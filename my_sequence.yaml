@@ -1,0 +1,43 @@
+---
+sequence_name: my sequence
+setup_steps: []
+steps:
+- steptype: Step # must be same as class name 
+  step_name: Test A1
+  repeat_gen: (['LOW', 'HIGH'])
+  skip: false
+  step_parameters: {}
+- steptype: Step
+  step_name: Test A2
+  skip: true
+  step_parameters: {}
+- steptype: ActionStep
+  step_name: Test C
+  environment: dmm
+  action_type: method
+  action_file: C:\dev\pypts-test\test_dut.py
+  method_name: test_to_run
+  step_parameters: {target: {type: variable, value: target_value}}
+- steptype: ActionStep
+  step_name: Test D
+  environment: dmm
+  action_type: read_attribute
+  action_file: C:\dev\pypts-test\test_dut.py
+  attribute_name: some_value
+  step_parameters: {}
+- steptype: ActionStep
+  step_name: Test E
+  environment: main
+  action_type: method
+  action_file: test_thing
+  method_name: other_test
+  step_parameters: {value: {type: direct, value: 1}}
+teardown_steps: []
+variables:
+  target_value: 45
+  test_name: Hello
+environments:
+  main: C:\dev\pypts\.venv\Scripts\python.exe
+  dmm: C:\dev\pypts-test\.venv\Scripts\python.exe
+
+
