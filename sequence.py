@@ -1,4 +1,4 @@
-from step import Step, ActionStep
+from step import Step, PythonModuleStep
 from typing import List, Dict
 from step_result import StepResult, ResultType
 import logging
@@ -23,14 +23,12 @@ class Sequence:
             sequence_data = yaml.safe_load(file)
         self._sequence_name = sequence_data["sequence_name"]
         self._variables = sequence_data["variables"]
+        self._parameters = sequence_data["parameters"]
         
-        # for each parameter defined in the sequence, give it a value
-        # we could also give them default values in the sequence file to override or not
-        for parameter in sequence_data["parameters"]:
-            if parameter in parameter_values:
-                self._parameters[parameter] = parameter_values[parameter]
-            else:
-                self._parameters[parameter] = None
+        # for each parameter defined in the sequence, override default if value is provided
+        for name, value in self._parameters.items():
+            if name in parameter_values:
+                self._parameters[name] = parameter_values[name]
 
         # Create interpreter objects for each environment
         for name, path in sequence_data["environments"].items():
@@ -49,13 +47,13 @@ class Sequence:
             logger.info(f"Running setup steps")
             for step in self._setup_steps:
                 logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._environments)
+                step_result = step.run(self._variables, self._parameters, self._environments)
                 results += step_result
             
             logger.info(f"Running core steps")
             for step in self._steps:
                 logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._environments)
+                step_result = step.run(self._variables, self._parameters, self._environments)
                 results += step_result
         except:
             pass
@@ -63,7 +61,7 @@ class Sequence:
             logger.info(f"Running teardown steps")
             for step in self._teardown_steps:
                 logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._environments)
+                step_result = step.run(self._variables, self._parameters, self._environments)
                 results += step_result
 
         # return is too simple here, but good enough placeholder for now

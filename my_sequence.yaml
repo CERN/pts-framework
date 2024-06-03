@@ -2,25 +2,18 @@
 sequence_name: my sequence
 setup_steps: []
 steps:
-- steptype: Step # must be same as class name 
-  step_name: Test A1
-  repeat_gen: (['LOW', 'HIGH'])
-  skip: false
-- steptype: Step
-  step_name: Test A2
-  skip: true
-- steptype: ActionStep
+- steptype: PythonModuleStep
   step_name: Test C
   environment: dmm
   action_type: method
   action_file: C:\dev\pypts-test\test_dut.py
   method_name: test_to_run
   input_mapping:
-      target: {type: variable, variable_name: target_value}
+      target: {type: parameter, parameter_name: target_value}
   output_mapping:
       compare: {type: passfail}
       other_output: {type: variable, variable_name: my_output}
-- steptype: ActionStep
+- steptype: PythonModuleStep
   step_name: Test Da
   environment: dmm
   action_type: read_attribute
@@ -28,7 +21,7 @@ steps:
   attribute_name: some_value
   input_mapping:
   output_mapping:
-- steptype: ActionStep
+- steptype: PythonModuleStep
   step_name: Test Db
   environment: dmm
   action_type: write_attribute
@@ -37,7 +30,7 @@ steps:
   attribute_value: 6
   input_mapping:
   output_mapping:
-- steptype: ActionStep
+- steptype: PythonModuleStep
   step_name: Test Dc
   environment: dmm
   action_type: read_attribute
@@ -45,20 +38,18 @@ steps:
   attribute_name: some_value
   input_mapping:
   output_mapping:
-# - steptype: ActionStep
-#   step_name: Test E
-#   environment: main
-#   action_type: method
-#   action_file: test_thing
-#   method_name: other_test
-#   input_mapping:
-#     {
-#       value: {type: direct, value: 1}
-#     }
+- steptype: PythonModuleStep
+  step_name: Test E
+  environment: main
+  action_type: method
+  action_file: test_thing
+  method_name: other_test
+  input_mapping:
+      value: {type: direct, value: 1}
+  output_mapping: {}
 teardown_steps: []
 parameters:
-  - param_1
-  - param_2
+  target_value: 0
 variables:
   target_value: 46
   test_name: Hello

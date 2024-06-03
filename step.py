@@ -26,21 +26,21 @@ class Step:
     def _post_step(self):
         pass
 
-    def run(self, variables, environments):
+    def run(self, variables, parameters, environments):
         results = list()
         if not self.skip:
             logger.debug(f"Running {self._id}:pre")
             self._pre_step()
             if not self.__do_repeat:
                 logger.debug(f"Running {self._id}")
-                result = self._step(variables, environments)
+                result = self._step(variables, parameters, environments)
                 results.append(result)
                 logger.info(f"Test {self._id} result: {result}")
             else:
                 for i in self.repeat_gen:
                     self._id = f"{self.name}#{i}"
                     logger.info(f"Running {self.name}, iteration {i}")
-                    result = self._step(variables, environments)
+                    result = self._step(variables, parameters, environments)
                     results.append(result)
                     logger.info(f"Test {self._id} result: {result}")
             logger.debug(f"Running {self._id}:post")
@@ -52,7 +52,7 @@ class Step:
 
 
 
-class ActionStep(Step):
+class PythonModuleStep(Step):
     
     def __init__(self, environment, action_type, action_file, input_mapping, output_mapping, method_name=None, attribute_name=None, attribute_value=None, **kwargs):
         super().__init__(**kwargs)
@@ -65,7 +65,7 @@ class ActionStep(Step):
         self.input_mapping = input_mapping
         self.output_mapping = output_mapping
 
-    def _step(self, variables, environments):
+    def _step(self, variables, parameters, environments):
         match self.action_type:
             case "method":
                 method_parameters = {}
@@ -77,6 +77,8 @@ class ActionStep(Step):
                         case "variable":
                             # go get the value in the variables
                             method_parameters[output_name] = variables[output_type["variable_name"]]
+                        case "parameter":
+                            method_parameters[output_name] = parameters[output_type["parameter_name"]]
         
                 step_environment: interpreter.Interpreter = environments[self.environment]
                 if not step_environment._running:
@@ -92,8 +94,7 @@ class ActionStep(Step):
                             # go set the value in the variables
                             variables[output_type["variable_name"]] = method_output[output_name]
                 
-                logger.info(f"Method {self.method_name} returned {method_output}")
-                
+                logger.info(f"Method {self.method_name} returned {method_output}")    
                 return step_result
             
             case "read_attribute":
@@ -103,6 +104,7 @@ class ActionStep(Step):
                 method_output = step_environment.read_attribute(self.action_file, self.attribute_name)
                 logger.info(f"Reading attribute {self.attribute_name}: {method_output}")
                 return StepResult(ResultType.PASS if method_output == 6 else ResultType.FAIL, id=self._id)
+            
             case "write_attribute":
                 step_environment: interpreter.Interpreter = environments[self.environment]
                 if not step_environment._running:

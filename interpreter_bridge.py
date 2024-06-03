@@ -5,8 +5,8 @@ import os
 import logging
 from pathlib import Path
 
-logging.basicConfig(level=logging.WARNING, format='[LOG]%(levelname)s:%(name)s:%(message)s')
-logger = logging.getLogger("interpreter_core")
+logging.basicConfig(level=logging.INFO, format='[LOG]%(levelname)s:%(name)s:%(message)s')
+logger = logging.getLogger("interpreter_bridge")
 interpreter_name = ""
 
 
