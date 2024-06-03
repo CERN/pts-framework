@@ -14,17 +14,29 @@ class Sequence:
     _teardown_steps: List[Step] = []
     _variables: Dict[str, any] = {}
     _environments: Dict[str, interpreter.Interpreter] = {}
-    
-    def __init__(self, sequence_file, sequence_parameters={}):
-        with open('my_sequence.yaml', 'r') as file:
+    _parameters: Dict[str, any] = {}
+    _input_mapping = {}
+    _output_mapping = {}
+
+    def __init__(self, sequence_file, parameter_values={}):
+        with open(sequence_file, 'r') as file:
             sequence_data = yaml.safe_load(file)
         self._sequence_name = sequence_data["sequence_name"]
         self._variables = sequence_data["variables"]
-        self._parameters = sequence_parameters
         
+        # for each parameter defined in the sequence, give it a value
+        # we could also give them default values in the sequence file to override or not
+        for parameter in sequence_data["parameters"]:
+            if parameter in parameter_values:
+                self._parameters[parameter] = parameter_values[parameter]
+            else:
+                self._parameters[parameter] = None
+
+        # Create interpreter objects for each environment
         for name, path in sequence_data["environments"].items():
             self._environments[name] = interpreter.Interpreter(path, name)
-            
+
+        # build all steps here    
         for step_data in sequence_data["steps"]:
             self.build_step(step_data)
         # needs to load setup and teardown lists as well
@@ -68,6 +80,4 @@ class Sequence:
         elif step_data["repeat_gen"] is not None:
                 repeat_eval = eval(step_data["repeat_gen"])
                 step_data["repeat_gen"] = repeat_eval
-
-
         self._steps.append(eval(step_type + "(**step_data)"))

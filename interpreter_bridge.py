@@ -5,7 +5,7 @@ import os
 import logging
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format='[LOG]%(levelname)s:%(name)s:%(message)s')
+logging.basicConfig(level=logging.WARNING, format='[LOG]%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger("interpreter_core")
 interpreter_name = ""
 
@@ -41,6 +41,17 @@ def main_loop():
                     output = getattr(module, attribute_name)
                 except Exception as e:
                     logger.error(f"Error loading module {e.with_traceback()}")  
+
+            case 'write_attribute':
+                output = {"pass": True}
+                module_name = Path(sys.stdin.readline().strip())
+                attribute_name = sys.stdin.readline().strip()
+                attribute_value = sys.stdin.readline().strip()
+                try:
+                    module = load_module(module_name)
+                    setattr(module, attribute_name, attribute_value)
+                except Exception as e:
+                    logger.error(f"Error loading module {e.with_traceback()}")
 
             case 'echo':
                 output = {"echo": sys.stdin.readline().strip()}

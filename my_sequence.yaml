@@ -6,36 +6,63 @@ steps:
   step_name: Test A1
   repeat_gen: (['LOW', 'HIGH'])
   skip: false
-  step_parameters: {}
 - steptype: Step
   step_name: Test A2
   skip: true
-  step_parameters: {}
 - steptype: ActionStep
   step_name: Test C
   environment: dmm
   action_type: method
   action_file: C:\dev\pypts-test\test_dut.py
   method_name: test_to_run
-  step_parameters: {target: {type: variable, value: target_value}}
+  input_mapping:
+      target: {type: variable, variable_name: target_value}
+  output_mapping:
+      compare: {type: passfail}
+      other_output: {type: variable, variable_name: my_output}
 - steptype: ActionStep
-  step_name: Test D
+  step_name: Test Da
   environment: dmm
   action_type: read_attribute
   action_file: C:\dev\pypts-test\test_dut.py
   attribute_name: some_value
-  step_parameters: {}
+  input_mapping:
+  output_mapping:
 - steptype: ActionStep
-  step_name: Test E
-  environment: main
-  action_type: method
-  action_file: test_thing
-  method_name: other_test
-  step_parameters: {value: {type: direct, value: 1}}
+  step_name: Test Db
+  environment: dmm
+  action_type: write_attribute
+  action_file: C:\dev\pypts-test\test_dut.py
+  attribute_name: some_value
+  attribute_value: 6
+  input_mapping:
+  output_mapping:
+- steptype: ActionStep
+  step_name: Test Dc
+  environment: dmm
+  action_type: read_attribute
+  action_file: C:\dev\pypts-test\test_dut.py
+  attribute_name: some_value
+  input_mapping:
+  output_mapping:
+# - steptype: ActionStep
+#   step_name: Test E
+#   environment: main
+#   action_type: method
+#   action_file: test_thing
+#   method_name: other_test
+#   input_mapping:
+#     {
+#       value: {type: direct, value: 1}
+#     }
 teardown_steps: []
+parameters:
+  - param_1
+  - param_2
 variables:
-  target_value: 45
+  target_value: 46
   test_name: Hello
+  my_output: 
 environments:
   main: C:\dev\pypts\.venv\Scripts\python.exe
   dmm: C:\dev\pypts-test\.venv\Scripts\python.exe

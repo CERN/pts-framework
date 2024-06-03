@@ -22,7 +22,7 @@ class Interpreter():
     def start(self):
         logger.info(f"Starting interpreter {self._name} at {self._python_path}")
         try:
-            self._proc = subprocess.Popen([self._python_path, "interpreter_core.py"], 
+            self._proc = subprocess.Popen([self._python_path, "interpreter_bridge.py"], 
                                           stdout=subprocess.PIPE, 
                                           stdin=subprocess.PIPE, 
                                           stderr=subprocess.STDOUT,
@@ -42,11 +42,14 @@ class Interpreter():
         pass
 
     def stop(self):
-        logger.info(f"Stopping interpreter {self._name}.")
-        output = self._send_command("stop")
-        self.thread.join()
-        self._running = False
-        self._proc.kill()
+        if self._running:
+            logger.info(f"Stopping interpreter {self._name}.")
+            output = self._send_command("stop")
+            self.thread.join()
+            self._running = False
+            self._proc.kill()
+        else:
+            output = "{}"
         return literal_eval(output)
 
     def run_method(self, module_name=None, method_name=None, method_parameters=None):
@@ -59,8 +62,10 @@ class Interpreter():
         output = self._send_command("read_attribute", module_name, attribute_name)
         return literal_eval(output)
 
-    def write_attribute(self):
-        pass
+    def write_attribute(self, module_name=None, attribute_name=None, attribute_value=None):
+        logger.info(f"Writing attribute {attribute_name} from module {module_name}.")
+        output = self._send_command("write_attribute", module_name, attribute_name, attribute_value)
+        return literal_eval(output)
 
     def _send_command(self, command, *args):
         try:
