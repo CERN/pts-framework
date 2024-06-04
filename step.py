@@ -1,15 +1,17 @@
 import logging
 from step_result import ResultType, StepResult
 import interpreter
-
+import sequence
 logger = logging.getLogger(__name__)
 
 class Step:
 
-    def __init__(self, step_name="", skip=False, repeat_gen=None):
+    def __init__(self, step_name, input_mapping, output_mapping, skip=False, repeat_gen=None):
         self.name = step_name
         self._id = step_name
         self.skip = skip
+        self.input_mapping = input_mapping
+        self.output_mapping = output_mapping
         if repeat_gen == None:
             self.__do_repeat = False
         else:
@@ -54,7 +56,7 @@ class Step:
 
 class PythonModuleStep(Step):
     
-    def __init__(self, environment, action_type, action_file, input_mapping, output_mapping, method_name=None, attribute_name=None, attribute_value=None, **kwargs):
+    def __init__(self, environment, action_type, action_file, method_name=None, attribute_name=None, attribute_value=None, **kwargs):
         super().__init__(**kwargs)
         self.environment = environment
         self.action_file = action_file
@@ -62,8 +64,6 @@ class PythonModuleStep(Step):
         self.attribute_name = attribute_name
         self.attribute_value = attribute_value
         self.action_type = action_type
-        self.input_mapping = input_mapping
-        self.output_mapping = output_mapping
 
     def _step(self, repeat_id, variables, parameters, outputs, environments):
         step_result = StepResult(ResultType.PASS, id=self._id)
@@ -118,3 +118,46 @@ class PythonModuleStep(Step):
                 method_output = step_environment.write_attribute(self.action_file, self.attribute_name, self.attribute_value)
                 logger.info(f"Setting attribute {self.attribute_name} to {self.attribute_value}")
                 return StepResult(ResultType.PASS if method_output == 6 else ResultType.FAIL, id=self._id)
+
+
+class SubSequenceStep(Step):
+    
+    def __init__(self, sequence_file, **kwargs):
+        super().__init__(**kwargs)
+        self.sequence_file = sequence_file
+
+
+    def _step(self, repeat_id, variables, parameters, outputs, environments):
+        step_result = StepResult(ResultType.PASS, id=self._id)
+
+        sequence_parameters = {}
+        for input_name, input_config in self.input_mapping.items():
+            match input_config["type"]:
+                case "direct":
+                    # value provided in the dictionary directly
+                    sequence_parameters[input_name] = input_config["value"]
+                case "variable":
+                    # go get the value in the variables
+                    sequence_parameters[input_name] = variables[input_config["variable_name"]]
+                case "parameter":
+                    sequence_parameters[input_name] = parameters[input_config["parameter_name"]]
+                case "repeat_id":
+                    sequence_parameters[input_name] = repeat_id
+
+        subsequence = sequence.Sequence(self.sequence_file, sequence_parameters)
+        sequence_output = subsequence.run()
+
+        for output_name, output_config in self.output_mapping.items():
+            match output_config["type"]:
+                case "passfail":
+                    # a boolean which sets pass/fail state of step
+                    step_result = StepResult(ResultType.PASS if sequence_output[output_name] else ResultType.FAIL, id=self._id)
+                case "variable":
+                    # go set the value in the variables
+                    variables[output_config["variable_name"]] = sequence_output[output_name]
+                case "output":
+                    # go set the value in the outputs
+                    outputs[output_config["output_name"]] = sequence_output[output_name]
+        
+        logger.info(f"Subsequence {subsequence._name} returned {sequence_output}")    
+        return step_result

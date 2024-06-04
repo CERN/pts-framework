@@ -19,8 +19,8 @@ steps:
   action_type: read_attribute
   action_file: C:\dev\pypts-test\test_dut.py
   attribute_name: some_value
-  input_mapping:
-  output_mapping:
+  input_mapping: {}
+  output_mapping: {}
 - steptype: PythonModuleStep
   step_name: Test Db
   environment: dmm
@@ -28,16 +28,16 @@ steps:
   action_file: C:\dev\pypts-test\test_dut.py
   attribute_name: some_value
   attribute_value: 6
-  input_mapping:
-  output_mapping:
+  input_mapping: {}
+  output_mapping: {}
 - steptype: PythonModuleStep
   step_name: Test Dc
   environment: dmm
   action_type: read_attribute
   action_file: C:\dev\pypts-test\test_dut.py
   attribute_name: some_value
-  input_mapping:
-  output_mapping:
+  input_mapping: {}
+  output_mapping: {}
 - steptype: PythonModuleStep
   step_name: Test E
   environment: main
@@ -48,6 +48,12 @@ steps:
     value: {type: direct, value: 1}
   output_mapping:
     some_return: {type: output, output_name: my_output}
+- steptype: SubSequenceStep
+  step_name: Test F
+  sequence_file: sub_sequence.yaml
+  input_mapping:
+    target_value: {type: direct, value: 46}
+  output_mapping: {}
 teardown_steps: []
 parameters:
   target_value: 0
