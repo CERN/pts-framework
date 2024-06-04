@@ -9,10 +9,10 @@ steps:
   action_file: C:\dev\pypts-test\test_dut.py
   method_name: test_to_run
   input_mapping:
-      target: {type: parameter, parameter_name: target_value}
+    target: {type: parameter, parameter_name: target_value}
   output_mapping:
-      compare: {type: passfail}
-      other_output: {type: variable, variable_name: my_output}
+    compare: {type: passfail}
+    other_output: {type: variable, variable_name: my_output}
 - steptype: PythonModuleStep
   step_name: Test Da
   environment: dmm
@@ -45,14 +45,17 @@ steps:
   action_file: test_thing
   method_name: other_test
   input_mapping:
-      value: {type: direct, value: 1}
-  output_mapping: {}
+    value: {type: direct, value: 1}
+  output_mapping:
+    some_return: {type: output, output_name: my_output}
 teardown_steps: []
 parameters:
   target_value: 0
 variables:
   target_value: 46
   test_name: Hello
+  my_output:
+outputs:
   my_output: 
 environments:
   main: C:\dev\pypts\.venv\Scripts\python.exe

@@ -20,27 +20,27 @@ class Step:
     def _pre_step(self):
         pass
 
-    def _step(self, variables, environments):
+    def _step(self, repeat_id, variables, parameters, outputs, environments):
         return StepResult(ResultType.PASS, id=self._id)
 
     def _post_step(self):
         pass
 
-    def run(self, variables, parameters, environments):
+    def run(self, variables, parameters, outputs, environments):
         results = list()
         if not self.skip:
             logger.debug(f"Running {self._id}:pre")
             self._pre_step()
             if not self.__do_repeat:
                 logger.debug(f"Running {self._id}")
-                result = self._step(variables, parameters, environments)
+                result = self._step(None, variables, parameters, outputs, environments)
                 results.append(result)
                 logger.info(f"Test {self._id} result: {result}")
             else:
                 for i in self.repeat_gen:
                     self._id = f"{self.name}#{i}"
                     logger.info(f"Running {self.name}, iteration {i}")
-                    result = self._step(variables, parameters, environments)
+                    result = self._step(i, variables, parameters, outputs, environments)
                     results.append(result)
                     logger.info(f"Test {self._id} result: {result}")
             logger.debug(f"Running {self._id}:post")
@@ -65,34 +65,40 @@ class PythonModuleStep(Step):
         self.input_mapping = input_mapping
         self.output_mapping = output_mapping
 
-    def _step(self, variables, parameters, environments):
+    def _step(self, repeat_id, variables, parameters, outputs, environments):
+        step_result = StepResult(ResultType.PASS, id=self._id)
         match self.action_type:
             case "method":
                 method_parameters = {}
-                for output_name, output_type in self.input_mapping.items():
-                    match output_type["type"]:
+                for input_name, input_config in self.input_mapping.items():
+                    match input_config["type"]:
                         case "direct":
                             # value provided in the dictionary directly
-                            method_parameters[output_name] = output_type["value"]
+                            method_parameters[input_name] = input_config["value"]
                         case "variable":
                             # go get the value in the variables
-                            method_parameters[output_name] = variables[output_type["variable_name"]]
+                            method_parameters[input_name] = variables[input_config["variable_name"]]
                         case "parameter":
-                            method_parameters[output_name] = parameters[output_type["parameter_name"]]
+                            method_parameters[input_name] = parameters[input_config["parameter_name"]]
+                        case "repeat_id":
+                            method_parameters[input_name] = repeat_id
         
                 step_environment: interpreter.Interpreter = environments[self.environment]
                 if not step_environment._running:
                     step_environment.start()
                 method_output = step_environment.run_method(self.action_file, self.method_name, method_parameters)
                 
-                for output_name, output_type in self.output_mapping.items():
-                    match output_type["type"]:
+                for output_name, output_config in self.output_mapping.items():
+                    match output_config["type"]:
                         case "passfail":
                             # a boolean which sets pass/fail state of step
                             step_result = StepResult(ResultType.PASS if method_output[output_name] else ResultType.FAIL, id=self._id)
                         case "variable":
                             # go set the value in the variables
-                            variables[output_type["variable_name"]] = method_output[output_name]
+                            variables[output_config["variable_name"]] = method_output[output_name]
+                        case "output":
+                            # go set the value in the outputs
+                            outputs[output_config["output_name"]] = method_output[output_name]
                 
                 logger.info(f"Method {self.method_name} returned {method_output}")    
                 return step_result

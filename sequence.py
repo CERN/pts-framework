@@ -15,6 +15,7 @@ class Sequence:
     _variables: Dict[str, any] = {}
     _environments: Dict[str, interpreter.Interpreter] = {}
     _parameters: Dict[str, any] = {}
+    _outputs: Dict[str, any] = {}
     _input_mapping = {}
     _output_mapping = {}
 
@@ -24,6 +25,7 @@ class Sequence:
         self._sequence_name = sequence_data["sequence_name"]
         self._variables = sequence_data["variables"]
         self._parameters = sequence_data["parameters"]
+        self._outputs = sequence_data["outputs"]
         
         # for each parameter defined in the sequence, override default if value is provided
         for name, value in self._parameters.items():
@@ -47,21 +49,21 @@ class Sequence:
             logger.info(f"Running setup steps")
             for step in self._setup_steps:
                 logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._parameters, self._environments)
+                step_result = step.run(self._variables, self._parameters, self._outputs, self._environments)
                 results += step_result
             
             logger.info(f"Running core steps")
             for step in self._steps:
                 logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._parameters, self._environments)
+                step_result = step.run(self._variables, self._parameters, self._outputs, self._environments)
                 results += step_result
-        except:
-            pass
+        except BaseException as e:
+            logger.error(f"Error occured during sequence: {e.with_traceback()}")
         finally:        
             logger.info(f"Running teardown steps")
             for step in self._teardown_steps:
                 logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._parameters, self._environments)
+                step_result = step.run(self._variables, self._parameters, self._outputs, self._environments)
                 results += step_result
 
         # return is too simple here, but good enough placeholder for now

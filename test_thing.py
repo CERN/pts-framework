@@ -8,4 +8,4 @@ def test_to_run(target):
 
 def other_test(value):
     logger.info("I could also do this.")
-    return {"pass": True, "value": value}
+    return {"some_return": True, "value": value}

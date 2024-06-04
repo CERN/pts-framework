@@ -13,3 +13,6 @@ for var, val in seq._variables.items():
 print("--- PARAMETERS ---")
 for param, val in seq._parameters.items():
     print(param, val)
+print("--- OUTPUTS ---")
+for output, val in seq._outputs.items():
+    print(output, val)
