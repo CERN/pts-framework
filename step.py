@@ -2,122 +2,118 @@ import logging
 from step_result import ResultType, StepResult
 import interpreter
 import sequence
+
 logger = logging.getLogger(__name__)
 
 class Step:
 
-    def __init__(self, step_name, input_mapping, output_mapping, skip=False, repeat_gen=None):
+    def __init__(self, id, step_name, input_mapping, output_mapping, environment=None, skip=False, repeat_gen=None):
         self.name = step_name
-        self._id = step_name
+        self.id = id
         self.skip = skip
         self.input_mapping = input_mapping
         self.output_mapping = output_mapping
-        if repeat_gen == None:
-            self.__do_repeat = False
-        else:
-            self.__do_repeat = True
+        self.environment: interpreter.Interpreter = environment
         self.repeat_gen = repeat_gen
-
+        self.__do_repeat = not repeat_gen == None
+        self.output = {}
+        self.result = None
+        
 
     def _pre_step(self):
         pass
 
-    def _step(self, repeat_id, variables, parameters, outputs, environments):
-        return StepResult(ResultType.PASS, id=self._id)
+    def _step(self):
+        return StepResult(ResultType.PASS, id=self.id)
 
     def _post_step(self):
         pass
 
-    def run(self, variables, parameters, outputs, environments):
-        results = list()
+    def __process_inputs(self, variables, parameters):
+        self.processed_inputs = {}
+        for input_name, input_config in self.input_mapping.items():
+            match input_config["type"]:
+                case "direct":
+                    # value provided in the dictionary directly
+                    self.processed_inputs[input_name] = input_config["value"]
+                case "variable":
+                    # go get the value in the variables
+                    self.processed_inputs[input_name] = variables[input_config["variable_name"]]
+                case "parameter":
+                    self.processed_inputs[input_name] = parameters[input_config["parameter_name"]]
+                # case "repeat_id":
+                #     self.processed_inputs[input_name] = repeat_id
+
+    def __process_outputs(self, variables, outputs, step_output):
+        for output_name, output_config in self.output_mapping.items():
+            match output_config["type"]:
+                case "passfail":
+                    # a boolean which sets pass/fail state of step
+                    self.result = StepResult(ResultType.PASS if step_output[output_name] else ResultType.FAIL, id=self.id)
+                case "variable":
+                    # go set the value in the variables
+                    variables[output_config["variable_name"]] = step_output[output_name]
+                case "output":
+                    # go set the value in the outputs of the step
+                    outputs[output_config["output_name"]] = step_output[output_name]
+                case "store":
+                    # don't put in variables, but store internally in the step. Not accessible to sequence
+                    pass
+                case "ignore":
+                    # do nothing with it. The value is discarded and the sequence won't see it
+                    pass
+    
+    def run(self, variables, parameters, outputs):
+        # not sure what this function should return
         if not self.skip:
-            logger.debug(f"Running {self._id}:pre")
+            logger.debug(f"Running {self.id}:pre")
+            self.__process_inputs(variables, parameters)
             self._pre_step()
-            if not self.__do_repeat:
-                logger.debug(f"Running {self._id}")
-                result = self._step(None, variables, parameters, outputs, environments)
-                results.append(result)
-                logger.info(f"Test {self._id} result: {result}")
-            else:
-                for i in self.repeat_gen:
-                    self._id = f"{self.name}#{i}"
-                    logger.info(f"Running {self.name}, iteration {i}")
-                    result = self._step(i, variables, parameters, outputs, environments)
-                    results.append(result)
-                    logger.info(f"Test {self._id} result: {result}")
-            logger.debug(f"Running {self._id}:post")
+            logger.debug(f"Running {self.id}")
+            self.result = self._step()
+            logger.debug(f"Running {self.id}:post")
             self._post_step()
+            self.__process_outputs(variables, outputs, self.output)
+            logger.info(f"Test {self.id} result: {self.result}")
         else:
             logger.info(f"Skipping {self.name}")
-            results = [StepResult(ResultType.SKIP, id=self._id)]
-        return results
+            self.result = StepResult(ResultType.SKIP, id=self.id)
+        return self.result
 
 
 
 class PythonModuleStep(Step):
     
-    def __init__(self, environment, action_type, action_file, method_name=None, attribute_name=None, attribute_value=None, **kwargs):
+    def __init__(self, action_type, module, method_name=None, attribute_name=None, **kwargs):
         super().__init__(**kwargs)
-        self.environment = environment
-        self.action_file = action_file
+        self.module = module
+        self.action_type = action_type
         self.method_name = method_name
         self.attribute_name = attribute_name
-        self.attribute_value = attribute_value
-        self.action_type = action_type
 
-    def _step(self, repeat_id, variables, parameters, outputs, environments):
-        step_result = StepResult(ResultType.PASS, id=self._id)
+    def _pre_step(self):
+        if not self.environment.running:
+            logger.info(f"Environment {self.environment.name} not running. Starting it now.")
+            self.environment.start()
+
+    def _step(self):
+        step_result = StepResult(ResultType.PASS, id=self.id)        
         match self.action_type:
             case "method":
-                method_parameters = {}
-                for input_name, input_config in self.input_mapping.items():
-                    match input_config["type"]:
-                        case "direct":
-                            # value provided in the dictionary directly
-                            method_parameters[input_name] = input_config["value"]
-                        case "variable":
-                            # go get the value in the variables
-                            method_parameters[input_name] = variables[input_config["variable_name"]]
-                        case "parameter":
-                            method_parameters[input_name] = parameters[input_config["parameter_name"]]
-                        case "repeat_id":
-                            method_parameters[input_name] = repeat_id
-        
-                step_environment: interpreter.Interpreter = environments[self.environment]
-                if not step_environment._running:
-                    step_environment.start()
-                method_output = step_environment.run_method(self.action_file, self.method_name, method_parameters)
-                
-                for output_name, output_config in self.output_mapping.items():
-                    match output_config["type"]:
-                        case "passfail":
-                            # a boolean which sets pass/fail state of step
-                            step_result = StepResult(ResultType.PASS if method_output[output_name] else ResultType.FAIL, id=self._id)
-                        case "variable":
-                            # go set the value in the variables
-                            variables[output_config["variable_name"]] = method_output[output_name]
-                        case "output":
-                            # go set the value in the outputs
-                            outputs[output_config["output_name"]] = method_output[output_name]
-                
-                logger.info(f"Method {self.method_name} returned {method_output}")    
+                self.output = self.environment.run_method(self.module, self.method_name, self.processed_inputs)
+                logger.info(f"Method {self.method_name} returned {self.output}")    
                 return step_result
             
             case "read_attribute":
-                step_environment: interpreter.Interpreter = environments[self.environment]
-                if not step_environment._running:
-                    step_environment.start()
-                method_output = step_environment.read_attribute(self.action_file, self.attribute_name)
-                logger.info(f"Reading attribute {self.attribute_name}: {method_output}")
-                return StepResult(ResultType.PASS if method_output == 6 else ResultType.FAIL, id=self._id)
+                self.output = self.environment.read_attribute(self.module, self.attribute_name)
+                logger.info(f"Reading attribute {self.attribute_name}: {self.output}")
+                return step_result
             
             case "write_attribute":
-                step_environment: interpreter.Interpreter = environments[self.environment]
-                if not step_environment._running:
-                    step_environment.start()
-                method_output = step_environment.write_attribute(self.action_file, self.attribute_name, self.attribute_value)
-                logger.info(f"Setting attribute {self.attribute_name} to {self.attribute_value}")
-                return StepResult(ResultType.PASS if method_output == 6 else ResultType.FAIL, id=self._id)
+                attribute_value = self.processed_inputs[self.attribute_name]
+                self.output = self.environment.write_attribute(self.module, self.attribute_name, attribute_value)
+                logger.info(f"Setting attribute {self.attribute_name} to {attribute_value}")
+                return step_result
 
 
 class SubSequenceStep(Step):
@@ -126,38 +122,11 @@ class SubSequenceStep(Step):
         super().__init__(**kwargs)
         self.sequence_file = sequence_file
 
+    def _step(self):
+        step_result = StepResult(ResultType.PASS, id=self.id)
 
-    def _step(self, repeat_id, variables, parameters, outputs, environments):
-        step_result = StepResult(ResultType.PASS, id=self._id)
-
-        sequence_parameters = {}
-        for input_name, input_config in self.input_mapping.items():
-            match input_config["type"]:
-                case "direct":
-                    # value provided in the dictionary directly
-                    sequence_parameters[input_name] = input_config["value"]
-                case "variable":
-                    # go get the value in the variables
-                    sequence_parameters[input_name] = variables[input_config["variable_name"]]
-                case "parameter":
-                    sequence_parameters[input_name] = parameters[input_config["parameter_name"]]
-                case "repeat_id":
-                    sequence_parameters[input_name] = repeat_id
-
-        subsequence = sequence.Sequence(self.sequence_file, sequence_parameters)
-        sequence_output = subsequence.run()
-
-        for output_name, output_config in self.output_mapping.items():
-            match output_config["type"]:
-                case "passfail":
-                    # a boolean which sets pass/fail state of step
-                    step_result = StepResult(ResultType.PASS if sequence_output[output_name] else ResultType.FAIL, id=self._id)
-                case "variable":
-                    # go set the value in the variables
-                    variables[output_config["variable_name"]] = sequence_output[output_name]
-                case "output":
-                    # go set the value in the outputs
-                    outputs[output_config["output_name"]] = sequence_output[output_name]
+        subsequence = sequence.Sequence(self.sequence_file, self.processed_inputs, self.id)
+        self.output = subsequence.run()
         
-        logger.info(f"Subsequence {subsequence._name} returned {sequence_output}")    
+        logger.info(f"Subsequence {subsequence.name} returned {self.output}")    
         return step_result

@@ -10,30 +10,25 @@ logger = logging.getLogger(__name__)
 
 class Interpreter():
 
-    _python_path = ""
-    _file = ""
-    _id = ""
-    _running = False
-
     def __init__(self, interpreter_path, name):
-        self._python_path = interpreter_path
-        self._name = name
+        self.python_path = interpreter_path
+        self.name = name
+        self.running = False
         
     def start(self):
-        logger.info(f"Starting interpreter {self._name} at {self._python_path}")
+        logger.info(f"Starting interpreter {self.name} at {self.python_path}")
         try:
-            self._proc = subprocess.Popen([self._python_path, "interpreter_bridge.py"], 
+            self._proc = subprocess.Popen([self.python_path, "interpreter_bridge.py"], 
                                           stdout=subprocess.PIPE, 
                                           stdin=subprocess.PIPE, 
                                           stderr=subprocess.STDOUT,
                                           text=True,
-                                          #bufsize=1,
                                           )
             self.queue = Queue()
-            self.thread = Thread(target=self.__process_stdout)
+            self.thread = Thread(target=self.__stdout_listener)
             self.thread.start()
-            self._proc.stdin.write(self._name + '\n') # sends the name to the interpreter
-            self._running = True
+            self._proc.stdin.write(self.name + '\n') # sends the name to the interpreter
+            self.running = True
         except (OSError, Exception):
             print("Error")
             self._proc.kill()
@@ -42,11 +37,11 @@ class Interpreter():
         pass
 
     def stop(self):
-        if self._running:
-            logger.info(f"Stopping interpreter {self._name}.")
+        if self.running:
+            logger.info(f"Stopping interpreter {self.name}.")
             output = self._send_command("stop")
             self.thread.join()
-            self._running = False
+            self.running = False
             self._proc.kill()
         else:
             output = "{}"
@@ -79,13 +74,14 @@ class Interpreter():
             print("Problem with child")
             return {}
         
-    def __process_stdout(self):
-        logger.info(f"Starting stdout listening thread for interpreter {self._name}")
+    def __stdout_listener(self):
+        logger.info(f"Starting stdout listening thread for interpreter {self.name}")
         count = 0
         while True:
             line = self._proc.stdout.readline().strip()
             logger.debug(line)
             if not line:
+                logger.debug("Received empty line.")
                 break
             # if count == 100:
             #     break
@@ -98,4 +94,4 @@ class Interpreter():
                 case _:
                     count += 1
                     print(count, line)
-        logger.info(f"Stopping stdout listening thread for interpreter {self._name}")
+        logger.info(f"Stopping stdout listening thread for interpreter {self.name}")

@@ -5,8 +5,7 @@ import os
 import logging
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO, format='[LOG]%(levelname)s:%(name)s:%(message)s')
-logger = logging.getLogger("interpreter_bridge")
+
 interpreter_name = ""
 
 
@@ -15,13 +14,13 @@ def main_loop():
     while not __stop:
         line = sys.stdin.readline().strip()
         logger.info(f"Received command '{line}'")
-        output = {} # default for now
+        output = {} # default for now. We only send the direct results of the commands. Whether it's a pass
+        # or a fail depends on step config in the sequence, not here
         match line:
             case 'stop':
                 __stop = True
             
             case 'run_method':
-                output = {"pass": False}
                 module_name = Path(sys.stdin.readline().strip())
                 method_name = sys.stdin.readline().strip()
                 method_parameters = literal_eval(sys.stdin.readline().strip())
@@ -30,20 +29,18 @@ def main_loop():
                     method = getattr(module, method_name)
                     output = method(**method_parameters)
                 except Exception as e:
-                    logger.error(f"Error loading module {e.with_traceback()}")
+                    logger.error(f"Error loading module: {e}")
             
             case 'read_attribute':
-                output = {"pass": False}
                 module_name = Path(sys.stdin.readline().strip())
                 attribute_name = sys.stdin.readline().strip()
                 try:
                     module = load_module(module_name)
-                    output = getattr(module, attribute_name)
+                    output[attribute_name] = getattr(module, attribute_name)
                 except Exception as e:
                     logger.error(f"Error loading module {e.with_traceback()}")  
 
             case 'write_attribute':
-                output = {"pass": True}
                 module_name = Path(sys.stdin.readline().strip())
                 attribute_name = sys.stdin.readline().strip()
                 attribute_value = sys.stdin.readline().strip()
@@ -76,7 +73,8 @@ def load_module(module_full_path: Path):
 
 if __name__ == "__main__":
     interpreter_name = sys.stdin.readline().strip()
-    logger = logging.getLogger(f"interpreter_core[{interpreter_name}]")
+    logger = logging.getLogger(f"interpreter_bridge[{interpreter_name}]")
+    logging.basicConfig(level=logging.INFO, format='[LOG]%(levelname)s:%(name)s:%(message)s')
     logger.info(f"Started subprocess {interpreter_name}")
     main_loop()
     logger.info(f"Ended subprocess {interpreter_name}")

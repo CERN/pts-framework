@@ -9,82 +9,98 @@ logger = logging.getLogger(__name__)
 
 class Sequence:
 
-    # _setup_steps: List[Step] = []
-    # _steps: List[Step] = []
-    # _teardown_steps: List[Step] = []
-    # _variables: Dict[str, any] = {}
-    # _environments: Dict[str, interpreter.Interpreter] = {}
-    # _parameters: Dict[str, any] = {}
-    # _outputs: Dict[str, any] = {}
-    # _input_mapping = {}
-    # _output_mapping = {}
-
-    def __init__(self, sequence_file, parameter_values={}):
-        logger.info(f"Parsing sequence file {sequence_file}.")
+    def __init__(self, sequence_file, parameter_values={}, id_prefix=None):
         with open(sequence_file, 'r') as file:
             sequence_data = yaml.safe_load(file)
-        self._name = sequence_data["sequence_name"]
-        self._variables = sequence_data["variables"]
-        self._parameters = sequence_data["parameters"]
-        self._outputs = sequence_data["outputs"]
+        self.name = sequence_data["sequence_name"]
+        self.variables = sequence_data["variables"]
+        self.parameters = sequence_data["parameters"]
+        self.outputs = sequence_data["outputs"]
+        self.environments: Dict[str, interpreter.Interpreter] = {}
+        self.setup_steps: List[Step] = []
+        self.steps: List[Step] = []
+        self.teardown_steps: List[Step] = []
+        self.id_prefix = id_prefix
 
-        self._environments: Dict[str, interpreter.Interpreter] = {}
         # for each parameter defined in the sequence, override default if value is provided
-        for parameter in self._parameters:
+        for parameter in self.parameters:
             if parameter in parameter_values:
-                self._parameters[parameter] = parameter_values[parameter]
+                self.parameters[parameter] = parameter_values[parameter]
 
         # Create interpreter objects for each environment
-        for parameter, path in sequence_data["environments"].items():
-            self._environments[parameter] = interpreter.Interpreter(path, parameter)
+        for environment, path in sequence_data["environments"].items():
+            self.environments[environment] = interpreter.Interpreter(path, environment)
 
-        self._setup_steps: List[Step] = []
-        self._steps: List[Step] = []
-        self._teardown_steps: List[Step] = []
-        # build all steps here    
+
+        def make_id(count: int):
+            if id_prefix is not None:
+                return f"{id_prefix}.{count}"
+            else:
+                return str(count)
+
+        id_count = 0
+        # build all steps here
         for step_data in sequence_data["setup_steps"]:
-            self._setup_steps.append(self.build_step(step_data))
+            self.setup_steps.append(self.build_step(step_data, make_id(id_count)))
+            id_count += 1
         for step_data in sequence_data["steps"]:
-            self._steps.append(self.build_step(step_data))
+            self.steps.append(self.build_step(step_data, make_id(id_count)))
+            id_count += 1
         for step_data in sequence_data["teardown_steps"]:
-            self._teardown_steps.append(self.build_step(step_data))
+            self.teardown_steps.append(self.build_step(step_data, make_id(id_count)))
+            id_count += 1
 
     def run(self):
-        logger.info(f"Starting sequence {self._name}")
-        results: List[StepResult] = []
+        logger.info(f"Starting sequence {self.name}")
         try:
             logger.info(f"Running setup steps")
-            for step in self._setup_steps:
-                logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._parameters, self._outputs, self._environments)
-                results += step_result
+            for step in self.setup_steps:
+                logger.info(f"Running step {step.id}")
+                step_result = step.run(self.variables, self.parameters, self.outputs)
             
             logger.info(f"Running core steps")
-            for step in self._steps:
-                logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._parameters, self._outputs, self._environments)
-                results += step_result
-        except BaseException as e:
-            logger.error(f"Error occured during sequence: {e.with_traceback()}")
+            for step in self.steps:
+                logger.info(f"Running step {step.id}")
+                step_result = step.run(self.variables, self.parameters, self.outputs)
+
+        except Exception as e:
+            logger.error(f"Error occured during sequence: {e}")
         finally:        
             logger.info(f"Running teardown steps")
-            for step in self._teardown_steps:
-                logger.info(f"Running step {step._id}")
-                step_result = step.run(self._variables, self._parameters, self._outputs, self._environments)
-                results += step_result
-            for environment in self._environments.values():
+            for step in self.teardown_steps:
+                logger.info(f"Running step {step.id}")
+                step_result = step.run(self.variables, self.parameters, self.outputs)
+            for environment in self.environments.values():
                 environment.stop()
-        return self._outputs
+        return self.outputs
 
-    def build_step(self, step_data):
+    def build_step(self, step_data: Dict, id: str) -> Step:
+        """This helper function analyzes the configuration of step_data and adapts what is needed before
+        creating the step.
+
+        Args:
+            step_data (Dict): the dictionary containing the keys from the sequence file
+
+        Returns:
+            Step: This is a fully configured step object
+        """
         step_type = step_data["steptype"]
-        del step_data["steptype"]
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
+        del step_data["steptype"]
         
-        if "repeat_gen" not in step_data:
-            step_data["repeat_gen"] = None
-        elif step_data["repeat_gen"] is not None:
-                repeat_eval = eval(step_data["repeat_gen"])
-                step_data["repeat_gen"] = repeat_eval
-        return eval(step_type + "(**step_data)")
+        # integrate id into step_data
+        step_data["id"] = id
+
+        # provide the step's interpreter name with the created interpreter
+        if "environment" in step_data and step_data["environment"] is not None:
+            step_data["environment"] = self.environments[step_data["environment"]]
+
+        # evaluate the repeat formula to create an iterator
+        if "repeat_gen" in step_data and step_data["repeat_gen"] is not None:
+            step_data["repeat_gen"] = eval(step_data["repeat_gen"])
+            # TODO should check validity as iterator
+
+        # creates the step according to the subclass type and passes all parameters   
+        new_step = eval(step_type + "(**step_data)")
+        return new_step

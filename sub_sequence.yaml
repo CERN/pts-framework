@@ -6,7 +6,7 @@ steps:
   step_name: SubTest
   environment: dmm
   action_type: method
-  action_file: C:\dev\pypts-test\test_dut.py
+  module: C:\dev\pypts-test\test_dut.py
   method_name: test_to_run
   input_mapping:
     target: {type: parameter, parameter_name: target_value}

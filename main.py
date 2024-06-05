@@ -1,18 +1,20 @@
 from sequence import Sequence
 import logging
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.DEBUG)
 
 
-seq = Sequence("my_sequence.yaml", {"target_value": 45})
+seq = Sequence("my_sequence.yaml", {"target_value": 33})
 result = seq.run()
+
 print(result)
 print("--- VARIABLES ---")
-for var, val in seq._variables.items():
+for var, val in seq.variables.items():
     print(var, val)
 print("--- PARAMETERS ---")
-for param, val in seq._parameters.items():
+for param, val in seq.parameters.items():
     print(param, val)
 print("--- OUTPUTS ---")
-for output, val in seq._outputs.items():
+for output, val in seq.outputs.items():
     print(output, val)
+    
