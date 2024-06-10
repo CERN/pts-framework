@@ -21,6 +21,6 @@ variables:
 outputs:
   my_output: 0
 environments:
-  dmm: C:\dev\pypts-test\.venv\Scripts\python.exe
+  dmm: C:\dev\pypts-test\.venv\Scripts
 
 

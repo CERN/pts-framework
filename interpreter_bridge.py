@@ -4,7 +4,8 @@ from ast import literal_eval
 import os
 import logging
 from pathlib import Path
-
+import traceback
+from time import sleep
 
 interpreter_name = ""
 
@@ -28,8 +29,10 @@ def main_loop():
                     module = load_module(module_name)
                     method = getattr(module, method_name)
                     output = method(**method_parameters)
-                except Exception as e:
-                    logger.error(f"Error loading module: {e}")
+                except:
+                    exc = traceback.format_exc()
+                    logger.error(f"Error running module: {exc}")
+
             
             case 'read_attribute':
                 module_name = Path(sys.stdin.readline().strip())
@@ -37,8 +40,8 @@ def main_loop():
                 try:
                     module = load_module(module_name)
                     output[attribute_name] = getattr(module, attribute_name)
-                except Exception as e:
-                    logger.error(f"Error loading module {e.with_traceback()}")  
+                except:
+                    logger.error(f"Error running module")
 
             case 'write_attribute':
                 module_name = Path(sys.stdin.readline().strip())
@@ -47,19 +50,22 @@ def main_loop():
                 try:
                     module = load_module(module_name)
                     setattr(module, attribute_name, attribute_value)
-                except Exception as e:
-                    logger.error(f"Error loading module {e.with_traceback()}")
+                except:
+                    logger.error(f"Error running module")
 
             case 'echo':
                 output = {"echo": sys.stdin.readline().strip()}
             
             case _:
                 logger.info(f"Unknown command: '{line}'")
+
         logger.info("Command executed")
         return_result(output)
 
 
 def return_result(results):
+    if type(results) != "Dict":
+        results = {"output": results}
     sys.stdout.write('[RES]' + str(results) + '\n')
     sys.stdout.flush()
 
@@ -78,7 +84,8 @@ if __name__ == "__main__":
     logger.info(f"Started subprocess {interpreter_name}")
     main_loop()
     logger.info(f"Ended subprocess {interpreter_name}")
-    sys.stdout.close()
+    sys.stdout.write('[FIN]\n')
+    sys.stdout.flush()
 
 
 

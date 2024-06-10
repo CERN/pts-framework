@@ -64,8 +64,10 @@ class Step:
                     pass
     
     def run(self, variables, parameters, outputs):
-        # not sure what this function should return
+        # not sure what this function should return: test result or data or both
         if not self.skip:
+            # Should have a conditional check to see if we run this test. This would
+            # allow multiple tags to be used to decide which parts run or not
             logger.debug(f"Running {self.id}:pre")
             self.__process_inputs(variables, parameters)
             self._pre_step()

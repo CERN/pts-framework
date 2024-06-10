@@ -1,6 +1,7 @@
 - Output for each step needs to include step_results (pass, fail...)
 - Implement popup step type for input and/or output
 - implement execution GUI with callbacks
+- implement reporting with callbacks
 - implement step by step execution
 - implement proper error handling at all levels
 ? implement environments at higher level
@@ -8,4 +9,4 @@
 - conditional execution of step based on variable
 - provide unified string variable access by name
 x steps need proper IDs
-- implement repeat as unrolling
+? implement repeat as unrolling
