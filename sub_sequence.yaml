@@ -4,7 +4,6 @@ setup_steps: []
 steps:
 - steptype: PythonModuleStep
   step_name: SubTest
-  environment: dmm
   action_type: method
   module: C:\dev\pypts-test\test_dut.py
   method_name: test_to_run
@@ -20,7 +19,6 @@ variables:
   svar1: 0
 outputs:
   my_output: 0
-environments:
-  dmm: C:\dev\pypts-test\.venv\Scripts
+  
 
 

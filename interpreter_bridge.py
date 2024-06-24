@@ -64,8 +64,8 @@ def main_loop():
 
 
 def return_result(results):
-    if type(results) != "Dict":
-        results = {"output": results}
+    # if type(results) != "Dict":
+    #     results = {"output": results}
     sys.stdout.write('[RES]' + str(results) + '\n')
     sys.stdout.flush()
 

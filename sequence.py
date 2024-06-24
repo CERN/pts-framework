@@ -16,7 +16,6 @@ class Sequence:
         self.variables = sequence_data["variables"]
         self.parameters = sequence_data["parameters"]
         self.outputs = sequence_data["outputs"]
-        self.environments: Dict[str, interpreter.Interpreter] = {}
         self.setup_steps: List[Step] = []
         self.steps: List[Step] = []
         self.teardown_steps: List[Step] = []
@@ -26,11 +25,6 @@ class Sequence:
         for parameter in self.parameters:
             if parameter in parameter_values:
                 self.parameters[parameter] = parameter_values[parameter]
-
-        # Create interpreter objects for each environment
-        for environment, path in sequence_data["environments"].items():
-            self.environments[environment] = interpreter.Interpreter(path, environment)
-
 
         def make_id(count: int):
             if id_prefix is not None:
@@ -70,8 +64,6 @@ class Sequence:
             for step in self.teardown_steps:
                 logger.info(f"Running step {step.id}")
                 step_result = step.run(self.variables, self.parameters, self.outputs)
-            for environment in self.environments.values():
-                environment.stop()
         return self.outputs
 
     def build_step(self, step_data: Dict, id: str) -> Step:
@@ -91,10 +83,6 @@ class Sequence:
         
         # integrate id into step_data
         step_data["id"] = id
-
-        # provide the step's interpreter name with the created interpreter
-        if "environment" in step_data and step_data["environment"] is not None:
-            step_data["environment"] = self.environments[step_data["environment"]]
 
         # evaluate the repeat formula to create an iterator
         if "repeat_gen" in step_data and step_data["repeat_gen"] is not None:

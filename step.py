@@ -2,18 +2,20 @@ import logging
 from step_result import ResultType, StepResult
 import interpreter
 import sequence
+from pathlib import Path
+from importlib import import_module
+import sys
 
 logger = logging.getLogger(__name__)
 
 class Step:
 
-    def __init__(self, id, step_name, input_mapping, output_mapping, environment=None, skip=False, repeat_gen=None):
+    def __init__(self, id, step_name, input_mapping, output_mapping, skip=False, repeat_gen=None):
         self.name = step_name
         self.id = id
         self.skip = skip
         self.input_mapping = input_mapping
         self.output_mapping = output_mapping
-        self.environment: interpreter.Interpreter = environment
         self.repeat_gen = repeat_gen
         self.__do_repeat = not repeat_gen == None
         self.output = {}
@@ -93,29 +95,36 @@ class PythonModuleStep(Step):
         self.method_name = method_name
         self.attribute_name = attribute_name
 
-    def _pre_step(self):
-        if not self.environment.running:
-            logger.info(f"Environment {self.environment.name} not running. Starting it now.")
-            self.environment.start()
-
     def _step(self):
         step_result = StepResult(ResultType.PASS, id=self.id)        
         match self.action_type:
             case "method":
-                self.output = self.environment.run_method(self.module, self.method_name, self.processed_inputs)
+                module = self.__load_module(Path(self.module))
+                method = getattr(module, self.method_name)
+                self.output = method(**self.processed_inputs)
                 logger.info(f"Method {self.method_name} returned {self.output}")    
                 return step_result
             
             case "read_attribute":
-                self.output = self.environment.read_attribute(self.module, self.attribute_name)
+                module = self.__load_module(Path(self.module))
+                self.output[self.attribute_name] = getattr(module, self.attribute_name)
                 logger.info(f"Reading attribute {self.attribute_name}: {self.output}")
                 return step_result
             
             case "write_attribute":
+                module = self.__load_module(Path(self.module))
                 attribute_value = self.processed_inputs[self.attribute_name]
-                self.output = self.environment.write_attribute(self.module, self.attribute_name, attribute_value)
+                setattr(module, self.attribute_name, attribute_value)
                 logger.info(f"Setting attribute {self.attribute_name} to {attribute_value}")
                 return step_result
+            
+    def __load_module(self, module_full_path: Path):
+        module_path = str(module_full_path.parent)
+        module_filename = module_full_path.stem
+        if module_path not in sys.path:
+            sys.path.append(module_path)
+        module = import_module(module_filename)
+        return module
 
 
 class SubSequenceStep(Step):

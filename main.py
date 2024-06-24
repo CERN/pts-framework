@@ -1,10 +1,10 @@
 from sequence import Sequence
 import logging
 
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 
-seq = Sequence("my_sequence.yaml", {"target_value": 33})
+seq = Sequence("my_sequence.yaml", {"target_value": 45})
 result = seq.run()
 
 print(result)
