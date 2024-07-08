@@ -1,24 +1,28 @@
-from step import Step, PythonModuleStep, SubSequenceStep
+import step
 from typing import List, Dict
 from step_result import StepResult, ResultType
 import logging
 import yaml
-import interpreter
 
 logger = logging.getLogger(__name__)
 
 class Sequence:
 
-    def __init__(self, sequence_file, parameter_values={}, id_prefix=None):
-        with open(sequence_file, 'r') as file:
-            sequence_data = yaml.safe_load(file)
+    def __init__(self, sequence_data=None, sequence_file=None, parameter_values={}, id_prefix=None):
+        if sequence_file is not None:
+            with open(sequence_file, 'r') as file:
+                sequence_data = yaml.safe_load(file)
+        elif sequence_data is not None:
+            sequence_data = sequence_data
+        else:
+            raise FileNotFoundError
         self.name = sequence_data["sequence_name"]
-        self.variables = sequence_data["variables"]
+        self.locals = sequence_data["locals"]
         self.parameters = sequence_data["parameters"]
         self.outputs = sequence_data["outputs"]
-        self.setup_steps: List[Step] = []
-        self.steps: List[Step] = []
-        self.teardown_steps: List[Step] = []
+        self.setup_steps: List[step.Step] = []
+        self.steps: List[step.Step] = []
+        self.teardown_steps: List[step.Step] = []
         self.id_prefix = id_prefix
 
         # for each parameter defined in the sequence, override default if value is provided
@@ -44,18 +48,18 @@ class Sequence:
             self.teardown_steps.append(self.build_step(step_data, make_id(id_count)))
             id_count += 1
 
-    def run(self):
+    def run(self, globals, internals):
         logger.info(f"Starting sequence {self.name}")
         try:
             logger.info(f"Running setup steps")
             for step in self.setup_steps:
                 logger.info(f"Running step {step.id}")
-                step_result = step.run(self.variables, self.parameters, self.outputs)
+                step_result = step.run(globals, internals, self.locals, self.parameters, self.outputs)
             
             logger.info(f"Running core steps")
             for step in self.steps:
                 logger.info(f"Running step {step.id}")
-                step_result = step.run(self.variables, self.parameters, self.outputs)
+                step_result = step.run(globals, internals, self.locals, self.parameters, self.outputs)
 
         except Exception as e:
             logger.error(f"Error occured during sequence: {e}")
@@ -63,10 +67,10 @@ class Sequence:
             logger.info(f"Running teardown steps")
             for step in self.teardown_steps:
                 logger.info(f"Running step {step.id}")
-                step_result = step.run(self.variables, self.parameters, self.outputs)
+                step_result = step.run(globals, internals, self.locals, self.parameters, self.outputs)
         return self.outputs
 
-    def build_step(self, step_data: Dict, id: str) -> Step:
+    def build_step(self, step_data: Dict, id: str) -> step.Step:
         """This helper function analyzes the configuration of step_data and adapts what is needed before
         creating the step.
 
@@ -90,5 +94,13 @@ class Sequence:
             # TODO should check validity as iterator
 
         # creates the step according to the subclass type and passes all parameters   
-        new_step = eval(step_type + "(**step_data)")
+        new_step = eval("step." + step_type + "(**step_data)")
         return new_step
+
+    def list_steps(self):
+        for step in self.setup_steps:
+            print(step.name)
+        for step in self.steps:
+            print(step.name)
+        for step in self.teardown_steps:
+            print(step.name)

@@ -15,7 +15,7 @@ steps:
 teardown_steps: []
 parameters:
   target_value: 0
-variables:
+locals:
   svar1: 0
 outputs:
   my_output: 0

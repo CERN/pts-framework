@@ -7,6 +7,7 @@ class ResultType(Enum):
     FAIL  = 2
     ERROR = 3
     SKIP  = 4
+    DONE  = 5
 
 
 class StepResult:
@@ -28,3 +29,5 @@ class StepResult:
                 return "ERROR"
             case ResultType.SKIP:
                 return "SKIP"
+            case ResultType.DONE:
+                return "DONE"

@@ -1,0 +1,87 @@
+---
+name: MFE
+version: 0.0.1
+description: This is the test recipe for the MFE board
+main_sequence: Main
+globals:
+  some_global_variable: 38
+
+---
+sequence_name: Main
+description: 
+setup_steps: []
+steps:
+- steptype: PythonModuleStep
+  step_name: Run test_to_run
+  action_type: method
+  module: C:\dev\pypts\test_dut.py
+  method_name: test_to_run
+  input_mapping:
+    target: {type: local, local_name: target_value, indexed: false}
+  output_mapping:
+    compare: {type: passfail}
+    other_output: {type: local, local_name: my_output}
+# - steptype: PythonModuleStep
+#   step_name: Test Da
+#   description:
+#   action_type: read_attribute
+#   module: C:\dev\pypts-test\test_dut.py
+#   attribute_name: some_value
+#   input_mapping: {}
+#   output_mapping:
+#     some_value: {type: local, local_name: first_value}
+# - steptype: PythonModuleStep
+#   step_name: Test Db
+#   action_type: write_attribute
+#   module: C:\dev\pypts-test\test_dut.py
+#   attribute_name: some_value
+#   input_mapping:
+#     some_value: {type: direct, value: 3}
+#   output_mapping: {}
+# - steptype: PythonModuleStep
+#   step_name: Test Dc
+#   action_type: read_attribute
+#   module: C:\dev\pypts-test\test_dut.py
+#   attribute_name: some_value
+#   input_mapping: {}
+#   output_mapping:
+#     some_value: {type: equals, value: 3}
+# - steptype: PythonModuleStep
+#   step_name: Test E
+#   action_type: method
+#   module: test_thing
+#   method_name: other_test
+#   input_mapping:
+#     value: {type: direct, value: 1}
+#   output_mapping:
+#     some_return: {type: output, output_name: my_output}
+- steptype: SubSequenceStep
+  step_name: Test F
+  sequence: {type: internal, name: Subsequence}
+  # sequence: {type: external, path: sub_sequence.yaml}
+  input_mapping:
+    sublocal: {type: direct, value: 55}
+  output_mapping: {}
+teardown_steps: []
+parameters:
+  - target_value
+locals:
+  target_value: 45
+  test_name: Hello
+  my_output:
+  first_value:
+  second_value:
+outputs:
+  - my_output
+  
+---
+sequence_name: Subsequence
+description: 
+setup_steps: []
+steps: []
+teardown_steps: []
+parameters: # list of local variable names. These are the ones that the calling step can set before running the subsequence
+  - sublocal
+locals:
+  sublocal: 34
+outputs: {}

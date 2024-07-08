@@ -12,7 +12,7 @@ steps:
     target: {type: parameter, parameter_name: target_value}
   output_mapping:
     compare: {type: passfail}
-    other_output: {type: variable, variable_name: my_output}
+    other_output: {type: local, local_name: my_output}
 - steptype: PythonModuleStep
   step_name: Test Da
   action_type: read_attribute
@@ -20,7 +20,7 @@ steps:
   attribute_name: some_value
   input_mapping: {}
   output_mapping:
-    some_value: {type: variable, variable_name: first_value}
+    some_value: {type: local, local_name: first_value}
 - steptype: PythonModuleStep
   step_name: Test Db
   action_type: write_attribute
@@ -36,7 +36,7 @@ steps:
   attribute_name: some_value
   input_mapping: {}
   output_mapping:
-    some_value: {type: variable, variable_name: second_value}
+    some_value: {type: local, local_name: second_value}
 - steptype: PythonModuleStep
   step_name: Test E
   action_type: method
@@ -50,12 +50,12 @@ steps:
   step_name: Test F
   sequence_file: sub_sequence.yaml
   input_mapping:
-    target_value: {type: variable, variable_name: target_value}
+    target_value: {type: local, local_name: target_value}
   output_mapping: {}
 teardown_steps: []
 parameters:
   target_value: 0
-variables:
+locals:
   target_value: 45
   test_name: Hello
   my_output:

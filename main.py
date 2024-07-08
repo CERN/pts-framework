@@ -1,5 +1,6 @@
 from sequence import Sequence
 import logging
+import recipe
 
 logging.basicConfig(level=logging.INFO)
 
@@ -11,10 +12,11 @@ print(result)
 print("--- PARAMETERS ---")
 for param, val in seq.parameters.items():
     print(param, val)
-print("--- VARIABLES ---")
-for var, val in seq.variables.items():
+print("--- LOCALS ---")
+for var, val in seq.locals.items():
     print(var, val)
 print("--- OUTPUTS ---")
 for output, val in seq.outputs.items():
     print(output, val)
-    
+
+# recipe = recipe.Recipe("my_sequence copy.yaml")

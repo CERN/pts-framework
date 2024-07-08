@@ -14,3 +14,6 @@ def test_to_run(target):
 def other_test(value):
     logger.info("I could also do this.")
     return {"some_return": True, "value": value}
+
+def range_test(value, min, max):
+    return {"compare": min < value < max}
