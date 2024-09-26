@@ -42,6 +42,8 @@ class MainWindow(QWidget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        self.q_in = None
+
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 600, 800)
 
@@ -95,6 +97,7 @@ class MainWindow(QWidget):
         msg_box.setWindowTitle("Message")
         msg_box.setText(message)
         msg_box.exec()
+        self.q_in.put("continue")
         
 
 class RecipeProxyWorker(QObject):
@@ -110,7 +113,7 @@ class RecipeProxyWorker(QObject):
     def run(self):
         while True:
             callback_name, callback_data = self.q.get()
-            print(f"Received callback {callback_name}")
+            # print(f"Received callback {callback_name}")
             try:
                 signal = getattr(self, callback_name + "_signal")
                 signal.emit(*tuple(callback_data.values()))
@@ -130,9 +133,10 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
 
-    q = recipe.run_threaded("recipe1.yaml")
+    q_out, q_in = recipe.run_threaded("recipe1.yaml")
+    window.q_in = q_in
     recipe_thread = QThread()
-    proxy_worker = RecipeProxyWorker(q)
+    proxy_worker = RecipeProxyWorker(q_out)
     proxy_worker.moveToThread(recipe_thread)
     recipe_thread.started.connect(proxy_worker.run)
     proxy_worker.pre_run_recipe_signal.connect(window.update_recipe_name)

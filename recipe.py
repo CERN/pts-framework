@@ -65,29 +65,43 @@ class Recipe:
         self.globals: dict[str, any] = recipe_main_data["globals"]
         self.callbacks = callback_object
         logger.info(f"Loaded recipe {self.name} version {self.version}.")
+        self.events = {}
+        self.events["continue"] = threading.Event()
     
 
     def run(self, sequence_name="Main", single=True):
-        self.globals["single-step"] = single
         # Create runtime variables structure here
         # This structure will be passed down throught the running functions to provide for all required data
-        runtime = {"sequences": self.sequences,
+        self.runtime = {"sequences": self.sequences,
                    "globals": self.globals,
                    "results": [],
-                   "callbacks": self.callbacks
+                   "callbacks": self.callbacks,
+                   "events": self.events
                   # locals will be added as soon as the sequence starts
                    }
-        cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
+        cb: RecipeCallbacks = self.runtime["callbacks"] # Add this to all methods that use callbacks for easy access
         cb.pre_run_recipe(self.name, self.description)
-        self.sequences[sequence_name].run(runtime, {})
-        cb.post_run_recipe(runtime["results"])
-        return runtime["results"]
+        self.sequences[sequence_name].run(self.runtime, {})
+        cb.post_run_recipe(self.runtime["results"])
+        return self.runtime["results"]
+
+    
+    def parse_q_input(self, q_in):
+        while True:
+            input_command = q_in.get()
+            print(f"RECEIVED CONTINUE SIGNAL FROM GUI: {input_command}")
+            event:threading.Event = self.runtime["events"][input_command]
+            event.set()
+                    
+
 
 def run_threaded(sequence_file, sequence_name="Main"):
-    q = queue.Queue()
-    recipe = Recipe(sequence_file, ThreadCallbacks(q))
+    q_out = queue.Queue()
+    q_in = queue.Queue()
+    recipe = Recipe(sequence_file, ThreadCallbacks(q_out))
     threading.Thread(target=recipe.run, kwargs={"sequence_name": sequence_name}, daemon=True).start()
-    return q
+    threading.Thread(target=recipe.parse_q_input, args=[q_in], daemon=True).start()
+    return q_out, q_in
         
 
 class Sequence:
@@ -299,7 +313,7 @@ class Step:
     def run(self, runtime):
         cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
         results = []
-        # not sure what this function should return: test result or data or both
+
         if not self.skip:
             # Should have a conditional check to see if we run this test. This would
             # allow multiple tags to be used to decide which parts run or not
@@ -336,9 +350,6 @@ class PythonModuleStep(Step):
         self.action_type = action_type
         self.method_name = method_name
         self.attribute_name = attribute_name
-
-    # def __str__(self):
-    #     return super().__str__()
 
     def _step(self, runtime, inputs):
         step_output = {}
@@ -412,6 +423,8 @@ class UIMsgStep(Step):
     def _step(self, runtime:dict, inputs):
         cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
         cb.gui_info(inputs["message"])
+        runtime["events"]["continue"].wait()
+        runtime["events"]["continue"].clear()
         # We should wait for OK from GUI here
         return StepResult(ResultType.DONE, id=self.id)
 
