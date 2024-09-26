@@ -1,5 +1,6 @@
 import logging
 import nidmm
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -9,11 +10,14 @@ def test_to_run(target):
     # with nidmm.Session("Dev1") as session:
     #     print("Measurement: " + str(session.read()))
     logger.info(f"I received {target}.")
+    time.sleep(1)
     return {"compare": target == 45, "other_output": "abc"}
 
 def other_test(value):
     logger.info("I could also do this.")
+    time.sleep(1)
     return {"some_return": True, "value": value}
 
 def range_test(value, min, max):
+    time.sleep(1)
     return {"compare": min < value < max}

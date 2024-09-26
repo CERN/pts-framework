@@ -6,13 +6,52 @@ from pathlib import Path
 from importlib import import_module
 import sys
 import traceback
+import threading
+import queue
 
 logger = logging.getLogger(__name__)
 
 
+
+class RecipeCallbacks:
+    """
+    This class defines the callbacks that are run at specific points of the execution
+    of a recipe. Use these to plug into a UI or some other logging mechanism.
+    The code calling the recipe provides an override of all these functions.
+    """
+    def pre_run_recipe(self, recipe_name, recipe_description): pass
+    def post_run_recipe(self, results): pass
+    def pre_run_sequence(self, sequence): pass
+    def post_run_sequence(self): pass
+    def pre_run_step(self, step, inputs): pass
+    def post_run_step(self, step, result): pass
+    def gui_info(self, msg): pass
+
+
+class ThreadCallbacks(RecipeCallbacks):
+    def __init__(self, q):
+        self.q:queue.Queue = q
+
+    def pre_run_recipe(self, recipe_name, recipe_description):
+        self.q.put(("pre_run_recipe", {"recipe_name": recipe_name, "recipe_description": recipe_description}))
+        
+    def pre_run_sequence(self, sequence):
+        self.q.put(("pre_run_sequence", {"sequence": sequence}))
+
+    def post_run_step(self, step, result):
+        self.q.put(("post_run_step", {"step": step, "result": result}))
+
+    def post_run_recipe(self, results):
+        self.q.put(("post_run_recipe", {"results": results}))
+    
+    def gui_info(self, message):
+        self.q.put(("gui_info", {"message": message}))
+
+
+
 class Recipe:
 
-    def __init__(self, recipe_file_path):
+    def __init__(self, recipe_file_path, callback_object=None):
         logger.info(f"Loading recipe file {recipe_file_path}.")
         self.sequences: dict[str, Sequence] = {} 
         with open(recipe_file_path, 'r') as file:
@@ -24,24 +63,36 @@ class Recipe:
         self.description: str = recipe_main_data["description"]
         self.version: str = recipe_main_data["version"]
         self.globals: dict[str, any] = recipe_main_data["globals"]
+        self.callbacks = callback_object
         logger.info(f"Loaded recipe {self.name} version {self.version}.")
-        
-    def run(self, sequence_name="Main"):
+    
+
+    def run(self, sequence_name="Main", single=True):
+        self.globals["single-step"] = single
         # Create runtime variables structure here
         # This structure will be passed down throught the running functions to provide for all required data
         runtime = {"sequences": self.sequences,
                    "globals": self.globals,
                    "results": [],
+                   "callbacks": self.callbacks
                   # locals will be added as soon as the sequence starts
                    }
+        cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
+        cb.pre_run_recipe(self.name, self.description)
+        self.sequences[sequence_name].run(runtime, {})
+        cb.post_run_recipe(runtime["results"])
+        return runtime["results"]
 
-        self.sequences[sequence_name].run(runtime, {"target_value": 44})
-
+def run_threaded(sequence_file, sequence_name="Main"):
+    q = queue.Queue()
+    recipe = Recipe(sequence_file, ThreadCallbacks(q))
+    threading.Thread(target=recipe.run, kwargs={"sequence_name": sequence_name}, daemon=True).start()
+    return q
         
 
 class Sequence:
 
-    def __init__(self, sequence_data=None, sequence_file=None, parameter_values={}, id_prefix=None):
+    def __init__(self, sequence_data=None, sequence_file=None, id_prefix=None):
         if sequence_file is not None:
             with open(sequence_file, 'r') as file:
                 sequence_data = yaml.safe_load(file)
@@ -78,25 +129,28 @@ class Sequence:
             id_count += 1
 
     def run(self, runtime:dict, parameter_values:dict):
+        cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
         runtime.update({"locals": self.locals})
-        
+        cb.pre_run_sequence(self)
+
         # for each parameter defined in the sequence, override default if value is provided and store it in locals
         for parameter in self.parameters:
             if parameter in parameter_values:
                 self.locals[parameter] = parameter_values[parameter]
 
-        print(runtime)
         logger.info(f"Starting sequence {self.name}")
         try:
             logger.info(f"Running setup steps")
             for step in self.setup_steps:
-                logger.info(f"Running step {step.id}")
-                step_result = step.run(runtime)
+                logger.info(f"Running step {step.name}")
+                step_data = step.run(runtime)
+                runtime["results"] += step_data
             
             logger.info(f"Running core steps")
             for step in self.steps:
-                logger.info(f"Running step {step.id}")
-                step_result = step.run(runtime)
+                logger.info(f"Running step {step.id}: {step.name}")
+                step_data = step.run(runtime)
+                runtime["results"] += step_data
 
         except Exception as e:
             logger.error(f"Error occured during sequence: {e}")
@@ -104,9 +158,11 @@ class Sequence:
         finally:        
             logger.info(f"Running teardown steps")
             for step in self.teardown_steps:
-                logger.info(f"Running step {step.id}")
-                step_result = step.run(runtime)
-        return self.outputs
+                logger.info(f"Running step {step.name}")
+                step_data = step.run(runtime)
+                runtime["results"] += step_data
+        cb.post_run_sequence()
+        # return self.outputs
 
     def build_step(self, step_data: Dict, id: str):
         """This helper function analyzes the configuration of step_data and adapts what is needed before
@@ -155,15 +211,16 @@ class Step:
         self.output_mapping = output_mapping
         self.repeat_gen = repeat_gen
         self.__do_repeat = not repeat_gen == None
-        self.output = {}
-        self.result = None
         
+
+    def __str__(self):
+        return f"Step: {self.name}"
 
     def _pre_step(self):
         pass
 
     def _step(self, runtime, inputs):
-        return StepResult(ResultType.PASS, id=self.id)
+        return ResultType.DONE
 
     def _post_step(self):
         pass
@@ -200,65 +257,75 @@ class Step:
                 if input_config["indexed"]:
                     try:
                         processed_inputs[input_name] = input_config["value"][i]
-
                     except IndexError:
                         remaining_iterations = False
                         break
                 else:
                     processed_inputs[input_name] = input_config["value"]
+                    input_list.append(processed_inputs)
+                    remaining_iterations = False
+            if not direct_inputs:
+                remaining_iterations = False
             if remaining_iterations:
                 input_list.append(processed_inputs)
                 i += 1
-        print(input_list)
         return input_list
 
     def __process_outputs(self, runtime, step_output):
+        step_result = ResultType.DONE
         for output_name, output_config in self.output_mapping.items():
             match output_config["type"]:
                 case "passfail":
                     # a boolean which sets pass/fail state of step
-                    self.result = StepResult(ResultType.PASS if step_output[output_name] else ResultType.FAIL, id=self.id)
+                    step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":
-                    self.result = StepResult(ResultType.PASS if step_output[output_name] == output_config["value"] else ResultType.FAIL, id=self.id)
+                    step_result = ResultType.PASS if step_output[output_name] == output_config["value"] else ResultType.FAIL
                 case "global":
                     # go set the value in the variables
                     runtime["globals"][output_config["global_name"]] = step_output[output_name]
                 case "local":
                     # go set the value in the variables
                     runtime["locals"][output_config["local_name"]] = step_output[output_name]
+        return step_result
     
-    def __evaluate_repetition(self):
-        repeat = False
-        indexed_inputs = {}
-        for input_name, input_config in self.input_mapping.items():
-            if input_config["indexed"]:
-                repeat = True
-                indexed_inputs[input_name] = eval(input_config["value"])
-        
-        return indexed_inputs
+    def __build_result(self, runtime, step_input, step_output, step_result):
+        result = {}
+        result["step"] = self
+        result["inputs"] = step_input
+        result["outputs"] = step_output
+        result["result"] = step_result
+        return result
 
     def run(self, runtime):
+        cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
+        results = []
         # not sure what this function should return: test result or data or both
         if not self.skip:
             # Should have a conditional check to see if we run this test. This would
             # allow multiple tags to be used to decide which parts run or not
             
-            # indexed_inputs = self.__evaluate_repetition()
-            
-            logger.debug(f"Running {self.id}:pre")
+
             input_list = self.__process_inputs(runtime, self.input_mapping)
             for input_set in input_list:
+                cb.pre_run_step(self, input_set)
+                logger.debug(f"Running {self.id}:pre")
                 self._pre_step()
                 logger.debug(f"Running {self.id}")
-                self.result = self._step(runtime, input_set)
+                step_output = self._step(runtime, input_set)
                 logger.debug(f"Running {self.id}:post")
                 self._post_step()
-                self.__process_outputs(runtime, self.output)
-                logger.info(f"Test {self.id} result: {self.result}")
+                step_result = self.__process_outputs(runtime, step_output)
+                result_data = self.__build_result(runtime, input_set, step_output, step_result)
+                results.append(result_data)
+                cb.post_run_step(self, result_data)
+                logger.info(f"Test {self.id} result: {step_result}")
         else:
             logger.info(f"Skipping {self.name}")
-            self.result = StepResult(ResultType.SKIP, id=self.id)
-        return self.result
+            cb.pre_run_step(self, {})
+            result_data = self.__build_result(runtime, [], {}, ResultType.SKIP)
+            cb.post_run_step(self, result_data)
+            results.append(result_data)
+        return results
 
 
 class PythonModuleStep(Step):
@@ -270,30 +337,35 @@ class PythonModuleStep(Step):
         self.method_name = method_name
         self.attribute_name = attribute_name
 
+    # def __str__(self):
+    #     return super().__str__()
+
     def _step(self, runtime, inputs):
-        step_result = StepResult(ResultType.DONE, id=self.id)        
+        step_output = {}
         match self.action_type:
             case "method":
                 module = self.__load_module(Path(self.module))
                 method = getattr(module, self.method_name)
-                self.output = method(**inputs)
+                step_output = method(**inputs)
                 # if not isinstance(self.output, dict):
                 #     self.output = {"result", self.output}
-                logger.info(f"Method {self.method_name} returned {self.output}")    
-                return step_result
+                logger.info(f"Method {self.method_name} returned {step_output}")    
+                return step_output
             
             case "read_attribute":
                 module = self.__load_module(Path(self.module))
-                self.output[self.attribute_name] = getattr(module, self.attribute_name)
-                logger.info(f"Reading attribute {self.attribute_name}: {self.output}")
-                return step_result
+                attribute_name = inputs["attribute_name"]
+                step_output[attribute_name] = getattr(module, attribute_name)
+                logger.info(f"Reading attribute {attribute_name}: {step_output}")
+                return step_output
             
             case "write_attribute":
                 module = self.__load_module(Path(self.module))
-                attribute_value = self.processed_inputs[self.attribute_name]
-                setattr(module, self.attribute_name, attribute_value)
-                logger.info(f"Setting attribute {self.attribute_name} to {attribute_value}")
-                return step_result
+                attribute_name = inputs["attribute_name"]
+                attribute_value = inputs["attribute_value"]
+                setattr(module, attribute_name, attribute_value)
+                logger.info(f"Setting attribute {attribute_name} to {attribute_value}")
+                return {}
             
     def __load_module(self, module_full_path: Path):
         module_path = str(module_full_path.parent)
@@ -310,7 +382,7 @@ class SubSequenceStep(Step):
         super().__init__(**kwargs)
         self.sequence = sequence
 
-    def _step(self, runtime: dict):
+    def _step(self, runtime: dict, inputs):
         step_result = StepResult(ResultType.DONE, id=self.id)
         match self.sequence["type"]:
             case "internal":
@@ -333,12 +405,30 @@ class SubSequenceStep(Step):
         logger.info(f"Subsequence {subsequence.name} returned {self.output}")    
         return step_result
     
+class UIMsgStep(Step):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _step(self, runtime:dict, inputs):
+        cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
+        cb.gui_info(inputs["message"])
+        # We should wait for OK from GUI here
+        return StepResult(ResultType.DONE, id=self.id)
+
+
 
 if __name__ == "__main__":
+
+    class myCallbacks(RecipeCallbacks):
+        def pre_run_recipe(self, recipe_name, recipe_description):
+            print(f"Starting recipe with name {recipe_name}!!!")
+    
+
     log_format = '%(levelname)s : %(name)s : %(message)s'
     logging.basicConfig(level=logging.INFO, format=log_format)
-    recipe = Recipe("recipe2.yaml")
-    recipe.sequences["Main"].list_steps()
+
+    recipe = Recipe("recipe1.yaml", myCallbacks())
+    # recipe.sequences["Main"].list_steps()
     recipe.run()
     # recipe.sequences["Main"].run()
     # print(recipe.sequences["Subsequence"])
