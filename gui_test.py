@@ -1,9 +1,9 @@
 import recipe
 import logging
 import sys
-from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, QTableWidgetItem, QPlainTextEdit, QMessageBox
-from PyQt5.QtCore import QObject, pyqtSignal, QThread
-from PyQt5.QtGui import QFont, QPalette, QColor
+from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, QVBoxLayout, QTableView, QPushButton
+from PyQt5.QtCore import QObject, pyqtSignal, QThread, Qt
+from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 from threading import Thread
 from queue import Queue
 
@@ -45,25 +45,53 @@ class MainWindow(QWidget):
         self.q_in = None
 
         self.setWindowTitle("PTS")
-        self.setGeometry(100, 100, 600, 800)
+        self.setGeometry(100, 100, 1200, 800)
 
-        layout = QGridLayout(self)
-        self.setLayout(layout)
+        top_level_layout = QHBoxLayout()
+        left_half_layout = QVBoxLayout()
+        right_half_layout = QVBoxLayout()
 
         self.recipe_label = QLabel(self)
-        layout.addWidget(self.recipe_label, 0, 0)
 
         self.step_list = QTableWidget(self)
+        self.step_list.setMaximumWidth(600)
         self.step_list.setColumnCount(2)
-        layout.addWidget(self.step_list, 1, 0)
+        self.step_list.setHorizontalHeaderLabels(["Step name", "Status"])
+        self.step_list.setSelectionBehavior(QTableView.SelectRows)
+        self.step_list.setColumnWidth(0, 450)
+        self.step_list.horizontalHeader().setStretchLastSection(True)
+
+        self.step_list.update()
+
+        left_half_layout.addWidget(self.recipe_label)
+        left_half_layout.addWidget(self.step_list)
+
+        self.picture_box = QLabel(self)
+        self.picture_box.setText("Image here")
+
+        self.message_box = QLabel(self)
+
+        self.button_list_layout = QHBoxLayout()
+        self.continue_button = QPushButton()
+        self.continue_button.setText("Continue")
+        self.button_list_layout.addWidget(self.continue_button)
+        self.continue_button.pressed.connect(lambda: self.q_in.put("continue"))
 
         self.log_text_box = QPlainTextEdit(self)
         self.log_text_box.setReadOnly(True)
         self.log_text_box.setFont(QFont("Courier", 10))
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_text_box.setStyleSheet('background-color: whitesmoke')
+        
+        right_half_layout.addWidget(self.picture_box)
+        right_half_layout.addWidget(self.message_box)
+        right_half_layout.addLayout(self.button_list_layout)
+        right_half_layout.addWidget(self.log_text_box)
 
-        layout.addWidget(self.log_text_box, 2, 0)
+        top_level_layout.addLayout(left_half_layout)
+        top_level_layout.addLayout(right_half_layout)
+        self.setLayout(top_level_layout)
+
         self.log_handler = TextEditLoggerHandler(self)
         self.log_handler.setFormatter(logging.Formatter('%(levelname)s : %(name)s : %(message)s'))
         self.log_handler.new_message.connect(self.log_text_box.appendPlainText)
@@ -71,40 +99,40 @@ class MainWindow(QWidget):
 
         self.show()
 
-    # def update_log(self, message):
-    #     self.logTextBox.appendPlainText(message)
 
     def update_recipe_name(self, recipe_name, recipe_description):
-        print("Updating recipe name in GUI")
         self.recipe_label.setText(recipe_name)
+        self.setWindowTitle(f"PTS: {recipe_name}")
 
     def update_sequence(self, sequence):
-        print("Updating sequence in GUI")
         i = 0
         self.step_list.setRowCount(len(sequence.steps))
         for step in sequence.steps:
-            self.step_list.setItem(i, 0, QTableWidgetItem(step.name))
+            new_item = QTableWidgetItem(step.name)
+            new_item.setFlags(new_item.flags() ^ Qt.ItemIsEditable)
+            self.step_list.setItem(i, 0, new_item)
             i += 1
 
     def update_step_result(self, step, result):
         step_line = int(step.id)
-        step_result_string = str(result["result"]).split(".")[1]
-        self.step_list.setItem(step_line, 1, QTableWidgetItem(step_result_string))
+        new_result_item = QTableWidgetItem(str(result["result"]).split(".")[1])
+        new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemIsEditable)
+        self.step_list.setItem(step_line, 1, new_result_item)
         self.step_list.update()
 
-    def show_popup(self, message):
-        msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("Message")
-        msg_box.setText(message)
-        msg_box.exec()
-        self.q_in.put("continue")
+    def show_message(self, message, image_path):
+        self.message_box.setText(message)
+        if image_path != "":
+            image_pixmap = QPixmap(image_path).scaled(800, 500, Qt.KeepAspectRatio)
+            self.picture_box.setPixmap(image_pixmap)
+        #self.q_in.put("continue")
         
 
-class RecipeProxyWorker(QObject):
+class RecipeCallbackProxy(QObject):
     pre_run_recipe_signal = pyqtSignal(str, str)
     pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
     post_run_step_signal = pyqtSignal(recipe.Step, dict)
-    gui_info_signal = pyqtSignal(str)
+    gui_info_signal = pyqtSignal(str, str)
 
     def __init__(self, q):
         super().__init__()
@@ -113,19 +141,15 @@ class RecipeProxyWorker(QObject):
     def run(self):
         while True:
             callback_name, callback_data = self.q.get()
-            # print(f"Received callback {callback_name}")
             try:
-                signal = getattr(self, callback_name + "_signal")
-                signal.emit(*tuple(callback_data.values()))
-            except AttributeError:
+                # the signals have the same names as the callback_names, with an appended '_signal' to them.
+                # We construct the signal name and get it dynamically, then emit the signal with callback_data as parameters
+                signal_name = callback_name + "_signal"
+                signal = getattr(self, signal_name)
+                signal.emit(*callback_data)
+            except AttributeError: # raised if the signal doesn't exist. This allows to not implement them all
                 pass
-            # match callback_name:
-            #     case "pre_run_recipe":
-            #         self.pre_run_recipe_signal.emit(*tuple(callback_data.values()))
-            #     case "pre_run_sequence":
-            #         self.pre_run_sequence_signal.emit(*tuple(callback_data.values()))
-            #     case "post_run_step":
-            #         self.post_run_step_signal.emit(*tuple(callback_data.values()))
+
                 
 
     
@@ -136,13 +160,15 @@ if __name__ == '__main__':
     q_out, q_in = recipe.run_threaded("recipe1.yaml")
     window.q_in = q_in
     recipe_thread = QThread()
-    proxy_worker = RecipeProxyWorker(q_out)
-    proxy_worker.moveToThread(recipe_thread)
-    recipe_thread.started.connect(proxy_worker.run)
-    proxy_worker.pre_run_recipe_signal.connect(window.update_recipe_name)
-    proxy_worker.pre_run_sequence_signal.connect(window.update_sequence)
-    proxy_worker.post_run_step_signal.connect(window.update_step_result)
-    proxy_worker.gui_info_signal.connect(window.show_popup)
+    recipe_callback_proxy = RecipeCallbackProxy(q_out)
+    recipe_callback_proxy.moveToThread(recipe_thread)
+    recipe_thread.started.connect(recipe_callback_proxy.run)
+
+    # All the signals from the proxy are connected to the GUI from here
+    recipe_callback_proxy.pre_run_recipe_signal.connect(window.update_recipe_name)
+    recipe_callback_proxy.pre_run_sequence_signal.connect(window.update_sequence)
+    recipe_callback_proxy.post_run_step_signal.connect(window.update_step_result)
+    recipe_callback_proxy.gui_info_signal.connect(window.show_message)
 
     recipe_thread.start()
 

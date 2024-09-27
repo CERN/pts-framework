@@ -11,47 +11,54 @@ import queue
 
 logger = logging.getLogger(__name__)
 
-
-
 class RecipeCallbacks:
     """
     This class defines the callbacks that are run at specific points of the execution
     of a recipe. Use these to plug into a UI or some other logging mechanism.
     The code calling the recipe provides an override of all these functions.
     """
+    def post_load_recipe(self, recipe): pass
     def pre_run_recipe(self, recipe_name, recipe_description): pass
     def post_run_recipe(self, results): pass
     def pre_run_sequence(self, sequence): pass
     def post_run_sequence(self): pass
     def pre_run_step(self, step, inputs): pass
     def post_run_step(self, step, result): pass
-    def gui_info(self, msg): pass
+    def gui_info(self, msg, image_path): pass
 
 
 class ThreadCallbacks(RecipeCallbacks):
     def __init__(self, q):
         self.q:queue.Queue = q
 
+    def post_load_recipe(self, recipe):
+        self.q.put(("post_load_recipe", (recipe,)))
+
     def pre_run_recipe(self, recipe_name, recipe_description):
-        self.q.put(("pre_run_recipe", {"recipe_name": recipe_name, "recipe_description": recipe_description}))
+        self.q.put(("pre_run_recipe", (recipe_name, recipe_description)))
         
     def pre_run_sequence(self, sequence):
-        self.q.put(("pre_run_sequence", {"sequence": sequence}))
+        self.q.put(("pre_run_sequence", (sequence,)))
 
     def post_run_step(self, step, result):
-        self.q.put(("post_run_step", {"step": step, "result": result}))
+        self.q.put(("post_run_step", (step, result)))
 
     def post_run_recipe(self, results):
-        self.q.put(("post_run_recipe", {"results": results}))
+        self.q.put(("post_run_recipe", (results,)))
+        print("=== TEST RESULTS ===")
+        i = 0
+        for result in results:
+            print(f"Result {i} - Step {result['step'].id} ({result['step'].name}) with inputs {result['inputs']}: {result['result']}")
+            i += 1
     
-    def gui_info(self, message):
-        self.q.put(("gui_info", {"message": message}))
+    def gui_info(self, message="", image_path=""):
+        self.q.put(("gui_info", (message, image_path)))
 
 
 
 class Recipe:
 
-    def __init__(self, recipe_file_path, callback_object=None):
+    def __init__(self, recipe_file_path, callback_object=RecipeCallbacks):
         logger.info(f"Loading recipe file {recipe_file_path}.")
         self.sequences: dict[str, Sequence] = {} 
         with open(recipe_file_path, 'r') as file:
@@ -67,18 +74,19 @@ class Recipe:
         logger.info(f"Loaded recipe {self.name} version {self.version}.")
         self.events = {}
         self.events["continue"] = threading.Event()
+        self.callbacks.post_load_recipe(self)
     
 
     def run(self, sequence_name="Main", single=True):
         # Create runtime variables structure here
         # This structure will be passed down throught the running functions to provide for all required data
         self.runtime = {"sequences": self.sequences,
-                   "globals": self.globals,
-                   "results": [],
-                   "callbacks": self.callbacks,
-                   "events": self.events
-                  # locals will be added as soon as the sequence starts
-                   }
+                        "globals": self.globals,
+                        "results": [],
+                        "callbacks": self.callbacks,
+                        "events": self.events
+                        # locals will be added as soon as the sequence starts
+                        }
         cb: RecipeCallbacks = self.runtime["callbacks"] # Add this to all methods that use callbacks for easy access
         cb.pre_run_recipe(self.name, self.description)
         self.sequences[sequence_name].run(self.runtime, {})
@@ -89,7 +97,7 @@ class Recipe:
     def parse_q_input(self, q_in):
         while True:
             input_command = q_in.get()
-            print(f"RECEIVED CONTINUE SIGNAL FROM GUI: {input_command}")
+            print(f"RECEIVED SIGNAL FROM GUI: {input_command}")
             event:threading.Event = self.runtime["events"][input_command]
             event.set()
                     
@@ -260,29 +268,26 @@ class Step:
             del direct_inputs[input_name]["type"]
 
         # We now process the direct_inputs to handle repetition for those inputs which are indexed
-        
-        input_list = []
-        remaining_iterations = True
-        i = 0
-        while remaining_iterations:
-            processed_inputs = {}
+        input_list = [] # Each entry corresponds to one run of the step
+        i = 0 # this index defines which position of the indexed lists we target
+        while True:
+            processed_inputs = {} # A group of inputs to be passed to the input list
+            try_next_index = False
             for input_name, input_config in direct_inputs.items():
-                #processed_inputs = direct_inputs
                 if input_config["indexed"]:
                     try:
                         processed_inputs[input_name] = input_config["value"][i]
                     except IndexError:
-                        remaining_iterations = False
+                        processed_inputs = {}
                         break
+                    try_next_index = True
                 else:
                     processed_inputs[input_name] = input_config["value"]
-                    input_list.append(processed_inputs)
-                    remaining_iterations = False
-            if not direct_inputs:
-                remaining_iterations = False
-            if remaining_iterations:
+            if processed_inputs: # If anything is in it, we append it to input_list
                 input_list.append(processed_inputs)
-                i += 1
+            if not try_next_index:
+                break
+            i += 1
         return input_list
 
     def __process_outputs(self, runtime, step_output):
@@ -422,10 +427,9 @@ class UIMsgStep(Step):
 
     def _step(self, runtime:dict, inputs):
         cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
-        cb.gui_info(inputs["message"])
+        cb.gui_info(inputs["message"], inputs["image_path"])
         runtime["events"]["continue"].wait()
         runtime["events"]["continue"].clear()
-        # We should wait for OK from GUI here
         return StepResult(ResultType.DONE, id=self.id)
 
 

@@ -19,5 +19,4 @@ def other_test(value):
     return {"some_return": True, "value": value}
 
 def range_test(value, min, max):
-    time.sleep(1)
     return {"compare": min < value < max}

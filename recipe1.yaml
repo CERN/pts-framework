@@ -12,7 +12,7 @@ description:
 setup_steps: []
 steps:
 - steptype: PythonModuleStep
-  step_name: Run test_to_run
+  step_name: Run test_to_run function
   action_type: method
   module: C:\dev\pypts\test_dut.py
   method_name: test_to_run
@@ -22,7 +22,7 @@ steps:
     compare: {type: passfail}
     other_output: {type: local, local_name: my_output}
 - steptype: PythonModuleStep
-  step_name: Test Da
+  step_name: Read an attribute from a file
   description:
   action_type: read_attribute
   module: C:\dev\pypts\test_dut.py
@@ -32,7 +32,7 @@ steps:
   output_mapping:
     some_value: {type: local, local_name: first_value}
 - steptype: PythonModuleStep
-  step_name: Test Db
+  step_name: Write attribute in python file
   action_type: write_attribute
   module: C:\dev\pypts\test_dut.py
   attribute_name: some_value
@@ -41,7 +41,7 @@ steps:
     attribute_value: {type: direct, value: 3, indexed: false}
   output_mapping: {}
 - steptype: PythonModuleStep
-  step_name: Test Dc
+  step_name: Read attribute again to see that the previous write worked
   action_type: read_attribute
   module: C:\dev\pypts\test_dut.py
   attribute_name: some_value
@@ -50,12 +50,13 @@ steps:
   output_mapping:
     some_value: {type: equals, value: 3}
 - steptype: UIMsgStep
-  step_name: msg step
+  step_name: Send text and an image to the UI
   input_mapping:
     message: {type: direct, value: Hello there, indexed: false}
+    image_path: {type: direct, value: images\lego2.jpg, indexed: false}
   output_mapping: {}
 - steptype: PythonModuleStep
-  step_name: Test E
+  step_name: Run other_test from python file
   action_type: method
   module: C:\dev\pypts\test_dut.py
   method_name: other_test
