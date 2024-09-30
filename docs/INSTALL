@@ -1,0 +1,3 @@
+sudo dnf install libxcb libxcb-devel
+sudo dnf install xcb-util xcb-util-wm xcb-util-keysyms xcb-util-image xcb-util-renderutil
+
