@@ -26,7 +26,6 @@ steps:
   description:
   action_type: read_attribute
   module: C:\dev\pypts\test_dut.py
-  attribute_name: some_value
   input_mapping: 
     attribute_name: {type: direct, value: some_value, indexed: false}
   output_mapping:
@@ -35,7 +34,6 @@ steps:
   step_name: Write attribute in python file
   action_type: write_attribute
   module: C:\dev\pypts\test_dut.py
-  attribute_name: some_value
   input_mapping:
     attribute_name: {type: direct, value: some_value, indexed: false}
     attribute_value: {type: direct, value: 3, indexed: false}
@@ -44,16 +42,16 @@ steps:
   step_name: Read attribute again to see that the previous write worked
   action_type: read_attribute
   module: C:\dev\pypts\test_dut.py
-  attribute_name: some_value
   input_mapping:
     attribute_name: {type: direct, value: some_value, indexed: false}
   output_mapping:
     some_value: {type: equals, value: 3}
-- steptype: UIMsgStep
+- steptype: UserInteractionStep
   step_name: Send text and an image to the UI
   input_mapping:
     message: {type: direct, value: Hello there, indexed: false}
     image_path: {type: direct, value: images\lego2.jpg, indexed: false}
+    options: {type: direct, value: [continue, cancel], indexed: false}
   output_mapping: {}
 - steptype: PythonModuleStep
   step_name: Run other_test from python file

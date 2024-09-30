@@ -24,7 +24,7 @@ class RecipeCallbacks:
     def post_run_sequence(self): pass
     def pre_run_step(self, step, inputs): pass
     def post_run_step(self, step, result): pass
-    def gui_info(self, msg, image_path): pass
+    def user_interact(self, msg, image_path): pass
 
 
 class ThreadCallbacks(RecipeCallbacks):
@@ -51,8 +51,8 @@ class ThreadCallbacks(RecipeCallbacks):
             print(f"Result {i} - Step {result['step'].id} ({result['step'].name}) with inputs {result['inputs']}: {result['result']}")
             i += 1
     
-    def gui_info(self, message="", image_path=""):
-        self.q.put(("gui_info", (message, image_path)))
+    def user_interact(self, message="", image_path="", options=[]):
+        self.q.put(("user_interact", (message, image_path, options)))
 
 
 
@@ -349,12 +349,11 @@ class Step:
 
 class PythonModuleStep(Step):
     
-    def __init__(self, action_type, module, method_name=None, attribute_name=None, **kwargs):
+    def __init__(self, action_type, module, method_name=None, **kwargs):
         super().__init__(**kwargs)
         self.module = module
         self.action_type = action_type
         self.method_name = method_name
-        self.attribute_name = attribute_name
 
     def _step(self, runtime, inputs):
         step_output = {}
@@ -421,13 +420,13 @@ class SubSequenceStep(Step):
         logger.info(f"Subsequence {subsequence.name} returned {self.output}")    
         return step_result
     
-class UIMsgStep(Step):
+class UserInteractionStep(Step):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
     def _step(self, runtime:dict, inputs):
         cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
-        cb.gui_info(inputs["message"], inputs["image_path"])
+        cb.user_interact(inputs["message"], inputs["image_path"], inputs["options"])
         runtime["events"]["continue"].wait()
         runtime["events"]["continue"].clear()
         return StepResult(ResultType.DONE, id=self.id)

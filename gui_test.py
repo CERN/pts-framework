@@ -120,19 +120,19 @@ class MainWindow(QWidget):
         self.step_list.setItem(step_line, 1, new_result_item)
         self.step_list.update()
 
-    def show_message(self, message, image_path):
+    def show_message(self, message, image_path, options):
         self.message_box.setText(message)
         if image_path != "":
             image_pixmap = QPixmap(image_path).scaled(800, 500, Qt.KeepAspectRatio)
             self.picture_box.setPixmap(image_pixmap)
-        #self.q_in.put("continue")
+        # recreate buttons for return from this interaction
         
 
 class RecipeCallbackProxy(QObject):
     pre_run_recipe_signal = pyqtSignal(str, str)
     pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
     post_run_step_signal = pyqtSignal(recipe.Step, dict)
-    gui_info_signal = pyqtSignal(str, str)
+    user_interact_signal = pyqtSignal(str, str, list)
 
     def __init__(self, q):
         super().__init__()
@@ -168,7 +168,7 @@ if __name__ == '__main__':
     recipe_callback_proxy.pre_run_recipe_signal.connect(window.update_recipe_name)
     recipe_callback_proxy.pre_run_sequence_signal.connect(window.update_sequence)
     recipe_callback_proxy.post_run_step_signal.connect(window.update_step_result)
-    recipe_callback_proxy.gui_info_signal.connect(window.show_message)
+    recipe_callback_proxy.user_interact_signal.connect(window.show_message)
 
     recipe_thread.start()
 
