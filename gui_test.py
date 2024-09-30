@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLa
 from PyQt5.QtCore import QObject, pyqtSignal, QThread, Qt
 from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 from threading import Thread
-from queue import Queue
+from queue import Queue, SimpleQueue
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +43,7 @@ class MainWindow(QWidget):
         super().__init__(*args, **kwargs)
 
         self.q_in = None
+        self.response_q = None
 
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1200, 800)
@@ -72,10 +73,14 @@ class MainWindow(QWidget):
         self.message_box = QLabel(self)
 
         self.button_list_layout = QHBoxLayout()
-        self.continue_button = QPushButton()
-        self.continue_button.setText("Continue")
-        self.button_list_layout.addWidget(self.continue_button)
-        self.continue_button.pressed.connect(lambda: self.q_in.put("continue"))
+        self.yes_button = QPushButton()
+        self.yes_button.setText("Yes")
+        self.no_button = QPushButton()
+        self.no_button.setText("No")
+        self.button_list_layout.addWidget(self.yes_button)
+        self.button_list_layout.addWidget(self.no_button)
+        self.yes_button.pressed.connect(lambda: self.interaction_response("yes"))
+        self.no_button.pressed.connect(lambda: self.interaction_response("no"))
 
         self.log_text_box = QPlainTextEdit(self)
         self.log_text_box.setReadOnly(True)
@@ -120,19 +125,24 @@ class MainWindow(QWidget):
         self.step_list.setItem(step_line, 1, new_result_item)
         self.step_list.update()
 
-    def show_message(self, message, image_path, options):
+    def show_message(self, response_q:SimpleQueue, message, image_path, options):
         self.message_box.setText(message)
         if image_path != "":
             image_pixmap = QPixmap(image_path).scaled(800, 500, Qt.KeepAspectRatio)
             self.picture_box.setPixmap(image_pixmap)
-        # recreate buttons for return from this interaction
+        self.response_q = response_q
+    
+    def interaction_response(self, response):
+        self.response_q.put(response)
+        self.picture_box.clear()
+        self.message_box.clear()
         
 
 class RecipeCallbackProxy(QObject):
     pre_run_recipe_signal = pyqtSignal(str, str)
     pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
     post_run_step_signal = pyqtSignal(recipe.Step, dict)
-    user_interact_signal = pyqtSignal(str, str, list)
+    user_interact_signal = pyqtSignal(SimpleQueue, str, str, list)
 
     def __init__(self, q):
         super().__init__()

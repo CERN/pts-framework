@@ -52,7 +52,8 @@ steps:
     message: {type: direct, value: Hello there, indexed: false}
     image_path: {type: direct, value: images\lego2.jpg, indexed: false}
     options: {type: direct, value: [continue, cancel], indexed: false}
-  output_mapping: {}
+  output_mapping:
+    output: {type: equals, value: "yes"}
 - steptype: PythonModuleStep
   step_name: Run other_test from python file
   action_type: method

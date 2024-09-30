@@ -51,8 +51,8 @@ class ThreadCallbacks(RecipeCallbacks):
             print(f"Result {i} - Step {result['step'].id} ({result['step'].name}) with inputs {result['inputs']}: {result['result']}")
             i += 1
     
-    def user_interact(self, message="", image_path="", options=[]):
-        self.q.put(("user_interact", (message, image_path, options)))
+    def user_interact(self, q, message="", image_path="", options=[]):
+        self.q.put(("user_interact", (q, message, image_path, options)))
 
 
 
@@ -426,10 +426,16 @@ class UserInteractionStep(Step):
 
     def _step(self, runtime:dict, inputs):
         cb: RecipeCallbacks = runtime["callbacks"] # Add this to all methods that use callbacks for easy access
-        cb.user_interact(inputs["message"], inputs["image_path"], inputs["options"])
-        runtime["events"]["continue"].wait()
-        runtime["events"]["continue"].clear()
-        return StepResult(ResultType.DONE, id=self.id)
+        response_q = queue.SimpleQueue()
+        cb.user_interact(response_q, inputs["message"], inputs["image_path"], inputs["options"])
+        response = response_q.get()
+        del(response_q)
+        
+        # runtime["events"]["continue"].wait()
+        # runtime["events"]["continue"].clear()
+        # Get value of output, i.e. text return of which button was pressed
+        return {"output": response}
+        # return StepResult(ResultType.DONE, id=self.id)
 
 
 
