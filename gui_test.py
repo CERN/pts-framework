@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 log_format = '%(levelname)s : %(name)s : %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_format)
+logging.getLogger("paramiko.transport").setLevel("WARN")
 
 # class TextEditLogger(logging.Handler):
 #     signal = pyqtSignal(str)
@@ -126,8 +127,25 @@ class MainWindow(QWidget):
 
     def update_step_result(self, step, result):
         step_line = int(step.id)
-        new_result_item = QTableWidgetItem(str(result["result"]).split(".")[1])
+        result = str(result["result"]).split(".")[1]
+        new_result_item = QTableWidgetItem(result)
         new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemIsEditable)
+        match result:
+            case "PASS":
+                background_color = "green"
+            case "FAIL":
+                background_color = "red"
+            case "DONE":
+                background_color = "cyan"
+            case "SKIP":
+                background_color = "yellow"
+            case "ERROR":
+                background_color = "red"
+        
+        new_result_item.setBackground(QColor(background_color))
+        # font = new_result_item.font().setBold(True)
+        # new_result_item.setFont(font)
+        new_result_item.setTextAlignment(Qt.AlignCenter)
         self.step_list.setItem(step_line, 1, new_result_item)
         self.step_list.update()
 
