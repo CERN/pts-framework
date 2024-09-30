@@ -191,3 +191,7 @@ _build/doctrees/spikes/scope/SCOPE_documentation.doctree
 _build/html/_sources/spikes/scope/SCOPE_documentation.rst.txt
 _build/html/spikes/scope/SCOPE_documentation.html
 /src/tests/ibert/test/
+
+# pypts specific
+tests
+drivers
