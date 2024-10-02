@@ -1,7 +1,7 @@
 import recipe
 import logging
 import sys
-from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, QVBoxLayout, QTableView, QPushButton
+from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit
 from PyQt5.QtCore import QObject, pyqtSignal, QThread, Qt
 from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 from threading import Thread
@@ -127,7 +127,7 @@ class MainWindow(QWidget):
 
     def update_step_result(self, step, result):
         step_line = int(step.id)
-        result = str(result["result"]).split(".")[1]
+        result = str(result["result"])#.split(".")[1]
         new_result_item = QTableWidgetItem(result)
         new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemIsEditable)
         match result:
@@ -164,6 +164,13 @@ class MainWindow(QWidget):
         self.no_button.setEnabled(False)
         self.picture_box.setPixmap(self.cern_logo)
         self.message_box.clear()
+
+    def get_serial_number(self, response_q:SimpleQueue):
+        while True:
+            text, ok = QInputDialog().getText(self, "Serial Number of DUT", "Serial Number:")
+            if ok and text:
+                response_q.put(text)
+                break       
         
 
 class RecipeCallbackProxy(QObject):
@@ -171,14 +178,15 @@ class RecipeCallbackProxy(QObject):
     pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
     post_run_step_signal = pyqtSignal(recipe.Step, dict)
     user_interact_signal = pyqtSignal(SimpleQueue, str, str, list)
+    get_serial_number_signal = pyqtSignal(SimpleQueue)
 
-    def __init__(self, q):
+    def __init__(self, event_q):
         super().__init__()
-        self.q = q
+        self.event_q = event_q
 
     def run(self):
         while True:
-            callback_name, callback_data = self.q.get()
+            callback_name, callback_data = self.event_q.get()
             try:
                 # the signals have the same names as the callback_names, with an appended '_signal' to them.
                 # We construct the signal name and get it dynamically, then emit the signal with callback_data as parameters
@@ -195,10 +203,10 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
 
-    q_out, q_in = recipe.run_threaded("recipeCRATE.yaml")
+    event_q, q_in = recipe.run_threaded("recipe2.yaml")
     window.q_in = q_in
     recipe_thread = QThread()
-    recipe_callback_proxy = RecipeCallbackProxy(q_out)
+    recipe_callback_proxy = RecipeCallbackProxy(event_q)
     recipe_callback_proxy.moveToThread(recipe_thread)
     recipe_thread.started.connect(recipe_callback_proxy.run)
 
@@ -207,6 +215,7 @@ if __name__ == '__main__':
     recipe_callback_proxy.pre_run_sequence_signal.connect(window.update_sequence)
     recipe_callback_proxy.post_run_step_signal.connect(window.update_step_result)
     recipe_callback_proxy.user_interact_signal.connect(window.show_message)
+    recipe_callback_proxy.get_serial_number_signal.connect(window.get_serial_number)
 
     recipe_thread.start()
 
