@@ -13,10 +13,10 @@ def test_to_run(target):
     time.sleep(1)
     return {"compare": target == 45, "other_output": "abc"}
 
-def other_test(value):
+def other_test():
     logger.info("I could also do this.")
     time.sleep(1)
-    return {"some_return": True, "value": value}
+    return {"some_return": True, "value": 3}
 
 def range_test(value, min, max):
     return {"compare": min < value < max}

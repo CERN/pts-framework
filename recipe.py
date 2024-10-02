@@ -269,25 +269,32 @@ class Step:
 
         # We now process the direct_inputs to handle repetition for those inputs which are indexed
         input_list = [] # Each entry corresponds to one run of the step
-        i = 0 # this index defines which position of the indexed lists we target
+        i = 0 # this index defines which position of the indexed lists we are targeting
         while True:
             processed_inputs = {} # A group of inputs to be passed to the input list
             try_next_index = False
             for input_name, input_config in direct_inputs.items():
                 if input_config["indexed"]:
+                    # In the indexed case we take element i from the list contained in value
                     try:
                         processed_inputs[input_name] = input_config["value"][i]
                     except IndexError:
+                        # we detect that we're beyond the last index so we invalidate this pass
                         processed_inputs = {}
                         break
                     try_next_index = True
                 else:
+                    # In the non-indexed case, we simply use the stored value as-is
                     processed_inputs[input_name] = input_config["value"]
             if processed_inputs: # If anything is in it, we append it to input_list
                 input_list.append(processed_inputs)
             if not try_next_index:
                 break
             i += 1
+        # If the input_list is empty, the step will run 0 times when it should run once with no arguments
+        # so we add an empty dictionary so that
+        if  not input_list:
+            input_list.append({})
         return input_list
 
     def __process_outputs(self, runtime, step_output):

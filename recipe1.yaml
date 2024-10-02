@@ -59,8 +59,7 @@ steps:
   action_type: method
   module: C:\dev\pypts\test_dut.py
   method_name: other_test
-  input_mapping:
-    value: {type: direct, value: 1, indexed: false}
+  input_mapping: {}
   output_mapping:
     some_return: {type: output, output_name: my_output}
 teardown_steps: []
