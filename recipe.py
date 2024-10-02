@@ -50,6 +50,7 @@ class ThreadCallbacks(RecipeCallbacks):
         for result in results:
             print(f"Result {i} - Step {result['step'].id} ({result['step'].name}) with inputs {result['inputs']}: {result['result']}")
             i += 1
+            
     
     def user_interact(self, q, message="", image_path="", options=[]):
         self.q.put(("user_interact", (q, message, image_path, options)))
@@ -306,6 +307,10 @@ class Step:
                     step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":
                     step_result = ResultType.PASS if step_output[output_name] == output_config["value"] else ResultType.FAIL
+                case "range":
+                    step_result = ResultType.PASS if step_output[output_name] <= output_config["max"] and \
+                                                     step_output[output_name] >= output_config["min"] \
+                                                  else ResultType.FAIL
                 case "global":
                     # go set the value in the variables
                     runtime["globals"][output_config["global_name"]] = step_output[output_name]

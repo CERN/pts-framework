@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 log_format = '%(levelname)s : %(name)s : %(message)s'
 logging.basicConfig(level=logging.INFO, format=log_format)
+logging.getLogger("paramiko.transport").setLevel("WARN")
 
 # class TextEditLogger(logging.Handler):
 #     signal = pyqtSignal(str)
@@ -46,7 +47,9 @@ class MainWindow(QWidget):
         self.response_q = None
 
         self.setWindowTitle("PTS")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, 1600, 800)
+
+        self.cern_logo = QPixmap("images/CERN_Logo.png").scaled(800, 500, Qt.KeepAspectRatio)
 
         top_level_layout = QHBoxLayout()
         left_half_layout = QVBoxLayout()
@@ -68,15 +71,19 @@ class MainWindow(QWidget):
         left_half_layout.addWidget(self.step_list)
 
         self.picture_box = QLabel(self)
-        self.picture_box.setText("Image here")
+        self.picture_box.setPixmap(self.cern_logo)
+        self.picture_box.setMinimumSize(800, 500)
+        self.picture_box.setAlignment(Qt.AlignCenter)
 
         self.message_box = QLabel(self)
 
         self.button_list_layout = QHBoxLayout()
         self.yes_button = QPushButton()
         self.yes_button.setText("Yes")
+        self.yes_button.setEnabled(False)
         self.no_button = QPushButton()
         self.no_button.setText("No")
+        self.no_button.setEnabled(False)
         self.button_list_layout.addWidget(self.yes_button)
         self.button_list_layout.addWidget(self.no_button)
         self.yes_button.pressed.connect(lambda: self.interaction_response("yes"))
@@ -120,8 +127,25 @@ class MainWindow(QWidget):
 
     def update_step_result(self, step, result):
         step_line = int(step.id)
-        new_result_item = QTableWidgetItem(str(result["result"]).split(".")[1])
+        result = str(result["result"]).split(".")[1]
+        new_result_item = QTableWidgetItem(result)
         new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemIsEditable)
+        match result:
+            case "PASS":
+                background_color = "green"
+            case "FAIL":
+                background_color = "red"
+            case "DONE":
+                background_color = "cyan"
+            case "SKIP":
+                background_color = "yellow"
+            case "ERROR":
+                background_color = "red"
+        
+        new_result_item.setBackground(QColor(background_color))
+        # font = new_result_item.font().setBold(True)
+        # new_result_item.setFont(font)
+        new_result_item.setTextAlignment(Qt.AlignCenter)
         self.step_list.setItem(step_line, 1, new_result_item)
         self.step_list.update()
 
@@ -130,11 +154,15 @@ class MainWindow(QWidget):
         if image_path != "":
             image_pixmap = QPixmap(image_path).scaled(800, 500, Qt.KeepAspectRatio)
             self.picture_box.setPixmap(image_pixmap)
+        self.yes_button.setEnabled(True)
+        self.no_button.setEnabled(True)
         self.response_q = response_q
     
     def interaction_response(self, response):
         self.response_q.put(response)
-        self.picture_box.clear()
+        self.yes_button.setEnabled(False)
+        self.no_button.setEnabled(False)
+        self.picture_box.setPixmap(self.cern_logo)
         self.message_box.clear()
         
 
@@ -167,7 +195,7 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
 
-    q_out, q_in = recipe.run_threaded("recipe1.yaml")
+    q_out, q_in = recipe.run_threaded("recipeCRATE.yaml")
     window.q_in = q_in
     recipe_thread = QThread()
     recipe_callback_proxy = RecipeCallbackProxy(q_out)
