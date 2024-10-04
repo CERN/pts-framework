@@ -10,22 +10,10 @@ from queue import Queue, SimpleQueue
 logger = logging.getLogger(__name__)
 
 
-
-
 log_format = '%(levelname)s : %(name)s : %(message)s'
-logging.basicConfig(level=logging.INFO, format=log_format)
+logging.basicConfig(level=logging.DEBUG, format=log_format)
 logging.getLogger("paramiko.transport").setLevel("WARN")
 
-# class TextEditLogger(logging.Handler):
-#     signal = pyqtSignal(str)
-#     def __init__(self, widget:QPlainTextEdit):
-#         super().__init__()
-#         self.widget = widget
-
-#     def emit(self, record):
-#         msg = self.format(record)
-#         self.signal.emit(msg)
-#         #self.widget.appendPlainText(msg)
 
 class TextEditLoggerHandler(QObject, logging.Handler):
     new_message = pyqtSignal(str)
@@ -47,7 +35,7 @@ class MainWindow(QWidget):
         self.response_q = None
 
         self.setWindowTitle("PTS")
-        self.setGeometry(100, 100, 1600, 800)
+        self.setGeometry(100, 100, 1600, 1000)
 
         self.cern_logo = QPixmap("images/CERN_Logo.png").scaled(800, 500, Qt.KeepAspectRatio)
 
@@ -72,7 +60,7 @@ class MainWindow(QWidget):
 
         self.picture_box = QLabel(self)
         self.picture_box.setPixmap(self.cern_logo)
-        self.picture_box.setMinimumSize(800, 500)
+        self.picture_box.setMinimumSize(800, 600)
         self.picture_box.setAlignment(Qt.AlignCenter)
 
         self.message_box = QLabel(self)
@@ -152,7 +140,7 @@ class MainWindow(QWidget):
     def show_message(self, response_q:SimpleQueue, message, image_path, options):
         self.message_box.setText(message)
         if image_path != "":
-            image_pixmap = QPixmap(image_path).scaled(800, 500, Qt.KeepAspectRatio)
+            image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.KeepAspectRatio)
             self.picture_box.setPixmap(image_pixmap)
         self.yes_button.setEnabled(True)
         self.no_button.setEnabled(True)
@@ -173,7 +161,7 @@ class MainWindow(QWidget):
                 break       
         
 
-class RecipeCallbackProxy(QObject):
+class RecipeEventProxy(QObject):
     pre_run_recipe_signal = pyqtSignal(str, str)
     pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
     post_run_step_signal = pyqtSignal(recipe.Step, dict)
@@ -186,13 +174,13 @@ class RecipeCallbackProxy(QObject):
 
     def run(self):
         while True:
-            callback_name, callback_data = self.event_q.get()
+            event_name, event_data = self.event_q.get()
             try:
-                # the signals have the same names as the callback_names, with an appended '_signal' to them.
-                # We construct the signal name and get it dynamically, then emit the signal with callback_data as parameters
-                signal_name = callback_name + "_signal"
+                # the signals have the same names as the event_names, with an appended '_signal' to them.
+                # We construct the signal name and get it dynamically, then emit the signal with event_data as parameters
+                signal_name = event_name + "_signal"
                 signal = getattr(self, signal_name)
-                signal.emit(*callback_data)
+                signal.emit(*event_data)
             except AttributeError: # raised if the signal doesn't exist. This allows to not implement them all
                 pass
 
@@ -203,10 +191,10 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
 
-    event_q, q_in = recipe.run_threaded("recipe2.yaml")
+    event_q, q_in = recipe.run_threaded("recipe1.yaml")
     window.q_in = q_in
     recipe_thread = QThread()
-    recipe_callback_proxy = RecipeCallbackProxy(event_q)
+    recipe_callback_proxy = RecipeEventProxy(event_q)
     recipe_callback_proxy.moveToThread(recipe_thread)
     recipe_thread.started.connect(recipe_callback_proxy.run)
 

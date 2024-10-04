@@ -1,14 +1,14 @@
 - do not expect anything from the called test function
-- Implement popup step type for input and/or output
-- implement execution GUI with callbacks
+x Implement popup step type for input and/or output
+x implement execution GUI with callbacks
 - implement reporting with callbacks
 - implement step by step execution (repeat steps as needed or even go back)
 - implement proper error handling at all levels
 - step results stored in sequence object or at a higher level in hierarchical way?
 - conditional execution of step based on variable
-- provide unified string variable access by name
+x provide unified string variable access by name
 x steps need proper IDs
 ? implement repeat as unrolling
-- run all in same environment
+x run all in same environment
 - needs to be able to run without GUI and with cli parameters
-- sequence yaml file should contain all sequences as well as top-level info on the test
+x sequence yaml file should contain all sequences as well as top-level info on the test

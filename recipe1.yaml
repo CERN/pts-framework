@@ -1,10 +1,14 @@
 ---
+file_version: 0.0.1
 name: MFE testing sequence
 version: 0.0.1
 description: This is the test recipe for the MFE board
 main_sequence: Main
 globals:
   some_global_variable: 38
+tags:
+  no_gui: steps that do not rely on GUI or user interaction
+  ci: steps that are used in for continuous integration
 
 ---
 sequence_name: Main
@@ -17,17 +21,22 @@ steps:
   module: C:\dev\pypts\test_dut.py
   method_name: test_to_run
   input_mapping:
-    target: {type: local, local_name: target_value, indexed: false}
+    target: {type: local, local_name: target_value}
   output_mapping:
     compare: {type: passfail}
     other_output: {type: local, local_name: my_output}
+- steptype: WaitStep
+  step_name: Wait for 1s
+  input_mapping:
+    wait_time: {value: 1}
+  output_mapping: {}
 - steptype: PythonModuleStep
   step_name: Read an attribute from a file
   description:
   action_type: read_attribute
   module: C:\dev\pypts\test_dut.py
   input_mapping: 
-    attribute_name: {type: direct, value: some_value, indexed: false}
+    attribute_name: {type: direct, value: some_value}
   output_mapping:
     some_value: {type: local, local_name: first_value}
 - steptype: PythonModuleStep
@@ -35,25 +44,49 @@ steps:
   action_type: write_attribute
   module: C:\dev\pypts\test_dut.py
   input_mapping:
-    attribute_name: {type: direct, value: some_value, indexed: false}
-    attribute_value: {type: direct, value: 3, indexed: false}
+    attribute_name: {value: some_value, indexed: false}
+    attribute_value: {value: 3, indexed: false}
   output_mapping: {}
 - steptype: PythonModuleStep
   step_name: Read attribute again to see that the previous write worked
   action_type: read_attribute
   module: C:\dev\pypts\test_dut.py
   input_mapping:
-    attribute_name: {type: direct, value: some_value, indexed: false}
+    attribute_name: {type: direct, value: some_value}
   output_mapping:
     some_value: {type: equals, value: 3}
 - steptype: UserInteractionStep
   step_name: Send text and an image to the UI
+  skip: true
   input_mapping:
-    message: {type: direct, value: Hello there, indexed: false}
-    image_path: {type: direct, value: images\lego2.jpg, indexed: false}
-    options: {type: direct, value: [continue, cancel], indexed: false}
+    message: {type: direct, value: Hello there}
+    image_path: {type: direct, value: images\lego2.jpg}
+    options: {type: direct, value: ["yes", "no"]}
   output_mapping:
     output: {type: equals, value: "yes"}
+- steptype: PythonModuleStep
+  step_name: Testing non dictionary reuturn value
+  action_type: method
+  module: C:\dev\pypts\test_dut.py
+  method_name: simple_return
+  input_mapping: {}
+  output_mapping:
+    output: {type: local, local_name: my_output}
+- steptype: PythonModuleStep
+  step_name: Generating an error
+  action_type: method
+  module: C:\dev\pypts\test_dut.py
+  method_name: generate_error
+  input_mapping: {}
+  output_mapping: {}
+- steptype: PythonModuleStep
+  step_name: Generating another error
+  action_type: method
+  module: C:\dev\pypts\test_dut.py
+  method_name: generate_error
+  input_mapping: {}
+  output_mapping: {}
+teardown_steps: 
 - steptype: PythonModuleStep
   step_name: Run other_test from python file
   action_type: method
@@ -62,7 +95,6 @@ steps:
   input_mapping: {}
   output_mapping:
     some_return: {type: output, output_name: my_output}
-teardown_steps: []
 parameters:
   - target_value
 locals:
@@ -70,7 +102,6 @@ locals:
   test_name: Hello
   my_output:
   first_value:
-  second_value:
 outputs:
   - my_output
   
