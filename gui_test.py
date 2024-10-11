@@ -34,6 +34,8 @@ class MainWindow(QWidget):
         self.q_in = None
         self.response_q = None
 
+        self.already_updated = False
+
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
 
@@ -105,29 +107,31 @@ class MainWindow(QWidget):
         self.setWindowTitle(f"PTS: {recipe_name}")
 
     def update_sequence(self, sequence):
-        i = 0
-        self.step_list.setRowCount(len(sequence.steps))
-        for step in sequence.steps:
-            new_item = QTableWidgetItem(step.name)
-            new_item.setFlags(new_item.flags() ^ Qt.ItemIsEditable)
-            self.step_list.setItem(i, 0, new_item)
-            i += 1
+        if not self.already_updated:
+            i = 0
+            self.step_list.setRowCount(len(sequence.steps))
+            for step in sequence.steps:
+                new_item = QTableWidgetItem(step.name)
+                new_item.setFlags(new_item.flags() ^ Qt.ItemIsEditable)
+                self.step_list.setItem(i, 0, new_item)
+                i += 1
+            self.already_updated = True
 
-    def update_step_result(self, step, result):
+    def update_step_result(self, step, result: recipe.StepResult):
         step_line = int(step.id)
-        result = str(result["result"])#.split(".")[1]
-        new_result_item = QTableWidgetItem(result)
+        result_string = str(result)
+        new_result_item = QTableWidgetItem(result_string)
         new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemIsEditable)
-        match result:
-            case "PASS":
+        match result.get_result():
+            case recipe.ResultType.PASS:
                 background_color = "green"
-            case "FAIL":
+            case recipe.ResultType.FAIL:
                 background_color = "red"
-            case "DONE":
+            case recipe.ResultType.DONE:
                 background_color = "cyan"
-            case "SKIP":
+            case recipe.ResultType.SKIP:
                 background_color = "yellow"
-            case "ERROR":
+            case recipe.ResultType.ERROR:
                 background_color = "red"
         
         new_result_item.setBackground(QColor(background_color))
@@ -164,7 +168,7 @@ class MainWindow(QWidget):
 class RecipeEventProxy(QObject):
     pre_run_recipe_signal = pyqtSignal(str, str)
     pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
-    post_run_step_signal = pyqtSignal(recipe.Step, dict)
+    post_run_step_signal = pyqtSignal(recipe.Step, recipe.StepResult)
     user_interact_signal = pyqtSignal(SimpleQueue, str, str, list)
     get_serial_number_signal = pyqtSignal(SimpleQueue)
 
@@ -191,7 +195,7 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
 
-    event_q, q_in = recipe.run_threaded("recipe1.yaml")
+    event_q, q_in = recipe.Recipe.run_threaded("recipe2.yaml")
     window.q_in = q_in
     recipe_thread = QThread()
     recipe_callback_proxy = RecipeEventProxy(event_q)

@@ -20,6 +20,7 @@ def simple_return():
     return (5, 4)
 
 def range_test(value, min, max):
+    # time.sleep(1)
     return {"compare": min < value < max}
 
 def generate_error():

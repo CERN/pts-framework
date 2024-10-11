@@ -9,6 +9,17 @@ globals:
 ---
 sequence_name: Main
 description: 
+parameters:
+  target_value: 0
+locals:
+  target_value: 45
+  test_name: Hello
+  my_output:
+  first_value:
+  second_value:
+outputs:
+  my_output:
+
 setup_steps: []
 steps:
 - steptype: PythonModuleStep
@@ -22,6 +33,7 @@ steps:
     max: {type: direct, value: 29, indexed: false}
   output_mapping:
     compare: {type: passfail}
+
 - steptype: PythonModuleStep
   step_name: Test indexing with different lengths second one is longer
   action_type: method
@@ -33,6 +45,7 @@ steps:
     max: {type: direct, value: 29, indexed: false}
   output_mapping:
     compare: {type: passfail}
+
 - steptype: PythonModuleStep
   step_name: Test mix of indexed and not
   action_type: method
@@ -44,24 +57,5 @@ steps:
     max: {type: direct, value: 29, indexed: false}
   output_mapping:
     compare: {type: passfail}
+
 teardown_steps: []
-parameters:
-  target_value: 0
-locals:
-  target_value: 45
-  test_name: Hello
-  my_output:
-  first_value:
-  second_value:
-outputs:
-  my_output:
-  
----
-sequence_name: Subsequence
-description: 
-setup_steps: []
-steps: []
-teardown_steps: []
-parameters: {}
-locals: {}
-outputs: {}
