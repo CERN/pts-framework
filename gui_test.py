@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 log_format = '%(levelname)s : %(name)s : %(message)s'
-logging.basicConfig(level=logging.DEBUG, format=log_format)
+logging.basicConfig(level=logging.INFO, format=log_format)
 logging.getLogger("paramiko.transport").setLevel("WARN")
 
 
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
 
-    event_q, q_in = recipe.Recipe.run_threaded("recipe2.yaml")
+    event_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
     window.q_in = q_in
     recipe_thread = QThread()
     recipe_callback_proxy = RecipeEventProxy(event_q)

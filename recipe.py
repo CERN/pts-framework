@@ -53,12 +53,16 @@ class Runtime:
         
     def push_locals(self, locals):
         self.local_stack.append(locals)
+        logger.debug(f"Pushing locals {locals}")
 
     def pop_locals(self):
+        logger.debug(f"Popping locals")
         return self.local_stack.pop()
-
+    
     def get_local(self, name):
-        return self.local_stack[-1][name]
+        value = self.local_stack[-1][name]
+        logger.debug(f"Getting local {name}: {value}")
+        return value
     
     def set_local(self, name, value):
         logger.debug(f"Setting local {name} to {value}")
@@ -108,6 +112,7 @@ def evaluate_multiple_step_results(step_results: List[StepResult]):
     for result in results:
         if result.value > highest_result.value:
             highest_result = result
+
     return highest_result
                 
 
@@ -427,12 +432,13 @@ class IndexedStep(Step):
         # first establish which inputs are indexed
         indexed_list = [name for name, config in self.template_step.input_mapping.items() if config["indexed"]]
         non_indexed_list = input.keys() - indexed_list
-        num_runs = min(len(value) for value in indexed_list)
+        num_runs = min(len(input[value]) for value in indexed_list)
         for name in non_indexed_list:
             input[name] = [input[name]] * num_runs  
         # Now all inputs are lists ready to be indexed
         
         input_sets = [{name: {"value": input[name][i]} for name in input} for i in range(num_runs)]
+        # logger.debug(f"This step will run {num_runs} times with these sets {input_sets}")
 
         for i, input_set in enumerate(input_sets):
             copied_step: Step = copy.deepcopy(self.template_step)
@@ -440,9 +446,11 @@ class IndexedStep(Step):
             # copied_step.id = f"{self.id}.{i}"
             copied_step.id = f"{self.id}"
             self.steps.append(copied_step)
-
+            # we should gather the results of each step and return them as a list if they were to be stored as a variable
+            # This will be the output of the containing step
 
         step_result = Sequence.run_steps(runtime, self.steps)
+        logger.debug(f"Indexed step {self.name} returning {step_result}")
 
         return {"indexed_result": step_result}
 
