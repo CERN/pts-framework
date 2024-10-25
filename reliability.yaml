@@ -32,9 +32,9 @@ steps:
     compare: {type: passfail}
 
 - steptype: WaitStep
-  step_name: Wait for 1s
+  step_name: Wait for 0.5s
   input_mapping:
-    wait_time: {value: 1}
+    wait_time: {value: 0.5}
   output_mapping: {}
 
 - steptype: PythonModuleStep
@@ -54,7 +54,8 @@ teardown_steps:
   module: C:\dev\pypts\test_dut.py
   method_name: other_test
   input_mapping: {}
-  output_mapping: {}
+  output_mapping:
+    some_return: {type: passfail}
   
 ---
 sequence_name: Reliablity Test
@@ -118,7 +119,7 @@ setup_steps:
 
 steps:
 - steptype: SubSequenceStep
-  step_name: Run test_to_run function
+  step_name: Indexed step that will be repeated
   sequence: {type: internal, name: Reliablity Test}
   input_mapping:
     temperature: {type: local, local_name: temperatures, indexed: true}

@@ -31,16 +31,31 @@ class StepResult():
         self.inputs: dict = inputs
         self.outputs: dict = outputs
         self.error_info: str = error_info
+        self.subresults: List[StepResult] = []
     
     def __str__(self):
         return str(self.result)
     
+    def append_subresult(self, subresult):
+        self.subresults.append(subresult)
+
     def get_result(self):
         return self.result
     
     def is_type(self, result_type: ResultType):
         return self.result == result_type
-        
+
+    def print_result(self, indent=""):
+        print(indent + f"Step: {self.step.name} - ID: {self.step.id} - Result: {self.result}")
+        if self.error_info is not None:
+            print(indent + f"Error: {self.error_info}")
+        print(indent + f"Inputs: {self.inputs}")
+        print(indent + f"Outputs: {self.outputs}")
+        if self.subresults:
+            print(indent + "Subresults:")
+            for subresult in self.subresults:
+                subresult.print_result("  " + indent)
+        print("=====================================")
 
 class Runtime:
     def __init__(self, event_queue):
@@ -116,7 +131,6 @@ def evaluate_multiple_step_results(step_results: List[StepResult]):
     return highest_result
                 
 
-
 class Recipe:
     def __init__(self, recipe_file_path):
         self.__load_recipe(recipe_file_path)
@@ -161,8 +175,10 @@ class Recipe:
         # Create folder structures needed here to store all results
         starting_sequence = runtime.get_sequence(sequence_name)
         sequence_result = starting_sequence.run(runtime, {})
-        results = runtime.get_results()
+        results: List[StepResult] = runtime.get_results()
         runtime.send_event("post_run_recipe", results)
+        for result in results:
+            result.print_result()
 
         return results
 
@@ -443,6 +459,7 @@ class IndexedStep(Step):
         for i, input_set in enumerate(input_sets):
             copied_step: Step = copy.deepcopy(self.template_step)
             copied_step.input_mapping = input_set
+            copied_step.name = f"{self.name} - #{i}"
             # copied_step.id = f"{self.id}.{i}"
             copied_step.id = f"{self.id}"
             self.steps.append(copied_step)

@@ -27,5 +27,5 @@ def wait_for_target(temperature, humidity):
             current_humidity += 1
         elif current_humidity > humidity:
             current_humidity -= 1
-        sleep(1)
+        sleep(0.1)
     return {}
