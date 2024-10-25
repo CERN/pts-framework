@@ -9,11 +9,11 @@ some_value = 5
 def test_to_run(target):
     # with nidmm.Session("Dev1") as session:
     #     print("Measurement: " + str(session.read()))
-    logger.info(f"I received {target}.")
+    # logger.info(f"I received {target}.")
     return {"compare": target == 45, "other_output": "abc"}
 
 def other_test():
-    logger.info("I could also do this.")
+    # logger.info("I could also do this.")
     return {"some_return": True, "value": 3}
 
 def simple_return():
