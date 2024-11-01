@@ -18,7 +18,7 @@ def calculate_chamber_steps(t_steps, t_step, t_min, rh_steps, rh_step, rh_min):
 def wait_for_target(temperature, humidity):
     global current_temperature, current_humidity
     while current_temperature != temperature or current_humidity != humidity:
-        print(f"Current temperature: {current_temperature} - Current humidity: {current_humidity}")
+        print(f"**** Current temperature: {current_temperature} - Current humidity: {current_humidity}")
         if current_temperature < temperature:
             current_temperature += 1
         elif current_temperature > temperature:

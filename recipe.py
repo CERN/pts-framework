@@ -1,7 +1,7 @@
 import copy
 import yaml
 import logging
-from typing import List, Dict
+from typing import List, Dict, Self
 from pathlib import Path
 from importlib import import_module
 import sys
@@ -10,6 +10,8 @@ import threading
 import queue
 import time
 from enum import Enum
+import json
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -25,17 +27,31 @@ class ResultType(Enum):
         return str(self.name)
     
 class StepResult():
-    def __init__(self, result, step=None, inputs={}, outputs={}, error_info=None):
+    def __init__(self, step=None):
         self.step: Step = step
-        self.result: ResultType = result
-        self.inputs: dict = inputs
-        self.outputs: dict = outputs
-        self.error_info: str = error_info
+        self.result: ResultType = None
+        self.inputs: dict = {}
+        self.outputs: dict = {}
+        self.error_info: str = ""
         self.subresults: List[StepResult] = []
+        self.uuid = uuid.uuid4()
     
     def __str__(self):
         return str(self.result)
     
+    def set_error(self, error_info=None, inputs={}):
+        self.result = ResultType.ERROR
+        self.error_info = error_info
+        self.inputs = inputs
+
+    def set_skip(self):
+        self.result = ResultType.SKIP
+
+    def set_result(self, result_type=ResultType.DONE, inputs={}, outputs={}):
+        self.result = result_type
+        self.inputs = inputs
+        self.outputs = outputs
+
     def append_subresult(self, subresult):
         self.subresults.append(subresult)
 
@@ -45,9 +61,20 @@ class StepResult():
     def is_type(self, result_type: ResultType):
         return self.result == result_type
 
+    @staticmethod
+    def evaluate_multiple_step_results(step_results: Self) -> ResultType:
+        highest_result = ResultType.SKIP
+        results = [result.get_result() for result in step_results]
+
+        for result in results:
+            if result.value > highest_result.value:
+                highest_result = result
+
+        return highest_result
+
     def print_result(self, indent=""):
         print(indent + f"Step: {self.step.name} - ID: {self.step.id} - Result: {self.result}")
-        if self.error_info is not None:
+        if self.error_info:
             print(indent + f"Error: {self.error_info}")
         print(indent + f"Inputs: {self.inputs}")
         print(indent + f"Outputs: {self.outputs}")
@@ -57,14 +84,29 @@ class StepResult():
                 subresult.print_result("  " + indent)
         print("=====================================")
 
+def serialize(obj):
+    if isinstance(obj, Enum):
+        return obj.name
+    else:
+        try:
+            filtered_dict = {
+                k: v
+                for k, v in obj.__dict__.items()
+                if not k.startswith("__")
+            }
+            return filtered_dict
+        
+        except AttributeError:
+            return str(obj)
+
 class Runtime:
-    def __init__(self, event_queue):
+    def __init__(self, event_queue, report_queue):
         self.event_queue = event_queue
+        self.report_queue = report_queue
         self.results = []
         self.globals = []
         self.sequences = {}
         self.local_stack = []
-        self.tags = {}
         
     def push_locals(self, locals):
         self.local_stack.append(locals)
@@ -96,15 +138,6 @@ class Runtime:
     def set_globals(self, globals):
         self.globals = globals
 
-    def set_tags(self, tags):
-        self.tags = tags
-
-    def get_tags(self):
-        return self.tags
-    
-    def is_tag_set(self, name):
-        return name in self.tags
-
     def get_sequence(self, name):
         return self.sequences[name]
     
@@ -119,17 +152,10 @@ class Runtime:
     
     def send_event(self, event_name:str, *event_data):
         self.event_queue.put((event_name, event_data))
+        json_data = json.dumps({event_name: event_data}, default=serialize)
+        # print(json_data)
+        self.report_queue.put((event_name, json_data))
 
-def evaluate_multiple_step_results(step_results: List[StepResult]):
-    highest_result = ResultType.SKIP
-    results = [result.get_result() for result in step_results]
-
-    for result in results:
-        if result.value > highest_result.value:
-            highest_result = result
-
-    return highest_result
-                
 
 class Recipe:
     def __init__(self, recipe_file_path):
@@ -173,10 +199,13 @@ class Recipe:
             runtime.set_global("serial_number", serial_number)
 
         # Create folder structures needed here to store all results
-        starting_sequence = runtime.get_sequence(sequence_name)
-        sequence_result = starting_sequence.run(runtime, {})
+        starting_sequence: Sequence = runtime.get_sequence(sequence_name)
+        final_result = starting_sequence.run(runtime, {})
         results: List[StepResult] = runtime.get_results()
         runtime.send_event("post_run_recipe", results)
+        
+        print("==== RESULTS ====")
+        print(f"Final result: {final_result}")
         for result in results:
             result.print_result()
 
@@ -191,21 +220,23 @@ class Recipe:
     #         event.set()
                     
 
+
+
     @staticmethod
     def run_threaded(recipe_file, sequence_name="Main"):
         q_in = queue.Queue()
         event_queue = queue.SimpleQueue()
-        runtime = Runtime(event_queue)
+        report_queue = queue.SimpleQueue()
+        runtime = Runtime(event_queue, report_queue)
         recipe = Recipe(recipe_file)
         runtime.send_event("post_load_recipe", recipe)
         threading.Thread(target=recipe.run, kwargs={"runtime": runtime, "sequence_name": sequence_name}, daemon=True).start()
         # threading.Thread(target=recipe.parse_q_input, args=[q_in], daemon=True).start()
-        return event_queue, q_in
+        return event_queue, report_queue, q_in
             
 
-class Sequence:
-
-    def __init__(self, sequence_data=None, sequence_file=None, id_prefix=None):
+class Sequence():
+    def __init__(self, sequence_data=None, sequence_file=None):
         if sequence_file is not None:
             with open(sequence_file, 'r') as file:
                 sequence_data = yaml.safe_load(file)
@@ -218,44 +249,29 @@ class Sequence:
         self.locals = sequence_data["locals"]
         self.parameters = sequence_data["parameters"]
         self.outputs = sequence_data["outputs"]
-        self.steps: List[Step] = []
-        self.id_prefix = id_prefix
-
-        def generate_id(count:int):
-            if id_prefix is None:
-                return str(count)
-            else:
-                return f"{id_prefix}.{count}"
-
-        step_count = 0 # used for id: just an incrementing number representing the step order
+        self.steps = []
+        self.teardown_steps = []
         
-        # build all steps here
+        # build all contained steps here
         for step_data in sequence_data["setup_steps"]:
-            self.steps.append(Step.build_step(step_data, generate_id(step_count)))
-            step_count += 1
+            self.steps.append(Step.build_step(step_data))
 
         for step_data in sequence_data["steps"]:
-            self.steps.append(Step.build_step(step_data, generate_id(step_count)))
-            step_count += 1
-
-        self.first_teardown = len(self.steps)
+            self.steps.append(Step.build_step(step_data))
 
         for step_data in sequence_data["teardown_steps"]:
-            self.steps.append(Step.build_step(step_data, generate_id(step_count)))
-            step_count += 1
+            self.teardown_steps.append(Step.build_step(step_data))
 
-    def run(self, runtime: Runtime, parameter_values: dict):
+    def run(self, runtime: Runtime, input: dict):
         logger.info(f"Starting sequence {self.name}")
         runtime.send_event("pre_run_sequence", self)
         runtime.push_locals(self.locals)
 
-        # for each parameter defined in the sequence
-        # override default if value is provided and store it in locals
-        for parameter in self.parameters:
-            if parameter in parameter_values:
-                self.locals[parameter] = parameter_values[parameter]
+        for variable in input:
+            runtime.set_local(variable, input[variable])
 
-        sequence_result = self.run_steps(runtime, self.steps, teardown_position=self.first_teardown)
+        sequence_result = Step.run_steps(runtime, self.steps)
+        Step.run_steps(runtime, self.teardown_steps)
 
         runtime.pop_locals()
         runtime.send_event("post_run_sequence", self, sequence_result)
@@ -263,73 +279,19 @@ class Sequence:
 
         return sequence_result
 
-    @staticmethod
-    def run_steps(runtime: Runtime, step_list, teardown_position=0):
-        step_results = []
-        next_step = 0
-
-        while next_step < len(step_list):
-            step: Step = step_list[next_step]
-            
-            runtime.send_event("pre_run_step", step)
-
-            if step.is_skipped():
-                logger.info(f"Skipping step {step.name}")
-                step_result = StepResult(ResultType.SKIP, step) 
-            else:
-                logger.info(f"Running step {step.name}")
-                step_input = step.process_inputs(runtime)
-
-                try:
-                    step_output = step.run(runtime, step_input)
-                except:
-                    logger.error(f"Error occurred while running step {step.name}")
-                    error_info = traceback.format_exc()
-                    step_result = StepResult(ResultType.ERROR, step, step_input, error_info=error_info)
-                    logger.error(error_info)
-                else:
-                    result_type = step.process_outputs(runtime, step_output)
-                    step_result = StepResult(result_type, step, step_input, step_output)
-            
-            if step_result.is_type(ResultType.ERROR):
-                if next_step < teardown_position: # Can't trigger if teardown is 0
-                    logger.warning("Jumping to teardown steps")
-                    next_step = teardown_position
-                else:
-                    logger.warning("No teardown steps")
-                    break
-            else:
-                next_step += 1
-
-            runtime.send_event("post_run_step", step, step_result)
-            runtime.append_results([step_result])
-            step_results.append(step_result)
-
-        final_result = evaluate_multiple_step_results(step_results)
-
-        return final_result # single pass or fail
-
-    def list_steps(self):
-        for step in self.steps:
-            print(step.name)
-
 
 class Step:
-
-    def __init__(self, id, step_name, input_mapping, output_mapping, skip=False, description=""):
+    def __init__(self, step_name, id="", description="", input_mapping={}, output_mapping={}, skip=False):
         self.name = step_name
         self.description = description
         self.id = id
         self.skip = skip
         self.input_mapping: dict = input_mapping
-        self.output_mapping: dict = output_mapping
+        self.output_mapping: dict = {}
+        self.output_mapping.update(output_mapping) # This is here to keep the potential writing to it by MultiStep
 
     def __str__(self):
-        return f"Step: {self.name}"
-    
-    @classmethod
-    def get_step_type_name(cls):
-        return cls.__name__
+        return f"Step: {self.__class__.__name__}: {self.name}"
     
     def check_indexing(self):
         for input_config in self.input_mapping.values():
@@ -341,8 +303,8 @@ class Step:
         return self.skip
 
     def _step(self, runtime, input):
-        return ResultType.DONE
-    
+        raise NotImplementedError
+
     def process_inputs(self, runtime:Runtime):
         # We replace all references to variables with their content. These become direct_inputs
         direct_inputs = {}
@@ -396,12 +358,55 @@ class Step:
         return step_result
 
     def run(self, runtime:Runtime, input):
+        step_result = StepResult(self)
+        runtime.send_event("pre_run_step", self)
 
-        step_output = self._step(runtime, input)
-        return step_output
+        if self.is_skipped():
+            logger.info(f"Skipping step {self.name}")
+            step_result.set_skip() 
+        else:
+            logger.info(f"Running step {self.name}")
+            step_input = self.process_inputs(runtime)
+
+            try:
+                step_output = self._step(runtime, step_input)
+            except:
+                logger.error(f"Error occurred while running step {self.name}")
+                error_info = traceback.format_exc()
+                step_result.set_error(error_info, step_input)
+                logger.error(error_info)
+            else:
+                result_type = self.process_outputs(runtime, step_output)
+                step_result.set_result(result_type, step_input, step_output)
+        
+        runtime.send_event("post_run_step", step_result)
+        
+        return step_result
 
     @staticmethod
-    def build_step(step_data:dict, id:str):
+    def run_steps(runtime: Runtime, step_list: List[Self]) -> ResultType:
+        step_results = []
+        next_step = 0
+
+        while next_step < len(step_list):
+            step: Step = step_list[next_step]
+            
+            step_result = step.run(runtime, input)
+            
+            runtime.append_results([step_result])
+            step_results.append(step_result)
+
+            if step_result.is_type(ResultType.ERROR):
+                break
+            else:
+                next_step += 1
+
+        aggregate_result = StepResult.evaluate_multiple_step_results(step_results)
+
+        return aggregate_result # single pass or fail type
+
+    @staticmethod
+    def build_step(step_data:dict):
         """
         This helper function analyzes the configuration of step_data and adapts what is needed before
         creating the step.
@@ -416,9 +421,6 @@ class Step:
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
         del step_data["steptype"]
-
-        # integrate id into step_data
-        step_data["id"] = id
 
         # creates the step according to the subclass type and passes all parameters   
         new_step: Step = eval(step_type + "(**step_data)")
@@ -436,15 +438,43 @@ class Step:
         return new_step
 
 
+# class MultiStep(Step):
+#     def __init__(self, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.steps = []
+#         self.output_mapping = {"__result": {"type": "passthrough"}}
+
+#     def run_steps(self, runtime: Runtime, first_step=0) -> ResultType:
+#         step_results = []
+#         next_step = first_step
+
+#         while next_step < len(self.steps):
+#             step: Step = self.steps[next_step]
+            
+#             step_result = step.run(runtime, input)
+            
+#             runtime.append_results([step_result])
+#             step_results.append(step_result)
+
+#             if step_result.is_type(ResultType.ERROR):
+#                 break
+#             else:
+#                 next_step += 1
+
+#         aggregate_result = StepResult.evaluate_multiple_step_results(step_results)
+
+#         return aggregate_result # single pass or fail type
+
+
 class IndexedStep(Step):
 
     def __init__(self, step, **kwargs):
         super().__init__(**kwargs)
         self.template_step = step
         self.steps = []
-        self.output_mapping = {"indexed_result": {"type": "passthrough"}}
+        self.output_mapping = {"__result": {"type": "passthrough"}}
 
-    def _step(self, runtime: Runtime, input):
+    def _step(self, runtime: Runtime, input: dict):
         # first establish which inputs are indexed
         indexed_list = [name for name, config in self.template_step.input_mapping.items() if config["indexed"]]
         non_indexed_list = input.keys() - indexed_list
@@ -461,15 +491,15 @@ class IndexedStep(Step):
             copied_step.input_mapping = input_set
             copied_step.name = f"{self.name} - #{i}"
             # copied_step.id = f"{self.id}.{i}"
-            copied_step.id = f"{self.id}"
+            # copied_step.id = f"{self.id}"
             self.steps.append(copied_step)
             # we should gather the results of each step and return them as a list if they were to be stored as a variable
             # This will be the output of the containing step
 
-        step_result = Sequence.run_steps(runtime, self.steps)
+        step_result = self.run_steps(runtime, self.steps)
         logger.debug(f"Indexed step {self.name} returning {step_result}")
 
-        return {"indexed_result": step_result}
+        return {"__result": step_result}
 
 
 class PythonModuleStep(Step):
@@ -516,29 +546,32 @@ class PythonModuleStep(Step):
         return module
 
 
-class SubSequenceStep(Step):
+class SequenceStep(Step):
     
     def __init__(self, sequence, **kwargs):
         super().__init__(**kwargs)
         self.sequence = sequence
+        self.output_mapping = {"__result": {"type": "passthrough"}}
 
     def _step(self, runtime: Runtime, input):
         logger.debug(f"Running sequence {self.sequence['name']} as a step")
         match self.sequence["type"]:
             case "internal":
                 sequence_name = self.sequence["name"]
-                subsequence = runtime.get_sequence(sequence_name)
+                sequence: Sequence = runtime.get_sequence(sequence_name)
             # case "external":
             #     sequence_path = self.sequence["path"]
             #     subsequence = Sequence(sequence_file=sequence_path)
 
-        step_result = subsequence.run(runtime, input)  # simple pass or fail
+        step_result = sequence.run(runtime, input)  # simple pass or fail
 
         # Create a copy of locals with only the items corresponding to the keys in outputs
-        step_output = {key: value for key, value in subsequence.locals.items() if key in subsequence.outputs}
-        step_output["seq_result"] = step_result
+        step_output = {key: value for key, value in sequence.locals.items() if key in sequence.outputs}
+        # This is the implicit output of the sequence step which will determine whether it passed or failed
+        step_output["__result"] = step_result
 
-        logger.debug(f"Sequence {subsequence.name} returning {step_output} as a step")    
+        logger.debug(f"Sequence {sequence.name} returning {step_output} as a step")    
+
         return step_output
     
 class UserInteractionStep(Step):
@@ -573,6 +606,6 @@ if __name__ == "__main__":
     # recipe.run()
     # recipe.sequences["Main"].run()
     # print(recipe.sequences["Subsequence"])
-    step = WaitStep(id="1", step_name="Wait Step", input_mapping={"wait_time": {"type": "direct", "value": 5}}, output_mapping={})
-    step1 = IndexedStep(step, id="1", step_name="Test Step", input_mapping={"a": {"type": "direct", "value": [1, 2, 3], "indexed": True}, "b": {"type": "direct", "value": [4, 5, 6], "indexed": True}, "c": {"type": "direct", "value": 6}}, output_mapping={"output": {"type": "direct"}})
-    print(step1._step())
+    # step = WaitStep(id="1", step_name="Wait Step", input_mapping={"wait_time": {"type": "direct", "value": 5}}, output_mapping={})
+    # step1 = IndexedStep(step, id="1", step_name="Test Step", input_mapping={"a": {"type": "direct", "value": [1, 2, 3], "indexed": True}, "b": {"type": "direct", "value": [4, 5, 6], "indexed": True}, "c": {"type": "direct", "value": 6}}, output_mapping={"output": {"type": "direct"}})
+    # print(step1._step())
