@@ -81,14 +81,14 @@ steps:
     humidity: {type: local, local_name: humidity}
   output_mapping: {}
 
-- steptype: SubSequenceStep
+- steptype: SequenceStep
   step_name: Run quick test
   sequence: {type: internal, name: Main}
   input_mapping:
     temperature: {type: local, local_name: temperature}
     humidity: {type: local, local_name: humidity}
-  output_mapping:
-    seq_result: {type: passthrough}
+  output_mapping: {}
+    #seq_result: {type: passthrough}
 
 teardown_steps: []
 
@@ -108,7 +108,7 @@ setup_steps:
   method_name: calculate_chamber_steps
   input_mapping:
     t_min: {value: 20}
-    t_steps: {value: 5}
+    t_steps: {value: 2}
     t_step: {value: 2}
     rh_min: {value: 50}
     rh_steps: {value: 3}
@@ -118,13 +118,13 @@ setup_steps:
     humidities: {type: local, local_name: humidities}
 
 steps:
-- steptype: SubSequenceStep
+- steptype: SequenceStep
   step_name: Indexed step that will be repeated
   sequence: {type: internal, name: Reliablity Test}
   input_mapping:
     temperature: {type: local, local_name: temperatures, indexed: true}
     humidity: {type: local, local_name: humidities, indexed: true}
-  output_mapping:
-    seq_result: {type: passthrough}
+  output_mapping: {}
+    #seq_result: {type: passthrough}
 
 teardown_steps: []

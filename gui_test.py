@@ -117,8 +117,8 @@ class MainWindow(QWidget):
                 i += 1
             self.already_updated = True
 
-    def update_step_result(self, step, result: recipe.StepResult):
-        step_line = int(step.id)
+    def update_step_result(self, result: recipe.StepResult):
+        #step_line = int(result.step.id)
         result_string = str(result)
         new_result_item = QTableWidgetItem(result_string)
         new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemIsEditable)
@@ -138,7 +138,7 @@ class MainWindow(QWidget):
         # font = new_result_item.font().setBold(True)
         # new_result_item.setFont(font)
         new_result_item.setTextAlignment(Qt.AlignCenter)
-        self.step_list.setItem(step_line, 1, new_result_item)
+        #self.step_list.setItem(step_line, 1, new_result_item)
         self.step_list.update()
 
     def show_message(self, response_q:SimpleQueue, message, image_path, options):
@@ -168,7 +168,7 @@ class MainWindow(QWidget):
 class RecipeEventProxy(QObject):
     pre_run_recipe_signal = pyqtSignal(str, str)
     pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
-    post_run_step_signal = pyqtSignal(recipe.Step, recipe.StepResult)
+    post_run_step_signal = pyqtSignal(recipe.StepResult)
     user_interact_signal = pyqtSignal(SimpleQueue, str, str, list)
     get_serial_number_signal = pyqtSignal(SimpleQueue)
 
@@ -195,21 +195,21 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
 
-    event_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
+    event_q, report_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
     window.q_in = q_in
-    recipe_thread = QThread()
-    recipe_callback_proxy = RecipeEventProxy(event_q)
-    recipe_callback_proxy.moveToThread(recipe_thread)
-    recipe_thread.started.connect(recipe_callback_proxy.run)
+    recipe_event_processing_thread = QThread()
+    recipe_event_proxy = RecipeEventProxy(event_q)
+    recipe_event_proxy.moveToThread(recipe_event_processing_thread)
+    recipe_event_processing_thread.started.connect(recipe_event_proxy.run)
 
     # All the signals from the proxy are connected to the GUI from here
-    recipe_callback_proxy.pre_run_recipe_signal.connect(window.update_recipe_name)
-    recipe_callback_proxy.pre_run_sequence_signal.connect(window.update_sequence)
-    recipe_callback_proxy.post_run_step_signal.connect(window.update_step_result)
-    recipe_callback_proxy.user_interact_signal.connect(window.show_message)
-    recipe_callback_proxy.get_serial_number_signal.connect(window.get_serial_number)
+    recipe_event_proxy.pre_run_recipe_signal.connect(window.update_recipe_name)
+    recipe_event_proxy.pre_run_sequence_signal.connect(window.update_sequence)
+    recipe_event_proxy.post_run_step_signal.connect(window.update_step_result)
+    recipe_event_proxy.user_interact_signal.connect(window.show_message)
+    recipe_event_proxy.get_serial_number_signal.connect(window.get_serial_number)
 
-    recipe_thread.start()
+    recipe_event_processing_thread.start()
 
     exit_code = app.exec()
     
