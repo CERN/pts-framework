@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 log_format = '%(levelname)s : %(name)s : %(message)s'
-logging.basicConfig(level=logging.INFO, format=log_format)
+logging.basicConfig(level=logging.DEBUG, format=log_format)
 logging.getLogger("paramiko.transport").setLevel("WARN")
 
 
@@ -196,6 +196,7 @@ if __name__ == '__main__':
     window = MainWindow()
 
     event_q, report_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
+    # event_q, report_q, q_in = recipe.Recipe.run_threaded("indexing.yaml", sequence_name="Main")
     window.q_in = q_in
     recipe_event_processing_thread = QThread()
     recipe_event_proxy = RecipeEventProxy(event_q)

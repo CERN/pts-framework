@@ -62,7 +62,7 @@ class StepResult():
         return self.result == result_type
 
     @staticmethod
-    def evaluate_multiple_step_results(step_results: Self) -> ResultType:
+    def evaluate_multiple_step_results(step_results: List[Self]) -> ResultType:
         highest_result = ResultType.SKIP
         results = [result.get_result() for result in step_results]
 
@@ -270,10 +270,14 @@ class Sequence():
         for variable in input:
             runtime.set_local(variable, input[variable])
 
-        sequence_result = Step.run_steps(runtime, self.steps)
-        Step.run_steps(runtime, self.teardown_steps)
+        sequence_results: List[StepResult] = Step.run_steps(runtime, self.steps)
+        teardown_results: List[StepResult] = Step.run_steps(runtime, self.teardown_steps)
+        if teardown_results:
+            sequence_results += teardown_results
 
-        runtime.pop_locals()
+        sequence_result = StepResult.evaluate_multiple_step_results(sequence_results)
+
+        print(str(runtime.pop_locals()))
         runtime.send_event("post_run_sequence", self, sequence_result)
         logger.info(f"Sequence {self.name} result: {sequence_result}")
 
@@ -287,8 +291,7 @@ class Step:
         self.id = id
         self.skip = skip
         self.input_mapping: dict = input_mapping
-        self.output_mapping: dict = {}
-        self.output_mapping.update(output_mapping) # This is here to keep the potential writing to it by MultiStep
+        self.output_mapping: dict = output_mapping
 
     def __str__(self):
         return f"Step: {self.__class__.__name__}: {self.name}"
@@ -331,29 +334,34 @@ class Step:
 
         for output_name, output_config in self.output_mapping.items():
             match output_config["type"]:
-                case "passthrough":
+                case "passthrough": # The output is already a ResultType
                     step_result = step_output[output_name]
-                case "passfail":
-                    # a boolean which sets pass/fail state of step
+                case "passfail":    # Output is boolean. Passes on True
                     step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
-                case "equals":
+                case "equals":      # Output is a value. Passes if equal to the target value
                     step_result = (
                         ResultType.PASS
                         if step_output[output_name] == output_config["value"] 
                         else ResultType.FAIL
                     )
-                case "range":
+                case "range":       # Output is a numberic value. Passes if within given range
                     step_result = (
                         ResultType.PASS
                         if (output_config["min"] <= step_output[output_name] <= output_config["max"])
                         else ResultType.FAIL
                     )
-                case "global":
-                    # go set the value in the variables
+                case "global":      # Output to be written to global variable
                     runtime.set_global(output_config["global_name"], step_output[output_name])
-                case "local":
-                    # go set the value in the variables
-                    runtime.set_local(output_config["local_name"], step_output[output_name])
+                case "local":       # Output to be written to local variable
+                    if "indexed" in output_config and output_config["indexed"]:
+                        local = runtime.get_local(output_config["local_name"])
+                        if isinstance(local, list):
+                            local.append(step_output[output_name])
+                        else:
+                            local = [step_output[output_name]]
+                        runtime.set_local(output_config["local_name"], local)
+                    else:
+                        runtime.set_local(output_config["local_name"], step_output[output_name])
         
         return step_result
 
@@ -384,7 +392,7 @@ class Step:
         return step_result
 
     @staticmethod
-    def run_steps(runtime: Runtime, step_list: List[Self]) -> ResultType:
+    def run_steps(runtime: Runtime, step_list: List[Self]) -> List[StepResult]:
         step_results = []
         next_step = 0
 
@@ -401,9 +409,9 @@ class Step:
             else:
                 next_step += 1
 
-        aggregate_result = StepResult.evaluate_multiple_step_results(step_results)
+        # aggregate_result = StepResult.evaluate_multiple_step_results(step_results)
 
-        return aggregate_result # single pass or fail type
+        return step_results # aggregate_result # single pass or fail type
 
     @staticmethod
     def build_step(step_data:dict):
@@ -438,41 +446,14 @@ class Step:
         return new_step
 
 
-# class MultiStep(Step):
-#     def __init__(self, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.steps = []
-#         self.output_mapping = {"__result": {"type": "passthrough"}}
-
-#     def run_steps(self, runtime: Runtime, first_step=0) -> ResultType:
-#         step_results = []
-#         next_step = first_step
-
-#         while next_step < len(self.steps):
-#             step: Step = self.steps[next_step]
-            
-#             step_result = step.run(runtime, input)
-            
-#             runtime.append_results([step_result])
-#             step_results.append(step_result)
-
-#             if step_result.is_type(ResultType.ERROR):
-#                 break
-#             else:
-#                 next_step += 1
-
-#         aggregate_result = StepResult.evaluate_multiple_step_results(step_results)
-
-#         return aggregate_result # single pass or fail type
-
-
 class IndexedStep(Step):
 
     def __init__(self, step, **kwargs):
         super().__init__(**kwargs)
-        self.template_step = step
+        self.template_step: Step = step
         self.steps = []
         self.output_mapping = {"__result": {"type": "passthrough"}}
+        # We replace output_mapping with a simple output to represent the aggregate
 
     def _step(self, runtime: Runtime, input: dict):
         # first establish which inputs are indexed
@@ -484,19 +465,22 @@ class IndexedStep(Step):
         # Now all inputs are lists ready to be indexed
         
         input_sets = [{name: {"value": input[name][i]} for name in input} for i in range(num_runs)]
-        # logger.debug(f"This step will run {num_runs} times with these sets {input_sets}")
+        logger.debug(f"This step is indexed and will run {num_runs} times")
 
         for i, input_set in enumerate(input_sets):
             copied_step: Step = copy.deepcopy(self.template_step)
             copied_step.input_mapping = input_set
+            for output in copied_step.output_mapping:
+                if copied_step.output_mapping[output]["type"] in ["local", "global"]:
+                    copied_step.output_mapping[output]["indexed"] = True
             copied_step.name = f"{self.name} - #{i}"
             # copied_step.id = f"{self.id}.{i}"
             # copied_step.id = f"{self.id}"
             self.steps.append(copied_step)
-            # we should gather the results of each step and return them as a list if they were to be stored as a variable
-            # This will be the output of the containing step
+            # print("Output mapping: " + str(copied_step.output_mapping))
 
-        step_result = self.run_steps(runtime, self.steps)
+        step_results: List[StepResult] = self.run_steps(runtime, self.steps)
+        step_result = StepResult.evaluate_multiple_step_results(step_results)
         logger.debug(f"Indexed step {self.name} returning {step_result}")
 
         return {"__result": step_result}
@@ -551,7 +535,7 @@ class SequenceStep(Step):
     def __init__(self, sequence, **kwargs):
         super().__init__(**kwargs)
         self.sequence = sequence
-        self.output_mapping = {"__result": {"type": "passthrough"}}
+        self.output_mapping["__result"] = {"type": "passthrough"}
 
     def _step(self, runtime: Runtime, input):
         logger.debug(f"Running sequence {self.sequence['name']} as a step")
