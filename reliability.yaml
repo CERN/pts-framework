@@ -66,8 +66,9 @@ parameters: [temperature, humidity]
 locals:
   temperature: 0
   humidity: 0
+  some_output: 3
 
-outputs: []
+outputs: [some_output]
 
 setup_steps: []
 steps:
@@ -97,7 +98,8 @@ sequence_name: Reliability Loop
 description: 
 
 parameters: []
-locals: {}
+locals:
+  wonderful: -1
 outputs: []
 
 setup_steps:
@@ -124,7 +126,7 @@ steps:
   input_mapping:
     temperature: {type: local, local_name: temperatures, indexed: true}
     humidity: {type: local, local_name: humidities, indexed: true}
-  output_mapping: {}
-    #seq_result: {type: passthrough}
+  output_mapping:
+    some_output: {type: local, local_name: wonderful}
 
 teardown_steps: []

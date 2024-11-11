@@ -25,3 +25,6 @@ def range_test(value, min, max):
 
 def generate_error():
     raise AttributeError
+
+def simple_output(value):
+    return {"my_output": value + 1}
