@@ -197,6 +197,7 @@ if __name__ == '__main__':
 
     event_q, report_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("indexing.yaml", sequence_name="Main")
+    # event_q, report_q, q_in = recipe.Recipe.run_threaded("recipe1.yaml", sequence_name="Main")
     window.q_in = q_in
     recipe_event_processing_thread = QThread()
     recipe_event_proxy = RecipeEventProxy(event_q)
