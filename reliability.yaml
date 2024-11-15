@@ -67,8 +67,9 @@ locals:
   temperature: 0
   humidity: 0
   some_output: 3
+  random_output: -5
 
-outputs: [some_output]
+outputs: [some_output, random_output]
 
 setup_steps: []
 steps:
@@ -89,7 +90,6 @@ steps:
     temperature: {type: local, local_name: temperature}
     humidity: {type: local, local_name: humidity}
   output_mapping: {}
-    #seq_result: {type: passthrough}
 
 teardown_steps: []
 
@@ -100,7 +100,7 @@ description:
 parameters: []
 locals:
   wonderful: -1
-outputs: []
+outputs: [wonderful]
 
 setup_steps:
 - steptype: PythonModuleStep
