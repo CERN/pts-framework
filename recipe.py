@@ -230,11 +230,14 @@ class Recipe:
         results: List[StepResult] = runtime.get_results()
         runtime.send_event("post_run_recipe", results)
         
-        print("==== RESULTS ====")
-        print(f"Final result: {final_result}")
-        print("-----------------")
+        # print("==== RESULTS ====")
+        # print(f"Final result: {final_result}")
+        # print("-----------------")
         for result in results:
             result.print_result()
+
+        print(runtime.local_stack)
+        print(runtime.globals)
 
         return results
 
@@ -380,15 +383,7 @@ class Step:
                 case "global":      # Output to be written to global variable
                     runtime.set_global(output_config["global_name"], step_output[output_name])
                 case "local":       # Output to be written to local variable
-                    if "indexed" in output_config and output_config["indexed"]:
-                        local = runtime.get_local(output_config["local_name"])
-                        if isinstance(local, list):
-                            local.append(step_output[output_name])
-                        else:
-                            local = [step_output[output_name]]
-                        runtime.set_local(output_config["local_name"], local)
-                    else:
-                        runtime.set_local(output_config["local_name"], step_output[output_name])
+                    runtime.set_local(output_config["local_name"], step_output[output_name])
         
         return step_result
 
@@ -498,9 +493,6 @@ class IndexedStep(Step):
         for i, input_set in enumerate(input_sets):
             copied_step: Step = copy.deepcopy(self.template_step)
             copied_step.input_mapping = input_set
-            for output in copied_step.output_mapping:
-                if copied_step.output_mapping[output]["type"] in ["local", "global"]:
-                    copied_step.output_mapping[output]["indexed"] = True
             copied_step.name = f"{self.name} - #{i}"
             # copied_step.id = f"{self.id}.{i}"
             # copied_step.id = f"{self.id}"
@@ -508,10 +500,24 @@ class IndexedStep(Step):
             # print("Output mapping: " + str(copied_step.output_mapping))
 
         step_results: List[StepResult] = self.run_steps(runtime, self.steps, parent_step)
+        # The following lines gather and join the outputs which are not passing criteria
+        # The passing criteria apply to each individual indexed step, but the variables or unspecific variables are gathered into lists
+        # The assumption is that indexed steps provide aggregate outputs of data to the step container so that it can be evaluated as one
+        indexed_outputs = {}
+        for result in step_results:
+            for name, value in result.outputs.items():
+                if name not in self.template_step.output_mapping or \
+                   self.template_step.output_mapping[name]["type"] not in ["passthrough", "passfail", "equals", "range"]: # relies on lazy evaluation
+                    if name in indexed_outputs:
+                        indexed_outputs[name].append(value)
+                    else:
+                        indexed_outputs[name] = [value]
+
         step_result = StepResult.evaluate_multiple_step_results(step_results)
+        indexed_outputs["__result"] = step_result # Add the final aggregate result to the output list
         logger.debug(f"Indexed step {self.name} returning {step_result}")
 
-        return {"__result": step_result}
+        return indexed_outputs
 
 
 class PythonModuleStep(Step):
