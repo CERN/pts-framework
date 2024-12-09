@@ -195,3 +195,29 @@ _build/html/spikes/scope/SCOPE_documentation.html
 # pypts specific
 tests
 drivers
+# Start of .gitignore content managed by acc-py
+
+# Project artefacts.
+*/_version.py
+
+# Runtime artefacts.
+__pycache__
+*.py[co]
+*.egg-info
+*.pkg-info
+
+# Common virtual env names
+venv/
+venv.*/
+
+# Build artefacts
+*.whl
+*.so
+dist/
+build/
+
+# Common IDE files
+.idea/
+.vscode/
+
+# End of .gitignore content managed by acc-py

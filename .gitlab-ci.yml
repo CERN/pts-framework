@@ -1,0 +1,39 @@
+# Use the acc-py CI templates documented at 
+# https://acc-py.web.cern.ch/gitlab-mono/acc-co/devops/python/acc-py-gitlab-ci-templates/docs/templates/master/
+include:
+ - project: acc-co/devops/python/acc-py-gitlab-ci-templates
+   file: v2/python.gitlab-ci.yml
+
+variables:
+  project_name: pypts
+
+  # The PY_VERSION and ACC_PY_BASE_IMAGE_TAG variables control the default Python and Acc-Py versions used by Acc-Py jobs.
+  # It is recommended to keep the two values consistent.
+  # More details https://acc-py.web.cern.ch/gitlab-mono/acc-co/devops/python/acc-py-gitlab-ci-templates/docs/templates/master/generated/v2.html#global-variables.
+  PY_VERSION: '3.11'
+  ACC_PY_BASE_IMAGE_TAG: '2023.06'
+
+
+# Build a source distribution for pypts.
+build_sdist:
+  extends: .acc_py_build_sdist
+
+
+# Build a wheel for pypts.
+build_wheel:
+  extends: .acc_py_build_wheel
+
+
+# A development installation of pypts tested with pytest.
+test_dev:
+  extends: .acc_py_dev_test
+
+
+# A full installation of pypts (as a wheel) tested with pytest on an Acc-Py image.
+test_wheel:
+  extends: .acc_py_wheel_test
+
+
+# Release the source distribution and the wheel to the acc-py package index, only on git tag.
+publish:
+  extends: .acc_py_publish

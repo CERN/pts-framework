@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools", "wheel", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pypts"
+dynamic = [
+  "version",  # The version is taken directly from the repository, using setuptools-scm.
+]
+# description = "<Insert short description of the project>"
+readme = "README.md"
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+]
+authors = [
+  { name = "Alvaro Martinez Landete", email = "alvaro.martinez.landete@cern.ch" },
+]
+# Specify the minimum Python version required. It is not safe to use
+# this to control the *upper* version of Python.
+requires-python = ">=3.11"
+
+# The core dependencies of the project.
+dependencies = [
+  # "numpy",
+  # "other-mandatory-requirement",
+]
+
+[project.optional-dependencies]
+# The optional dependencies of the project, installable using the "extras" syntax.
+test = [
+  "pytest",
+]
+doc = [
+]
+dev = [
+  # Dependencies for development of the project, such as type checkers,
+  # linters, etc.
+  # "requirement-for-development-purposes-only",
+
+  # Include the "test" and "doc" dependencies in the dev dependencies.
+  "pypts[doc,test]",
+]
+
+[project.urls]
+# Homepage = "<Insert your URL>"
+Repository = "https://gitlab.cern.ch/rade/pts/pts-framework/pypts"
+
+[tool.setuptools.packages.find]
+include = ["pypts", "pypts.*"]
+
+[tool.setuptools.package-data]
+# All package data which is tracked by git is included automatically due to
+# include-package-data=true (the default) along with setuptools-scm. More details at:
+# https://setuptools.pypa.io/en/latest/userguide/datafiles.html#include-package-data
+
+[tool.setuptools_scm]
+# Tell setuptools_scm to write a _version.py file in the package. The
+# _version.py file must not be committed to the repository.
+version_file = "pypts/_version.py"
+
+[tool.acc_py_template]
+features = [
+  {name = "core", version = 2},
+]
