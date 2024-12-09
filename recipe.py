@@ -27,7 +27,7 @@ class ResultType(Enum):
         return str(self.name)
     
 class StepResult():
-    def __init__(self, step=None):
+    def __init__(self, step=None, parent=None):
         self.step: Step = step
         self.result: ResultType = None
         self.inputs: dict = {}
@@ -35,6 +35,7 @@ class StepResult():
         self.error_info: str = ""
         self.subresults: List[StepResult] = []
         self.uuid: uuid.UUID = uuid.uuid4()
+        self.parent: uuid.UUID = parent
     
     def __str__(self):
         return str(self.result)
@@ -60,6 +61,17 @@ class StepResult():
     
     def is_type(self, result_type: ResultType):
         return self.result == result_type
+    
+    @staticmethod
+    def get_result_by_uuid(step_results: List[Self], uuid: uuid.UUID) -> Self:
+        for result in step_results:
+            if result.uuid == uuid:
+                return result
+            else:
+                found_result = StepResult.get_result_by_uuid(result.subresults, uuid)
+                if found_result is not None:
+                    return found_result
+        return None
 
     @staticmethod
     def evaluate_multiple_step_results(step_results: List[Self]) -> ResultType:
@@ -73,16 +85,20 @@ class StepResult():
         return highest_result
 
     def print_result(self, indent=""):
-        print(indent + f"Step: {self.step.name} - ID: {self.uuid} - Result: {self.result}")
+        print((indent[:-2] + "+-" if indent else "") + f"Step: {self.step.name} - ID: {self.uuid} - Result: {self.result}")
         if self.error_info:
             print(indent + f"Error: {self.error_info}")
         print(indent + f"Inputs: {self.inputs}")
         print(indent + f"Outputs: {self.outputs}")
         if self.subresults:
             print(indent + "Subresults:")
-            for subresult in self.subresults:
-                subresult.print_result("  " + indent)
-        print(indent + "=====================================")
+            length = len(self.subresults)
+            for i, subresult in enumerate(self.subresults):
+                if i == length - 1:
+                    subresult.print_result(indent + "  ")
+                else:
+                    subresult.print_result(indent + "| ")
+        # print(indent + "=====================================")
 
 def serialize(obj):
     if isinstance(obj, Enum):
@@ -113,8 +129,9 @@ class Runtime:
         logger.debug(f"Pushing locals {locals}")
 
     def pop_locals(self):
-        logger.debug(f"Popping locals")
-        return self.local_stack.pop()
+        popped_locals = self.local_stack.pop()
+        logger.debug(f"Popping locals: {popped_locals}")
+        return popped_locals
     
     def get_local(self, name):
         value = self.local_stack[-1][name]
@@ -146,26 +163,15 @@ class Runtime:
 
     def append_result(self, parent_step_id: uuid.UUID, result: StepResult):
         logger.debug(f"Appending result to parent '{parent_step_id}'")
-
-        def get_result_by_uuid(result_list: List[StepResult], id: uuid.UUID):
-            for result in result_list:
-                if result.uuid == id:
-                    return result
-                else:
-                    found_result = get_result_by_uuid(result.subresults, id)
-                    if found_result is not None:
-                        return found_result
-            return None
         
         if parent_step_id is None:
             self.results.append(result)
         else:
-            found_result = get_result_by_uuid(self.results, parent_step_id)
-            if found_result is not None:
-                found_result.append_subresult(result)
+            parent_step_result: StepResult = StepResult.get_result_by_uuid(self.results, parent_step_id)
+            if parent_step_result is not None:
+                parent_step_result.append_subresult(result)
             else:
-                logger.warning(f"Could not find result with uuid {parent_step_id}.")
-                # self.results.extend(result)
+                logger.warning(f"Could not find step result with uuid {parent_step_id}.")
     
 
     def get_results(self):
@@ -230,14 +236,14 @@ class Recipe:
         results: List[StepResult] = runtime.get_results()
         runtime.send_event("post_run_recipe", results)
         
-        # print("==== RESULTS ====")
+        print("\n==== RESULTS ====")
         # print(f"Final result: {final_result}")
         # print("-----------------")
-        for result in results:
-            result.print_result()
+        # for result in results:
+        #     result.print_result()
 
-        print(runtime.local_stack)
-        print(runtime.globals)
+        # print(runtime.local_stack)
+        # print(runtime.globals)
 
         return results
 
@@ -307,7 +313,7 @@ class Sequence():
 
         sequence_result = StepResult.evaluate_multiple_step_results(sequence_results)
 
-        print(str(runtime.pop_locals()))
+        runtime.pop_locals()
         runtime.send_event("post_run_sequence", self, sequence_result)
         logger.info(f"Sequence {self.name} result: {sequence_result}")
 
@@ -318,7 +324,10 @@ class Step:
     def __init__(self, step_name, id="", description="", input_mapping={}, output_mapping={}, skip=False):
         self.name = step_name
         self.description = description
-        self.id = id
+        if id:
+            self.id = id
+        else:
+            self.id = uuid.uuid4()
         self.skip = skip
         self.input_mapping: dict = input_mapping
         self.output_mapping: dict = output_mapping
@@ -388,7 +397,7 @@ class Step:
         return step_result
 
     def run(self, runtime:Runtime, input, parent_step: uuid.UUID=None):
-        step_result = StepResult(self)
+        step_result = StepResult(self, parent_step)
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)
 
@@ -424,15 +433,12 @@ class Step:
             
             step_result = step.run(runtime, input, parent_step)
             
-            # runtime.append_results([step_result])
             step_results.append(step_result)
 
             if step_result.is_type(ResultType.ERROR):
                 break
             else:
                 next_step += 1
-
-        # aggregate_result = StepResult.evaluate_multiple_step_results(step_results)
 
         return step_results # aggregate_result # single pass or fail type
 
@@ -493,13 +499,17 @@ class IndexedStep(Step):
         for i, input_set in enumerate(input_sets):
             copied_step: Step = copy.deepcopy(self.template_step)
             copied_step.input_mapping = input_set
+            # Remove local and global variable access from the output mapping of individual steps
+            output_mapping_names = list(copied_step.output_mapping.keys())
+            for name in output_mapping_names:
+                if copied_step.output_mapping[name]["type"] in ["local", "global"]:
+                    del(copied_step.output_mapping[name])
+
             copied_step.name = f"{self.name} - #{i}"
-            # copied_step.id = f"{self.id}.{i}"
-            # copied_step.id = f"{self.id}"
             self.steps.append(copied_step)
-            # print("Output mapping: " + str(copied_step.output_mapping))
 
         step_results: List[StepResult] = self.run_steps(runtime, self.steps, parent_step)
+
         # The following lines gather and join the outputs which are not passing criteria
         # The passing criteria apply to each individual indexed step, but the variables or unspecific variables are gathered into lists
         # The assumption is that indexed steps provide aggregate outputs of data to the step container so that it can be evaluated as one

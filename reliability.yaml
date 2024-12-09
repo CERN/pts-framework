@@ -34,7 +34,7 @@ steps:
 - steptype: WaitStep
   step_name: Wait for 0.5s
   input_mapping:
-    wait_time: {value: 0.5}
+    wait_time: {value: 0.1}
   output_mapping: {}
 
 - steptype: PythonModuleStep

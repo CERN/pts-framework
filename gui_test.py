@@ -1,11 +1,12 @@
 import recipe
 import logging
 import sys
-from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit
-from PyQt5.QtCore import QObject, pyqtSignal, QThread, Qt
+from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, QTreeView
+from PyQt5.QtCore import QObject, pyqtSignal, QThread, Qt, QAbstractItemModel, QModelIndex
 from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 from threading import Thread
 from queue import Queue, SimpleQueue
+from typing import List, Dict, Self
 
 logger = logging.getLogger(__name__)
 
@@ -57,8 +58,12 @@ class MainWindow(QWidget):
 
         self.step_list.update()
 
+        self.result_list = QTreeView(self)
+        self.result_list.setMaximumWidth(600)
+
         left_half_layout.addWidget(self.recipe_label)
         left_half_layout.addWidget(self.step_list)
+        left_half_layout.addWidget(self.result_list)
 
         self.picture_box = QLabel(self)
         self.picture_box.setPixmap(self.cern_logo)
@@ -141,6 +146,11 @@ class MainWindow(QWidget):
         #self.step_list.setItem(step_line, 1, new_result_item)
         self.step_list.update()
 
+    def show_results(self, results: List[recipe.StepResult]):
+        myResultModel = StepResultModel(results)
+        self.result_list.setModel(myResultModel)
+        self.result_list.update()
+
     def show_message(self, response_q:SimpleQueue, message, image_path, options):
         self.message_box.setText(message)
         if image_path != "":
@@ -165,8 +175,84 @@ class MainWindow(QWidget):
                 break       
         
 
+class StepResultModel(QAbstractItemModel):
+    def __init__(self, result_data):
+        super().__init__()
+        self.result_data: List[recipe.StepResult] = result_data
+
+    def index(self, row, column, parent):
+        if not self.hasIndex(row, column, parent):
+            return QModelIndex()
+        
+        if parent.isValid():
+            parent_item = parent.internalPointer().subresults
+        else:
+            parent_item = self.result_data
+
+        child_item = parent_item[row]
+
+        return self.createIndex(row, column, child_item)
+
+    def parent(self, index):
+        if not index.isValid():
+            return QModelIndex()
+
+        index_item: recipe.StepResult = index.internalPointer()
+        parent_uuid = index_item.parent
+
+        if parent_uuid is None:
+            return QModelIndex()
+
+        parent_item: recipe.StepResult = recipe.StepResult.get_result_by_uuid(self.result_data, parent_uuid)
+        
+        if parent_item.parent is None:
+            list_to_search = self.result_data
+        else:
+            grandparent_item = recipe.StepResult.get_result_by_uuid(self.result_data, parent_item.parent)
+            list_to_search = grandparent_item.subresults
+
+        for i, step in enumerate(list_to_search):
+            if step.uuid == parent_uuid:
+                return self.createIndex(i, 0, parent_item)
+        
+        return QModelIndex()
+   
+    def rowCount(self, parent):
+        if parent.column() > 0:
+            return 0
+        
+        if parent.isValid():
+            parent_item = parent.internalPointer().subresults
+        else:
+            parent_item = self.result_data
+
+        return len(parent_item)
+
+    def columnCount(self, parent):
+        return 2
+    
+    def data(self, index, role):
+        if not index.isValid():
+            return None
+        
+        index_item: recipe.StepResult = index.internalPointer()
+        
+        columns = [
+            index_item.step.name,
+            str(index_item.result)
+        ]
+
+        match role:
+            case Qt.DisplayRole:
+                return columns[index.column()]
+            case _:
+                return None
+
+
+
 class RecipeEventProxy(QObject):
     pre_run_recipe_signal = pyqtSignal(str, str)
+    post_run_recipe_signal = pyqtSignal(list)
     pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
     post_run_step_signal = pyqtSignal(recipe.StepResult)
     user_interact_signal = pyqtSignal(SimpleQueue, str, str, list)
@@ -206,6 +292,7 @@ if __name__ == '__main__':
 
     # All the signals from the proxy are connected to the GUI from here
     recipe_event_proxy.pre_run_recipe_signal.connect(window.update_recipe_name)
+    recipe_event_proxy.post_run_recipe_signal.connect(window.show_results)
     recipe_event_proxy.pre_run_sequence_signal.connect(window.update_sequence)
     recipe_event_proxy.post_run_step_signal.connect(window.update_step_result)
     recipe_event_proxy.user_interact_signal.connect(window.show_message)
