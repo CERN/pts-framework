@@ -12,6 +12,7 @@ import time
 from enum import Enum
 import json
 import uuid
+# from pts import Runtime
 
 logger = logging.getLogger(__name__)
 
@@ -258,17 +259,17 @@ class Recipe:
 
 
 
-    @staticmethod
-    def run_threaded(recipe_file, sequence_name="Main"):
-        q_in = queue.Queue()
-        event_queue = queue.SimpleQueue()
-        report_queue = queue.SimpleQueue()
-        runtime = Runtime(event_queue, report_queue)
-        recipe = Recipe(recipe_file)
-        runtime.send_event("post_load_recipe", recipe)
-        threading.Thread(target=recipe.run, kwargs={"runtime": runtime, "sequence_name": sequence_name}, daemon=True).start()
-        # threading.Thread(target=recipe.parse_q_input, args=[q_in], daemon=True).start()
-        return event_queue, report_queue, q_in
+    # @staticmethod
+    # def run_threaded(recipe_file, sequence_name="Main"):
+    #     q_in = queue.Queue()
+    #     event_queue = queue.SimpleQueue()
+    #     report_queue = queue.SimpleQueue()
+    #     runtime = Runtime(event_queue, report_queue)
+    #     recipe = Recipe(recipe_file)
+    #     runtime.send_event("post_load_recipe", recipe)
+    #     threading.Thread(target=recipe.run, kwargs={"runtime": runtime, "sequence_name": sequence_name}, daemon=True).start()
+    #     # threading.Thread(target=recipe.parse_q_input, args=[q_in], daemon=True).start()
+    #     return event_queue, report_queue, q_in
             
 
 class Sequence():
@@ -347,7 +348,7 @@ class Step:
     def _step(self, runtime, input, parent_step):
         raise NotImplementedError
 
-    def process_inputs(self, runtime:Runtime):
+    def process_inputs(self, runtime: Runtime):
         # We replace all references to variables with their content. These become direct_inputs
         direct_inputs = {}
         for input_name, input_config in self.input_mapping.items():
@@ -396,7 +397,7 @@ class Step:
         
         return step_result
 
-    def run(self, runtime:Runtime, input, parent_step: uuid.UUID=None):
+    def run(self, runtime: Runtime, input, parent_step: uuid.UUID=None):
         step_result = StepResult(self, parent_step)
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)
@@ -606,7 +607,7 @@ class UserInteractionStep(Step):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def _step(self, runtime:Runtime, input, parent_step: uuid.UUID):
+    def _step(self, runtime: Runtime, input, parent_step: uuid.UUID):
         response_q = queue.SimpleQueue()
         runtime.send_event("user_interact", response_q, input["message"], input["image_path"], input["options"])
         logger.info("Waiting for user interaction...")
@@ -618,7 +619,7 @@ class WaitStep(Step):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
-    def _step(self, runtime:Runtime, input, parent_step: uuid.UUID):
+    def _step(self, runtime: Runtime, input, parent_step: uuid.UUID):
         logger.info(f"Waiting for {input['wait_time']}s")
         time.sleep(input["wait_time"])
 

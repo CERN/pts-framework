@@ -7,6 +7,8 @@ from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 from threading import Thread
 from queue import Queue, SimpleQueue
 from typing import List, Dict, Self
+import pts
+from contextlib import suppress
 
 logger = logging.getLogger(__name__)
 
@@ -265,28 +267,27 @@ class RecipeEventProxy(QObject):
     def run(self):
         while True:
             event_name, event_data = self.event_q.get()
-            try:
+            with suppress(AttributeError): # If we can't find the signal, ignore and move on
                 # the signals have the same names as the event_names, with an appended '_signal' to them.
                 # We construct the signal name and get it dynamically, then emit the signal with event_data as parameters
                 signal_name = event_name + "_signal"
                 signal = getattr(self, signal_name)
                 signal.emit(*event_data)
-            except AttributeError: # raised if the signal doesn't exist. This allows to not implement them all
-                pass
 
-                
 
     
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     window = MainWindow()
 
-    event_q, report_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
+    # event_q, report_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
+    api = pts.run_pts("reliability.yaml", sequence_name="Reliability Loop")
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("indexing.yaml", sequence_name="Main")
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("recipe1.yaml", sequence_name="Main")
-    window.q_in = q_in
+    # window.q_in = q_in
+    window.q_in = api.input_queue
     recipe_event_processing_thread = QThread()
-    recipe_event_proxy = RecipeEventProxy(event_q)
+    recipe_event_proxy = RecipeEventProxy(api.event_queue)
     recipe_event_proxy.moveToThread(recipe_event_processing_thread)
     recipe_event_processing_thread.started.connect(recipe_event_proxy.run)
 
