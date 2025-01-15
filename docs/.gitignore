@@ -1,0 +1,6 @@
+# Start of .gitignore content managed by acc-py
+
+build
+source/api/*
+
+# End of .gitignore content managed by acc-py
