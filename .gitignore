@@ -221,3 +221,4 @@ build/
 .vscode/
 
 # End of .gitignore content managed by acc-py
+src/pypts/_version.py
