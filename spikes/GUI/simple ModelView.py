@@ -8,13 +8,12 @@ from PyQt6.QtCore import QTimer
 
 
 class MyModel(QAbstractTableModel):
-    def __init__(self):
+    def __init__(self, timer_interval: int = 1000):
         super(MyModel, self).__init__()
-        self.rowCount
-        self.columnCount
+        self.startTimer(timer_interval)
         pass
 
-    def startTimer(self):
+    def startTimer(self, timer_interval):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.timerEvent)
         self.timer.start(1000)  # Timer set to 1 second intervals
@@ -26,7 +25,7 @@ class MyModel(QAbstractTableModel):
         self.dataChanged.emit(top_left, bottom_right)
 
     def rowCount(self, parent=None):
-        return 4  # Example row count
+        return 6  # Example row count
     
     def columnCount(self, parent=None):
         return 3  # Example column count
@@ -56,7 +55,7 @@ class MyModel(QAbstractTableModel):
 if  __name__ == "__main__":
     app = QApplication(sys.argv)
     table_view = QTableView()
-    myModel = MyModel()
+    myModel = MyModel(timer_interval=1000)
     table_view.setModel(myModel)
     table_view.show()
     sys.exit(app.exec())
