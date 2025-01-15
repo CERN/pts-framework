@@ -32,6 +32,9 @@ test = [
   "pytest",
 ]
 doc = [
+  "Sphinx",
+  "sphinx",
+  "acc-py-sphinx",
 ]
 dev = [
   # Dependencies for development of the project, such as type checkers,
@@ -43,10 +46,11 @@ dev = [
 ]
 
 [project.urls]
-# Homepage = "<Insert your URL>"
-Repository = "https://gitlab.cern.ch/rade/pts/pts-framework/pypts"
+# Homepage = "PyPTS repository"
+Repository = "https://gitlab.cern.ch/pts/framework/pypts"
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["pypts", "pypts.*"]
 
 [tool.setuptools.package-data]
@@ -57,9 +61,10 @@ include = ["pypts", "pypts.*"]
 [tool.setuptools_scm]
 # Tell setuptools_scm to write a _version.py file in the package. The
 # _version.py file must not be committed to the repository.
-version_file = "pypts/_version.py"
+version_file = "src/pypts/_version.py"
 
 [tool.acc_py_template]
 features = [
   {name = "core", version = 2},
+  {name = "docs", version = 2},
 ]
