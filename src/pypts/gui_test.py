@@ -10,6 +10,8 @@ from typing import List, Dict, Self
 from contextlib import suppress
 import pts
 import recipe
+import os
+from importlib.resources import files
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +284,9 @@ if __name__ == '__main__':
     window = MainWindow()
 
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
-    api = pts.run_pts("recipes/reliability.yaml", sequence_name="Reliability Loop")
+    yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
+    yaml_path = os.path.join(yaml_dir, 'reliability.yaml')
+    api = pts.run_pts(yaml_path, sequence_name="Reliability Loop")
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("indexing.yaml", sequence_name="Main")
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("recipe1.yaml", sequence_name="Main")
     # window.q_in = q_in
