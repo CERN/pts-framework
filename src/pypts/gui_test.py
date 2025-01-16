@@ -1,4 +1,4 @@
-import recipe
+
 import logging
 import sys
 from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, QTreeView
@@ -7,8 +7,9 @@ from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
 from threading import Thread
 from queue import Queue, SimpleQueue
 from typing import List, Dict, Self
-import pts
 from contextlib import suppress
+import pts
+import recipe
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +282,7 @@ if __name__ == '__main__':
     window = MainWindow()
 
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("reliability.yaml", sequence_name="Reliability Loop")
-    api = pts.run_pts("reliability.yaml", sequence_name="Reliability Loop")
+    api = pts.run_pts("recipes/reliability.yaml", sequence_name="Reliability Loop")
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("indexing.yaml", sequence_name="Main")
     # event_q, report_q, q_in = recipe.Recipe.run_threaded("recipe1.yaml", sequence_name="Main")
     # window.q_in = q_in

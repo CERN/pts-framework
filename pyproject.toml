@@ -14,6 +14,9 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 authors = [
+  { name = "Odd Oyvind Andreassen", email = "odd.oyvind.andreassen@cern.ch" },
+  { name = "Joseph Tagg", email = "joseph.tagg@cern.ch" },
+  { name = "Bartlomiej Banas", email = "joseph.tagg@cern.ch" },
   { name = "Alvaro Martinez Landete", email = "alvaro.martinez.landete@cern.ch" },
 ]
 # Specify the minimum Python version required. It is not safe to use

@@ -1,5 +1,5 @@
 from time import sleep
-from pts import DataChannel, create_channel, destroy_channel
+from pypts.pts import DataChannel, create_channel, destroy_channel
 
 
 current_temperature = 20
