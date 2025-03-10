@@ -46,6 +46,7 @@ dev = [
 
   # Include the "test" and "doc" dependencies in the dev dependencies.
   "pypts[doc,test]",
+  "ruff",
 ]
 
 [project.urls]

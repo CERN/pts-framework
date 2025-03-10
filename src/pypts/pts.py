@@ -20,7 +20,20 @@ class PtsApi:
     recipe_queue: SimpleQueue
     
 
-def run_pts(recipe_file, sequence_name="Main"):
+def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
+    """
+    Starts a PTS recipe running in a separate thread and returns an API object to interact with it.
+
+    Args:
+        recipe_file (str): Path to the YAML recipe file to run
+        sequence_name (str, optional): Name of the sequence in the recipe to run. Defaults to "Main".
+
+    Returns:
+        PtsApi: An object containing queues for interacting with the running recipe:
+            - input_queue: Queue for sending commands to the recipe
+            - event_queue: Queue for receiving events from the recipe
+            - recipe_queue: Queue for receiving recipe execution reports
+    """
     input_queue = Queue()
     event_queue = SimpleQueue()
     report_queue = SimpleQueue()
