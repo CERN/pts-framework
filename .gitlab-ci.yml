@@ -6,7 +6,7 @@ include:
 
 variables:
   project_name: pypts
-  project_root: src
+  project_root: "."
 
   # The PY_VERSION and ACC_PY_BASE_IMAGE_TAG variables control the default Python and Acc-Py versions used by Acc-Py jobs.
   # It is recommended to keep the two values consistent.
@@ -16,6 +16,15 @@ variables:
 
 dev_test:
   extends: .acc_py_dev_test
+  script:
+    # Override the default test command to look in the src directory
+    - cd ${project_root}
+    - python -m pytest ./src/${project_name}
+      --cov=${project_name}
+      --cov-report term
+      --cov-report html:coverage-html
+      --cov-report xml:coverage-report.xml
+      --junitxml=junit-report.xml
 
 # Build a source distribution for pypts.
 build_sdist:
