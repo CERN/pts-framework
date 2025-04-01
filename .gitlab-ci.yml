@@ -17,9 +17,9 @@ variables:
 dev_test:
   extends: .acc_py_dev_test
   script:
-    # Override the default test command to look in the src directory
+    # Override the default test command to look in the tests directory
     - cd ${project_root}
-    - python -m pytest ./src/${project_name}
+    - python -m pytest ./tests
       --cov=${project_name}
       --cov-report term
       --cov-report html:coverage-html
