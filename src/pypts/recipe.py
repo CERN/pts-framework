@@ -194,7 +194,10 @@ class Recipe:
     def _default_file_loader(self, path):
         """Default implementation that loads a YAML file"""
         with open(path, 'r') as file:
-            return yaml.safe_load_all(file)
+            # Read the file content into memory first
+            file_content = file.read()
+        # Then return an iterator over the YAML documents
+        return yaml.safe_load_all(file_content)
     
     def _default_event_sender(self, runtime, event_name, *event_data):
         """Default implementation that uses runtime's send_event"""
