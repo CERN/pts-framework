@@ -15,6 +15,8 @@ variables:
 
 dev_test:
   extends: .acc_py_dev_test
+  variables:
+    TEST_COMMAND: python -m pytest ./src/${project_name} --cov=${project_name} --cov-report term --cov-report html:coverage-html --cov-report xml:coverage-report.xml --junitxml=junit-report.xml
 
 # Build a source distribution for pypts.
 build_sdist:
