@@ -186,19 +186,31 @@ class Runtime:
 
 
 class Recipe:
-    def __init__(self, recipe_file_path):
+    def __init__(self, recipe_file_path, file_loader=None, event_sender=None):
+        self.file_loader = file_loader or self._default_file_loader
+        self.event_sender = event_sender or self._default_event_sender
         self.__load_recipe(recipe_file_path)
 
-    def __load_recipe(self, recipe_file_path):
-        logger.info(f"Loading recipe file {recipe_file_path}.")
-        self.sequences: dict[str, Sequence] = {} 
-        with open(recipe_file_path, 'r') as file:
-            recipe_data = yaml.safe_load_all(file)
-            recipe_main_data = next(recipe_data)
+    def _default_file_loader(self, path):
+        """Default implementation that loads a YAML file"""
+        with open(path, 'r') as file:
+            return yaml.safe_load_all(file)
+    
+    def _default_event_sender(self, runtime, event_name, *event_data):
+        """Default implementation that uses runtime's send_event"""
+        runtime.send_event(event_name, *event_data)
 
-            # The rest of the documents are all sequences
-            for sequence in recipe_data:
-                self.sequences[sequence["sequence_name"]] = Sequence(sequence_data=sequence)
+    def __load_recipe(self, recipe_file_path):
+        """Loads recipe data using the file_loader"""
+        logger.info(f"Loading recipe file {recipe_file_path}.")
+        self.sequences = {}
+        
+        recipe_data = self.file_loader(recipe_file_path)
+        recipe_main_data = next(recipe_data)
+        
+        # The rest of the documents are all sequences
+        for sequence in recipe_data:
+            self.sequences[sequence["sequence_name"]] = Sequence(sequence_data=sequence)
 
         self.name: str = recipe_main_data["name"]
         self.description: str = recipe_main_data["description"]
@@ -216,13 +228,17 @@ class Recipe:
         logger.info(f"Serial number: {serial_number}")
         return serial_number
 
-    def run(self, runtime: Runtime, sequence_name: str="Main", serial_number: str=None):
+    def run(self, runtime: Runtime, sequence_name: str="Main", serial_number: str=None, get_serial_number_func=None):
         runtime.set_globals(self.globals)
         runtime.set_sequences(self.sequences)
-        runtime.send_event("pre_run_recipe", self.name, self.description)
+        
+        # Use the event sender instead of direct calls
+        self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
 
         if serial_number is None:
-            runtime.set_global("serial_number", self.__get_serial_number(runtime))
+            # Allow passing a different function for getting serial numbers
+            get_serial = get_serial_number_func or self.__get_serial_number
+            runtime.set_global("serial_number", get_serial(runtime))
         else:
             runtime.set_global("serial_number", serial_number)
 
