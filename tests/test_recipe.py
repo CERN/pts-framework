@@ -3,6 +3,10 @@ from unittest.mock import MagicMock
 from pypts.recipe import Recipe
 
 def test_recipe_loading():
+    '''
+    Test that the recipe is loaded correctly by loading a fake recipe and checking the attributes.
+    Also tests that the recipe is run with the correct serial number.
+    '''
     # Prepare test data
     recipe_data = [
         {"name": "Test Recipe", "description": "For testing", "version": "1.0", "globals": {}},
