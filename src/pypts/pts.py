@@ -1,6 +1,6 @@
 from queue import Queue, SimpleQueue
 import logging
-import recipe
+from pypts import recipe
 import threading
 from dataclasses import dataclass
 
@@ -41,10 +41,22 @@ def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
     _pts_context = True
     api = PtsApi(input_queue, event_queue, report_queue)
     runtime = recipe.Runtime(event_queue, report_queue)
+    
+    # Create the recipe with default file_loader and event_sender
     recipe_to_run = recipe.Recipe(recipe_file)
+    
+    # Send event using runtime's send_event method
     runtime.send_event("post_load_recipe", recipe_to_run)
-    threading.Thread(target=recipe_to_run.run, kwargs={"runtime": runtime, "sequence_name": sequence_name}, daemon=True).start()
-    # threading.Thread(target=recipe.parse_q_input, args=[q_in], daemon=True).start()
+    
+    # Start the recipe in a separate thread
+    threading.Thread(
+        target=recipe_to_run.run, 
+        kwargs={
+            "runtime": runtime, 
+            "sequence_name": sequence_name
+        }, 
+        daemon=True
+    ).start()
 
     return api
 

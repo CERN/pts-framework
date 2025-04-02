@@ -193,7 +193,6 @@ _build/html/spikes/scope/SCOPE_documentation.html
 /src/tests/ibert/test/
 
 # pypts specific
-tests
 drivers
 # Start of .gitignore content managed by acc-py
 
