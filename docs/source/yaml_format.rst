@@ -14,14 +14,16 @@ Document 1: Main Recipe Configuration
 .. code-block:: yaml
    :caption: Example Main Recipe Document
 
-   name: MyRecipeName
-   description: A detailed description of what this recipe does.
-   version: 1.0.0
-   globals:
-     global_var1: value1
-     global_var2: 123
-   # tags:  # Optional tags (Currently commented out in code)
-   #   key1: value1
+  ---
+  name: Name of the recipe. Typically the project name.
+  version: Allows for tracking different versions of the file
+  description: A more complete description of this recipe
+  globals: # Globals can be referenced and used from any step in the whole file
+    global_name: value
+    other_global: other_value
+    # ...
+  # tags:  # Optional tags (Currently commented out in code)
+  #   key1: value1
 
 --- # Separator for the next document
 
@@ -33,27 +35,16 @@ Each subsequent document defines a sequence.
 .. code-block:: yaml
    :caption: Example Sequence Document
 
-   sequence_name: Main # Or any other sequence name
-   parameters: # Inputs expected by this sequence when called as a step
-     param1: description
-     param2: description
-   locals: # Variables local to this sequence's execution scope
-     local_var1: default_value
-     some_list: []
-   outputs: # List of local variables to be returned as output
-     - local_var1
-     - output_data
-   setup_steps: # Steps run before the main steps
-     - steptype: ... # Step definition (see below)
-       # ... other step fields
-   steps: # Main execution steps
-     - steptype: PythonModuleStep
-       step_name: Call Python Function
-       # ... (step fields shown below)
-     # ... more steps
-   teardown_steps: # Steps run after main steps, even if errors occurred
-     - steptype: ... # Step definition
-       # ... other step fields
+   sequence_name: Name of the sequence. A sequence defines a list of steps
+   description: Description of the sequence
+   setup_steps: [] # Steps that run first and are used to setup environments. Typically utility steps necessary for the next ones to work properly.
+   steps: [] # Main steps of the sequence. These are run in order by the execution environment
+   teardown_steps: [] # Teardown steps are run even if there is an error during the run. This is to make sure we run some shutdown routines no matter what happens.
+   locals: # List of variables local to the sequence in scope (contrasted with global variables defined in recipe document)
+     local_name: local_value
+     # ...
+   parameters: [] # List of which locals can be set by the execution environment if this sequence is run as a subsequence
+   outputs: [] # List of which locals are to be used as outputs of the sequence when run as a subsequence
 
 
 Step Definition
