@@ -32,6 +32,7 @@ Documentation contents
     :maxdepth: 1
 
     usage
+    yaml_format
 
 .. toctree::
     :caption: Reference docs
