@@ -18,6 +18,7 @@ Document 1: Main Recipe Configuration
   name: Name of the recipe. Typically the project name.
   version: Allows for tracking different versions of the file
   description: A more complete description of this recipe
+  main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
   globals: # Globals can be referenced and used from any step in the whole file
     global_name: value
     other_global: other_value
@@ -89,18 +90,18 @@ The ``input_mapping`` dictionary maps internal step input names (e.g., argument 
 
 Each value in the ``input_mapping`` dictionary is *another* dictionary with the following keys:
 
-*   ``type`` (str): Source of the value. Must be one of ``direct``, ``local``, or ``global``.
-*   ``value``: Required if ``type`` is ``direct``. Provides the literal value directly.
+*   ``type`` (str, optional): Source of the value. Must be one of ``direct``, ``local``, or ``global``. If omitted, defaults to ``direct``.
+*   ``value``: Required if ``type`` is ``direct`` (or omitted). Provides the literal value directly.
 *   ``local_name``: Required if ``type`` is ``local``. Specifies the name of the sequence's local variable to read from.
 *   ``global_name``: Required if ``type`` is ``global``. Specifies the name of the recipe's global variable to read from.
-*   ``indexed`` (bool, optional): Defaults to ``false``. If ``true`` for one or more inputs, the step becomes an ``IndexedStep``. It runs multiple times, once for each item in the *shortest* input list marked as ``indexed: true``. Non-indexed inputs are repeated (their value is used) for each run of the indexed step.
+*   ``indexed`` (bool, optional): Defaults to ``false``. If ``true`` for one or more inputs, the step becomes an ``IndexedStep`` internally. It runs multiple times, once for each item in the *shortest* input list marked as ``indexed: true``. Non-indexed inputs are repeated (their value is used as-is) for each run of the indexed step.
 
 .. code-block:: yaml
    :caption: Example Input Mapping Options
 
    input_mapping:
-     # Input 'arg1' gets the literal integer value 3
-     arg1: {type: direct, value: 3, indexed: false}
+     # Input 'arg1' gets the literal integer value 3 (type defaults to direct)
+     arg1: {value: 3, indexed: false}
 
      # Input 'arg2' gets its value from the sequence's local variable 'my_local_var'
      arg2: {type: local, local_name: my_local_var, indexed: false}
@@ -121,15 +122,16 @@ Each value in the ``input_mapping`` dictionary is *another* dictionary with the 
 Output Mapping Details (``output_mapping``)
 --------------------------------------------
 
-The ``output_mapping`` dictionary defines how the step's raw output is processed, evaluated for pass/fail status, and stored back into variables. The keys of the ``output_mapping`` dictionary correspond to the keys in the step's raw output data (typically a dictionary). If the step produces a non-dictionary output, it's treated as a dictionary with a single key (often ``output`` or specific to the step type).
+The ``output_mapping`` dictionary defines how the step's raw output is processed, evaluated for pass/fail status, and stored back into variables. The keys of the ``output_mapping`` dictionary correspond to the keys in the step's raw output data (typically a dictionary). If the step produces a non-dictionary output (e.g., a ``PythonModuleStep`` method returns a single value like a boolean or number), it's treated as a dictionary with a single key ``output`` (e.g., ``{"output": returned_value}``).
 
 Each value in the ``output_mapping`` dictionary is *another* dictionary specifying the action to take:
 
-*   ``type`` (str): How to handle the output value associated with this key. Must be one of ``local``, ``global``, ``passfail``, ``equals``, ``range``, or ``passthrough`` (primarily for ``SequenceStep``).
+*   ``type`` (str): How to handle the output value associated with this key. Must be one of ``local``, ``global``, ``passfail``, ``equals``, ``range``, or ``passthrough``.
 *   ``local_name``: Required if ``type`` is ``local``. The name of the sequence's local variable where this output value should be stored.
 *   ``global_name``: Required if ``type`` is ``global``. The name of the recipe's global variable where this output value should be stored.
 *   ``value``: Required if ``type`` is ``equals``. The target value for comparison. If the step's output value for this key equals ``value``, the check passes.
 *   ``min``, ``max``: Required if ``type`` is ``range``. The inclusive lower (``min``) and upper (``max``) bounds for comparison. If the step's output value for this key falls within [min, max], the check passes.
+*   ``passthrough``: Used to propagate a `ResultType` directly. This is often used with the implicit ``__result`` output key from a `SequenceStep` to propagate the overall status of the subsequence, or internally by `IndexedStep` to represent the aggregate result.
 
 **Pass/Fail Determination:**
 
@@ -162,7 +164,7 @@ Each value in the ``output_mapping`` dictionary is *another* dictionary specifyi
      measurement: {type: range, min: 3.0, max: 6.5}
 
      # For SequenceStep: Propagate the overall Pass/Fail/Done status
-     # of the subsequence.
+     # of the subsequence using its implicit '__result' output.
      __result: { type: passthrough }
 
 Specific Step Types
@@ -197,6 +199,7 @@ Executes Python code.
 *   **method_name** (str): Name of the method to call (if ``action_type`` is ``method``).
 *   Inputs for ``read_attribute``: ``attribute_name``.
 *   Inputs for ``write_attribute``: ``attribute_name``, ``attribute_value``.
+*   Note: If ``action_type`` is ``method`` and the called function returns a non-dictionary value, the value is made available under the output key ``output``.
 
 SequenceStep
 ------------
