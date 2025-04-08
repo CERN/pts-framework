@@ -1,6 +1,5 @@
 # pypts
 
-A short description goes here.
+Hardware-oriented testing framework developed by BE-CEM-MTA.
 
-You can use [Gitlab-flavored Markdown](https://docs.gitlab.com/ee/user/markdown.html) to
-write the README.
+For full documentation, please visit [PTS Framework Documentation](https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/stable/).
