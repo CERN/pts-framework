@@ -30,6 +30,10 @@ class RecipeEventProxy(QObject):
     """Emitted after a step finishes. Args: {'step_uuid': uuid, 'status_text': str, 'status_color': str}"""
     pre_run_step_signal = pyqtSignal(dict)
     """Emitted before a step starts. Args: {'step_uuid': uuid, 'step_name': str}"""
+    post_load_recipe_signal = pyqtSignal(dict)
+    """Emitted after a recipe is loaded. Args: {'recipe_name': str, 'recipe_version': str}"""
+    post_run_sequence_signal = pyqtSignal(dict)
+    """Emitted after a sequence finishes. Args: {'sequence_name': str, 'sequence_result': str}"""
 
     def __init__(self, event_q: SimpleQueue):
         """Initializes the proxy with the event queue to listen to."""
@@ -88,6 +92,19 @@ class RecipeEventProxy(QObject):
                         "step_uuid": step_object.id,
                         "step_name": step_object.name
                         # Add other step attributes if needed later
+                    }
+                elif event_name == "post_load_recipe":
+                    recipe_object: recipe.Recipe = event_data[0]
+                    event_dict = {
+                        "recipe_name": recipe_object.name,
+                        "recipe_version": recipe_object.version
+                    }
+                elif event_name == "post_run_sequence":
+                    sequence_object: recipe.Sequence = event_data[0]
+                    sequence_result: recipe.ResultType = event_data[1]
+                    event_dict = {
+                        "sequence_name": sequence_object.name,
+                        "sequence_result": str(sequence_result) # Convert enum to string
                     }
                 # Add other event types and their dictionary mappings here if needed
 

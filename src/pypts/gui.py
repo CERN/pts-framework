@@ -259,6 +259,20 @@ class MainWindow(QWidget):
         else:
             logging.warning(f"Could not find step with UUID {step_uuid_to_find} in the step list to highlight as running.")
 
+    def handle_post_load_recipe(self, event_dict):
+        """Handles the event triggered after a recipe is loaded."""
+        recipe_name = event_dict["recipe_name"]
+        recipe_version = event_dict["recipe_version"]
+        logging.info(f"Recipe '{recipe_name}' (v{recipe_version}) loaded.")
+        # Potential UI update: self.some_label.setText(f"Loaded: {recipe_name} v{recipe_version}")
+
+    def handle_post_run_sequence(self, event_dict):
+        """Handles the event triggered after a sequence finishes."""
+        sequence_name = event_dict["sequence_name"]
+        sequence_result = event_dict["sequence_result"]
+        logging.info(f"Sequence '{sequence_name}' finished with result: {sequence_result}.")
+        # Potential UI update: Could mark sequence as done in a separate list/view
+
 
 class StepResultModel(QAbstractItemModel):
     """A Qt model for displaying hierarchical StepResult data in a QTreeView.

@@ -49,6 +49,10 @@ if __name__ == '__main__':
     recipe_event_proxy.user_interact_signal.connect(window.show_message)
     recipe_event_proxy.get_serial_number_signal.connect(window.get_serial_number)
 
+    # Connect new signals
+    recipe_event_proxy.post_load_recipe_signal.connect(window.handle_post_load_recipe)
+    recipe_event_proxy.post_run_sequence_signal.connect(window.handle_post_run_sequence)
+
     recipe_event_processing_thread.start()
 
     exit_code = app.exec()
