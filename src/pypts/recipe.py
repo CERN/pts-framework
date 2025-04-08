@@ -186,6 +186,22 @@ class Runtime:
 
 
 class Recipe:
+    """
+    Represents and executes a test recipe defined in a multi-document YAML file.
+
+    Loads the recipe structure, manages global variables, sequences, and overall
+    execution flow. The detailed structure of the recipe YAML file is described
+    in :doc:`yaml_format`.
+
+    Args:
+        recipe_file_path (str or Path): Path to the recipe YAML file.
+        file_loader (callable, optional): A function that takes a path and returns
+            an iterator over loaded YAML documents. Defaults to loading from a
+            local YAML file.
+        event_sender (callable, optional): A function to send events during recipe
+            execution. Takes `runtime`, `event_name`, and `*event_data` as arguments.
+            Defaults to using `runtime.send_event`.
+    """
     def __init__(self, recipe_file_path, file_loader=None, event_sender=None):
         self.file_loader = file_loader or self._default_file_loader
         self.event_sender = event_sender or self._default_event_sender
