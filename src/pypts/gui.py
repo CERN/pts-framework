@@ -12,6 +12,7 @@ import uuid # Import uuid
 
 
 class TextEditLoggerHandler(QObject, logging.Handler):
+    """A logging handler that emits Qt signals for log messages."""
     new_message = pyqtSignal(str)
 
     def __init__(self, parent):
@@ -24,7 +25,9 @@ class TextEditLoggerHandler(QObject, logging.Handler):
 
 
 class MainWindow(QWidget):
+    """The main application window, displaying recipe progress and results."""
     def __init__(self, *args, **kwargs):
+        """Initializes the main window UI components."""
         super().__init__(*args, **kwargs)
 
         self.q_in = None
@@ -103,10 +106,15 @@ class MainWindow(QWidget):
 
 
     def update_recipe_name(self, recipe_name, recipe_description):
+        """Updates the recipe name label and window title."""
         self.recipe_label.setText(recipe_name)
         self.setWindowTitle(f"PTS: {recipe_name}")
 
     def update_sequence(self, sequence: recipe.Sequence):
+        """Populates the step list table when a sequence starts.
+        
+        Stores the step UUID in the UserRole for later identification.
+        """
         if not self.already_updated:
             self.step_list.setRowCount(len(sequence.steps))
             for i, step in enumerate(sequence.steps):
@@ -127,6 +135,11 @@ class MainWindow(QWidget):
             self.step_list.update() # Ensure visual update
 
     def update_step_result(self, step_status_vm: dict):
+        """Updates the status of a step in the live step list table.
+        
+        Receives a ViewModel dictionary with step UUID, status text, and color.
+        Finds the corresponding row using the UUID and updates the status cell.
+        """
         # Extract data from the ViewModel
         step_uuid_to_find = step_status_vm["step_uuid"]
         result_string = step_status_vm["status_text"]
@@ -158,6 +171,11 @@ class MainWindow(QWidget):
         # self.step_list.update() # setItem should trigger update, but call explicitly if needed
 
     def show_results(self, results: List[recipe.StepResult]):
+        """Displays the final, hierarchical results in the tree view.
+        
+        Receives the raw list of StepResult objects and uses StepResultModel
+        to populate the QTreeView.
+        """
         myResultModel = StepResultModel(results)
         self.result_list.setModel(myResultModel)
         self.result_list.update()
@@ -172,6 +190,7 @@ class MainWindow(QWidget):
         self.response_q = response_q
     
     def interaction_response(self, response):
+        """Sends the user's response back via the response queue and resets UI."""
         self.response_q.put(response)
         self.yes_button.setEnabled(False)
         self.no_button.setEnabled(False)
@@ -189,7 +208,12 @@ class MainWindow(QWidget):
         
 
 class StepResultModel(QAbstractItemModel):
-    def __init__(self, result_data):
+    """A Qt model for displaying hierarchical StepResult data in a QTreeView.
+
+    Note: This model is currently coupled to the `recipe.StepResult` class structure.
+    """
+    def __init__(self, result_data: List[recipe.StepResult]):
+        """Initializes the model with the raw list of StepResult objects."""
         super().__init__()
         self.result_data: List[recipe.StepResult] = result_data
 

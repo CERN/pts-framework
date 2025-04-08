@@ -13,13 +13,20 @@ from pypts.event_proxy import RecipeEventProxy # Import the proxy class
 
 logger = logging.getLogger(__name__)
 
-
+# Configure basic logging
 log_format = '%(levelname)s : %(name)s : %(message)s'
 logging.basicConfig(level=logging.DEBUG, format=log_format)
+# Reduce verbosity of noisy libraries
 logging.getLogger("paramiko.transport").setLevel("WARN")
 
 
 if __name__ == '__main__':
+    """Main entry point for the PTS application.
+    
+    Sets up the QApplication, MainWindow, logging, RecipeEventProxy, 
+    and connects signals/slots between the proxy and the window.
+    Starts the recipe execution and event processing threads.
+    """
     app = QApplication(sys.argv)
     window = MainWindow()
 

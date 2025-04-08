@@ -10,26 +10,38 @@ logger = logging.getLogger(__name__)
 
 class RecipeEventProxy(QObject):
     """Proxies events from the recipe execution thread's event queue 
-       to Qt signals for the GUI thread, transforming data into ViewModels 
-       where appropriate to decouple the GUI from the core recipe logic.
+       to Qt signals for the GUI thread. 
+
+       It transforms data into ViewModels for specific signals (like 
+       `post_run_step_signal`) to decouple the GUI from the core recipe logic,
+       while passing raw data for others.
     """
     # --- Raw Signals (Data directly from recipe/pts) ---
     pre_run_recipe_signal = pyqtSignal(str, str)
-    post_run_recipe_signal = pyqtSignal(list) # TODO: Consider transforming to ViewModel
-    pre_run_sequence_signal = pyqtSignal(recipe.Sequence) # TODO: Consider transforming to ViewModel
+    """Emitted before the recipe starts. Args: recipe_name (str), recipe_description (str)"""
+    post_run_recipe_signal = pyqtSignal(list)
+    """Emitted after the recipe finishes. Args: results (List[recipe.StepResult])"""
+    pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
+    """Emitted before a sequence starts. Args: sequence (recipe.Sequence)"""
     user_interact_signal = pyqtSignal(SimpleQueue, str, str, list)
+    """Emitted when user interaction is required. Args: response_q, message, image_path, options"""
     get_serial_number_signal = pyqtSignal(SimpleQueue)
+    """Emitted when the serial number needs to be obtained. Args: response_q"""
 
     # --- ViewModel Signals ---
-    post_run_step_signal = pyqtSignal(dict) # Emits Step Status ViewModel
+    post_run_step_signal = pyqtSignal(dict)
+    """Emitted after a step finishes. Args: step_status_vm (dict) - A ViewModel 
+       containing keys like 'step_uuid', 'status_text', 'status_color'.
+    """
 
     def __init__(self, event_q: SimpleQueue):
+        """Initializes the proxy with the event queue to listen to."""
         super().__init__()
         self.event_q = event_q
 
     def run(self):
-        """Continuously fetches events from the queue and emits corresponding signals.
-           Transforms data for specific events (like post_run_step) into ViewModels.
+        """Continuously fetches events from the queue, transforms data for 
+           `post_run_step` into a ViewModel, and emits the corresponding Qt signal.
         """
         logger.info("RecipeEventProxy started.")
         while True:
