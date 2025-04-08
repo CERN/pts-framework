@@ -32,11 +32,11 @@ Documentation contents
     :maxdepth: 1
 
     usage
-    yaml_format
 
 .. toctree::
     :caption: Reference docs
     :maxdepth: 1
 
     api
+    yaml_format
     genindex

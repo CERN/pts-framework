@@ -1,9 +1,11 @@
-
 import logging
 import sys
-from PyQt5.QtWidgets import QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, QTreeView
-from PyQt5.QtCore import QObject, pyqtSignal, QThread, Qt, QAbstractItemModel, QModelIndex
-from PyQt5.QtGui import QFont, QPalette, QColor, QPixmap
+from PyQt6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
+                             QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, 
+                             QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
+                             QTreeView, QAbstractItemView)
+from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QAbstractItemModel, QModelIndex
+from PyQt6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
 from threading import Thread
 from queue import Queue, SimpleQueue
 from typing import List, Dict, Self
@@ -45,7 +47,7 @@ class MainWindow(QWidget):
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
 
-        self.cern_logo = QPixmap("images/CERN_Logo.png").scaled(800, 500, Qt.KeepAspectRatio)
+        self.cern_logo = QPixmap("images/CERN_Logo.png").scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
 
         top_level_layout = QHBoxLayout()
         left_half_layout = QVBoxLayout()
@@ -57,7 +59,7 @@ class MainWindow(QWidget):
         self.step_list.setMaximumWidth(600)
         self.step_list.setColumnCount(2)
         self.step_list.setHorizontalHeaderLabels(["Step name", "Status"])
-        self.step_list.setSelectionBehavior(QTableView.SelectRows)
+        self.step_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.step_list.setColumnWidth(0, 450)
         self.step_list.horizontalHeader().setStretchLastSection(True)
 
@@ -73,7 +75,7 @@ class MainWindow(QWidget):
         self.picture_box = QLabel(self)
         self.picture_box.setPixmap(self.cern_logo)
         self.picture_box.setMinimumSize(800, 600)
-        self.picture_box.setAlignment(Qt.AlignCenter)
+        self.picture_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         self.message_box = QLabel(self)
 
@@ -122,7 +124,7 @@ class MainWindow(QWidget):
             self.step_list.setRowCount(len(sequence.steps))
             for step in sequence.steps:
                 new_item = QTableWidgetItem(step.name)
-                new_item.setFlags(new_item.flags() ^ Qt.ItemIsEditable)
+                new_item.setFlags(new_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 self.step_list.setItem(i, 0, new_item)
                 i += 1
             self.already_updated = True
@@ -131,7 +133,7 @@ class MainWindow(QWidget):
         #step_line = int(result.step.id)
         result_string = str(result)
         new_result_item = QTableWidgetItem(result_string)
-        new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemIsEditable)
+        new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
         match result.get_result():
             case recipe.ResultType.PASS:
                 background_color = "green"
@@ -147,7 +149,7 @@ class MainWindow(QWidget):
         new_result_item.setBackground(QColor(background_color))
         # font = new_result_item.font().setBold(True)
         # new_result_item.setFont(font)
-        new_result_item.setTextAlignment(Qt.AlignCenter)
+        new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         #self.step_list.setItem(step_line, 1, new_result_item)
         self.step_list.update()
 
@@ -159,7 +161,7 @@ class MainWindow(QWidget):
     def show_message(self, response_q:SimpleQueue, message, image_path, options):
         self.message_box.setText(message)
         if image_path != "":
-            image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.KeepAspectRatio)
+            image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
             self.picture_box.setPixmap(image_pixmap)
         self.yes_button.setEnabled(True)
         self.no_button.setEnabled(True)
@@ -174,7 +176,9 @@ class MainWindow(QWidget):
 
     def get_serial_number(self, response_q:SimpleQueue):
         while True:
-            text, ok = QInputDialog().getText(self, "Serial Number of DUT", "Serial Number:")
+            # QInputDialog static methods are deprecated in PyQt6
+            dialog = QInputDialog(self)
+            text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
             if ok and text:
                 response_q.put(text)
                 break       
@@ -248,7 +252,7 @@ class StepResultModel(QAbstractItemModel):
         ]
 
         match role:
-            case Qt.DisplayRole:
+            case Qt.ItemDataRole.DisplayRole:
                 return columns[index.column()]
             case _:
                 return None
