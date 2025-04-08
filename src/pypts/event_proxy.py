@@ -28,6 +28,8 @@ class RecipeEventProxy(QObject):
     """Emitted when the serial number needs to be obtained. Args: {'response_q': SimpleQueue}"""
     post_run_step_signal = pyqtSignal(dict)
     """Emitted after a step finishes. Args: {'step_uuid': uuid, 'status_text': str, 'status_color': str}"""
+    pre_run_step_signal = pyqtSignal(dict)
+    """Emitted before a step starts. Args: {'step_uuid': uuid, 'step_name': str}"""
 
     def __init__(self, event_q: SimpleQueue):
         """Initializes the proxy with the event queue to listen to."""
@@ -80,6 +82,13 @@ class RecipeEventProxy(QObject):
                     }
                 elif event_name == "get_serial_number":
                     event_dict = {"response_q": event_data[0]}
+                elif event_name == "pre_run_step":
+                    step_object: recipe.Step = event_data[0] # event_data is a tuple (step,)
+                    event_dict = {
+                        "step_uuid": step_object.id,
+                        "step_name": step_object.name
+                        # Add other step attributes if needed later
+                    }
                 # Add other event types and their dictionary mappings here if needed
 
                 # --- Signal Emission ---

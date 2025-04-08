@@ -216,6 +216,49 @@ class MainWindow(QWidget):
                 response_q.put(text)
                 break       
         
+    def update_running_step(self, event_dict):
+        """Highlights the step that is currently running in the step list table."""
+        step_uuid_to_find = event_dict["step_uuid"]
+        
+        # Reset previous running step highlight (optional, depends on desired behavior)
+        # You might need to keep track of the previously highlighted row index
+        # Or iterate through all rows and reset font
+        
+        # Find the row corresponding to the step UUID
+        target_row = -1
+        for row in range(self.step_list.rowCount()):
+            item = self.step_list.item(row, 0) # Get item from the first column (name/uuid)
+            if item:
+                stored_uuid = item.data(Qt.ItemDataRole.UserRole)
+                if stored_uuid == step_uuid_to_find:
+                    target_row = row
+                    break
+        
+        if target_row != -1:
+            # Highlight the name item (column 0)
+            name_item = self.step_list.item(target_row, 0)
+            if name_item:
+                font = name_item.font()
+                font.setBold(True)
+                name_item.setFont(font)
+                
+            # Highlight the status item (column 1)
+            status_item = self.step_list.item(target_row, 1)
+            if status_item:
+                 # Set status to 'Running...' and make bold
+                 status_item.setText("Running...")
+                 font = status_item.font()
+                 font.setBold(True)
+                 status_item.setFont(font)
+                 # Optionally change text color
+                 # status_item.setForeground(QColor("blue")) 
+
+            # Ensure the item is visible if the list is scrollable
+            self.step_list.scrollToItem(self.step_list.item(target_row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+
+        else:
+            logging.warning(f"Could not find step with UUID {step_uuid_to_find} in the step list to highlight as running.")
+
 
 class StepResultModel(QAbstractItemModel):
     """A Qt model for displaying hierarchical StepResult data in a QTreeView.

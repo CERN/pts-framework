@@ -45,6 +45,7 @@ if __name__ == '__main__':
     recipe_event_proxy.post_run_recipe_signal.connect(window.show_results)
     recipe_event_proxy.pre_run_sequence_signal.connect(window.update_sequence)
     recipe_event_proxy.post_run_step_signal.connect(window.update_step_result)
+    recipe_event_proxy.pre_run_step_signal.connect(window.update_running_step)
     recipe_event_proxy.user_interact_signal.connect(window.show_message)
     recipe_event_proxy.get_serial_number_signal.connect(window.get_serial_number)
 
