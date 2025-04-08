@@ -12,27 +12,22 @@ class RecipeEventProxy(QObject):
     """Proxies events from the recipe execution thread's event queue 
        to Qt signals for the GUI thread. 
 
-       It transforms data into ViewModels for specific signals (like 
-       `post_run_step_signal`) to decouple the GUI from the core recipe logic,
-       while passing raw data for others.
+       It transforms data into ViewModels (dictionaries) for all signals
+       to decouple the GUI from the core recipe logic.
     """
-    # --- Raw Signals (Data directly from recipe/pts) ---
-    pre_run_recipe_signal = pyqtSignal(str, str)
-    """Emitted before the recipe starts. Args: recipe_name (str), recipe_description (str)"""
-    post_run_recipe_signal = pyqtSignal(list)
-    """Emitted after the recipe finishes. Args: results (List[recipe.StepResult])"""
-    pre_run_sequence_signal = pyqtSignal(recipe.Sequence)
-    """Emitted before a sequence starts. Args: sequence (recipe.Sequence)"""
-    user_interact_signal = pyqtSignal(SimpleQueue, str, str, list)
-    """Emitted when user interaction is required. Args: response_q, message, image_path, options"""
-    get_serial_number_signal = pyqtSignal(SimpleQueue)
-    """Emitted when the serial number needs to be obtained. Args: response_q"""
-
-    # --- ViewModel Signals ---
+    # --- Signals (All emit dictionaries) ---
+    pre_run_recipe_signal = pyqtSignal(dict)
+    """Emitted before the recipe starts. Args: {'recipe_name': str, 'recipe_description': str}"""
+    post_run_recipe_signal = pyqtSignal(dict)
+    """Emitted after the recipe finishes. Args: {'results': List[recipe.StepResult]}"""
+    pre_run_sequence_signal = pyqtSignal(dict)
+    """Emitted before a sequence starts. Args: {'sequence': recipe.Sequence}"""
+    user_interact_signal = pyqtSignal(dict)
+    """Emitted when user interaction is required. Args: {'response_q': SimpleQueue, 'message': str, 'image_path': str, 'options': list}"""
+    get_serial_number_signal = pyqtSignal(dict)
+    """Emitted when the serial number needs to be obtained. Args: {'response_q': SimpleQueue}"""
     post_run_step_signal = pyqtSignal(dict)
-    """Emitted after a step finishes. Args: step_status_vm (dict) - A ViewModel 
-       containing keys like 'step_uuid', 'status_text', 'status_color'.
-    """
+    """Emitted after a step finishes. Args: {'step_uuid': uuid, 'status_text': str, 'status_color': str}"""
 
     def __init__(self, event_q: SimpleQueue):
         """Initializes the proxy with the event queue to listen to."""
@@ -50,44 +45,53 @@ class RecipeEventProxy(QObject):
                 logger.debug(f"Event Proxy received: {event_name}")
 
                 # --- Data Transformation / ViewModel Creation ---
+                event_dict = {}
                 if event_name == "post_run_step":
                     step_result: recipe.StepResult = event_data[0] # event_data is a tuple
-                    
-                    # Determine color based on result type
                     result_type = step_result.get_result()
                     match result_type:
-                        case recipe.ResultType.PASS:
-                            background_color = "green"
-                        case recipe.ResultType.FAIL:
-                            background_color = "red"
-                        case recipe.ResultType.DONE:
-                            background_color = "cyan"
-                        case recipe.ResultType.SKIP:
-                            background_color = "yellow"
-                        case recipe.ResultType.ERROR:
-                            background_color = "red" # Or maybe orange/purple?
-                        case _: # Should not happen
-                            background_color = "white"
+                        case recipe.ResultType.PASS: background_color = "green"
+                        case recipe.ResultType.FAIL: background_color = "red"
+                        case recipe.ResultType.DONE: background_color = "cyan"
+                        case recipe.ResultType.SKIP: background_color = "yellow"
+                        case recipe.ResultType.ERROR: background_color = "red"
+                        case _: background_color = "white"
                             
-                    # Create the ViewModel dictionary
-                    step_status_view_model = {
+                    event_dict = {
                         "step_uuid": step_result.uuid,
                         "status_text": str(result_type),
                         "status_color": background_color
                     }
-                    
-                    # Emit the specific signal with the ViewModel
-                    self.post_run_step_signal.emit(step_status_view_model)
+                elif event_name == "pre_run_recipe":
+                    event_dict = {
+                        "recipe_name": event_data[0], 
+                        "recipe_description": event_data[1]
+                    }
+                elif event_name == "post_run_recipe":
+                    event_dict = {"results": event_data[0]}
+                elif event_name == "pre_run_sequence":
+                    event_dict = {"sequence": event_data[0]}
+                elif event_name == "user_interact":
+                    event_dict = {
+                        "response_q": event_data[0], 
+                        "message": event_data[1], 
+                        "image_path": event_data[2], 
+                        "options": event_data[3]
+                    }
+                elif event_name == "get_serial_number":
+                    event_dict = {"response_q": event_data[0]}
+                # Add other event types and their dictionary mappings here if needed
 
-                # --- Direct Signal Emission for other events ---
-                else:
+                # --- Signal Emission ---
+                if event_dict: # Check if a dictionary was created for the event
                     with suppress(AttributeError):
-                        # Dynamically find the corresponding signal and emit
                         signal_name = event_name + "_signal"
                         signal = getattr(self, signal_name)
-                        signal.emit(*event_data)
-                    # else: # Optional: Log if no matching signal found
+                        signal.emit(event_dict)
+                    # else: # Optional: Log if no matching signal found (shouldn't happen if event_dict is populated)
                     #    logger.warning(f"No signal found for event: {event_name}")
+                else:
+                    logger.warning(f"No dictionary created for event: {event_name}")
 
             except Exception as e:
                 logger.error(f"Error in RecipeEventProxy loop: {e}", exc_info=True)

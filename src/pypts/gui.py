@@ -105,16 +105,19 @@ class MainWindow(QWidget):
         self.show()
 
 
-    def update_recipe_name(self, recipe_name, recipe_description):
-        """Updates the recipe name label and window title."""
+    def update_recipe_name(self, event_dict):
+        """Updates the recipe name label and window title from the event dictionary."""
+        recipe_name = event_dict["recipe_name"]
+        # recipe_description = event_dict["recipe_description"] # Currently unused
         self.recipe_label.setText(recipe_name)
         self.setWindowTitle(f"PTS: {recipe_name}")
 
-    def update_sequence(self, sequence: recipe.Sequence):
-        """Populates the step list table when a sequence starts.
+    def update_sequence(self, event_dict):
+        """Populates the step list table when a sequence starts using data from the event dictionary.
         
         Stores the step UUID in the UserRole for later identification.
         """
+        sequence: recipe.Sequence = event_dict["sequence"]
         if not self.already_updated:
             self.step_list.setRowCount(len(sequence.steps))
             for i, step in enumerate(sequence.steps):
@@ -170,17 +173,22 @@ class MainWindow(QWidget):
 
         # self.step_list.update() # setItem should trigger update, but call explicitly if needed
 
-    def show_results(self, results: List[recipe.StepResult]):
-        """Displays the final, hierarchical results in the tree view.
+    def show_results(self, event_dict):
+        """Displays the final, hierarchical results in the tree view using data from the event dictionary.
         
-        Receives the raw list of StepResult objects and uses StepResultModel
-        to populate the QTreeView.
+        Uses StepResultModel to populate the QTreeView.
         """
+        results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
         self.result_list.setModel(myResultModel)
         self.result_list.update()
 
-    def show_message(self, response_q:SimpleQueue, message, image_path, options):
+    def show_message(self, event_dict):
+        """Displays a user message and interaction options from the event dictionary."""
+        response_q: SimpleQueue = event_dict["response_q"]
+        message = event_dict["message"]
+        image_path = event_dict["image_path"]
+        # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
             image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
@@ -197,7 +205,9 @@ class MainWindow(QWidget):
         self.picture_box.setPixmap(self.cern_logo)
         self.message_box.clear()
 
-    def get_serial_number(self, response_q:SimpleQueue):
+    def get_serial_number(self, event_dict):
+        """Prompts the user for a serial number and sends it back via the response queue from the event dictionary."""
+        response_q: SimpleQueue = event_dict["response_q"]
         while True:
             # QInputDialog static methods are deprecated in PyQt6
             dialog = QInputDialog(self)
