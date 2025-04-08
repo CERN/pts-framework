@@ -8,6 +8,7 @@ from PyQt6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
+import uuid # Import uuid
 
 
 class TextEditLoggerHandler(QObject, logging.Handler):
@@ -105,40 +106,56 @@ class MainWindow(QWidget):
         self.recipe_label.setText(recipe_name)
         self.setWindowTitle(f"PTS: {recipe_name}")
 
-    def update_sequence(self, sequence):
+    def update_sequence(self, sequence: recipe.Sequence):
         if not self.already_updated:
-            i = 0
             self.step_list.setRowCount(len(sequence.steps))
-            for step in sequence.steps:
-                new_item = QTableWidgetItem(step.name)
-                new_item.setFlags(new_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
-                self.step_list.setItem(i, 0, new_item)
-                i += 1
+            for i, step in enumerate(sequence.steps):
+                # Store step name in the first column
+                name_item = QTableWidgetItem(step.name)
+                name_item.setFlags(name_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                # Store the step's UUID in the UserRole for later lookup
+                name_item.setData(Qt.ItemDataRole.UserRole, step.id)
+                self.step_list.setItem(i, 0, name_item)
+                
+                # Optionally add an initial empty/pending status item
+                status_item = QTableWidgetItem("Pending")
+                status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                status_item.setFlags(status_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                self.step_list.setItem(i, 1, status_item)
+                
             self.already_updated = True
+            self.step_list.update() # Ensure visual update
 
-    def update_step_result(self, result: recipe.StepResult):
-        #step_line = int(result.step.id)
-        result_string = str(result)
-        new_result_item = QTableWidgetItem(result_string)
-        new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
-        match result.get_result():
-            case recipe.ResultType.PASS:
-                background_color = "green"
-            case recipe.ResultType.FAIL:
-                background_color = "red"
-            case recipe.ResultType.DONE:
-                background_color = "cyan"
-            case recipe.ResultType.SKIP:
-                background_color = "yellow"
-            case recipe.ResultType.ERROR:
-                background_color = "red"
+    def update_step_result(self, step_status_vm: dict):
+        # Extract data from the ViewModel
+        step_uuid_to_find = step_status_vm["step_uuid"]
+        result_string = step_status_vm["status_text"]
+        background_color = step_status_vm["status_color"]
         
-        new_result_item.setBackground(QColor(background_color))
-        # font = new_result_item.font().setBold(True)
-        # new_result_item.setFont(font)
-        new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        #self.step_list.setItem(step_line, 1, new_result_item)
-        self.step_list.update()
+        # Find the row corresponding to the step UUID
+        target_row = -1
+        for row in range(self.step_list.rowCount()):
+            item = self.step_list.item(row, 0) # Get item from the first column (name/uuid)
+            if item:
+                stored_uuid = item.data(Qt.ItemDataRole.UserRole)
+                if stored_uuid == step_uuid_to_find:
+                    target_row = row
+                    break
+        
+        if target_row != -1:
+            # Create the new status item using ViewModel data
+            new_result_item = QTableWidgetItem(result_string)
+            new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+            new_result_item.setBackground(QColor(background_color))
+            new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Update the status in the found row (second column)
+            self.step_list.setItem(target_row, 1, new_result_item)
+        else:
+            # Handle case where UUID wasn't found (optional logging/error)
+            logging.warning(f"Could not find step with UUID {step_uuid_to_find} in the step list to update status.")
+
+        # self.step_list.update() # setItem should trigger update, but call explicitly if needed
 
     def show_results(self, results: List[recipe.StepResult]):
         myResultModel = StepResultModel(results)
