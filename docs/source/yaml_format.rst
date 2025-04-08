@@ -50,9 +50,29 @@ Each subsequent document defines a sequence.
 Step Definition
 ===============
 
-Each item in `setup_steps`, `steps`, and `teardown_steps` is a dictionary representing a Step. Key fields:
+Each item in `setup_steps`, `steps`, and `teardown_steps` is a dictionary representing a Step.
 
-*   ``steptype`` (str): Determines the type of action (e.g., ``PythonModuleStep``, ``SequenceStep``, ``UserInteractionStep``, ``WaitStep``).
+.. code-block:: yaml
+   :caption: Example Step Structure
+
+   steptype: PythonModuleStep | UserInteractionStep | SequenceStep | WaitStep | ... # Determines the type of action
+   step_name: Name of the step # A descriptive name for the step
+   id: unique_id # Optional: A unique identifier. Defaults to a generated UUID.
+   description: More details about the step # Optional: More details about the step's purpose.
+   skip: false # Optional: If true, the step execution is skipped. Defaults to false.
+   # --- Fields specific to certain steptypes ---
+   action_type: method # e.g., For PythonModuleStep: 'method', 'read_attribute', 'write_attribute'
+   module: path/to/my_module.py # e.g., For PythonModuleStep: Path to the Python file
+   method_name: my_function # e.g., For PythonModuleStep with action_type 'method': Name of the function to run
+   # ... other specific fields depending on steptype ...
+   # --- Input/Output Mapping ---
+   input_mapping: {} # Defines how the step gets its input data. See below.
+   output_mapping: {} # Defines how the step's output is processed. See below.
+
+
+Key fields common to most steps:
+
+*   ``steptype`` (str): Determines the type of action (e.g., ``PythonModuleStep``, ``SequenceStep``, ``UserInteractionStep``, ``WaitStep``). Specific step types may have additional required or optional fields.
 *   ``step_name`` (str): A descriptive name for the step.
 *   ``id`` (str, optional): A unique identifier. Defaults to a generated UUID.
 *   ``description`` (str, optional): More details about the step's purpose.
@@ -65,26 +85,85 @@ Each item in `setup_steps`, `steps`, and `teardown_steps` is a dictionary repres
 Input Mapping Details (``input_mapping``)
 ------------------------------------------
 
-Maps internal step input names to data sources. Each value is a dictionary:
+The ``input_mapping`` dictionary maps internal step input names (e.g., argument names for a ``PythonModuleStep``) to data sources. The keys of ``input_mapping`` are the names the step internally uses for its inputs, and the values specify where that data comes from.
 
-*   ``type`` (str): Source of the value (``direct``, ``local``, ``global``).
-*   ``value``: Required if ``type`` is ``direct``. The literal value.
-*   ``local_name``: Required if ``type`` is ``local``. Name of the sequence's local variable.
-*   ``global_name``: Required if ``type`` is ``global``. Name of the recipe's global variable.
-*   ``indexed`` (bool, optional): If ``true`` for one or more inputs, the step becomes an ``IndexedStep``. It runs multiple times, once for each item in the shortest input list marked as indexed. Non-indexed inputs are repeated for each run.
+Each value in the ``input_mapping`` dictionary is *another* dictionary with the following keys:
+
+*   ``type`` (str): Source of the value. Must be one of ``direct``, ``local``, or ``global``.
+*   ``value``: Required if ``type`` is ``direct``. Provides the literal value directly.
+*   ``local_name``: Required if ``type`` is ``local``. Specifies the name of the sequence's local variable to read from.
+*   ``global_name``: Required if ``type`` is ``global``. Specifies the name of the recipe's global variable to read from.
+*   ``indexed`` (bool, optional): Defaults to ``false``. If ``true`` for one or more inputs, the step becomes an ``IndexedStep``. It runs multiple times, once for each item in the *shortest* input list marked as ``indexed: true``. Non-indexed inputs are repeated (their value is used) for each run of the indexed step.
+
+.. code-block:: yaml
+   :caption: Example Input Mapping Options
+
+   input_mapping:
+     # Input 'arg1' gets the literal integer value 3
+     arg1: {type: direct, value: 3, indexed: false}
+
+     # Input 'arg2' gets its value from the sequence's local variable 'my_local_var'
+     arg2: {type: local, local_name: my_local_var, indexed: false}
+
+     # Input 'arg3' gets its value from the recipe's global variable 'my_global_var'
+     arg3: {type: global, global_name: my_global_var, indexed: false}
+
+     # Input 'items_to_process' comes from a direct list.
+     # Because indexed is true, the step will run 3 times.
+     # Run 1: items_to_process = 1
+     # Run 2: items_to_process = 2
+     # Run 3: items_to_process = 3
+     # Inputs arg1, arg2, arg3 will keep their mapped values for each of these runs.
+     items_to_process: {type: direct, value: [1, 2, 3], indexed: true}
 
 .. _output_mapping_details:
 
 Output Mapping Details (``output_mapping``)
 --------------------------------------------
 
-Maps the step's raw output keys to actions or result evaluations. Each value is a dictionary:
+The ``output_mapping`` dictionary defines how the step's raw output is processed, evaluated for pass/fail status, and stored back into variables. The keys of the ``output_mapping`` dictionary correspond to the keys in the step's raw output data (typically a dictionary). If the step produces a non-dictionary output, it's treated as a dictionary with a single key (often ``output`` or specific to the step type).
 
-*   ``type`` (str): How to handle the output (``passthrough``, ``passfail``, ``equals``, ``range``, ``local``, ``global``).
-*   ``value``: Required for ``equals``. The target value for comparison.
-*   ``min``, ``max``: Required for ``range``. The inclusive bounds for comparison.
-*   ``local_name``: Required for ``local``. Target local variable name.
-*   ``global_name``: Required for ``global``. Target global variable name.
+Each value in the ``output_mapping`` dictionary is *another* dictionary specifying the action to take:
+
+*   ``type`` (str): How to handle the output value associated with this key. Must be one of ``local``, ``global``, ``passfail``, ``equals``, ``range``, or ``passthrough`` (primarily for ``SequenceStep``).
+*   ``local_name``: Required if ``type`` is ``local``. The name of the sequence's local variable where this output value should be stored.
+*   ``global_name``: Required if ``type`` is ``global``. The name of the recipe's global variable where this output value should be stored.
+*   ``value``: Required if ``type`` is ``equals``. The target value for comparison. If the step's output value for this key equals ``value``, the check passes.
+*   ``min``, ``max``: Required if ``type`` is ``range``. The inclusive lower (``min``) and upper (``max``) bounds for comparison. If the step's output value for this key falls within [min, max], the check passes.
+
+**Pass/Fail Determination:**
+
+*   If any output key is mapped with ``type: passfail``, the boolean value of that output determines the step's Pass/Fail status.
+*   If any output key is mapped with ``type: equals`` or ``type: range``, the comparison result determines the step's Pass/Fail status. If multiple such mappings exist, *all* must pass for the step to pass.
+*   If *no* output keys are mapped to ``passfail``, ``equals``, or ``range``, the step automatically finishes with a status of ``DONE``, which is generally treated as equivalent to ``PASS``.
+
+.. code-block:: yaml
+   :caption: Example Output Mapping Options
+
+   output_mapping:
+     # Store the value associated with the output key 'result_data'
+     # into the local variable 'my_local_result'.
+     result_data: {type: local, local_name: my_local_result}
+
+     # Store the value associated with the output key 'shared_value'
+     # into the global variable 'my_global_result'.
+     shared_value: {type: global, global_name: my_global_result}
+
+     # Use the boolean value associated with the output key 'test_passed'
+     # to determine if the step passes or fails.
+     test_passed: {type: passfail}
+
+     # Check if the value associated with the output key 'status_code'
+     # is exactly equal to 200. If yes, pass; otherwise, fail.
+     status_code: {type: equals, value: 200}
+
+     # Check if the value associated with the output key 'measurement'
+     # is between 3.0 and 6.5 (inclusive). If yes, pass; otherwise, fail.
+     measurement: {type: range, min: 3.0, max: 6.5}
+
+     # For SequenceStep: Propagate the overall Pass/Fail/Done status
+     # of the subsequence.
+     __result: { type: passthrough }
 
 Specific Step Types
 ===================
@@ -174,8 +253,9 @@ Pauses execution for a specified duration.
    steptype: WaitStep
    step_name: Pause Execution
    input_mapping:
-     wait_time: { type: direct, value: 5 } # Wait time in seconds
+     wait_time: { type: global, global_name: default_wait } # Example: use a global
+     # wait_time: { type: direct, value: 5 } # Or direct value
    output_mapping: {} # WaitStep usually has no functional output
 
 *   Input:
-    *   ``wait_time`` (int or float): Duration to wait in seconds. 
+    *   ``wait_time`` (int or float): Duration to wait in seconds. Must be provided via ``input_mapping``. 
