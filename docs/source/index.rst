@@ -39,4 +39,5 @@ Documentation contents
 
     api
     yaml_format
+    gui_event_handling
     genindex

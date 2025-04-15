@@ -1,0 +1,621 @@
+import logging
+import copy
+import uuid
+import sys
+import queue
+import time
+import contextlib
+from pathlib import Path
+from importlib import import_module
+from typing import List, Dict
+from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
+
+logger = logging.getLogger(__name__)
+
+
+class IndexedStep(Step):
+    """
+    A step that wraps another step (template_step) and runs it multiple times
+    based on indexed inputs. It aggregates results and outputs.
+    """
+    def __init__(self, step: Step, **kwargs):
+        """
+        Args:
+            step: The template Step instance to be run multiple times.
+            **kwargs: Common Step arguments (step_name, id, description, input_mapping, skip)
+                      for the wrapper itself. The input_mapping here should contain
+                      the potentially indexed lists.
+        """
+        # Initialize Step with common arguments for the wrapper
+        super().__init__(**kwargs)
+        if not isinstance(step, Step):
+            raise TypeError(f"IndexedStep requires a valid Step instance, got {type(step)}")
+        self.template_step: Step = step
+        self.steps: List[Step] = [] # Stores the generated step instances for each run
+        # Override output_mapping for the wrapper step itself to capture the aggregate result
+        self.output_mapping = {"__result": {"type": "passthrough"}}
+        # Note: Any output mappings defined in the original step_data for the wrapper
+        # (like saving the aggregated result to a variable) should be added here or
+        # processed by the base Step.process_outputs method using self.output_mapping.
+
+    def check_indexing(self):
+        """
+        IndexedStep itself doesn't have indexed inputs; it manages the execution
+        based on the template step's inputs. This method shouldn't be relevant
+        after instantiation.
+        """
+        return False # An IndexedStep wrapper doesn't get wrapped again.
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        """
+        Executes the template step multiple times based on indexed inputs.
+
+        Args:
+            runtime: The current recipe runtime environment.
+            input: The dictionary of inputs resolved for *this* IndexedStep wrapper.
+                   It should contain lists for inputs marked as 'indexed' in the
+                   original step configuration.
+            parent_step_result_uuid: The UUID of the StepResult for this IndexedStep wrapper.
+                                     Sub-step results will be children of this.
+        """
+        # Determine which inputs of the *template* step are marked as indexed
+        # from the original configuration passed during __init__.
+        try:
+             indexed_input_configs = {
+                 name: config for name, config in self.template_step.input_mapping.items()
+                 if isinstance(config, dict) and config.get("indexed", False)
+             }
+        except AttributeError:
+             logger.error(f"Template step {getattr(self.template_step, 'name', 'Unnamed')} seems to lack input_mapping.")
+             raise ValueError("Invalid template step configuration for IndexedStep.")
+
+        indexed_list_names = list(indexed_input_configs.keys())
+
+        # Get the actual input *values* provided to the IndexedStep wrapper
+        wrapper_inputs = input
+
+        if not indexed_list_names:
+            logger.warning(f"IndexedStep '{self.name}' called, but no inputs marked 'indexed' found in template step '{self.template_step.name}'. Running template step once.")
+            num_runs = 1
+        else:
+            # Validate that the corresponding inputs in the wrapper's resolved input values are lists
+            for name in indexed_list_names:
+                if name not in wrapper_inputs:
+                     raise ValueError(f"Indexed input '{name}' missing in resolved inputs for IndexedStep '{self.name}'.")
+                if not isinstance(wrapper_inputs[name], list):
+                    raise TypeError(f"Input '{name}' for indexed step '{self.name}' must be a list, got {type(wrapper_inputs[name])}.")
+
+            # Determine number of runs based on the shortest indexed list
+            try:
+                num_runs = min(len(wrapper_inputs[name]) for name in indexed_list_names)
+                if num_runs == 0:
+                    logger.warning(f"IndexedStep '{self.name}' has empty lists for indexed inputs. Skipping execution.")
+                    return {"__result": ResultType.SKIP} # Or DONE? SKIP seems appropriate.
+            except ValueError: # Handle case where indexed_list_names is empty after checks
+                logger.warning(f"IndexedStep '{self.name}' inconsistency: Indexed inputs found, but failed to determine run count. Running once.")
+                num_runs = 1
+
+        logger.info(f"IndexedStep '{self.name}' will execute template '{self.template_step.name}' {num_runs} times.")
+        self.steps = [] # Clear previous runs if step is somehow re-executed
+
+        # Get names of non-indexed inputs from the wrapper's resolved inputs
+        non_indexed_input_names = [name for name in wrapper_inputs if name not in indexed_list_names]
+
+        for i in range(num_runs):
+            # Create the input mapping for *this specific iteration* of the template step
+            iteration_input_mapping = {}
+            # Get indexed values for this iteration
+            for name in indexed_list_names:
+                 # Use 'direct' 'value' structure, as process_inputs expects this format
+                 # when input_mapping is pre-resolved like this.
+                 iteration_input_mapping[name] = {"type": "direct", "value": wrapper_inputs[name][i]}
+            # Get non-indexed values (use the same value for all iterations)
+            for name in non_indexed_input_names:
+                 iteration_input_mapping[name] = {"type": "direct", "value": wrapper_inputs[name]}
+
+            # Create a deep copy of the template step for this iteration
+            # This ensures modifications (like changing input_mapping) don't affect other iterations.
+            copied_step: Step = copy.deepcopy(self.template_step)
+
+            # Set the specific inputs for this iteration by replacing its input_mapping
+            copied_step.input_mapping = iteration_input_mapping
+
+            # Remove local/global variable *saving* definitions from the copied step's *output* mapping.
+            # We want to aggregate these values in the wrapper, not have each iteration save potentially overwriting variables.
+            # Pass/Fail/Range/Equals checks on outputs should still happen per iteration.
+            output_mapping_keys = list(copied_step.output_mapping.keys())
+            for key in output_mapping_keys:
+                output_conf = copied_step.output_mapping[key]
+                if isinstance(output_conf, dict) and output_conf.get("type") in ["local", "global"]:
+                    logger.debug(f"Removing output mapping '{key}' (type: {output_conf.get('type')}) from iteration {i} of '{self.name}'")
+                    del copied_step.output_mapping[key]
+
+            # Modify the name for clarity in logs and results
+            copied_step.name = f"{self.template_step.name} - Iteration {i+1}/{num_runs}"
+            # Use a unique ID for the sub-step result? Or is the wrapper's sufficient?
+            # Let StepResult handle UUID generation.
+            self.steps.append(copied_step)
+
+        # Run all the generated steps using the Step.run_steps static method
+        # Pass the UUID of the *wrapper's* StepResult as the parent.
+        step_results: List[StepResult] = Step.run_steps(runtime, self.steps, parent_step_result_uuid)
+
+        # --- Aggregation ---
+        # Aggregate outputs from the individual step results.
+        # We only aggregate outputs that were *not* used for pass/fail/range/equals checks
+        # within the iterations (i.e., likely intended as data outputs).
+        aggregated_outputs = {}
+        # These types imply the output was used for per-iteration result calculation.
+        per_iteration_result_types = ["passthrough", "passfail", "equals", "range"]
+
+        for result in step_results:
+            # Iterate through the outputs recorded in the StepResult for this iteration
+            for output_name, output_value in result.outputs.items():
+                # Check the *template* step's original output mapping config for this output name.
+                template_output_conf = self.template_step.output_mapping.get(output_name)
+
+                # If the output exists in the template config AND its type was NOT a per-iteration check, aggregate it.
+                if template_output_conf and isinstance(template_output_conf, dict) and template_output_conf.get("type") not in per_iteration_result_types:
+                    if output_name not in aggregated_outputs:
+                        aggregated_outputs[output_name] = []
+                    aggregated_outputs[output_name].append(output_value)
+
+        # Determine the overall result of the IndexedStep based on all iteration results.
+        overall_result_type = StepResult.evaluate_multiple_step_results(step_results)
+        # Add this overall result to the outputs dictionary under the special key "__result".
+        # This is used by the wrapper's process_outputs method for the "passthrough" type.
+        aggregated_outputs["__result"] = overall_result_type
+
+        logger.info(f"IndexedStep '{self.name}' finished. Aggregated result: {overall_result_type}")
+        logger.debug(f"Aggregated outputs for '{self.name}': {aggregated_outputs}")
+
+        # Return the dictionary of aggregated outputs. This will be processed by the
+        # wrapper Step's process_outputs method (e.g., to save variables).
+        return aggregated_outputs
+
+
+class PythonModuleStep(Step):
+    """
+    Executes a method or interacts with attributes within a specified Python module.
+    """
+    def __init__(self, action_type: str, module: str, method_name: str = None, **kwargs):
+        """
+        Args:
+            action_type (str): The action to perform ('method', 'read_attribute', 'write_attribute').
+            module (str): The file path to the Python module.
+            method_name (str, optional): The name of the method to call (required if action_type is 'method').
+            **kwargs: Common Step arguments.
+        """
+        super().__init__(**kwargs)
+        self.action_type = action_type
+        self.module_path_str = module # Store path as string
+        self.method_name = method_name
+
+        # Basic validation during init
+        if self.action_type == "method" and not self.method_name:
+            raise ValueError(f"method_name is required for action_type 'method' in step {self.name}")
+        if not self.module_path_str:
+             raise ValueError(f"Module path is required for PythonModuleStep {self.name}")
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        """
+        Performs the specified action on the Python module.
+
+        Args:
+            runtime: The recipe runtime.
+            input: Dictionary of resolved inputs for this step. Expected inputs depend on action_type:
+                   - 'method': Passed as keyword arguments to the method.
+                   - 'read_attribute': Requires 'attribute_name' in input.
+                   - 'write_attribute': Requires 'attribute_name' and 'attribute_value' in input.
+            parent_step_result_uuid: UUID of the parent StepResult.
+        """
+        step_output = {}
+        module_file_path = Path(self.module_path_str)
+
+        try:
+            # Load the module dynamically and carefully
+            loaded_module = self.__load_module(module_file_path)
+        except ImportError as e:
+            logger.error(f"Failed to import module '{self.module_path_str}' for step '{self.name}': {e}")
+            raise # Re-raise to be caught by the main run loop and result in ERROR
+
+        try:
+            match self.action_type:
+                case "method":
+                    try:
+                        method_to_call = getattr(loaded_module, self.method_name)
+                    except AttributeError:
+                        logger.error(f"Method '{self.method_name}' not found in module '{module_file_path.name}' for step '{self.name}'")
+                        raise AttributeError(f"Method '{self.method_name}' not found in module.") # Re-raise specific error
+
+                    logger.debug(f"Calling method '{self.method_name}' in '{module_file_path.name}' with inputs: {input}")
+                    # Call the method, passing the resolved 'input' dictionary as keyword arguments
+                    return_value = method_to_call(**input)
+
+                    # Ensure the output is always a dictionary for consistent processing by process_outputs
+                    if isinstance(return_value, dict):
+                        step_output = return_value
+                    elif return_value is None:
+                        step_output = {} # Explicitly empty dict if method returns None
+                    else:
+                        # Wrap non-dict return values under a default key 'output'
+                        step_output = {"output": return_value}
+                    logger.debug(f"Method '{self.method_name}' returned: {step_output}")
+
+                case "read_attribute":
+                    attribute_name = input.get("attribute_name")
+                    if not attribute_name:
+                        raise ValueError(f"'attribute_name' is required in inputs for action_type 'read_attribute' in step '{self.name}'")
+                    try:
+                        value = getattr(loaded_module, attribute_name)
+                        # Store the read value in the step output dictionary using the attribute name as the key
+                        step_output[attribute_name] = value
+                        logger.debug(f"Read attribute '{attribute_name}' from '{module_file_path.name}': {value}")
+                    except AttributeError:
+                        logger.error(f"Attribute '{attribute_name}' not found in module '{module_file_path.name}' for step '{self.name}'")
+                        raise AttributeError(f"Attribute '{attribute_name}' not found.")
+
+                case "write_attribute":
+                    attribute_name = input.get("attribute_name")
+                    attribute_value = input.get("attribute_value")
+                    # Check if both name and value are provided
+                    if attribute_name is None or attribute_value is None: # Allow attribute_value to be None explicitly
+                        raise ValueError(f"'attribute_name' and 'attribute_value' are required in inputs for action_type 'write_attribute' in step '{self.name}'")
+                    try:
+                        # Check if attribute exists before trying to set? Optional.
+                        # if not hasattr(loaded_module, attribute_name):
+                        #    logger.warning(f"Attribute '{attribute_name}' does not exist in module '{module_file_path.name}'. Attempting to create it.")
+                        setattr(loaded_module, attribute_name, attribute_value)
+                        logger.debug(f"Set attribute '{attribute_name}' in '{module_file_path.name}' to: {attribute_value}")
+                        step_output = {} # Write action typically doesn't produce output data
+                    except Exception as e:
+                        # Catch potential errors during setattr (e.g., read-only property)
+                        logger.error(f"Failed to set attribute '{attribute_name}' on module '{module_file_path.name}' for step '{self.name}': {e}")
+                        raise # Re-raise to indicate step failure
+
+                case _:
+                    # Should not happen if validation occurs, but good failsafe
+                    raise ValueError(f"Unknown action_type '{self.action_type}' encountered in PythonModuleStep '{self.name}'")
+
+        except Exception as e:
+             # Catch errors during attribute access or method call
+             logger.error(f"Error during action '{self.action_type}' in step '{self.name}': {e}")
+             import traceback
+             logger.debug(traceback.format_exc()) # Log traceback for debugging
+             raise # Re-raise the exception to mark the step as ERROR
+
+        return step_output
+
+    def __load_module(self, module_full_path: Path):
+        """
+        Loads a Python module dynamically and safely from a given file path.
+
+        Args:
+            module_full_path (Path): The absolute or relative path to the .py file.
+
+        Returns:
+            The loaded module object.
+
+        Raises:
+            ImportError: If the module file is not found or cannot be imported.
+        """
+        if not module_full_path.is_file():
+            raise ImportError(f"Module file not found: {module_full_path}")
+
+        module_path = module_full_path.parent.resolve() # Get absolute directory path
+        module_filename = module_full_path.stem
+
+        # Ensure module directory is temporarily in sys.path
+        original_sys_path = list(sys.path)
+        cleanup_needed = False
+        module_to_delete = None
+
+        try:
+            if str(module_path) not in sys.path:
+                 sys.path.insert(0, str(module_path)) # Prepend to prioritize this path
+                 cleanup_needed = True
+
+            # Check if module is already imported *from the target path*
+            # to handle potential reloads or conflicts
+            if module_filename in sys.modules:
+                 existing_module = sys.modules[module_filename]
+                 # Heuristic: check if the existing module file seems to be the one we want
+                 try:
+                     existing_path = Path(existing_module.__file__).parent.resolve()
+                     if existing_path == module_path:
+                         logger.warning(f"Module '{module_filename}' already loaded from target directory. Consider using reload if updates are needed.")
+                         # For simplicity now, return existing; could add reload logic here.
+                         # from importlib import reload
+                         # module = reload(existing_module)
+                         module = existing_module
+                     else:
+                         # Conflict - module name exists but from different path
+                         logger.error(f"Module name conflict: '{module_filename}' already loaded from {existing_path}, expected {module_path}. Aborting import.")
+                         raise ImportError(f"Module name conflict for '{module_filename}'")
+                 except (AttributeError, TypeError):
+                      # Built-in modules or others might not have __file__
+                      logger.warning(f"Cannot verify path for already loaded module '{module_filename}'. Attempting import anyway.")
+                      module = import_module(module_filename)
+                      module_to_delete = module_filename # Mark for potential cleanup if newly imported
+            else:
+                # Module not loaded, perform the import
+                module = import_module(module_filename)
+                module_to_delete = module_filename # Mark for potential cleanup
+                logger.debug(f"Successfully imported module '{module_filename}' from '{module_path}'")
+
+            return module
+
+        except Exception as e:
+            logger.error(f"Error loading module '{module_filename}' from '{module_path}': {e}")
+            raise ImportError(f"Failed to load module '{module_filename}': {e}") from e
+
+        finally:
+            # Restore original sys.path if it was modified
+            if cleanup_needed:
+                # Careful restoration: Only remove the path we added if it's still there at index 0
+                if sys.path[0] == str(module_path):
+                     sys.path.pop(0)
+                else:
+                     # Path got modified unexpectedly? Log a warning.
+                     logger.warning(f"sys.path modification conflict detected while cleaning up for module '{module_filename}'")
+                     # Try removing by value if it exists elsewhere
+                     with contextlib.suppress(ValueError):
+                         sys.path.remove(str(module_path))
+
+            # --- Module Unloading/Cleanup ---
+            # Generally, unloading modules in Python is complex and often discouraged
+            # due to potential issues with dangling references and shared state.
+            # If the loaded module modifies global state or holds resources,
+            # simply removing it from sys.modules might not be sufficient or safe.
+            # Consider if the steps *need* isolated module instances or if managing
+            # state within the module or via runtime variables is better.
+            #
+            # If cleanup is essential (e.g., to load updated code in a loop),
+            # investigate robust reloading patterns or running steps in separate processes.
+            #
+            # Basic cleanup attempt (use with caution):
+            # if module_to_delete and module_to_delete in sys.modules:
+            #     logger.debug(f"Attempting to remove '{module_to_delete}' from sys.modules.")
+            #     del sys.modules[module_to_delete]
+
+
+class SequenceStep(Step):
+    """
+    Executes another sequence (defined either internally in the same recipe
+    or potentially externally) as a single step within the current sequence.
+    """
+    def __init__(self, sequence: dict, **kwargs):
+        """
+        Args:
+            sequence (dict): Configuration dictionary for the sequence to run.
+                             Requires keys:
+                             - 'type' (str): 'internal' (more types could be added).
+                             - 'name' (str): Name of the sequence (for 'internal').
+                             - 'path' (str): Path to sequence file (for future 'external' type).
+            **kwargs: Common Step arguments.
+        """
+        super().__init__(**kwargs)
+        # Validate sequence configuration dictionary
+        if not isinstance(sequence, dict) or "type" not in sequence:
+            raise ValueError(f"SequenceStep '{self.name}' requires a 'sequence' dictionary with at least a 'type' key.")
+        self.sequence_config = sequence
+
+        # Define that the primary result of this step is the pass/fail/error of the sub-sequence
+        # The special output name "__result" is handled by the "passthrough" type in process_outputs.
+        self.output_mapping["__result"] = {"type": "passthrough"}
+        # Any other outputs defined in the YAML for SequenceStep (e.g., saving sub-sequence
+        # results to variables) will be handled by process_outputs based on step_output content.
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        """
+        Finds and executes the specified sub-sequence.
+
+        Args:
+            runtime: The recipe runtime, used to find internal sequences.
+            input: Dictionary of resolved inputs. These will be passed as the
+                   initial local variables to the sub-sequence.
+            parent_step_result_uuid: UUID of the parent StepResult (this SequenceStep).
+                                     Results from the sub-sequence's steps will be children of this.
+        """
+        seq_type = self.sequence_config["type"]
+        logger.debug(f"SequenceStep '{self.name}': Running sequence (type: {seq_type})")
+
+        sequence_to_run: Sequence = None
+        sequence_name = None # For logging
+
+        try:
+            match seq_type:
+                case "internal":
+                    sequence_name = self.sequence_config.get("name")
+                    if not sequence_name:
+                         raise ValueError(f"SequenceStep '{self.name}': 'internal' sequence type requires a 'name'.")
+                    try:
+                        # Retrieve the pre-loaded Sequence object from the runtime
+                        sequence_to_run = runtime.get_sequence(sequence_name)
+                        logger.info(f"SequenceStep '{self.name}': Executing internal sequence '{sequence_name}'.")
+                    except KeyError:
+                        logger.error(f"Internal sequence '{sequence_name}' not found in runtime for step '{self.name}'.")
+                        raise ValueError(f"Internal sequence '{sequence_name}' not found.")
+
+                # case "external": # Example for future extension
+                #     sequence_path = self.sequence_config.get("path")
+                #     if not sequence_path:
+                #         raise ValueError(f"SequenceStep '{self.name}': 'external' sequence type requires a 'path'.")
+                #     try:
+                #         # Load the sequence dynamically from its file
+                #         # This assumes Sequence can be instantiated from a file path
+                #         sequence_to_run = Sequence(sequence_file=sequence_path)
+                #         sequence_name = sequence_to_run.name # Get name after loading
+                #         logger.info(f"SequenceStep '{self.name}': Executing external sequence '{sequence_name}' from '{sequence_path}'.")
+                #         # Note: Need to consider how globals/runtime interact with external sequences.
+                #     except FileNotFoundError:
+                #         logger.error(f"External sequence file not found: '{sequence_path}' for step '{self.name}'.")
+                #         raise
+                #     except Exception as e:
+                #          logger.error(f"Error loading external sequence from '{sequence_path}': {e}")
+                #          raise
+
+                case _:
+                    raise ValueError(f"Unsupported sequence type: '{seq_type}' in SequenceStep '{self.name}'")
+
+            # --- Execute the Sub-Sequence ---
+            # The 'input' dict for SequenceStep becomes the initial set of local variables for the sub-sequence.
+            # Pass the UUID of the SequenceStep's *result* as the parent for the sub-sequence's steps.
+            sub_sequence_result_type: ResultType = sequence_to_run.run(runtime, input, parent_step_result_uuid)
+
+            # --- Collect Outputs ---
+            # After the sub-sequence runs, collect its defined outputs from the (now popped) local scope.
+            # We need access to the locals *before* they are popped by sequence.run().
+            # This requires modifying Sequence.run() or how outputs are handled.
+            #
+            # Alternative: Sequence.run could return a tuple: (ResultType, dict_of_outputs)
+            # Or: Outputs could be pushed to a dedicated runtime stack/dict associated with the call.
+            #
+            # Current approach (based on original code): Assumes Sequence.run modifies its locals
+            # and SequenceStep._step tries to read them *after* run finishes, which won't work
+            # correctly as the locals are popped.
+            #
+            # Let's assume Sequence.run is modified to return (ResultType, output_dict)
+            # Or, more simply, the relevant runtime locals are accessible *somehow*.
+            #
+            # Revision: Sequence.run *doesn't* pop locals until the end. We need to access the locals
+            # *before* the pop happens. SequenceStep._step runs *within* the context of the main
+            # sequence's `run_steps` loop. The sub-sequence `run` pushes and pops its own scope.
+            # How does the SequenceStep get the outputs?
+            #
+            # Proposal: SequenceStep needs to examine the StepResults generated by the sub-sequence
+            # or the Runtime needs a way to retrieve outputs declared by a finished sequence.
+            #
+            # Simpler approach: The outputs defined in the Sequence object (`sequence_to_run.outputs`)
+            # are keys whose values should be retrieved from the Runtime's *local* scope
+            # *just before* it's popped by the Sequence.run method. Sequence.run needs modification.
+            #
+            # Workaround (using current structure): Assume outputs are written to *parent* locals
+            # or globals by the sub-sequence steps if needed higher up. This avoids complexity here.
+            # SequenceStep itself just needs to return the sub-sequence's final ResultType.
+
+            step_output = {}
+            # Add the overall result of the sub-sequence execution
+            step_output["__result"] = sub_sequence_result_type
+
+            logger.debug(f"Sequence '{sequence_name}' (called by step '{self.name}') finished with result: {sub_sequence_result_type}")
+            return step_output
+
+        except Exception as e:
+             logger.error(f"Error during execution of SequenceStep '{self.name}' (running sequence '{sequence_name}'): {e}")
+             import traceback
+             logger.debug(traceback.format_exc())
+             raise # Propagate the error
+
+
+class UserInteractionStep(Step):
+    """
+    Pauses recipe execution and sends an event to request interaction from a user
+    via a UI or other external interface. Waits for a response.
+    """
+    def __init__(self, **kwargs):
+        """
+        Args:
+            **kwargs: Common Step arguments. Input mapping should define:
+                      - 'message' (str): Text prompt for the user.
+                      - 'image_path' (str, optional): Path to an image to display.
+                      - 'options' (list, optional): List of response options (e.g., button labels).
+                      Output mapping should define how to store the 'user_response'.
+        """
+        super().__init__(**kwargs)
+        # Example: Ensure output mapping expects the response.
+        # This should be defined in the YAML, but we can add a default/check.
+        if "user_response" not in self.output_mapping:
+             logger.warning(f"UserInteractionStep '{self.name}' might need an output mapping for 'user_response' to store the result.")
+             # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        """
+        Sends the 'user_interact' event and waits for a response on a queue.
+
+        Args:
+            runtime: The recipe runtime, used for sending events.
+            input: Dictionary of resolved inputs ('message', 'image_path', 'options').
+            parent_step_result_uuid: UUID of the parent StepResult.
+        """
+        message = input.get("message", "User interaction required.") # Default message
+        image_path = input.get("image_path") # Can be None
+        options = input.get("options") # Can be None or list/dict
+
+        # Create a temporary queue for this specific interaction to receive the response.
+        response_q = queue.SimpleQueue()
+
+        try:
+            # Send the event to the external listener (e.g., GUI)
+            # Pass the response queue so the listener knows where to send the result.
+            runtime.send_event("user_interact", response_q, message, image_path, options)
+
+            logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
+
+            # --- Blocking Wait for Response ---
+            # This will pause the recipe execution thread until the UI puts something in the queue.
+            # TODO: Consider adding a timeout mechanism here. What happens if the UI never responds?
+            # Example timeout:
+            # try:
+            #     response = response_q.get(block=True, timeout=300) # 5-minute timeout
+            # except queue.Empty:
+            #     logger.error(f"Timeout waiting for user interaction in step '{self.name}'.")
+            #     raise TimeoutError("User did not respond in time.")
+            response = response_q.get(block=True) # No timeout for now
+
+            logger.info(f"Step '{self.name}': User responded.")
+            logger.debug(f"Step '{self.name}': Received response: {response}")
+
+            # Return the response in a dictionary. The key 'user_response' should match
+            # what the output mapping expects.
+            return {"user_response": response}
+
+        except Exception as e:
+            # Catch potential errors during event sending or queue operations
+            logger.error(f"Error during user interaction step '{self.name}': {e}")
+            raise # Propagate error to mark step as ERROR
+        finally:
+            # Clean up queue reference (though SimpleQueue doesn't strictly need it)
+            del response_q
+
+
+class WaitStep(Step):
+    """
+    Pauses recipe execution for a specified duration.
+    """
+    def __init__(self, **kwargs):
+        """
+        Args:
+            **kwargs: Common Step arguments. Input mapping should define:
+                      - 'wait_time' (float or int): Duration to wait in seconds.
+        """
+        super().__init__(**kwargs)
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        """
+        Performs the time.sleep operation.
+
+        Args:
+            runtime: The recipe runtime (not used directly but part of signature).
+            input: Dictionary of resolved inputs, must contain 'wait_time'.
+            parent_step_result_uuid: UUID of the parent StepResult.
+        """
+        wait_time = input.get("wait_time")
+
+        # Validate wait_time
+        if not isinstance(wait_time, (int, float)):
+            raise TypeError(f"Invalid wait_time type '{type(wait_time)}' for WaitStep '{self.name}'. Must be number.")
+        if wait_time < 0:
+            raise ValueError(f"Invalid wait_time '{wait_time}' for WaitStep '{self.name}'. Must be non-negative.")
+
+        logger.info(f"Step '{self.name}': Waiting for {wait_time:.2f} seconds...")
+        try:
+            time.sleep(wait_time)
+            logger.info(f"Step '{self.name}': Wait finished.")
+        except Exception as e:
+             # Catch potential errors during sleep (e.g., interrupted?)
+             logger.error(f"Error during wait step '{self.name}': {e}")
+             raise # Propagate error
+
+        # Wait step typically doesn't produce data output
+        return {} 

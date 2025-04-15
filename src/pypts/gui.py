@@ -8,9 +8,11 @@ from PyQt6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
+import uuid # Import uuid
 
 
 class TextEditLoggerHandler(QObject, logging.Handler):
+    """A logging handler that emits Qt signals for log messages."""
     new_message = pyqtSignal(str)
 
     def __init__(self, parent):
@@ -23,7 +25,9 @@ class TextEditLoggerHandler(QObject, logging.Handler):
 
 
 class MainWindow(QWidget):
+    """The main application window, displaying recipe progress and results."""
     def __init__(self, *args, **kwargs):
+        """Initializes the main window UI components."""
         super().__init__(*args, **kwargs)
 
         self.q_in = None
@@ -101,51 +105,90 @@ class MainWindow(QWidget):
         self.show()
 
 
-    def update_recipe_name(self, recipe_name, recipe_description):
+    def update_recipe_name(self, event_dict):
+        """Updates the recipe name label and window title from the event dictionary."""
+        recipe_name = event_dict["recipe_name"]
+        # recipe_description = event_dict["recipe_description"] # Currently unused
         self.recipe_label.setText(recipe_name)
         self.setWindowTitle(f"PTS: {recipe_name}")
 
-    def update_sequence(self, sequence):
-        if not self.already_updated:
-            i = 0
-            self.step_list.setRowCount(len(sequence.steps))
-            for step in sequence.steps:
-                new_item = QTableWidgetItem(step.name)
-                new_item.setFlags(new_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
-                self.step_list.setItem(i, 0, new_item)
-                i += 1
-            self.already_updated = True
-
-    def update_step_result(self, result: recipe.StepResult):
-        #step_line = int(result.step.id)
-        result_string = str(result)
-        new_result_item = QTableWidgetItem(result_string)
-        new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
-        match result.get_result():
-            case recipe.ResultType.PASS:
-                background_color = "green"
-            case recipe.ResultType.FAIL:
-                background_color = "red"
-            case recipe.ResultType.DONE:
-                background_color = "cyan"
-            case recipe.ResultType.SKIP:
-                background_color = "yellow"
-            case recipe.ResultType.ERROR:
-                background_color = "red"
+    def update_sequence(self, event_dict):
+        """Populates the step list table when a sequence starts using data from the event dictionary.
         
-        new_result_item.setBackground(QColor(background_color))
-        # font = new_result_item.font().setBold(True)
-        # new_result_item.setFont(font)
-        new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        #self.step_list.setItem(step_line, 1, new_result_item)
-        self.step_list.update()
+        Stores the step UUID in the UserRole for later identification.
+        """
+        sequence: recipe.Sequence = event_dict["sequence"]
+        if not self.already_updated:
+            self.step_list.setRowCount(len(sequence.steps))
+            for i, step in enumerate(sequence.steps):
+                # Store step name in the first column
+                name_item = QTableWidgetItem(step.name)
+                name_item.setFlags(name_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                # Store the step's UUID in the UserRole for later lookup
+                name_item.setData(Qt.ItemDataRole.UserRole, step.id)
+                self.step_list.setItem(i, 0, name_item)
+                
+                # Optionally add an initial empty/pending status item
+                status_item = QTableWidgetItem("Pending")
+                status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                status_item.setFlags(status_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                self.step_list.setItem(i, 1, status_item)
+                
+            self.already_updated = True
+            self.step_list.update() # Ensure visual update
 
-    def show_results(self, results: List[recipe.StepResult]):
+    def update_step_result(self, step_status_vm: dict):
+        """Updates the status of a step in the live step list table.
+        
+        Receives a ViewModel dictionary with step UUID, status text, and color.
+        Finds the corresponding row using the UUID and updates the status cell.
+        """
+        # Extract data from the ViewModel
+        step_uuid_to_find = step_status_vm["step_uuid"]
+        result_string = step_status_vm["status_text"]
+        background_color = step_status_vm["status_color"]
+        
+        # Find the row corresponding to the step UUID
+        target_row = -1
+        for row in range(self.step_list.rowCount()):
+            item = self.step_list.item(row, 0) # Get item from the first column (name/uuid)
+            if item:
+                stored_uuid = item.data(Qt.ItemDataRole.UserRole)
+                if stored_uuid == step_uuid_to_find:
+                    target_row = row
+                    break
+        
+        if target_row != -1:
+            # Create the new status item using ViewModel data
+            new_result_item = QTableWidgetItem(result_string)
+            new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+            new_result_item.setBackground(QColor(background_color))
+            new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+            
+            # Update the status in the found row (second column)
+            self.step_list.setItem(target_row, 1, new_result_item)
+        else:
+            # Handle case where UUID wasn't found (optional logging/error)
+            logging.warning(f"Could not find step with UUID {step_uuid_to_find} in the step list to update status.")
+
+        # self.step_list.update() # setItem should trigger update, but call explicitly if needed
+
+    def show_results(self, event_dict):
+        """Displays the final, hierarchical results in the tree view using data from the event dictionary.
+        
+        Uses StepResultModel to populate the QTreeView.
+        """
+        results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
         self.result_list.setModel(myResultModel)
         self.result_list.update()
 
-    def show_message(self, response_q:SimpleQueue, message, image_path, options):
+    def show_message(self, event_dict):
+        """Displays a user message and interaction options from the event dictionary."""
+        response_q: SimpleQueue = event_dict["response_q"]
+        message = event_dict["message"]
+        image_path = event_dict["image_path"]
+        # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
             image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
@@ -155,13 +198,16 @@ class MainWindow(QWidget):
         self.response_q = response_q
     
     def interaction_response(self, response):
+        """Sends the user's response back via the response queue and resets UI."""
         self.response_q.put(response)
         self.yes_button.setEnabled(False)
         self.no_button.setEnabled(False)
         self.picture_box.setPixmap(self.cern_logo)
         self.message_box.clear()
 
-    def get_serial_number(self, response_q:SimpleQueue):
+    def get_serial_number(self, event_dict):
+        """Prompts the user for a serial number and sends it back via the response queue from the event dictionary."""
+        response_q: SimpleQueue = event_dict["response_q"]
         while True:
             # QInputDialog static methods are deprecated in PyQt6
             dialog = QInputDialog(self)
@@ -170,9 +216,71 @@ class MainWindow(QWidget):
                 response_q.put(text)
                 break       
         
+    def update_running_step(self, event_dict):
+        """Highlights the step that is currently running in the step list table."""
+        step_uuid_to_find = event_dict["step_uuid"]
+        
+        # Reset previous running step highlight (optional, depends on desired behavior)
+        # You might need to keep track of the previously highlighted row index
+        # Or iterate through all rows and reset font
+        
+        # Find the row corresponding to the step UUID
+        target_row = -1
+        for row in range(self.step_list.rowCount()):
+            item = self.step_list.item(row, 0) # Get item from the first column (name/uuid)
+            if item:
+                stored_uuid = item.data(Qt.ItemDataRole.UserRole)
+                if stored_uuid == step_uuid_to_find:
+                    target_row = row
+                    break
+        
+        if target_row != -1:
+            # Highlight the name item (column 0)
+            name_item = self.step_list.item(target_row, 0)
+            if name_item:
+                font = name_item.font()
+                font.setBold(True)
+                name_item.setFont(font)
+                
+            # Highlight the status item (column 1)
+            status_item = self.step_list.item(target_row, 1)
+            if status_item:
+                 # Set status to 'Running...' and make bold
+                 status_item.setText("Running...")
+                 font = status_item.font()
+                 font.setBold(True)
+                 status_item.setFont(font)
+                 # Optionally change text color
+                 # status_item.setForeground(QColor("blue")) 
+
+            # Ensure the item is visible if the list is scrollable
+            self.step_list.scrollToItem(self.step_list.item(target_row, 0), QAbstractItemView.ScrollHint.EnsureVisible)
+
+        else:
+            logging.warning(f"Could not find step with UUID {step_uuid_to_find} in the step list to highlight as running.")
+
+    def handle_post_load_recipe(self, event_dict):
+        """Handles the event triggered after a recipe is loaded."""
+        recipe_name = event_dict["recipe_name"]
+        recipe_version = event_dict["recipe_version"]
+        logging.info(f"Recipe '{recipe_name}' (v{recipe_version}) loaded.")
+        # Potential UI update: self.some_label.setText(f"Loaded: {recipe_name} v{recipe_version}")
+
+    def handle_post_run_sequence(self, event_dict):
+        """Handles the event triggered after a sequence finishes."""
+        sequence_name = event_dict["sequence_name"]
+        sequence_result = event_dict["sequence_result"]
+        logging.info(f"Sequence '{sequence_name}' finished with result: {sequence_result}.")
+        # Potential UI update: Could mark sequence as done in a separate list/view
+
 
 class StepResultModel(QAbstractItemModel):
-    def __init__(self, result_data):
+    """A Qt model for displaying hierarchical StepResult data in a QTreeView.
+
+    Note: This model is currently coupled to the `recipe.StepResult` class structure.
+    """
+    def __init__(self, result_data: List[recipe.StepResult]):
+        """Initializes the model with the raw list of StepResult objects."""
         super().__init__()
         self.result_data: List[recipe.StepResult] = result_data
 
