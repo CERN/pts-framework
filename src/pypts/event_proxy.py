@@ -54,20 +54,22 @@ class RecipeEventProxy(QObject):
                 event_dict = {}
                 if event_name == "post_run_step":
                     step_result: recipe.StepResult = event_data[0] # event_data is a tuple
-                    result_type = step_result.get_result()
-                    match result_type:
-                        case recipe.ResultType.PASS: background_color = "green"
-                        case recipe.ResultType.FAIL: background_color = "red"
-                        case recipe.ResultType.DONE: background_color = "cyan"
-                        case recipe.ResultType.SKIP: background_color = "yellow"
-                        case recipe.ResultType.ERROR: background_color = "red"
-                        case _: background_color = "white"
+                    # Ignore events from SequenceStep itself as they aren't in the table
+                    if not isinstance(step_result.step, recipe.SequenceStep):
+                        result_type = step_result.get_result()
+                        match result_type:
+                            case recipe.ResultType.PASS: background_color = "green"
+                            case recipe.ResultType.FAIL: background_color = "red"
+                            case recipe.ResultType.DONE: background_color = "cyan"
+                            case recipe.ResultType.SKIP: background_color = "yellow"
+                            case recipe.ResultType.ERROR: background_color = "red"
+                            case _: background_color = "white"
                             
-                    event_dict = {
-                        "step_uuid": step_result.step.id,
-                        "status_text": str(result_type),
-                        "status_color": background_color
-                    }
+                        event_dict = {
+                            "step_uuid": step_result.step.id,
+                            "status_text": str(result_type),
+                            "status_color": background_color
+                        }
                 elif event_name == "pre_run_recipe":
                     event_dict = {
                         "recipe_name": event_data[0], 
@@ -88,11 +90,13 @@ class RecipeEventProxy(QObject):
                     event_dict = {"response_q": event_data[0]}
                 elif event_name == "pre_run_step":
                     step_object: recipe.Step = event_data[0] # event_data is a tuple (step,)
-                    event_dict = {
-                        "step_uuid": step_object.id,
-                        "step_name": step_object.name
-                        # Add other step attributes if needed later
-                    }
+                    # Ignore events from SequenceStep itself as they aren't in the table
+                    if not isinstance(step_object, recipe.SequenceStep):
+                        event_dict = {
+                            "step_uuid": step_object.id,
+                            "step_name": step_object.name
+                            # Add other step attributes if needed later
+                        }
                 elif event_name == "post_load_recipe":
                     recipe_object: recipe.Recipe = event_data[0]
                     event_dict = {

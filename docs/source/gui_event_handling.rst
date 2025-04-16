@@ -56,13 +56,14 @@ recipe progress and results:
     4.  When a step finishes, the `recipe.Runtime` puts a `post_run_step` event
         onto the `event_queue` containing the `recipe.StepResult` object.
     5.  `RecipeEventProxy` receives this event.
-    6.  It extracts the necessary information from the `StepResult` (UUID, result
-        type) and creates a simple **ViewModel dictionary**:
+    6.  It extracts the necessary information from the `StepResult` (the *original*
+        `step.id`, not the `step_result.uuid`, and result type) and creates a
+        simple **ViewModel dictionary**:
 
         .. code-block:: python
 
            step_status_view_model = {
-               "step_uuid": step_result.uuid,
+               "step_uuid": step_result.step.id, # Use original Step ID
                "status_text": str(result_type), # e.g., "PASS", "FAIL"
                "status_color": background_color # e.g., "green", "red"
            }
@@ -75,6 +76,12 @@ recipe progress and results:
         data).
     10. It then updates the status cell in that row using the `status_text` and
         `status_color` from the dictionary, resetting the font from bold.
+
+    **Note:** To prevent unnecessary warnings in the GUI log, the `RecipeEventProxy` explicitly filters out
+    `pre_run_step` and `post_run_step` events if they originate from a `recipe.SequenceStep`.
+    This is because the wrapper `SequenceStep` used to run the main sequence isn't displayed
+    in the live table, and its events would otherwise cause "Could not find step with UUID" messages.
+
 *   **Decoupling:** Because the `MainWindow` slots (`update_sequence`, `update_running_step`, `update_step_result`)
     only receive simple dictionaries, `MainWindow` does **not** need to know about
     the internal structure of `recipe.Sequence`, `recipe.Step`, `recipe.StepResult`,
