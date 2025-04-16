@@ -3,6 +3,8 @@ import logging
 from pypts import recipe
 import threading
 from dataclasses import dataclass
+from pypts.report import report_listener
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,20 @@ def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
     global _pts_context
     _pts_context = True
     api = PtsApi(input_queue, event_queue, report_queue)
+    
+    # Define output directory for reports
+    report_output_dir = Path("./pts_reports")
+    report_output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Start the report listener thread
+    report_thread = threading.Thread(
+        target=report_listener,
+        args=(report_queue, str(report_output_dir)),
+        daemon=True
+    )
+    report_thread.start()
+    logger.info(f"Report listener started. Output directory: {report_output_dir.resolve()}")
+
     runtime = recipe.Runtime(event_queue, report_queue)
     
     # Create the recipe with default file_loader and event_sender

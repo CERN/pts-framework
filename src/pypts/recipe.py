@@ -181,8 +181,6 @@ class Runtime:
     def send_event(self, event_name:str, *event_data):
         self.event_queue.put((event_name, event_data))
         json_data = json.dumps({event_name: event_data}, default=serialize)
-        # print(json_data)
-        self.report_queue.put((event_name, json_data))
 
 
 class Recipe:
@@ -280,6 +278,11 @@ class Recipe:
 
         # print(runtime.local_stack)
         # print(runtime.globals)
+
+        # Signal the report listener to stop
+        from pypts.report import STOP_LISTENER
+        runtime.report_queue.put(STOP_LISTENER)
+        logger.debug("Sent STOP_LISTENER to report queue.")
 
         return results
 
@@ -456,6 +459,8 @@ class Step:
                 step_result.set_result(result_type, step_input, step_output)
         
         runtime.send_event("post_run_step", step_result)
+        # Add result to the report queue for processing by the listener
+        runtime.report_queue.put(step_result)
         
         return step_result
 
