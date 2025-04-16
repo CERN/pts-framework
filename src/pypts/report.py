@@ -6,6 +6,8 @@ from pathlib import Path
 import logging
 from pypts.recipe import StepResult, ResultType, Step
 import argparse
+import html # Added for HTML escaping
+from datetime import datetime # Added for timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +216,126 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
         logger.info("Report listener finished.")
 
 
+# --- HTML Report Generation ---
+
+def generate_html_report(csv_path: Path, html_path: Path):
+    """Reads a CSV report and generates an HTML version."""
+    results = []
+    try:
+        with open(csv_path, 'r', newline='', encoding='utf-8') as csvfile:
+            reader = csv.DictReader(csvfile)
+            for row in reader:
+                results.append(row)
+    except FileNotFoundError:
+        logger.error(f"CSV file not found: {csv_path}")
+        return
+    except Exception as e:
+        logger.error(f"Error reading CSV file {csv_path}: {e}")
+        return
+
+    if not results:
+        logger.warning("No results found in CSV to generate HTML report.")
+        # Optionally create a basic HTML file indicating no results
+        # For now, just return
+        return
+
+    # --- HTML Structure --- 
+    html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>pypts Test Report</title>
+<meta charset="utf-8">
+<style>
+    body { font-family: sans-serif; margin: 20px; }
+    h1, h2 { color: #333; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+    th { background-color: #f2f2f2; }
+    .status-pass { background-color: #d4edda; color: #155724; }
+    .status-fail { background-color: #f8d7da; color: #721c24; }
+    .status-error { background-color: #f8d7da; color: #721c24; } /* Same as fail for now */
+    .status-skip { background-color: #fff3cd; color: #856404; }
+    .status-unknown { background-color: #e2e3e5; color: #383d41; }
+    pre { white-space: pre-wrap; word-wrap: break-word; background-color: #f8f9fa; padding: 5px; border: 1px solid #eee; margin: 0; }
+    .details { display: none; }
+    .toggle:hover { cursor: pointer; text-decoration: underline; color: blue; }
+</style>
+<script>
+    function toggleDetails(id) {
+        var element = document.getElementById(id);
+        if (element.style.display === "none") {
+            element.style.display = "block";
+        } else {
+            element.style.display = "none";
+        }
+    }
+</script>
+</head>
+<body>
+"""
+
+    # --- Header --- 
+    html_content += f"<h1>pypts Test Report</h1>"
+    html_content += f"<p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>"
+
+    # --- Summary (Basic) --- 
+    # TODO: Add a more detailed summary (Pass/Fail counts)
+    total_steps = len(results)
+    html_content += f"<h2>Summary</h2>"
+    html_content += f"<p>Total steps: {total_steps}</p>"
+
+    # --- Results Table --- 
+    html_content += "<h2>Details</h2>"
+    html_content += "<table>"
+    html_content += "<thead><tr><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th><th>UUID</th><th>Parent UUID</th></tr></thead>"
+    html_content += "<tbody>"
+
+    for i, row in enumerate(results):
+        status = str(row.get('result', 'Unknown')).split('.')[-1].lower() # Extract status like 'pass'
+        css_class = f"status-{status}" if status in ['pass', 'fail', 'error', 'skip'] else "status-unknown"
+        
+        html_content += f'<tr class="{css_class}">'
+        html_content += f"<td>{html.escape(row.get('step_name', 'N/A'))}</td>"
+        html_content += f"<td>{html.escape(status.upper())}</td>"
+        
+        # Inputs/Outputs/Error Info with toggles for large content
+        for col in ['inputs', 'outputs', 'error_info']:
+            content = row.get(col, '')
+            escaped_content = html.escape(content) # Escape potential HTML in the data
+            # Try to format if it looks like JSON
+            formatted_content = escaped_content
+            if content and content.strip().startswith(('{', '[')): 
+                try:
+                    # Basic JSON pretty print attempt within <pre>
+                    import json
+                    parsed = json.loads(content)
+                    formatted_content = f'<pre>{html.escape(json.dumps(parsed, indent=2))}</pre>'
+                except json.JSONDecodeError:
+                    formatted_content = f'<pre>{escaped_content}</pre>' # Fallback to preformatted escaped
+            elif content: # Handle non-empty, non-JSON content
+                formatted_content = f'<pre>{escaped_content}</pre>'
+            else:
+                formatted_content = "" # Empty content if nothing
+            
+            html_content += f"<td>{formatted_content}</td>"
+
+        html_content += f"<td>{html.escape(row.get('uuid', 'N/A'))}</td>"
+        html_content += f"<td>{html.escape(row.get('parent_uuid', 'N/A'))}</td>"
+        html_content += "</tr>"
+
+    html_content += "</tbody></table>"
+    html_content += "</body></html>"
+
+    # --- Write HTML File ---
+    try:
+        with open(html_path, 'w', encoding='utf-8') as htmlfile:
+            htmlfile.write(html_content)
+        logger.info(f"HTML report generated successfully: {html_path}")
+    except Exception as e:
+        logger.error(f"Error writing HTML file {html_path}: {e}")
+
+
 if __name__ == "__main__":
     import uuid
     from datetime import datetime
@@ -285,7 +407,16 @@ if __name__ == "__main__":
     # --- Finalize ---
     report_manager.finish_reports()
 
-    print(f"Sample report generated: {report_manager.output_dir / 'report.csv'}")
+    csv_report_path = report_manager.output_dir / 'report.csv'
+    html_report_path = report_manager.output_dir / 'report.html'
+    print(f"Sample report generated: {csv_report_path}")
     print("Review the contents of the CSV file.")
+
+    # --- Generate HTML Report ---
+    if csv_report_path.exists():
+        generate_html_report(csv_path=csv_report_path, html_path=html_report_path)
+        print(f"HTML report generated: {html_report_path}")
+    else:
+        print(f"CSV report not found at {csv_report_path}, skipping HTML generation.")
 
 

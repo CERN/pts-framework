@@ -15,7 +15,7 @@ def test_main_report_generation(tmp_path):
     Tests the __main__ block of report.py to ensure it runs and creates a report file.
     """
     report_py_path = PROJECT_ROOT / "src" / "pypts" / "report.py"
-    output_dir = tmp_path / "test_report_output"
+    output_dir = tmp_path / "temp_report_output"
     expected_report_path = output_dir / "report.csv"
 
     # Ensure the script path exists
@@ -52,7 +52,7 @@ def test_main_report_content(tmp_path):
     Tests the content of the generated report.csv from the __main__ block of report.py.
     """
     report_py_path = PROJECT_ROOT / "src" / "pypts" / "report.py"
-    output_dir = tmp_path / "test_report_output_content"
+    output_dir = tmp_path / "temp_report_output"
     report_path = output_dir / "report.csv"
 
     # --- Run the script (similar to test_main_report_generation) ---
