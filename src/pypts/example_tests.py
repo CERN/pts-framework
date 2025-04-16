@@ -1,6 +1,8 @@
 import logging
-import nidmm
-import time
+
+'''
+This file contains a collection of example tests that can be used to develop the PTS framework.
+'''
 
 logger = logging.getLogger(__name__)
 
