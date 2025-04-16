@@ -224,3 +224,4 @@ src/pypts/_version.py
 temp_report_output/report.csv
 pts_reports/report.csv
 temp_report_output/report.html
+pts_reports/report.html
