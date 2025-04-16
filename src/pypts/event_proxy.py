@@ -64,7 +64,7 @@ class RecipeEventProxy(QObject):
                         case _: background_color = "white"
                             
                     event_dict = {
-                        "step_uuid": step_result.uuid,
+                        "step_uuid": step_result.step.id,
                         "status_text": str(result_type),
                         "status_color": background_color
                     }

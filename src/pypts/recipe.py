@@ -118,6 +118,12 @@ def serialize(obj):
 
 class Runtime:
     def __init__(self, event_queue, report_queue):
+        """Initializes the Runtime environment for recipe execution.
+
+        Args:
+            event_queue: Queue for sending events (e.g., to GUI).
+            report_queue: Queue for sending StepResult objects to the report listener.
+        """
         self.event_queue = event_queue
         self.report_queue = report_queue
         self.results: List[StepResult] = []
@@ -181,8 +187,6 @@ class Runtime:
     def send_event(self, event_name:str, *event_data):
         self.event_queue.put((event_name, event_data))
         json_data = json.dumps({event_name: event_data}, default=serialize)
-        # print(json_data)
-        self.report_queue.put((event_name, json_data))
 
 
 class Recipe:
@@ -248,6 +252,21 @@ class Recipe:
         return serial_number
 
     def run(self, runtime: Runtime, sequence_name: str="Main", serial_number: str=None, get_serial_number_func=None):
+        """Executes the main sequence of the recipe.
+
+        Sets up the runtime, determines the serial number, runs the specified sequence,
+        sends pre/post recipe events, sends the STOP_LISTENER signal to the report queue,
+        and returns the collected results.
+
+        Args:
+            runtime (Runtime): The runtime environment.
+            sequence_name (str, optional): The name of the sequence to start execution from. Defaults to "Main".
+            serial_number (str, optional): An explicit serial number to use. If None, prompts the user.
+            get_serial_number_func (callable, optional): A custom function to get the serial number.
+
+        Returns:
+            List[StepResult]: A list of the top-level StepResult objects generated during the run.
+        """
         runtime.set_globals(self.globals)
         runtime.set_sequences(self.sequences)
         
@@ -280,6 +299,11 @@ class Recipe:
 
         # print(runtime.local_stack)
         # print(runtime.globals)
+
+        # Signal the report listener to stop
+        from pypts.report import STOP_LISTENER
+        runtime.report_queue.put(STOP_LISTENER)
+        logger.debug("Sent STOP_LISTENER to report queue.")
 
         return results
 
@@ -433,6 +457,20 @@ class Step:
         return step_result
 
     def run(self, runtime: Runtime, input, parent_step: uuid.UUID=None):
+        """Executes the step, handling setup, execution, error handling, and output processing.
+
+        Processes inputs, calls the internal `_step` method, processes outputs,
+        handles potential errors, creates a StepResult, sends pre/post events,
+        and sends the StepResult to the report_queue.
+
+        Args:
+            runtime (Runtime): The current execution runtime environment.
+            input: The input data for the step (not used directly here, processed in `process_inputs`).
+            parent_step (uuid.UUID, optional): The UUID of the parent step, if any.
+
+        Returns:
+            StepResult: An object containing the results of the step execution.
+        """
         step_result = StepResult(self, parent_step)
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)
@@ -456,6 +494,8 @@ class Step:
                 step_result.set_result(result_type, step_input, step_output)
         
         runtime.send_event("post_run_step", step_result)
+        # Add result to the report queue for processing by the listener
+        runtime.report_queue.put(step_result)
         
         return step_result
 

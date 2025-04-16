@@ -125,7 +125,7 @@ class MainWindow(QWidget):
                 name_item = QTableWidgetItem(step.name)
                 name_item.setFlags(name_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 # Store the step's UUID in the UserRole for later lookup
-                name_item.setData(Qt.ItemDataRole.UserRole, step.id)
+                name_item.setData(Qt.ItemDataRole.UserRole, str(step.id))
                 self.step_list.setItem(i, 0, name_item)
                 
                 # Optionally add an initial empty/pending status item
@@ -154,7 +154,7 @@ class MainWindow(QWidget):
             item = self.step_list.item(row, 0) # Get item from the first column (name/uuid)
             if item:
                 stored_uuid = item.data(Qt.ItemDataRole.UserRole)
-                if stored_uuid == step_uuid_to_find:
+                if stored_uuid == str(step_uuid_to_find):
                     target_row = row
                     break
         
@@ -230,7 +230,7 @@ class MainWindow(QWidget):
             item = self.step_list.item(row, 0) # Get item from the first column (name/uuid)
             if item:
                 stored_uuid = item.data(Qt.ItemDataRole.UserRole)
-                if stored_uuid == step_uuid_to_find:
+                if stored_uuid == str(step_uuid_to_find):
                     target_row = row
                     break
         

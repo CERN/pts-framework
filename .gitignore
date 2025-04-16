@@ -221,3 +221,5 @@ build/
 
 # End of .gitignore content managed by acc-py
 src/pypts/_version.py
+temp_report_output/report.csv
+pts_reports/report.csv
