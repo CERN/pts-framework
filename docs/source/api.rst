@@ -3,11 +3,25 @@
 pypts API documentation
 ========================
 
-.. rubric:: Modules
+This section provides detailed documentation for the public modules and classes within the ``pypts`` framework.
 
-.. autosummary::
-   :toctree: api
+Core Runner (`pts`)
+-------------------
+.. automodule:: pypts.pts
+   :members: run_pts, PtsApi
+   :undoc-members:
+   :show-inheritance:
 
-   .. Add the sub-packages that you wish to document below
+Recipe Components (`recipe`)
+----------------------------
+.. automodule:: pypts.recipe
+   :members: Recipe, Sequence, Step, ResultType, StepResult, Runtime
+   :undoc-members:
+   :show-inheritance:
 
-   pypts
+Reporting (`report`)
+--------------------
+.. automodule:: pypts.report
+   :members: Report, report_listener, generate_html_report
+   :undoc-members:
+   :show-inheritance:
