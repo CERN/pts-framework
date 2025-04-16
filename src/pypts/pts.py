@@ -5,6 +5,7 @@ import threading
 from dataclasses import dataclass
 from pypts.report import report_listener
 from pathlib import Path
+import importlib.metadata
 
 logger = logging.getLogger(__name__)
 
@@ -60,6 +61,14 @@ def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
 
     runtime = recipe.Runtime(event_queue, report_queue)
     
+    # Get and set pypts version
+    try:
+        runtime.pypts_version = importlib.metadata.version('pypts')
+        logger.info(f"pypts version: {runtime.pypts_version}")
+    except importlib.metadata.PackageNotFoundError:
+        runtime.pypts_version = "unknown"
+        logger.warning("Could not determine pypts version. Package not found by importlib.metadata.")
+
     # Create the recipe with default file_loader and event_sender
     recipe_to_run = recipe.Recipe(recipe_file)
     

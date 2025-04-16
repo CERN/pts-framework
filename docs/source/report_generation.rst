@@ -1,4 +1,3 @@
-\
 =====================
 Report Generation
 =====================
@@ -63,9 +62,4 @@ When the main recipe execution completes in ``recipe.Recipe.run``:
 
 1.  Before returning the final results, it imports the ``report.STOP_LISTENER`` sentinel object.
 2.  It places this sentinel onto the ``report_queue`` using ``runtime.report_queue.put(STOP_LISTENER)``.
-3.  This signals the ``report_listener`` thread to stop waiting for more results, finalize the report by calling ``report_manager.finish_reports()``, and exit gracefully.
-
-Output
-------
-
-The final report is generated as ``report.csv`` inside the output directory (defaulting to ``./pts_reports``). It contains a detailed, step-by-step log of the recipe execution in a tabular format.
+3.  This signals the ``report_listener`` thread to stop waiting for more results, finalize the report by calling ``

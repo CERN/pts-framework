@@ -58,7 +58,8 @@ def _result_to_dict(result: StepResult) -> Dict[str, Any]:
         "recipe_name": getattr(result, 'recipe_name', None),
         "recipe_file_name": getattr(result, 'recipe_file_name', None),
         "serial_number": getattr(result, 'serial_number', None),
-        "sequence_name": getattr(result, 'sequence_name', None)
+        "sequence_name": getattr(result, 'sequence_name', None),
+        "pypts_version": getattr(result, 'pypts_version', 'unknown'),
         # "subresults": ... Removed for flattening
     }
 
@@ -76,6 +77,7 @@ def _flatten_single_result(result_dict: Dict[str, Any]) -> Dict[str, Any]:
         "recipe_file_name": result_dict.get("recipe_file_name", "N/A"),
         "sequence_name": result_dict.get("sequence_name", "N/A"),
         "serial_number": result_dict.get("serial_number", "N/A"),
+        "pypts_version": result_dict.get("pypts_version", "unknown"),
         # Step info
         "step_name": result_dict.get("step", {}).get("name", "N/A") if result_dict.get("step") else "N/A",
         "step_id": result_dict.get("step", {}).get("id", "N/A") if result_dict.get("step") else "N/A",
@@ -95,7 +97,7 @@ class Report:
     Writes results to a CSV file (report.csv) in the specified directory
     as they become available via the `add_step_result` method.
     """
-    _CSV_HEADERS = ["uuid", "parent_uuid", "recipe_name", "recipe_file_name", "sequence_name", "serial_number", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
+    _CSV_HEADERS = ["uuid", "parent_uuid", "recipe_name", "recipe_file_name", "sequence_name", "serial_number", "pypts_version", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
 
     def __init__(self, output_dir: str | Path):
         """
@@ -297,10 +299,12 @@ def generate_html_report(csv_path: Path, html_path: Path):
         recipe_name = html.escape(first_row.get('recipe_name', 'N/A'))
         recipe_file = html.escape(first_row.get('recipe_file_name', 'N/A'))
         serial_num = html.escape(first_row.get('serial_number', 'N/A'))
+        pypts_version = html.escape(first_row.get('pypts_version', 'unknown')) # Get version
         html_content += f"<h2>Run Context</h2>"
         html_content += f"<p><strong>Recipe:</strong> {recipe_name}<br>"
         html_content += f"<strong>File:</strong> {recipe_file}<br>"
-        html_content += f"<strong>Serial Number:</strong> {serial_num}</p>"
+        html_content += f"<strong>Serial Number:</strong> {serial_num}<br>"
+        html_content += f"<strong>pypts Version:</strong> {pypts_version}</p>" # Display version
     else:
         html_content += "<p><strong>Run Context:</strong> No results data found.</p>"
 
@@ -401,6 +405,7 @@ if __name__ == "__main__":
     result1.recipe_file_name = "sample_recipe.yaml"
     result1.serial_number = "DUMMY_SN_12345"
     result1.sequence_name = "Main"
+    result1.pypts_version = "0.1.0-dummy" # Dummy version
     result1.set_result(
         result_type=ResultType.PASS,
         inputs={"arg1": 10},
@@ -413,6 +418,7 @@ if __name__ == "__main__":
     result2.recipe_file_name = "sample_recipe.yaml"
     result2.serial_number = "DUMMY_SN_12345"
     result2.sequence_name = "Main"
+    result2.pypts_version = "0.1.0-dummy" # Dummy version
     result2.set_result(
         result_type=ResultType.PASS,
         inputs={"value": "abc"},
@@ -426,6 +432,7 @@ if __name__ == "__main__":
     result3.recipe_file_name = "sample_recipe.yaml"
     result3.serial_number = "DUMMY_SN_12345"
     result3.sequence_name = "Main"
+    result3.pypts_version = "0.1.0-dummy" # Dummy version
     result3.set_result(
         result_type=ResultType.FAIL,
         inputs={"value": 25, "min": 10, "max": 20},
@@ -442,6 +449,7 @@ if __name__ == "__main__":
         result4.recipe_file_name = "sample_recipe.yaml"
         result4.serial_number = "DUMMY_SN_12345"
         result4.sequence_name = "Main"
+        result4.pypts_version = "0.1.0-dummy" # Dummy version
         result4.set_error(
             error_info=f"{type(e).__name__}: {e}",
             inputs={}

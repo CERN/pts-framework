@@ -42,6 +42,7 @@ class StepResult():
         self.recipe_file_name: str = None
         self.serial_number: str = None
         self.sequence_name: str = None
+        self.pypts_version: str = "unknown" # Added pypts version
     
     def __str__(self):
         return str(self.result)
@@ -140,6 +141,7 @@ class Runtime:
         self.recipe_file_name: str = None
         self.serial_number: str = None
         self.current_sequence_name: str = None
+        self.pypts_version: str = "unknown" # Added pypts version
         
     def push_locals(self, locals):
         self.local_stack.append(locals)
@@ -495,6 +497,7 @@ class Step:
         step_result.recipe_file_name = runtime.recipe_file_name
         step_result.serial_number = runtime.serial_number
         step_result.sequence_name = runtime.current_sequence_name
+        step_result.pypts_version = runtime.pypts_version # Copy version
 
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)
