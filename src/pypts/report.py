@@ -224,6 +224,15 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
     # Loop finished, finalize reports
     try:
         report_manager.finish_reports()
+        # --- Generate HTML Report after CSV is finalized ---
+        csv_report_path = report_manager.output_dir / 'report.csv'
+        html_report_path = report_manager.output_dir / 'report.html'
+        if csv_report_path.exists():
+            logger.info(f"Generating HTML report from {csv_report_path}...")
+            generate_html_report(csv_path=csv_report_path, html_path=html_report_path)
+        else:
+            logger.warning(f"CSV report not found at {csv_report_path}, cannot generate HTML report.")
+        # ----------------------------------------------------
     except Exception as e:
         logger.error(f"Error during final report generation: {e}", exc_info=True)
     finally:
