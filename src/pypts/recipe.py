@@ -118,6 +118,12 @@ def serialize(obj):
 
 class Runtime:
     def __init__(self, event_queue, report_queue):
+        """Initializes the Runtime environment for recipe execution.
+
+        Args:
+            event_queue: Queue for sending events (e.g., to GUI).
+            report_queue: Queue for sending StepResult objects to the report listener.
+        """
         self.event_queue = event_queue
         self.report_queue = report_queue
         self.results: List[StepResult] = []
@@ -246,6 +252,21 @@ class Recipe:
         return serial_number
 
     def run(self, runtime: Runtime, sequence_name: str="Main", serial_number: str=None, get_serial_number_func=None):
+        """Executes the main sequence of the recipe.
+
+        Sets up the runtime, determines the serial number, runs the specified sequence,
+        sends pre/post recipe events, sends the STOP_LISTENER signal to the report queue,
+        and returns the collected results.
+
+        Args:
+            runtime (Runtime): The runtime environment.
+            sequence_name (str, optional): The name of the sequence to start execution from. Defaults to "Main".
+            serial_number (str, optional): An explicit serial number to use. If None, prompts the user.
+            get_serial_number_func (callable, optional): A custom function to get the serial number.
+
+        Returns:
+            List[StepResult]: A list of the top-level StepResult objects generated during the run.
+        """
         runtime.set_globals(self.globals)
         runtime.set_sequences(self.sequences)
         
@@ -436,6 +457,20 @@ class Step:
         return step_result
 
     def run(self, runtime: Runtime, input, parent_step: uuid.UUID=None):
+        """Executes the step, handling setup, execution, error handling, and output processing.
+
+        Processes inputs, calls the internal `_step` method, processes outputs,
+        handles potential errors, creates a StepResult, sends pre/post events,
+        and sends the StepResult to the report_queue.
+
+        Args:
+            runtime (Runtime): The current execution runtime environment.
+            input: The input data for the step (not used directly here, processed in `process_inputs`).
+            parent_step (uuid.UUID, optional): The UUID of the parent step, if any.
+
+        Returns:
+            StepResult: An object containing the results of the step execution.
+        """
         step_result = StepResult(self, parent_step)
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)

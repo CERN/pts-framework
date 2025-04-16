@@ -1,3 +1,4 @@
+"""Handles the generation of incremental CSV reports for pypts recipe execution."""
 import json
 import csv
 from typing import List, Dict, Any
@@ -21,7 +22,11 @@ def _serialize_step(step: Step) -> Dict[str, Any]:
     return None
 
 def _result_to_dict(result: StepResult) -> Dict[str, Any]:
-    """Converts a StepResult object into a dictionary (without subresults for flattening)."""
+    """Converts a StepResult object into a dictionary suitable for reporting.
+
+    Handles potential serialization errors for inputs and outputs.
+    Does not recursively process subresults for flat structures.
+    """
     # Simplified: Does not handle subresults recursively for flat structure.
     if not isinstance(result, StepResult):
         logger.warning(f"Expected StepResult, got {type(result)}. Skipping.")
@@ -51,7 +56,10 @@ def _result_to_dict(result: StepResult) -> Dict[str, Any]:
     }
 
 def _flatten_single_result(result_dict: Dict[str, Any]) -> Dict[str, Any]:
-    """Flattens a single result dictionary for CSV writing."""
+    """Flattens a single result dictionary for CSV writing.
+
+    Extracts nested step information and serializes complex fields like inputs/outputs to JSON.
+    """ 
     if not result_dict: return None
     return {
         "uuid": result_dict.get("uuid"),
@@ -70,7 +78,8 @@ def _flatten_single_result(result_dict: Dict[str, Any]) -> Dict[str, Any]:
 class Report:
     """
     Manages incremental CSV report generation during PTS execution.
-    Writes results to a CSV file as they become available.
+    Writes results to a CSV file (report.csv) in the specified directory
+    as they become available via the `add_step_result` method.
     """
     _CSV_HEADERS = ["uuid", "parent_uuid", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
 
@@ -167,6 +176,9 @@ STOP_LISTENER = object()
 def report_listener(result_queue: SimpleQueue, output_dir: str):
     """
     Listens to a queue for StepResult objects and generates reports incrementally.
+
+    Instantiates a Report manager to handle file writing.
+    Exits gracefully when the STOP_LISTENER sentinel object is received on the queue.
 
     Args:
         result_queue (SimpleQueue): Queue to receive StepResult objects or STOP_LISTENER.
