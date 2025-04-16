@@ -4,6 +4,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 import logging
 from pypts.recipe import StepResult, ResultType, Step
+import argparse
 
 logger = logging.getLogger(__name__)
 
@@ -206,14 +207,23 @@ if __name__ == "__main__":
     from datetime import datetime
     from pypts.recipe import Step, StepResult, ResultType # Ensure these are importable
 
+    # --- Argument Parsing ---
+    parser = argparse.ArgumentParser(description="Generate a sample pypts report CSV.")
+    parser.add_argument(
+        "-o", "--output-dir",
+        type=str,
+        default="./temp_report_output",
+        help="Directory to save the report.csv file."
+    )
+    args = parser.parse_args()
+    output_directory = Path(args.output_dir)
+
     # --- Configuration ---
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-    # Create a temporary output directory for the example
-    temp_output_dir = Path("./temp_report_output")
-    print(f"Example report will be generated in: {temp_output_dir.resolve()}")
+    print(f"Example report will be generated in: {output_directory.resolve()}")
 
     # --- Simulate Recipe Execution ---
-    report_manager = Report(output_dir=temp_output_dir)
+    report_manager = Report(output_dir=output_directory) # Use the parsed output directory
 
     # Simulate some steps (minimal Step objects for reporting)
     step1 = Step(step_name="Run Other Test", id=uuid.uuid4(), description="First step")
