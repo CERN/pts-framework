@@ -37,6 +37,11 @@ class StepResult():
         self.subresults: List[StepResult] = []
         self.uuid: uuid.UUID = uuid.uuid4()
         self.parent: uuid.UUID = parent
+        # Metadata added for reporting
+        self.recipe_name: str = None
+        self.recipe_file_name: str = None
+        self.serial_number: str = None
+        self.sequence_name: str = None
     
     def __str__(self):
         return str(self.result)
@@ -130,6 +135,11 @@ class Runtime:
         self.globals = []
         self.sequences = {}
         self.local_stack = []
+        # Metadata for reporting context
+        self.recipe_name: str = None
+        self.recipe_file_name: str = None
+        self.serial_number: str = None
+        self.current_sequence_name: str = None
         
     def push_locals(self, locals):
         self.local_stack.append(locals)
@@ -210,6 +220,7 @@ class Recipe:
         self.file_loader = file_loader or self._default_file_loader
         self.event_sender = event_sender or self._default_event_sender
         self.__load_recipe(recipe_file_path)
+        self.recipe_file_name = Path(recipe_file_path).name # Store filename
 
     def _default_file_loader(self, path):
         """Default implementation that loads a YAML file"""
@@ -269,16 +280,22 @@ class Recipe:
         """
         runtime.set_globals(self.globals)
         runtime.set_sequences(self.sequences)
-        
+        runtime.recipe_name = self.name             # Set recipe name in runtime
+        runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
+
         # Use the event sender instead of direct calls
         self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
 
         if serial_number is None:
             # Allow passing a different function for getting serial numbers
             get_serial = get_serial_number_func or self.__get_serial_number
-            runtime.set_global("serial_number", get_serial(runtime))
+            # runtime.set_global("serial_number", get_serial(runtime))
+            _serial_number = get_serial(runtime)
+            runtime.set_global("serial_number", _serial_number)
+            runtime.serial_number = _serial_number # Set serial number in runtime
         else:
             runtime.set_global("serial_number", serial_number)
+            runtime.serial_number = serial_number # Set serial number in runtime
 
         # Create folder structures needed here to store all results
         # starting_sequence: Sequence = runtime.get_sequence(sequence_name)
@@ -362,6 +379,7 @@ class Sequence():
         logger.info(f"Starting sequence {self.name}")
         runtime.send_event("pre_run_sequence", self)
         runtime.push_locals(self.locals)
+        runtime.current_sequence_name = self.name # Set current sequence name
 
         for variable in input:
             runtime.set_local(variable, input[variable])
@@ -472,6 +490,12 @@ class Step:
             StepResult: An object containing the results of the step execution.
         """
         step_result = StepResult(self, parent_step)
+        # Populate metadata from runtime
+        step_result.recipe_name = runtime.recipe_name
+        step_result.recipe_file_name = runtime.recipe_file_name
+        step_result.serial_number = runtime.serial_number
+        step_result.sequence_name = runtime.current_sequence_name
+
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)
 

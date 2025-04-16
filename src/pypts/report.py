@@ -54,6 +54,11 @@ def _result_to_dict(result: StepResult) -> Dict[str, Any]:
         "inputs": inputs_serializable,
         "outputs": outputs_serializable,
         "error_info": result.error_info,
+        # Add metadata fields
+        "recipe_name": getattr(result, 'recipe_name', None),
+        "recipe_file_name": getattr(result, 'recipe_file_name', None),
+        "serial_number": getattr(result, 'serial_number', None),
+        "sequence_name": getattr(result, 'sequence_name', None)
         # "subresults": ... Removed for flattening
     }
 
@@ -66,9 +71,16 @@ def _flatten_single_result(result_dict: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "uuid": result_dict.get("uuid"),
         "parent_uuid": result_dict.get("parent_uuid"),
+        # Add metadata fields
+        "recipe_name": result_dict.get("recipe_name", "N/A"),
+        "recipe_file_name": result_dict.get("recipe_file_name", "N/A"),
+        "sequence_name": result_dict.get("sequence_name", "N/A"),
+        "serial_number": result_dict.get("serial_number", "N/A"),
+        # Step info
         "step_name": result_dict.get("step", {}).get("name", "N/A") if result_dict.get("step") else "N/A",
         "step_id": result_dict.get("step", {}).get("id", "N/A") if result_dict.get("step") else "N/A",
         "step_type": result_dict.get("step", {}).get("type", "N/A") if result_dict.get("step") else "N/A",
+        # Result info
         "result": result_dict.get("result"),
         "inputs": json.dumps(result_dict.get("inputs", {})), # Serialize complex structures
         "outputs": json.dumps(result_dict.get("outputs", {})), # Serialize complex structures
@@ -83,7 +95,7 @@ class Report:
     Writes results to a CSV file (report.csv) in the specified directory
     as they become available via the `add_step_result` method.
     """
-    _CSV_HEADERS = ["uuid", "parent_uuid", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
+    _CSV_HEADERS = ["uuid", "parent_uuid", "recipe_name", "recipe_file_name", "sequence_name", "serial_number", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
 
     def __init__(self, output_dir: str | Path):
         """
@@ -279,6 +291,19 @@ def generate_html_report(csv_path: Path, html_path: Path):
     html_content += f"<h1>pypts Test Report</h1>"
     html_content += f"<p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>"
 
+    # --- Run Context --- 
+    if results: # Ensure we have results before accessing
+        first_row = results[0]
+        recipe_name = html.escape(first_row.get('recipe_name', 'N/A'))
+        recipe_file = html.escape(first_row.get('recipe_file_name', 'N/A'))
+        serial_num = html.escape(first_row.get('serial_number', 'N/A'))
+        html_content += f"<h2>Run Context</h2>"
+        html_content += f"<p><strong>Recipe:</strong> {recipe_name}<br>"
+        html_content += f"<strong>File:</strong> {recipe_file}<br>"
+        html_content += f"<strong>Serial Number:</strong> {serial_num}</p>"
+    else:
+        html_content += "<p><strong>Run Context:</strong> No results data found.</p>"
+
     # --- Summary (Basic) --- 
     # TODO: Add a more detailed summary (Pass/Fail counts)
     total_steps = len(results)
@@ -288,7 +313,8 @@ def generate_html_report(csv_path: Path, html_path: Path):
     # --- Results Table --- 
     html_content += "<h2>Details</h2>"
     html_content += "<table>"
-    html_content += "<thead><tr><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th><th>UUID</th><th>Parent UUID</th></tr></thead>"
+    # Revert header, keep Sequence Name
+    html_content += "<thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th><th>UUID</th><th>Parent UUID</th></tr></thead>"
     html_content += "<tbody>"
 
     for i, row in enumerate(results):
@@ -296,6 +322,8 @@ def generate_html_report(csv_path: Path, html_path: Path):
         css_class = f"status-{status}" if status in ['pass', 'fail', 'error', 'skip'] else "status-unknown"
         
         html_content += f'<tr class="{css_class}">'
+        # Revert cells, keep Sequence Name 
+        html_content += f"<td>{html.escape(row.get('sequence_name', 'N/A'))}</td>"
         html_content += f"<td>{html.escape(row.get('step_name', 'N/A'))}</td>"
         html_content += f"<td>{html.escape(status.upper())}</td>"
         
@@ -368,6 +396,11 @@ if __name__ == "__main__":
 
     # Simulate results
     result1 = StepResult(step=step1)
+    # Add dummy metadata for example
+    result1.recipe_name = "SampleRecipe"
+    result1.recipe_file_name = "sample_recipe.yaml"
+    result1.serial_number = "DUMMY_SN_12345"
+    result1.sequence_name = "Main"
     result1.set_result(
         result_type=ResultType.PASS,
         inputs={"arg1": 10},
@@ -376,6 +409,10 @@ if __name__ == "__main__":
     report_manager.add_step_result(result1)
 
     result2 = StepResult(step=step2, parent=result1.uuid) # Example of parent linking
+    result2.recipe_name = "SampleRecipe"
+    result2.recipe_file_name = "sample_recipe.yaml"
+    result2.serial_number = "DUMMY_SN_12345"
+    result2.sequence_name = "Main"
     result2.set_result(
         result_type=ResultType.PASS,
         inputs={"value": "abc"},
@@ -385,6 +422,10 @@ if __name__ == "__main__":
 
 
     result3 = StepResult(step=step3, parent=result1.uuid) # Example of parent linking
+    result3.recipe_name = "SampleRecipe"
+    result3.recipe_file_name = "sample_recipe.yaml"
+    result3.serial_number = "DUMMY_SN_12345"
+    result3.sequence_name = "Main"
     result3.set_result(
         result_type=ResultType.FAIL,
         inputs={"value": 25, "min": 10, "max": 20},
@@ -397,6 +438,10 @@ if __name__ == "__main__":
         raise ValueError("Something went wrong deliberately")
     except Exception as e:
         result4 = StepResult(step=step4, parent=result1.uuid) # Example of parent linking
+        result4.recipe_name = "SampleRecipe"
+        result4.recipe_file_name = "sample_recipe.yaml"
+        result4.serial_number = "DUMMY_SN_12345"
+        result4.sequence_name = "Main"
         result4.set_error(
             error_info=f"{type(e).__name__}: {e}",
             inputs={}
