@@ -199,3 +199,71 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
         logger.error(f"Error during final report generation: {e}", exc_info=True)
     finally:
         logger.info("Report listener finished.")
+
+
+if __name__ == "__main__":
+    import uuid
+    from datetime import datetime
+    from pypts.recipe import Step, StepResult, ResultType # Ensure these are importable
+
+    # --- Configuration ---
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
+    # Create a temporary output directory for the example
+    temp_output_dir = Path("./temp_report_output")
+    print(f"Example report will be generated in: {temp_output_dir.resolve()}")
+
+    # --- Simulate Recipe Execution ---
+    report_manager = Report(output_dir=temp_output_dir)
+
+    # Simulate some steps (minimal Step objects for reporting)
+    step1 = Step(step_name="Run Other Test", id=uuid.uuid4(), description="First step")
+    step2 = Step(step_name="Run Simple Output Test", id=uuid.uuid4(), description="Second step")
+    step3 = Step(step_name="Run Range Test (Fail)", id=uuid.uuid4(), description="Third step, expected fail")
+    step4 = Step(step_name="Generate Error", id=uuid.uuid4(), description="Fourth step, error")
+
+
+    # Simulate results
+    result1 = StepResult(step=step1)
+    result1.set_result(
+        result_type=ResultType.PASS,
+        inputs={"arg1": 10},
+        outputs={"some_return": True, "value": "abc"}
+    )
+    report_manager.add_step_result(result1)
+
+    result2 = StepResult(step=step2, parent=result1.uuid) # Example of parent linking
+    result2.set_result(
+        result_type=ResultType.PASS,
+        inputs={"value": "abc"},
+        outputs={"my_output": "calculated_abc"}
+    )
+    report_manager.add_step_result(result2)
+
+
+    result3 = StepResult(step=step3, parent=result1.uuid) # Example of parent linking
+    result3.set_result(
+        result_type=ResultType.FAIL,
+        inputs={"value": 25, "min": 10, "max": 20},
+        outputs={"compare": False}
+    )
+    report_manager.add_step_result(result3)
+
+    # Simulate an error result
+    try:
+        raise ValueError("Something went wrong deliberately")
+    except Exception as e:
+        result4 = StepResult(step=step4, parent=result1.uuid) # Example of parent linking
+        result4.set_error(
+            error_info=f"{type(e).__name__}: {e}",
+            inputs={}
+        )
+        report_manager.add_step_result(result4)
+
+
+    # --- Finalize ---
+    report_manager.finish_reports()
+
+    print(f"Sample report generated: {report_manager.output_dir / 'report.csv'}")
+    print("Review the contents of the CSV file.")
+
+
