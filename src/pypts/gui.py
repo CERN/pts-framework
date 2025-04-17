@@ -2,9 +2,9 @@ import logging
 from PyQt6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
                              QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, 
                              QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
-                             QTreeView, QAbstractItemView)
+                             QTreeView, QAbstractItemView, QMainWindow, QMenuBar)
 from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QAbstractItemModel, QModelIndex
-from PyQt6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
+from PyQt6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QAction
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
@@ -24,7 +24,7 @@ class TextEditLoggerHandler(QObject, logging.Handler):
         self.new_message.emit(msg)
 
 
-class MainWindow(QWidget):
+class MainWindow(QMainWindow):
     """The main application window, displaying recipe progress and results."""
     def __init__(self, *args, **kwargs):
         """Initializes the main window UI components."""
@@ -38,15 +38,20 @@ class MainWindow(QWidget):
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
 
+        # Create a central widget to hold the main layout
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+
         self.cern_logo = QPixmap("images/CERN_Logo.png").scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
 
         top_level_layout = QHBoxLayout()
         left_half_layout = QVBoxLayout()
         right_half_layout = QVBoxLayout()
 
-        self.recipe_label = QLabel(self)
+        # Parent widgets to central_widget or self
+        self.recipe_label = QLabel(central_widget)
 
-        self.step_list = QTableWidget(self)
+        self.step_list = QTableWidget(central_widget)
         self.step_list.setMaximumWidth(600)
         self.step_list.setColumnCount(2)
         self.step_list.setHorizontalHeaderLabels(["Step name", "Status"])
@@ -56,19 +61,19 @@ class MainWindow(QWidget):
 
         self.step_list.update()
 
-        self.result_list = QTreeView(self)
+        self.result_list = QTreeView(central_widget)
         self.result_list.setMaximumWidth(600)
 
         left_half_layout.addWidget(self.recipe_label)
         left_half_layout.addWidget(self.step_list)
         left_half_layout.addWidget(self.result_list)
 
-        self.picture_box = QLabel(self)
+        self.picture_box = QLabel(central_widget)
         self.picture_box.setPixmap(self.cern_logo)
         self.picture_box.setMinimumSize(800, 600)
         self.picture_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.message_box = QLabel(self)
+        self.message_box = QLabel(central_widget)
 
         self.button_list_layout = QHBoxLayout()
         self.yes_button = QPushButton()
@@ -82,7 +87,7 @@ class MainWindow(QWidget):
         self.yes_button.pressed.connect(lambda: self.interaction_response("yes"))
         self.no_button.pressed.connect(lambda: self.interaction_response("no"))
 
-        self.log_text_box = QPlainTextEdit(self)
+        self.log_text_box = QPlainTextEdit(central_widget)
         self.log_text_box.setReadOnly(True)
         self.log_text_box.setFont(QFont("Courier", 10))
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
@@ -95,7 +100,11 @@ class MainWindow(QWidget):
 
         top_level_layout.addLayout(left_half_layout)
         top_level_layout.addLayout(right_half_layout)
-        self.setLayout(top_level_layout)
+        # Set the layout on the central widget
+        central_widget.setLayout(top_level_layout)
+
+        # Create Menu Bar
+        self._create_menu_bar()
 
         self.log_handler = TextEditLoggerHandler(self)
         self.log_handler.setFormatter(logging.Formatter('%(levelname)s : %(name)s : %(message)s'))
@@ -104,6 +113,17 @@ class MainWindow(QWidget):
 
         self.show()
 
+    def _create_menu_bar(self):
+        """Creates the main menu bar with 'File' and 'About' menus."""
+        menu_bar = self.menuBar()  # QMainWindow has a built-in menuBar()
+        # File Menu
+        file_menu = menu_bar.addMenu("&File")
+        # About Menu
+        about_menu = menu_bar.addMenu("&About")
+        # Placeholder actions - will be connected later
+        # file_menu.addAction("Open Recipe...") 
+        # file_menu.addAction("Exit")
+        # about_menu.addAction("About PTS")
 
     def update_recipe_name(self, event_dict):
         """Updates the recipe name label and window title from the event dictionary."""
