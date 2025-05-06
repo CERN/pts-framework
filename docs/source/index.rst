@@ -24,7 +24,7 @@ Installation
 
 Using the `acc-py Python package index
 <https://wikis.cern.ch/display/ACCPY/Getting+started+with+acc-python#Gettingstartedwithacc-python-OurPythonPackageRepositoryrepo>`_
-``pypts`` can be pip installed with::
+``pts-framework`` can be pip installed with::
 
    pip install pts-framework
 
