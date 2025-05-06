@@ -5,7 +5,7 @@ include:
    file: v2/python.gitlab-ci.yml
 
 variables:
-  project_name: pypts
+  project_name: pts-framework
   project_root: "."
 
   # The PY_VERSION and ACC_PY_BASE_IMAGE_TAG variables control the default Python and Acc-Py versions used by Acc-Py jobs.
