@@ -49,7 +49,7 @@ dev = [
   # "requirement-for-development-purposes-only",
 
   # Include the "test" and "doc" dependencies in the dev dependencies.
-  "pypts[doc,test]",
+  "pts-framework[doc,test]",
   "ruff",
 ]
 
