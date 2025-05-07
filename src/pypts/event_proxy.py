@@ -40,90 +40,106 @@ class RecipeEventProxy(QObject):
         super().__init__()
         self.event_q = event_q
 
+    def RecipeEventProxyRunner(self):
+        try:
+            event_name, event_data = self.event_q.get()
+            logger.debug(f"Event Proxy received: {event_name}")
+
+            # --- Data Transformation / ViewModel Creation ---
+            event_dict = {}
+            if event_name == "post_run_step":
+                step_result: recipe.StepResult = event_data[0]  # event_data is a tuple
+                # Ignore events from SequenceStep itself as they aren't in the table
+                if not isinstance(step_result.step, recipe.SequenceStep):
+                    result_type = step_result.get_result()
+                    match result_type:
+                        case recipe.ResultType.PASS:
+                            background_color = "green"
+                        case recipe.ResultType.FAIL:
+                            background_color = "red"
+                        case recipe.ResultType.DONE:
+                            background_color = "cyan"
+                        case recipe.ResultType.SKIP:
+                            background_color = "yellow"
+                        case recipe.ResultType.ERROR:
+                            background_color = "red"
+                        case _:
+                            background_color = "white"
+
+                    event_dict = {
+                        "step_uuid": step_result.step.id,
+                        "status_text": str(result_type),
+                        "status_color": background_color
+                    }
+            elif event_name == "pre_run_recipe":
+                event_dict = {
+                    "recipe_name": event_data[0],
+                    "recipe_description": event_data[1]
+                }
+            elif event_name == "post_run_recipe":
+                event_dict = {"results": event_data[0]}
+            elif event_name == "pre_run_sequence":
+                event_dict = {"sequence": event_data[0]}
+            elif event_name == "user_interact":
+                event_dict = {
+                    "response_q": event_data[0],
+                    "message": event_data[1],
+                    "image_path": event_data[2],
+                    "options": event_data[3]
+                }
+            elif event_name == "get_serial_number":
+                event_dict = {"response_q": event_data[0]}
+            elif event_name == "pre_run_step":
+                step_object: recipe.Step = event_data[0]  # event_data is a tuple (step,)
+                # Ignore events from SequenceStep itself as they aren't in the table
+                if not isinstance(step_object, recipe.SequenceStep):
+                    event_dict = {
+                        "step_uuid": step_object.id,
+                        "step_name": step_object.name
+                        # Add other step attributes if needed later
+                    }
+            elif event_name == "post_load_recipe":
+                recipe_object: recipe.Recipe = event_data[0]
+                event_dict = {
+                    "recipe_name": recipe_object.name,
+                    "recipe_version": recipe_object.version
+                }
+            elif event_name == "post_run_sequence":
+                sequence_object: recipe.Sequence = event_data[0]
+                sequence_result: recipe.ResultType = event_data[1]
+                event_dict = {
+                    "sequence_name": sequence_object.name,
+                    "sequence_result": str(sequence_result)  # Convert enum to string
+                }
+            # Add other event types and their dictionary mappings here if needed
+
+            # --- Signal Emission ---
+            if event_dict:  # Check if a dictionary was created for the event
+                with suppress(AttributeError):
+                    signal_name = event_name + "_signal"
+                    signal = getattr(self, signal_name)
+                    signal.emit(event_dict)
+                # else: # Optional: Log if no matching signal found (shouldn't happen if event_dict is populated)
+                #    logger.warning(f"No signal found for event: {event_name}")
+            else:
+                logger.warning(f"No dictionary created for event: {event_name}")
+
+        except Exception as e:
+            logger.error(f"Error in RecipeEventProxy loop: {e}", exc_info=True)
+            # Depending on desired behavior, you might want to break or continue
+            # For robustness, we'll continue here
+
     def run(self):
         """Continuously fetches events from the queue, transforms data for 
            `post_run_step` into a ViewModel, and emits the corresponding Qt signal.
         """
         logger.info("RecipeEventProxy started.")
         while True:
-            try:
-                event_name, event_data = self.event_q.get()
-                logger.debug(f"Event Proxy received: {event_name}")
+            self.RecipeEventProxyRunner()
 
-                # --- Data Transformation / ViewModel Creation ---
-                event_dict = {}
-                if event_name == "post_run_step":
-                    step_result: recipe.StepResult = event_data[0] # event_data is a tuple
-                    # Ignore events from SequenceStep itself as they aren't in the table
-                    if not isinstance(step_result.step, recipe.SequenceStep):
-                        result_type = step_result.get_result()
-                        match result_type:
-                            case recipe.ResultType.PASS: background_color = "green"
-                            case recipe.ResultType.FAIL: background_color = "red"
-                            case recipe.ResultType.DONE: background_color = "cyan"
-                            case recipe.ResultType.SKIP: background_color = "yellow"
-                            case recipe.ResultType.ERROR: background_color = "red"
-                            case _: background_color = "white"
-                            
-                        event_dict = {
-                            "step_uuid": step_result.step.id,
-                            "status_text": str(result_type),
-                            "status_color": background_color
-                        }
-                elif event_name == "pre_run_recipe":
-                    event_dict = {
-                        "recipe_name": event_data[0], 
-                        "recipe_description": event_data[1]
-                    }
-                elif event_name == "post_run_recipe":
-                    event_dict = {"results": event_data[0]}
-                elif event_name == "pre_run_sequence":
-                    event_dict = {"sequence": event_data[0]}
-                elif event_name == "user_interact":
-                    event_dict = {
-                        "response_q": event_data[0], 
-                        "message": event_data[1], 
-                        "image_path": event_data[2], 
-                        "options": event_data[3]
-                    }
-                elif event_name == "get_serial_number":
-                    event_dict = {"response_q": event_data[0]}
-                elif event_name == "pre_run_step":
-                    step_object: recipe.Step = event_data[0] # event_data is a tuple (step,)
-                    # Ignore events from SequenceStep itself as they aren't in the table
-                    if not isinstance(step_object, recipe.SequenceStep):
-                        event_dict = {
-                            "step_uuid": step_object.id,
-                            "step_name": step_object.name
-                            # Add other step attributes if needed later
-                        }
-                elif event_name == "post_load_recipe":
-                    recipe_object: recipe.Recipe = event_data[0]
-                    event_dict = {
-                        "recipe_name": recipe_object.name,
-                        "recipe_version": recipe_object.version
-                    }
-                elif event_name == "post_run_sequence":
-                    sequence_object: recipe.Sequence = event_data[0]
-                    sequence_result: recipe.ResultType = event_data[1]
-                    event_dict = {
-                        "sequence_name": sequence_object.name,
-                        "sequence_result": str(sequence_result) # Convert enum to string
-                    }
-                # Add other event types and their dictionary mappings here if needed
-
-                # --- Signal Emission ---
-                if event_dict: # Check if a dictionary was created for the event
-                    with suppress(AttributeError):
-                        signal_name = event_name + "_signal"
-                        signal = getattr(self, signal_name)
-                        signal.emit(event_dict)
-                    # else: # Optional: Log if no matching signal found (shouldn't happen if event_dict is populated)
-                    #    logger.warning(f"No signal found for event: {event_name}")
-                else:
-                    logger.warning(f"No dictionary created for event: {event_name}")
-
-            except Exception as e:
-                logger.error(f"Error in RecipeEventProxy loop: {e}", exc_info=True)
-                # Depending on desired behavior, you might want to break or continue
-                # For robustness, we'll continue here
+    def run_once(self):
+        """
+            This function is being run once for testability (pytest would block with while loop)
+        """
+        logger.info("RecipeEventProxy started.")
+        self.RecipeEventProxyRunner()

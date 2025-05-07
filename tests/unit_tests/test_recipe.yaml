@@ -1,0 +1,83 @@
+---
+name: Example Test Recipe
+version: 0.1.0
+description: A sample recipe demonstrating how to call functions from example_tests.py
+main_sequence: Main
+globals: {}
+
+---
+sequence_name: Main
+description: The main sequence of steps for the example recipe.
+setup_steps: []
+steps:
+  - steptype: PythonModuleStep
+    step_name: Run Other Test
+    action_type: method
+    module: src/pypts/example_tests.py
+    method_name: other_test
+    input_mapping: {}
+    output_mapping:
+      some_return: {type: passfail}
+      value: {type: local, local_name: test_value}
+
+  - steptype: PythonModuleStep
+    step_name: Run Simple Output Test
+    action_type: method
+    module: src/pypts/example_tests.py
+    method_name: simple_output
+    input_mapping:
+      value: {type: local, local_name: test_value}
+    output_mapping:
+      my_output: {type: local, local_name: calculated_output} # Store the output
+
+  - steptype: PythonModuleStep
+    step_name: Run Test To Run (Check 45)
+    action_type: method
+    module: src/pypts/example_tests.py
+    method_name: test_to_run
+    input_mapping:
+      target: {type: direct, value: 45}
+    output_mapping:
+      compare: {type: passfail}
+      other_output: {type: local, local_name: some_string} # Store the other output
+
+  - steptype: PythonModuleStep
+    step_name: Run Range Test (Inside Range)
+    action_type: method
+    module: src/pypts/example_tests.py
+    method_name: range_test
+    input_mapping:
+      value: {type: direct, value: 15}
+      min: {type: direct, value: 10}
+      max: {type: direct, value: 20}
+    output_mapping:
+      compare: {type: passfail} # Should pass
+
+  - steptype: PythonModuleStep
+    step_name: Run Range Test (Outside Range)
+    action_type: method
+    module: src/pypts/example_tests.py
+    method_name: range_test
+    input_mapping:
+      value: {type: direct, value: 25}
+      min: {type: direct, value: 10}
+      max: {type: direct, value: 20}
+    output_mapping:
+      compare: {type: passfail} # Should fail
+
+  # Uncomment the following step to test error handling
+  # - steptype: PythonModuleStep
+  #   step_name: Generate Error Deliberately
+  #   action_type: method
+  #   module: src/pypts/example_tests.py
+  #   method_name: generate_error
+  #   input_mapping: {}
+  #   output_mapping: {} # No specific output check needed, framework handles the error
+
+teardown_steps: []
+parameters: []
+locals:
+  test_value: null # Initialize local variable
+  calculated_output: null
+  some_string: ""
+outputs: []
