@@ -8,7 +8,7 @@ import json
 from pypts.recipe import ResultType
 
 # Define the project root relative to this test file
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 def test_main_report_generation(tmp_path):
     """
