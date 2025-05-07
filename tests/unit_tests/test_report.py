@@ -1,8 +1,11 @@
+from pypts.report import _result_to_dict
+import uuid
+from pypts.report import *
+from unittest.mock import MagicMock
 import subprocess
 import sys
 from pathlib import Path
 import pytest
-import shutil
 import csv
 import json
 from pypts.recipe import ResultType
@@ -137,3 +140,40 @@ def test_main_report_content(tmp_path):
     assert "ValueError: Something went wrong deliberately" in step4_res['error_info'], f"{step4_name} error message mismatch"
 
     # Cleanup is handled automatically by pytest's tmp_path fixture
+
+
+
+@pytest.fixture
+def dummy_step():
+    step = MagicMock(spec=Step)
+    step.name = "MockStep"
+    step.id = uuid.uuid4()
+    step.description = "Mock step description"
+    return step
+
+
+@pytest.fixture
+def dummy_step():
+    return MagicMock(name="DummyStep")
+
+@pytest.fixture
+def dummy_result(dummy_step):
+    result = StepResult(step=dummy_step)
+    result.result = ResultType.PASS
+    result.inputs = {"foo": "bar"}
+    result.outputs = {"baz": "qux"}
+    result.error_info = None
+    result.uuid = uuid.uuid4()
+    result.recipe_name = "Test Recipe"
+    result.recipe_file_name = "recipe.json"
+    result.serial_number = "SN123456"
+    result.sequence_name = "MainSequence"
+    result.pypts_version = "1.2.3"
+    return result
+
+def test_result_to_dict_valid(dummy_result):
+    result_dict = _result_to_dict(dummy_result)
+    assert result_dict["result"] == "PASS"
+    assert result_dict["inputs"] == {"foo": "bar"}
+    assert result_dict["outputs"] == {"baz": "qux"}
+

@@ -28,7 +28,7 @@ class ResultType(Enum):
         return str(self.name)
     
 class StepResult():
-    def __init__(self, step=None, parent=None, result=ResultType.ERROR):
+    def __init__(self, step=None, parent=None):
         self.step: Step = step
         self.result: ResultType = None
         self.inputs: dict = {}
