@@ -6,6 +6,7 @@ class RecipeValidationError(Exception):
         self.warnings = warnings
         super().__init__(f"Validation failed with {len(faults)} faults and {len(warnings)} warnings")
 
+
 def extract_line_map(node, path=()):
     result = {}
     if isinstance(node, yaml.MappingNode):
@@ -14,7 +15,12 @@ def extract_line_map(node, path=()):
             new_path = path + (key,)
             result[new_path] = key_node.start_mark.line + 1
             result.update(extract_line_map(value_node, new_path))
+    elif isinstance(node, yaml.SequenceNode):
+        for idx, item_node in enumerate(node.value):
+            new_path = path + (idx,)
+            result.update(extract_line_map(item_node, new_path))
     return result
+
 
 def validate_field(doc, field_name, expected_type, faults, warnings, context, line_map, path=()):
     full_path = path + (field_name,)
@@ -27,7 +33,6 @@ def validate_field(doc, field_name, expected_type, faults, warnings, context, li
     value = doc[field_name]
 
     if value is None:
-        # None is warning only for strings, fault for others
         if expected_type == str:
             warnings.append(f"[{context}] Field '{field_name}' is null {line_info}")
         else:
@@ -45,6 +50,30 @@ def validate_field(doc, field_name, expected_type, faults, warnings, context, li
         warnings.append(f"[{context}] Field '{field_name}' is an empty string {line_info}")
 
 
+def validate_step_fields(steps, faults, line_map, base_path=()):
+    for idx, step in enumerate(steps):
+        if not isinstance(step, dict):
+            faults.append(f"[Step {idx}] Step is not a dictionary")
+            continue
+
+        step_path = base_path + (idx,)
+        step_line = line_map.get(step_path, '?')
+        step_name = step.get("step_name", f"at index {idx}")
+        context = f"Step {idx} ({step_name})"
+
+        required_fields = ["steptype", "step_name"]
+        steptype = step.get("steptype")
+
+        if steptype != "UserInteractionStep":
+            required_fields += ["action_type", "module", "method_name"]
+
+        for field in required_fields:
+            field_path = step_path + (field,)
+            line = line_map.get(field_path, step_line)
+            if field not in step:
+                faults.append(f"[{context}] Missing required field: '{field}' (line {line})")
+
+
 def validate_recipe_file(file_path):
     faults = []
     warnings = []
@@ -57,7 +86,7 @@ def validate_recipe_file(file_path):
     except yaml.YAMLError as e:
         raise RecipeValidationError([f"YAML parsing error: {e}"], [])
 
-    docs = list(yaml.safe_load_all(content))  # For actual content
+    docs = list(yaml.safe_load_all(content))
 
     for i, (doc, node) in enumerate(zip(docs, docs_nodes)):
         if not isinstance(doc, dict):
@@ -83,6 +112,8 @@ def validate_recipe_file(file_path):
             if "steps" not in doc:
                 line_info = f"(line {line_map.get(('steps',), '?')})"
                 faults.append(f"[{context}] Missing required subsection: 'steps' {line_info}")
+            else:
+                validate_step_fields(doc["steps"], faults, line_map, base_path=("steps",))
 
             for key in ["teardown_steps", "parameters", "outputs"]:
                 validate_field(doc, key, list, faults, warnings, context, line_map)
@@ -91,6 +122,7 @@ def validate_recipe_file(file_path):
                 faults.append(f"[{context}] Missing 'locals' section")
             elif not isinstance(doc["locals"], dict):
                 faults.append(f"[{context}] 'locals' should be a dictionary")
+
         else:
             line = node.start_mark.line + 1
             faults.append(f"[Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
@@ -111,9 +143,6 @@ def validate_recipe_file(file_path):
         raise RecipeValidationError(faults, warnings)
 
     print("✅ Validation passed successfully.")
-
-# Example usage:
-# validate_recipe_file("recipes/recipeCRATE.yaml")
 
 
 if __name__ == "__main__":
