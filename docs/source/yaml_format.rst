@@ -14,7 +14,6 @@ Document 1: Main Recipe Configuration
 .. code-block:: yaml
    :caption: Example Main Recipe Document
 
-  ---
   name: Name of the recipe. Typically the project name.
   version: Allows for tracking different versions of the file
   description: A more complete description of this recipe
