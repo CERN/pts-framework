@@ -53,7 +53,7 @@ def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
 
     recipe_event_processing_thread.start()
 
-    time.sleep(5) # Prevents a race condition. To be properly fixed!!
+    time.sleep(1) # Prevents a race condition. To be properly fixed!!
 
     # If we don't put the sleep, recipe_event_processing_thread.start() may not 
     # be finished before the app.exec() call.
