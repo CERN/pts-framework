@@ -31,4 +31,6 @@ def generate_error():
 def simple_output(value):
     return {"my_output": value + 1}
 
+def is_PSU_disconnected():
+    return (True)
 

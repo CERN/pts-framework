@@ -1,8 +1,20 @@
 uuid,parent_uuid,recipe_name,recipe_file_name,sequence_name,serial_number,pypts_version,step_name,step_id,step_type,result,inputs,outputs,error_info
-f1c0e6b3-1b44-4c15-9f5f-b32c08d28492,ca0d9f7d-82ce-4608-86e2-271fd85736ae,Example Test Recipe,example_recipe.yml,Main,asd,0.1.dev110+g52d4bd6,Are you all right?,6e3499ac-7c62-4b4c-8a6b-79e91fdc920d,UserInteractionStep,PASS,"{""message"": ""Hello there. Are you doing all right?\nPlease let us know by pressing the correct button :)\n"", ""image_path"": ""lego2.jpg"", ""options"": [""yes"", ""no""]}","{""output"": ""yes""}",
-becf9b1e-59c8-45d1-8e33-6325a60ad270,ca0d9f7d-82ce-4608-86e2-271fd85736ae,Example Test Recipe,example_recipe.yml,Main,asd,0.1.dev110+g52d4bd6,Run a other_test,6ca8b4a3-c812-4e0a-9abf-80dbb6869b90,PythonModuleStep,PASS,{},"{""some_return"": true, ""value"": 3}",
-523fd006-b489-4e2c-97d0-b625d7d2367c,ca0d9f7d-82ce-4608-86e2-271fd85736ae,Example Test Recipe,example_recipe.yml,Main,asd,0.1.dev110+g52d4bd6,Run some precondition steps,4fd9c042-e28f-48f0-b666-aece19965638,PythonModuleStep,DONE,"{""value"": 3}","{""my_output"": 4}",
-8a969e4b-63c0-4722-a327-41abc3c50a61,ca0d9f7d-82ce-4608-86e2-271fd85736ae,Example Test Recipe,example_recipe.yml,Main,asd,0.1.dev110+g52d4bd6,Run test_to_run (Check value 45),c781367a-db00-4aa7-922d-a163736ebaaf,PythonModuleStep,PASS,"{""target"": 45}","{""compare"": true, ""other_output"": ""abc""}",
-e8e77ba0-b946-4583-ae2d-2a89a8014087,ca0d9f7d-82ce-4608-86e2-271fd85736ae,Example Test Recipe,example_recipe.yml,Main,asd,0.1.dev110+g52d4bd6,Run range_test (valid Range),1c81d582-e66c-4328-ad6b-bc4ae793fd8a,PythonModuleStep,PASS,"{""value"": 15, ""min"": 10, ""max"": 20}","{""compare"": true}",
-f93cba21-24fc-4a19-8184-5d8aa856e23c,ca0d9f7d-82ce-4608-86e2-271fd85736ae,Example Test Recipe,example_recipe.yml,Main,asd,0.1.dev110+g52d4bd6,Run range_test (outside Range),9ac05325-931f-4fbb-84f5-50bcfd30e330,PythonModuleStep,FAIL,"{""value"": 25, ""min"": 10, ""max"": 20}","{""compare"": false}",
-ca0d9f7d-82ce-4608-86e2-271fd85736ae,,Example Test Recipe,example_recipe.yml,,asd,0.1.dev110+g52d4bd6,Main,29f9a3aa-5bd4-4028-8016-7f539e23975b,SequenceStep,FAIL,{},"{""__result"": ""FAIL""}",
+ca45c85b-08ba-413c-80d1-1bd15fc101c8,43793e26-e2c2-4f00-8bbe-23e7b05d2722,Example Test Recipe,simple_recipe.yml,Main,123,0.1.dev110+g52d4bd6,Are you all right?,c2810123-086f-4567-95a9-a32023523af2,UserInteractionStep,PASS,"{""message"": ""Hello there. Are you doing all right?\nPlease let us know by pressing the correct button :)\n"", ""image_path"": ""lego2.jpg"", ""options"": [""yes"", ""no""]}","{""output"": ""yes""}",
+79abc402-34b2-4205-aee2-56ff0ff013e3,43793e26-e2c2-4f00-8bbe-23e7b05d2722,Example Test Recipe,simple_recipe.yml,Main,123,0.1.dev110+g52d4bd6,Run a other_test,1120cce2-a3f1-45be-a252-960b0ad2de68,PythonModuleStep,PASS,{},"{""some_return"": true, ""value"": 3}",
+079b62db-b047-431a-b035-02ea8f1a1630,43793e26-e2c2-4f00-8bbe-23e7b05d2722,Example Test Recipe,simple_recipe.yml,Main,123,0.1.dev110+g52d4bd6,Run some precondition steps,a9892c1d-1257-4f8e-95ca-96e76be1dd31,PythonModuleStep,DONE,"{""value"": 3}","{""my_output"": 4}",
+a2a093af-8724-47cd-a3dc-cb8a7d5fb5ec,43793e26-e2c2-4f00-8bbe-23e7b05d2722,Example Test Recipe,simple_recipe.yml,Main,123,0.1.dev110+g52d4bd6,Run test_to_run (Check value 45),ee7cec39-764b-47cc-a044-314f91055672,PythonModuleStep,PASS,"{""target"": 45}","{""compare"": true, ""other_output"": ""abc""}",
+4e7c344e-5a9e-405b-ad6f-d4943a29f64e,43793e26-e2c2-4f00-8bbe-23e7b05d2722,Example Test Recipe,simple_recipe.yml,Main,123,0.1.dev110+g52d4bd6,Run range_test (valid Range),f030feed-6ca0-422c-a91d-e0ce618b8f71,PythonModuleStep,PASS,"{""value"": 15, ""min"": 10, ""max"": 20}","{""compare"": true}",
+fca20a49-1046-4d2e-8ae3-4b40f994c8ff,43793e26-e2c2-4f00-8bbe-23e7b05d2722,Example Test Recipe,simple_recipe.yml,Main,123,0.1.dev110+g52d4bd6,Wait for 3s,8e8a3eb5-484b-48a5-b5e6-c9ef75b9403b,WaitStep,DONE,"{""wait_time"": 3}",null,
+159eceed-7973-431a-9b56-888e2cdfea23,43793e26-e2c2-4f00-8bbe-23e7b05d2722,Example Test Recipe,simple_recipe.yml,Main,123,0.1.dev110+g52d4bd6,Run range_test (outside Range),c0494045-bd97-4063-a856-b6bada7692d4,PythonModuleStep,FAIL,"{""value"": 25, ""min"": 10, ""max"": 20}","{""compare"": false}",
+a63de034-6fe4-4ac2-a007-b7157ad73234,43793e26-e2c2-4f00-8bbe-23e7b05d2722,Example Test Recipe,simple_recipe.yml,Main,123,0.1.dev110+g52d4bd6,Generate Error Deliberately,4dffc66b-b1ca-468e-8b77-a1e1e63da2cf,PythonModuleStep,ERROR,{},{},"Traceback (most recent call last):
+  File ""/home/pts/dev/pypts/src/pypts/recipe.py"", line 513, in run
+    step_output = self._step(runtime, step_input, step_result.uuid)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File ""/home/pts/dev/pypts/src/pypts/recipe.py"", line 650, in _step
+    step_output = method(**input)
+                  ^^^^^^^^^^^^^^^
+  File ""/home/pts/dev/pypts/src/pypts/example_tests.py"", line 29, in generate_error
+    raise AttributeError
+AttributeError
+"
+43793e26-e2c2-4f00-8bbe-23e7b05d2722,,Example Test Recipe,simple_recipe.yml,,123,0.1.dev110+g52d4bd6,Main,fe9a7863-d25e-4579-a70b-fda1b678c5af,SequenceStep,ERROR,{},"{""__result"": ""ERROR""}",
