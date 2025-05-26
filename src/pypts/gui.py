@@ -9,7 +9,7 @@ from queue import SimpleQueue
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
-
+from utils import get_project_root
 
 class TextEditLoggerHandler(QObject, logging.Handler):
     """A logging handler that emits Qt signals for log messages."""
@@ -37,8 +37,9 @@ class MainWindow(QWidget):
 
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
-
-        self.cern_logo = QPixmap("images/CERN_Logo.png").scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
+        """Get the root path of the project and build string path from it"""
+        cern_logo_path = str(get_project_root() / "images" / "CERN_Logo.png")
+        self.cern_logo = QPixmap(cern_logo_path).scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
 
         top_level_layout = QHBoxLayout()
         left_half_layout = QVBoxLayout()
@@ -188,6 +189,7 @@ class MainWindow(QWidget):
         response_q: SimpleQueue = event_dict["response_q"]
         message = event_dict["message"]
         image_path = event_dict["image_path"]
+        print(image_path)
         # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
