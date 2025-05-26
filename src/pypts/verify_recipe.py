@@ -161,8 +161,10 @@ def validate_all_recipes_in_folder(folder_path):
         print("\n❌ Summary: Some recipe files failed validation.")
         for filename, e in errors:
             print(f" - {filename}: {len(e.faults)} faults, {len(e.warnings)} warnings")
+        return False
     else:
         print("\n✅ All recipe files validated successfully.")
+        return True
 
 
 if __name__ == "__main__":

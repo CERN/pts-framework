@@ -1,5 +1,5 @@
 # src/pypts/event_proxy.py
-from utils import get_project_root
+from pypts.utils import get_project_root
 import logging
 from PyQt6.QtCore import QObject, pyqtSignal
 from queue import SimpleQueue

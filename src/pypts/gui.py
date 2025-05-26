@@ -9,7 +9,7 @@ from queue import SimpleQueue
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
-from utils import get_project_root
+from pypts.utils import get_project_root
 
 class TextEditLoggerHandler(QObject, logging.Handler):
     """A logging handler that emits Qt signals for log messages."""
@@ -109,7 +109,7 @@ class MainWindow(QWidget):
     def update_recipe_name(self, event_dict):
         """Updates the recipe name label and window title from the event dictionary."""
         recipe_name = event_dict["recipe_name"]
-        recipe_description = event_dict["recipe_description"] # Currently unused
+        recipe_description = event_dict["recipe_description"]
         self.recipe_label.setText(f"Running {recipe_name}...\n{recipe_description}")
         self.setWindowTitle(f"PTS: {recipe_name}")
 
