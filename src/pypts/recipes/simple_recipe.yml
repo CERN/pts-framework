@@ -1,12 +1,12 @@
----
+--- # Separator - beginning of the document - header
 name: Example Test Recipe
 version: 0.1.0
-recipe_version: 0.1.0
+recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
 globals: {}
 
----
+--- # End separator - beginning of the next document - sequence description
 sequence_name: Main
 description: The main sequence of steps for the example recipe.
 parameters:
@@ -18,8 +18,8 @@ locals:
   wunderbar:
 outputs:
   my_output:
-
 setup_steps: []
+
 steps:
   - steptype: UserInteractionStep
     step_name: Are you all right?
@@ -80,6 +80,8 @@ steps:
 
   - steptype: WaitStep
     step_name: Wait for 3s
+    description: Waiting 3 seconds to let user check the LEDs
+    skip: False
     input_mapping:
       wait_time: {value: 3}
     output_mapping: {}
