@@ -33,6 +33,7 @@ steps:
       options: {type: direct, value: ["yes", "no"]}
     output_mapping:
       output: {type: equals, value: "yes"}
+
   - steptype: PythonModuleStep
     step_name: Run a other_test
     action_type: method
@@ -76,6 +77,12 @@ steps:
     output_mapping:
       compare: {type: passfail} # Should pass
 
+  - steptype: WaitStep
+    step_name: Wait for 3s
+    input_mapping:
+      wait_time: {value: 3}
+    output_mapping: {}
+
   - steptype: PythonModuleStep
     step_name: Run range_test (outside Range)
     action_type: method
@@ -88,46 +95,67 @@ steps:
     output_mapping:
       compare: {type: passfail} # Should fail
 
-  # Uncomment the following step to test error handling
-  # - steptype: PythonModuleStep
-  #   step_name: Generate Error Deliberately
-  #   action_type: method
-  #   module: src/pypts/example_tests.py
-  #   method_name: generate_error
-  #   input_mapping: {}
-  #   output_mapping: {} # No specific output check needed, framework handles the error
+#  - steptype: PythonModuleStep
+#    step_name: Generate Error Deliberately
+#    action_type: method
+#    module: src/pypts/example_tests.py
+#    method_name: generate_error
+#    input_mapping: {}
+#    output_mapping: {} # No specific output check needed, framework handles the error
+#
+#  - steptype: PythonModuleStep
+#    step_name: Check if some condition is met
+#    action_type: method
+#    module: src/pypts/example_tests.py
+#    method_name: is_PSU_disconnected
+#    input_mapping: { }
+#    output_mapping:
+#      some_return: { type: passfail }
+
+  - steptype: SequenceStep
+    step_name: Testing a subsequence
+    sequence: {type: internal, name: subsequence_test}
+    input_mapping:
+      sublocal: {type: direct, value: 45}
+    output_mapping:
+      hello: {type: local, local_name: hello}
+      seq_result: {type: passthrough}
+teardown_steps: []
+
+---
+sequence_name: Voltage subtests
+description: Set of tests to verify the voltages of 12V, 3.3V and 5V rails
+parameters:
+  target_value: 0
+locals:
+  12V_tolerance: 5
+  5V_tolerance: 5
+  3P3V_tolerance: 5
+outputs: []
+
+setup_steps: []
+steps:
+  - steptype: UserInteractionStep
+    step_name: subsequence_test
+    skip: true
+    input_mapping:
+      message: {type: direct, value: Hello there}
+      image_path: {type: direct, value: images\lego2.jpg}
+      options: {type: direct, value: ["yes", "no"]}
+    output_mapping:
+      output: {type: equals, value: "yes"}
 
 teardown_steps: []
-#parameters: []
-#locals:
-#  test_value: null # Initialize local variable
-#  calculated_output: null
-#  some_string: ""
-#outputs: []
-
-
-
-
-#- steptype: WaitStep
-#  step_name: Wait for 1s
-#  input_mapping:
-#    wait_time: {value: 1}
-#  output_mapping: {}
+#  - steptype: SequenceStep
+#    step_name: Testing a subsequence
+#    sequence: {type: internal, name: Subsequence}
+#    input_mapping:
+#      sublocal: {type: direct, value: 45}
+#    output_mapping:
+#      hello: {type: local, local_name: hello}
+#      seq_result: {type: passthrough}
 #
 #
-#
-#
-#
-#- steptype: SubSequenceStep
-#  step_name: Testing a subsequence
-#  sequence: {type: internal, name: Subsequence}
-#  input_mapping:
-#    sublocal: {type: direct, value: 45}
-#  output_mapping:
-#    hello: {type: local, local_name: hello}
-#    seq_result: {type: passthrough}
-
-
 #---
 #sequence_name: Subsequence
 #description:
@@ -165,3 +193,5 @@ teardown_steps: []
 #  output_mapping:
 #    compare: {type: passfail}
 #    other_output: {type: local, local_name: hello}
+#
+#teardown_steps: []
