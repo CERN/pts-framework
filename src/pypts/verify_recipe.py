@@ -62,12 +62,14 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
         step_name = step.get("step_name", f"at index {idx}")
         context = f"Step {idx} ({step_name})"
 
-        #todo - define all fields, always. If it is optional, just keep it empty
-        required_fields = ["steptype", "step_name"]
         steptype = step.get("steptype")
-
-        if steptype != "UserInteractionStep":
-            required_fields += ["action_type", "module", "method_name"]
+        # Define required fields based on steptype
+        if steptype == "UserInteractionStep":
+            required_fields = ["steptype", "step_name", "description"]
+        elif steptype == "WaitStep":
+            required_fields = ["steptype", "step_name", "description"]
+        else:
+            required_fields = ["steptype", "step_name", "action_type", "module", "method_name"]
 
         for field in required_fields:
             field_path = step_path + (field,)
@@ -115,15 +117,14 @@ def validate_recipe_file(filepath):
                 faults.append(f"[{context}] Missing required subsection: 'steps' {line_info}")
             else:
                 validate_step_fields(doc["steps"], faults, line_map, base_path=("steps",))
-
-            for key in ["teardown_steps", "parameters", "outputs"]:
+            for key in ["teardown_steps"]:
                 validate_field(doc, key, list, faults, warnings, context, line_map)
-
+            for key in ["parameters", "outputs"]:
+                validate_field(doc, key, dict, faults, warnings, context, line_map)
             if "locals" not in doc:
                 faults.append(f"[{context}] Missing 'locals' section")
             elif not isinstance(doc["locals"], dict):
                 faults.append(f"[{context}] 'locals' should be a dictionary")
-
         else:
             line = node.start_mark.line + 1
             faults.append(f"[{filepath}, Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
@@ -168,111 +169,3 @@ if __name__ == "__main__":
     import sys
     folder = "recipes/"
     validate_all_recipes_in_folder(folder)
-
-
-#todo - make tests to be able to develop such functions more easily
-#
-# import pytest
-# from your_module import validate_recipe_file, validate_all_recipes_in_folder, RecipeValidationError
-# import os
-# import textwrap
-#
-# # Example of a valid header document
-# VALID_HEADER = textwrap.dedent("""\
-# name: Example Recipe
-# version: "1.0"
-# description: A test recipe
-# main_sequence: my_sequence
-# globals: {}
-# """)
-#
-# # Example of a valid sequence document
-# VALID_SEQUENCE = textwrap.dedent("""\
-# sequence_name: my_sequence
-# description: Just a test
-# setup_steps: []
-# steps:
-#   - steptype: SomeStep
-#     step_name: DoSomething
-#     action_type: auto
-#     module: example
-#     method_name: run
-# teardown_steps: []
-# parameters: []
-# outputs: []
-# locals: {}
-# """)
-#
-# # Malformed YAML
-# MALFORMED_YAML = "sequence_name: test\n  bad_indentation: true"
-#
-# # Missing required fields
-# MISSING_FIELDS = textwrap.dedent("""\
-# sequence_name: incomplete
-# description: Incomplete
-# setup_steps: []
-# steps:
-#   - step_name: MissingFields
-# locals: {}
-# """)
-#
-# @pytest.mark.parametrize("content,should_raise", [
-#     (VALID_HEADER, False),
-#     (VALID_SEQUENCE, False),
-#     (MALFORMED_YAML, True),
-#     (MISSING_FIELDS, True),
-# ])
-# def test_validate_recipe_file(tmp_path, content, should_raise):
-#     file = tmp_path / "test.yaml"
-#     file.write_text(content)
-#
-#     if should_raise:
-#         with pytest.raises(RecipeValidationError):
-#             validate_recipe_file(str(file))
-#     else:
-#         validate_recipe_file(str(file))  # Should not raise
-#
-#
-# def test_validate_all_recipes_in_folder(tmp_path):
-#     # 1 valid file
-#     valid_file = tmp_path / "valid.yaml"
-#     valid_file.write_text(VALID_HEADER)
-#
-#     # 1 invalid file
-#     invalid_file = tmp_path / "invalid.yaml"
-#     invalid_file.write_text(MISSING_FIELDS)
-#
-#     # Should raise but not crash
-#     validate_all_recipes_in_folder(tmp_path)
-#
-#     # Ensure both files were processed
-#     files = os.listdir(tmp_path)
-#     assert "valid.yaml" in files
-#     assert "invalid.yaml" in files
-#
-#
-# def test_multiple_documents(tmp_path):
-#     content = VALID_HEADER + "\n---\n" + VALID_SEQUENCE
-#     file = tmp_path / "multi.yaml"
-#     file.write_text(content)
-#
-#     validate_recipe_file(str(file))  # Should not raise
-#
-#
-# def test_missing_steps_key(tmp_path):
-#     bad_sequence = textwrap.dedent("""\
-# sequence_name: badseq
-# description: no steps
-# setup_steps: []
-# teardown_steps: []
-# parameters: []
-# outputs: []
-# locals: {}
-# """)
-#     file = tmp_path / "bad.yaml"
-#     file.write_text(bad_sequence)
-#
-#     with pytest.raises(RecipeValidationError) as excinfo:
-#         validate_recipe_file(str(file))
-#
-#     assert "Missing required subsection: 'steps'" in str(excinfo.value)

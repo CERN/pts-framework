@@ -23,6 +23,7 @@ setup_steps: []
 steps:
   - steptype: UserInteractionStep
     step_name: Are you all right?
+    description: Asking user for something
     skip: false
     input_mapping:
       message:
