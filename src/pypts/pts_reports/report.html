@@ -31,30 +31,39 @@
 </script>
 </head>
 <body>
-<h1>pypts Test Report</h1><p>Generated: 2025-05-07 11:12:27</p><h2>Run Context</h2><p><strong>Recipe:</strong> Example Test Recipe<br><strong>File:</strong> example_recipe.yml<br><strong>Serial Number:</strong> qsd<br><strong>pypts Version:</strong> 0.1.dev110+g52d4bd6</p><h2>Summary</h2><p>Total steps: 6</p><h2>Details</h2><table><thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th><th>UUID</th><th>Parent UUID</th></tr></thead><tbody><tr class="status-pass"><td>Main</td><td>Run Other Test</td><td>PASS</td><td><pre>{}</pre></td><td><pre>{
+<h1>pypts Test Report</h1><p>Generated: 2025-05-26 10:58:52</p><h2>Run Context</h2><p><strong>Recipe:</strong> Example Test Recipe<br><strong>File:</strong> example_recipe.yml<br><strong>Serial Number:</strong> asd<br><strong>pypts Version:</strong> 0.1.dev110+g52d4bd6</p><h2>Summary</h2><p>Total steps: 7</p><h2>Details</h2><table><thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th><th>UUID</th><th>Parent UUID</th></tr></thead><tbody><tr class="status-pass"><td>Main</td><td>Are you all right?</td><td>PASS</td><td><pre>{
+  &quot;message&quot;: &quot;Hello there. Are you doing all right?\nPlease let us know by pressing the correct button :)\n&quot;,
+  &quot;image_path&quot;: &quot;lego2.jpg&quot;,
+  &quot;options&quot;: [
+    &quot;yes&quot;,
+    &quot;no&quot;
+  ]
+}</pre></td><td><pre>{
+  &quot;output&quot;: &quot;yes&quot;
+}</pre></td><td></td><td>f1c0e6b3-1b44-4c15-9f5f-b32c08d28492</td><td>ca0d9f7d-82ce-4608-86e2-271fd85736ae</td></tr><tr class="status-pass"><td>Main</td><td>Run a other_test</td><td>PASS</td><td><pre>{}</pre></td><td><pre>{
   &quot;some_return&quot;: true,
   &quot;value&quot;: 3
-}</pre></td><td></td><td>8b391bba-003d-494c-a782-16b6890fe44f</td><td>e0f13846-4e67-4aec-b28d-9c7125255b07</td></tr><tr class="status-unknown"><td>Main</td><td>Run Simple Output Test</td><td>DONE</td><td><pre>{
+}</pre></td><td></td><td>becf9b1e-59c8-45d1-8e33-6325a60ad270</td><td>ca0d9f7d-82ce-4608-86e2-271fd85736ae</td></tr><tr class="status-unknown"><td>Main</td><td>Run some precondition steps</td><td>DONE</td><td><pre>{
   &quot;value&quot;: 3
 }</pre></td><td><pre>{
   &quot;my_output&quot;: 4
-}</pre></td><td></td><td>bed2aedc-78d4-442c-9cf6-283e8b2b327c</td><td>e0f13846-4e67-4aec-b28d-9c7125255b07</td></tr><tr class="status-pass"><td>Main</td><td>Run Test To Run (Check 45)</td><td>PASS</td><td><pre>{
+}</pre></td><td></td><td>523fd006-b489-4e2c-97d0-b625d7d2367c</td><td>ca0d9f7d-82ce-4608-86e2-271fd85736ae</td></tr><tr class="status-pass"><td>Main</td><td>Run test_to_run (Check value 45)</td><td>PASS</td><td><pre>{
   &quot;target&quot;: 45
 }</pre></td><td><pre>{
   &quot;compare&quot;: true,
   &quot;other_output&quot;: &quot;abc&quot;
-}</pre></td><td></td><td>32ada255-870f-48a7-81b8-907a863b92fa</td><td>e0f13846-4e67-4aec-b28d-9c7125255b07</td></tr><tr class="status-pass"><td>Main</td><td>Run Range Test (Inside Range)</td><td>PASS</td><td><pre>{
+}</pre></td><td></td><td>8a969e4b-63c0-4722-a327-41abc3c50a61</td><td>ca0d9f7d-82ce-4608-86e2-271fd85736ae</td></tr><tr class="status-pass"><td>Main</td><td>Run range_test (valid Range)</td><td>PASS</td><td><pre>{
   &quot;value&quot;: 15,
   &quot;min&quot;: 10,
   &quot;max&quot;: 20
 }</pre></td><td><pre>{
   &quot;compare&quot;: true
-}</pre></td><td></td><td>2b9ab54c-53d9-4899-b086-6a2c765fa95b</td><td>e0f13846-4e67-4aec-b28d-9c7125255b07</td></tr><tr class="status-fail"><td>Main</td><td>Run Range Test (Outside Range)</td><td>FAIL</td><td><pre>{
+}</pre></td><td></td><td>e8e77ba0-b946-4583-ae2d-2a89a8014087</td><td>ca0d9f7d-82ce-4608-86e2-271fd85736ae</td></tr><tr class="status-fail"><td>Main</td><td>Run range_test (outside Range)</td><td>FAIL</td><td><pre>{
   &quot;value&quot;: 25,
   &quot;min&quot;: 10,
   &quot;max&quot;: 20
 }</pre></td><td><pre>{
   &quot;compare&quot;: false
-}</pre></td><td></td><td>6ca72655-8b54-420c-b7a4-9fa88f693213</td><td>e0f13846-4e67-4aec-b28d-9c7125255b07</td></tr><tr class="status-fail"><td></td><td>Main</td><td>FAIL</td><td><pre>{}</pre></td><td><pre>{
+}</pre></td><td></td><td>f93cba21-24fc-4a19-8184-5d8aa856e23c</td><td>ca0d9f7d-82ce-4608-86e2-271fd85736ae</td></tr><tr class="status-fail"><td></td><td>Main</td><td>FAIL</td><td><pre>{}</pre></td><td><pre>{
   &quot;__result&quot;: &quot;FAIL&quot;
-}</pre></td><td></td><td>e0f13846-4e67-4aec-b28d-9c7125255b07</td><td></td></tr></tbody></table></body></html>
+}</pre></td><td></td><td>ca0d9f7d-82ce-4608-86e2-271fd85736ae</td><td></td></tr></tbody></table></body></html>
