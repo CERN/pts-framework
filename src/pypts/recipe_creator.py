@@ -160,19 +160,17 @@ class YamlTreeEditor(QMainWindow):
         self.log("🧹 Recipe view cleared.")
 
     def save_yaml(self):
-        def save_yaml(self):
-            if not self.current_file_path:
-                self.log("❌ No YAML file loaded.")
-                return
-
-            try:
-                data = self.extract_tree_to_data()
-                with open(self.current_file_path, 'w') as f:
-                    yaml.dump_all(data, f, sort_keys=False)
-                self.log(f"💾 Saved to {self.current_file_path}")
-                self.setWindowTitle("Recipe Editor")
-            except Exception as e:
-                self.log(f"❌ Failed to save: {e}")
+        if not self.current_file_path:
+            self.log("❌ No YAML file loaded.")
+            return
+        try:
+            data = self.extract_tree_to_data()
+            with open(self.current_file_path, 'w') as f:
+                yaml.dump_all(data, f, sort_keys=False)
+            self.log(f"💾 Saved to {self.current_file_path}")
+            self.setWindowTitle("Recipe Editor")
+        except Exception as e:
+            self.log(f"❌ Failed to save: {e}")
 
     def create_yaml(self):
         self.log("Todo: 1.1")
