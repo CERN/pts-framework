@@ -14,6 +14,7 @@ Document 1: Main Recipe Configuration
 .. code-block:: yaml
    :caption: Example Main Recipe Document
 
+  ---
   name: Name of the recipe. Typically the project name.
   version: Allows for tracking different versions of the file
   description: A more complete description of this recipe
@@ -260,4 +261,4 @@ Pauses execution for a specified duration.
    output_mapping: {} # WaitStep usually has no functional output
 
 *   Input:
-    *   ``wait_time`` (int or float): Duration to wait in seconds. Must be provided via ``input_mapping``. 
+    *   ``wait_time`` (int or float): Duration to wait in seconds. Must be provided via ``input_mapping``.
