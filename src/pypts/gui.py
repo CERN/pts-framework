@@ -9,7 +9,7 @@ from queue import SimpleQueue
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
-
+from pypts.utils import get_project_root
 
 class TextEditLoggerHandler(QObject, logging.Handler):
     """A logging handler that emits Qt signals for log messages."""
@@ -37,8 +37,9 @@ class MainWindow(QWidget):
 
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
-
-        self.cern_logo = QPixmap("images/CERN_Logo.png").scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
+        """Get the root path of the project and build string path from it"""
+        cern_logo_path = str(get_project_root() / "images" / "CERN_Logo.png")
+        self.cern_logo = QPixmap(cern_logo_path).scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
 
         top_level_layout = QHBoxLayout()
         left_half_layout = QVBoxLayout()
@@ -84,10 +85,10 @@ class MainWindow(QWidget):
 
         self.log_text_box = QPlainTextEdit(self)
         self.log_text_box.setReadOnly(True)
-        self.log_text_box.setFont(QFont("Courier", 10))
+        self.log_text_box.setFont(QFont("Courier", 8))
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_text_box.setStyleSheet('background-color: whitesmoke')
-        
+
         right_half_layout.addWidget(self.picture_box)
         right_half_layout.addWidget(self.message_box)
         right_half_layout.addLayout(self.button_list_layout)
@@ -108,13 +109,13 @@ class MainWindow(QWidget):
     def update_recipe_name(self, event_dict):
         """Updates the recipe name label and window title from the event dictionary."""
         recipe_name = event_dict["recipe_name"]
-        # recipe_description = event_dict["recipe_description"] # Currently unused
-        self.recipe_label.setText(recipe_name)
+        recipe_description = event_dict["recipe_description"]
+        self.recipe_label.setText(f"Running {recipe_name}...\n{recipe_description}")
         self.setWindowTitle(f"PTS: {recipe_name}")
 
     def update_sequence(self, event_dict):
         """Populates the step list table when a sequence starts using data from the event dictionary.
-        
+
         Stores the step UUID in the UserRole for later identification.
         """
         sequence: recipe.Sequence = event_dict["sequence"]
@@ -127,19 +128,19 @@ class MainWindow(QWidget):
                 # Store the step's UUID in the UserRole for later lookup
                 name_item.setData(Qt.ItemDataRole.UserRole, str(step.id))
                 self.step_list.setItem(i, 0, name_item)
-                
+
                 # Optionally add an initial empty/pending status item
                 status_item = QTableWidgetItem("Pending")
                 status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 status_item.setFlags(status_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
                 self.step_list.setItem(i, 1, status_item)
-                
+
             self.already_updated = True
             self.step_list.update() # Ensure visual update
 
     def update_step_result(self, step_status_vm: dict):
         """Updates the status of a step in the live step list table.
-        
+
         Receives a ViewModel dictionary with step UUID, status text, and color.
         Finds the corresponding row using the UUID and updates the status cell.
         """
@@ -147,7 +148,7 @@ class MainWindow(QWidget):
         step_uuid_to_find = step_status_vm["step_uuid"]
         result_string = step_status_vm["status_text"]
         background_color = step_status_vm["status_color"]
-        
+
         # Find the row corresponding to the step UUID
         target_row = -1
         for row in range(self.step_list.rowCount()):
@@ -157,14 +158,14 @@ class MainWindow(QWidget):
                 if stored_uuid == str(step_uuid_to_find):
                     target_row = row
                     break
-        
+
         if target_row != -1:
             # Create the new status item using ViewModel data
             new_result_item = QTableWidgetItem(result_string)
             new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
             new_result_item.setBackground(QColor(background_color))
             new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            
+
             # Update the status in the found row (second column)
             self.step_list.setItem(target_row, 1, new_result_item)
         else:
@@ -175,7 +176,7 @@ class MainWindow(QWidget):
 
     def show_results(self, event_dict):
         """Displays the final, hierarchical results in the tree view using data from the event dictionary.
-        
+
         Uses StepResultModel to populate the QTreeView.
         """
         results: List[recipe.StepResult] = event_dict["results"]
@@ -188,6 +189,7 @@ class MainWindow(QWidget):
         response_q: SimpleQueue = event_dict["response_q"]
         message = event_dict["message"]
         image_path = event_dict["image_path"]
+        print(image_path)
         # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
@@ -196,7 +198,7 @@ class MainWindow(QWidget):
         self.yes_button.setEnabled(True)
         self.no_button.setEnabled(True)
         self.response_q = response_q
-    
+
     def interaction_response(self, response):
         """Sends the user's response back via the response queue and resets UI."""
         self.response_q.put(response)
@@ -214,16 +216,16 @@ class MainWindow(QWidget):
             text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
             if ok and text:
                 response_q.put(text)
-                break       
-        
+                break
+
     def update_running_step(self, event_dict):
         """Highlights the step that is currently running in the step list table."""
         step_uuid_to_find = event_dict["step_uuid"]
-        
+
         # Reset previous running step highlight (optional, depends on desired behavior)
         # You might need to keep track of the previously highlighted row index
         # Or iterate through all rows and reset font
-        
+
         # Find the row corresponding to the step UUID
         target_row = -1
         for row in range(self.step_list.rowCount()):
@@ -233,7 +235,7 @@ class MainWindow(QWidget):
                 if stored_uuid == str(step_uuid_to_find):
                     target_row = row
                     break
-        
+
         if target_row != -1:
             # Highlight the name item (column 0)
             name_item = self.step_list.item(target_row, 0)
@@ -241,7 +243,7 @@ class MainWindow(QWidget):
                 font = name_item.font()
                 font.setBold(True)
                 name_item.setFont(font)
-                
+
             # Highlight the status item (column 1)
             status_item = self.step_list.item(target_row, 1)
             if status_item:
@@ -251,7 +253,7 @@ class MainWindow(QWidget):
                  font.setBold(True)
                  status_item.setFont(font)
                  # Optionally change text color
-                 # status_item.setForeground(QColor("blue")) 
+                 # status_item.setForeground(QColor("blue"))
 
             # Ensure the item is visible if the list is scrollable
             self.step_list.scrollToItem(self.step_list.item(target_row, 0), QAbstractItemView.ScrollHint.EnsureVisible)

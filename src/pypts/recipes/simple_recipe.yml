@@ -1,17 +1,43 @@
----
+--- # Separator - beginning of the document - header
 name: Example Test Recipe
 version: 0.1.0
+recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
 globals: {}
 
----
+--- # End separator - beginning of the next document - sequence description
 sequence_name: Main
 description: The main sequence of steps for the example recipe.
+parameters:
+  target_value: 0
+locals:
+  target_value: 45
+  test_name: Hello
+  wonderful:
+  wunderbar:
+outputs:
+  my_output:
 setup_steps: []
+
 steps:
+  - steptype: UserInteractionStep
+    step_name: Are you all right?
+    description: Asking user for something
+    skip: false
+    input_mapping:
+      message:
+        type: direct
+        value: |
+          Hello there. Are you doing all right?
+          Please let us know by pressing the correct button :)
+      image_path: {type: direct, value: lego2.jpg}
+      options: {type: direct, value: ["yes", "no"]}
+    output_mapping:
+      output: {type: equals, value: "yes"}
+
   - steptype: PythonModuleStep
-    step_name: Run Other Test
+    step_name: Run a other_test
     action_type: method
     module: src/pypts/example_tests.py
     method_name: other_test
@@ -21,7 +47,7 @@ steps:
       value: {type: local, local_name: test_value}
 
   - steptype: PythonModuleStep
-    step_name: Run Simple Output Test
+    step_name: Run some precondition steps
     action_type: method
     module: src/pypts/example_tests.py
     method_name: simple_output
@@ -31,7 +57,7 @@ steps:
       my_output: {type: local, local_name: calculated_output} # Store the output
 
   - steptype: PythonModuleStep
-    step_name: Run Test To Run (Check 45)
+    step_name: Run test_to_run (Check value 45)
     action_type: method
     module: src/pypts/example_tests.py
     method_name: test_to_run
@@ -42,7 +68,7 @@ steps:
       other_output: {type: local, local_name: some_string} # Store the other output
 
   - steptype: PythonModuleStep
-    step_name: Run Range Test (Inside Range)
+    step_name: Run range_test (valid Range)
     action_type: method
     module: src/pypts/example_tests.py
     method_name: range_test
@@ -53,8 +79,16 @@ steps:
     output_mapping:
       compare: {type: passfail} # Should pass
 
+  - steptype: WaitStep
+    step_name: Wait for 3s
+    description: Waiting 3 seconds to let user check the LEDs
+    skip: False
+    input_mapping:
+      wait_time: {value: 3}
+    output_mapping: {}
+
   - steptype: PythonModuleStep
-    step_name: Run Range Test (Outside Range)
+    step_name: Run range_test (outside Range)
     action_type: method
     module: src/pypts/example_tests.py
     method_name: range_test
@@ -65,19 +99,12 @@ steps:
     output_mapping:
       compare: {type: passfail} # Should fail
 
-  # Uncomment the following step to test error handling
-  # - steptype: PythonModuleStep
-  #   step_name: Generate Error Deliberately
-  #   action_type: method
-  #   module: src/pypts/example_tests.py
-  #   method_name: generate_error
-  #   input_mapping: {}
-  #   output_mapping: {} # No specific output check needed, framework handles the error
+  - steptype: PythonModuleStep
+    step_name: Generate Error Deliberately
+    action_type: method
+    module: src/pypts/example_tests.py
+    method_name: generate_error
+    input_mapping: {}
+    output_mapping: {} # No specific output check needed, framework handles the error
 
 teardown_steps: []
-parameters: []
-locals:
-  test_value: null # Initialize local variable
-  calculated_output: null
-  some_string: ""
-outputs: []

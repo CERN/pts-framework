@@ -33,7 +33,7 @@ if __name__ == '__main__':
     logging.getLogger().addHandler(window.log_handler)
 
     yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
-    yaml_path = os.path.join(yaml_dir, 'example_recipe.yml')
+    yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
     api = run_pts(yaml_path, sequence_name="Main")
     window.q_in = api.input_queue
     recipe_event_processing_thread = QThread()

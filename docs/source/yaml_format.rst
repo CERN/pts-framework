@@ -261,4 +261,4 @@ Pauses execution for a specified duration.
    output_mapping: {} # WaitStep usually has no functional output
 
 *   Input:
-    *   ``wait_time`` (int or float): Duration to wait in seconds. Must be provided via ``input_mapping``. 
+    *   ``wait_time`` (int or float): Duration to wait in seconds. Must be provided via ``input_mapping``.

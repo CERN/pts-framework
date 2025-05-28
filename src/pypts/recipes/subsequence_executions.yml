@@ -1,0 +1,88 @@
+##todo - test it, build documentation on the subsequences
+#    if this sequence is run as a subsequence
+#
+#
+#
+#  - steptype: SequenceStep
+#    step_name: Testing a subsequence
+#    sequence: {type: internal, name: subsequence_test}
+#    input_mapping:
+#      sublocal: {type: direct, value: 45}
+#    output_mapping:
+#      hello: {type: local, local_name: hello}
+#      seq_result: {type: passthrough}
+#teardown_steps: []
+#
+#---
+#sequence_name: Voltage subtests
+#description: Set of tests to verify the voltages of 12V, 3.3V and 5V rails
+#parameters:
+#  target_value: 0
+#locals:
+#  12V_tolerance: 5
+#  5V_tolerance: 5
+#  3P3V_tolerance: 5
+#outputs: []
+#
+#setup_steps: []
+#steps:
+#  - steptype: UserInteractionStep
+#    step_name: subsequence_test
+#    skip: true
+#    input_mapping:
+#      message: {type: direct, value: Hello there}
+#      image_path: {type: direct, value: images\lego2.jpg}
+#      options: {type: direct, value: ["yes", "no"]}
+#    output_mapping:
+#      output: {type: equals, value: "yes"}
+#
+#teardown_steps: []
+##  - steptype: SequenceStep
+##    step_name: Testing a subsequence
+##    sequence: {type: internal, name: Subsequence}
+##    input_mapping:
+##      sublocal: {type: direct, value: 45}
+##    output_mapping:
+##      hello: {type: local, local_name: hello}
+##      seq_result: {type: passthrough}
+##
+##
+##---
+##sequence_name: Subsequence
+##description:
+##
+##parameters: # list of local variable names. These are the ones that the calling step can set before running the subsequence
+##  - sublocal
+##
+##locals:
+##  sublocal: 34
+##  hello: bla
+##  bye: nope
+##
+##outputs: [sublocal, hello]
+##
+##setup_steps: []
+##steps:
+##
+##- steptype: UserInteractionStep
+##  step_name: Ask user if he/she is doing all right
+##  skip: true
+##  input_mapping:
+##    message: {type: direct, value: Hello there}
+##    image_path: {type: direct, value: images\lego2.jpg}
+##    options: {type: direct, value: ["yes", "no"]}
+##  output_mapping:
+##    output: {type: equals, value: "yes"}
+##
+##- steptype: PythonModuleStep
+##  step_name: Run test_to_run function
+##  action_type: method
+##  module: C:\dev\pypts\test_dut.py
+##  method_name: test_to_run
+##  input_mapping:
+##    target: {type: local, local_name: sublocal}
+##  output_mapping:
+##    compare: {type: passfail}
+##    other_output: {type: local, local_name: hello}
+##
+##teardown_steps: []

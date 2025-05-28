@@ -19,10 +19,17 @@ def make_step_result(name="Step 1", result=recipe.ResultType.PASS, parent=None):
     return recipe.StepResult(step=step, result=result, parent=parent)
 
 def test_update_recipe_name(main_window):
-    event = {"recipe_name": "Test Recipe"}
+    event = {
+        "recipe_name": "Test Recipe",
+        "recipe_description": "This is a test description."
+    }
     main_window.update_recipe_name(event)
-    assert main_window.recipe_label.text() == "Test Recipe"
-    assert "Test Recipe" in main_window.windowTitle()
+    expected_label = "Running Test Recipe...\nThis is a test description."
+    expected_title = "PTS: Test Recipe"
+    assert main_window.recipe_label.text() == expected_label
+    assert main_window.windowTitle() == expected_title
+
+
 
 
 def test_update_step_result(main_window):
