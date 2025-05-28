@@ -472,7 +472,7 @@ class YamlTreeEditor(QMainWindow):
         self.log_console.append(f"[{timestamp}] {message}")
 
 
-#todo 1.0 - VIEWER
+#done 1.0 - VIEWER
 #done 1.0 - Show some indicator that the changes are unsaved
 #done 1.0 - allow to clear any field
 #done 1.0 - indicate optional and required fields (with star?)
@@ -483,7 +483,7 @@ class YamlTreeEditor(QMainWindow):
 #done 1.0 - on the log, show which line of the yaml was edited
 #done 1.0 - Bugfix - make the right panel read only
 #done 1.0 - Clear view shall be grayed if the view is already cleared (logo visible)
-#todo 1.0 - 1.0 unit tests
+#done 1.0 - 1.0 unit tests
 
 #todo 1.1 - GENERATION, EDITING, PARTIAL SUPPORT
 #todo 1.1 - allow saving
