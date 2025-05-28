@@ -1,12 +1,14 @@
+from ruamel.yaml import YAML
+from ruamel.yaml.compat import StringIO
 from datetime import datetime
 import webbrowser
 import sys
 import yaml
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction ,QTextCursor, QTextCharFormat, QColor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QFileDialog, QTreeWidget, QTreeWidgetItem, QTextEdit,
-    QLabel, QStackedLayout, QScrollArea
+    QLabel, QStackedLayout, QScrollArea, QPlainTextEdit
 )
 from PyQt6.QtGui import QPixmap, QPainter
 from PyQt6.QtCore import Qt
@@ -32,6 +34,7 @@ class YamlTreeEditor(QMainWindow):
         super().__init__()
         self.yaml_documents = []  # Store parsed YAML data (necessary for runtime cache)
         self.current_file_path = ""  # Track original file path (necessary for saving)
+        self.item_to_line = {}
 
         self.setWindowTitle("Recipe Editor")
         self.setGeometry(200, 200, 1600, 1000)
@@ -41,29 +44,67 @@ class YamlTreeEditor(QMainWindow):
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
 
+        # main application layout
         self.main_layout = QVBoxLayout(self.central_widget)
 
         # Stacked layout (watermark + YAML tree)
         self.stacked_layout = QStackedLayout()
+
+        # Watermark logo on the back
         self.watermark_widget = WatermarkWidget("logo.png")  # <-- place your transparent logo here
+
+        # yaml table widget
         self.tree = QTreeWidget()
         self.tree.setColumnCount(2)
         self.tree.setHeaderLabels(["Field", "Value"])
         self.tree.setAlternatingRowColors(True)
         self.tree.itemChanged.connect(self.on_item_changed)
+        self.tree.itemClicked.connect(self.on_item_clicked)
 
-        self.stacked_layout.addWidget(self.watermark_widget)  # index 0
-        self.stacked_layout.addWidget(self.tree)              # index 1
+        # defining the yaml overview widget
+        self.yaml_viewer = QPlainTextEdit()
+        # self.yaml_viewer = QTextEdit()
+        self.yaml_viewer.setReadOnly(True)
+        # self.yaml_viewer.setFixedHeight(120)
+        # self.yaml_viewer.setFixedWidth(120)
 
-        # Log console (multi-line status output)
-        self.log_console = QTextEdit()
+        # Create container widget for tree + yaml
+        self.tree_and_yaml_widget = QWidget()
+        self.tree_and_yaml_layout = QHBoxLayout(self.tree_and_yaml_widget)
+        self.tree_and_yaml_layout.addWidget(self.tree)
+        self.tree_and_yaml_layout.addWidget(self.yaml_viewer)
+
+        # Placing widgets into the stacked layout
+        self.stacked_layout.addWidget(self.watermark_widget)        # index 0
+        self.stacked_layout.addWidget(self.tree_and_yaml_widget)    # index 1
+
+        # Defining log console (multi-line status output)
+        self.log_console = QPlainTextEdit()
         self.log_console.setReadOnly(True)
         self.log_console.setFixedHeight(120)
 
         self.main_layout.addLayout(self.stacked_layout)
+        # below the stacked layout there is a status bar
         self.main_layout.addWidget(self.log_console)
 
         self.log("Application started 👍")
+
+    def get_line_mappings(yaml_text):
+        yaml = YAML()
+        yaml.preserve_quotes = True
+        data = yaml.load(StringIO(yaml_text))
+
+        def walk(d, parent_path=[]):
+            if isinstance(d, dict):
+                for k, v in d.items():
+                    key_path = parent_path + [str(k)]
+                    yield ('.'.join(key_path), d.lc.line(k) + 1)
+                    yield from walk(v, key_path)
+            elif isinstance(d, list):
+                for idx, item in enumerate(d):
+                    yield from walk(item, parent_path + [str(idx)])
+
+        return dict(walk(data))
 
     def setup_menu(self):
         menubar = self.menuBar()
@@ -98,7 +139,10 @@ class YamlTreeEditor(QMainWindow):
         open_action.triggered.connect(self.open_wiki)
         about_menu.addAction(open_action)
 
-        # Add your view actions here
+        dev_menu = menubar.addMenu("Development")
+        highlight_line = QAction("Highlight 10", self)
+        highlight_line.triggered.connect(lambda: self.highlight_line(10))
+        dev_menu.addAction(highlight_line)
 
     def toggle_dark_mode(self, enabled):
         if enabled:
@@ -120,39 +164,48 @@ class YamlTreeEditor(QMainWindow):
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         self.log_console.append(f"[{timestamp}] {message}")
 
-    # def load_yaml(self):
-    #     file_path, _ = QFileDialog.getOpenFileName(self, "Open YAML File", "", "YAML Files (*.yml *.yaml)")
-    #     if file_path:
-    #         try:
-    #             with open(file_path, 'r') as f:
-    #                 docs = list(yaml.safe_load_all(f))  # Multi-document YAML
-    #                 self.tree.clear()
-    #                 for idx, doc in enumerate(docs):
-    #                     doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
-    #                     self.tree.addTopLevelItem(doc_root)
-    #                     self.populate_tree(doc, doc_root)
-    #                     doc_root.setExpanded(True)
-    #                 self.stacked_layout.setCurrentIndex(1)  # Show tree
-    #                 self.log(f"✅ Loaded {len(docs)} document(s) from: {file_path}")
-    #         except yaml.YAMLError as e:
-    #             self.log(f"❌ YAML parse error: {e}")
     def load_yaml(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
         if file_path:
             try:
                 with open(file_path, 'r') as f:
-                    self.yaml_documents = list(yaml.safe_load_all(f))
-                    self.current_file_path = file_path
-                    self.tree.clear()
-                    for idx, doc in enumerate(self.yaml_documents):
-                        doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
-                        self.tree.addTopLevelItem(doc_root)
-                        self.populate_tree(doc, doc_root)
-                        doc_root.setExpanded(True)
-                    self.stacked_layout.setCurrentIndex(1)
-                    self.log(f"✅ Loaded {len(self.yaml_documents)} document(s) from: {file_path}")
+                    raw_text = f.read()
+
+                self.current_file_path = file_path
+                self.yaml_documents = list(yaml.safe_load_all(raw_text))
+                self.yaml_viewer.setPlainText(raw_text)  # Set in QTextEdit
+                self.tree.clear()
+
+                for idx, doc in enumerate(self.yaml_documents):
+                    doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
+                    self.tree.addTopLevelItem(doc_root)
+                    self.populate_tree(doc, doc_root)
+                    doc_root.setExpanded(True)
+
+                # Reset cursor to start (optional)
+                cursor = self.yaml_viewer.textCursor()
+                cursor.movePosition(QTextCursor.MoveOperation.Start)
+                self.yaml_viewer.setTextCursor(cursor)
+
+                self.stacked_layout.setCurrentIndex(1)
+                self.log(f"✅ Loaded {len(self.yaml_documents)} document(s) from: {file_path}")
             except yaml.YAMLError as e:
                 self.log(f"❌ YAML parse error: {e}")
+
+    def highlight_line(self, line_number: int):
+        cursor = self.yaml_viewer.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        for _ in range(line_number - 1):
+            cursor.movePosition(QTextCursor.MoveOperation.Down)
+
+        cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        extra_selection = QTextEdit.ExtraSelection()
+        format = QTextCharFormat()
+        format.setBackground(QColor("#FFFF00"))  # yellow
+        extra_selection.cursor = cursor
+        extra_selection.format = format
+
+        self.yaml_viewer.setExtraSelections([extra_selection])
 
     def clear_yaml(self):
         self.tree.clear()
@@ -165,6 +218,8 @@ class YamlTreeEditor(QMainWindow):
             return
         try:
             data = self.extract_tree_to_data()
+            print(data)
+            return True
             with open(self.current_file_path, 'w') as f:
                 yaml.dump_all(data, f, sort_keys=False)
             self.log(f"💾 Saved to {self.current_file_path}")
@@ -223,6 +278,18 @@ class YamlTreeEditor(QMainWindow):
                 result[key] = value
             return result
 
+    def on_item_clicked(self, item, column):
+        key_path = self.get_item_key_path(item)
+        line = self.item_to_line.get(key_path)
+        if line:
+            self.highlight_line(line)
+
+    def get_item_key_path(self, item):
+        path = []
+        while item is not None:
+            path.insert(0, item.text(0).strip("[]"))  # Remove list brackets for consistency
+            item = item.parent()
+        return ".".join(path)
 
 
 #todo 1.0 - SIMPLE EDITOR
@@ -270,5 +337,6 @@ class YamlTreeEditor(QMainWindow):
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = YamlTreeEditor()
+
     window.show()
     sys.exit(app.exec())
