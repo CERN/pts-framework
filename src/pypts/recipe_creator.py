@@ -1,8 +1,14 @@
+from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
+from PyQt6.QtGui import QColor, QFont
+
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
+from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
+
 from ruamel.yaml import YAML
 from ruamel.yaml.compat import StringIO
 from datetime import datetime
 import webbrowser
-import sys
 import yaml
 from PyQt6.QtGui import QAction ,QTextCursor, QTextCharFormat, QColor
 from PyQt6.QtWidgets import (
@@ -12,7 +18,35 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtGui import QPixmap, QPainter
 from PyQt6.QtCore import Qt
+import sys
+from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
+from PyQt6.QtGui import QFont, QColor
+from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
 from styles import *
+from ruamel.yaml import YAML
+
+class ScintillaYamlEditor(QsciScintilla):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # Basic editor setup
+        self.setUtf8(True)
+        self.setMarginsFont(QFont("Courier", 10))
+        self.setMarginWidth(0, "0000")  # Line number margin
+        self.setMarginLineNumbers(0, True)
+
+        # Highlight the current line
+        self.setCaretLineVisible(True)
+        self.setCaretLineBackgroundColor(QColor("#e6f7ff"))
+
+        # Font and syntax highlighting
+        font = QFont("Courier", 10)
+        self.setFont(font)
+        self.setMarginsFont(font)
+
+        lexer = QsciLexerYAML()
+        lexer.setFont(font)
+        self.setLexer(lexer)
 
 class WatermarkWidget(QWidget):
     """Widget showing a watermark image in the center."""
@@ -28,6 +62,15 @@ class WatermarkWidget(QWidget):
         y = (self.height() - self.pixmap.height()) // 2
         painter.drawPixmap(x, y, self.pixmap)
 
+class HashableTreeItem:
+    def __init__(self, item):
+        self.item = item
+
+    def __hash__(self):
+        return id(self.item)
+
+    def __eq__(self, other):
+        return isinstance(other, HashableTreeItem) and self.item is other.item
 
 class YamlTreeEditor(QMainWindow):
     def __init__(self):
@@ -35,6 +78,8 @@ class YamlTreeEditor(QMainWindow):
         self.yaml_documents = []  # Store parsed YAML data (necessary for runtime cache)
         self.current_file_path = ""  # Track original file path (necessary for saving)
         self.item_to_line = {}
+        self.yaml_parser = None
+        self.data = None
 
         self.setWindowTitle("Recipe Editor")
         self.setGeometry(200, 200, 1600, 1000)
@@ -59,14 +104,13 @@ class YamlTreeEditor(QMainWindow):
         self.tree.setHeaderLabels(["Field", "Value"])
         self.tree.setAlternatingRowColors(True)
         self.tree.itemChanged.connect(self.on_item_changed)
-        self.tree.itemClicked.connect(self.on_item_clicked)
+        self.tree.itemClicked.connect(self.on_tree_item_clicked)
 
         # defining the yaml overview widget
         self.yaml_viewer = QPlainTextEdit()
-        # self.yaml_viewer = QTextEdit()
         self.yaml_viewer.setReadOnly(True)
-        # self.yaml_viewer.setFixedHeight(120)
-        # self.yaml_viewer.setFixedWidth(120)
+
+        self.yaml_viewer = ScintillaYamlEditor(self)
 
         # Create container widget for tree + yaml
         self.tree_and_yaml_widget = QWidget()
@@ -79,7 +123,7 @@ class YamlTreeEditor(QMainWindow):
         self.stacked_layout.addWidget(self.tree_and_yaml_widget)    # index 1
 
         # Defining log console (multi-line status output)
-        self.log_console = QPlainTextEdit()
+        self.log_console = QTextEdit()
         self.log_console.setReadOnly(True)
         self.log_console.setFixedHeight(120)
 
@@ -89,60 +133,41 @@ class YamlTreeEditor(QMainWindow):
 
         self.log("Application started 👍")
 
-    def get_line_mappings(yaml_text):
-        yaml = YAML()
-        yaml.preserve_quotes = True
-        data = yaml.load(StringIO(yaml_text))
-
-        def walk(d, parent_path=[]):
-            if isinstance(d, dict):
-                for k, v in d.items():
-                    key_path = parent_path + [str(k)]
-                    yield ('.'.join(key_path), d.lc.line(k) + 1)
-                    yield from walk(v, key_path)
-            elif isinstance(d, list):
-                for idx, item in enumerate(d):
-                    yield from walk(item, parent_path + [str(idx)])
-
-        return dict(walk(data))
-
     def setup_menu(self):
         menubar = self.menuBar()
 
-        file_menu = menubar.addMenu("File")
-        open_action = QAction("Open Recipe", self)
-        open_action.triggered.connect(self.load_yaml)
-        file_menu.addAction(open_action)
-        exit_action = QAction("Clear view", self)
-        exit_action.triggered.connect(self.clear_yaml)
-        file_menu.addAction(exit_action)
-        exit_action = QAction("Exit", self)
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        self.file_menu = menubar.addMenu("File")
+        self.open_action = QAction("Open Recipe", self)
+        self.open_action.triggered.connect(self.load_yaml_path)
+        self.file_menu.addAction(self.open_action)
+        self.clean_action = QAction("Clear view", self)
+        self.clean_action.triggered.connect(self.clear_yaml)
+        self.clean_action.setEnabled(False)  # 🔒 Disable it (gray out)
+        self.file_menu.addAction(self.clean_action)
+        self.exit_action = QAction("Exit", self)
+        self.exit_action.triggered.connect(self.close)
+        self.file_menu.addAction(self.exit_action)
 
-        edit_menu = menubar.addMenu("Edit")
-        open_action = QAction("Save Recipe", self)
-        open_action.triggered.connect(self.save_yaml)
-        edit_menu.addAction(open_action)
+        self.edit_menu = menubar.addMenu("Edit")
+        self.edit_action = QAction("Save Recipe", self)
+        self.edit_action.triggered.connect(self.save_yaml)
+        self.edit_menu.addAction(self.edit_action)
 
-        view_menu = menubar.addMenu("View")
-        toggle_dark_mode_action = QAction("Toggle Dark Mode", self)
-        toggle_dark_mode_action.setCheckable(True)
-        toggle_dark_mode_action.triggered.connect(self.toggle_dark_mode)
-        view_menu.addAction(toggle_dark_mode_action)
+        self.view_menu = menubar.addMenu("View")
+        self.toggle_dark_mode_action = QAction("Toggle Dark Mode", self)
+        self.toggle_dark_mode_action.setCheckable(True)
+        self.toggle_dark_mode_action.triggered.connect(self.toggle_dark_mode)
+        self.view_menu.addAction(self.toggle_dark_mode_action)
 
-        about_menu = menubar.addMenu("About")
-        open_action = QAction("Gitlab", self)
-        open_action.triggered.connect(self.open_gitlab)
-        about_menu.addAction(open_action)
-        open_action = QAction("Wiki", self)
-        open_action.triggered.connect(self.open_wiki)
-        about_menu.addAction(open_action)
+        self.about_menu = menubar.addMenu("About")
+        self.open_action = QAction("Gitlab", self)
+        self.open_action.triggered.connect(self.open_gitlab)
+        self.about_menu.addAction(self.open_action)
+        self.open_action = QAction("Wiki", self)
+        self.open_action.triggered.connect(self.open_wiki)
+        self.about_menu.addAction(self.open_action)
 
-        dev_menu = menubar.addMenu("Development")
-        highlight_line = QAction("Highlight 10", self)
-        highlight_line.triggered.connect(lambda: self.highlight_line(10))
-        dev_menu.addAction(highlight_line)
+        self.dev_menu = menubar.addMenu("Development")
 
     def toggle_dark_mode(self, enabled):
         if enabled:
@@ -164,17 +189,25 @@ class YamlTreeEditor(QMainWindow):
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         self.log_console.append(f"[{timestamp}] {message}")
 
-    def load_yaml(self):
+    def load_yaml_path(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
+        self.load_yaml(file_path)
+
+    def load_yaml(self, file_path):
         if file_path:
             try:
                 with open(file_path, 'r') as f:
                     raw_text = f.read()
 
                 self.current_file_path = file_path
-                self.yaml_documents = list(yaml.safe_load_all(raw_text))
-                self.yaml_viewer.setPlainText(raw_text)  # Set in QTextEdit
+                self.yaml_viewer.setText(raw_text)
+
+                self.yaml_parser = YAML()
+                self.yaml_parser.preserve_quotes = True
+                self.yaml_documents = list(self.yaml_parser.load_all(raw_text))
+
                 self.tree.clear()
+                self.item_to_line.clear()  # Clear previous mappings
 
                 for idx, doc in enumerate(self.yaml_documents):
                     doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
@@ -182,34 +215,17 @@ class YamlTreeEditor(QMainWindow):
                     self.populate_tree(doc, doc_root)
                     doc_root.setExpanded(True)
 
-                # Reset cursor to start (optional)
-                cursor = self.yaml_viewer.textCursor()
-                cursor.movePosition(QTextCursor.MoveOperation.Start)
-                self.yaml_viewer.setTextCursor(cursor)
-
                 self.stacked_layout.setCurrentIndex(1)
+                self.clean_action.setEnabled(True)  # 🔒 Enable it
                 self.log(f"✅ Loaded {len(self.yaml_documents)} document(s) from: {file_path}")
-            except yaml.YAMLError as e:
+
+            except YAMLError as e:
                 self.log(f"❌ YAML parse error: {e}")
-
-    def highlight_line(self, line_number: int):
-        cursor = self.yaml_viewer.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.Start)
-        for _ in range(line_number - 1):
-            cursor.movePosition(QTextCursor.MoveOperation.Down)
-
-        cursor.select(QTextCursor.SelectionType.LineUnderCursor)
-        extra_selection = QTextEdit.ExtraSelection()
-        format = QTextCharFormat()
-        format.setBackground(QColor("#FFFF00"))  # yellow
-        extra_selection.cursor = cursor
-        extra_selection.format = format
-
-        self.yaml_viewer.setExtraSelections([extra_selection])
 
     def clear_yaml(self):
         self.tree.clear()
         self.stacked_layout.setCurrentIndex(0)  # Show logo
+        self.clean_action.setEnabled(False)  # 🔒 Disable it - gray out
         self.log("🧹 Recipe view cleared.")
 
     def save_yaml(self):
@@ -230,23 +246,92 @@ class YamlTreeEditor(QMainWindow):
     def create_yaml(self):
         self.log("Todo: 1.1")
 
-    def populate_tree(self, data, parent):
-        if isinstance(data, dict):
-            for key, value in data.items():
-                item = QTreeWidgetItem([str(key), ""])
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-                parent.addChild(item)
-                self.populate_tree(value, item)
-        elif isinstance(data, list):
-            for i, value in enumerate(data):
-                item = QTreeWidgetItem([f"[{i}]", ""])
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-                parent.addChild(item)
-                self.populate_tree(value, item)
+    def highlight_line(self, line_num):
+        # Clear previous highlights
+        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICATORCLEARRANGE, 0, self.yaml_viewer.length())
+
+        # Set indicator 0
+        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_SETINDICATORCURRENT, 0)
+
+        # Use FULLBOX to fill the entire line background (no border, just fill)
+        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICSETSTYLE, 0, QsciScintilla.INDIC_FULLBOX)
+
+        highlight_color = QColor(100, 0, 255)
+        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICSETFORE, 0, highlight_color.rgb())
+
+        # Highlight the full line from line start to line end including newline
+        start_pos = self.yaml_viewer.positionFromLineIndex(line_num, 0)
+        line_length = len(self.yaml_viewer.text(line_num))
+
+        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICATORFILLRANGE, start_pos, line_length)
+
+        # Scroll and set cursor position for visibility
+        self.yaml_viewer.setCursorPosition(line_num, 0)
+        self.yaml_viewer.ensureLineVisible(line_num)
+
+    def on_tree_item_clicked(self, item, column):
+        key = HashableTreeItem(item)
+        if key in self.item_to_line:
+            line = self.item_to_line[key]
+            self.highlight_line(line)
         else:
-            item = QTreeWidgetItem(["", str(data)])
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable)
-            parent.addChild(item)
+            print("Item not found in item_to_line mapping.")
+
+    def populate_tree(self, data, parent_item):
+        if isinstance(data, CommentedMap):
+            for key, value in data.items():
+                child_item = QTreeWidgetItem(parent_item, [str(key)])
+                parent_item.addChild(child_item)
+
+                # Try to get line number for this key
+                line_number = None
+                if hasattr(data, 'lc'):
+                    try:
+                        # lc.key returns (line, col) for key
+                        line_info = data.lc.key(key)
+                        if line_info is not None:
+                            line_number = line_info[0]  # line number is the first element
+                    except Exception:
+                        pass
+
+                if line_number is not None:
+                    self.item_to_line[HashableTreeItem(child_item)] = line_number
+
+                # Recursively populate children
+                self.populate_tree(value, child_item)
+
+        elif isinstance(data, CommentedSeq):
+            for idx, value in enumerate(data):
+                child_item = QTreeWidgetItem(parent_item, [f"[{idx}]"])
+                parent_item.addChild(child_item)
+
+                line_number = None
+                if hasattr(data, 'lc'):
+                    try:
+                        # For sequences, lc.item(idx) returns (line, col)
+                        line_info = data.lc.item(idx)
+                        if line_info is not None:
+                            line_number = line_info[0]
+                    except Exception:
+                        pass
+
+                if line_number is not None:
+                    self.item_to_line[HashableTreeItem(child_item)] = line_number
+
+                self.populate_tree(value, child_item)
+
+        else:
+            # For scalar values, just add as a leaf node
+            leaf_item = QTreeWidgetItem(parent_item, [str(data)])
+            parent_item.addChild(leaf_item)
+
+            # Scalars don't have children, but can have line info
+            line_number = None
+            if hasattr(data, 'lc'):
+                # Usually scalars inside sequences or mappings won't have lc,
+                # but just in case - you could check or skip here
+                pass
+            # Optionally store line info if applicable here
 
     def on_item_changed(self, item, column):
         if (item.text(1)) == "":
@@ -278,27 +363,17 @@ class YamlTreeEditor(QMainWindow):
                 result[key] = value
             return result
 
-    def on_item_clicked(self, item, column):
-        key_path = self.get_item_key_path(item)
-        line = self.item_to_line.get(key_path)
-        if line:
-            self.highlight_line(line)
-
-    def get_item_key_path(self, item):
-        path = []
-        while item is not None:
-            path.insert(0, item.text(0).strip("[]"))  # Remove list brackets for consistency
-            item = item.parent()
-        return ".".join(path)
-
-
 #todo 1.0 - SIMPLE EDITOR
 #done 1.0 - Show some indicator that the changes are unsaved
 #done 1.0 - allow to clear any field
 #todo 1.0 - indicate optional and required fields (with star?)
-#todo 1.0 - gray out save option if recipe is not opened
+#done 1.0 - gray out save option if recipe is not opened
 #todo 1.0 - allow saving
 #todo 1.0 - add button to automatically verify the recipe
+#done 1.0 - right-hand side panel with descriptions on the selected field
+#done 1.0 - Expert live view of the yaml file on the right hand side panel
+#todo 1.0 - on the log, show which line of the yaml was edited
+#todo 1.0 - Bugfix - make the right panel read only
 #todo 1.0 - 1.0 unit tests
 
 #todo 1.1 - GENERATION, PARTIAL SUPPORT
@@ -318,9 +393,6 @@ class YamlTreeEditor(QMainWindow):
 #todo 1.2 - Handle possibility that the recent file is not present anymore
 #todo 1.2 - Add parsing of the recipe_version fieldand inform if the recipe is up to correct version
 #todo 1.2 - increase 1st column size
-#todo 1.2 - right-hand side panel with descriptions on the selected field
-#todo 1.2 - on the log, show which line of the yaml was edited
-#todo 1.2 - Expert live view of the yaml file on the right hand side panel
 #todo 1.2 - Clear view shall be grayed if the view is already cleared (logo visible)
 #todo 1.2 - Bugfix - sometimes after opening new recipe for editing, the GUI is not refreshing (it does after clicking on the window)
 #todo 1.2 - 1.2 unit tests
@@ -339,4 +411,28 @@ if __name__ == "__main__":
     window = YamlTreeEditor()
 
     window.show()
+    file_path="/home/pts/dev/pypts/src/pypts/recipes/simple_recipe.yml"
+    window.load_yaml(file_path)
     sys.exit(app.exec())
+
+
+# from ruamel.yaml import YAML
+# from ruamel.yaml.error import YAMLError
+#
+# def save_yaml(self, file_path=None):
+#     if file_path is None:
+#         file_path = self.current_file_path
+#
+#     if file_path and self.yaml_documents:
+#         try:
+#             yaml_writer = YAML()
+#             yaml_writer.preserve_quotes = True
+#             yaml_writer.width = 4096  # prevent auto line wrapping
+#             yaml_writer.indent(mapping=2, sequence=4, offset=2)
+#
+#             with open(file_path, 'w') as f:
+#                 yaml_writer.dump_all(self.yaml_documents, f)
+#
+#             self.log(f"✅ YAML saved to: {file_path}")
+#         except YAMLError as e:
+#             self.log(f"❌ YAML write error: {e}")
