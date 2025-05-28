@@ -19,3 +19,5 @@
 # todo - move the generated html report out of the environment and git, so its not versioned and the reports are being generated locally
 
 # todo - change the self.globals type to dictionary, co we can access them by name, not just have the values in list. It is located in recipe.py/runtime class
+
+# todo - add X server on the gitlab server, so it is possible to run GUI tests

@@ -30,6 +30,7 @@ dev_test:
       --cov-report xml:coverage-report.xml
       --junitxml=junit-report.xml
       --ignore=tests/unit_tests/test_gui.py  # Ignore the GUI test file, because it requires X server, not present on gitlab machine
+      --ignore=tests/unit_tests/test_recipe_creator.py  # Ignore the GUI test file, because it requires X server, not present on gitlab machine
 
 # Build a source distribution for pypts.
 build_sdist:
