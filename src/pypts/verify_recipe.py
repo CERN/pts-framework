@@ -1,12 +1,13 @@
+from pathlib import Path
 import os
 import yaml
+from pypts.rules import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS
 
 class RecipeValidationError(Exception):
     def __init__(self, faults, warnings):
         self.faults = faults
         self.warnings = warnings
         super().__init__(f"Validation failed with {len(faults)} faults and {len(warnings)} warnings")
-
 
 def extract_line_map(node, path=()):
     result = {}
@@ -21,7 +22,6 @@ def extract_line_map(node, path=()):
             new_path = path + (idx,)
             result.update(extract_line_map(item_node, new_path))
     return result
-
 
 def validate_field(doc, field_name, expected_type, faults, warnings, context, line_map, path=()):
     full_path = path + (field_name,)
@@ -50,7 +50,6 @@ def validate_field(doc, field_name, expected_type, faults, warnings, context, li
     if expected_type == str and not value.strip():
         warnings.append(f"[{context}] Field '{field_name}' is an empty string {line_info}")
 
-
 def validate_step_fields(steps, faults, line_map, base_path=()):
     for idx, step in enumerate(steps):
         if not isinstance(step, dict):
@@ -63,13 +62,7 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
         context = f"Step {idx} ({step_name})"
 
         steptype = step.get("steptype")
-        # Define required fields based on steptype
-        if steptype == "UserInteractionStep":
-            required_fields = ["steptype", "step_name", "description"]
-        elif steptype == "WaitStep":
-            required_fields = ["steptype", "step_name", "description"]
-        else:
-            required_fields = ["steptype", "step_name", "action_type", "module", "method_name"]
+        required_fields = STEP_REQUIRED_FIELDS.get(steptype, STEP_REQUIRED_FIELDS["default"])
 
         for field in required_fields:
             field_path = step_path + (field,)
@@ -77,11 +70,10 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
             if field not in step:
                 faults.append(f"[{context}] Missing required field: '{field}' (line {line})")
 
-
 def validate_recipe_file(filepath):
     faults = []
     warnings = []
-    #todo - how to present verification? For now it could just be print and manual verification and then at some point we could reuse the scripts
+
     with open(filepath, 'r') as f:
         content = f.read()
 
@@ -102,25 +94,22 @@ def validate_recipe_file(filepath):
 
         if first_key == "name":
             context = f"{filepath} Header"
-            validate_field(doc, "version", str, faults, warnings, context, line_map)
-            validate_field(doc, "description", str, faults, warnings, context, line_map)
-            validate_field(doc, "main_sequence", str, faults, warnings, context, line_map)
-            validate_field(doc, "globals", dict, faults, warnings, context, line_map)
+            for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
+                validate_field(doc, field, expected_type, faults, warnings, context, line_map)
 
         elif first_key == "sequence_name":
             context = f"{filepath} Sequence"
-            validate_field(doc, "description", str, faults, warnings, context, line_map)
-            validate_field(doc, "setup_steps", list, faults, warnings, context, line_map)
+            for field, expected_type in RECIPE_SEQUENCE_REQUIRED_FIELDS.items():
+                # For "steps" subsection, validate presence and content separately
+                if field == "steps":
+                    if field not in doc:
+                        line_info = f"(line {line_map.get(('steps',), '?')})"
+                        faults.append(f"[{context}] Missing required subsection: 'steps' {line_info}")
+                    else:
+                        validate_step_fields(doc["steps"], faults, line_map, base_path=("steps",))
+                else:
+                    validate_field(doc, field, expected_type, faults, warnings, context, line_map)
 
-            if "steps" not in doc:
-                line_info = f"(line {line_map.get(('steps',), '?')})"
-                faults.append(f"[{context}] Missing required subsection: 'steps' {line_info}")
-            else:
-                validate_step_fields(doc["steps"], faults, line_map, base_path=("steps",))
-            for key in ["teardown_steps"]:
-                validate_field(doc, key, list, faults, warnings, context, line_map)
-            for key in ["parameters", "outputs"]:
-                validate_field(doc, key, dict, faults, warnings, context, line_map)
             if "locals" not in doc:
                 faults.append(f"[{context}] Missing 'locals' section")
             elif not isinstance(doc["locals"], dict):
@@ -130,22 +119,23 @@ def validate_recipe_file(filepath):
             faults.append(f"[{filepath}, Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
 
     if faults or warnings:
-        print(f"❌ Validation for '{filepath}' completed with issues:")
+        # print(f"❌ Validation for '{filepath}' completed with issues:")
 
         if faults:
-            print("🛑 Faults:")
+            # print("🛑 Faults:")
             for f in faults:
-                print(" -", f)
+                # print(" -", f)
+                pass
 
         if warnings:
-            print("⚠️ Warnings:")
+            # print("⚠️ Warnings:")
             for w in warnings:
-                print(" -", w)
+                # print(" -", w)
+                pass
 
         raise RecipeValidationError(faults, warnings)
 
-    print(f"✅ Validation passed for '{filepath}'.")
-
+    # print(f"✅ Validation passed for '{filepath}'.")
 
 def validate_all_recipes_in_folder(folder_path):
     errors = []
@@ -158,16 +148,49 @@ def validate_all_recipes_in_folder(folder_path):
                 errors.append((filename, e))
 
     if errors:
-        print("\n❌ Summary: Some recipe files failed validation.")
+        # print("\n❌ Summary: Some recipe files failed validation.")
         for filename, e in errors:
-            print(f" - {filename}: {len(e.faults)} faults, {len(e.warnings)} warnings")
+            # print(f" - {filename}: {len(e.faults)} faults, {len(e.warnings)} warnings")
+            pass
         return False
     else:
-        print("\n✅ All recipe files validated successfully.")
+        # print("\n✅ All recipe files validated successfully.")
         return True
 
+def validate_recipe(file_path):
+    errors = []
+    p = Path(file_path)
+    filename = p.stem
+    try:
+        validate_recipe_file(file_path)
+    except RecipeValidationError as e:
+        errors.append((filename, e))
+
+    if errors:
+        # print("\n❌ Summary: Some recipe files failed validation.")
+        for filename, e in errors:
+            # print(f" - {filename}: {len(e.faults)} faults, {len(e.warnings)} warnings")
+            pass
+        return False
+    else:
+        # print("\n✅ All recipe files validated successfully.")
+        return True
 
 if __name__ == "__main__":
     import sys
-    folder = "recipes/"
-    validate_all_recipes_in_folder(folder)
+    folder = sys.argv[1] if len(sys.argv) > 1 else "recipes/"
+
+    try:
+        if (validate_all_recipes_in_folder(folder)):
+            print("✅ Recipe file validated successfully.")
+        else:
+            print("❌ Summary: Recipe file failed the validation!")
+    except Exception as e:
+        print(f"❌ Unhandled expception while validating the recipe: {e}")
+
+    #todo - fix the prints, add a flag that would determine if functions shall print on the stdout or not.
+    # For now, the prints are just commented
+
+    # example usage on specific recipe
+    # path = "recipes/simple_recipe.yml"
+    # validate_recipe(path)
