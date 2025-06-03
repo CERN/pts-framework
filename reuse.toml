@@ -1,0 +1,74 @@
+# SPDX-FileCopyrightText: 2025 CERN (home.cern)
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+version = 1
+SPDX-PackageName = "PTS Framework"
+SPDX-PackageSupplier = "BE-CEM-MTA <odd.oyvind.andreassen@cern.ch>"
+SPDX-PackageDownloadLocation = "https://gitlab.cern.ch/pts/framework/pypts"
+
+# Python source code files - main framework
+[[annotations]]
+path = [
+    "src/pypts/**/*.py",
+    "tests/**/*.py",
+    "run_tests.py"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 CERN <home.cern>"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+# Configuration and recipe files
+[[annotations]]
+path = [
+    "src/pypts/recipes/*.yml",
+    "src/pypts/recipes/*.yaml",
+    "pyproject.toml",
+    "requirements.txt",
+    ".gitlab-ci.yml"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 CERN <home.cern>"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+# Documentation files
+[[annotations]]
+path = [
+    "README.md",
+    "docs/**/*.rst",
+    "docs/**/*.md",
+    "docs/**/*.txt",
+    "docs/INSTALL"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 CERN <home.cern>"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
+
+# Development and tooling files
+[[annotations]]
+path = [
+    ".gitignore",
+    ".gitattributes",
+    "TODO.txt",
+    ".vscode/**/*.json",
+    "spikes/**/*"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 CERN <home.cern>"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
+
+# Generated files and directories to exclude
+[[annotations]]
+path = [
+    "src/pypts/_version.py",
+    "**/__pycache__/**",
+    ".pytest_cache/**",
+    ".venv/**",
+    ".git/**",
+    "pts_reports/**",
+    "temp_report_output/**",
+    "images/**"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 CERN <home.cern>"
+SPDX-License-Identifier = "LGPL-2.1-or-later"
