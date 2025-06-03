@@ -13,7 +13,7 @@ stages:
   - analyse
   - test
   - build
-  - publish
+  - deploy
   - docs
 
 variables:
