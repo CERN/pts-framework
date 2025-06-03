@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN
+#
+# SPDX-License-Identifier: LGPL-2.1-or-lateer
+
 from ._version import version as __version__
 
 import logging

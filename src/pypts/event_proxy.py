@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN
+#
+# SPDX-License-Identifier: LGPL-2.1-or-lateer
+
 # src/pypts/event_proxy.py
 from pypts.utils import get_project_root
 import logging

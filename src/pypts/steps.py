@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN
+#
+# SPDX-License-Identifier: LGPL-2.1-or-lateer
+
 import logging
 import copy
 import uuid
