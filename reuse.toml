@@ -12,6 +12,7 @@ SPDX-PackageDownloadLocation = "https://gitlab.cern.ch/pts/framework/pypts"
 path = [
     "src/pypts/**/*.py",
     "tests/**/*.py",
+    "spikes/**/*.py",
     "run_tests.py"
 ]
 precedence = "aggregate"
@@ -25,7 +26,9 @@ path = [
     "src/pypts/recipes/*.yaml",
     "pyproject.toml",
     "requirements.txt",
-    ".gitlab-ci.yml"
+    ".gitlab-ci.yml",
+    ".gitignore",
+    "docs/.gitignore"
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 CERN <home.cern>"
@@ -44,20 +47,29 @@ precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 CERN <home.cern>"
 SPDX-License-Identifier = "CC-BY-SA-4.0"
 
-# Development and tooling files
+# Images and media files
 [[annotations]]
 path = [
-    ".gitignore",
-    ".gitattributes",
-    "TODO.txt",
-    ".vscode/**/*.json",
-    "spikes/**/*"
+    "images/*.png",
+    "images/*.jpg",
+    "images/*.jpeg"
+]
+precedence = "aggregate"
+SPDX-FileCopyrightText = "2025 CERN <home.cern>"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
+
+# Test configuration files
+[[annotations]]
+path = [
+    "tests/**/*.yaml",
+    "tests/**/*.yml",
+    "spikes/**/*.seq"
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 CERN <home.cern>"
 SPDX-License-Identifier = "LGPL-2.1-or-later"
 
-# Generated files and directories to exclude
+# Files to exclude from REUSE checking
 [[annotations]]
 path = [
     "src/pypts/_version.py",
@@ -67,7 +79,8 @@ path = [
     ".git/**",
     "pts_reports/**",
     "temp_report_output/**",
-    "images/**"
+    "src/pypts/pts_reports/**",
+    "TODO.txt"
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 CERN <home.cern>"

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 # https://doc.qt.io/qt-6/modelview.html
 
 from PyQt6.QtWidgets import QApplication, QTableView

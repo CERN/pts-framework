@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 import sys
 from PyQt5.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QListView, QPushButton
 from PyQt5.QtCore import Qt, QAbstractListModel
