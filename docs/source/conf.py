@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: 2025 'CERN'
 #
-# SPDX-License-Identifier: LGPL-2.1-or-later.txt
+# SPDX-License-Identifier: LGPL-2.1-or-later
 
 import datetime
 
