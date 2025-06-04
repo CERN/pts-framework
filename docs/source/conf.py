@@ -1,3 +1,5 @@
+# SPDX-FileCopyrightText: 2025 'CERN'
+
 import datetime
 
 import pypts
