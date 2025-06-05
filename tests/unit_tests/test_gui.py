@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 import pytest
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import QModelIndex

@@ -1,9 +1,23 @@
+.. SPDX-FileCopyrightText: 2025 2025 CERN <home.cern>
+..
+.. SPDX-License-Identifier: CC-BY-SA-4.0
+
 .. _usage:
 
 Usage
 =====
 
 This guide provides a basic overview of how to run a test recipe using the ``pypts`` framework.
+
+Installation
+------------
+
+Before using pypts, you may need to install the following system dependencies:
+
+.. code-block:: bash
+
+   sudo dnf install libxcb libxcb-devel
+   sudo dnf install xcb-util xcb-util-wm xcb-util-keysyms xcb-util-image xcb-util-renderutil
 
 1. Define your Recipe (`my_recipe.yaml`)
 -----------------------------------------

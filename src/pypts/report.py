@@ -1,3 +1,8 @@
+# SPDX-FileCopyrightText: 2025 2025 CERN <home.cern>
+# SPDX-FileCopyrightText: 2025 CERN
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 """Handles the generation of incremental CSV reports for pypts recipe execution."""
 import json
 import csv
