@@ -14,7 +14,11 @@ from queue import SimpleQueue
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
-from pypts.utils import get_project_root
+import threading
+import os
+from importlib.resources import files
+
+logger = logging.getLogger(__name__)
 
 class TextEditLoggerHandler(QObject, logging.Handler):
     """A logging handler that emits Qt signals for log messages."""
@@ -42,9 +46,20 @@ class MainWindow(QWidget):
 
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
-        """Get the root path of the project and build string path from it"""
-        cern_logo_path = str(get_project_root() / "images" / "CERN_Logo.png")
-        self.cern_logo = QPixmap(cern_logo_path).scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
+        
+        """Load CERN logo from package resources"""
+        try:
+            # Access the image resource from the pypts package
+            cern_logo_resource = files('pypts') / 'images' / 'CERN_Logo.png'
+            with cern_logo_resource.open('rb') as img_file:
+                pixmap = QPixmap()
+                pixmap.loadFromData(img_file.read())
+                self.cern_logo = pixmap.scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
+        except (FileNotFoundError, ModuleNotFoundError, AttributeError) as e:
+            logger.warning(f"CERN logo not found in package resources: {e}, using default")
+            # Create a simple default pixmap if the image is missing
+            self.cern_logo = QPixmap(800, 500)
+            self.cern_logo.fill(Qt.GlobalColor.lightGray)
 
         top_level_layout = QHBoxLayout()
         left_half_layout = QVBoxLayout()
@@ -198,8 +213,17 @@ class MainWindow(QWidget):
         # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
-            image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
-            self.picture_box.setPixmap(image_pixmap)
+            # Add error handling for image loading
+            if os.path.exists(image_path):
+                image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
+                if not image_pixmap.isNull():
+                    self.picture_box.setPixmap(image_pixmap)
+                else:
+                    logger.warning(f"Failed to load image from {image_path}, using default logo")
+                    self.picture_box.setPixmap(self.cern_logo)
+            else:
+                logger.warning(f"Image not found at {image_path}, using default logo")
+                self.picture_box.setPixmap(self.cern_logo)
         self.yes_button.setEnabled(True)
         self.no_button.setEnabled(True)
         self.response_q = response_q

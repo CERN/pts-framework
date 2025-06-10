@@ -9,7 +9,7 @@ from pypts import run_recipe_app
 
 def main():
     # Get the path to the example recipe
-    recipe_path = os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'pypts', 'recipes', 'example_recipe.yml')
+    recipe_path = os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'pypts', 'recipes', 'simple_recipe.yml')
     
     # Run the recipe app - this will create the window and set up the recipe
     window, app = run_recipe_app(recipe_path, sequence_name="Main")
