@@ -238,17 +238,44 @@ class MainWindow(QWidget):
 
     def get_serial_number(self, event_dict):
         """Prompts the user for a serial number and sends it back via the response queue from the event dictionary."""
+        logger.debug("get_serial_number method called")
         response_q: SimpleQueue = event_dict["response_q"]
-        while True:
-            # QInputDialog static methods are deprecated in PyQt6
-            dialog = QInputDialog(self)
-            text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
-            if ok and text:
-                response_q.put(text)
+        max_attempts = 3
+        attempts = 0
+        
+        while attempts < max_attempts:
+            attempts += 1
+            logger.debug(f"Serial number dialog attempt {attempts}")
+            try:
+                # QInputDialog static methods are deprecated in PyQt6
+                dialog = QInputDialog(self)
+                text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
+                logger.debug(f"Dialog result: ok={ok}, text='{text}'")
+                
+                if ok and text.strip():  # Check for non-empty text after stripping whitespace
+                    response_q.put(text.strip())
+                    logger.debug(f"Serial number '{text.strip()}' sent to queue")
+                    break
+                elif ok and not text.strip():
+                    logger.warning("Empty serial number entered, retrying...")
+                    continue
+                else:
+                    logger.warning("User cancelled serial number dialog")
+                    # Put a default value to prevent the recipe from hanging
+                    response_q.put("CANCELLED")
+                    break
+            except Exception as e:
+                logger.error(f"Error in serial number dialog: {e}", exc_info=True)
+                response_q.put("ERROR")
                 break
+        
+        if attempts >= max_attempts:
+            logger.error("Maximum attempts reached for serial number input")
+            response_q.put("MAX_ATTEMPTS_REACHED")
 
     def update_running_step(self, event_dict):
         """Highlights the step that is currently running in the step list table."""
+        logger.debug("update_running_step method called")
         step_uuid_to_find = event_dict["step_uuid"]
 
         # Reset previous running step highlight (optional, depends on desired behavior)
@@ -292,6 +319,7 @@ class MainWindow(QWidget):
 
     def handle_post_load_recipe(self, event_dict):
         """Handles the event triggered after a recipe is loaded."""
+        logger.debug("handle_post_load_recipe method called")
         recipe_name = event_dict["recipe_name"]
         recipe_version = event_dict["recipe_version"]
         logging.info(f"Recipe '{recipe_name}' (v{recipe_version}) loaded.")
@@ -299,6 +327,7 @@ class MainWindow(QWidget):
 
     def handle_post_run_sequence(self, event_dict):
         """Handles the event triggered after a sequence finishes."""
+        logger.debug("handle_post_run_sequence method called")
         sequence_name = event_dict["sequence_name"]
         sequence_result = event_dict["sequence_result"]
         logging.info(f"Sequence '{sequence_name}' finished with result: {sequence_result}.")

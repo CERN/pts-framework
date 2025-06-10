@@ -50,6 +50,7 @@ class RecipeEventProxy(QObject):
         try:
             event_name, event_data = self.event_q.get()
             logger.debug(f"Event Proxy received: {event_name}")
+            logger.debug(f"Event data type: {type(event_data)}, length: {len(event_data) if hasattr(event_data, '__len__') else 'N/A'}")
 
             # --- Data Transformation / ViewModel Creation ---
             event_dict = {}
@@ -106,11 +107,35 @@ class RecipeEventProxy(QObject):
                         # Add other step attributes if needed later
                     }
             elif event_name == "post_load_recipe":
-                recipe_object: recipe.Recipe = event_data[0]
-                event_dict = {
-                    "recipe_name": recipe_object.name,
-                    "recipe_version": recipe_object.version
-                }
+                logger.debug(f"Processing post_load_recipe event. Event data: {event_data}")
+                try:
+                    if not event_data or len(event_data) == 0:
+                        logger.error("post_load_recipe event has no data")
+                        return
+                    
+                    recipe_object = event_data[0]
+                    logger.debug(f"Recipe object type: {type(recipe_object)}")
+                    
+                    if recipe_object is None:
+                        logger.error("Recipe object is None")
+                        return
+                    
+                    if not hasattr(recipe_object, 'name'):
+                        logger.error(f"Recipe object has no 'name' attribute. Available attributes: {dir(recipe_object)}")
+                        return
+                        
+                    if not hasattr(recipe_object, 'version'):
+                        logger.error(f"Recipe object has no 'version' attribute. Available attributes: {dir(recipe_object)}")
+                        return
+                    
+                    event_dict = {
+                        "recipe_name": recipe_object.name,
+                        "recipe_version": recipe_object.version
+                    }
+                    logger.debug(f"Successfully created event_dict for post_load_recipe: {event_dict}")
+                except Exception as e:
+                    logger.error(f"Error processing post_load_recipe event: {e}", exc_info=True)
+                    return
             elif event_name == "post_run_sequence":
                 sequence_object: recipe.Sequence = event_data[0]
                 sequence_result: recipe.ResultType = event_data[1]
@@ -122,10 +147,16 @@ class RecipeEventProxy(QObject):
 
             # --- Signal Emission ---
             if event_dict:  # Check if a dictionary was created for the event
-                with suppress(AttributeError):
-                    signal_name = event_name + "_signal"
-                    signal = getattr(self, signal_name)
-                    signal.emit(event_dict)
+                logger.debug(f"Attempting to emit signal for event: {event_name}")
+                try:
+                    with suppress(AttributeError):
+                        signal_name = event_name + "_signal"
+                        signal = getattr(self, signal_name)
+                        logger.debug(f"Found signal: {signal_name}")
+                        signal.emit(event_dict)
+                        logger.debug(f"Successfully emitted signal: {signal_name}")
+                except Exception as e:
+                    logger.error(f"Error emitting signal for event {event_name}: {e}", exc_info=True)
                 # else: # Optional: Log if no matching signal found (shouldn't happen if event_dict is populated)
                 #    logger.warning(f"No signal found for event: {event_name}")
             else:

@@ -246,19 +246,44 @@ class Recipe:
         logger.info(f"Loading recipe file {recipe_file_path}.")
         self.sequences = {}
         
-        recipe_data = self.file_loader(recipe_file_path)
-        recipe_main_data = next(recipe_data)
-        
-        # The rest of the documents are all sequences
-        for sequence in recipe_data:
-            self.sequences[sequence["sequence_name"]] = Sequence(sequence_data=sequence)
+        try:
+            recipe_data = self.file_loader(recipe_file_path)
+            logger.debug(f"File loader returned recipe_data type: {type(recipe_data)}")
+            
+            recipe_main_data = next(recipe_data)
+            logger.debug(f"Recipe main data keys: {recipe_main_data.keys() if isinstance(recipe_main_data, dict) else 'Not a dict'}")
+            
+            # Validate required fields in main data
+            required_fields = ["name", "description", "version", "globals"]
+            for field in required_fields:
+                if field not in recipe_main_data:
+                    raise KeyError(f"Missing required field '{field}' in recipe main data")
+            
+            # The rest of the documents are all sequences
+            sequence_count = 0
+            for sequence in recipe_data:
+                sequence_count += 1
+                logger.debug(f"Processing sequence {sequence_count}: {sequence.get('sequence_name', 'UNNAMED')}")
+                if "sequence_name" not in sequence:
+                    logger.error(f"Sequence {sequence_count} missing 'sequence_name' field")
+                    continue
+                try:
+                    self.sequences[sequence["sequence_name"]] = Sequence(sequence_data=sequence)
+                except Exception as e:
+                    logger.error(f"Failed to create sequence '{sequence.get('sequence_name', 'UNNAMED')}': {e}")
+                    raise
 
-        self.name: str = recipe_main_data["name"]
-        self.description: str = recipe_main_data["description"]
-        self.version: str = recipe_main_data["version"]
-        self.globals: dict[str, any] = recipe_main_data["globals"]
-        # self.tags: dict[str, str] = recipe_main_data["tags"]
-        logger.info(f"Loaded recipe {self.name} version {self.version}.")
+            self.name: str = recipe_main_data["name"]
+            self.description: str = recipe_main_data["description"]
+            self.version: str = recipe_main_data["version"]
+            self.globals: dict[str, any] = recipe_main_data["globals"]
+            # self.tags: dict[str, str] = recipe_main_data["tags"]
+            logger.info(f"Loaded recipe {self.name} version {self.version}.")
+            logger.debug(f"Recipe has {len(self.sequences)} sequences: {list(self.sequences.keys())}")
+            
+        except Exception as e:
+            logger.error(f"Failed to load recipe from {recipe_file_path}: {e}", exc_info=True)
+            raise
 
     def __get_serial_number(self, runtime: Runtime):
         response_q = queue.SimpleQueue()
