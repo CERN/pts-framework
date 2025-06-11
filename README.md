@@ -20,4 +20,4 @@ Hardware-oriented testing framework developed by BE-CEM-MTA.
 *   **HTML Reports:** Provides a utility to convert the CSV report into a styled HTML file (`report.html`) for easy viewing, similar to `pytest-html`.
 *   **Event System:** Uses queues for inter-thread communication and event reporting (e.g., step start/end).
 
-For full documentation, please visit [PTS Framework Documentation](https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/master/).
+For full documentation, please visit [PTS Framework Documentation](https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/stable/).
