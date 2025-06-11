@@ -11,6 +11,7 @@ import time
 import contextlib
 from pathlib import Path
 from importlib import import_module
+import importlib.resources
 from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
 
@@ -214,11 +215,10 @@ class PythonModuleStep(Step):
             parent_step_result_uuid: UUID of the parent StepResult.
         """
         step_output = {}
-        module_file_path = Path(self.module_path_str)
 
         try:
-            # Load the module dynamically and carefully
-            loaded_module = self.__load_module(module_file_path)
+            # Load the module dynamically using resources
+            loaded_module = self.__load_module(runtime)
         except ImportError as e:
             logger.error(f"Failed to import module '{self.module_path_str}' for step '{self.name}': {e}")
             raise # Re-raise to be caught by the main run loop and result in ERROR
@@ -229,10 +229,10 @@ class PythonModuleStep(Step):
                     try:
                         method_to_call = getattr(loaded_module, self.method_name)
                     except AttributeError:
-                        logger.error(f"Method '{self.method_name}' not found in module '{module_file_path.name}' for step '{self.name}'")
+                        logger.error(f"Method '{self.method_name}' not found in module '{self.module_path_str}' for step '{self.name}'")
                         raise AttributeError(f"Method '{self.method_name}' not found in module.") # Re-raise specific error
 
-                    logger.debug(f"Calling method '{self.method_name}' in '{module_file_path.name}' with inputs: {input}")
+                    logger.debug(f"Calling method '{self.method_name}' in '{self.module_path_str}' with inputs: {input}")
                     # Call the method, passing the resolved 'input' dictionary as keyword arguments
                     return_value = method_to_call(**input)
 
@@ -254,9 +254,9 @@ class PythonModuleStep(Step):
                         value = getattr(loaded_module, attribute_name)
                         # Store the read value in the step output dictionary using the attribute name as the key
                         step_output[attribute_name] = value
-                        logger.debug(f"Read attribute '{attribute_name}' from '{module_file_path.name}': {value}")
+                        logger.debug(f"Read attribute '{attribute_name}' from '{self.module_path_str}': {value}")
                     except AttributeError:
-                        logger.error(f"Attribute '{attribute_name}' not found in module '{module_file_path.name}' for step '{self.name}'")
+                        logger.error(f"Attribute '{attribute_name}' not found in module '{self.module_path_str}' for step '{self.name}'")
                         raise AttributeError(f"Attribute '{attribute_name}' not found.")
 
                 case "write_attribute":
@@ -270,11 +270,11 @@ class PythonModuleStep(Step):
                         # if not hasattr(loaded_module, attribute_name):
                         #    logger.warning(f"Attribute '{attribute_name}' does not exist in module '{module_file_path.name}'. Attempting to create it.")
                         setattr(loaded_module, attribute_name, attribute_value)
-                        logger.debug(f"Set attribute '{attribute_name}' in '{module_file_path.name}' to: {attribute_value}")
+                        logger.debug(f"Set attribute '{attribute_name}' in '{self.module_path_str}' to: {attribute_value}")
                         step_output = {} # Write action typically doesn't produce output data
                     except Exception as e:
                         # Catch potential errors during setattr (e.g., read-only property)
-                        logger.error(f"Failed to set attribute '{attribute_name}' on module '{module_file_path.name}' for step '{self.name}': {e}")
+                        logger.error(f"Failed to set attribute '{attribute_name}' on module '{self.module_path_str}' for step '{self.name}': {e}")
                         raise # Re-raise to indicate step failure
 
                 case _:
@@ -290,97 +290,54 @@ class PythonModuleStep(Step):
 
         return step_output
 
-    def __load_module(self, module_full_path: Path):
+    def __load_module(self, runtime: Runtime):
         """
-        Loads a Python module dynamically and safely from a given file path.
+        Loads a Python module dynamically from package resources.
 
         Args:
-            module_full_path (Path): The absolute or relative path to the .py file.
+            runtime (Runtime): The runtime environment containing test_package information.
 
         Returns:
             The loaded module object.
 
         Raises:
-            ImportError: If the module file is not found or cannot be imported.
+            ImportError: If the test package is not configured or module cannot be imported.
         """
-        if not module_full_path.is_file():
-            raise ImportError(f"Module file not found: {module_full_path}")
-
-        module_path = module_full_path.parent.resolve() # Get absolute directory path
-        module_filename = module_full_path.stem
-
-        # Ensure module directory is temporarily in sys.path
-        original_sys_path = list(sys.path)
-        cleanup_needed = False
-        module_to_delete = None
-
+        if not runtime.test_package:
+            raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
+        
+        # Parse the module path - convert from file path format to module format
+        # e.g., "tests/test_status.py" -> "test_status"
+        # Since test_package already includes the directory (e.g., "fsi_pts.tests"),
+        # we only need the filename part
+        module_path = Path(self.module_path_str)
+        if module_path.suffix == '.py':
+            module_path = module_path.with_suffix('')
+        
+        # Build the full module name: test_package + filename only
+        # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
+        module_name = module_path.name  # Just the filename part
+        full_module_name = f"{runtime.test_package}.{module_name}"
+        
         try:
-            if str(module_path) not in sys.path:
-                 sys.path.insert(0, str(module_path)) # Prepend to prioritize this path
-                 cleanup_needed = True
-
-            # Check if module is already imported *from the target path*
-            # to handle potential reloads or conflicts
-            if module_filename in sys.modules:
-                 existing_module = sys.modules[module_filename]
-                 # Heuristic: check if the existing module file seems to be the one we want
-                 try:
-                     existing_path = Path(existing_module.__file__).parent.resolve()
-                     if existing_path == module_path:
-                         logger.warning(f"Module '{module_filename}' already loaded from target directory. Consider using reload if updates are needed.")
-                         # For simplicity now, return existing; could add reload logic here.
-                         # from importlib import reload
-                         # module = reload(existing_module)
-                         module = existing_module
-                     else:
-                         # Conflict - module name exists but from different path
-                         logger.error(f"Module name conflict: '{module_filename}' already loaded from {existing_path}, expected {module_path}. Aborting import.")
-                         raise ImportError(f"Module name conflict for '{module_filename}'")
-                 except (AttributeError, TypeError):
-                      # Built-in modules or others might not have __file__
-                      logger.warning(f"Cannot verify path for already loaded module '{module_filename}'. Attempting import anyway.")
-                      module = import_module(module_filename)
-                      module_to_delete = module_filename # Mark for potential cleanup if newly imported
-            else:
-                # Module not loaded, perform the import
-                module = import_module(module_filename)
-                module_to_delete = module_filename # Mark for potential cleanup
-                logger.debug(f"Successfully imported module '{module_filename}' from '{module_path}'")
-
+            # First check if the test package exists
+            try:
+                importlib.resources.files(runtime.test_package)
+            except (ModuleNotFoundError, AttributeError) as e:
+                raise ImportError(f"Test package '{runtime.test_package}' not found or not accessible: {e}")
+            
+            # Try to import the module
+            logger.debug(f"Attempting to import module '{full_module_name}'")
+            module = import_module(full_module_name)
+            logger.debug(f"Successfully imported module '{full_module_name}'")
             return module
-
+            
+        except ModuleNotFoundError as e:
+            logger.error(f"Module '{full_module_name}' not found in package '{runtime.test_package}': {e}")
+            raise ImportError(f"Failed to load module '{full_module_name}': {e}") from e
         except Exception as e:
-            logger.error(f"Error loading module '{module_filename}' from '{module_path}': {e}")
-            raise ImportError(f"Failed to load module '{module_filename}': {e}") from e
-
-        finally:
-            # Restore original sys.path if it was modified
-            if cleanup_needed:
-                # Careful restoration: Only remove the path we added if it's still there at index 0
-                if sys.path[0] == str(module_path):
-                     sys.path.pop(0)
-                else:
-                     # Path got modified unexpectedly? Log a warning.
-                     logger.warning(f"sys.path modification conflict detected while cleaning up for module '{module_filename}'")
-                     # Try removing by value if it exists elsewhere
-                     with contextlib.suppress(ValueError):
-                         sys.path.remove(str(module_path))
-
-            # --- Module Unloading/Cleanup ---
-            # Generally, unloading modules in Python is complex and often discouraged
-            # due to potential issues with dangling references and shared state.
-            # If the loaded module modifies global state or holds resources,
-            # simply removing it from sys.modules might not be sufficient or safe.
-            # Consider if the steps *need* isolated module instances or if managing
-            # state within the module or via runtime variables is better.
-            #
-            # If cleanup is essential (e.g., to load updated code in a loop),
-            # investigate robust reloading patterns or running steps in separate processes.
-            #
-            # Basic cleanup attempt (use with caution):
-            # if module_to_delete and module_to_delete in sys.modules:
-            #     logger.debug(f"Attempting to remove '{module_to_delete}' from sys.modules.")
-            #     del sys.modules[module_to_delete]
+            logger.error(f"Error loading module '{full_module_name}': {e}")
+            raise ImportError(f"Failed to load module '{full_module_name}': {e}") from e
 
 
 class SequenceStep(Step):

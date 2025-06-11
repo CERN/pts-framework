@@ -145,6 +145,7 @@ class Runtime:
         self.recipe_file_name: str = None
         self.serial_number: str = None
         self.current_sequence_name: str = None
+        self.test_package: str = None
         self.pypts_version: str = "unknown" # Added pypts version
         
     def push_locals(self, locals):
@@ -276,6 +277,7 @@ class Recipe:
             self.description: str = recipe_main_data["description"]
             self.version: str = recipe_main_data["version"]
             self.globals: dict[str, any] = recipe_main_data["globals"]
+            self.test_package: str = recipe_main_data.get("test_package", None)
             # self.tags: dict[str, str] = recipe_main_data["tags"]
             logger.info(f"Loaded recipe {self.name} version {self.version}.")
             logger.debug(f"Recipe has {len(self.sequences)} sequences: {list(self.sequences.keys())}")
@@ -313,6 +315,7 @@ class Recipe:
         runtime.set_sequences(self.sequences)
         runtime.recipe_name = self.name             # Set recipe name in runtime
         runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
+        runtime.test_package = self.test_package    # Set test package in runtime
 
         # Use the event sender instead of direct calls
         self.event_sender(runtime, "pre_run_recipe", self.name, self.description)

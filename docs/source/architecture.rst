@@ -118,6 +118,71 @@ Parameter Signature Compatibility
        # Previously used 'parent_step', now uses 'parent_step_result_uuid'
        # for consistency with steps.py implementations
 
+.. _resource-based-module-loading:
+
+Resource-Based Module Loading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Problem**: The previous file-based module loading approach had several limitations:
+
+* **Working Directory Dependency**: Module paths were resolved relative to the current working directory
+* **Distribution Complexity**: Test modules needed to be available as separate files during deployment
+* **Path Management Issues**: Complex ``sys.path`` manipulation with potential conflicts
+* **Deployment Fragility**: Risk of missing test files in different environments
+
+**Solution**: Implemented a resource-based module loading system using ``importlib.resources``:
+
+1. **Recipe Configuration**: Added ``test_package`` field to recipe YAML files
+2. **Package-Based Loading**: Test modules are now loaded as proper Python package resources
+3. **Simplified Path Resolution**: Module paths are resolved within the specified package
+4. **Robust Error Handling**: Clear error messages for missing packages or modules
+
+**Implementation Details**:
+
+The ``PythonModuleStep`` now uses a completely rewritten ``__load_module`` method that:
+
+**Package Validation**:
+  * Verifies the specified ``test_package`` exists and is accessible
+  * Uses ``importlib.resources.files()`` to validate package availability
+  * Provides clear error messages for missing or inaccessible packages
+
+**Resource-Based Import**:
+  * Converts file paths (e.g., ``tests/test_status.py``) to module names (``test_status``)
+  * Constructs full module names using the package prefix (``fsi_pts.tests.test_status``)
+  * Uses standard Python import mechanisms instead of file system operations
+
+**Simplified Architecture**:
+  * Eliminated complex ``sys.path`` manipulation
+  * Removed module conflict detection (handled by Python's import system)
+  * Streamlined error handling with proper exception chaining
+
+**Recipe Configuration Example**:
+
+.. code-block:: yaml
+
+   ---
+   name: FSI PTS
+   version: 0.0.1
+   description: Test recipe for FSI version check
+   test_package: fsi_pts.tests  # NEW: Specifies package containing test modules
+   globals: {}
+
+   ---
+   sequence_name: Main
+   steps:
+   - steptype: PythonModuleStep
+     step_name: Get FSI Status
+     module: test_status.py  # Resolved to fsi_pts.tests.test_status
+     method_name: test_status
+
+**Benefits**:
+
+* **Package Consistency**: Tests are bundled as proper package resources
+* **Distribution Simplicity**: No separate file management required
+* **Environment Independence**: No dependency on current working directory
+* **Deployment Robustness**: Tests are guaranteed to be available if the package is installed
+* **Python Standards Compliance**: Uses standard Python import mechanisms
+
 Current Architecture Benefits
 -----------------------------
 
@@ -152,11 +217,13 @@ Future Considerations
 Path Resolution
 ~~~~~~~~~~~~~~~
 
-The current module loading still resolves paths relative to the current working directory. Future improvements may include:
+✅ **IMPLEMENTED**: Package-aware loading is now available through the ``test_package`` configuration field.
 
-* **Recipe-relative paths**: Resolve module paths relative to the recipe file location
-* **Configurable search paths**: Allow recipes to specify additional module search directories
-* **Package-aware loading**: Support for proper Python package imports
+Future improvements may include:
+
+* **Recipe-relative paths**: Resolve module paths relative to the recipe file location (for legacy file-based loading)
+* **Multiple package support**: Allow recipes to specify multiple test packages
+* **Configurable search paths**: Allow recipes to specify additional module search directories for mixed loading strategies
 
 Extension Points
 ~~~~~~~~~~~~~~~~
@@ -182,4 +249,31 @@ For existing code using the old architecture:
    from pypts.recipe import PythonModuleStep
    
    # New  
-   from pypts.steps import PythonModuleStep 
+   from pypts.steps import PythonModuleStep
+
+For migrating to resource-based module loading:
+
+1. **Package Structure**: Organize test modules as Python packages with proper ``__init__.py`` files
+2. **Recipe Configuration**: Add ``test_package`` field to recipe YAML files
+3. **Module Paths**: Update module paths to be relative to the test package (remove directory prefixes)
+
+.. code-block:: yaml
+
+   # Old (file-based)
+   ---
+   name: My Recipe
+   globals: {}
+   
+   steps:
+   - steptype: PythonModuleStep
+     module: tests/my_test.py  # File path
+   
+   # New (resource-based)
+   ---
+   name: My Recipe
+   test_package: my_package.tests  # Package containing test modules
+   globals: {}
+   
+   steps:
+   - steptype: PythonModuleStep
+     module: my_test.py  # Resolved to my_package.tests.my_test 

@@ -23,6 +23,13 @@ Recipe Components (`recipe`)
    :undoc-members:
    :show-inheritance:
 
+Step Implementations (`steps`)
+------------------------------
+.. automodule:: pypts.steps
+   :members: PythonModuleStep, SequenceStep, IndexedStep, UserInteractionStep, WaitStep
+   :undoc-members:
+   :show-inheritance:
+
 Reporting (`report`)
 --------------------
 .. automodule:: pypts.report

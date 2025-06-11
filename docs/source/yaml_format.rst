@@ -23,12 +23,71 @@ Document 1: Main Recipe Configuration
   version: Allows for tracking different versions of the file
   description: A more complete description of this recipe
   main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
+  test_package: my_package.tests # Optional: Python package containing test modules for PythonModuleStep
   globals: # Globals can be referenced and used from any step in the whole file
     global_name: value
     other_global: other_value
     # ...
   # tags:  # Optional tags (Currently commented out in code)
   #   key1: value1
+
+Main Recipe Configuration Fields
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+*   **name** (str): Name of the recipe, typically the project name.
+*   **version** (str): Version string for tracking different versions of the recipe.
+*   **description** (str): A detailed description of the recipe's purpose.
+*   **main_sequence** (str, optional): Name of the sequence to run by default. Defaults to "Main".
+*   **test_package** (str, optional): Python package containing test modules for ``PythonModuleStep``. When specified, ``PythonModuleStep`` uses resource-based module loading instead of file-based loading. See :ref:`resource_based_loading`.
+*   **globals** (dict): Global variables that can be referenced from any step in the recipe.
+
+.. _resource_based_loading:
+
+Resource-Based Module Loading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When ``test_package`` is specified, ``PythonModuleStep`` loads test modules as Python package resources instead of files:
+
+**Benefits:**
+  * Modules are bundled with your package during distribution
+  * No dependency on current working directory  
+  * Uses Python's standard import mechanism
+  * More reliable deployment
+
+**Example:**
+
+.. code-block:: yaml
+
+   ---
+   name: My Recipe
+   test_package: my_project.tests
+   globals: {}
+   
+   ---
+   sequence_name: Main
+   steps:
+   - steptype: PythonModuleStep
+     module: test_module.py  # Resolves to my_project.tests.test_module
+     action_type: method
+     method_name: my_test
+
+**Package Structure Required:**
+
+.. code-block:: text
+
+   my_project/
+   ├── __init__.py
+   ├── tests/
+   │   ├── __init__.py          # Required for Python package
+   │   ├── test_module.py
+   │   └── other_tests.py
+   └── recipe.yaml
+
+**Migration from File-Based:**
+  * Add ``__init__.py`` files to make directories into packages
+  * Add ``test_package`` field to recipe
+  * Remove directory prefixes from module paths (use just the filename)
+  * Install your package with ``pip install -e .``
 
 --- # Separator for the next document
 
@@ -198,12 +257,17 @@ Executes Python code.
      result: { type: local, local_name: output_data }
      passed: { type: passfail } # Treats boolean output as pass/fail
 
-*   **module** (str): Path to the Python file.
+*   **module** (str): Path to the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``). Otherwise, this is a file path relative to the current working directory.
 *   **action_type** (str): ``method``, ``read_attribute``, or ``write_attribute``.
 *   **method_name** (str): Name of the method to call (if ``action_type`` is ``method``).
 *   Inputs for ``read_attribute``: ``attribute_name``.
 *   Inputs for ``write_attribute``: ``attribute_name``, ``attribute_value``.
 *   Note: If ``action_type`` is ``method`` and the called function returns a non-dictionary value, the value is made available under the output key ``output``.
+
+**Module Loading Behavior:**
+
+*   **Resource-based** (when ``test_package`` is set): Module is loaded from the specified package using ``importlib.resources``. More reliable for distribution.
+*   **File-based** (when ``test_package`` is not set): Module is loaded as a file relative to the current working directory. Legacy behavior.
 
 SequenceStep
 ------------
