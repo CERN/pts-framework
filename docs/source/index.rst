@@ -53,6 +53,7 @@ Documentation contents
     :maxdepth: 1
 
     api
+    architecture
     yaml_format
     gui_event_handling
     report_generation
