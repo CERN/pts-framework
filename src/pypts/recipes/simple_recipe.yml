@@ -39,7 +39,7 @@ steps:
       image_path: {type: direct, value: lego2.jpg}
       options: {type: direct, value: ["yes", "no"]}
     output_mapping:
-      output: {type: equals, value: "yes"}
+      user_response: {type: equals, value: "yes"}
 
   - steptype: PythonModuleStep
     step_name: Run a other_test
