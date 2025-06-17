@@ -51,8 +51,6 @@ def _result_to_dict(result: StepResult) -> Dict[str, Any]:
         outputs_serializable = {"error": "Could not serialize outputs"}
 
     return {
-        "uuid": str(result.uuid),
-        "parent_uuid": str(result.parent) if result.parent else None,
         "step": _serialize_step(result.step),
         "result": str(result.result) if result.result else None,
         "inputs": inputs_serializable,
@@ -74,8 +72,6 @@ def _flatten_single_result(result_dict: Dict[str, Any]) -> Dict[str, Any]:
     """ 
     if not result_dict: return None
     return {
-        "uuid": result_dict.get("uuid"),
-        "parent_uuid": result_dict.get("parent_uuid"),
         # Add metadata fields
         "recipe_name": result_dict.get("recipe_name", "N/A"),
         "recipe_file_name": result_dict.get("recipe_file_name", "N/A"),
@@ -101,7 +97,7 @@ class Report:
     Writes results to a CSV file (report.csv) in the specified directory
     as they become available via the `add_step_result` method.
     """
-    _CSV_HEADERS = ["uuid", "parent_uuid", "recipe_name", "recipe_file_name", "sequence_name", "serial_number", "pypts_version", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
+    _CSV_HEADERS = ["recipe_name", "recipe_file_name", "sequence_name", "serial_number", "pypts_version", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
 
     def __init__(self, output_dir: str | Path):
         """
@@ -331,7 +327,7 @@ def generate_html_report(csv_path: Path, html_path: Path):
     html_content += "<h2>Details</h2>"
     html_content += "<table>"
     # Revert header, keep Sequence Name
-    html_content += "<thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th><th>UUID</th><th>Parent UUID</th></tr></thead>"
+    html_content += "<thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th></tr></thead>"
     html_content += "<tbody>"
 
     for i, row in enumerate(results):
@@ -365,8 +361,6 @@ def generate_html_report(csv_path: Path, html_path: Path):
             
             html_content += f"<td>{formatted_content}</td>"
 
-        html_content += f"<td>{html.escape(row.get('uuid', 'N/A'))}</td>"
-        html_content += f"<td>{html.escape(row.get('parent_uuid', 'N/A'))}</td>"
         html_content += "</tr>"
 
     html_content += "</tbody></table>"
