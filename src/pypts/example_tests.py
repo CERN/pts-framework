@@ -4,6 +4,9 @@
 
 import logging
 import numpy as np
+from nptdms import TdmsWriter, RootObject, GroupObject, ChannelObject
+import os
+from datetime import datetime
 
 '''
 This file contains a collection of example tests that can be used to develop the PTS framework.
@@ -58,7 +61,53 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
     
     # Generate sinewave
     data = np.sin(2 * np.pi * frequency * t)
+   
+    # Save data to TDMS file in reports directory
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tdms_filename = f"sinewave_{frequency}Hz_{timestamp}.tdms"
+    tdms_filepath = os.path.join("pts_reports", tdms_filename)
     
+    # Ensure the directory exists
+    os.makedirs("pts_reports", exist_ok=True)
+    
+    # Create TDMS file with sinewave data
+    with TdmsWriter(tdms_filepath) as tdms_writer:
+        # Create root object with test metadata
+        root_object = RootObject(properties={
+            "Test_Name": "Sinewave Generation and Validation",
+            "Expected_Frequency_Hz": frequency,
+            "Detected_Frequency_Hz": detected_frequency,
+            "Frequency_Error_Hz": frequency_error,
+            "Test_Passed": test_passed,
+            "Tolerance_Hz": tolerance,
+        })
+        
+        # Create group object with measurement info
+        group_object = GroupObject("Sinewave_Test", properties={
+            "Sampling_Rate_Hz": sampling_rate,
+            "Duration_s": duration,
+            "Num_Samples": len(data),
+        })
+        
+        # Create channel objects with data and properties
+        time_channel = ChannelObject("Sinewave_Test", "Time", t, properties={
+            "unit_string": "s",
+            "wf_increment": 1.0/sampling_rate,
+        })
+        
+        data_channel = ChannelObject("Sinewave_Test", "Amplitude", data, properties={
+            "unit_string": "V",
+            "wf_increment": 1.0/sampling_rate,
+        })
+        
+        # Write segment to file
+        tdms_writer.write_segment([
+            root_object,
+            group_object,
+            time_channel,
+            data_channel
+        ])
+        
     # Analyze frequency content using FFT
     fft_result = np.fft.fft(data)
     fft_freq = np.fft.fftfreq(len(data), 1/sampling_rate)
@@ -74,6 +123,7 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
     # Check if detected frequency matches expected frequency within tolerance
     frequency_error = abs(detected_frequency - frequency)
     test_passed = frequency_error <= tolerance
+ 
     
     return {
         "compare": test_passed,  # Pass/fail result for the test framework
@@ -83,6 +133,7 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
         "tolerance": tolerance,
         "sampling_rate": sampling_rate,
         "duration": duration,
-        "num_samples": len(data)
+        "num_samples": len(data),
+        "tdms_file": tdms_filepath
     }
 

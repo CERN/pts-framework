@@ -120,6 +120,7 @@ steps:
       frequency_error: {type: local, local_name: freq_error}
       sampling_rate: {type: local, local_name: sample_rate}
       num_samples: {type: local, local_name: total_samples}
+      tdms_file: {type: local, local_name: tdms_filepath}
 
   - steptype: PythonModuleStep
     step_name: Generate Error Deliberately
