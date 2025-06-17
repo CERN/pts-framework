@@ -39,29 +39,49 @@ def simple_output(value):
 def is_PSU_disconnected():
     return (True)
 
-def generate_sinewave(frequency=60, duration=1.0):
+def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
     """
-    Generate a sinewave with sampling rate according to Nyquist theorem.
+    Generate a sinewave and validate its frequency content using FFT analysis.
     
     Args:
-        frequency: Frequency of the sinewave in Hz (default: 60)
+        frequency: Expected frequency of the sinewave in Hz (default: 60)
         duration: Duration of the signal in seconds (default: 1.0)
+        tolerance: Frequency tolerance in Hz for pass/fail (default: 1.0)
     
     Returns:
-        dict: Contains 'data' (numpy array) and 'sampling_rate' (Hz)
+        dict: Contains validation results and signal data
     """
     sampling_rate = frequency * 10  # 10x for Nyquist theorem
     
     # Generate time vector
     t = np.linspace(0, duration, int(sampling_rate * duration), endpoint=False)
     
-    # Generate 60Hz sinewave
+    # Generate sinewave
     data = np.sin(2 * np.pi * frequency * t)
     
+    # Analyze frequency content using FFT
+    fft_result = np.fft.fft(data)
+    fft_freq = np.fft.fftfreq(len(data), 1/sampling_rate)
+    
+    # Get magnitude spectrum (only positive frequencies)
+    magnitude = np.abs(fft_result[:len(fft_result)//2])
+    freq_bins = fft_freq[:len(fft_freq)//2]
+    
+    # Find the peak frequency
+    peak_index = np.argmax(magnitude)
+    detected_frequency = abs(freq_bins[peak_index])
+    
+    # Check if detected frequency matches expected frequency within tolerance
+    frequency_error = abs(detected_frequency - frequency)
+    test_passed = frequency_error <= tolerance
+    
     return {
-        "data": data,
+        "compare": test_passed,  # Pass/fail result for the test framework
+        "expected_frequency": frequency,
+        "detected_frequency": detected_frequency,
+        "frequency_error": frequency_error,
+        "tolerance": tolerance,
         "sampling_rate": sampling_rate,
-        "frequency": frequency,
         "duration": duration,
         "num_samples": len(data)
     }

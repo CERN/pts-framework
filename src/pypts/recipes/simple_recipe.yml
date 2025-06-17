@@ -105,17 +105,20 @@ steps:
       compare: {type: passfail} # Should fail
 
   - steptype: PythonModuleStep
-    step_name: Generate 60Hz Sinewave
+    step_name: Generate and Validate 60Hz Sinewave
     action_type: method
     module: example_tests.py
     method_name: generate_sinewave
     input_mapping:
       frequency: {type: direct, value: 60}
       duration: {type: direct, value: 1.0}
+      tolerance: {type: direct, value: 1.0}
     output_mapping:
-      data: {type: local, local_name: sinewave_data}
+      compare: {type: passfail}  # Main pass/fail result
+      expected_frequency: {type: local, local_name: expected_freq}
+      detected_frequency: {type: local, local_name: detected_freq}
+      frequency_error: {type: local, local_name: freq_error}
       sampling_rate: {type: local, local_name: sample_rate}
-      frequency: {type: local, local_name: signal_freq}
       num_samples: {type: local, local_name: total_samples}
 
   - steptype: PythonModuleStep
