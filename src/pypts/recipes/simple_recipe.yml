@@ -113,6 +113,7 @@ steps:
       frequency: {type: direct, value: 60}
       duration: {type: direct, value: 1.0}
       tolerance: {type: direct, value: 1.0}
+      serial_number: {type: global, global_name: serial_number}
     output_mapping:
       compare: {type: passfail}  # Main pass/fail result
       expected_frequency: {type: local, local_name: expected_freq}

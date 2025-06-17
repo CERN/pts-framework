@@ -42,7 +42,7 @@ def simple_output(value):
 def is_PSU_disconnected():
     return (True)
 
-def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
+def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0, serial_number=None):
     """
     Generate a sinewave and validate its frequency content using FFT analysis.
     
@@ -50,6 +50,7 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
         frequency: Expected frequency of the sinewave in Hz (default: 60)
         duration: Duration of the signal in seconds (default: 1.0)
         tolerance: Frequency tolerance in Hz for pass/fail (default: 1.0)
+        serial_number: Serial number for this test run (default: None)
     
     Returns:
         dict: Contains validation results and signal data
@@ -61,10 +62,30 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
     
     # Generate sinewave
     data = np.sin(2 * np.pi * frequency * t)
+    
+    # Analyze frequency content using FFT FIRST
+    fft_result = np.fft.fft(data)
+    fft_freq = np.fft.fftfreq(len(data), 1/sampling_rate)
+    
+    # Get magnitude spectrum (only positive frequencies)
+    magnitude = np.abs(fft_result[:len(fft_result)//2])
+    freq_bins = fft_freq[:len(fft_freq)//2]
+    
+    # Find the peak frequency
+    peak_index = np.argmax(magnitude)
+    detected_frequency = abs(freq_bins[peak_index])
+    
+    # Check if detected frequency matches expected frequency within tolerance
+    frequency_error = abs(detected_frequency - frequency)
+    test_passed = frequency_error <= tolerance
    
     # Save data to TDMS file in reports directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    tdms_filename = f"sinewave_{frequency}Hz_{timestamp}.tdms"
+    # Include serial number in filename if provided
+    if serial_number:
+        tdms_filename = f"sinewave_{frequency}Hz_{serial_number}_{timestamp}.tdms"
+    else:
+        tdms_filename = f"sinewave_{frequency}Hz_{timestamp}.tdms"
     tdms_filepath = os.path.join("pts_reports", tdms_filename)
     
     # Ensure the directory exists
@@ -73,14 +94,19 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
     # Create TDMS file with sinewave data
     with TdmsWriter(tdms_filepath) as tdms_writer:
         # Create root object with test metadata
-        root_object = RootObject(properties={
+        root_properties = {
             "Test_Name": "Sinewave Generation and Validation",
             "Expected_Frequency_Hz": frequency,
             "Detected_Frequency_Hz": detected_frequency,
             "Frequency_Error_Hz": frequency_error,
             "Test_Passed": test_passed,
             "Tolerance_Hz": tolerance,
-        })
+        }
+        # Add serial number to TDMS properties if provided
+        if serial_number:
+            root_properties["Serial_Number"] = serial_number
+        
+        root_object = RootObject(properties=root_properties)
         
         # Create group object with measurement info
         group_object = GroupObject("Sinewave_Test", properties={
@@ -107,22 +133,6 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
             time_channel,
             data_channel
         ])
-        
-    # Analyze frequency content using FFT
-    fft_result = np.fft.fft(data)
-    fft_freq = np.fft.fftfreq(len(data), 1/sampling_rate)
-    
-    # Get magnitude spectrum (only positive frequencies)
-    magnitude = np.abs(fft_result[:len(fft_result)//2])
-    freq_bins = fft_freq[:len(fft_freq)//2]
-    
-    # Find the peak frequency
-    peak_index = np.argmax(magnitude)
-    detected_frequency = abs(freq_bins[peak_index])
-    
-    # Check if detected frequency matches expected frequency within tolerance
-    frequency_error = abs(detected_frequency - frequency)
-    test_passed = frequency_error <= tolerance
  
     
     return {
