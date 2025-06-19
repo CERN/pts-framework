@@ -131,4 +131,19 @@ steps:
     input_mapping: {}
     output_mapping: {} # No specific output check needed, framework handles the error
 
+  - steptype: UserInteractionStep
+    step_name: Are LED ON?
+    description: Asking user to check the LEDs
+    skip: false
+    input_mapping:
+      message:
+        type: direct
+        value: |
+          Are the LEDs on?
+          Please let me know.
+      image_path: {type: direct, value: Front_Panel_Test.jpg}
+      options: {type: direct, value: ["yes", "no"]}
+    output_mapping:
+      user_response: {type: equals, value: "yes"}
+
 teardown_steps: []
