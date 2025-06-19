@@ -4,7 +4,7 @@
 
 import sys
 import os
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 from pypts import run_recipe_app
 
 def main():

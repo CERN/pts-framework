@@ -7,8 +7,8 @@ from ._version import version as __version__
 import logging
 import sys
 import os
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QThread
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QThread
 from pypts.pts import run_pts
 from pypts.gui import MainWindow
 from pypts.event_proxy import RecipeEventProxy
