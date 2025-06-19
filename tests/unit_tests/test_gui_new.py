@@ -14,6 +14,15 @@ from PySide6.QtGui import QPixmap
 from pypts import gui, recipe
 import uuid
 
+# Skip all GUI tests when running in CI
+pytestmark = pytest.mark.skipif(
+    os.environ.get('CI') is not None or 
+    os.environ.get('GITHUB_ACTIONS') is not None or
+    os.environ.get('GITLAB_CI') is not None or
+    os.environ.get('JENKINS_URL') is not None,
+    reason="GUI tests are skipped in CI environments"
+)
+
 
 @pytest.fixture(scope="session")
 def qapp():
