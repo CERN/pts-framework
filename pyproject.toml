@@ -42,6 +42,8 @@ dependencies = [
 # The optional dependencies of the project, installable using the "extras" syntax.
 test = [
   "pytest",
+  "pytest-qt",
+  "PySide6",
 ]
 doc = [
   "Sphinx",
