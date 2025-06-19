@@ -5,7 +5,7 @@
 # src/pypts/event_proxy.py
 from pypts.utils import get_project_root
 import logging
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide6.QtCore import QObject, Signal
 from queue import SimpleQueue
 from contextlib import suppress
 from pypts import recipe
@@ -21,23 +21,23 @@ class RecipeEventProxy(QObject):
        to decouple the GUI from the core recipe logic.
     """
     # --- Signals (All emit dictionaries) ---
-    pre_run_recipe_signal = pyqtSignal(dict)
+    pre_run_recipe_signal = Signal(dict)
     """Emitted before the recipe starts. Args: {'recipe_name': str, 'recipe_description': str}"""
-    post_run_recipe_signal = pyqtSignal(dict)
+    post_run_recipe_signal = Signal(dict)
     """Emitted after the recipe finishes. Args: {'results': List[recipe.StepResult]}"""
-    pre_run_sequence_signal = pyqtSignal(dict)
+    pre_run_sequence_signal = Signal(dict)
     """Emitted before a sequence starts. Args: {'sequence': recipe.Sequence}"""
-    user_interact_signal = pyqtSignal(dict)
+    user_interact_signal = Signal(dict)
     """Emitted when user interaction is required. Args: {'response_q': SimpleQueue, 'message': str, 'image_path': str, 'options': list}"""
-    get_serial_number_signal = pyqtSignal(dict)
+    get_serial_number_signal = Signal(dict)
     """Emitted when the serial number needs to be obtained. Args: {'response_q': SimpleQueue}"""
-    post_run_step_signal = pyqtSignal(dict)
+    post_run_step_signal = Signal(dict)
     """Emitted after a step finishes. Args: {'step_uuid': uuid, 'status_text': str, 'status_color': str}"""
-    pre_run_step_signal = pyqtSignal(dict)
+    pre_run_step_signal = Signal(dict)
     """Emitted before a step starts. Args: {'step_uuid': uuid, 'step_name': str}"""
-    post_load_recipe_signal = pyqtSignal(dict)
+    post_load_recipe_signal = Signal(dict)
     """Emitted after a recipe is loaded. Args: {'recipe_name': str, 'recipe_version': str}"""
-    post_run_sequence_signal = pyqtSignal(dict)
+    post_run_sequence_signal = Signal(dict)
     """Emitted after a sequence finishes. Args: {'sequence_name': str, 'sequence_result': str}"""
 
     def __init__(self, event_q: SimpleQueue):

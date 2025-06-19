@@ -34,7 +34,7 @@ dependencies = [
   "nidmm==1.4.8",
   "nptdms",
   "numpy",
-  "PyQt6",
+  "PySide6",
   "PyYAML==6.0.2",
 ]
 
@@ -43,7 +43,6 @@ dependencies = [
 test = [
   "pytest",
   "pytest-qt",
-  "PySide6",
 ]
 doc = [
   "Sphinx",

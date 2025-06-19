@@ -5,7 +5,7 @@
 import pytest
 from unittest.mock import MagicMock
 from queue import SimpleQueue
-from PyQt6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication
 from pypts.event_proxy import RecipeEventProxy
 from pypts import recipe
 import uuid

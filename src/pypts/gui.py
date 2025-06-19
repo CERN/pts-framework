@@ -3,12 +3,12 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 import logging
-from PyQt6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
+from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
                              QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, 
                              QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
                              QTreeView, QAbstractItemView)
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QAbstractItemModel, QModelIndex
-from PyQt6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
+from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex
+from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 class TextEditLoggerHandler(QObject, logging.Handler):
     """A logging handler that emits Qt signals for log messages."""
-    new_message = pyqtSignal(str)
+    new_message = Signal(str)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -74,7 +74,7 @@ class MainWindow(QWidget):
         self.step_list.setColumnWidth(0, 450)
         self.step_list.horizontalHeader().setStretchLastSection(True)
 
-        self.step_list.update()
+        # Note: In PySide6, we don't need to call update() here as the widget will refresh automatically
 
         self.result_list = QTreeView(self)
         self.result_list.setMaximumWidth(600)
@@ -155,7 +155,7 @@ class MainWindow(QWidget):
                 self.step_list.setItem(i, 1, status_item)
 
             self.already_updated = True
-            self.step_list.update() # Ensure visual update
+            # Note: In PySide6, the widget will refresh automatically after setItem calls
 
     def update_step_result(self, step_status_vm: dict):
         """Updates the status of a step in the live step list table.
@@ -201,7 +201,7 @@ class MainWindow(QWidget):
         results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
         self.result_list.setModel(myResultModel)
-        self.result_list.update()
+        # Note: In PySide6, the view will refresh automatically when the model is set
 
     def show_message(self, event_dict):
         """Displays a user message and interaction options from the event dictionary."""
@@ -246,7 +246,7 @@ class MainWindow(QWidget):
             attempts += 1
             logger.debug(f"Serial number dialog attempt {attempts}")
             try:
-                # QInputDialog static methods are deprecated in PyQt6
+                # QInputDialog static methods were deprecated in PyQt6, but still work in PySide6
                 dialog = QInputDialog(self)
                 text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
                 logger.debug(f"Dialog result: ok={ok}, text='{text}'")
