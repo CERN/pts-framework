@@ -24,8 +24,11 @@ def event_q():
 
 @pytest.fixture
 def proxy(event_q):
-    # Required to initialize Qt event loop for signals
-    QCoreApplication([])
+    # Use existing Qt application instance or create one if none exists
+    app = QCoreApplication.instance()
+    if app is None:
+        app = QCoreApplication([])
+    
     proxy = RecipeEventProxy(event_q)
 
     # Mock all signals
