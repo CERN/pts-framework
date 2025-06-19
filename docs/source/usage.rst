@@ -12,7 +12,7 @@ This guide provides a basic overview of how to run a test recipe using the ``pyp
 Installation
 ------------
 
-Before using pypts, you may need to install the following system dependencies:
+Before using pypts, you may need to install the following system dependencies for PySide6 (Qt GUI framework):
 
 .. code-block:: bash
 

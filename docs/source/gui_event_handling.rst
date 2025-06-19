@@ -29,7 +29,7 @@ bridge between the recipe execution thread and the main GUI thread.
 4.  It dynamically finds the corresponding Qt signal (e.g., `pre_run_step_signal`,
     `post_run_step_signal`) and emits it, passing the **ViewModel dictionary**
     as the single payload.
-5.  These Qt signals (all defined as `pyqtSignal(dict)`) are connected to slots
+5.  These Qt signals (all defined as `Signal(dict)`) are connected to slots
     in the `MainWindow` (`gui.py`) in the main GUI thread (`__main__.py`),
     ensuring thread-safe updates.
 
