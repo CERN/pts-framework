@@ -5,10 +5,11 @@
 --- # Separator - beginning of the document - header
 name: Example Test Recipe
 version: 0.1.0
-recipe_version: 1.0.0
+recipe_version: 1.1.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
 test_package: pypts
+continue_on_error: true
 globals: {}
 
 --- # End separator - beginning of the next document - sequence description
@@ -128,6 +129,7 @@ steps:
     action_type: method
     module: example_tests.py
     method_name: generate_error
+    critical: false
     input_mapping: {}
     output_mapping: {} # No specific output check needed, framework handles the error
 

@@ -21,9 +21,11 @@ Document 1: Main Recipe Configuration
   ---
   name: Name of the recipe. Typically the project name.
   version: Allows for tracking different versions of the file
+  recipe_version: Version of the recipe format specification. Use "1.1.0" or higher to enable continue_on_error functionality.
   description: A more complete description of this recipe
   main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
   test_package: my_package.tests # Optional: Python package containing test modules for PythonModuleStep
+  continue_on_error: false # Global setting that controls whether execution continues after errors in non-critical steps. Defaults to false. When true, only errors in steps marked as critical: true will stop execution. Requires recipe_version 1.1.0 or higher.
   globals: # Globals can be referenced and used from any step in the whole file
     global_name: value
     other_global: other_value
@@ -36,9 +38,11 @@ Main Recipe Configuration Fields
 
 *   **name** (str): Name of the recipe, typically the project name.
 *   **version** (str): Version string for tracking different versions of the recipe.
+*   **recipe_version** (str): Version of the recipe format specification. Use "1.1.0" or higher to enable continue_on_error functionality.
 *   **description** (str): A detailed description of the recipe's purpose.
 *   **main_sequence** (str, optional): Name of the sequence to run by default. Defaults to "Main".
 *   **test_package** (str, optional): Python package containing test modules for ``PythonModuleStep``. When specified, ``PythonModuleStep`` uses resource-based module loading instead of file-based loading. See :ref:`resource_based_loading`.
+*   **continue_on_error** (bool, optional): Global setting that controls whether execution continues after errors in non-critical steps. Defaults to ``false``. When ``true``, only errors in steps marked as ``critical: true`` will stop execution. Requires ``recipe_version`` 1.1.0 or higher.
 *   **globals** (dict): Global variables that can be referenced from any step in the recipe.
 
 .. _resource_based_loading:
@@ -124,6 +128,7 @@ Each item in `setup_steps`, `steps`, and `teardown_steps` is a dictionary repres
    id: unique_id # Optional: A unique identifier. Defaults to a generated UUID.
    description: More details about the step # Optional: More details about the step's purpose.
    skip: false # Optional: If true, the step execution is skipped. Defaults to false.
+   critical: false # Optional: If true, errors in this step will always stop execution, even when continue_on_error is enabled globally. Defaults to false. Requires recipe_version 1.1.0 or higher.
    # --- Fields specific to certain steptypes ---
    action_type: method # e.g., For PythonModuleStep: 'method', 'read_attribute', 'write_attribute'
    module: path/to/my_module.py # e.g., For PythonModuleStep: Path to the Python file
@@ -141,6 +146,7 @@ Key fields common to most steps:
 *   ``id`` (str, optional): A unique identifier. Defaults to a generated UUID.
 *   ``description`` (str, optional): More details about the step's purpose.
 *   ``skip`` (bool, optional): If ``true``, the step execution is skipped. Defaults to ``false``.
+*   ``critical`` (bool, optional): If ``true``, errors in this step will always stop execution, even when ``continue_on_error`` is enabled globally. Defaults to ``false``. Requires ``recipe_version`` 1.1.0 or higher.
 *   ``input_mapping`` (dict): Defines how the step gets its input data. See :ref:`input_mapping_details`.
 *   ``output_mapping`` (dict): Defines how the step's output is processed and stored. See :ref:`output_mapping_details`.
 
@@ -259,74 +265,123 @@ Executes Python code.
 
 *   **module** (str): Path to the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``). Otherwise, this is a file path relative to the current working directory.
 *   **action_type** (str): ``method``, ``read_attribute``, or ``write_attribute``.
-*   **method_name** (str): Name of the method to call (if ``action_type`` is ``method``).
-*   Inputs for ``read_attribute``: ``attribute_name``.
-*   Inputs for ``write_attribute``: ``attribute_name``, ``attribute_value``.
-*   Note: If ``action_type`` is ``method`` and the called function returns a non-dictionary value, the value is made available under the output key ``output``.
+*   **method_name** (str): Name of the method to call (if ``
 
-**Module Loading Behavior:**
+Continue On Error Mechanism
+============================
 
-*   **Resource-based** (when ``test_package`` is set): Module is loaded from the specified package using ``importlib.resources``. More reliable for distribution.
-*   **File-based** (when ``test_package`` is not set): Module is loaded as a file relative to the current working directory. Legacy behavior.
+Starting with ``recipe_version`` 1.1.0, the pypts framework supports a "Continue On Error" mechanism that allows test execution to continue even after encountering errors in non-critical steps.
 
-SequenceStep
-------------
+Global Setting
+--------------
 
-Executes another sequence defined within the same recipe file.
+The ``continue_on_error`` field in the main recipe configuration enables this functionality:
 
 .. code-block:: yaml
 
-   steptype: SequenceStep
-   step_name: Run Subsequence
-   sequence:
-     type: internal # Or 'external' (external currently not implemented)
-     name: MySubSequenceName # Name of sequence defined in another doc
-   input_mapping:
-     sub_param1: { type: global, global_name: global_var1 }
-   output_mapping:
-     sub_output: { type: local, local_name: sub_result }
-     __result: { type: passthrough } # Propagates sub-sequence result
+   ---
+   name: My Recipe
+   recipe_version: 1.1.0
+   continue_on_error: true  # Enable continue on error globally
+   # ... other fields
 
-*   **sequence** (dict): Describes the sequence to run.
-    *   ``type`` (str): Currently only ``internal`` is supported.
-    *   ``name`` (str): The ``sequence_name`` of the sequence to execute.
+When ``continue_on_error`` is ``true``:
+- Errors in steps marked as ``critical: false`` (default) will not stop sequence execution
+- Errors in steps marked as ``critical: true`` will still stop sequence execution
+- All errors are still logged and reported
 
-UserInteractionStep
--------------------
+When ``continue_on_error`` is ``false`` (default):
+- Any error in any step stops sequence execution (legacy behavior)
+- The ``critical`` field has no effect
 
-Pauses execution to request input from the user via the UI.
+Step-Level Critical Flag
+------------------------
 
-.. code-block:: yaml
-
-   steptype: UserInteractionStep
-   step_name: Ask User
-   input_mapping:
-     message: { type: direct, value: "Please confirm." }
-     image_path: { type: direct, value: "path/to/image.png" } # Optional
-     options: { type: direct, value: ["Yes", "No", "Cancel"] }
-   output_mapping:
-     user_choice: { type: local, local_name: choice }
-     choice_is_yes: { type: equals, value: "Yes" } # PASS if output == "Yes"
-
-*   Inputs:
-    *   ``message`` (str): The text prompt displayed to the user.
-    *   ``image_path`` (str, optional): Path to an image file to display.
-    *   ``options`` (list[str]): A list of button labels for the user to choose from.
-*   Outputs: The step's raw output (available for mapping) is the string label of the button clicked by the user, under the key ``output``.
-
-WaitStep
---------
-
-Pauses execution for a specified duration.
+Individual steps can be marked as critical using the ``critical`` field:
 
 .. code-block:: yaml
 
-   steptype: WaitStep
-   step_name: Pause Execution
-   input_mapping:
-     wait_time: { type: global, global_name: default_wait } # Example: use a global
-     # wait_time: { type: direct, value: 5 } # Or direct value
-   output_mapping: {} # WaitStep usually has no functional output
+   steps:
+   - steptype: PythonModuleStep
+     step_name: Optional Diagnostic Test
+     critical: false  # Default - errors won't stop execution if continue_on_error is true
+     # ... other fields
 
-*   Input:
-    *   ``wait_time`` (int or float): Duration to wait in seconds. Must be provided via ``input_mapping``.
+   - steptype: PythonModuleStep
+     step_name: Essential Safety Check
+     critical: true   # Errors will always stop execution
+     # ... other fields
+
+Behavior Matrix
+---------------
+
+The interaction between ``continue_on_error`` and ``critical`` settings:
+
++-------------------+------------------+------------------------+
+| continue_on_error | step critical    | Error Behavior         |
++===================+==================+========================+
+| false             | false (default)  | Stop execution         |
++-------------------+------------------+------------------------+
+| false             | true             | Stop execution         |
++-------------------+------------------+------------------------+
+| true              | false (default)  | Continue execution     |
++-------------------+------------------+------------------------+
+| true              | true             | Stop execution         |
++-------------------+------------------+------------------------+
+
+Use Cases
+---------
+
+This mechanism is useful for:
+
+- **Diagnostic Tests**: Run optional diagnostic steps that shouldn't fail the entire test if they encounter issues
+- **Data Collection**: Continue gathering test data even if some measurements fail
+- **Graceful Degradation**: Allow test sequences to complete as much as possible before stopping
+- **Critical Safety Checks**: Ensure essential safety or validation steps always stop execution on failure
+
+Example
+-------
+
+.. code-block:: yaml
+
+   ---
+   name: Hardware Test Suite
+   recipe_version: 1.1.0
+   continue_on_error: true
+   globals: {}
+
+   ---
+   sequence_name: Main
+   steps:
+   - steptype: PythonModuleStep
+     step_name: Initialize Hardware
+     critical: true          # Setup failure should stop everything
+     # ... configuration
+
+   - steptype: PythonModuleStep
+     step_name: Optional Calibration
+     critical: false         # Calibration failure shouldn't stop the test
+     # ... configuration
+
+   - steptype: PythonModuleStep
+     step_name: Core Functionality Test
+     critical: true          # Main test failure should stop execution
+     # ... configuration
+
+   - steptype: PythonModuleStep
+     step_name: Performance Metrics
+     critical: false         # Metrics failure shouldn't stop cleanup
+     # ... configuration
+
+   teardown_steps:
+   - steptype: PythonModuleStep
+     step_name: Hardware Cleanup
+     critical: true          # Cleanup failure is critical for safety
+     # ... configuration
+
+In this example:
+- If "Initialize Hardware" fails, execution stops immediately
+- If "Optional Calibration" fails, execution continues to "Core Functionality Test"
+- If "Core Functionality Test" fails, execution stops before "Performance Metrics"
+- If "Performance Metrics" fails, execution continues to teardown
+- If "Hardware Cleanup" fails, it's reported as a critical failure

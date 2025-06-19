@@ -147,6 +147,7 @@ class Runtime:
         self.current_sequence_name: str = None
         self.test_package: str = None
         self.pypts_version: str = "unknown" # Added pypts version
+        self.continue_on_error: bool = False # Added continue_on_error setting
         
     def push_locals(self, locals):
         self.local_stack.append(locals)
@@ -278,6 +279,7 @@ class Recipe:
             self.version: str = recipe_main_data["version"]
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
+            self.continue_on_error: bool = recipe_main_data.get("continue_on_error", False)
             # self.tags: dict[str, str] = recipe_main_data["tags"]
             logger.info(f"Loaded recipe {self.name} version {self.version}.")
             logger.debug(f"Recipe has {len(self.sequences)} sequences: {list(self.sequences.keys())}")
@@ -316,6 +318,7 @@ class Recipe:
         runtime.recipe_name = self.name             # Set recipe name in runtime
         runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
         runtime.test_package = self.test_package    # Set test package in runtime
+        runtime.continue_on_error = self.continue_on_error # Set continue on error setting in runtime
 
         # Use the event sender instead of direct calls
         self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
@@ -433,7 +436,7 @@ class Sequence():
 
 
 class Step:
-    def __init__(self, step_name, id="", description="", input_mapping={}, output_mapping={}, skip=False):
+    def __init__(self, step_name, id="", description="", input_mapping={}, output_mapping={}, skip=False, critical=False):
         self.name = step_name
         self.description = description
         if id:
@@ -441,6 +444,7 @@ class Step:
         else:
             self.id = uuid.uuid4()
         self.skip = skip
+        self.critical = critical
         self.input_mapping: dict = input_mapping
         self.output_mapping: dict = output_mapping
 
@@ -455,6 +459,9 @@ class Step:
     
     def is_skipped(self):
         return self.skip
+
+    def is_critical(self):
+        return self.critical
 
     def _step(self, runtime, input, parent_step_result_uuid):
         raise NotImplementedError
@@ -570,8 +577,14 @@ class Step:
             
             step_results.append(step_result)
 
-            if step_result.is_type(ResultType.ERROR):
+            # Check if we should stop execution due to an error
+            # Stop if: ERROR occurred AND (continue_on_error is disabled OR step is critical)
+            if step_result.is_type(ResultType.ERROR) and (not runtime.continue_on_error or step.is_critical()):
+                logger.warning(f"Stopping execution due to error in {'critical' if step.is_critical() else 'non-critical'} step '{step.name}' (continue_on_error={'enabled' if runtime.continue_on_error else 'disabled'})")
                 break
+            elif step_result.is_type(ResultType.ERROR):
+                logger.info(f"Continuing execution despite error in non-critical step '{step.name}' (continue_on_error enabled)")
+                next_step += 1
             else:
                 next_step += 1
 
