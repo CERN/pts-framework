@@ -57,4 +57,5 @@ Documentation contents
     yaml_format
     gui_event_handling
     report_generation
+    dependency_license_analysis
     genindex
