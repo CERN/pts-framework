@@ -1,3 +1,7 @@
+.. SPDX-FileCopyrightText: 2025 CERN <home.cern>
+..
+.. SPDX-License-Identifier: CC-BY-SA-4.0
+
 =====================================
 Dependency License Analysis Report
 =====================================
