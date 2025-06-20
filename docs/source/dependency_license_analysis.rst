@@ -348,5 +348,5 @@ This analysis was conducted using:
 - Package distribution information
 - Web searches for license verification
 
-**Last Updated:** January 2025
+**Last Updated:** June 2025
 **Next Review:** Recommended annually or when adding new dependencies 
