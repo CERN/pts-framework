@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QWidget,
@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QPlainTextEdit,
 )
-from PyQt6.QtGui import (
+from PySide6.QtGui import (
     QAction,
     QColor,
     QFont,
@@ -25,8 +25,8 @@ from PyQt6.QtGui import (
     QTextCursor,
     QTextCharFormat,
 )
-from PyQt6.QtCore import QSize, Qt
-from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
+from PySide6.QtCore import QSize, Qt
+# from PyQt5.Qsci import QsciScintilla, QsciLexerYAML
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.error import YAMLError
@@ -39,28 +39,52 @@ from pypts.styles import *
 from pypts.rules import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS
 from pypts.verify_recipe import *
 
-class ScintillaYamlEditor(QsciScintilla):
+class ScintillaYamlEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
-
+        
         # Basic editor setup
-        self.setUtf8(True)
-        self.setMarginsFont(QFont("Courier", 10))
-        self.setMarginWidth(0, "0000")  # Line number margin
-        self.setMarginLineNumbers(0, True)
-
-        # Highlight the current line
-        self.setCaretLineVisible(True)
-        self.setCaretLineBackgroundColor(QColor("#e6f7ff"))
-
-        # Font and syntax highlighting
         font = QFont("Courier", 10)
         self.setFont(font)
-        self.setMarginsFont(font)
-
-        lexer = QsciLexerYAML()
-        lexer.setFont(font)
-        self.setLexer(lexer)
+        
+        # For compatibility with original QsciScintilla interface
+        self.length = lambda: len(self.toPlainText())
+        
+    def setText(self, text):
+        # Compatibility method for QsciScintilla
+        self.setPlainText(text)
+        
+    def SendScintilla(self, *args):
+        # Stub for QsciScintilla compatibility
+        pass
+        
+    def positionFromLineIndex(self, line_num, index):
+        # Simple implementation for basic functionality
+        lines = self.toPlainText().split('\n')
+        if line_num < len(lines):
+            pos = sum(len(line) + 1 for line in lines[:line_num]) + index
+            return pos
+        return 0
+        
+    def text(self, line_num):
+        # Return text of specific line
+        lines = self.toPlainText().split('\n')
+        if line_num < len(lines):
+            return lines[line_num]
+        return ""
+        
+    def setCursorPosition(self, line_num, col):
+        # Set cursor to specific line and column
+        lines = self.toPlainText().split('\n')
+        if line_num < len(lines):
+            pos = sum(len(line) + 1 for line in lines[:line_num]) + col
+            cursor = self.textCursor()
+            cursor.setPosition(pos)
+            self.setTextCursor(cursor)
+            
+    def ensureLineVisible(self, line_num):
+        # Make sure line is visible (stub implementation)
+        pass
 
 class WatermarkWidget(QWidget):
     """Widget showing a watermark image in the center."""
@@ -232,27 +256,27 @@ class YamlTreeEditor(QMainWindow):
             self.log("☀️ Light Mode restored.")
 
     def highlight_line(self, line_num):
-        # Clear previous highlights
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICATORCLEARRANGE, 0, self.yaml_viewer.length())
-
-        # Set indicator 0
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_SETINDICATORCURRENT, 0)
-
-        # Use FULLBOX to fill the entire line background (no border, just fill)
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICSETSTYLE, 0, QsciScintilla.INDIC_FULLBOX)
-
-        highlight_color = QColor(100, 0, 255)
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICSETFORE, 0, highlight_color.rgb())
-
-        # Highlight the full line from line start to line end including newline
-        start_pos = self.yaml_viewer.positionFromLineIndex(line_num, 0)
-        line_length = len(self.yaml_viewer.text(line_num))
-
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICATORFILLRANGE, start_pos, line_length)
-
-        # Scroll and set cursor position for visibility
+        # Simple highlighting for QPlainTextEdit
+        cursor = self.yaml_viewer.textCursor()
+        
+        # Clear any existing selections
+        cursor.clearSelection()
+        
+        # Move to the specified line
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        for _ in range(line_num):
+            cursor.movePosition(QTextCursor.MoveOperation.Down)
+        
+        # Select the entire line
+        cursor.select(QTextCursor.SelectionType.LineUnderCursor)
+        
+        # Apply highlighting
+        format = QTextCharFormat()
+        format.setBackground(QColor(220, 220, 255))  # Light blue background
+        cursor.mergeCharFormat(format)
+        
+        # Set cursor position for visibility
         self.yaml_viewer.setCursorPosition(line_num, 0)
-        self.yaml_viewer.ensureLineVisible(line_num)
 
 # Methods related to handling actions
     def on_revalidate_clicked(self):
