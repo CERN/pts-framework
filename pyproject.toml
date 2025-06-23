@@ -36,6 +36,7 @@ dependencies = [
   "numpy",
   "PySide6",
   "PyYAML==6.0.2",
+  "ruamel.yaml",
 ]
 
 [project.optional-dependencies]
