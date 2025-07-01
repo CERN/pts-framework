@@ -13,11 +13,16 @@
 #todo 1.1 - needs to be able to run without GUI and with cli parameters
 #todo 1.1 x sequence yaml file should contain all sequences as well as top-level info on the test
 
-# todo discuss the general development strategy (how do we cooperate well)
-# todo semi-important - write unit tests for the signal proxy, more informations in tests/unit_tests/test_event_proxy
-# todo minor - allow the application to start without providing any DUT
-# todo - move the generated html report out of the environment and git, so its not versioned and the reports are being generated locally
+#todo discuss the general development strategy (how do we cooperate well)
+#todo semi-important - write unit tests for the signal proxy, more informations in tests/unit_tests/test_event_proxy
+#todo minor - allow the application to start without providing any DUT
+#todo - move the generated html report out of the environment and git, so its not versioned and the reports are being generated locally
 
-# todo - change the self.globals type to dictionary, co we can access them by name, not just have the values in list. It is located in recipe.py/runtime class
+#todo - change the self.globals type to dictionary, co we can access them by name, not just have the values in list. It is located in recipe.py/runtime class
 
-# todo - add X server on the gitlab server, so it is possible to run GUI tests
+#todo - add X server on the gitlab server, so it is possible to run GUI tests
+
+#todo - ensure correct handling of the requirements/pyproject.toml (everything shall be in toml and then we delete requirements
+
+#todo - implement usage of reuse on the gitlab CI, structurize the licensing, document it on the .rst file
+

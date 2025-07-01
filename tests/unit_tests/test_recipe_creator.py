@@ -85,7 +85,7 @@ def test_log_appends_message(editor):
 def test_load_yaml_success(mock_file, editor):
     # Patch QFileDialog to return a known file path
     with patch("PyQt6.QtWidgets.QFileDialog.getOpenFileName", return_value=("dummy.yaml", "YAML Files (*.yaml)")):
-        editor.load_yaml_path()
+        editor.open_recipe()
 
     # After loading, current_file_path should be set
     assert editor.current_file_path == "dummy.yaml"
@@ -97,7 +97,7 @@ def test_load_yaml_success(mock_file, editor):
 def test_load_yaml_parse_error(mock_file, editor):
     # Patch QFileDialog to return a known file path
     with patch("PyQt6.QtWidgets.QFileDialog.getOpenFileName", return_value=("bad.yaml", "YAML Files (*.yaml)")):
-        editor.load_yaml_path()
+        editor.open_recipe()
 
     # Log console should contain a parse error message
     logs = editor.log_console.toPlainText()
