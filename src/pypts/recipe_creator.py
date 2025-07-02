@@ -1,4 +1,4 @@
-import time
+import sys
 import io
 from PyQt6.QtWidgets import (
     QApplication,
@@ -11,14 +11,11 @@ from PyQt6.QtWidgets import (
     QTreeWidgetItem,
     QTextEdit,
     QLabel,
-    QPushButton,
     QWidgetAction,
     QFileDialog,
     QToolBar,
     QStyle,
     QSizePolicy,
-    QScrollArea,
-    QPlainTextEdit,
 )
 from PyQt6.QtGui import (
     QAction,
@@ -26,21 +23,14 @@ from PyQt6.QtGui import (
     QFont,
     QPixmap,
     QPainter,
-    QTextCursor,
-    QTextCharFormat,
 )
 from PyQt6.QtCore import QSize, Qt
 from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
 from ruamel.yaml import YAML
-from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from ruamel.yaml.error import YAMLError
-from ruamel.yaml.compat import StringIO
 from datetime import datetime
-import sys
 import webbrowser
-import yaml
 from pypts.styles import *
-from pypts.rules import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS
 from pypts.verify_recipe import *
 
 class ScintillaYamlEditor(QsciScintilla):
@@ -90,6 +80,8 @@ class HashableTreeItem:
     def __eq__(self, other):
         return isinstance(other, HashableTreeItem) and self.item is other.item
 
+
+# noinspection PyUnresolvedReferences
 class YamlTreeEditor(QMainWindow):
 # Methods related to initialization and set up of GUI
     def __init__(self):
@@ -164,19 +156,22 @@ class YamlTreeEditor(QMainWindow):
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         # Example buttons for the toolbar
+        self.action_add = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder), "Add", self)
         self.action_refresh = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload), "Validate recipe", self)
         self.action_save = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save", self)
-        self.action_add = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder), "Add", self)
+        self.action_save_as = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save as", self)
 
         # Add actions to toolbar
+        self.toolbar.addAction(self.action_add)
         self.toolbar.addAction(self.action_refresh)
         self.toolbar.addAction(self.action_save)
-        self.toolbar.addAction(self.action_add)
+        self.toolbar.addAction(self.action_save_as)
 
         # Connect buttons if needed
+        self.action_add.triggered.connect(self.on_add_clicked)
         self.action_refresh.triggered.connect(self.on_revalidate_clicked)
         self.action_save.triggered.connect(self.on_save_clicked)
-        self.action_add.triggered.connect(self.on_add_clicked)
+        self.action_save_as.triggered.connect(self.on_save_as_clicked)
 
         # 2. Add spacer to push the next widget to the right
         spacer = QWidget()
@@ -187,14 +182,11 @@ class YamlTreeEditor(QMainWindow):
 
         # 3. Add custom image on the far right
         icon_label = QLabel()
-        icon_label.setPixmap(QPixmap("logo.png"))
+        icon_label.setPixmap(QPixmap("YamVIEW.png"))
         icon_action = QWidgetAction(self)
         icon_action.setDefaultWidget(icon_label)
         self.toolbar.addAction(icon_action)
 
-
-
-        ##
         # Create container for top status + tree+yaml layout
         self.tree_status_container = QWidget()
         self.tree_status_layout = QVBoxLayout(self.tree_status_container)
@@ -252,7 +244,6 @@ class YamlTreeEditor(QMainWindow):
         self.edit_menu = menubar.addMenu("Edit")
         self.save_action = QAction("Save Recipe", self)
         self.save_action.triggered.connect(self.on_save_clicked)
-
 
         self.edit_menu.addAction(self.save_action)
 
@@ -363,6 +354,30 @@ class YamlTreeEditor(QMainWindow):
     def on_revalidate_clicked(self):
         self.log("To be implemented, now validation is checking in the file !")
 
+    def on_save_as_clicked(self):
+        # Open the file dialog for the user to choose the save location
+        new_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save As",
+            self.current_file_path or "",  # Start from current path if available
+            "YAML Files (*.yaml *.yml);;All Files (*)"
+        )
+
+        if not new_path:
+            self.log("❌ Save As cancelled.")
+            return
+
+        try:
+            data = self.extract_treeView_to_data()
+            with open(new_path, 'w') as f:
+                yaml.dump_all(data, f, sort_keys=False)
+
+            self.current_file_path = new_path  # Update the current path
+            self.log(f"💾 Saved to {new_path}")
+            self.setWindowTitle(f"Recipe Editor - {os.path.basename(new_path)}")
+        except Exception as e:
+            self.log(f"❌ Failed to save: {e}")
+
     def on_save_clicked(self):
         if not self.current_file_path:
             self.log("❌ No YAML file loaded.")
@@ -371,7 +386,7 @@ class YamlTreeEditor(QMainWindow):
             data = self.extract_treeView_to_data()
             # Construct new filename with suffix
             base, ext = os.path.splitext(self.current_file_path)
-            new_path = f"{base}_modified{ext}"
+            new_path = f"{base}{ext}"
 
             with open(new_path, 'w') as f:
                 yaml.dump_all(data, f, sort_keys=False)
@@ -590,7 +605,7 @@ class YamlTreeEditor(QMainWindow):
                         line_info = data.lc.item(idx)
                         if line_info is not None:
                             line_number = line_info[0]
-                    except Exception:
+                    except Exception as e:
                         pass
                 if line_number is not None:
                     self.item_to_line[HashableTreeItem(child_item)] = line_number
@@ -668,10 +683,9 @@ class YamlTreeEditor(QMainWindow):
 #done 1.1 - allow editing on the tree-view panel
 #done 1.1 - allow editing on the yaml-editing panel
 #todo 1.1 - auto-verification on save, pop-up confirming save, when verification fails
-#todo 1.1 - add save as option
+#todo 1.1 - add <save as> option
 #todo 1.1 - add _invalid at the end of recipe, if verification failed
 #todo 1.1 - add buttons on toolbox: <restore from interactive view>, <show validation report> - change existing button
-#todo 1.1 - name the views - Interactive view, Raw YAML view
 #todo 1.1 - add recipe status indicator (only to show the current recipe state), inform if the treeview is not updated.
 #done 1.1 - button toolbox to allow editing (just add few buttons and design the helper GUI)
 #todo 1.1 - add auto-conversion flag and disable it when the yaml have errors
