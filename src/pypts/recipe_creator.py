@@ -117,7 +117,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.toolbar.addAction(spacer_action)
 
         icon_label = QLabel()
-        icon_label.setPixmap(QPixmap("YamVIEW.png"))
+        icon_label.setPixmap(QPixmap("YamVIEW_cookie.png"))
         icon_action = QWidgetAction(self)
         icon_action.setDefaultWidget(icon_label)
         self.toolbar.addAction(icon_action)
