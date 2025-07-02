@@ -156,13 +156,14 @@ class RecipeEditorMainMenu(QMainWindow):
         self.recipeStatus = QTextEdit()
         self.recipeStatus.setReadOnly(True)
         self.recipeStatus.setFixedHeight(30)
+        self.recipeStatus.setViewportMargins(QMargins(5, 0, 0, 0))
         self.recipeStatus.setStyleSheet("""
             QTextEdit {
                 border: none;
                 background-color: transparent;
                 color: #333;
                 font-style: italic;
-                font-size: 14pt;
+                font-size: 12pt;
             }
         """)
 
@@ -193,7 +194,7 @@ class RecipeEditorMainMenu(QMainWindow):
         # Log console below everything
         self.log_console = QTextEdit()
         self.log_console.setReadOnly(True)
-        self.log_console.setFixedHeight(120)
+        self.log_console.setFixedHeight(200)
 
         # Add layouts to main layout
         self.main_layout.addLayout(self.stacked_layout)
@@ -685,6 +686,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 0.2 - bugfixing, unittests
 
 # todo 1.0 - Create new recipe, ask for its name
+# done 1.0 - fix the small gui imperfections
 # todo 1.0 - create a new helper file yaml_description.py, where we can have yaml field type descriptions etc
 # todo 1.0 - Recipe generator
 # todo 1.0 - Populate generator with headers
