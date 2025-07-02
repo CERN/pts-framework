@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
     QStackedLayout,
     QTreeWidget,
     QTreeWidgetItem,
+    QMessageBox,
     QTextEdit,
     QLabel,
     QWidgetAction,
@@ -237,3 +238,4 @@ class HashableTreeItem:
 
     def __eq__(self, other):
         return isinstance(other, HashableTreeItem) and self.item is other.item
+

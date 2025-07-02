@@ -1,49 +1,7 @@
-import sys
-import io
-from PySide6.QtWidgets import (
-    QApplication,
-    QPlainTextEdit,
-    QMainWindow,
-    QWidget,
-    QVBoxLayout,
-    QMessageBox,
-    QHBoxLayout,
-    QStackedLayout,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QTextEdit,
-    QLabel,
-    QWidgetAction,
-    QFileDialog,
-    QToolBar,
-    QStyle,
-    QSizePolicy,
-)
-from PySide6.QtGui import (
-    QAction,
-    QColor,
-    QTextFormat,
-    QFont,
-    QTextCharFormat,
-    QTextCursor,
-    QPixmap,
-    QPainter,
-)
-from PySide6.QtCore import QSize, Qt, QRect
-from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
-from ruamel.yaml import YAML
-from ruamel.yaml.error import YAMLError
-from datetime import datetime
-import webbrowser
-from pypts.styles import *
-from pypts.verify_recipe import *
-
-from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
-from PySide6.QtCore import Qt, QRegularExpression
 from pypts.customGUIModules import *
 
-
 class RecipeEditorMainMenu(QMainWindow):
+# Initialization methods
     def __init__(self):
         super().__init__()
         self.yaml_documents = []
@@ -71,31 +29,33 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def setup_menu(self):
         menubar = self.menuBar()
-
         # File menu
         self.file_menu = menubar.addMenu("File")
 
         self.open_recipe_action = QAction("Open Recipe", self)
-        self.open_recipe_action.triggered.connect(self.open_recipe)
-        self.file_menu.addAction(self.open_recipe_action)
         self.close_recipe = QAction("Close Recipe", self)
-        self.close_recipe.triggered.connect(self.on_close_recipe_clicked)
-        self.close_recipe.setEnabled(False)
-        self.file_menu.addAction(self.close_recipe)
         self.exit_action = QAction("Exit", self)
-        self.exit_action.triggered.connect(self.close)
+
+        self.file_menu.addAction(self.open_recipe_action)
+        self.file_menu.addAction(self.close_recipe)
         self.file_menu.addAction(self.exit_action)
+        self.close_recipe.setEnabled(False)
+
+        self.open_recipe_action.triggered.connect(self.open_recipe)
+        self.close_recipe.triggered.connect(self.on_close_recipe_clicked)
+        self.exit_action.triggered.connect(self.close)
 
         # Edit menu
         self.edit_menu = menubar.addMenu("Edit")
 
         self.save_action = QAction("Save Recipe", self)
-        self.save_action.triggered.connect(self.on_save_clicked)
-        self.edit_menu.addAction(self.save_action)
-
         self.save_as_action = QAction("Save Recipe As", self)
-        self.save_as_action.triggered.connect(self.on_save_as_clicked)
+
+        self.edit_menu.addAction(self.save_action)
         self.edit_menu.addAction(self.save_as_action)
+
+        self.save_action.triggered.connect(self.on_save_clicked)
+        self.save_as_action.triggered.connect(self.on_save_as_clicked)
 
         # View menu
         self.view_menu = menubar.addMenu("View")
@@ -107,12 +67,13 @@ class RecipeEditorMainMenu(QMainWindow):
         # About menu
         self.about_menu = menubar.addMenu("About")
         self.open_gitlab = QAction("Gitlab", self)
-        self.open_gitlab.triggered.connect(self.on_open_gitlab_clicked)
-        self.about_menu.addAction(self.open_gitlab)
-
         self.open_wiki = QAction("Wiki", self)
-        self.open_wiki.triggered.connect(self.on_open_wiki_clicked)
+
+        self.about_menu.addAction(self.open_gitlab)
         self.about_menu.addAction(self.open_wiki)
+
+        self.open_wiki.triggered.connect(self.on_open_wiki_clicked)
+        self.open_gitlab.triggered.connect(self.on_open_gitlab_clicked)
 
         # Development menu
         self.dev_menu = menubar.addMenu("Development")
@@ -238,7 +199,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.main_layout.addLayout(self.stacked_layout)
         self.main_layout.addWidget(self.log_console)
 
-    # Helper GUI functions - colouring, viewing
+# Helper GUI methods - colouring, viewing
     def mark_required_field(self, tree_item, is_required: bool):
         if is_required:
             # Append star
@@ -318,7 +279,7 @@ class RecipeEditorMainMenu(QMainWindow):
     def show_recipe_info(self, message: str):
         self.set_recipe_status(f"ℹ️ {message}", color="gray")
 
-    # Methods related to handling actions
+# Methods related to handling GUI actions
     def on_action_restore_recipe_clicked(self):
         if self.last_valid_recipe == "":
             self.log("️⚠️ ️Unable to restore, no working version in the history")
@@ -350,28 +311,6 @@ class RecipeEditorMainMenu(QMainWindow):
         except Exception as e:
             self.log(f"❌ Failed to save: {e}")
 
-    def ask_save_invalid_file(self):
-        msg = QMessageBox(self)
-        msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Invalid File")
-        msg.setText("The recipe content is invalid.\nDo you want to save it anyway?\n The content in Tree View would be saved.")
-        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-        msg.setDefaultButton(QMessageBox.No)
-
-        # Force button text color to black
-        msg.setStyleSheet("""
-            QPushButton {
-                color: black;
-            }
-        """)
-
-        ret = msg.exec()
-
-        if ret == QMessageBox.Yes:
-            return True
-        else:
-            return False
-
     def on_save_clicked(self):
         validation_result, description = self.validate_temporary_recipe_contents()
         print(validation_result)
@@ -397,7 +336,7 @@ class RecipeEditorMainMenu(QMainWindow):
             self.log(f"❌ Failed to save: {e}")
 
     def on_add_clicked(self):
-        self.log("Add clicked (not implemented yet)")
+        self.log("️️ℹ️ Add clicked (not implemented yet)")
 
     def on_open_wiki_clicked(self):
         url = "https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/master/"
@@ -423,10 +362,10 @@ class RecipeEditorMainMenu(QMainWindow):
         self.tree.clear()
         self.stacked_layout.setCurrentIndex(0)  # Show logo
         self.close_recipe.setEnabled(False)  # 🔒 Disable it - gray out
-        self.log("🧹 Recipe view cleared.")
+        self.log("️ℹ️ Recipe view cleared.")
 
     def on_create_recipe_clicked(self):
-        self.log("Todo: 1.1")
+        self.log("️ℹ️ Todo: 0.2")
 
     def on_tree_item_clicked(self, item, column):
         key = HashableTreeItem(item)
@@ -482,7 +421,7 @@ class RecipeEditorMainMenu(QMainWindow):
         else:
             super().keyPressEvent(event)
 
-    # Recipe parsing and processing
+# Recipe parsing and processing
     def validate_recipe(self):
         try:
             if (validate_recipe_filepath(self.current_file_path)):
@@ -686,10 +625,32 @@ class RecipeEditorMainMenu(QMainWindow):
             # Manually trigger the handler after deletion
             self.on_treeview_item_changed(item, 0)
 
-    # Misc
+# Misc
     def log(self, message: str):
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         self.log_console.append(f"[{timestamp}] {message}")
+
+    def ask_save_invalid_file(self):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Invalid File")
+        msg.setText("The recipe content is invalid.\nDo you want to save it anyway?\n The content in Tree View would be saved.")
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+
+        # Force button text color to black
+        msg.setStyleSheet("""
+            QPushButton {
+                color: black;
+            }
+        """)
+
+        ret = msg.exec()
+
+        if ret == QMessageBox.Yes:
+            return True
+        else:
+            return False
 
 
 # done 0.1 - VIEWER
@@ -705,7 +666,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 0.1 - Clear view shall be grayed if the view is already cleared (logo visible)
 # done 0.1 - 1.0 unit tests
 
-# todo 0.2 - GENERATION, EDITING, PARTIAL SUPPORT
+# done 0.2 - GENERATION, EDITING, PARTIAL SUPPORT
 # done 0.2 - allow saving
 # done 0.2 - allow editing on the tree-view panel
 # done 0.2 - allow editing on the yaml-editing panel
@@ -721,7 +682,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 0.2 - print the faults found in recipe verification - on the status bar in the bottom
 # done 0.2 - mark the text on red only if required + is not filled
 # done 0.2 - allow full control over the YAML editor
-# todo 0.2 - bugfixing, unittests
+# done 0.2 - bugfixing, unittests
 
 # todo 1.0 - Create new recipe, ask for its name
 # todo 1.0 - create a new helper file yaml_description.py, where we can have yaml field type descriptions etc
@@ -730,7 +691,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # todo 1.0 - Ask how many sequences to make
 # todo 1.0 - Step generator
 # todo 1.0 - increase 1st column size
-# todo 1.0 - easy way to set it up
+# todo 1.0 - easy way to set the YamView application
 # todo 1.0 - change the required field to be a star or warning emoji, instead of red colour
 # todo 1.0 - 1.1 unit tests
 
