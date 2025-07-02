@@ -1,7 +1,11 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 import logging
 import sys
-from PyQt6.QtWidgets import QApplication
-from PyQt6.QtCore import QObject, pyqtSignal, QThread
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Signal, QThread
 from queue import SimpleQueue
 from contextlib import suppress
 from pypts.pts import run_pts
@@ -10,6 +14,7 @@ import os
 from pypts.gui import MainWindow, TextEditLoggerHandler # Import necessary GUI classes
 import uuid # Import uuid
 from pypts.event_proxy import RecipeEventProxy # Import the proxy class
+import atexit
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +24,19 @@ logging.basicConfig(level=logging.DEBUG, format=log_format)
 # Reduce verbosity of noisy libraries
 logging.getLogger("paramiko.transport").setLevel("WARN")
 
+# Global variable to track the thread for cleanup
+_recipe_thread = None
+
+def _cleanup_thread():
+    """Cleanup function to properly stop the recipe event processing thread."""
+    global _recipe_thread
+    if _recipe_thread and _recipe_thread.isRunning():
+        logger.debug("Stopping recipe event processing thread...")
+        _recipe_thread.quit()
+        _recipe_thread.wait(5000)  # Wait up to 5 seconds for thread to finish
+        if _recipe_thread.isRunning():
+            logger.warning("Thread did not stop gracefully, terminating...")
+            _recipe_thread.terminate()
 
 if __name__ == '__main__':
     """Main entry point for the PTS application.
@@ -27,6 +45,7 @@ if __name__ == '__main__':
     and connects signals/slots between the proxy and the window.
     Starts the recipe execution and event processing threads.
     """
+    
     app = QApplication(sys.argv)
     window = MainWindow()
 
@@ -37,6 +56,12 @@ if __name__ == '__main__':
     api = run_pts(yaml_path, sequence_name="Main")
     window.q_in = api.input_queue
     recipe_event_processing_thread = QThread()
+    # Make the thread a child of the app to ensure it's cleaned up
+    recipe_event_processing_thread.setParent(app)
+    
+    # Store reference for cleanup
+    _recipe_thread = recipe_event_processing_thread
+    
     recipe_event_proxy = RecipeEventProxy(api.event_queue)
     recipe_event_proxy.moveToThread(recipe_event_processing_thread)
     recipe_event_processing_thread.started.connect(recipe_event_proxy.run)
@@ -54,6 +79,12 @@ if __name__ == '__main__':
     recipe_event_proxy.post_run_sequence_signal.connect(window.handle_post_run_sequence)
 
     recipe_event_processing_thread.start()
+
+    # Register cleanup function
+    atexit.register(_cleanup_thread)
+    
+    # Connect app aboutToQuit signal to cleanup
+    app.aboutToQuit.connect(_cleanup_thread)
 
     exit_code = app.exec()
     

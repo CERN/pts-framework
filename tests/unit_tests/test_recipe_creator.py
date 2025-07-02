@@ -1,6 +1,6 @@
 import pytest
 from unittest.mock import patch, mock_open, MagicMock
-from PyQt6.QtWidgets import QTreeWidgetItem
+from PySide6.QtWidgets import QTreeWidgetItem
 from pypts.recipe_creator import YamlTreeEditor, HashableTreeItem
 
 
@@ -84,8 +84,8 @@ def test_log_appends_message(editor):
 @patch("builtins.open", new_callable=mock_open, read_data="key: value\n")
 def test_load_yaml_success(mock_file, editor):
     # Patch QFileDialog to return a known file path
-    with patch("PyQt6.QtWidgets.QFileDialog.getOpenFileName", return_value=("dummy.yaml", "YAML Files (*.yaml)")):
-        editor.open_recipe()
+    with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=("dummy.yaml", "YAML Files (*.yaml)")):
+        editor.load_yaml_path()
 
     # After loading, current_file_path should be set
     assert editor.current_file_path == "dummy.yaml"
@@ -96,8 +96,8 @@ def test_load_yaml_success(mock_file, editor):
 @patch("builtins.open", new_callable=mock_open, read_data="invalid: [yaml")
 def test_load_yaml_parse_error(mock_file, editor):
     # Patch QFileDialog to return a known file path
-    with patch("PyQt6.QtWidgets.QFileDialog.getOpenFileName", return_value=("bad.yaml", "YAML Files (*.yaml)")):
-        editor.open_recipe()
+    with patch("PySide6.QtWidgets.QFileDialog.getOpenFileName", return_value=("bad.yaml", "YAML Files (*.yaml)")):
+        editor.load_yaml_path()
 
     # Log console should contain a parse error message
     logs = editor.log_console.toPlainText()

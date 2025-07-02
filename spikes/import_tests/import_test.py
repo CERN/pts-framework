@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 import imported
 from threading import Thread
 from importlib import import_module, reload

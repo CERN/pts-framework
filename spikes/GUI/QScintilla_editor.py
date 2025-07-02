@@ -1,7 +1,8 @@
 import sys
-from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
-from PyQt6.QtGui import QFont, QColor
-from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
+from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
+from PySide6.QtGui import QFont, QColor
+# Note: QScintilla for PySide6 requires mixed imports as there's no direct PySide6.QtScintilla
+from PyQt5.Qsci import QsciScintilla, QsciLexerYAML
 
 class ScintillaYamlEditor(QsciScintilla):
     def __init__(self, parent=None):

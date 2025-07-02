@@ -1,3 +1,7 @@
+.. SPDX-FileCopyrightText: 2025 CERN <home.cern>
+..
+.. SPDX-License-Identifier: CC-BY-SA-4.0
+
 pypts
 =====
 
@@ -49,7 +53,9 @@ Documentation contents
     :maxdepth: 1
 
     api
+    architecture
     yaml_format
     gui_event_handling
     report_generation
+    dependency_license_analysis
     genindex

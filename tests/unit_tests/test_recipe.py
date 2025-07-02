@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
 
 import pypts.recipe
 from pypts.recipe import ResultType
@@ -411,6 +414,7 @@ def test_main_sequence_exists_and_has_steps(recipe):
 def test_range_check_pass_fail(recipe, runtime):
     runtime.set_globals(recipe.globals)
     runtime.set_sequences(recipe.sequences)
+    runtime.test_package = recipe.test_package  # Set test_package from recipe
 
     inside_step = recipe.sequences["Main"].steps[3]
     outside_step = recipe.sequences["Main"].steps[4]

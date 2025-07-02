@@ -1,19 +1,27 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 import logging
-from PyQt6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
+from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
                              QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, 
                              QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
                              QTreeView, QAbstractItemView)
-from PyQt6.QtCore import QObject, pyqtSignal, QThread, Qt, QAbstractItemModel, QModelIndex
-from PyQt6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
+from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex
+from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
-from pypts.utils import get_project_root
+import threading
+import os
+from importlib.resources import files
+
+logger = logging.getLogger(__name__)
 
 class TextEditLoggerHandler(QObject, logging.Handler):
     """A logging handler that emits Qt signals for log messages."""
-    new_message = pyqtSignal(str)
+    new_message = Signal(str)
 
     def __init__(self, parent):
         super().__init__(parent)
@@ -37,9 +45,20 @@ class MainWindow(QWidget):
 
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
-        """Get the root path of the project and build string path from it"""
-        cern_logo_path = str(get_project_root() / "images" / "CERN_Logo.png")
-        self.cern_logo = QPixmap(cern_logo_path).scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
+        
+        """Load CERN logo from package resources"""
+        try:
+            # Access the image resource from the pypts package
+            cern_logo_resource = files('pypts') / 'images' / 'CERN_Logo.png'
+            with cern_logo_resource.open('rb') as img_file:
+                pixmap = QPixmap()
+                pixmap.loadFromData(img_file.read())
+                self.cern_logo = pixmap.scaled(800, 500, Qt.AspectRatioMode.KeepAspectRatio)
+        except (FileNotFoundError, ModuleNotFoundError, AttributeError) as e:
+            logger.warning(f"CERN logo not found in package resources: {e}, using default")
+            # Create a simple default pixmap if the image is missing
+            self.cern_logo = QPixmap(800, 500)
+            self.cern_logo.fill(Qt.GlobalColor.lightGray)
 
         top_level_layout = QHBoxLayout()
         left_half_layout = QVBoxLayout()
@@ -55,7 +74,7 @@ class MainWindow(QWidget):
         self.step_list.setColumnWidth(0, 450)
         self.step_list.horizontalHeader().setStretchLastSection(True)
 
-        self.step_list.update()
+        # Note: In PySide6, we don't need to call update() here as the widget will refresh automatically
 
         self.result_list = QTreeView(self)
         self.result_list.setMaximumWidth(600)
@@ -136,7 +155,7 @@ class MainWindow(QWidget):
                 self.step_list.setItem(i, 1, status_item)
 
             self.already_updated = True
-            self.step_list.update() # Ensure visual update
+            # Note: In PySide6, the widget will refresh automatically after setItem calls
 
     def update_step_result(self, step_status_vm: dict):
         """Updates the status of a step in the live step list table.
@@ -182,7 +201,7 @@ class MainWindow(QWidget):
         results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
         self.result_list.setModel(myResultModel)
-        self.result_list.update()
+        # Note: In PySide6, the view will refresh automatically when the model is set
 
     def show_message(self, event_dict):
         """Displays a user message and interaction options from the event dictionary."""
@@ -193,8 +212,17 @@ class MainWindow(QWidget):
         # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
-            image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
-            self.picture_box.setPixmap(image_pixmap)
+            # Add error handling for image loading
+            if os.path.exists(image_path):
+                image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
+                if not image_pixmap.isNull():
+                    self.picture_box.setPixmap(image_pixmap)
+                else:
+                    logger.warning(f"Failed to load image from {image_path}, using default logo")
+                    self.picture_box.setPixmap(self.cern_logo)
+            else:
+                logger.warning(f"Image not found at {image_path}, using default logo")
+                self.picture_box.setPixmap(self.cern_logo)
         self.yes_button.setEnabled(True)
         self.no_button.setEnabled(True)
         self.response_q = response_q
@@ -209,17 +237,44 @@ class MainWindow(QWidget):
 
     def get_serial_number(self, event_dict):
         """Prompts the user for a serial number and sends it back via the response queue from the event dictionary."""
+        logger.debug("get_serial_number method called")
         response_q: SimpleQueue = event_dict["response_q"]
-        while True:
-            # QInputDialog static methods are deprecated in PyQt6
-            dialog = QInputDialog(self)
-            text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
-            if ok and text:
-                response_q.put(text)
+        max_attempts = 3
+        attempts = 0
+        
+        while attempts < max_attempts:
+            attempts += 1
+            logger.debug(f"Serial number dialog attempt {attempts}")
+            try:
+                # QInputDialog static methods were deprecated in PyQt6, but still work in PySide6
+                dialog = QInputDialog(self)
+                text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
+                logger.debug(f"Dialog result: ok={ok}, text='{text}'")
+                
+                if ok and text.strip():  # Check for non-empty text after stripping whitespace
+                    response_q.put(text.strip())
+                    logger.debug(f"Serial number '{text.strip()}' sent to queue")
+                    break
+                elif ok and not text.strip():
+                    logger.warning("Empty serial number entered, retrying...")
+                    continue
+                else:
+                    logger.warning("User cancelled serial number dialog")
+                    # Put a default value to prevent the recipe from hanging
+                    response_q.put("CANCELLED")
+                    break
+            except Exception as e:
+                logger.error(f"Error in serial number dialog: {e}", exc_info=True)
+                response_q.put("ERROR")
                 break
+        
+        if attempts >= max_attempts:
+            logger.error("Maximum attempts reached for serial number input")
+            response_q.put("MAX_ATTEMPTS_REACHED")
 
     def update_running_step(self, event_dict):
         """Highlights the step that is currently running in the step list table."""
+        logger.debug("update_running_step method called")
         step_uuid_to_find = event_dict["step_uuid"]
 
         # Reset previous running step highlight (optional, depends on desired behavior)
@@ -263,6 +318,7 @@ class MainWindow(QWidget):
 
     def handle_post_load_recipe(self, event_dict):
         """Handles the event triggered after a recipe is loaded."""
+        logger.debug("handle_post_load_recipe method called")
         recipe_name = event_dict["recipe_name"]
         recipe_version = event_dict["recipe_version"]
         logging.info(f"Recipe '{recipe_name}' (v{recipe_version}) loaded.")
@@ -270,6 +326,7 @@ class MainWindow(QWidget):
 
     def handle_post_run_sequence(self, event_dict):
         """Handles the event triggered after a sequence finishes."""
+        logger.debug("handle_post_run_sequence method called")
         sequence_name = event_dict["sequence_name"]
         sequence_result = event_dict["sequence_result"]
         logging.info(f"Sequence '{sequence_name}' finished with result: {sequence_result}.")

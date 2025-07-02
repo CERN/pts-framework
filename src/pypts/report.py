@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 """Handles the generation of incremental CSV reports for pypts recipe execution."""
 import json
 import csv
@@ -8,6 +12,13 @@ from pypts.recipe import StepResult, ResultType, Step
 import argparse
 import html # Added for HTML escaping
 from datetime import datetime # Added for timestamp
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend
+import matplotlib.pyplot as plt
+import numpy as np
+from nptdms import TdmsFile
+import glob
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +58,6 @@ def _result_to_dict(result: StepResult) -> Dict[str, Any]:
         outputs_serializable = {"error": "Could not serialize outputs"}
 
     return {
-        "uuid": str(result.uuid),
-        "parent_uuid": str(result.parent) if result.parent else None,
         "step": _serialize_step(result.step),
         "result": str(result.result) if result.result else None,
         "inputs": inputs_serializable,
@@ -70,8 +79,6 @@ def _flatten_single_result(result_dict: Dict[str, Any]) -> Dict[str, Any]:
     """ 
     if not result_dict: return None
     return {
-        "uuid": result_dict.get("uuid"),
-        "parent_uuid": result_dict.get("parent_uuid"),
         # Add metadata fields
         "recipe_name": result_dict.get("recipe_name", "N/A"),
         "recipe_file_name": result_dict.get("recipe_file_name", "N/A"),
@@ -97,7 +104,7 @@ class Report:
     Writes results to a CSV file (report.csv) in the specified directory
     as they become available via the `add_step_result` method.
     """
-    _CSV_HEADERS = ["uuid", "parent_uuid", "recipe_name", "recipe_file_name", "sequence_name", "serial_number", "pypts_version", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
+    _CSV_HEADERS = ["recipe_name", "recipe_file_name", "sequence_name", "serial_number", "pypts_version", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
 
     def __init__(self, output_dir: str | Path):
         """
@@ -229,7 +236,9 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
         html_report_path = report_manager.output_dir / 'report.html'
         if csv_report_path.exists():
             logger.info(f"Generating HTML report from {csv_report_path}...")
-            generate_html_report(csv_path=csv_report_path, html_path=html_report_path)
+            # Generate TDMS plots before HTML report
+            generate_tdms_plots(report_manager.output_dir, csv_report_path)
+            generate_html_report(csv_path=csv_report_path, html_path=html_report_path, output_dir=report_manager.output_dir)
         else:
             logger.warning(f"CSV report not found at {csv_report_path}, cannot generate HTML report.")
         # ----------------------------------------------------
@@ -239,9 +248,215 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
         logger.info("Report listener finished.")
 
 
+# --- TDMS Data Processing and Plotting ---
+
+def _verify_tdms_serial_number(tdms_file_path: Path, expected_serial_number: str) -> bool:
+    """Verifies that a TDMS file contains the expected serial number in its properties."""
+    try:
+        with TdmsFile.read(tdms_file_path) as tdms_file:
+            # Check root properties for Serial_Number
+            root_props = tdms_file.properties
+            file_serial_number = root_props.get("Serial_Number")
+            
+            if file_serial_number == expected_serial_number:
+                logger.debug(f"TDMS file {tdms_file_path.name} serial number verified: {file_serial_number}")
+                return True
+            else:
+                logger.debug(f"TDMS file {tdms_file_path.name} serial number mismatch. Expected: {expected_serial_number}, Found: {file_serial_number}")
+                return False
+    except Exception as e:
+        logger.warning(f"Could not read TDMS file {tdms_file_path.name} for serial number verification: {e}")
+        return False
+
+def generate_tdms_plots(output_dir: Path, csv_path: Path = None):
+    """Generates matplotlib plots for TDMS files that match the current test run's serial number."""
+    # Create img directory
+    img_dir = output_dir / "img"
+    img_dir.mkdir(exist_ok=True)
+    
+    # Get the serial number from the CSV report
+    test_serial_number = None
+    if csv_path and csv_path.exists():
+        try:
+            with open(csv_path, 'r', newline='', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                first_row = next(reader, None)
+                if first_row:
+                    test_serial_number = first_row.get('serial_number')
+                    logger.debug(f"Found test serial number from CSV: {test_serial_number}")
+        except Exception as e:
+            logger.warning(f"Could not read serial number from CSV report: {e}")
+    
+    if not test_serial_number or test_serial_number == 'N/A':
+        logger.warning("No valid serial number found in CSV report - cannot match TDMS files.")
+        return
+    
+    # Find TDMS files that match the serial number
+    tdms_files_to_plot = []
+    
+    # Look for TDMS files in the output directory
+    for tdms_file in output_dir.glob("*.tdms"):
+        # Check if filename contains the serial number
+        if test_serial_number in tdms_file.name:
+            # Also verify the serial number inside the TDMS file
+            if _verify_tdms_serial_number(tdms_file, test_serial_number):
+                tdms_files_to_plot.append(tdms_file)
+                logger.debug(f"Matched TDMS file: {tdms_file.name}")
+            else:
+                logger.debug(f"TDMS file {tdms_file.name} has serial number in filename but not in properties")
+        else:
+            logger.debug(f"TDMS file {tdms_file.name} does not contain serial number {test_serial_number}")
+    
+    if not tdms_files_to_plot:
+        logger.info(f"No TDMS files found matching serial number {test_serial_number}.")
+        return
+    
+    logger.info(f"Found {len(tdms_files_to_plot)} TDMS files matching serial number {test_serial_number}.")
+    
+    for tdms_file in tdms_files_to_plot:
+        try:
+            logger.info(f"Generating plot for {tdms_file.name}")
+            plot_path = generate_single_tdms_plot(tdms_file, img_dir)
+            if plot_path:
+                logger.info(f"Plot saved: {plot_path}")
+        except Exception as e:
+            logger.error(f"Error generating plot for {tdms_file.name}: {e}")
+
+def generate_single_tdms_plot(tdms_file_path: Path, img_dir: Path) -> Path:
+    """Generates a plot for a single TDMS file and returns the plot path."""
+    try:
+        with TdmsFile.read(tdms_file_path) as tdms_file:
+            # Try to find appropriate data channels
+            time_data = None
+            amplitude_data = None
+            group = None
+            
+            # First, try the expected group structure
+            if "Sinewave_Test" in tdms_file:
+                group = tdms_file["Sinewave_Test"]
+                if "Time" in group and "Amplitude" in group:
+                    time_data = group["Time"][:]
+                    amplitude_data = group["Amplitude"][:]
+            
+            # If that didn't work, try to find any suitable channels
+            if time_data is None or amplitude_data is None:
+                logger.warning(f"Expected group/channels not found in {tdms_file_path.name}, searching for alternatives...")
+                
+                # Look through all groups for time/amplitude-like channels
+                for group_name in tdms_file.groups():
+                    try:
+                        test_group = tdms_file[group_name]
+                        channels = list(test_group.channels())
+                        
+                        # Look for channels with time/amplitude-like names or just use first two
+                        time_channel = None
+                        amplitude_channel = None
+                        
+                        for channel in channels:
+                            channel_name = channel.name.lower()
+                            if 'time' in channel_name or channel_name == 't':
+                                time_channel = channel
+                            elif 'amplitude' in channel_name or 'amp' in channel_name or 'data' in channel_name:
+                                amplitude_channel = channel
+                        
+                        # If we didn't find named channels, use first two channels
+                        if not time_channel and len(channels) >= 1:
+                            time_channel = channels[0]
+                        if not amplitude_channel and len(channels) >= 2:
+                            amplitude_channel = channels[1]
+                        
+                        if time_channel and amplitude_channel:
+                            time_data = time_channel[:]
+                            amplitude_data = amplitude_channel[:]
+                            group = test_group
+                            logger.info(f"Using group '{group_name}' with channels '{time_channel.name}' and '{amplitude_channel.name}'")
+                            break
+                    except Exception as e:
+                        logger.debug(f"Error checking group {group_name}: {e}")
+                        continue
+            
+            if time_data is None or amplitude_data is None:
+                logger.error(f"Could not find suitable time/amplitude data in {tdms_file_path.name}")
+                return None
+            
+            # Get properties for plot info
+            root_props = tdms_file.properties
+            group_props = group.properties
+            amplitude_props = group["Amplitude"].properties
+            
+            # Create the plot
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
+            
+            # Time domain plot
+            ax1.plot(time_data, amplitude_data, 'b-', linewidth=1)
+            ax1.set_xlabel('Time (s)')
+            ax1.set_ylabel('Amplitude (V)')
+            ax1.set_title(f'Sinewave - Time Domain')
+            ax1.grid(True, alpha=0.3)
+            
+            # Add statistics text
+            stats_text = f'Mean: {np.mean(amplitude_data):.6f} V\n'
+            stats_text += f'RMS: {np.sqrt(np.mean(amplitude_data**2)):.6f} V\n'
+            stats_text += f'Peak-to-Peak: {np.ptp(amplitude_data):.6f} V'
+            ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes, 
+                    verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            
+            # Frequency domain plot
+            if len(amplitude_data) > 1:
+                sample_rate = 1.0 / (time_data[1] - time_data[0])
+                fft_result = np.fft.fft(amplitude_data)
+                fft_freq = np.fft.fftfreq(len(amplitude_data), 1/sample_rate)
+                
+                # Only positive frequencies
+                magnitude = np.abs(fft_result[:len(fft_result)//2])
+                freq_bins = fft_freq[:len(fft_freq)//2]
+                
+                ax2.plot(freq_bins, magnitude, 'r-', linewidth=1)
+                ax2.set_xlabel('Frequency (Hz)')
+                ax2.set_ylabel('Magnitude')
+                ax2.set_title('Frequency Domain (FFT)')
+                ax2.grid(True, alpha=0.3)
+                
+                # Find and mark peak frequency
+                peak_index = np.argmax(magnitude)
+                peak_freq = abs(freq_bins[peak_index])
+                ax2.axvline(peak_freq, color='red', linestyle='--', alpha=0.7)
+                ax2.text(peak_freq * 1.1, magnitude[peak_index] * 0.9, 
+                        f'Peak: {peak_freq:.1f} Hz', 
+                        verticalalignment='top', color='red')
+            
+            # Add test metadata to the plot
+            metadata_text = ""
+            if "Expected_Frequency_Hz" in root_props:
+                metadata_text += f'Expected: {root_props["Expected_Frequency_Hz"]:.1f} Hz\n'
+            if "Detected_Frequency_Hz" in root_props:
+                metadata_text += f'Detected: {root_props["Detected_Frequency_Hz"]:.1f} Hz\n'
+            if "Test_Passed" in root_props:
+                test_result = "PASS" if root_props["Test_Passed"] else "FAIL"
+                metadata_text += f'Result: {test_result}'
+            
+            if metadata_text:
+                fig.text(0.02, 0.02, metadata_text, fontsize=10, 
+                        bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+            
+            plt.tight_layout()
+            plt.subplots_adjust(bottom=0.15)  # Make room for metadata
+            
+            # Save the plot
+            plot_filename = f"{tdms_file_path.stem}_plot.png"
+            plot_path = img_dir / plot_filename
+            plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+            plt.close(fig)
+            
+            return plot_path
+            
+    except Exception as e:
+        logger.error(f"Error processing TDMS file {tdms_file_path}: {e}")
+        return None
+
 # --- HTML Report Generation ---
 
-def generate_html_report(csv_path: Path, html_path: Path):
+def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = None):
     """Reads a CSV report and generates an HTML version."""
     results = []
     try:
@@ -327,7 +542,7 @@ def generate_html_report(csv_path: Path, html_path: Path):
     html_content += "<h2>Details</h2>"
     html_content += "<table>"
     # Revert header, keep Sequence Name
-    html_content += "<thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th><th>UUID</th><th>Parent UUID</th></tr></thead>"
+    html_content += "<thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th></tr></thead>"
     html_content += "<tbody>"
 
     for i, row in enumerate(results):
@@ -361,11 +576,25 @@ def generate_html_report(csv_path: Path, html_path: Path):
             
             html_content += f"<td>{formatted_content}</td>"
 
-        html_content += f"<td>{html.escape(row.get('uuid', 'N/A'))}</td>"
-        html_content += f"<td>{html.escape(row.get('parent_uuid', 'N/A'))}</td>"
         html_content += "</tr>"
 
     html_content += "</tbody></table>"
+    
+    # --- Add TDMS Plots Section ---
+    if output_dir:
+        img_dir = output_dir / "img"
+        if img_dir.exists():
+            plot_files = list(img_dir.glob("*_plot.png"))
+            if plot_files:
+                html_content += "<h2>Test Data Plots</h2>"
+                for plot_file in plot_files:
+                    relative_path = f"img/{plot_file.name}"
+                    # Extract test info from filename
+                    test_name = plot_file.stem.replace("_plot", "")
+                    html_content += f"<h3>{html.escape(test_name)}</h3>"
+                    html_content += f'<img src="{relative_path}" alt="{html.escape(test_name)} plot" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin: 10px 0;">'
+                    html_content += "<br><br>"
+    
     html_content += "</body></html>"
 
     # --- Write HTML File ---
@@ -476,7 +705,9 @@ if __name__ == "__main__":
 
     # --- Generate HTML Report ---
     if csv_report_path.exists():
-        generate_html_report(csv_path=csv_report_path, html_path=html_report_path)
+        # Generate TDMS plots before HTML report
+        generate_tdms_plots(report_manager.output_dir, csv_report_path)
+        generate_html_report(csv_path=csv_report_path, html_path=html_report_path, output_dir=report_manager.output_dir)
         print(f"HTML report generated: {html_report_path}")
     else:
         print(f"CSV report not found at {csv_report_path}, skipping HTML generation.")

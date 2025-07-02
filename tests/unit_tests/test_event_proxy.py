@@ -1,7 +1,11 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 import pytest
 from unittest.mock import MagicMock
 from queue import SimpleQueue
-from PyQt6.QtCore import QCoreApplication
+from PySide6.QtCore import QCoreApplication
 from pypts.event_proxy import RecipeEventProxy
 from pypts import recipe
 import uuid
@@ -20,8 +24,11 @@ def event_q():
 
 @pytest.fixture
 def proxy(event_q):
-    # Required to initialize Qt event loop for signals
-    QCoreApplication([])
+    # Use existing Qt application instance or create one if none exists
+    app = QCoreApplication.instance()
+    if app is None:
+        app = QCoreApplication([])
+    
     proxy = RecipeEventProxy(event_q)
 
     # Mock all signals
