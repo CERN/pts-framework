@@ -264,6 +264,6 @@ if __name__ == "__main__":
     # For now, the prints are just commented
 
     # # example usage on specific recipe
-    # path = "recipes/simple_recipe_GOLDEN.yml"
+    # path = "recipes/simple_recipe_GOLDEN_COPY.yml"
     # path = "recipes/simple_recipe.yml"
     # validate_recipe(path)

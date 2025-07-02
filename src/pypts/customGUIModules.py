@@ -29,7 +29,7 @@ from PySide6.QtGui import (
     QPixmap,
     QPainter,
 )
-from PySide6.QtCore import QSize, Qt, QRect, QMargins
+from PySide6.QtCore import QSize, Qt, QRect, QMargins, QEvent
 from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError

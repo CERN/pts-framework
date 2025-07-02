@@ -22,6 +22,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.setup_tree_and_yaml()
         self.setup_status_and_layouts()
 
+        # Define the shortcut activation action
         save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         save_shortcut.activated.connect(self.on_save_clicked)
 
@@ -206,9 +207,10 @@ class RecipeEditorMainMenu(QMainWindow):
             # Append star
             original_text = tree_item.text(0)
 
-            tree_item.setForeground(0, QColor(210, 40, 0))  # orange star
-            # if "★" not in original_text:
-            # tree_item.setText(0, "* " + original_text)
+            # tree_item.setForeground(0, QColor(210, 40, 0))  # orange star
+            # mmark required field (only temporary, not to be saved to YAML)
+            tree_item.setText(0, "* " + original_text)
+
         else:
             pass
 
@@ -280,6 +282,25 @@ class RecipeEditorMainMenu(QMainWindow):
     def show_recipe_info(self, message: str):
         self.set_recipe_status(f"ℹ️ {message}", color="gray")
 
+    def sanitize_empty_fields(self, data: dict) -> dict:
+        # For RECIPE_HEADER_REQUIRED_FIELDS, force "globals" to be dict if empty string
+        if "globals" in data and (data["globals"] == "" or data["globals"] is None):
+            data["globals"] = {}
+
+        # For sequences inside main_sequence or others, you can add similar logic:
+        seq_fields = ["setup_steps", "steps", "teardown_steps"]
+        for seq in seq_fields:
+            if seq in data and (data[seq] == "" or data[seq] is None):
+                data[seq] = []
+
+        # Similarly for dict fields in sequence:
+        dict_fields = ["parameters", "outputs", "locals"]
+        for dfield in dict_fields:
+            if dfield in data and (data[dfield] == "" or data[dfield] is None):
+                data[dfield] = {}
+
+        return data
+
 # Methods related to handling GUI actions
     def on_action_restore_recipe_clicked(self):
         if self.last_valid_recipe == "":
@@ -303,6 +324,7 @@ class RecipeEditorMainMenu(QMainWindow):
 
         try:
             data = self.extract_treeView_to_data()
+            data = self.sanitize_empty_fields(data)
             with open(new_path, 'w') as f:
                 yaml.dump_all(data, f, sort_keys=False)
 
@@ -314,7 +336,6 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def on_save_clicked(self):
         validation_result, description = self.validate_temporary_recipe_contents()
-        print(validation_result)
         if not validation_result:
             if not self.ask_save_invalid_file():
                 self.log("⚠️ Save aborted.")
@@ -327,12 +348,14 @@ class RecipeEditorMainMenu(QMainWindow):
             # Construct new filename with suffix
             base, ext = os.path.splitext(self.current_file_path)
             new_path = f"{base}{ext}"
-
+            print(new_path)
             with open(new_path, 'w') as f:
                 yaml.dump_all(data, f, sort_keys=False)
 
             self.log(f"💾 Saved to {new_path}")
             self.setWindowTitle(f"Recipe Editor - {os.path.basename(new_path)}")
+
+            self.load_yaml_recipe(new_path)
         except Exception as e:
             self.log(f"❌ Failed to save: {e}")
 
@@ -369,6 +392,9 @@ class RecipeEditorMainMenu(QMainWindow):
         self.log("️ℹ️ Todo: 0.2")
 
     def on_tree_item_clicked(self, item, column):
+        text = item.text(column)
+        print("Registered click on " + text)
+
         key = HashableTreeItem(item)
         if key in self.item_to_line:
             line = self.item_to_line[key]
@@ -452,10 +478,10 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def open_recipe(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
-        self.load_yaml(file_path)
+        self.load_yaml_recipe(file_path)
         self.setWindowTitle(f"Recipe Editor - {os.path.basename(file_path)}")
 
-    def load_yaml(self, file_path):
+    def load_yaml_recipe(self, file_path):
         if file_path:
             try:
                 with open(file_path, 'r') as f:
@@ -477,9 +503,9 @@ class RecipeEditorMainMenu(QMainWindow):
                     self.temporary_recipe_contents = self.yaml_viewer.toPlainText()
                     validation_result, description = self.validate_temporary_recipe_contents()
                     if (validation_result == True):
-                        self.show_recipe_ok()
+                        self.show_recipe_ok("✅ Recipe is valid")
                     else:
-                        self.show_recipe_error("Recipe in Text Edit View is invalid!")
+                        self.show_recipe_error("Opened recipe is invalid!")
                         self.log(description)
                 except Exception as e:
                     self.log(f"❌ YAML verification failure!: {e}")
@@ -579,6 +605,10 @@ class RecipeEditorMainMenu(QMainWindow):
         for i in range(self.tree.topLevelItemCount()):
             doc_item = self.tree.topLevelItem(i)
             data = self.extract_item_data(doc_item)
+
+            doc_item = self.strip_star_prefix(doc_item)
+            data = self.strip_star_prefix(data)
+            data = self.sanitize_empty_fields(data)
             documents.append(data)
 
         buffer = io.StringIO()
@@ -654,6 +684,23 @@ class RecipeEditorMainMenu(QMainWindow):
             return False
 
 
+    def strip_star_prefix(self, data):
+        if isinstance(data, str):
+            if data.startswith("* "):
+                return data[2:]
+            return data
+        elif isinstance(data, list):
+            return [self.strip_star_prefix(item) for item in data]
+        elif isinstance(data, dict):
+            return {self.strip_star_prefix(k): self.strip_star_prefix(v) for k, v in data.items()}
+        else:
+            # Other types (int, float, bool, None, etc) returned as is
+            return data
+
+#TODO - BugFIX
+#Globals are being written as a string, not as a list (if empty)
+#
+
 # done 0.1 - VIEWER
 # done 0.1 - Show some indicator that the changes are unsaved
 # done 0.1 - allow to clear any field
@@ -687,6 +734,7 @@ class RecipeEditorMainMenu(QMainWindow):
 
 # todo 1.0 - Create new recipe, ask for its name
 # done 1.0 - fix the small gui imperfections
+# done 1.0 - Some gui and UX improvements
 # todo 1.0 - create a new helper file yaml_description.py, where we can have yaml field type descriptions etc
 # todo 1.0 - Recipe generator
 # todo 1.0 - Populate generator with headers
@@ -694,7 +742,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # todo 1.0 - Step generator
 # todo 1.0 - increase 1st column size
 # todo 1.0 - easy way to set the YamView application
-# todo 1.0 - change the required field to be a star or warning emoji, instead of red colour
+# done 1.0 - change the required field to be a star or warning emoji, instead of red colour
 # todo 1.0 - 1.1 unit tests
 
 # todo 1.1 - UX REFINEMENT
@@ -714,6 +762,15 @@ class RecipeEditorMainMenu(QMainWindow):
 
 # todo 3.0 - check possibility to generate the recipe from test plan using AI
 
+# todo Nice features to show in 0.2:
+# shortcuts,
+# parser - if i put some undefined globals, it will define it for me
+# auto recovery
+# auto cross-verification
+# check on save
+# save as
+# undo on the YAML editview
+# unsaved changes
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -722,5 +779,6 @@ if __name__ == "__main__":
     window.show()
     # automation - adding the automatic recipe opening - uncomment to speed up testing
     file_path = "/home/pts/dev/pypts/src/pypts/recipes/simple_recipe.yml"
-    window.load_yaml(file_path)
+    window.load_yaml_recipe(file_path)
     sys.exit(app.exec())
+
