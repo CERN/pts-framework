@@ -1,10 +1,12 @@
 import sys
 import io
-from PyQt6.QtWidgets import (
+from PySide6.QtWidgets import (
     QApplication,
+    QPlainTextEdit,
     QMainWindow,
     QWidget,
     QVBoxLayout,
+    QMessageBox,
     QHBoxLayout,
     QStackedLayout,
     QTreeWidget,
@@ -17,14 +19,17 @@ from PyQt6.QtWidgets import (
     QStyle,
     QSizePolicy,
 )
-from PyQt6.QtGui import (
+from PySide6.QtGui import (
     QAction,
     QColor,
+    QTextFormat,
     QFont,
+    QTextCharFormat,
+    QTextCursor,
     QPixmap,
     QPainter,
 )
-from PyQt6.QtCore import QSize, Qt
+from PySide6.QtCore import QSize, Qt, QRect
 from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
@@ -33,84 +38,160 @@ import webbrowser
 from pypts.styles import *
 from pypts.verify_recipe import *
 
-class ScintillaYamlEditor(QsciScintilla):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-
-        # Basic editor setup
-        self.setUtf8(True)
-        self.setMarginsFont(QFont("Courier", 10))
-        self.setMarginWidth(0, "0000")  # Line number margin
-        self.setMarginLineNumbers(0, True)
-
-        # Highlight the current line
-        self.setCaretLineVisible(True)
-        self.setCaretLineBackgroundColor(QColor("#e6f7ff"))
-
-        # Font and syntax highlighting
-        font = QFont("Courier", 10)
-        self.setFont(font)
-        self.setMarginsFont(font)
-
-        lexer = QsciLexerYAML()
-        lexer.setFont(font)
-        self.setLexer(lexer)
-
-class WatermarkWidget(QWidget):
-    """Widget showing a watermark image in the center."""
-    def __init__(self, image_path: str):
-        super().__init__()
-        self.image_path = image_path
-        self.pixmap = QPixmap(image_path)
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setOpacity(0.2)
-        x = (self.width() - self.pixmap.width()) // 2
-        y = (self.height() - self.pixmap.height()) // 2
-        painter.drawPixmap(x, y, self.pixmap)
-
-class HashableTreeItem:
-    def __init__(self, item):
-        self.item = item
-
-    def __hash__(self):
-        return id(self.item)
-
-    def __eq__(self, other):
-        return isinstance(other, HashableTreeItem) and self.item is other.item
+from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
+from PySide6.QtCore import Qt, QRegularExpression
+from pypts.customGUIModules import *
 
 
-# noinspection PyUnresolvedReferences
-class YamlTreeEditor(QMainWindow):
-# Methods related to initialization and set up of GUI
+class RecipeEditorMainMenu(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.yaml_documents = []  # Store parsed YAML data (necessary for runtime cache)
-        self.temporary_recipe_contents = "" # Store yaml as raw text (necessary for the yaml viewer)
-        self.current_file_path = ""  # Track original file path (necessary for saving)
+        self.yaml_documents = []
+        self.temporary_recipe_contents = ""
+        self.last_valid_recipe = ""
+        self.current_file_path = ""
         self.item_to_line = {}
         self.yaml_parser = None
         self.data = None
+        self.enable_recipe_verification = True
 
         self.setWindowTitle("Recipe Editor")
         self.setGeometry(200, 200, 1600, 1000)
 
         self.setup_menu()
+        self.setup_central_widget()
+        self.setup_toolbar()
+        self.setup_tree_and_yaml()
+        self.setup_status_and_layouts()
+
+        save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
+        save_shortcut.activated.connect(self.on_save_clicked)
+
+        self.log("✅ Application started.")
+
+    def setup_menu(self):
+        menubar = self.menuBar()
+
+        # File menu
+        self.file_menu = menubar.addMenu("File")
+
+        self.open_recipe_action = QAction("Open Recipe", self)
+        self.open_recipe_action.triggered.connect(self.open_recipe)
+        self.file_menu.addAction(self.open_recipe_action)
+        self.close_recipe = QAction("Close Recipe", self)
+        self.close_recipe.triggered.connect(self.on_close_recipe_clicked)
+        self.close_recipe.setEnabled(False)
+        self.file_menu.addAction(self.close_recipe)
+        self.exit_action = QAction("Exit", self)
+        self.exit_action.triggered.connect(self.close)
+        self.file_menu.addAction(self.exit_action)
+
+        # Edit menu
+        self.edit_menu = menubar.addMenu("Edit")
+
+        self.save_action = QAction("Save Recipe", self)
+        self.save_action.triggered.connect(self.on_save_clicked)
+        self.edit_menu.addAction(self.save_action)
+
+        self.save_as_action = QAction("Save Recipe As", self)
+        self.save_as_action.triggered.connect(self.on_save_as_clicked)
+        self.edit_menu.addAction(self.save_as_action)
+
+        # View menu
+        self.view_menu = menubar.addMenu("View")
+        self.toggle_dark_mode_action = QAction("Toggle Dark Mode", self)
+        self.toggle_dark_mode_action.setCheckable(True)
+        self.toggle_dark_mode_action.triggered.connect(self.toggle_dark_mode)
+        self.view_menu.addAction(self.toggle_dark_mode_action)
+
+        # About menu
+        self.about_menu = menubar.addMenu("About")
+        self.open_gitlab = QAction("Gitlab", self)
+        self.open_gitlab.triggered.connect(self.on_open_gitlab_clicked)
+        self.about_menu.addAction(self.open_gitlab)
+
+        self.open_wiki = QAction("Wiki", self)
+        self.open_wiki.triggered.connect(self.on_open_wiki_clicked)
+        self.about_menu.addAction(self.open_wiki)
+
+        # Development menu
+        self.dev_menu = menubar.addMenu("Development")
+        for i in range(1, 5):
+            action = QAction(f"Dev Tool {i}", self)
+            action.triggered.connect(getattr(self, f"on_dev_{i}_clicked"))
+            self.dev_menu.addAction(action)
+
+    def setup_central_widget(self):
         self.setStyleSheet(light_style)
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
-
-        # main application layout
         self.main_layout = QVBoxLayout(self.central_widget)
 
-        # Stacked layout (watermark + YAML tree)
-        self.stacked_layout = QStackedLayout()
+    def setup_toolbar(self):
+        self.toolbar = QToolBar()
+        self.toolbar.setIconSize(QSize(32, 32))
+        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        # Watermark logo on the back
-        self.watermark_widget = WatermarkWidget("logo.png")  # <-- place your transparent logo here
+        self.action_add = QAction(self.style().standardIcon(QStyle.SP_FileDialogNewFolder), "Add", self)
+        self.action_save = QAction(self.style().standardIcon(QStyle.SP_DialogSaveButton), "Save", self)
+        self.action_save_as = QAction(self.style().standardIcon(QStyle.SP_DialogSaveButton), "Save as", self)
+        self.action_restore_recipe = QAction(self.style().standardIcon(QStyle.SP_BrowserReload),
+                                             "Restore last working recipe state", self)
 
-        # Top Recipe status indicator
+        self.toolbar.addAction(self.action_add)
+        self.toolbar.addAction(self.action_save)
+        self.toolbar.addAction(self.action_save_as)
+        self.toolbar.addAction(self.action_restore_recipe)
+
+        self.action_add.triggered.connect(self.on_add_clicked)
+        self.action_save.triggered.connect(self.on_save_clicked)
+        self.action_save_as.triggered.connect(self.on_save_as_clicked)
+        self.action_restore_recipe.triggered.connect(self.on_action_restore_recipe_clicked)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        spacer_action = QWidgetAction(self)
+        spacer_action.setDefaultWidget(spacer)
+        self.toolbar.addAction(spacer_action)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(QPixmap("YamVIEW.png"))
+        icon_action = QWidgetAction(self)
+        icon_action.setDefaultWidget(icon_label)
+        self.toolbar.addAction(icon_action)
+
+    def setup_tree_and_yaml(self):
+        # YAML Tree widget
+        self.tree = QTreeWidget()
+        self.tree.setColumnCount(2)
+        self.tree.setHeaderLabels(["Field", "Value"])
+        self.tree.setColumnWidth(0, 200)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.itemChanged.connect(self.on_treeview_item_changed)
+        self.tree.itemClicked.connect(self.on_tree_item_clicked)
+        self.tree.setEditTriggers(
+            QTreeWidget.EditTrigger.DoubleClicked |
+            QTreeWidget.EditTrigger.SelectedClicked |
+            QTreeWidget.EditTrigger.EditKeyPressed
+        )
+
+        # YAML Viewer (custom ScintillaYamlEditor)
+        self.yaml_viewer = ScintillaYamlEditor(self)
+        self.yaml_viewer.setReadOnly(False)
+        self.yaml_viewer.textChanged.connect(self.on_yamlview_item_changed)
+        font = QFont("Fira Code", 11)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFixedPitch(True)
+        self.yaml_viewer.setFont(font)
+
+        # Horizontal container for tree + yaml viewer
+        self.tree_and_yaml_widget = QWidget()
+        self.tree_and_yaml_hlayout = QHBoxLayout(self.tree_and_yaml_widget)
+        self.tree_and_yaml_hlayout.addWidget(self.tree)
+        self.tree_and_yaml_hlayout.addWidget(self.yaml_viewer)
+
+    def setup_status_and_layouts(self):
+        # Recipe status bar
         self.recipeStatus = QTextEdit()
         self.recipeStatus.setReadOnly(True)
         self.recipeStatus.setFixedHeight(30)
@@ -124,82 +205,15 @@ class YamlTreeEditor(QMainWindow):
             }
         """)
 
-        # yaml table widget
-        self.tree = QTreeWidget()
-        self.tree.setColumnCount(2)
-        self.tree.setHeaderLabels(["Field", "Value"])
-        self.tree.setColumnWidth(0, 200)  # Fix width of the "Field" column
-        self.tree.setAlternatingRowColors(True)
-        self.tree.itemChanged.connect(self.on_treeview_item_changed)
-        self.tree.itemClicked.connect(self.on_tree_item_clicked)
-
-        self.tree.setEditTriggers(
-            QTreeWidget.EditTrigger.DoubleClicked |
-            QTreeWidget.EditTrigger.SelectedClicked |
-            QTreeWidget.EditTrigger.EditKeyPressed
-        )
-
-        # defining the yaml overview widget
-        self.yaml_viewer = ScintillaYamlEditor(self)
-        self.yaml_viewer.setReadOnly(False)
-        self.yaml_viewer.textChanged.connect(self.on_yamlview_item_changed)
-
-        #Create container for tree + yaml
-        self.tree_and_yaml_widget = QWidget()
-        self.tree_and_yaml_hlayout = QHBoxLayout(self.tree_and_yaml_widget)
-        self.tree_and_yaml_hlayout.addWidget(self.tree)
-        self.tree_and_yaml_hlayout.addWidget(self.yaml_viewer)
-
-                # Create toolbar
-        self.toolbar = QToolBar()
-        self.toolbar.setIconSize(QSize(32, 32))  # small icons
-        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-
-        # Example buttons for the toolbar
-        self.action_add = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogNewFolder), "Add", self)
-        self.action_refresh = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_BrowserReload), "Validate recipe", self)
-        self.action_save = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save", self)
-        self.action_save_as = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton), "Save as", self)
-
-        # Add actions to toolbar
-        self.toolbar.addAction(self.action_add)
-        self.toolbar.addAction(self.action_refresh)
-        self.toolbar.addAction(self.action_save)
-        self.toolbar.addAction(self.action_save_as)
-
-        # Connect buttons if needed
-        self.action_add.triggered.connect(self.on_add_clicked)
-        self.action_refresh.triggered.connect(self.on_revalidate_clicked)
-        self.action_save.triggered.connect(self.on_save_clicked)
-        self.action_save_as.triggered.connect(self.on_save_as_clicked)
-
-        # 2. Add spacer to push the next widget to the right
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        spacer_action = QWidgetAction(self)
-        spacer_action.setDefaultWidget(spacer)
-        self.toolbar.addAction(spacer_action)
-
-        # 3. Add custom image on the far right
-        icon_label = QLabel()
-        icon_label.setPixmap(QPixmap("YamVIEW.png"))
-        icon_action = QWidgetAction(self)
-        icon_action.setDefaultWidget(icon_label)
-        self.toolbar.addAction(icon_action)
-
-        # Create container for top status + tree+yaml layout
+        # Container for status + tree+yaml
         self.tree_status_container = QWidget()
         self.tree_status_layout = QVBoxLayout(self.tree_status_container)
         self.tree_status_layout.setContentsMargins(0, 0, 0, 0)
         self.tree_status_layout.setSpacing(0)
-
-        # Add recipe status bar (top of the view)
         self.tree_status_layout.addWidget(self.recipeStatus)
-
-        # Add the existing tree + yaml horizontal layout
         self.tree_status_layout.addWidget(self.tree_and_yaml_widget)
 
-        # Create final container with toolbar + top status + tree+yaml
+        # Container for toolbar + status + main content
         self.tree_and_yaml_container = QWidget()
         self.tree_and_yaml_layout = QVBoxLayout(self.tree_and_yaml_container)
         self.tree_and_yaml_layout.setContentsMargins(0, 0, 0, 0)
@@ -207,77 +221,24 @@ class YamlTreeEditor(QMainWindow):
         self.tree_and_yaml_layout.addWidget(self.toolbar)
         self.tree_and_yaml_layout.addWidget(self.tree_status_container)
 
-        # Placing widgets into the stacked layout
+        # Watermark widget (your logo)
+        self.watermark_widget = WatermarkWidget("logo.png")  # Replace with your logo
+
+        # Stacked layout to switch between watermark and main editor
+        self.stacked_layout = QStackedLayout()
         self.stacked_layout.addWidget(self.watermark_widget)  # index 0
         self.stacked_layout.addWidget(self.tree_and_yaml_container)  # index 1
 
-        # Placing widgets into the stacked layout
-        self.stacked_layout.addWidget(self.watermark_widget)  # index 0
-        self.stacked_layout.addWidget(self.tree_and_yaml_container)  # index 1
-
-        # Defining log console (multi-line status output)
+        # Log console below everything
         self.log_console = QTextEdit()
         self.log_console.setReadOnly(True)
         self.log_console.setFixedHeight(120)
 
+        # Add layouts to main layout
         self.main_layout.addLayout(self.stacked_layout)
-        # below the stacked layout there is a status bar
         self.main_layout.addWidget(self.log_console)
 
-        self.log("Application started 👍")
-
-    def setup_menu(self):
-        menubar = self.menuBar()
-
-        self.file_menu = menubar.addMenu("File")
-        self.open_gitlab = QAction("Open Recipe", self)
-        self.open_gitlab.triggered.connect(self.open_recipe)
-        self.file_menu.addAction(self.open_gitlab)
-        self.close_recipe = QAction("Close Recipe", self)
-        self.close_recipe.triggered.connect(self.on_close_recipe_clicked)
-        self.close_recipe.setEnabled(False)  # 🔒 Disable it (gray out)
-        self.file_menu.addAction(self.close_recipe)
-        self.exit_action = QAction("Exit", self)
-        self.exit_action.triggered.connect(self.close)
-        self.file_menu.addAction(self.exit_action)
-
-        self.edit_menu = menubar.addMenu("Edit")
-        self.save_action = QAction("Save Recipe", self)
-        self.save_action.triggered.connect(self.on_save_clicked)
-
-        self.edit_menu.addAction(self.save_action)
-
-        self.view_menu = menubar.addMenu("View")
-        self.toggle_dark_mode_action = QAction("Toggle Dark Mode", self)
-        self.toggle_dark_mode_action.setCheckable(True)
-        self.toggle_dark_mode_action.triggered.connect(self.toggle_dark_mode)
-        self.view_menu.addAction(self.toggle_dark_mode_action)
-
-        self.about_menu = menubar.addMenu("About")
-        self.open_gitlab = QAction("Gitlab", self)
-        self.open_gitlab.triggered.connect(self.on_open_gitlab_clicked)
-        self.about_menu.addAction(self.open_gitlab)
-        self.open_wiki = QAction("Wiki", self)
-        self.open_wiki.triggered.connect(self.on_open_wiki_clicked)
-        self.about_menu.addAction(self.open_wiki)
-
-        self.dev_menu = menubar.addMenu("Development")
-        self.open_dev_1 = QAction("Dev Tool 1", self)
-        self.open_dev_2 = QAction("Dev Tool 2", self)
-        self.open_dev_3 = QAction("Dev Tool 3", self)
-        self.open_dev_4 = QAction("Dev Tool 4", self)
-
-        self.open_dev_1.triggered.connect(self.on_dev_1_clicked)
-        self.open_dev_2.triggered.connect(self.on_dev_2_clicked)
-        self.open_dev_3.triggered.connect(self.on_dev_3_clicked)
-        self.open_dev_4.triggered.connect(self.on_dev_4_clicked)
-
-        self.dev_menu.addAction(self.open_dev_1)
-        self.dev_menu.addAction(self.open_dev_2)
-        self.dev_menu.addAction(self.open_dev_3)
-        self.dev_menu.addAction(self.open_dev_4)
-
-# Helper GUI functions - colouring, viewing
+    # Helper GUI functions - colouring, viewing
     def mark_required_field(self, tree_item, is_required: bool):
         if is_required:
             # Append star
@@ -285,7 +246,7 @@ class YamlTreeEditor(QMainWindow):
 
             tree_item.setForeground(0, QColor(210, 40, 0))  # orange star
             # if "★" not in original_text:
-            #     tree_item.setText(0, "★ " + original_text)
+            # tree_item.setText(0, "* " + original_text)
         else:
             pass
 
@@ -298,27 +259,29 @@ class YamlTreeEditor(QMainWindow):
             self.log("☀️ Light Mode restored.")
 
     def highlight_line(self, line_num):
-        # Clear previous highlights
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICATORCLEARRANGE, 0, self.yaml_viewer.length())
+        cursor = self.yaml_viewer.textCursor()
 
-        # Set indicator 0
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_SETINDICATORCURRENT, 0)
+        # Clear any existing selections
+        cursor.clearSelection()
+        # Move to the specified line
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        for _ in range(line_num):
+            cursor.movePosition(QTextCursor.MoveOperation.Down)
 
-        # Use FULLBOX to fill the entire line background (no border, just fill)
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICSETSTYLE, 0, QsciScintilla.INDIC_FULLBOX)
+        # Select the entire line
+        cursor.select(QTextCursor.SelectionType.LineUnderCursor)
 
-        highlight_color = QColor(100, 0, 255)
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICSETFORE, 0, highlight_color.rgb())
+        # Apply highlighting
+        format = QTextCharFormat()
 
-        # Highlight the full line from line start to line end including newline
-        start_pos = self.yaml_viewer.positionFromLineIndex(line_num, 0)
-        line_length = len(self.yaml_viewer.text(line_num))
-
-        self.yaml_viewer.SendScintilla(self.yaml_viewer.SCI_INDICATORFILLRANGE, start_pos, line_length)
+        self.enable_recipe_verification = False
+        cursor.mergeCharFormat(format)
+        self.enable_recipe_verification = True
 
         # Scroll and set cursor position for visibility
         self.yaml_viewer.setCursorPosition(line_num, 0)
         self.yaml_viewer.ensureLineVisible(line_num)
+        pass
 
     def update_yaml_viewer(self):
         self.yaml_viewer.setText(self.temporary_recipe_contents)
@@ -339,7 +302,12 @@ class YamlTreeEditor(QMainWindow):
 
     def set_recipe_status(self, message: str, color: str = "#333"):
         """Sets the status message and text color in the top recipe status field."""
-        self.recipeStatus.setHtml(f'<span style="color: {color};">{message}</span>')
+        escaped_message = (
+            message.replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+        )
+        self.recipeStatus.setHtml(f'<span style="color: {color};">{escaped_message}</span>')
 
     def show_recipe_ok(self, message: str = "✅ Recipe is valid"):
         self.set_recipe_status(message, color="green")
@@ -350,9 +318,13 @@ class YamlTreeEditor(QMainWindow):
     def show_recipe_info(self, message: str):
         self.set_recipe_status(f"ℹ️ {message}", color="gray")
 
-# Methods related to handling actions
-    def on_revalidate_clicked(self):
-        self.log("To be implemented, now validation is checking in the file !")
+    # Methods related to handling actions
+    def on_action_restore_recipe_clicked(self):
+        if self.last_valid_recipe == "":
+            self.log("️⚠️ ️Unable to restore, no working version in the history")
+            return
+        self.temporary_recipe_contents = self.last_valid_recipe
+        self.update_yaml_viewer()
 
     def on_save_as_clicked(self):
         # Open the file dialog for the user to choose the save location
@@ -364,7 +336,7 @@ class YamlTreeEditor(QMainWindow):
         )
 
         if not new_path:
-            self.log("❌ Save As cancelled.")
+            self.log("⚠️ Save As cancelled.")
             return
 
         try:
@@ -378,9 +350,37 @@ class YamlTreeEditor(QMainWindow):
         except Exception as e:
             self.log(f"❌ Failed to save: {e}")
 
+    def ask_save_invalid_file(self):
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Invalid File")
+        msg.setText("The recipe content is invalid.\nDo you want to save it anyway?\n The content in Tree View would be saved.")
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+
+        # Force button text color to black
+        msg.setStyleSheet("""
+            QPushButton {
+                color: black;
+            }
+        """)
+
+        ret = msg.exec()
+
+        if ret == QMessageBox.Yes:
+            return True
+        else:
+            return False
+
     def on_save_clicked(self):
+        validation_result, description = self.validate_temporary_recipe_contents()
+        print(validation_result)
+        if not validation_result:
+            if not self.ask_save_invalid_file():
+                self.log("⚠️ Save aborted.")
+                return
         if not self.current_file_path:
-            self.log("❌ No YAML file loaded.")
+            self.log("⚠️ No YAML file loaded.")
             return
         try:
             data = self.extract_treeView_to_data()
@@ -413,7 +413,6 @@ class YamlTreeEditor(QMainWindow):
         self.show_recipe_info("No recipe loaded yet.")
 
     def on_dev_4_clicked(self):
-        # self.show_recipe_ok()
         pass
 
     def on_open_gitlab_clicked(self):
@@ -438,53 +437,59 @@ class YamlTreeEditor(QMainWindow):
             pass
 
     def on_treeview_item_changed(self, item, column):
-        line_info = ""
-        line_number = self.item_to_line.get(HashableTreeItem(item))
-        if line_number is not None:
-            line_info = f" (line {line_number + 1})"  # +1 for human-readable line number
+        if self.enable_recipe_verification == True:
+            line_info = ""
+            line_number = self.item_to_line.get(HashableTreeItem(item))
+            if line_number is not None:
+                line_info = f" (line {line_number + 1})"  # +1 for human-readable line number
 
-        if item.text(1) == "":
-            self.log(f"✏️ Cleared a field...{line_info}")
-        else:
-            self.log(f"✏️ Edited: {line_info}")
+            if item.text(1) == "":
+                self.log(f"✏️ Cleared a field...{line_info}")
+            else:
+                self.log(f"✏️ Recipe in Tree editor updated")
 
-        self.extract_treeView_to_data()
-
-        # if self.validate_yaml_documents() == True:
-        #     self.update_yaml_viewer()
-        #     self.update_yaml_treeview()
-        #     self.show_recipe_ok()
-        # else:
-        #     self.update_yaml_treeview()
-        #     self.show_recipe_error("Recipe in Tree View ( <<< ) is invalid!")
-
-        self.setWindowTitle(f"Recipe Editor - {os.path.basename(self.current_file_path)} *unsaved changes*")
+            self.extract_treeView_to_data()
+            result, description = self.validate_yaml_documents()
+            if result == True:
+                self.update_yaml_viewer()
+                self.show_recipe_ok()
+            else:
+                self.show_recipe_error("Recipe in Tree Edit View is invalid!")
+                self.log(description)
+            self.setWindowTitle(f"Recipe Editor - {os.path.basename(self.current_file_path)} *unsaved changes*")
+        pass
 
     def on_yamlview_item_changed(self):
-        try:
-            self.temporary_recipe_contents = self.yaml_viewer.text()
-        #     validation_result = self.validate_temporary_recipe_contents()
-        #     if (validation_result == True) or (validation_result == None):
-        #         self.update_yaml_viewer()
-        #         self.update_yaml_treeview()
-        #         self.show_recipe_ok()
-        #     else:
-        #         self.update_yaml_treeview()
-        #         self.show_recipe_error("Recipe in Edit View ( >>> ) is invalid!")
-        #     self.update_yaml_treeview()
-        #     self.log("✍️ Recipe in YAML editor was modified")
-        #     self.setWindowTitle(f"Recipe Editor - {os.path.basename(self.current_file_path)} *unsaved changes*")
-        except Exception as e:
-            self.log(f"❌ Exception on yamlview edit!: {e}")
+        if self.enable_recipe_verification == True:
+            try:
+                self.temporary_recipe_contents = self.yaml_viewer.toPlainText()
+                validation_result, description = self.validate_temporary_recipe_contents()
+                if (validation_result == True):
+                    self.update_yaml_treeview()
+                    self.show_recipe_ok()
+                else:
+                    self.show_recipe_error("Recipe in Text Edit View is invalid!")
+                    self.log(description)
+                self.log("✏️️ Recipe in YAML editor updated")
+                self.setWindowTitle(f"Recipe Editor - {os.path.basename(self.current_file_path)} *unsaved changes*")
+            except Exception as e:
+                self.log(f"❌ YAML edit failure!: {e}")
+        pass
 
-# Recipe handling
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Delete:
+            self.delete_selected_items()
+        else:
+            super().keyPressEvent(event)
+
+    # Recipe parsing and processing
     def validate_recipe(self):
         try:
             if (validate_recipe_filepath(self.current_file_path)):
                 self.log("✅ Recipe file validated successfully.")
                 self.show_recipe_ok()
             else:
-                self.log("❌ Summary: Recipe file failed the validation!")
+                self.log("❌ Recipe file failed the validation!")
                 self.show_recipe_error("❌ Recipe file is invalid!")
                 return False
         except Exception as e:
@@ -494,22 +499,16 @@ class YamlTreeEditor(QMainWindow):
 
     def validate_yaml_documents(self):
         self.extract_treeView_to_data()
-        # self.validate_temporary_recipe_contents()
-        pass
+        validation_result = self.validate_temporary_recipe_contents()
+        if validation_result == True:
+            self.last_valid_recipe = self.temporary_recipe_contents
+        return validation_result
 
     def validate_temporary_recipe_contents(self):
-        try:
-            if (validate_recipe_string_variable(self.temporary_recipe_contents)):
-                self.log("✅ Recipe file validated successfully.")
-                self.show_recipe_ok()
-            else:
-                self.log("❌ Summary: Recipe failed the validation!")
-                self.show_recipe_error("Recipe file is invalid!")
-                return False
-        except Exception as e:
-            self.tree.blockSignals(False)  # Safety catch
-            self.log(f"❌ Unhandled expception while validating the recipe: {e}")
-            return False
+        result, description = validate_recipe_string_variable(self.temporary_recipe_contents)
+        if result == True:
+            self.last_valid_recipe = self.temporary_recipe_contents
+        return result, description
 
     def open_recipe(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
@@ -527,18 +526,32 @@ class YamlTreeEditor(QMainWindow):
                 self.yaml_parser = YAML()
                 self.yaml_parser.preserve_quotes = True
 
+                self.enable_recipe_verification = False
                 self.update_yaml_viewer()
                 self.update_yaml_treeview()
+                self.enable_recipe_verification = True
+
+                self.log(f"✅ Loaded {len(self.yaml_documents)} document(s) from: {file_path}")
+
+                try:
+                    self.temporary_recipe_contents = self.yaml_viewer.toPlainText()
+                    validation_result, description = self.validate_temporary_recipe_contents()
+                    if (validation_result == True):
+                        self.show_recipe_ok()
+                    else:
+                        self.show_recipe_error("Recipe in Text Edit View is invalid!")
+                        self.log(description)
+                except Exception as e:
+                    self.log(f"❌ YAML verification failure!: {e}")
+
 
                 self.stacked_layout.setCurrentIndex(1)
                 self.close_recipe.setEnabled(True)  # 🔒 Enable it
-                self.log(f"✅ Loaded {len(self.yaml_documents)} document(s) from: {file_path}")
 
             except YAMLError as e:
                 self.tree.blockSignals(False)  # Safety catch
                 self.log(f"❌ YAML parse error: {e}")
             QApplication.processEvents()
-            self.validate_temporary_recipe_contents()
 
     def populate_tree(self, data, parent_item, path=()):
         from ruamel.yaml.comments import CommentedMap, CommentedSeq
@@ -569,7 +582,7 @@ class YamlTreeEditor(QMainWindow):
                 else:
                     child_item = QTreeWidgetItem(parent_item, [str(key), ""])
 
-                child_item.setFlags(child_item.flags() | Qt.ItemFlag.ItemIsEditable) # make the field editable
+                child_item.setFlags(child_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make the field editable
                 parent_item.addChild(child_item)
 
                 # Store line number if available
@@ -595,7 +608,7 @@ class YamlTreeEditor(QMainWindow):
         elif isinstance(data, CommentedSeq):
             for idx, value in enumerate(data):
                 child_item = QTreeWidgetItem(parent_item, [f"[{idx}]", ""])
-                child_item.setFlags(child_item.flags() | Qt.ItemFlag.ItemIsEditable) #make editable
+                child_item.setFlags(child_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make editable
                 parent_item.addChild(child_item)
 
                 # Line number for sequence item
@@ -615,7 +628,7 @@ class YamlTreeEditor(QMainWindow):
         else:
             # Scalar value directly under a sequence or map
             leaf_item = QTreeWidgetItem(parent_item, [str(data), ""])
-            leaf_item.setFlags(leaf_item.flags() | Qt.ItemFlag.ItemIsEditable) #make editable
+            leaf_item.setFlags(leaf_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make editable
             parent_item.addChild(leaf_item)
 
         # Expand all items after population
@@ -659,81 +672,92 @@ class YamlTreeEditor(QMainWindow):
                 result[key] = value
             return result
 
-# Misc
+    def delete_selected_items(self):
+        selected_items = self.tree.selectedItems()
+
+        for item in selected_items:
+            parent = item.parent()
+            if parent:
+                parent.removeChild(item)
+            else:
+                # Top-level item
+                index = self.indexOfTopLevelItem(item)
+                self.takeTopLevelItem(index)
+            # Manually trigger the handler after deletion
+            self.on_treeview_item_changed(item, 0)
+
+    # Misc
     def log(self, message: str):
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         self.log_console.append(f"[{timestamp}] {message}")
 
 
-#done 1.0 - VIEWER
-#done 1.0 - Show some indicator that the changes are unsaved
-#done 1.0 - allow to clear any field
-#done 1.0 - indicate optional and required fields (with star?)
-#done 1.0 - gray out save option if recipe is not opened
-#done 1.0 - add button to automatically verify the recipe
-#done 1.0 - right-hand side panel with descriptions on the selected field
-#done 1.0 - Expert live view of the yaml file on the right hand side panel
-#done 1.0 - on the log, show which line of the yaml was edited
-#done 1.0 - Bugfix - make the right panel read only
-#done 1.0 - Clear view shall be grayed if the view is already cleared (logo visible)
-#done 1.0 - 1.0 unit tests
+# done 0.1 - VIEWER
+# done 0.1 - Show some indicator that the changes are unsaved
+# done 0.1 - allow to clear any field
+# done 0.1 - indicate optional and required fields (with star?)
+# done 0.1 - gray out save option if recipe is not opened
+# done 0.1 - add button to automatically verify the recipe
+# done 0.1 - right-hand side panel with descriptions on the selected field
+# done 0.1 - Expert live view of the yaml file on the right hand side panel
+# done 0.1 - on the log, show which line of the yaml was edited
+# done 0.1 - Bugfix - make the right panel read only
+# done 0.1 - Clear view shall be grayed if the view is already cleared (logo visible)
+# done 0.1 - 1.0 unit tests
 
-#todo 0.1 - GENERATION, EDITING, PARTIAL SUPPORT
-#done 1.1 - allow saving
-#done 1.1 - allow editing on the tree-view panel
-#done 1.1 - allow editing on the yaml-editing panel
-#todo 1.1 - auto-verification on save, pop-up confirming save, when verification fails
-#todo 1.1 - add <save as> option
-#todo 1.1 - add _invalid at the end of recipe, if verification failed
-#todo 1.1 - add buttons on toolbox: <restore from interactive view>, <show validation report> - change existing button
-#todo 1.1 - add recipe status indicator (only to show the current recipe state), inform if the treeview is not updated.
-#done 1.1 - button toolbox to allow editing (just add few buttons and design the helper GUI)
-#todo 1.1 - add auto-conversion flag and disable it when the yaml have errors
-#todo 1.1 - add button allowing to revert to the last valid format (recreate from tree)
-#todo 1.1 - bugfixing, unittests
+# todo 0.2 - GENERATION, EDITING, PARTIAL SUPPORT
+# done 0.2 - allow saving
+# done 0.2 - allow editing on the tree-view panel
+# done 0.2 - allow editing on the yaml-editing panel
+# done 0.2 - auto-verification on save, pop-up confirming save, when verification fails
+# done 0.2 - add <save as> option
+# done 0.2 - add CTRL+S shortcut
+# done 0.2 - add recipe status indicator (only to show the current recipe state), inform if the treeview is not updated.
+# done 0.2 - button toolbox to allow editing (just add few buttons and design the helper GUI)
+# done 0.2 - add auto-conversion flag and disable it when the yaml have errors
+# done 0.2 - add button allowing to revert to the last valid format (recreate last working state)
+# done 0.2 - allow deletion of the whole steps
+# done 0.2 - allow deletion of the whole sequences
+# done 0.2 - print the faults found in recipe verification - on the status bar in the bottom
+# done 0.2 - mark the text on red only if required + is not filled
+# done 0.2 - allow full control over the YAML editor
+# todo 0.2 - bugfixing, unittests
 
-#todo 1.1.1 - Create new recipe, ask for its name
-#todo 1.1.1 - create a new helper file yaml_description.py, where we can have yaml field type descriptions etc
-#todo 1.1.1 - Recipe generator
-#todo 1.1.1 - Populate generator with headers
-#todo 1.1.1 - Ask how many sequences to make
-#todo 1.1.1 - Step generator
-#todo 1.1.1 - allow deletion of the whole steps
-#todo 1.1.1 - allow deletion of the whole sequences
-#todo 1.1.1 - mark the text on red only if required + is not filled
-#todo 1.1.1 - 1.1 unit tests
+# todo 1.0 - Create new recipe, ask for its name
+# todo 1.0 - create a new helper file yaml_description.py, where we can have yaml field type descriptions etc
+# todo 1.0 - Recipe generator
+# todo 1.0 - Populate generator with headers
+# todo 1.0 - Ask how many sequences to make
+# todo 1.0 - Step generator
+# todo 1.0 - increase 1st column size
+# todo 1.0 - easy way to set it up
+# todo 1.0 - change the required field to be a star or warning emoji, instead of red colour
+# todo 1.0 - 1.1 unit tests
 
-#todo 1.2 - UX REFINEMENT
-#todo 1.2 - Add possibility to open recent files
-#todo 1.2 - Handle possibility that the recent file is not present anymore
-#todo 1.2 - Add parsing of the recipe_version field and inform if the recipe is up to correct version
-#todo 1.2 - increase 1st column size
-#todo 1.2 - Bugfix - sometimes after opening new recipe for editing, the GUI is not refreshing (it does after clicking on the window)
-#todo 1.2 - 1.2 unit tests
+# todo 1.1 - UX REFINEMENT
+# todo 1.1 - Add possibility to open recent files
+# todo 1.1 - Handle possibility that the recent file is not present anymore
+# todo 1.1 - Add parsing of the recipe_version field and inform if the recipe is up to correct version
+# todo 1.1 - Bugfix - sometimes after opening new recipe for editing, the GUI is not refreshing (it does after clicking on the window)
+# todo 1.1 - 1.2 unit tests
 
-#todo 1.3 - FULL SUPPORT
-#todo 1.3 - creator - number of sequences, steps etc
-#todo 1.3 - all fields programatically described in the yaml_description.py helper file
-#todo 1.3 - clean up documentation
-#todo 1.3 - add drop down lists on the treeview
+# todo 1.2 - FULL SUPPORT
+# todo 1.2 - creator - number of sequences, steps etc
+# todo 1.2 - all fields programatically described in the yaml_description.py helper file
+# todo 1.2 - clean up documentation
+# todo 1.2 - add drop down lists on the treeview
 
-#todo 2.0 - AI based yaml generation based on prompt (answers to fixed questions)
+# todo 2.0 - AI based yaml generation based on prompt (answers to fixed questions)
 
-#todo 3.0 - check possibility to generate the recipe from test plan using AI
-
-# clear up what is required and
-# if it is empty or fault, highlight, if it is conforming, its okay and the description can be just blakc
-# shall be editable in the text or within the editor
-# XSD model validation
+# todo 3.0 - check possibility to generate the recipe from test plan using AI
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    window = YamlTreeEditor()
+    window = RecipeEditorMainMenu()
 
     window.show()
     # automation - adding the automatic recipe opening - uncomment to speed up testing
-    file_path="/home/pts/dev/pypts/src/pypts/recipes/simple_recipe.yml"
+    file_path = "/home/pts/dev/pypts/src/pypts/recipes/simple_recipe.yml"
     window.load_yaml(file_path)
     sys.exit(app.exec())
-

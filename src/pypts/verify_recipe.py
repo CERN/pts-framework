@@ -183,7 +183,9 @@ def validate_recipe_string_variable(content):
     try:
         docs_nodes = list(yaml.compose_all(content))
     except yaml.YAMLError as e:
-        raise RecipeValidationError([f"YAML parsing error in : {e}"], [])
+
+        return False, f"❌ YAML parsing error: {e}"
+        # raise RecipeValidationError([f"❌ YAML parsing error: {e}"], [])
 
     docs = list(yaml.safe_load_all(content))
 
@@ -222,24 +224,27 @@ def validate_recipe_string_variable(content):
             faults.append(
                 f"[Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
 
-    if faults or warnings:
-        print(f"❌ Validation for recipe completed with issues:")
-        if faults:
-            print("🛑 Faults:")
-            for f in faults:
-                print(" -", f)
-                return False
-        if warnings:
-            print("⚠️ Warnings:")
-            for w in warnings:
-                print(" -", w)
-                pass
-        raise RecipeValidationError(faults, warnings)
-    else:
-        print(f"✅ No faults, warnings.")
+    output_lines = []
 
-    print(f"✅ Validation passed for the variable recipe.")
-    return True
+    if faults or warnings:
+        output_lines.append("❌ Validation for recipe completed with issues:")
+        if faults:
+            output_lines.append("🛑 Faults:")
+            for f in faults:
+                output_lines.append(f" - {f}")
+        if warnings:
+            output_lines.append("⚠️ Warnings:")
+            for w in warnings:
+                output_lines.append(f" - {w}")
+            # pass here means continue to raise below
+
+        return False, "\n".join(output_lines)
+        # raise RecipeValidationError(faults, warnings)
+    else:
+        output_lines.append("✅ Validation passed for the variable recipe.")
+    return True, "\n".join(output_lines)
+
+
 
 
 

@@ -1,5 +1,5 @@
 name: Example Test Recipe
-version: 0.1.0
+version: 1.0.0
 recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
@@ -19,20 +19,20 @@ outputs:
 setup_steps: []
 steps:
 - steptype: UserInteractionStep
-  step_name: Are you all right?
+  step_name: Are you alt?
   description: Asking user for something
-  skip: 'False'
+  skip: Fase
   input_mapping:
     message:
-      type: direct
-      value: 'Hello there. Are you doing all right?
+      type: dirct
+      value: 'Helo there. Are you doing all right?
 
         Please let us know by pressing the correct button :)
 
         '
     image_path:
       type: direct
-      value: lego2.jpg
+      value: leg2.jpg
     options:
       type: direct
       value:
