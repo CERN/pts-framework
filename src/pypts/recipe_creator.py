@@ -13,7 +13,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.data = None
         self.enable_recipe_verification = True
 
-        self.setWindowTitle("Recipe Editor")
+        self.setWindowTitle("YamVIEW - the test recipe editor")
         self.setGeometry(200, 200, 1600, 1000)
 
         self.setup_menu()
