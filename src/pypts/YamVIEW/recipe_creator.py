@@ -1,19 +1,61 @@
-from pypts.customGUIModules import *
+from pypts.YamVIEW.customGUIModules import (
+    ScintillaYamlEditor,
+    WatermarkWidget,
+    HashableTreeItem
+)
+
+from interactive_recipe_creator import RecipeCreatorApp
+import io
+from PySide6.QtWidgets import (
+    QApplication,
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QHBoxLayout,
+    QStackedLayout,
+    QMessageBox,
+    QTextEdit,
+    QLabel,
+    QWidgetAction,
+    QFileDialog,
+    QToolBar,
+    QStyle,
+    QSizePolicy,
+)
+from PySide6.QtGui import (
+    QAction,
+    QTextCursor,
+    QPixmap,
+)
+from PySide6.QtCore import QSize, QMargins
+from ruamel.yaml import YAML
+from ruamel.yaml.error import YAMLError
+from datetime import datetime
+import webbrowser
+from pypts.YamVIEW.styles import *
+from pypts.YamVIEW.verify_recipe import *
+import sys
+from PySide6.QtGui import QTextCharFormat, QFont
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
+from PySide6.QtGui import QKeySequence, QShortcut
+
 
 class RecipeEditorMainMenu(QMainWindow):
 # Initialization methods
     def __init__(self):
         super().__init__()
+        self.dark_mode = False
         self.yaml_documents = []
         self.temporary_recipe_contents = ""
         self.last_valid_recipe = ""
         self.current_file_path = ""
         self.item_to_line = {}
-        self.yaml_parser = None
+        self.yaml_parser = YAML()
         self.data = None
         self.enable_recipe_verification = True
-
-        self.setWindowTitle("YamVIEW - the test recipe editor")
+        self.title = "YamVIEW 1.0.0"
+        self.setWindowTitle(f"{self.title} recipe editor")
         self.setGeometry(200, 200, 1600, 1000)
 
         self.setup_menu()
@@ -33,15 +75,18 @@ class RecipeEditorMainMenu(QMainWindow):
         # File menu
         self.file_menu = menubar.addMenu("File")
 
+        self.new_recipe_action = QAction("New Recipe", self)
         self.open_recipe_action = QAction("Open Recipe", self)
         self.close_recipe = QAction("Close Recipe", self)
         self.exit_action = QAction("Exit", self)
 
+        self.file_menu.addAction(self.new_recipe_action)
         self.file_menu.addAction(self.open_recipe_action)
         self.file_menu.addAction(self.close_recipe)
         self.file_menu.addAction(self.exit_action)
         self.close_recipe.setEnabled(False)
 
+        self.new_recipe_action.triggered.connect(self.on_add_clicked)
         self.open_recipe_action.triggered.connect(self.open_recipe)
         self.close_recipe.triggered.connect(self.on_close_recipe_clicked)
         self.exit_action.triggered.connect(self.close)
@@ -82,6 +127,7 @@ class RecipeEditorMainMenu(QMainWindow):
             action = QAction(f"Dev Tool {i}", self)
             action.triggered.connect(getattr(self, f"on_dev_{i}_clicked"))
             self.dev_menu.addAction(action)
+            self.dev_menu.addAction(action)
 
     def setup_central_widget(self):
         self.setStyleSheet(light_style)
@@ -94,7 +140,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.toolbar.setIconSize(QSize(32, 32))
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
-        self.action_add = QAction(self.style().standardIcon(QStyle.SP_FileDialogNewFolder), "Add", self)
+        self.action_add = QAction(self.style().standardIcon(QStyle.SP_FileDialogNewFolder), "Create recipe from the template", self)
         self.action_save = QAction(self.style().standardIcon(QStyle.SP_DialogSaveButton), "Save", self)
         self.action_save_as = QAction(self.style().standardIcon(QStyle.SP_DialogSaveButton), "Save as", self)
         self.action_restore_recipe = QAction(self.style().standardIcon(QStyle.SP_BrowserReload),
@@ -110,6 +156,11 @@ class RecipeEditorMainMenu(QMainWindow):
         self.action_save_as.triggered.connect(self.on_save_as_clicked)
         self.action_restore_recipe.triggered.connect(self.on_action_restore_recipe_clicked)
 
+        self.save_as_action.setEnabled(False)
+        self.save_action.setEnabled(False)
+        self.action_save.setEnabled(False)
+        self.action_save_as.setEnabled(False)
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         spacer_action = QWidgetAction(self)
@@ -117,7 +168,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.toolbar.addAction(spacer_action)
 
         icon_label = QLabel()
-        icon_label.setPixmap(QPixmap("YamVIEW_cookie.png"))
+        icon_label.setPixmap(QPixmap("../../images/YamVIEW_cookie.png"))
         icon_action = QWidgetAction(self)
         icon_action.setDefaultWidget(icon_label)
         self.toolbar.addAction(icon_action)
@@ -136,6 +187,7 @@ class RecipeEditorMainMenu(QMainWindow):
             QTreeWidget.EditTrigger.SelectedClicked |
             QTreeWidget.EditTrigger.EditKeyPressed
         )
+        self.tree.setColumnWidth(0, 250)
 
         # YAML Viewer (custom ScintillaYamlEditor)
         self.yaml_viewer = ScintillaYamlEditor(self)
@@ -185,7 +237,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.tree_and_yaml_layout.addWidget(self.tree_status_container)
 
         # Watermark widget (your logo)
-        self.watermark_widget = WatermarkWidget("logo.png")  # Replace with your logo
+        self.watermark_widget = WatermarkWidget("../../images/logo.png")  # Replace with your logo
 
         # Stacked layout to switch between watermark and main editor
         self.stacked_layout = QStackedLayout()
@@ -214,12 +266,17 @@ class RecipeEditorMainMenu(QMainWindow):
         else:
             pass
 
+
     def toggle_dark_mode(self, enabled):
         if enabled:
+            self.dark_mode = True
             self.setStyleSheet(dark_style)
+            self.yaml_viewer.set_dark_mode(True)
             self.log("🌙 Dark Mode enabled.")
         else:
+            self.dark_mode = False
             self.setStyleSheet(light_style)
+            self.yaml_viewer.set_dark_mode(False)
             self.log("☀️ Light Mode restored.")
 
     def highlight_line(self, line_num):
@@ -301,20 +358,63 @@ class RecipeEditorMainMenu(QMainWindow):
 
         return data
 
-# Methods related to handling GUI actions
+    def collapse_by_labels(self, labels_to_collapse: set[str]):
+        def recurse_and_collapse(item: QTreeWidgetItem):
+            for i in range(item.childCount()):
+                child = item.child(i)
+                label = child.text(0)
+
+                if label in labels_to_collapse:
+                    self.tree.collapseItem(child)
+
+                recurse_and_collapse(child)
+
+        top_level_count = self.tree.topLevelItemCount()
+        for i in range(top_level_count):
+            top_item = self.tree.topLevelItem(i)
+            recurse_and_collapse(top_item)
+
+    def collapse_inside_steps(self):
+        labels_to_collapse = {
+            "globals", "locals", "outputs", "parameters",
+            "setup_steps", "teardown_steps", "steps"
+        }
+        self.collapse_by_labels(labels_to_collapse)
+        def recurse_and_collapse(item: QTreeWidgetItem):
+            for i in range(item.childCount()):
+                child = item.child(i)
+                label = child.text(0)
+
+                if label == "steps":
+                    self.tree.expandItem(child)  # keep "steps" expanded
+
+                    # collapse every step under "steps"
+                    for step_i in range(child.childCount()):
+                        step_item = child.child(step_i)
+                        self.tree.collapseItem(step_item)
+
+                recurse_and_collapse(child)
+
+        for i in range(self.tree.topLevelItemCount()):
+            top_item = self.tree.topLevelItem(i)
+            recurse_and_collapse(top_item)
+
+    # Methods related to handling GUI actions
     def on_action_restore_recipe_clicked(self):
         if self.last_valid_recipe == "":
             self.log("️⚠️ ️Unable to restore, no working version in the history")
             return
         self.temporary_recipe_contents = self.last_valid_recipe
         self.update_yaml_viewer()
+        self.collapse_inside_steps()
+
 
     def on_save_as_clicked(self):
         # Open the file dialog for the user to choose the save location
         new_path, _ = QFileDialog.getSaveFileName(
             self,
             "Save As",
-            self.current_file_path or "",  # Start from current path if available
+            self.current_file_path or "",  # start dir
             "YAML Files (*.yaml *.yml);;All Files (*)"
         )
 
@@ -325,16 +425,27 @@ class RecipeEditorMainMenu(QMainWindow):
         try:
             data = self.extract_treeView_to_data()
             data = self.sanitize_empty_fields(data)
-            with open(new_path, 'w') as f:
+
+            base, _ = os.path.splitext(new_path)  # use new_path here
+            new_path_fixed = f"{base}.yml"  # force .yml extension
+
+            with open(new_path_fixed, 'w') as f:
                 yaml.dump_all(data, f, sort_keys=False)
 
             self.current_file_path = new_path  # Update the current path
+            self.save_action.setEnabled(True)
+            self.action_save.setEnabled(True)
             self.log(f"💾 Saved to {new_path}")
             self.setWindowTitle(f"Recipe Editor - {os.path.basename(new_path)}")
         except Exception as e:
             self.log(f"❌ Failed to save: {e}")
 
     def on_save_clicked(self):
+        if self.current_file_path:
+            pass
+        else:
+            self.on_save_as_clicked()  # Fallback
+            return
         validation_result, description = self.validate_temporary_recipe_contents()
         if not validation_result:
             if not self.ask_save_invalid_file():
@@ -348,7 +459,6 @@ class RecipeEditorMainMenu(QMainWindow):
             # Construct new filename with suffix
             base, ext = os.path.splitext(self.current_file_path)
             new_path = f"{base}{ext}"
-            print(new_path)
             with open(new_path, 'w') as f:
                 yaml.dump_all(data, f, sort_keys=False)
 
@@ -360,23 +470,48 @@ class RecipeEditorMainMenu(QMainWindow):
             self.log(f"❌ Failed to save: {e}")
 
     def on_add_clicked(self):
-        self.log("️️ℹ️ Add clicked (not implemented yet)")
+        generator_pop_up = RecipeCreatorApp()
+        result = generator_pop_up.open_creator_dialog(self.dark_mode)
+        if result == None:
+            self.stacked_layout.setCurrentIndex(0)
+            self.action_save.setEnabled(False)
+            self.action_save_as.setEnabled(False)
+            self.save_action.setEnabled(False)
+            self.save_as_action.setEnabled(False)
+            self.current_file_path = None
+            return
+
+        self.action_restore_recipe.setEnabled(True)
+        yaml_string = generator_pop_up.get_generated_recipe()
+        self.temporary_recipe_contents = yaml_string
+        self.update_yaml_viewer()
+
+        # Mark as unsaved
+        self.current_file_path = None
+        self.stacked_layout.setCurrentIndex(1)
+
+        self.collapse_inside_steps()
+
+        self.action_save.setEnabled(False)
+        self.action_save_as.setEnabled(True)
+        self.save_action.setEnabled(False)
+        self.save_as_action.setEnabled(True)
 
     def on_open_wiki_clicked(self):
         url = "https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/master/"
         webbrowser.open(url)
 
     def on_dev_1_clicked(self):
-        self.show_recipe_ok()
+        self.log("clicked Dev1 tool")
 
     def on_dev_2_clicked(self):
-        self.show_recipe_error("YAML parse failed: expected ':' at line 4")
+        self.log("clicked Dev2 tool")
 
     def on_dev_3_clicked(self):
-        self.show_recipe_info("No recipe loaded yet.")
+        self.log("clicked Dev3 tool")
 
     def on_dev_4_clicked(self):
-        pass
+        self.log("clicked Dev4 tool")
 
     def on_open_gitlab_clicked(self):
         url = "https://gitlab.cern.ch/pts/framework/pypts"
@@ -386,7 +521,15 @@ class RecipeEditorMainMenu(QMainWindow):
         self.tree.clear()
         self.stacked_layout.setCurrentIndex(0)  # Show logo
         self.close_recipe.setEnabled(False)  # 🔒 Disable it - gray out
+
+        self.action_save.setEnabled(False)
+        self.action_save_as.setEnabled(False)
+        self.save_as_action.setEnabled(False)
+        self.save_action.setEnabled(False)
+
+        self.current_file_path = None
         self.log("️ℹ️ Recipe view cleared.")
+        self.reset_recovery_history()
 
     def on_create_recipe_clicked(self):
         self.log("️ℹ️ Todo: 0.2")
@@ -437,7 +580,8 @@ class RecipeEditorMainMenu(QMainWindow):
                     self.show_recipe_error("Recipe in Text Edit View is invalid!")
                     self.log(description)
                 self.log("✏️️ Recipe in YAML editor updated")
-                self.setWindowTitle(f"Recipe Editor - {os.path.basename(self.current_file_path)} *unsaved changes*")
+
+                self.setWindowTitle(f"{self.title} - {os.path.basename(self.current_file_path)} *unsaved changes*")
             except Exception as e:
                 self.log(f"❌ YAML edit failure!: {e}")
         pass
@@ -468,6 +612,7 @@ class RecipeEditorMainMenu(QMainWindow):
         validation_result = self.validate_temporary_recipe_contents()
         if validation_result == True:
             self.last_valid_recipe = self.temporary_recipe_contents
+            self.action_restore_recipe.setEnabled(True)
         return validation_result
 
     def validate_temporary_recipe_contents(self):
@@ -479,7 +624,16 @@ class RecipeEditorMainMenu(QMainWindow):
     def open_recipe(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
         self.load_yaml_recipe(file_path)
+        self.save_as_action.setEnabled(True)
+        self.save_action.setEnabled(True)
+        self.action_save.setEnabled(True)
+        self.action_save_as.setEnabled(True)
+        self.collapse_inside_steps()
         self.setWindowTitle(f"Recipe Editor - {os.path.basename(file_path)}")
+
+    def reset_recovery_history(self):
+        self.last_valid_recipe = ""
+        self.action_restore_recipe.setEnabled(False)
 
     def load_yaml_recipe(self, file_path):
         if file_path:
@@ -489,7 +643,7 @@ class RecipeEditorMainMenu(QMainWindow):
                     self.temporary_recipe_contents = raw_text
                     self.current_file_path = file_path
 
-                self.yaml_parser = YAML()
+
                 self.yaml_parser.preserve_quotes = True
 
                 self.enable_recipe_verification = False
@@ -517,6 +671,7 @@ class RecipeEditorMainMenu(QMainWindow):
             except YAMLError as e:
                 self.tree.blockSignals(False)  # Safety catch
                 self.log(f"❌ YAML parse error: {e}")
+            self.collapse_inside_steps()
             QApplication.processEvents()
 
     def populate_tree(self, data, parent_item, path=()):
@@ -683,7 +838,6 @@ class RecipeEditorMainMenu(QMainWindow):
         else:
             return False
 
-
     def strip_star_prefix(self, data):
         if isinstance(data, str):
             if data.startswith("* "):
@@ -732,35 +886,46 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 0.2 - allow full control over the YAML editor
 # done 0.2 - bugfixing, unittests
 
-# todo 1.0 - Create new recipe, ask for its name
+# todo 1.0 - Create new recipe
 # done 1.0 - fix the small gui imperfections
 # done 1.0 - Some gui and UX improvements
-# todo 1.0 - create a new helper file yaml_description.py, where we can have yaml field type descriptions etc
-# todo 1.0 - Recipe generator
-# todo 1.0 - Populate generator with headers
-# todo 1.0 - Ask how many sequences to make
-# todo 1.0 - Step generator
-# todo 1.0 - increase 1st column size
-# todo 1.0 - easy way to set the YamView application
+# done 1.0 - Create new recipe from the template
+# done 1.0 - create a new helper file recipe_rules.py, where we can have yaml field type descriptions etc
+# done 1.0 - Recipe interactive generator - one sequence, multiple steps
+# done 1.0 - increase 1st column size
+# done 1.0 - easy way to set the YamView application
 # done 1.0 - change the required field to be a star or warning emoji, instead of red colour
+# done 1.0 - check if it possible to fold only selected branches
+# todo 1.0 - bugfix - do not close previous recipe on cancelling the add_new
+# todo 1.0 - bugfix - point automatically to the tree view on the yaml edit click
+# todo 1.0 - bugfix - fix the exceptions so they are parsed instead of shown
+# todo 1.0 - bugfix - exception on YAML edit failure
+# todo 1.0 - bugfix - if recipe is not saved (just generated, we cannot close it
+# todo 1.0 - bugfix - if there is opened template recipe, trying to open and close, the title is wrong (try to reproduce first)
+# todo 1.0 - bugfix - title not updated on close recipe click
+# todo 1.0 - implement undo on the treeview, or show popup showing
 # todo 1.0 - 1.1 unit tests
+
+
 
 # todo 1.1 - UX REFINEMENT
 # todo 1.1 - Add possibility to open recent files
 # todo 1.1 - Handle possibility that the recent file is not present anymore
 # todo 1.1 - Add parsing of the recipe_version field and inform if the recipe is up to correct version
+# todo 1.1 - Add recipe config file, where we can track the version (and maybe something more later)
 # todo 1.1 - Bugfix - sometimes after opening new recipe for editing, the GUI is not refreshing (it does after clicking on the window)
-# todo 1.1 - 1.2 unit tests
+# todo 1.1 - 1.1 unit tests
 
 # todo 1.2 - FULL SUPPORT
 # todo 1.2 - creator - number of sequences, steps etc
 # todo 1.2 - all fields programatically described in the yaml_description.py helper file
 # todo 1.2 - clean up documentation
 # todo 1.2 - add drop down lists on the treeview
+# todo 1.2 - refined way of generating the recipe - the tree yaml view is not too intuitive
 
-# todo 2.0 - AI based yaml generation based on prompt (answers to fixed questions)
+# todo 2.0 - AI based yaml generation based on prompt (answers to fixed questions - how many sequences, how many steps etc)
 
-# todo 3.0 - check possibility to generate the recipe from test plan using AI
+# todo 3.0 - check possibility to generate the recipe from the test plan
 
 # todo Nice features to show in 0.2:
 # shortcuts,
@@ -771,6 +936,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # save as
 # undo on the YAML editview
 # unsaved changes
+# generate from template
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
@@ -778,7 +944,7 @@ if __name__ == "__main__":
 
     window.show()
     # automation - adding the automatic recipe opening - uncomment to speed up testing
-    file_path = "/home/pts/dev/pypts/src/pypts/recipes/simple_recipe.yml"
-    window.load_yaml_recipe(file_path)
+    # file_path = "../pypts/recipes/simple_recipe.yml"
+    # window.load_yaml_recipe(file_path)
     sys.exit(app.exec())
 

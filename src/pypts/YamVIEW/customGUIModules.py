@@ -1,47 +1,16 @@
-import sys
-import io
 from PySide6.QtWidgets import (
-    QApplication,
     QPlainTextEdit,
-    QMainWindow,
     QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QStackedLayout,
-    QTreeWidget,
-    QTreeWidgetItem,
-    QMessageBox,
     QTextEdit,
-    QLabel,
-    QWidgetAction,
-    QFileDialog,
-    QToolBar,
-    QStyle,
-    QSizePolicy,
 )
 from PySide6.QtGui import (
-    QAction,
-    QColor,
     QTextFormat,
-    QFont,
-    QTextCharFormat,
-    QTextCursor,
     QPixmap,
     QPainter,
 )
-from PySide6.QtCore import QSize, Qt, QRect, QMargins, QEvent
-from PyQt6.Qsci import QsciScintilla, QsciLexerYAML
-from ruamel.yaml import YAML
-from ruamel.yaml.error import YAMLError
-from datetime import datetime
-import webbrowser
-from pypts.styles import *
-from pypts.verify_recipe import *
-
+from PySide6.QtCore import QSize, QRect
 from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 from PySide6.QtCore import Qt, QRegularExpression
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
-from PySide6.QtGui import QKeySequence, QUndoStack, QUndoCommand, QShortcut
 
 class YamlHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
@@ -104,6 +73,7 @@ class LineNumberArea(QWidget):
 class ScintillaYamlEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.dark_mode = False
         font = QFont("Courier New", 10)
         self.setFont(font)
         self.highlighter = YamlHighlighter(self.document())
@@ -116,6 +86,11 @@ class ScintillaYamlEditor(QPlainTextEdit):
         self.cursorPositionChanged.connect(self.update_current_line_highlight)
 
         self.update_line_number_area_width(0)
+
+    def set_dark_mode(self, enabled: bool):
+        self.dark_mode = enabled
+        self.line_number_area.update()
+        self.update_current_line_highlight()
 
     def line_number_area_width(self):
         digits = len(str(self.blockCount()))
@@ -140,7 +115,8 @@ class ScintillaYamlEditor(QPlainTextEdit):
 
     def line_number_area_paint_event(self, event):
         painter = QPainter(self.line_number_area)
-        painter.fillRect(event.rect(), QColor("#f0f0f0"))
+        background_color = QColor("#2b2b2b") if self.dark_mode else QColor("#f0f0f0")
+        painter.fillRect(event.rect(), background_color)
 
         block = self.firstVisibleBlock()
         blockNumber = block.blockNumber()
@@ -163,7 +139,7 @@ class ScintillaYamlEditor(QPlainTextEdit):
 
         if self.highlight_current_line:
             selection = QTextEdit.ExtraSelection()
-            lineColor = QColor("#e6f7ff")
+            lineColor = QColor("#000000") if self.dark_mode else QColor("#e6f7ff")
             selection.format.setBackground(lineColor)
             selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             selection.cursor = self.textCursor()

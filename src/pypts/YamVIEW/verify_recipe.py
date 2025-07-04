@@ -1,7 +1,7 @@
 from pathlib import Path
 import os
 import yaml
-from pypts.rules import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS
+from pypts.YamVIEW.recipe_rules import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS
 
 class RecipeValidationError(Exception):
     def __init__(self, faults, warnings):

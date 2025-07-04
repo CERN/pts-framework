@@ -1,0 +1,49 @@
+name: Template Test Recipe
+version: 0.0.1
+recipe_version: 1.0.0
+description: A Template Recipe
+main_sequence: Template Sequence
+globals: {}
+---
+sequence_name: Template Sequence
+description: Template Sequence Description
+parameters: {}
+locals: {}
+outputs: {}
+setup_steps: []
+steps:
+- steptype: UserInteractionStep
+  step_name: Step 1
+  description: Step 1 description
+  skip: 'False'
+  input_mapping:
+    message:
+      type: direct
+      value: Put your message here
+    options:
+      type: direct
+      value:
+      - 'yes': ''
+      - 'no': ''
+  output_mapping:
+    output:
+      type: equals
+      value: 'yes'
+- steptype: UserInteractionStep
+  step_name: Step 2
+  description: Step 2 description
+  skip: 'False'
+  input_mapping:
+    message:
+      type: direct
+      value: Put your message here
+    options:
+      type: direct
+      value:
+      - 'yes': ''
+      - 'no': ''
+  output_mapping:
+    output:
+      type: equals
+      value: 'yes'
+teardown_steps: []

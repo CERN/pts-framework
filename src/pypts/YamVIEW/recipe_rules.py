@@ -1,4 +1,4 @@
-# rules.py
+# recipe_rules.py
 
 # Define required fields and expected types for top-level recipe sections
 RECIPE_HEADER_REQUIRED_FIELDS = {
