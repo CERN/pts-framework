@@ -1,3 +1,8 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+
 #todo 1.1 - do not expect anything from the called test function
 #todo 1.1 x Implement popup step type for input and/or output
 #todo 1.1 x implement execution GUI with callbacks
