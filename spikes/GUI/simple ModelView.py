@@ -4,11 +4,11 @@
 
 # https://doc.qt.io/qt-6/modelview.html
 
-from PyQt6.QtWidgets import QApplication, QTableView
-from PyQt6.QtCore import QAbstractTableModel, Qt, QTime
+from PySide6.QtWidgets import QApplication, QTableView
+from PySide6.QtCore import QAbstractTableModel, Qt, QTime
 import sys
-from PyQt6.QtGui import QFont, QColor
-from PyQt6.QtCore import QTimer
+from PySide6.QtGui import QFont, QColor
+from PySide6.QtCore import QTimer
 
 
 class MyModel(QAbstractTableModel):
