@@ -1,10 +1,10 @@
 from pypts.YamVIEW.customGUIModules import (
     ScintillaYamlEditor,
     WatermarkWidget,
-    HashableTreeItem
+    HashableTreeItem,
+    RecipeCreatorApp
 )
 
-from interactive_recipe_creator import RecipeCreatorApp
 import io
 from PySide6.QtWidgets import (
     QApplication,
@@ -51,6 +51,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.last_valid_recipe = ""
         self.current_file_path = ""
         self.item_to_line = {}
+        self.line_to_item = {}
         self.yaml_parser = YAML()
         self.data = None
         self.enable_recipe_verification = True
@@ -193,6 +194,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.yaml_viewer = ScintillaYamlEditor(self)
         self.yaml_viewer.setReadOnly(False)
         self.yaml_viewer.textChanged.connect(self.on_yamlview_item_changed)
+        self.yaml_viewer.cursorPositionChanged.connect(self.on_yaml_cursor_changed)
         font = QFont("Fira Code", 11)
         font.setStyleHint(QFont.StyleHint.Monospace)
         font.setFixedPitch(True)
@@ -258,14 +260,10 @@ class RecipeEditorMainMenu(QMainWindow):
         if is_required:
             # Append star
             original_text = tree_item.text(0)
-
-            # tree_item.setForeground(0, QColor(210, 40, 0))  # orange star
-            # mmark required field (only temporary, not to be saved to YAML)
             tree_item.setText(0, "* " + original_text)
 
         else:
             pass
-
 
     def toggle_dark_mode(self, enabled):
         if enabled:
@@ -308,18 +306,40 @@ class RecipeEditorMainMenu(QMainWindow):
         self.yaml_viewer.setText(self.temporary_recipe_contents)
 
     def update_yaml_treeview(self):
-        self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
-        self.tree.blockSignals(True)  # ⛔ Block signals while populating
-        self.tree.clear()
-        self.item_to_line.clear()  # Clear previous mappings
+        try:
+            try:
+                self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
+            except Exception as e:
+                self.log(f"❌ Failed to parse YAML content: {e}")
+                return False
 
-        for idx, doc in enumerate(self.yaml_documents):
-            doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
-            self.tree.addTopLevelItem(doc_root)
-            self.populate_tree(doc, doc_root)
-            doc_root.setExpanded(True)
-        self.tree.blockSignals(False)
-        return True
+            try:
+                self.tree.blockSignals(True)  # ⛔ Block signals while populating
+                self.tree.clear()
+                self.item_to_line.clear()  # Clear previous mappings
+            except Exception as e:
+                self.log(f"❌ Failed to reset TreeView state: {e}")
+                return False
+
+            for idx, doc in enumerate(self.yaml_documents):
+                try:
+                    doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
+                    self.tree.addTopLevelItem(doc_root)
+                    self.populate_tree(doc, doc_root)
+                    doc_root.setExpanded(True)
+                except Exception as e:
+                    self.log(f"❌ Failed to populate tree for document {idx + 1}: {e}")
+                    continue  # Try to load next document anyway
+
+            try:
+                self.tree.blockSignals(False)
+            except Exception as e:
+                self.log(f"❌ Failed to unblock TreeView signals: {e}")
+            return True
+
+        except Exception as e:
+            self.log(f"❌ Unexpected error during TreeView update: {e}")
+            return False
 
     def set_recipe_status(self, message: str, color: str = "#333"):
         """Sets the status message and text color in the top recipe status field."""
@@ -399,6 +419,24 @@ class RecipeEditorMainMenu(QMainWindow):
             top_item = self.tree.topLevelItem(i)
             recurse_and_collapse(top_item)
 
+    def on_yaml_cursor_changed(self):
+        try:
+            cursor = self.yaml_viewer.textCursor()
+            current_line = cursor.blockNumber()
+
+            wrapper = self.line_to_item.get(current_line)
+            item = wrapper.item if isinstance(wrapper, HashableTreeItem) else wrapper
+
+            if item:
+                self.tree.setCurrentItem(item)
+                self.tree.scrollToItem(item)
+                # self.log(f"🧭 Cursor at line {current_line}, highlighting: {item.text(0)}")
+            else:
+                # self.log(f"🧭 Cursor at line {current_line}, no matching tree item found.")
+                pass
+        except Exception as e:
+            self.log(f"❌ Error in on_yaml_cursor_changed: {e}")
+
     # Methods related to handling GUI actions
     def on_action_restore_recipe_clicked(self):
         if self.last_valid_recipe == "":
@@ -408,8 +446,18 @@ class RecipeEditorMainMenu(QMainWindow):
         self.update_yaml_viewer()
         self.collapse_inside_steps()
 
-
     def on_save_as_clicked(self):
+        try:
+            # Validate recipe
+            validation_result, description = self.validate_temporary_recipe_contents()
+            if not validation_result:
+                if not self.ask_save_invalid_file():
+                    self.log("⚠️ Save aborted.")
+                    return
+
+        except Exception as e:
+            self.log(f"❌ Recipe validation failed: {e}")
+
         # Open the file dialog for the user to choose the save location
         new_path, _ = QFileDialog.getSaveFileName(
             self,
@@ -419,68 +467,97 @@ class RecipeEditorMainMenu(QMainWindow):
         )
 
         if not new_path:
-            self.log("⚠️ Save As cancelled.")
+            self.log("⚠️ Save aborted, no YAML file selected.")
             return
 
         try:
-            data = self.extract_treeView_to_data()
-            data = self.sanitize_empty_fields(data)
+            # Extract data from the text view
+            try:
+                # data = self.extract_treeView_to_data()
+                data = self.temporary_recipe_contents
+            except Exception as e:
+                raise RuntimeError(f"Failed to extract data from the text editor: {e}")
+            try:
+                base, _ = os.path.splitext(new_path)
+                new_path_fixed = f"{base}.yml"
+                with open(new_path_fixed, 'w') as f:
+                    # yaml.dump_all(data, f, sort_keys=False)
+                    f.write(data)
+            except Exception as e:
+                raise IOError(f"Failed to save YAML file '{new_path_fixed}': {e}")
 
-            base, _ = os.path.splitext(new_path)  # use new_path here
-            new_path_fixed = f"{base}.yml"  # force .yml extension
-
-            with open(new_path_fixed, 'w') as f:
-                yaml.dump_all(data, f, sort_keys=False)
-
-            self.current_file_path = new_path  # Update the current path
+            # Update UI state and log success
+            self.current_file_path = new_path_fixed
             self.save_action.setEnabled(True)
             self.action_save.setEnabled(True)
-            self.log(f"💾 Saved to {new_path}")
-            self.setWindowTitle(f"Recipe Editor - {os.path.basename(new_path)}")
+            self.log(f"💾 Saved to {new_path_fixed}")
+            self.setWindowTitle(f"Recipe Editor - {os.path.basename(new_path_fixed)}")
+
+            try:
+                self.load_yaml_recipe(new_path_fixed)
+            except Exception as e:
+                self.log(f"⚠️ Saved but failed to reload: {e}")
         except Exception as e:
-            self.log(f"❌ Failed to save: {e}")
+            error_message = f"❌ Save failed: {e}"
+            self.log(error_message)
 
     def on_save_clicked(self):
-        if self.current_file_path:
-            pass
-        else:
+        if not self.current_file_path:
             self.on_save_as_clicked()  # Fallback
             return
-        validation_result, description = self.validate_temporary_recipe_contents()
-        if not validation_result:
-            if not self.ask_save_invalid_file():
-                self.log("⚠️ Save aborted.")
-                return
-        if not self.current_file_path:
-            self.log("⚠️ No YAML file loaded.")
-            return
-        try:
-            data = self.extract_treeView_to_data()
-            # Construct new filename with suffix
-            base, ext = os.path.splitext(self.current_file_path)
-            new_path = f"{base}{ext}"
-            with open(new_path, 'w') as f:
-                yaml.dump_all(data, f, sort_keys=False)
 
+        try:
+            # Validate recipe
+            validation_result, description = self.validate_temporary_recipe_contents()
+            if not validation_result:
+                if not self.ask_save_invalid_file():
+                    self.log("⚠️ Save aborted.")
+                    return
+
+            if not self.current_file_path:
+                self.log("⚠️ Save aborted, no YAML file selected.")
+                return
+
+            # Extract data from text view
+            try:
+                # data = self.extract_treeView_to_data()
+                data = self.temporary_recipe_contents
+            except Exception as e:
+                raise RuntimeError(f"Failed to extract data from the text view: {e}")
+
+            # Construct filename and write data
+            try:
+                base, ext = os.path.splitext(self.current_file_path)
+                new_path = f"{base}{ext}"
+                with open(new_path, 'w') as f:
+                    # yaml.dump_all(data, f, sort_keys=False)
+                    f.write(data)
+            except Exception as e:
+                raise IOError(f"Failed to save YAML file '{new_path}': {e}")
+
+            # Log success and reload
             self.log(f"💾 Saved to {new_path}")
             self.setWindowTitle(f"Recipe Editor - {os.path.basename(new_path)}")
 
-            self.load_yaml_recipe(new_path)
+            try:
+                self.load_yaml_recipe(new_path)
+            except Exception as e:
+                self.log(f"⚠️ Saved but failed to reload: {e}")
         except Exception as e:
-            self.log(f"❌ Failed to save: {e}")
+            self.log(f"❌ Save failed: {e}")
 
     def on_add_clicked(self):
         generator_pop_up = RecipeCreatorApp()
         result = generator_pop_up.open_creator_dialog(self.dark_mode)
         if result == None:
-            self.stacked_layout.setCurrentIndex(0)
-            self.action_save.setEnabled(False)
-            self.action_save_as.setEnabled(False)
-            self.save_action.setEnabled(False)
-            self.save_as_action.setEnabled(False)
-            self.current_file_path = None
             return
 
+        filename = os.path.basename(self.current_file_path)
+        if filename == "":
+            self.setWindowTitle(f"Recipe Editor - *unnamed recipe* *unsaved changes*")
+        else:
+            self.setWindowTitle(f"Recipe Editor - {filename} *unsaved changes*")
+        self.close_recipe.setEnabled(True)
         self.action_restore_recipe.setEnabled(True)
         yaml_string = generator_pop_up.get_generated_recipe()
         self.temporary_recipe_contents = yaml_string
@@ -502,16 +579,16 @@ class RecipeEditorMainMenu(QMainWindow):
         webbrowser.open(url)
 
     def on_dev_1_clicked(self):
-        self.log("clicked Dev1 tool")
+        self.log("clicked Dev1 tool (no action implemented)")
 
     def on_dev_2_clicked(self):
-        self.log("clicked Dev2 tool")
+        self.log("clicked Dev2 tool (no action implemented)")
 
     def on_dev_3_clicked(self):
-        self.log("clicked Dev3 tool")
+        self.log("clicked Dev3 tool (no action implemented)")
 
     def on_dev_4_clicked(self):
-        self.log("clicked Dev4 tool")
+        self.log("clicked Dev4 tool (no action implemented)")
 
     def on_open_gitlab_clicked(self):
         url = "https://gitlab.cern.ch/pts/framework/pypts"
@@ -521,13 +598,16 @@ class RecipeEditorMainMenu(QMainWindow):
         self.tree.clear()
         self.stacked_layout.setCurrentIndex(0)  # Show logo
         self.close_recipe.setEnabled(False)  # 🔒 Disable it - gray out
-
         self.action_save.setEnabled(False)
         self.action_save_as.setEnabled(False)
         self.save_as_action.setEnabled(False)
         self.save_action.setEnabled(False)
 
-        self.current_file_path = None
+        self.yaml_documents = []
+        self.temporary_recipe_contents = ""
+        self.last_valid_recipe = ""
+        self.current_file_path = ""
+        self.setWindowTitle(f"{self.title} recipe editor")
         self.log("️ℹ️ Recipe view cleared.")
         self.reset_recovery_history()
 
@@ -535,9 +615,6 @@ class RecipeEditorMainMenu(QMainWindow):
         self.log("️ℹ️ Todo: 0.2")
 
     def on_tree_item_clicked(self, item, column):
-        text = item.text(column)
-        print("Registered click on " + text)
-
         key = HashableTreeItem(item)
         if key in self.item_to_line:
             line = self.item_to_line[key]
@@ -565,25 +642,45 @@ class RecipeEditorMainMenu(QMainWindow):
             else:
                 self.show_recipe_error("Recipe in Tree Edit View is invalid!")
                 self.log(description)
-            self.setWindowTitle(f"Recipe Editor - {os.path.basename(self.current_file_path)} *unsaved changes*")
+            try:
+                filename = ""
+                filename = os.path.basename(self.current_file_path)
+            except Exception as e:
+                pass
+            if filename == "":
+                self.setWindowTitle(f"Recipe Editor - *unnamed recipe* *unsaved changes*")
+            else:
+                self.setWindowTitle(f"Recipe Editor - {filename} *unsaved changes*")
         pass
 
     def on_yamlview_item_changed(self):
+
         if self.enable_recipe_verification == True:
             try:
                 self.temporary_recipe_contents = self.yaml_viewer.toPlainText()
                 validation_result, description = self.validate_temporary_recipe_contents()
+            except Exception as e:
+                self.log(f"❌ Unable to parse YAML contents")
+                return
+            try:
                 if (validation_result == True):
                     self.update_yaml_treeview()
                     self.show_recipe_ok()
+                    self.log("✏️️ Recipe in YAML editor updated")
                 else:
                     self.show_recipe_error("Recipe in Text Edit View is invalid!")
-                    self.log(description)
-                self.log("✏️️ Recipe in YAML editor updated")
+                    self.log(f"❌ YAML edit failure, the YAML format got corrupted!")
 
-                self.setWindowTitle(f"{self.title} - {os.path.basename(self.current_file_path)} *unsaved changes*")
             except Exception as e:
-                self.log(f"❌ YAML edit failure!: {e}")
+                self.log(f"❌ Could not update the view. {e}")
+            try:
+                filename = os.path.basename(self.current_file_path)
+                if filename == "":
+                    self.setWindowTitle(f"Recipe Editor - *unnamed recipe* *unsaved changes*")
+                else:
+                    self.setWindowTitle(f"Recipe Editor - {filename} *unsaved changes*")
+            except Exception as e:
+                pass
         pass
 
     def keyPressEvent(self, event):
@@ -604,7 +701,7 @@ class RecipeEditorMainMenu(QMainWindow):
                 return False
         except Exception as e:
             self.tree.blockSignals(False)  # Safety catch
-            self.log(f"❌ Unhandled expception while validating the recipe: {e}")
+            self.log(f"❌ Expception while validating the recipe, recipe might be corrupted.")
             return False
 
     def validate_yaml_documents(self):
@@ -629,7 +726,12 @@ class RecipeEditorMainMenu(QMainWindow):
         self.action_save.setEnabled(True)
         self.action_save_as.setEnabled(True)
         self.collapse_inside_steps()
-        self.setWindowTitle(f"Recipe Editor - {os.path.basename(file_path)}")
+
+        filename = os.path.basename(file_path)
+        if filename == "":
+            return
+        else:
+            self.setWindowTitle(f"Recipe Editor - {filename}")
 
     def reset_recovery_history(self):
         self.last_valid_recipe = ""
@@ -662,7 +764,7 @@ class RecipeEditorMainMenu(QMainWindow):
                         self.show_recipe_error("Opened recipe is invalid!")
                         self.log(description)
                 except Exception as e:
-                    self.log(f"❌ YAML verification failure!: {e}")
+                    self.log(f"❌ YAML verification failed, {e}")
 
 
                 self.stacked_layout.setCurrentIndex(1)
@@ -716,8 +818,9 @@ class RecipeEditorMainMenu(QMainWindow):
                     except Exception:
                         pass
                 if line_number is not None:
-                    self.item_to_line[HashableTreeItem(child_item)] = line_number
-
+                    item = HashableTreeItem(child_item)
+                    self.item_to_line[item] = line_number
+                    self.line_to_item[line_number] = item  # Add this line
                 # Mark required field
                 is_required = key in context_required_fields
                 self.mark_required_field(child_item, is_required)
@@ -819,8 +922,10 @@ class RecipeEditorMainMenu(QMainWindow):
     def ask_save_invalid_file(self):
         msg = QMessageBox(self)
         msg.setIcon(QMessageBox.Warning)
-        msg.setWindowTitle("Invalid File")
-        msg.setText("The recipe content is invalid.\nDo you want to save it anyway?\n The content in Tree View would be saved.")
+        msg.setWindowTitle("Save Corrupted Recipe")
+        msg.setText("The recipe content is invalid.\n"
+                    "Do you want to save it anyway?\n "
+                    "The contents of the Text View (right) would be saved.")
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg.setDefaultButton(QMessageBox.No)
 
@@ -850,10 +955,6 @@ class RecipeEditorMainMenu(QMainWindow):
         else:
             # Other types (int, float, bool, None, etc) returned as is
             return data
-
-#TODO - BugFIX
-#Globals are being written as a string, not as a list (if empty)
-#
 
 # done 0.1 - VIEWER
 # done 0.1 - Show some indicator that the changes are unsaved
@@ -886,7 +987,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 0.2 - allow full control over the YAML editor
 # done 0.2 - bugfixing, unittests
 
-# todo 1.0 - Create new recipe
+# done 1.0 - Create new recipe
 # done 1.0 - fix the small gui imperfections
 # done 1.0 - Some gui and UX improvements
 # done 1.0 - Create new recipe from the template
@@ -896,17 +997,17 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 1.0 - easy way to set the YamView application
 # done 1.0 - change the required field to be a star or warning emoji, instead of red colour
 # done 1.0 - check if it possible to fold only selected branches
-# todo 1.0 - bugfix - do not close previous recipe on cancelling the add_new
-# todo 1.0 - bugfix - point automatically to the tree view on the yaml edit click
-# todo 1.0 - bugfix - fix the exceptions so they are parsed instead of shown
-# todo 1.0 - bugfix - exception on YAML edit failure
-# todo 1.0 - bugfix - if recipe is not saved (just generated, we cannot close it
-# todo 1.0 - bugfix - if there is opened template recipe, trying to open and close, the title is wrong (try to reproduce first)
-# todo 1.0 - bugfix - title not updated on close recipe click
-# todo 1.0 - implement undo on the treeview, or show popup showing
-# todo 1.0 - 1.1 unit tests
-
-
+# done 1.0 - bugfix - do not close previous recipe on cancelling the add_new
+# done 1.0 - point automatically to the tree view on the yaml editor click
+# done 1.0 - bugfix - fix the exceptions so they are parsed instead of shown
+# done 1.0 - bugfix - exception on YAML edit failure
+# done 1.0 - bugfix - if recipe is not saved, (just generated) we cannot close it
+# done 1.0 - bugfix - if there is opened template recipe, trying to open and close, the title is wrong (try to reproduce first)
+# done 1.0 - bugfix - title not updated on close recipe click
+# done 1.0 - bugfix - invalid cleaning application state on close recipe click
+# done 1.0 - bugfix - ask for saving invalid recipe in save as, the same way as save
+# done 1.0 - bugfix - ensure, that the textview is saved
+# done 1.0 - 1.0 unit tests
 
 # todo 1.1 - UX REFINEMENT
 # todo 1.1 - Add possibility to open recent files
@@ -927,24 +1028,20 @@ class RecipeEditorMainMenu(QMainWindow):
 
 # todo 3.0 - check possibility to generate the recipe from the test plan
 
-# todo Nice features to show in 0.2:
-# shortcuts,
-# parser - if i put some undefined globals, it will define it for me
-# auto recovery
-# auto cross-verification
-# check on save
-# save as
-# undo on the YAML editview
-# unsaved changes
-# generate from template
+# Nice features to show in 1.0:
+# Shortcuts - redo, undo,
+# YAML parser - if I put some undefined globals, it will define it for me
+# Automatic recipe recovery
+# Automatic cross-verification
+# Verification on save, save as
+# Unsaved changes
+# Generate from the template
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = RecipeEditorMainMenu()
 
     window.show()
-    # automation - adding the automatic recipe opening - uncomment to speed up testing
-    # file_path = "../pypts/recipes/simple_recipe.yml"
-    # window.load_yaml_recipe(file_path)
     sys.exit(app.exec())
 

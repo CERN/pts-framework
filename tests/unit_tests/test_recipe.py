@@ -240,7 +240,7 @@ def test_serialize_enum():
 
 # 3. Test serialization of an object without attributes (e.g., integers, floats, strings)
 def test_serialize_basic_types():
-    assert pypts.recipe.serialize(123) == "123"
+    assert pypts.recipe.serialize(1234) == "1234"
     assert pypts.recipe.serialize(45.67) == "45.67"
     assert pypts.recipe.serialize("hello") == "hello"
 
