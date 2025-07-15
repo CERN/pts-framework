@@ -332,8 +332,8 @@ class RecipeCreatorApp(QWidget):
         for i in range(data['num_steps']):
             step = {
                 'steptype': 'UserInteractionStep',
-                'step_name': f'Step {i+1}',
-                'description': f'Step {i+1} description',
+                'step_name': f'Step {i + 1}',
+                'description': f'Step {i + 1} description',
                 'skip': 'False',
                 'input_mapping': {
                     'message': {'type': 'direct', 'value': 'Tell the cook what to do'},
@@ -345,8 +345,18 @@ class RecipeCreatorApp(QWidget):
             }
             sequence['steps'].append(step)
 
-        # Generate the YAML string with two documents
-        yaml_string = yaml.dump_all([header, sequence], sort_keys=False)
+        # SPDX header string
+        spdx_header = (
+            "# SPDX-FileCopyrightText: 2025 CERN <home.cern>\n"
+            "#\n"
+            "# SPDX-License-Identifier: LGPL-2.1-or-later\n"
+        )
+
+        # Generate YAML
+        yaml_body = yaml.dump_all([header, sequence], sort_keys=False)
+
+        # Combine SPDX header and YAML body
+        yaml_string = spdx_header + yaml_body
         return yaml_string
 
 if __name__ == '__main__':
