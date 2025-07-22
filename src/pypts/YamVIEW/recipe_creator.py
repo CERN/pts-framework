@@ -172,7 +172,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.toolbar.addAction(spacer_action)
 
         icon_label = QLabel()
-        icon_label.setPixmap(QPixmap("../../images/YamVIEW_cookie.png"))
+        icon_label.setPixmap(QPixmap("../images/YamVIEW_cookie.png"))
         icon_action = QWidgetAction(self)
         icon_action.setDefaultWidget(icon_label)
         self.toolbar.addAction(icon_action)
@@ -242,7 +242,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.tree_and_yaml_layout.addWidget(self.tree_status_container)
 
         # Watermark widget (your logo)
-        self.watermark_widget = WatermarkWidget("../../images/logo.png")  # Replace with your logo
+        self.watermark_widget = WatermarkWidget("../images/CERN_Logo.png")  # Replace with your logo
 
         # Stacked layout to switch between watermark and main editor
         self.stacked_layout = QStackedLayout()
@@ -861,6 +861,7 @@ class RecipeEditorMainMenu(QMainWindow):
         # Expand all items after population
         self.tree.expandAll()
 
+
     def extract_treeView_to_data(self):
         documents = []
         for i in range(self.tree.topLevelItemCount()):
@@ -869,7 +870,10 @@ class RecipeEditorMainMenu(QMainWindow):
 
             doc_item = self.strip_star_prefix(doc_item)
             data = self.strip_star_prefix(data)
+
+            # Sanitize empty strings to empty dicts for specific keys
             data = self.sanitize_empty_fields(data)
+
             documents.append(data)
 
         buffer = io.StringIO()
@@ -917,6 +921,23 @@ class RecipeEditorMainMenu(QMainWindow):
             # Manually trigger the handler after deletion
             self.on_treeview_item_changed(item, 0)
 
+    def sanitize_empty_fields(self, data):
+        """
+        Recursively walk the data, and convert empty strings to empty dicts
+        for specific keys like 'input_mapping' and 'output_mapping'.
+        """
+        if isinstance(data, dict):
+            new_data = {}
+            for k, v in data.items():
+                if isinstance(v, str) and v == "" and k in ("input_mapping", "output_mapping"):
+                    new_data[k] = {}
+                else:
+                    new_data[k] = self.sanitize_empty_fields(v)
+            return new_data
+        elif isinstance(data, list):
+            return [self.sanitize_empty_fields(item) for item in data]
+        else:
+            return data
 # Misc
     def log(self, message: str):
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -1012,6 +1033,12 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 1.0 - bugfix - ensure, that the textview is saved
 # done 1.0 - 1.0 unit tests
 
+# todo 1.1 - if i delete whole recipe - its valid - well shout not be
+# todo 1.1 - database of valid recipes
+# todo 1.1 - include more information about what is missing in the structure
+# todo 1.1 - bug [17/07/2025 12:00:41] ❌ Error in on_yaml_cursor_changed: Internal C++ object (PySide6.QtWidgets.QTreeWidgetItem) already deleted.
+# todo 1.1 - generate the steps, but also have a way to recreate from template, based on instrument used or test type
+# todo 1.1 - test with whitespaces, cross platform compatibility
 # todo 1.1 - UX REFINEMENT
 # todo 1.1 - Add possibility to open recent files
 # todo 1.1 - Handle possibility that the recent file is not present anymore
@@ -1019,6 +1046,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # todo 1.1 - Add recipe config file, where we can track the version (and maybe something more later)
 # todo 1.1 - Bugfix - sometimes after opening new recipe for editing, the GUI is not refreshing (it does after clicking on the window)
 # todo 1.1 - 1.1 unit tests
+# todo 1.1 - autocomplete or helper to write down the tests
 
 # todo 1.2 - FULL SUPPORT
 # todo 1.2 - creator - number of sequences, steps etc
