@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
+
+from pypts.YamVIEW.verify_recipe import validate_recipe_filepath
 import copy
 import yaml
 import logging
@@ -16,6 +18,7 @@ import time
 from enum import Enum
 import json
 import uuid
+import os
 # from pts import Runtime
 
 logger = logging.getLogger(__name__)
@@ -259,16 +262,24 @@ class Recipe:
             for field in required_fields:
                 if field not in recipe_main_data:
                     raise KeyError(f"Missing required field '{field}' in recipe main data")
+
+            #add verification here
+
+
+
             
             # The rest of the documents are all sequences
             sequence_count = 0
             for sequence in recipe_data:
                 sequence_count += 1
+
                 logger.debug(f"Processing sequence {sequence_count}: {sequence.get('sequence_name', 'UNNAMED')}")
+
                 if "sequence_name" not in sequence:
                     logger.error(f"Sequence {sequence_count} missing 'sequence_name' field")
                     continue
                 try:
+                    # todo this is failing
                     self.sequences[sequence["sequence_name"]] = Sequence(sequence_data=sequence)
                 except Exception as e:
                     logger.error(f"Failed to create sequence '{sequence.get('sequence_name', 'UNNAMED')}': {e}")
@@ -401,7 +412,7 @@ class Sequence():
         self.outputs = sequence_data["outputs"]
         self.steps = []
         self.teardown_steps = []
-        
+
         # build all contained steps here
         for step_data in sequence_data["setup_steps"]:
             self.steps.append(Step.build_step(step_data))
@@ -452,6 +463,11 @@ class Step:
         return f"Step: {self.__class__.__name__}: {self.name}"
     
     def check_indexing(self):
+        print("DEBUG input_mapping:", self.input_mapping)
+        print("TYPE:", type(self.input_mapping))
+
+
+
         for input_config in self.input_mapping.values():
             if "indexed" in input_config and input_config["indexed"]:
                 return True
@@ -609,6 +625,8 @@ class Step:
 
         # creates the step according to the subclass type and passes all parameters   
         new_step: Step = eval(step_type + "(**step_data)")
+        print(new_step)
+
 
         # Check if indexing is to be used, and if so, create IndexingStep to encapsulate the original step
         if new_step.check_indexing():
@@ -633,9 +651,14 @@ if __name__ == "__main__":
     log_format = '%(levelname)s : %(name)s : %(message)s'
     logging.basicConfig(level=logging.INFO, format=log_format)
 
-    # recipe = Recipe("recipe1.yaml")
-    # recipe.sequences["Main"].list_steps()
-    # recipe.run()
+    yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
+    yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
+    validate_recipe_filepath(yaml_path)
+    # give time to print to stdout
+    time.sleep(0.1)
+    recipe = Recipe(yaml_path)
+    recipe.sequences["Main"].list_steps()
+    recipe.run()
     # recipe.sequences["Main"].run()
     # print(recipe.sequences["Subsequence"])
     # step = WaitStep(id="1", step_name="Wait Step", input_mapping={"wait_time": {"type": "direct", "value": 5}}, output_mapping={})

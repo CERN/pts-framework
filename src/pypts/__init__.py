@@ -2,8 +2,17 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-from ._version import version as __version__
+# This file defines the package interface and provides reusable API entry points.
+#
+# In particular, `run_recipe_app()` can be imported and called to launch the GUI
+# with a specified recipe path and sequence. This enables programmatic control
+# for test frameworks, embedded use, or alternative frontends.
+#
+# For a standalone execution of the full GUI app (e.g., from the command line),
+# use `__main__.py` which runs the same stack with a hardcoded recipe.
 
+
+from pypts._version import version as __version__
 import logging
 import sys
 import os
@@ -47,7 +56,6 @@ def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
     global _recipe_thread
     
     app = QApplication(sys.argv) # Only one instance of QApplication is allowed
-    
     window = MainWindow()
 
     logging.getLogger().addHandler(window.log_handler)
@@ -84,7 +92,6 @@ def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
     app.aboutToQuit.connect(_cleanup_thread)
 
     time.sleep(1) # Prevents a race condition. To be properly fixed!!
-
     # If we don't put the sleep, recipe_event_processing_thread.start() may not 
     # be finished before the app.exec() call.
 

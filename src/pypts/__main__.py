@@ -2,19 +2,32 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
+# This file defines the script entry point for the PTS application.
+#
+# It allows the GUI to be launched directly by running:
+#     python -m pypts
+#
+# It sets up the full application stack: GUI, threading, event proxy, and recipe execution.
+# Intended for end users or developers running the app manually with a fixed recipe path.
+#
+# For programmatic use (e.g., testing or embedding), use `run_recipe_app()` in `__init__.py` instead.
+
+from pypts._version import version as __version__
 import logging
 import sys
+import os
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QObject, Signal, QThread
+from pypts.pts import run_pts
+from pypts.gui import MainWindow, TextEditLoggerHandler # Import necessary GUI classes
+from pypts.event_proxy import RecipeEventProxy # Import the proxy class
 from queue import SimpleQueue
 from contextlib import suppress
-from pypts.pts import run_pts
 from pypts import recipe
 import os
-from pypts.gui import MainWindow, TextEditLoggerHandler # Import necessary GUI classes
 import uuid # Import uuid
-from pypts.event_proxy import RecipeEventProxy # Import the proxy class
 import atexit
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +58,6 @@ if __name__ == '__main__':
     and connects signals/slots between the proxy and the window.
     Starts the recipe execution and event processing threads.
     """
-    
     app = QApplication(sys.argv)
     window = MainWindow()
 
@@ -53,6 +65,7 @@ if __name__ == '__main__':
 
     yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
     yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
+
     api = run_pts(yaml_path, sequence_name="Main")
     window.q_in = api.input_queue
     recipe_event_processing_thread = QThread()
@@ -73,8 +86,6 @@ if __name__ == '__main__':
     recipe_event_proxy.pre_run_step_signal.connect(window.update_running_step)
     recipe_event_proxy.user_interact_signal.connect(window.show_message)
     recipe_event_proxy.get_serial_number_signal.connect(window.get_serial_number)
-
-    # Connect new signals
     recipe_event_proxy.post_load_recipe_signal.connect(window.handle_post_load_recipe)
     recipe_event_proxy.post_run_sequence_signal.connect(window.handle_post_run_sequence)
 
@@ -85,6 +96,10 @@ if __name__ == '__main__':
     
     # Connect app aboutToQuit signal to cleanup
     app.aboutToQuit.connect(_cleanup_thread)
+
+    time.sleep(1)  # Prevents a race condition. To be properly fixed!!
+    # If we don't put the sleep, recipe_event_processing_thread.start() may not
+    # be finished before the app.exec() call.
 
     exit_code = app.exec()
     

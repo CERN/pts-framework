@@ -409,4 +409,14 @@ class StepResultModel(QAbstractItemModel):
             case Qt.ItemDataRole.DisplayRole:
                 return columns[index.column()]
             case _:
-                return None 
+                return None
+
+if __name__ == "__main__":
+    import sys
+
+    logging.basicConfig(level=logging.DEBUG)  # Optional: Configure logging level
+
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec())
