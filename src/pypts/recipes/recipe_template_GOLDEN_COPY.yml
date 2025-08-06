@@ -18,7 +18,7 @@ steps:
 - steptype: UserInteractionStep
   step_name: Template Step Name
   description: Template Step Description
-  skip: 'False'
+  skip: false
   input_mapping:
     message:
       type: direct

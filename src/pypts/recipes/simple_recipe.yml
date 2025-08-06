@@ -24,7 +24,7 @@ steps:
 - steptype: UserInteractionStep
   step_name: Are you all right?
   description: Asking user for something
-  skip: 'False'
+  skip: false
   input_mapping:
     message:
       type: direct
@@ -106,7 +106,7 @@ steps:
 - steptype: WaitStep
   step_name: Wait for 3s
   description: Waiting 3 seconds to let user check the LEDs
-  skip: 'False'
+  skip: true
   input_mapping:
     wait_time:
       value: '3'
