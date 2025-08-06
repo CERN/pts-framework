@@ -21,32 +21,27 @@ def _cleanup_thread():
             logger.warning("Thread did not stop gracefully, terminating...")
             _recipe_thread.terminate()
 
-def create_and_start_gui(recipe_path: str, sequence_name: str = "Main"):
-    """Creates and starts the GUI with threading and signal connections.
-
-    Returns:
-        window (MainWindow): The main GUI window.
-        app (QApplication): The Qt application instance.
+def create_and_start_gui(api):
     """
-    global _recipe_thread
-
+    todo
+    """
     app = QApplication(sys.argv)
     window = MainWindow()
-
+    window.q_in = api.input_queue
     logging.getLogger().addHandler(window.log_handler)
 
-    api = run_pts(recipe_path, sequence_name=sequence_name)
     window.q_in = api.input_queue
-
     recipe_event_processing_thread = QThread()
+    # Make the thread a child of the app to ensure it's cleaned up
     recipe_event_processing_thread.setParent(app)
+
+    # Store reference for cleanup
     _recipe_thread = recipe_event_processing_thread
 
     recipe_event_proxy = RecipeEventProxy(api.event_queue)
     recipe_event_proxy.moveToThread(recipe_event_processing_thread)
     recipe_event_processing_thread.started.connect(recipe_event_proxy.run)
 
-    # Connect signals from proxy to GUI
     recipe_event_proxy.pre_run_recipe_signal.connect(window.update_recipe_name)
     recipe_event_proxy.post_run_recipe_signal.connect(window.show_results)
     recipe_event_proxy.pre_run_sequence_signal.connect(window.update_sequence)
@@ -59,10 +54,14 @@ def create_and_start_gui(recipe_path: str, sequence_name: str = "Main"):
 
     recipe_event_processing_thread.start()
 
+    # Register cleanup function
     atexit.register(_cleanup_thread)
+
+    # Connect app aboutToQuit signal to cleanup
     app.aboutToQuit.connect(_cleanup_thread)
 
-    # Temporary workaround for thread startup race
-    time.sleep(1)
+    time.sleep(1)  # Prevents a race condition. To be properly fixed!!
+    # If we don't put the sleep, recipe_event_processing_thread.start() may not
+    # be finished before the app.exec() call.
 
     return window, app
