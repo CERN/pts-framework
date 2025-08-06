@@ -609,7 +609,6 @@ class RecipeEditorMainMenu(QMainWindow):
             pass
 
     def on_treeview_item_changed(self, item, column):
-        self.log("on_treeview_item_changed")
         if self.enable_recipe_verification == True:
             line_info = ""
             line_number = self.item_to_line.get(HashableTreeItem(item))
@@ -792,10 +791,12 @@ class RecipeEditorMainMenu(QMainWindow):
             elif path and isinstance(path[-1], int):
                 # We are inside a step dictionary
                 step_dict = data
-                steptype = step_dict.get("steptype")
-                if steptype.lower() == "userinteractionstep":
+                step_type = step_dict.get("steptype") or ""
+                step_type_lower = step_type.lower()
+
+                if step_type_lower == "userinteractionstep":
                     context_required_fields = {"steptype", "step_name", "description"}
-                elif steptype.lower() == "userinteractionstep":
+                elif step_type_lower == "waitstep":
                     context_required_fields = {"steptype", "step_name", "description"}
                 else:
                     context_required_fields = {"steptype", "step_name", "action_type", "module", "method_name"}
