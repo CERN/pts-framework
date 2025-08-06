@@ -65,7 +65,8 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
         context = f"Step {idx} ({step_name})"
 
         steptype = step.get("steptype")
-        required_fields = STEP_REQUIRED_FIELDS.get(steptype, STEP_REQUIRED_FIELDS["default"])
+        steptype_key = steptype.lower() if isinstance(steptype, str) else ""
+        required_fields = STEP_REQUIRED_FIELDS.get(steptype_key, STEP_REQUIRED_FIELDS["default"])
 
         for field in required_fields:
             field_path = step_path + (field,)
@@ -73,7 +74,6 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
             if field not in step:
                 faults.append(f"[{context}] Missing required field: '{field}' (line {line})")
 
-        # ✅ INSERT THIS HERE: After checking for missing required fields
         # Validate that input_mapping and output_mapping are dictionaries
         for field in ("input_mapping", "output_mapping"):
             if field in step:
@@ -84,6 +84,12 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
                 elif not isinstance(value, dict):
                     faults.append(f"[{context}] Field '{field}' should be a dictionary but got {type(value).__name__} (line {line})")
 
+        # Check if 'skip' is a boolean
+        if "skip" in step:
+            skip_value = step["skip"]
+            skip_line = line_map.get(step_path + ("skip",), step_line)
+            if not isinstance(skip_value, bool):
+                faults.append(f"[{context}] Field 'skip' should be a boolean but got {type(skip_value).__name__} (line {skip_line})")
 
 def validate_all_recipes_in_folder(folder_path):
     errors = []
@@ -121,7 +127,7 @@ def validate_recipe_filepath(file_path):
             pass
         return False
     else:
-        # print("\n✅ All recipe files validated successfully.")
+        print("\n✅ All recipe files validated successfully.")
         return True
 
 def validate_recipe_file(filepath):
@@ -173,19 +179,15 @@ def validate_recipe_file(filepath):
             faults.append(f"[{filepath}, Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
 
     if faults or warnings:
-        # print(f"❌ Validation for '{filepath}' completed with issues:")
-
         if faults:
             print("🛑 Faults:")
             for f in faults:
                 print(" -", f)
-                pass
 
         if warnings:
             print("⚠️ Warnings:")
             for w in warnings:
                 print(" -", w)
-                pass
 
         raise RecipeValidationError(faults, warnings)
 
@@ -258,10 +260,6 @@ def validate_recipe_string_variable(content):
     else:
         output_lines.append("✅ Validation passed for the variable recipe.")
     return True, "\n".join(output_lines)
-
-
-
-
 
 if __name__ == "__main__":
     current_dir = os.path.dirname(__file__)  # directory of current file

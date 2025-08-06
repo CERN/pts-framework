@@ -8,6 +8,7 @@ from pypts.YamVIEW.customGUIModules import (
     RecipeCreatorApp
 )
 
+import re
 import io
 from PySide6.QtWidgets import (
     QApplication,
@@ -306,6 +307,7 @@ class RecipeEditorMainMenu(QMainWindow):
         pass
 
     def update_yaml_viewer(self):
+        self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
         self.yaml_viewer.setText(self.temporary_recipe_contents)
 
     def update_yaml_treeview(self):
@@ -361,25 +363,6 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def show_recipe_info(self, message: str):
         self.set_recipe_status(f"ℹ️ {message}", color="gray")
-
-    def sanitize_empty_fields(self, data: dict) -> dict:
-        # For RECIPE_HEADER_REQUIRED_FIELDS, force "globals" to be dict if empty string
-        if "globals" in data and (data["globals"] == "" or data["globals"] is None):
-            data["globals"] = {}
-
-        # For sequences inside main_sequence or others, you can add similar logic:
-        seq_fields = ["setup_steps", "steps", "teardown_steps"]
-        for seq in seq_fields:
-            if seq in data and (data[seq] == "" or data[seq] is None):
-                data[seq] = []
-
-        # Similarly for dict fields in sequence:
-        dict_fields = ["parameters", "outputs", "locals"]
-        for dfield in dict_fields:
-            if dfield in data and (data[dfield] == "" or data[dfield] is None):
-                data[dfield] = {}
-
-        return data
 
     def collapse_by_labels(self, labels_to_collapse: set[str]):
         def recurse_and_collapse(item: QTreeWidgetItem):
@@ -626,6 +609,7 @@ class RecipeEditorMainMenu(QMainWindow):
             pass
 
     def on_treeview_item_changed(self, item, column):
+        self.log("on_treeview_item_changed")
         if self.enable_recipe_verification == True:
             line_info = ""
             line_number = self.item_to_line.get(HashableTreeItem(item))
@@ -638,9 +622,11 @@ class RecipeEditorMainMenu(QMainWindow):
                 self.log(f"✏️ Recipe in Tree editor updated")
 
             self.extract_treeView_to_data()
+            self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
+            self.update_yaml_viewer()
+            print(self.temporary_recipe_contents)
             result, description = self.validate_yaml_documents()
             if result == True:
-                self.update_yaml_viewer()
                 self.show_recipe_ok()
             else:
                 self.show_recipe_error("Recipe in Tree Edit View is invalid!")
@@ -657,7 +643,6 @@ class RecipeEditorMainMenu(QMainWindow):
         pass
 
     def on_yamlview_item_changed(self):
-
         if self.enable_recipe_verification == True:
             try:
                 self.temporary_recipe_contents = self.yaml_viewer.toPlainText()
@@ -693,6 +678,20 @@ class RecipeEditorMainMenu(QMainWindow):
             super().keyPressEvent(event)
 
 # Recipe parsing and processing
+    def sanitize_booleans(self, yaml_str: str) -> str:
+        sanitized_lines = []
+
+        for line in yaml_str.splitlines():
+            # Convert the line to lowercase
+            line = line.lower()
+
+            # Remove quotes around 'true' or 'false'
+            line = re.sub(r"(['\"])\s*(true|false)\s*\1", r"\2", line)
+
+            sanitized_lines.append(line)
+
+        return "\n".join(sanitized_lines)
+
     def validate_recipe(self):
         try:
             if (validate_recipe_filepath(self.current_file_path)):
@@ -794,9 +793,9 @@ class RecipeEditorMainMenu(QMainWindow):
                 # We are inside a step dictionary
                 step_dict = data
                 steptype = step_dict.get("steptype")
-                if steptype == "UserInteractionStep":
+                if steptype.lower() == "userinteractionstep":
                     context_required_fields = {"steptype", "step_name", "description"}
-                elif steptype == "WaitStep":
+                elif steptype.lower() == "userinteractionstep":
                     context_required_fields = {"steptype", "step_name", "description"}
                 else:
                     context_required_fields = {"steptype", "step_name", "action_type", "module", "method_name"}
@@ -861,7 +860,6 @@ class RecipeEditorMainMenu(QMainWindow):
         # Expand all items after population
         self.tree.expandAll()
 
-
     def extract_treeView_to_data(self):
         documents = []
         for i in range(self.tree.topLevelItemCount()):
@@ -881,6 +879,7 @@ class RecipeEditorMainMenu(QMainWindow):
         yaml_string = buffer.getvalue()
         buffer.close()
         self.temporary_recipe_contents = yaml_string
+        self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
         return documents
 
     def extract_item_data(self, item):
@@ -921,23 +920,25 @@ class RecipeEditorMainMenu(QMainWindow):
             # Manually trigger the handler after deletion
             self.on_treeview_item_changed(item, 0)
 
-    def sanitize_empty_fields(self, data):
-        """
-        Recursively walk the data, and convert empty strings to empty dicts
-        for specific keys like 'input_mapping' and 'output_mapping'.
-        """
-        if isinstance(data, dict):
-            new_data = {}
-            for k, v in data.items():
-                if isinstance(v, str) and v == "" and k in ("input_mapping", "output_mapping"):
-                    new_data[k] = {}
-                else:
-                    new_data[k] = self.sanitize_empty_fields(v)
-            return new_data
-        elif isinstance(data, list):
-            return [self.sanitize_empty_fields(item) for item in data]
-        else:
-            return data
+    def sanitize_empty_fields(self, data: dict) -> dict:
+        # For RECIPE_HEADER_REQUIRED_FIELDS, force "globals" to be dict if empty string
+        if "globals" in data and (data["globals"] == "" or data["globals"] is None):
+            data["globals"] = {}
+
+        # For sequences inside main_sequence or others, you can add similar logic:
+        seq_fields = ["setup_steps", "steps", "teardown_steps"]
+        for seq in seq_fields:
+            if seq in data and (data[seq] == "" or data[seq] is None):
+                data[seq] = []
+
+        # Similarly for dict fields in sequence:
+        dict_fields = ["parameters", "outputs", "locals", "input_mapping", "output_mapping"]
+        for dfield in dict_fields:
+            if dfield in data and (data[dfield] == "" or data[dfield] is None):
+                data[dfield] = {}
+
+        return data
+
 # Misc
     def log(self, message: str):
         timestamp = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
@@ -1075,4 +1076,3 @@ if __name__ == "__main__":
 
     window.show()
     sys.exit(app.exec())
-
