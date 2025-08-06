@@ -422,7 +422,6 @@ class Sequence():
 
         for step_data in sequence_data["teardown_steps"]:
             self.teardown_steps.append(Step.build_step(step_data))
-
     def run(self, runtime: Runtime, input: dict, parent_step: uuid.UUID=None):
         logger.info(f"Starting sequence {self.name}")
         runtime.send_event("pre_run_sequence", self)
@@ -459,15 +458,11 @@ class Step:
         self.input_mapping: dict = input_mapping
         self.output_mapping: dict = output_mapping
 
+
     def __str__(self):
         return f"Step: {self.__class__.__name__}: {self.name}"
     
     def check_indexing(self):
-        print("DEBUG input_mapping:", self.input_mapping)
-        print("TYPE:", type(self.input_mapping))
-
-
-
         for input_config in self.input_mapping.values():
             if "indexed" in input_config and input_config["indexed"]:
                 return True
@@ -557,6 +552,7 @@ class Step:
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)
 
+        logger.info("check before skip " + str(self.is_skipped()))
         if self.is_skipped():
             logger.info(f"Skipping step {self.name}")
             step_result.set_skip() 
@@ -619,17 +615,25 @@ class Step:
             Step: This is a fully configured step object
         """
         step_type = step_data["steptype"]
+        # we need to map the steptype names into the class strings.
+        # it can happen that user defines waitstep instead of WaitStep and the application have to handle
+        match step_type.lower():
+            case "indexedstep": step_type = "IndexedStep"
+            case "pythonmodulestep": step_type = "PythonModuleStep"
+            case "sequencestep": step_type = "SequenceStep"
+            case "userinteractionstep": step_type = "UserInteractionStep"
+            case "waitstep": step_type = "WaitStep"
+
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
         del step_data["steptype"]
 
         # creates the step according to the subclass type and passes all parameters   
         new_step: Step = eval(step_type + "(**step_data)")
-        print(new_step)
-
 
         # Check if indexing is to be used, and if so, create IndexingStep to encapsulate the original step
         if new_step.check_indexing():
+
             # List of keys to keep
             keys_to_keep = ["id", "step_name", "input_mapping", "output_mapping", "skip", "description"]
 
@@ -637,7 +641,6 @@ class Step:
             filtered_step_data = {key: value for key, value in step_data.items() if key in keys_to_keep}
 
             new_step = IndexedStep(new_step, **filtered_step_data)
-
         return new_step
 
 
