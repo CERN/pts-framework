@@ -31,6 +31,7 @@ To do so, create a new virtual environment in the project folder in a similar po
     └── README.md
 
 Activate the environment and install the package within the environment.
+
 .. code-block:: bash
 
    # Install in development mode
@@ -53,6 +54,7 @@ Issues related to the recipe are often related to a difference or lack of keys.
 
 **Required framework for recipe**
 The specifics in the framework below is required in the prelude of the recipe to run the framework.
+
 .. code-block:: bash
     name: Example Test Recipe
     version: 0.1.0
@@ -62,6 +64,7 @@ The specifics in the framework below is required in the prelude of the recipe to
     test_package: test_package
     globals: {}
 The Main sequence is also required and consists of the rest of the test cases which exists of the following elements.
+
 .. code-block:: bash
     sequence_name: Main
     description: The main sequence of steps for the example recipe.
