@@ -303,8 +303,8 @@ class PythonModuleStep(Step):
         Raises:
             ImportError: If the test package is not configured or module cannot be imported.
         """
-        # if not runtime.test_package:
-        #     raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
+        if not runtime.test_package:
+            raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
         
         # Parse the module path - convert from file path format to module format
         # e.g., "tests/test_status.py" -> "test_status"
@@ -318,16 +318,16 @@ class PythonModuleStep(Step):
         # Build the full module name: test_package + filename only
         # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
         module_name = module_path.name  # Just the filename part
-        #full_module_name = f"{runtime.test_package}.{module_name}" 
+        full_module_name = f"{runtime.test_package}.{module_name}" 
         #This one above tries to include a test_package that never was found or existed as a key in the recipe.
-        full_module_name = f"{module_name}" 
+        #full_module_name = f"{module_name}" 
         
         try:
             # First check if the test package exists
-            # try:
-            #     importlib.resources.files(runtime.test_package)
-            # except (ModuleNotFoundError, AttributeError) as e:
-            #     raise ImportError(f"Test package '{runtime.test_package}' not found or not accessible: {e}")
+            try:
+                importlib.resources.files(runtime.test_package)
+            except (ModuleNotFoundError, AttributeError) as e:
+                raise ImportError(f"Test package '{runtime.test_package}' not found or not accessible: {e}")
             
             # Try to import the module
             logger.debug(f"Attempting to import module '{full_module_name}'")
@@ -505,6 +505,7 @@ class UserInteractionStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+        print(image_path)
 
         # Create a temporary queue for this specific interaction to receive the response.
         response_q = queue.SimpleQueue()
@@ -532,7 +533,7 @@ class UserInteractionStep(Step):
 
             # Return the response in a dictionary. The key 'user_response' should match
             # what the output mapping expects.
-            return {"output": response}
+            return {"user_response": response}
 
         except Exception as e:
             # Catch potential errors during event sending or queue operations

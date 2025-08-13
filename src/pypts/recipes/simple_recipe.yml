@@ -6,6 +6,7 @@ version: 0.1.0
 recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
+test_package: pypts
 globals: {}
 ---
 sequence_name: Main
@@ -48,7 +49,7 @@ steps:
 - steptype: PythonModuleStep
   step_name: Run a other_test
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: other_test
   input_mapping: {}
   output_mapping:
@@ -60,7 +61,7 @@ steps:
 - steptype: PythonModuleStep
   step_name: Run some precondition steps
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: simple_output
   input_mapping:
     value:
@@ -73,7 +74,7 @@ steps:
 - steptype: PythonModuleStep
   step_name: Run test_to_run (Check value 45)
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: test_to_run
   input_mapping:
     target:
@@ -88,7 +89,7 @@ steps:
 - steptype: PythonModuleStep
   step_name: Run range_test (valid Range)
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: range_test
   input_mapping:
     value:
@@ -114,12 +115,12 @@ steps:
 - steptype: PythonModuleStep
   step_name: Run range_test (outside Range)
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: range_test
   input_mapping:
     value:
       type: direct
-      value: '25'
+      value: '15'
     min:
       type: direct
       value: '10'
@@ -132,7 +133,7 @@ steps:
 - steptype: PythonModuleStep
   step_name: Generate Error Deliberately
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: generate_error
   input_mapping: {}
   output_mapping: {}
