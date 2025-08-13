@@ -55,7 +55,7 @@ Issues related to the recipe are often related to a difference or lack of keys.
 **Required framework for recipe**
 The specifics in the framework below is required in the prelude of the recipe to run the framework.
 
-.. code-block:: bash
+.. code-block:: yaml
     name: Example Test Recipe
     version: 0.1.0
     recipe_version: 1.0.0
@@ -63,9 +63,10 @@ The specifics in the framework below is required in the prelude of the recipe to
     main_sequence: Main
     test_package: test_package
     globals: {}
+
 The Main sequence is also required and consists of the rest of the test cases which exists of the following elements.
 
-.. code-block:: bash
+.. code-block:: yaml
     sequence_name: Main
     description: The main sequence of steps for the example recipe.
     parameters:
@@ -109,6 +110,7 @@ The Main sequence is also required and consists of the rest of the test cases wh
             value:
                 type: local
                 local_name: test_value
+    
 Above we see an example of an UserInteractionStep type and a PythonModuleStep setup. The UserInteractionStep is used for when the system is awaiting an action from user.
 The PythonModuleStep shows a requirement for determining which module to use and a specification of the method_name to be used.
 
