@@ -17,18 +17,18 @@ Issues can often occur due to missing libraries, conflicting versions or conflic
 
 If you come into any difficulties, making a fresh virtual environment is recommended.
 To do so, create a new virtual environment in the project folder in a similar position as this.
-.. code-block:: text
 
-   my_project/
-   ├── .venv/
-   ├── /src/pypts/
-   ├── ├── __init__.py
-   ├── ├── __main__.py
-   ├── ├── recipes/
-   ├── ├── ├── simple_recipe_GOLDEN_COPY.yml
-   ├── tests/unit_tests/
-   │   └── other_test_modules.py
-   └── README.md
+.. code-block:: text
+    my_project/
+    ├── .venv/
+    ├── /src/pypts/
+    ├── ├── __init__.py
+    ├── ├── __main__.py
+    ├── ├── recipes/
+    ├── ├── ├── simple_recipe_GOLDEN_COPY.yml
+    ├── tests/unit_tests/
+    │   └── other_test_modules.py
+    └── README.md
 
 Activate the environment and install the package within the environment.
 .. code-block:: bash
@@ -108,7 +108,8 @@ The Main sequence is also required and consists of the rest of the test cases wh
                 local_name: test_value
 Above we see an example of an UserInteractionStep type and a PythonModuleStep setup. The UserInteractionStep is used for when the system is awaiting an action from user.
 The PythonModuleStep shows a requirement for determining which module to use and a specification of the method_name to be used.
-..note::
+
+.. note::
     Notice that the output_mapping for ``UserInteractionStep`` is user_response, respective to a response on a pushed button. 
 
 **ModuleNotFoundError**

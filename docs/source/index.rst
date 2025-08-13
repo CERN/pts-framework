@@ -47,6 +47,7 @@ Documentation contents
     :maxdepth: 1
 
     usage
+    troubleshooting
 
 .. toctree::
     :caption: Reference docs
