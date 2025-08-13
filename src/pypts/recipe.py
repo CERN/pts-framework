@@ -355,7 +355,6 @@ class Recipe:
         
         results: List[StepResult] = runtime.get_results()
         runtime.send_event("post_run_recipe", results)
-        
         print("\n==== RESULTS ====")
         # print(f"Final result: {final_result}")
         # print("-----------------")
@@ -502,6 +501,7 @@ class Step:
         step_result = ResultType.DONE
 
         for output_name, output_config in self.output_mapping.items():
+
             match output_config["type"]:
                 case "passthrough": # The output is already a ResultType
                     step_result = step_output[output_name]
@@ -510,7 +510,8 @@ class Step:
                 case "equals":      # Output is a value. Passes if equal to the target value
                     step_result = (
                         ResultType.PASS
-                        if step_output[output_name] == output_config["value"] 
+                        
+                        if step_output[output_name] == output_config["value"]
                         else ResultType.FAIL
                     )
                 case "range":       # Output is a numberic value. Passes if within given range
@@ -541,6 +542,7 @@ class Step:
         Returns:
             StepResult: An object containing the results of the step execution.
         """
+        
         step_result = StepResult(self, parent_step)
         # Populate metadata from runtime
         step_result.recipe_name = runtime.recipe_name
@@ -574,7 +576,7 @@ class Step:
         runtime.send_event("post_run_step", step_result)
         # Add result to the report queue for processing by the listener
         runtime.report_queue.put(step_result)
-        
+
         return step_result
 
     @staticmethod
@@ -586,7 +588,6 @@ class Step:
             step: Step = step_list[next_step]
             
             step_result = step.run(runtime, input, parent_step)
-            
             step_results.append(step_result)
 
             # Check if we should stop execution due to an error
