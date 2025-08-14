@@ -312,13 +312,21 @@ class PythonModuleStep(Step):
         # we only need the filename part
         
         module_path = Path(self.module_path_str)
+        folder_name = None
+
         if module_path.suffix == '.py':
             module_path = module_path.with_suffix('')
-        
+
+        if module_path != Path(module_path.name):
+            folder_name = str(module_path.parent)
+
         # Build the full module name: test_package + filename only
         # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
         module_name = module_path.name  # Just the filename part
-        full_module_name = f"{runtime.test_package}.{module_name}" 
+        if folder_name:
+            full_module_name = f"{runtime.test_package}.{folder_name}.{module_name}" 
+        else:
+            full_module_name = f"{runtime.test_package}.{module_name}"
         #This one above tries to include a test_package that never was found or existed as a key in the recipe.
         #full_module_name = f"{module_name}" 
         
