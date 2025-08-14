@@ -19,16 +19,16 @@ If you come into any difficulties, making a fresh virtual environment is recomme
 To do so, create a new virtual environment in the project folder in a similar position as this.
 
 .. code-block:: text
-    my_project/
-    ├── .venv/
-    ├── /src/pypts/
-    ├── ├── __init__.py
-    ├── ├── __main__.py
-    ├── ├── recipes/
-    ├── ├── ├── simple_recipe_GOLDEN_COPY.yml
-    ├── tests/unit_tests/
-    │   └── other_test_modules.py
-    └── README.md
+     my_project/
+     ├── .venv/
+     ├── /src/pypts/
+     ├── ├── __init__.py
+     ├── ├── __main__.py
+     ├── ├── recipes/
+     ├── ├── ├── simple_recipe_GOLDEN_COPY.yml
+     ├── tests/unit_tests/
+     │   └── other_test_modules.py
+     └── README.md
 
 Activate the environment and install the package within the environment.
 
@@ -57,60 +57,60 @@ Issues related to the recipe are often related to a difference or lack of keys.
 The specifics in the framework below is required in the prelude of the recipe to run the framework.
 
 .. code-block:: yaml
-        name: Example Test Recipe
-        version: 0.1.0
-        recipe_version: 1.0.0
-        description: A sample description of a recipe
-        main_sequence: Main
-        test_package: test_package
-        globals: {}
+     name: Example Test Recipe
+     version: 0.1.0
+     recipe_version: 1.0.0
+     description: A sample description of a recipe
+     main_sequence: Main
+     test_package: test_package
+     globals: {}
 
 The Main sequence is also required and consists of the rest of the test cases which exists of the following elements.
 
 .. code-block:: yaml
-        sequence_name: Main
-        description: The main sequence of steps for the example recipe.
-        parameters:
-            target_value: '0'
-        locals:
-            target_value: '45'
-            test_name: Hello
-        outputs:
-            my_output: None
-        setup_steps: []
-        steps:
-        - steptype: UserInteractionStep
-            step_name: Are you all right?
-            description: Asking user for something
-            skip: false
-            input_mapping:
-                message:
-                    type: direct
-                    value: 'example'
-                image_path:
-                    type: direct
-                    value: example2.jpg
-                options:
-                    type: direct
-                    value:
-                    - 'yes': ''
-                    - 'no': ''
-            output_mapping:
-                user_response:
-                    type: equals
-                    value: 'yes'
-            - steptype: PythonModuleStep
-            step_name: Run a other_test
-            action_type: method
-            module: example_tests.py
-            method_name: other_test
-            input_mapping: {}
-            output_mapping:
-                some_return:
-                    type: passfail
-                value:
-                    type: local
-                    local_name: test_value
+     sequence_name: Main
+     description: The main sequence of steps for the example recipe.
+     parameters:
+         target_value: '0'
+     locals:
+         target_value: '45'
+         test_name: Hello
+     outputs:
+         my_output: None
+     setup_steps: []
+     steps:
+     - steptype: UserInteractionStep
+         step_name: Are you all right?
+         description: Asking user for something
+         skip: false
+         input_mapping:
+             message:
+                 type: direct
+                 value: 'example'
+             image_path:
+                 type: direct
+                 value: example.jpg
+             options:
+                 type: direct
+                 value:
+                 - 'yes': ''
+                 - 'no': ''
+         output_mapping:
+             user_response:
+                 type: equals
+                 value: 'yes'
+         - steptype: PythonModuleStep
+         step_name: Run a other_test
+         action_type: method
+         module: example_tests.py
+         method_name: other_test
+         input_mapping: {}
+         output_mapping:
+             some_return:
+                 type: passfail
+             value:
+                 type: local
+                 local_name: test_value
     
 Above we see an example of an UserInteractionStep type and a PythonModuleStep setup. The UserInteractionStep is used for when the system is awaiting an action from user.
 The PythonModuleStep shows a requirement for determining which module to use and a specification of the method_name to be used.
