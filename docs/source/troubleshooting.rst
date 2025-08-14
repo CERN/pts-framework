@@ -19,6 +19,7 @@ If you come into any difficulties, making a fresh virtual environment is recomme
 To do so, create a new virtual environment in the project folder in a similar position as this.
 
 .. code-block:: text
+
      my_project/
      ├── .venv/
      ├── /src/pypts/
@@ -57,6 +58,7 @@ Issues related to the recipe are often related to a difference or lack of keys.
 The specifics in the framework below is required in the prelude of the recipe to run the framework.
 
 .. code-block:: yaml
+
      name: Example Test Recipe
      version: 0.1.0
      recipe_version: 1.0.0
@@ -68,6 +70,7 @@ The specifics in the framework below is required in the prelude of the recipe to
 The Main sequence is also required and consists of the rest of the test cases which exists of the following elements.
 
 .. code-block:: yaml
+    
      sequence_name: Main
      description: The main sequence of steps for the example recipe.
      parameters:
