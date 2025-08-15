@@ -43,7 +43,7 @@ steps:
       - 'yes': ''
       - 'no': ''
   output_mapping:
-    output:
+    user_response:
       type: equals
       value: 'yes'
 - steptype: PythonModuleStep

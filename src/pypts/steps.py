@@ -16,6 +16,7 @@ from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
 
 logger = logging.getLogger(__name__)
+EXCLUDE_DIRS = {'.git', '.venv', '__pycache__', 'archive', 'backup', 'old_tests'}
 
 
 class IndexedStep(Step):
@@ -303,32 +304,39 @@ class PythonModuleStep(Step):
         Raises:
             ImportError: If the test package is not configured or module cannot be imported.
         """
-        if not runtime.test_package:
-            raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
+        # if not runtime.test_package:
+        #     raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
         
         # Parse the module path - convert from file path format to module format
         # e.g., "tests/test_status.py" -> "test_status"
         # Since test_package already includes the directory (e.g., "fsi_pts.tests"),
         # we only need the filename part
         
-        module_path = Path(self.module_path_str)
+        #module_path = Path(self.module_path_str)
+        module_path = find_module_path(self.module_path_str)
         folder_name = None
-
         if module_path.suffix == '.py':
             module_path = module_path.with_suffix('')
 
-        if module_path != Path(module_path.name):
-            folder_name = str(module_path.parent)
-
+        if module_path.parent != Path("."):
+            folder_path = module_path.parent
+            folder_name = ".".join(folder_path.parts)
+            if not runtime.test_package:
+                folder_name = ".".join([Path.cwd().name, folder_name])
+        else:
+            folder_name = Path.cwd().name
+        
         # Build the full module name: test_package + filename only
         # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
         module_name = module_path.name  # Just the filename part
-        if folder_name:
-            full_module_name = f"{runtime.test_package}.{folder_name}.{module_name}" 
-        else:
-            full_module_name = f"{runtime.test_package}.{module_name}"
+
+        if runtime.test_package and folder_name == runtime.test_package:
+            folder_name = None
+        
+        parts = [runtime.test_package, folder_name, module_name]
+        full_module_name = ".".join(part for part in parts if part)
+
         #This one above tries to include a test_package that never was found or existed as a key in the recipe.
-        #full_module_name = f"{module_name}" 
         
         try:
             # First check if the test package exists
@@ -592,3 +600,17 @@ class WaitStep(Step):
 
         # Wait step typically doesn't produce data output
         return {} 
+    
+
+def find_module_path(module_name_str: str, root: Path = None) -> Path:
+    if root is None:
+         root = Path(sys.modules['__main__'].__file__).resolve().parent
+
+    for path in root.rglob(module_name_str):
+        # Skip any result that has excluded directories in its path
+        if any(part in EXCLUDE_DIRS for part in path.parts):
+            continue
+        if path.name == module_name_str:
+            return path.relative_to(root)
+
+    raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
