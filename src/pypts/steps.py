@@ -313,7 +313,11 @@ class PythonModuleStep(Step):
         # we only need the filename part
         
         #module_path = Path(self.module_path_str)
-        module_path = find_module_path(self.module_path_str)
+        if runtime.test_package:
+            root = get_package_root(runtime.test_package)
+        else:
+            root = Path.cwd()
+        module_path = find_module_path(self.module_path_str, root=root)
         folder_name = None
         if module_path.suffix == '.py':
             module_path = module_path.with_suffix('')
@@ -323,6 +327,10 @@ class PythonModuleStep(Step):
             folder_name = ".".join(folder_path.parts)
             if not runtime.test_package:
                 folder_name = ".".join([Path.cwd().name, folder_name])
+            
+            redundant_prefix = "pypts.src"
+            if folder_name.startswith(redundant_prefix + "."):
+                folder_name = folder_name[len(redundant_prefix) + 1 :]
         else:
             folder_name = Path.cwd().name
         
@@ -335,6 +343,7 @@ class PythonModuleStep(Step):
         
         parts = [runtime.test_package, folder_name, module_name]
         full_module_name = ".".join(part for part in parts if part)
+        print(full_module_name)
 
         #This one above tries to include a test_package that never was found or existed as a key in the recipe.
         
@@ -600,17 +609,17 @@ class WaitStep(Step):
 
         # Wait step typically doesn't produce data output
         return {} 
-    
 
-def find_module_path(module_name_str: str, root: Path = None) -> Path:
-    if root is None:
-         root = Path(sys.modules['__main__'].__file__).resolve().parent
+def get_package_root(package_name: str) -> Path:
+    spec = importlib.util.find_spec(package_name)
+    if spec is None or spec.origin is None:
+        raise ImportError(f"Cannot find package '{package_name}'")
+    return Path(spec.origin).parent
 
+def find_module_path(module_name_str: str, root: Path) -> Path:
     for path in root.rglob(module_name_str):
-        # Skip any result that has excluded directories in its path
         if any(part in EXCLUDE_DIRS for part in path.parts):
             continue
         if path.name == module_name_str:
             return path.relative_to(root)
-
     raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")

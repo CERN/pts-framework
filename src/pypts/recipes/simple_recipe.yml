@@ -6,7 +6,6 @@ version: 0.1.0
 recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
-test_package: pypts
 globals: {}
 ---
 sequence_name: Main
@@ -120,7 +119,7 @@ steps:
   input_mapping:
     value:
       type: direct
-      value: '15'
+      value: '25'
     min:
       type: direct
       value: '10'

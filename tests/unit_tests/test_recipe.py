@@ -416,8 +416,8 @@ def test_range_check_pass_fail(recipe, runtime):
     runtime.set_sequences(recipe.sequences)
     runtime.test_package = recipe.test_package  # Set test_package from recipe
 
-    inside_step = recipe.sequences["Main"].steps[4]
-    outside_step = recipe.sequences["Main"].steps[5]
+    inside_step = recipe.sequences["Main"].steps[3]
+    outside_step = recipe.sequences["Main"].steps[4]
 
     inside_result = inside_step.run(runtime, {})
     outside_result = outside_step.run(runtime, {})
