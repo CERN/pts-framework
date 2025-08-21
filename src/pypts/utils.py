@@ -61,7 +61,7 @@ def find_resource_path(module_name_str: str, root: Path) -> Path:
             continue
         if path.name == module_name_str:
             return path.relative_to(root)
-    raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
+    #raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
 
 
 if __name__ == "__main__":
