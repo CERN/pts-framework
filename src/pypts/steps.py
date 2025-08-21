@@ -14,9 +14,9 @@ from importlib import import_module
 import importlib.resources
 from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
+from pypts.utils import get_package_root, find_resource_path, get_project_root
 
 logger = logging.getLogger(__name__)
-EXCLUDE_DIRS = {'.git', '.venv', '__pycache__', 'archive', 'backup', 'old_tests'}
 
 
 class IndexedStep(Step):
@@ -316,8 +316,8 @@ class PythonModuleStep(Step):
         if runtime.test_package:
             root = get_package_root(runtime.test_package)
         else:
-            root = Path.cwd()
-        module_path = find_module_path(self.module_path_str, root=root)
+            root = get_project_root()
+        module_path = find_resource_path(self.module_path_str, root=root)
         folder_name = None
         if module_path.suffix == '.py':
             module_path = module_path.with_suffix('')
@@ -332,7 +332,7 @@ class PythonModuleStep(Step):
             if folder_name.startswith(redundant_prefix + "."):
                 folder_name = folder_name[len(redundant_prefix) + 1 :]
         else:
-            folder_name = Path.cwd().name
+            folder_name = get_project_root().name
         
         # Build the full module name: test_package + filename only
         # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
@@ -343,7 +343,7 @@ class PythonModuleStep(Step):
         
         parts = [runtime.test_package, folder_name, module_name]
         full_module_name = ".".join(part for part in parts if part)
-        print(full_module_name)
+        logger.debug(f"{full_module_name}" )
 
         #This one above tries to include a test_package that never was found or existed as a key in the recipe.
         
@@ -609,17 +609,3 @@ class WaitStep(Step):
 
         # Wait step typically doesn't produce data output
         return {} 
-
-def get_package_root(package_name: str) -> Path:
-    spec = importlib.util.find_spec(package_name)
-    if spec is None or spec.origin is None:
-        raise ImportError(f"Cannot find package '{package_name}'")
-    return Path(spec.origin).parent
-
-def find_module_path(module_name_str: str, root: Path) -> Path:
-    for path in root.rglob(module_name_str):
-        if any(part in EXCLUDE_DIRS for part in path.parts):
-            continue
-        if path.name == module_name_str:
-            return path.relative_to(root)
-    raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
