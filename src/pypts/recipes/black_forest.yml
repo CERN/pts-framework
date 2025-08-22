@@ -99,7 +99,7 @@ steps:
       value: 'yes'
 - steptype: userinteractionstep
   step_name: step 6
-  description: Step 6 will fail, because of unhandled excep[tion in the user code
+  description: step 6 will fail, because of unhandled excep[tion in the user code
   skip: false
   input_mapping:
     message:
@@ -116,7 +116,7 @@ steps:
       value: 'yes'
 - steptype: userinteractionstep
   step_name: step 7
-  description: Step 7 will take the output from test5 and pass/fail accordingly 
+  description: step 7 will take the output from test5 and pass/fail accordingly 
   skip: false
   input_mapping:
     message:
@@ -133,7 +133,7 @@ steps:
       value: 'yes'
 - steptype: userinteractionstep
   step_name: step 8
-  description: Step 8 will take output from (crashed) test 6 and pass/fail accordingly
+  description: step 8 will take output from (crashed) test 6 and pass/fail accordingly
   skip: false
   input_mapping:
     message:
