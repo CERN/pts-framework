@@ -487,8 +487,8 @@ class UserInteractionStep(Step):
         # Example: Ensure output mapping expects the response.
         # This should be defined in the YAML, but we can add a default/check.
         if "user_response" not in self.output_mapping:
-             logger.warning(f"UserInteractionStep '{self.name}' might need an output mapping for 'user_response' to store the result.")
-             # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
+            logger.warning(f"UserInteractionStep '{self.name}' might need an output mapping for 'user_response' to store the result.")
+            # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
 
     def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
         """
@@ -502,6 +502,7 @@ class UserInteractionStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+
 
         # Create a temporary queue for this specific interaction to receive the response.
         response_q = queue.SimpleQueue()
@@ -527,9 +528,13 @@ class UserInteractionStep(Step):
             logger.info(f"Step '{self.name}': User responded.")
             logger.debug(f"Step '{self.name}': Received response: {response}")
 
-            # Return the response in a dictionary. The key 'user_response' should match
-            # what the output mapping expects.
-            return {"user_response": response}
+            # Return the response in a dictionary. The key should match
+            # what the output mapping expects - therefore the yaml mapping is used
+
+            # todo - dynamically resolve what is the string for output
+            # but then, itr raises a question of "what if multiple outputs are processed?"
+            # Maybe we shall pass whole input/output mapping instead and handle those mappings internally in the step?
+            return {"output": response}
 
         except Exception as e:
             # Catch potential errors during event sending or queue operations
