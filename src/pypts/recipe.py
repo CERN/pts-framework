@@ -356,13 +356,13 @@ class Recipe:
         results: List[StepResult] = runtime.get_results()
         runtime.send_event("post_run_recipe", results)
         print("\n==== RESULTS ====")
-        # print(f"Final result: {final_result}")
-        # print("-----------------")
-        # for result in results:
-        #     result.print_result()
+        print(f"Final result: {final_result}")
+        print("-----------------")
+        for result in results:
+            result.print_result()
 
-        # print(runtime.local_stack)
-        # print(runtime.globals)
+        print(runtime.local_stack)
+        print(runtime.globals)
 
         # Signal the report listener to stop
         from pypts.report import STOP_LISTENER
@@ -457,7 +457,6 @@ class Step:
         self.input_mapping: dict = input_mapping
         self.output_mapping: dict = output_mapping
 
-
     def __str__(self):
         return f"Step: {self.__class__.__name__}: {self.name}"
     
@@ -474,6 +473,7 @@ class Step:
         return self.critical
 
     def _step(self, runtime, input, parent_step_result_uuid):
+        # the step should be overriden by the subclass defined within steps.py
         raise NotImplementedError
 
     def process_inputs(self, runtime: Runtime):
@@ -508,13 +508,13 @@ class Step:
                 case "passfail":    # Output is boolean. Passes on True
                     step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":      # Output is a value. Passes if equal to the target value
-                    step_result = (
+                        step_result = (
                         ResultType.PASS
                         
                         if step_output[output_name] == output_config["value"]
                         else ResultType.FAIL
                     )
-                case "range":       # Output is a numberic value. Passes if within given range
+                case "range":       # Output is a numeric value. Passes if within given range
                     step_result = (
                         ResultType.PASS
                         if (output_config["min"] <= step_output[output_name] <= output_config["max"])
@@ -618,6 +618,7 @@ class Step:
         step_type = step_data["steptype"]
         # we need to map the steptype names into the class strings.
         # it can happen that user defines waitstep instead of WaitStep and the application have to handle
+
         match step_type.lower():
             case "indexedstep": step_type = "IndexedStep"
             case "pythonmodulestep": step_type = "PythonModuleStep"
@@ -647,7 +648,6 @@ class Step:
 
 # Import step implementations from steps module
 from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep
-
 
 
 
