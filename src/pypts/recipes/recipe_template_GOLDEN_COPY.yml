@@ -18,7 +18,7 @@ steps:
 - steptype: UserInteractionStep
   step_name: Template Step Name
   description: Template Step Description
-  skip: 'False'
+  skip: false
   input_mapping:
     message:
       type: direct
@@ -37,7 +37,7 @@ steps:
   action_type: method
   module: src/pypts/example_tests.py
   method_name: other_test
-  input_mapping: ''
+  input_mapping: {}
   output_mapping:
     some_return:
       type: passfail

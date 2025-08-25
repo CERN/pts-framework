@@ -18,6 +18,7 @@
 #todo 1.1 - needs to be able to run without GUI and with cli parameters
 #todo 1.1 x sequence yaml file should contain all sequences as well as top-level info on the test
 
+#todo bugfix - the GUI (both recipe creator and main GUI) do not refresh always properly
 #todo discuss the general development strategy (how do we cooperate well)
 #todo semi-important - write unit tests for the signal proxy, more informations in tests/unit_tests/test_event_proxy
 #todo minor - allow the application to start without providing any DUT

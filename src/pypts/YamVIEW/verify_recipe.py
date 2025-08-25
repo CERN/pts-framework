@@ -65,13 +65,31 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
         context = f"Step {idx} ({step_name})"
 
         steptype = step.get("steptype")
-        required_fields = STEP_REQUIRED_FIELDS.get(steptype, STEP_REQUIRED_FIELDS["default"])
+        steptype_key = steptype.lower() if isinstance(steptype, str) else ""
+        required_fields = STEP_REQUIRED_FIELDS.get(steptype_key, STEP_REQUIRED_FIELDS["default"])
 
         for field in required_fields:
             field_path = step_path + (field,)
             line = line_map.get(field_path, step_line)
             if field not in step:
                 faults.append(f"[{context}] Missing required field: '{field}' (line {line})")
+
+        # Validate that input_mapping and output_mapping are dictionaries
+        for field in ("input_mapping", "output_mapping"):
+            if field in step:
+                value = step[field]
+                line = line_map.get(step_path + (field,), step_line)
+                if value is None:
+                    faults.append(f"[{context}] Field '{field}' is null, expected dict (line {line})")
+                elif not isinstance(value, dict):
+                    faults.append(f"[{context}] Field '{field}' should be a dictionary but got {type(value).__name__} (line {line})")
+
+        # Check if 'skip' is a boolean
+        if "skip" in step:
+            skip_value = step["skip"]
+            skip_line = line_map.get(step_path + ("skip",), step_line)
+            if not isinstance(skip_value, bool):
+                faults.append(f"[{context}] Field 'skip' should be a boolean but got {type(skip_value).__name__} (line {skip_line})")
 
 def validate_all_recipes_in_folder(folder_path):
     errors = []
@@ -103,7 +121,7 @@ def validate_recipe_filepath(file_path):
         errors.append((filename, e))
 
     if errors:
-        print("\n❌ Summary: Some recipe files failed validation.")
+        # print("\n❌ Summary: Some recipe files failed validation.")
         for filename, e in errors:
             print(f" - {filename}: {len(e.faults)} faults, {len(e.warnings)} warnings")
             pass
@@ -161,19 +179,15 @@ def validate_recipe_file(filepath):
             faults.append(f"[{filepath}, Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
 
     if faults or warnings:
-        # print(f"❌ Validation for '{filepath}' completed with issues:")
-
         if faults:
             print("🛑 Faults:")
             for f in faults:
                 print(" -", f)
-                pass
 
         if warnings:
             print("⚠️ Warnings:")
             for w in warnings:
                 print(" -", w)
-                pass
 
         raise RecipeValidationError(faults, warnings)
 
@@ -247,26 +261,18 @@ def validate_recipe_string_variable(content):
         output_lines.append("✅ Validation passed for the variable recipe.")
     return True, "\n".join(output_lines)
 
-
-
-
-
 if __name__ == "__main__":
-    import sys
-    folder = sys.argv[1] if len(sys.argv) > 1 else "recipes/"
+    current_dir = os.path.dirname(__file__)  # directory of current file
+    parent_dir = os.path.dirname(current_dir)  # one directory up
+    recipes_dir = os.path.join(parent_dir, "recipes")
 
     try:
-        if (validate_all_recipes_in_folder(folder)):
+        if (validate_all_recipes_in_folder(recipes_dir)):
             print("✅ Recipe file validated successfully.")
         else:
             print("❌ Summary: Recipe file failed the validation!")
     except Exception as e:
         print(f"❌ Unhandled expception while validating the recipe: {e}")
 
-    #todo - fix the prints, add a flag that would determine if functions shall print on the stdout or not.
+    # todo - fix the prints, add a flag that would determine if functions shall print on the stdout or not.
     # For now, the prints are just commented
-
-    # # example usage on specific recipe
-    # path = "recipes/simple_recipe_GOLDEN_COPY.yml"
-    # path = "recipes/simple_recipe.yml"
-    # validate_recipe(path)

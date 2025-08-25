@@ -106,7 +106,7 @@ steps:
 - steptype: WaitStep
   step_name: Wait for 3s
   description: Waiting 3 seconds to let user check the LEDs
-  skip: false
+  skip: true
   input_mapping:
     wait_time:
       value: '3'

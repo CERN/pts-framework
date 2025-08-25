@@ -8,6 +8,7 @@ from pypts.YamVIEW.customGUIModules import (
     RecipeCreatorApp
 )
 
+import re
 import io
 from PySide6.QtWidgets import (
     QApplication,
@@ -172,7 +173,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.toolbar.addAction(spacer_action)
 
         icon_label = QLabel()
-        icon_label.setPixmap(QPixmap("../../images/YamVIEW_cookie.png"))
+        icon_label.setPixmap(QPixmap("../images/YamVIEW_cookie.png"))
         icon_action = QWidgetAction(self)
         icon_action.setDefaultWidget(icon_label)
         self.toolbar.addAction(icon_action)
@@ -242,7 +243,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.tree_and_yaml_layout.addWidget(self.tree_status_container)
 
         # Watermark widget (your logo)
-        self.watermark_widget = WatermarkWidget("../../images/logo.png")  # Replace with your logo
+        self.watermark_widget = WatermarkWidget("../images/CERN_Logo.png")  # Replace with your logo
 
         # Stacked layout to switch between watermark and main editor
         self.stacked_layout = QStackedLayout()
@@ -306,6 +307,7 @@ class RecipeEditorMainMenu(QMainWindow):
         pass
 
     def update_yaml_viewer(self):
+        self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
         self.yaml_viewer.setText(self.temporary_recipe_contents)
 
     def update_yaml_treeview(self):
@@ -361,25 +363,6 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def show_recipe_info(self, message: str):
         self.set_recipe_status(f"ℹ️ {message}", color="gray")
-
-    def sanitize_empty_fields(self, data: dict) -> dict:
-        # For RECIPE_HEADER_REQUIRED_FIELDS, force "globals" to be dict if empty string
-        if "globals" in data and (data["globals"] == "" or data["globals"] is None):
-            data["globals"] = {}
-
-        # For sequences inside main_sequence or others, you can add similar logic:
-        seq_fields = ["setup_steps", "steps", "teardown_steps"]
-        for seq in seq_fields:
-            if seq in data and (data[seq] == "" or data[seq] is None):
-                data[seq] = []
-
-        # Similarly for dict fields in sequence:
-        dict_fields = ["parameters", "outputs", "locals"]
-        for dfield in dict_fields:
-            if dfield in data and (data[dfield] == "" or data[dfield] is None):
-                data[dfield] = {}
-
-        return data
 
     def collapse_by_labels(self, labels_to_collapse: set[str]):
         def recurse_and_collapse(item: QTreeWidgetItem):
@@ -638,9 +621,11 @@ class RecipeEditorMainMenu(QMainWindow):
                 self.log(f"✏️ Recipe in Tree editor updated")
 
             self.extract_treeView_to_data()
+            self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
+            self.update_yaml_viewer()
+            print(self.temporary_recipe_contents)
             result, description = self.validate_yaml_documents()
             if result == True:
-                self.update_yaml_viewer()
                 self.show_recipe_ok()
             else:
                 self.show_recipe_error("Recipe in Tree Edit View is invalid!")
@@ -657,7 +642,6 @@ class RecipeEditorMainMenu(QMainWindow):
         pass
 
     def on_yamlview_item_changed(self):
-
         if self.enable_recipe_verification == True:
             try:
                 self.temporary_recipe_contents = self.yaml_viewer.toPlainText()
@@ -693,6 +677,20 @@ class RecipeEditorMainMenu(QMainWindow):
             super().keyPressEvent(event)
 
 # Recipe parsing and processing
+    def sanitize_booleans(self, yaml_str: str) -> str:
+        sanitized_lines = []
+
+        for line in yaml_str.splitlines():
+            # Convert the line to lowercase
+            line = line.lower()
+
+            # Remove quotes around 'true' or 'false'
+            line = re.sub(r"(['\"])\s*(true|false)\s*\1", r"\2", line)
+
+            sanitized_lines.append(line)
+
+        return "\n".join(sanitized_lines)
+
     def validate_recipe(self):
         try:
             if (validate_recipe_filepath(self.current_file_path)):
@@ -793,10 +791,12 @@ class RecipeEditorMainMenu(QMainWindow):
             elif path and isinstance(path[-1], int):
                 # We are inside a step dictionary
                 step_dict = data
-                steptype = step_dict.get("steptype")
-                if steptype == "UserInteractionStep":
+                step_type = step_dict.get("steptype") or ""
+                step_type_lower = step_type.lower()
+
+                if step_type_lower == "userinteractionstep":
                     context_required_fields = {"steptype", "step_name", "description"}
-                elif steptype == "WaitStep":
+                elif step_type_lower == "waitstep":
                     context_required_fields = {"steptype", "step_name", "description"}
                 else:
                     context_required_fields = {"steptype", "step_name", "action_type", "module", "method_name"}
@@ -869,7 +869,10 @@ class RecipeEditorMainMenu(QMainWindow):
 
             doc_item = self.strip_star_prefix(doc_item)
             data = self.strip_star_prefix(data)
+
+            # Sanitize empty strings to empty dicts for specific keys
             data = self.sanitize_empty_fields(data)
+
             documents.append(data)
 
         buffer = io.StringIO()
@@ -877,6 +880,7 @@ class RecipeEditorMainMenu(QMainWindow):
         yaml_string = buffer.getvalue()
         buffer.close()
         self.temporary_recipe_contents = yaml_string
+        self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
         return documents
 
     def extract_item_data(self, item):
@@ -916,6 +920,25 @@ class RecipeEditorMainMenu(QMainWindow):
                 self.takeTopLevelItem(index)
             # Manually trigger the handler after deletion
             self.on_treeview_item_changed(item, 0)
+
+    def sanitize_empty_fields(self, data: dict) -> dict:
+        # For RECIPE_HEADER_REQUIRED_FIELDS, force "globals" to be dict if empty string
+        if "globals" in data and (data["globals"] == "" or data["globals"] is None):
+            data["globals"] = {}
+
+        # For sequences inside main_sequence or others, you can add similar logic:
+        seq_fields = ["setup_steps", "steps", "teardown_steps"]
+        for seq in seq_fields:
+            if seq in data and (data[seq] == "" or data[seq] is None):
+                data[seq] = []
+
+        # Similarly for dict fields in sequence:
+        dict_fields = ["parameters", "outputs", "locals", "input_mapping", "output_mapping"]
+        for dfield in dict_fields:
+            if dfield in data and (data[dfield] == "" or data[dfield] is None):
+                data[dfield] = {}
+
+        return data
 
 # Misc
     def log(self, message: str):
@@ -1012,6 +1035,12 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 1.0 - bugfix - ensure, that the textview is saved
 # done 1.0 - 1.0 unit tests
 
+# todo 1.1 - if i delete whole recipe - its valid - well shout not be
+# todo 1.1 - database of valid recipes
+# todo 1.1 - include more information about what is missing in the structure
+# todo 1.1 - bug [17/07/2025 12:00:41] ❌ Error in on_yaml_cursor_changed: Internal C++ object (PySide6.QtWidgets.QTreeWidgetItem) already deleted.
+# todo 1.1 - generate the steps, but also have a way to recreate from template, based on instrument used or test type
+# todo 1.1 - test with whitespaces, cross platform compatibility
 # todo 1.1 - UX REFINEMENT
 # todo 1.1 - Add possibility to open recent files
 # todo 1.1 - Handle possibility that the recent file is not present anymore
@@ -1019,6 +1048,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # todo 1.1 - Add recipe config file, where we can track the version (and maybe something more later)
 # todo 1.1 - Bugfix - sometimes after opening new recipe for editing, the GUI is not refreshing (it does after clicking on the window)
 # todo 1.1 - 1.1 unit tests
+# todo 1.1 - autocomplete or helper to write down the tests
 
 # todo 1.2 - FULL SUPPORT
 # todo 1.2 - creator - number of sequences, steps etc
@@ -1047,4 +1077,3 @@ if __name__ == "__main__":
 
     window.show()
     sys.exit(app.exec())
-

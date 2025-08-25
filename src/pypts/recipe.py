@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
+
+from pypts.YamVIEW.verify_recipe import validate_recipe_filepath
 import copy
 import yaml
 import logging
@@ -16,6 +18,7 @@ import time
 from enum import Enum
 import json
 import uuid
+import os
 # from pts import Runtime
 
 logger = logging.getLogger(__name__)
@@ -259,16 +262,24 @@ class Recipe:
             for field in required_fields:
                 if field not in recipe_main_data:
                     raise KeyError(f"Missing required field '{field}' in recipe main data")
+
+            #add verification here
+
+
+
             
             # The rest of the documents are all sequences
             sequence_count = 0
             for sequence in recipe_data:
                 sequence_count += 1
+
                 logger.debug(f"Processing sequence {sequence_count}: {sequence.get('sequence_name', 'UNNAMED')}")
+
                 if "sequence_name" not in sequence:
                     logger.error(f"Sequence {sequence_count} missing 'sequence_name' field")
                     continue
                 try:
+                    # todo this is failing
                     self.sequences[sequence["sequence_name"]] = Sequence(sequence_data=sequence)
                 except Exception as e:
                     logger.error(f"Failed to create sequence '{sequence.get('sequence_name', 'UNNAMED')}': {e}")
@@ -344,15 +355,14 @@ class Recipe:
         
         results: List[StepResult] = runtime.get_results()
         runtime.send_event("post_run_recipe", results)
-        
         print("\n==== RESULTS ====")
-        # print(f"Final result: {final_result}")
-        # print("-----------------")
-        # for result in results:
-        #     result.print_result()
+        print(f"Final result: {final_result}")
+        print("-----------------")
+        for result in results:
+            result.print_result()
 
-        # print(runtime.local_stack)
-        # print(runtime.globals)
+        print(runtime.local_stack)
+        print(runtime.globals)
 
         # Signal the report listener to stop
         from pypts.report import STOP_LISTENER
@@ -401,7 +411,7 @@ class Sequence():
         self.outputs = sequence_data["outputs"]
         self.steps = []
         self.teardown_steps = []
-        
+
         # build all contained steps here
         for step_data in sequence_data["setup_steps"]:
             self.steps.append(Step.build_step(step_data))
@@ -411,7 +421,6 @@ class Sequence():
 
         for step_data in sequence_data["teardown_steps"]:
             self.teardown_steps.append(Step.build_step(step_data))
-
     def run(self, runtime: Runtime, input: dict, parent_step: uuid.UUID=None):
         logger.info(f"Starting sequence {self.name}")
         runtime.send_event("pre_run_sequence", self)
@@ -464,6 +473,7 @@ class Step:
         return self.critical
 
     def _step(self, runtime, input, parent_step_result_uuid):
+        # the step should be overriden by the subclass defined within steps.py
         raise NotImplementedError
 
     def process_inputs(self, runtime: Runtime):
@@ -491,18 +501,20 @@ class Step:
         step_result = ResultType.DONE
 
         for output_name, output_config in self.output_mapping.items():
+
             match output_config["type"]:
                 case "passthrough": # The output is already a ResultType
                     step_result = step_output[output_name]
                 case "passfail":    # Output is boolean. Passes on True
                     step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":      # Output is a value. Passes if equal to the target value
-                    step_result = (
+                        step_result = (
                         ResultType.PASS
-                        if step_output[output_name] == output_config["value"] 
+                        
+                        if step_output[output_name] == output_config["value"]
                         else ResultType.FAIL
                     )
-                case "range":       # Output is a numberic value. Passes if within given range
+                case "range":       # Output is a numeric value. Passes if within given range
                     step_result = (
                         ResultType.PASS
                         if (output_config["min"] <= step_output[output_name] <= output_config["max"])
@@ -530,6 +542,7 @@ class Step:
         Returns:
             StepResult: An object containing the results of the step execution.
         """
+        
         step_result = StepResult(self, parent_step)
         # Populate metadata from runtime
         step_result.recipe_name = runtime.recipe_name
@@ -541,6 +554,7 @@ class Step:
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)
 
+        logger.info("check before skip " + str(self.is_skipped()))
         if self.is_skipped():
             logger.info(f"Skipping step {self.name}")
             step_result.set_skip() 
@@ -562,7 +576,7 @@ class Step:
         runtime.send_event("post_run_step", step_result)
         # Add result to the report queue for processing by the listener
         runtime.report_queue.put(step_result)
-        
+
         return step_result
 
     @staticmethod
@@ -574,7 +588,6 @@ class Step:
             step: Step = step_list[next_step]
             
             step_result = step.run(runtime, input, parent_step)
-            
             step_results.append(step_result)
 
             # Check if we should stop execution due to an error
@@ -603,6 +616,16 @@ class Step:
             Step: This is a fully configured step object
         """
         step_type = step_data["steptype"]
+        # we need to map the steptype names into the class strings.
+        # it can happen that user defines waitstep instead of WaitStep and the application have to handle
+
+        match step_type.lower():
+            case "indexedstep": step_type = "IndexedStep"
+            case "pythonmodulestep": step_type = "PythonModuleStep"
+            case "sequencestep": step_type = "SequenceStep"
+            case "userinteractionstep": step_type = "UserInteractionStep"
+            case "waitstep": step_type = "WaitStep"
+
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
         del step_data["steptype"]
@@ -612,6 +635,7 @@ class Step:
 
         # Check if indexing is to be used, and if so, create IndexingStep to encapsulate the original step
         if new_step.check_indexing():
+
             # List of keys to keep
             keys_to_keep = ["id", "step_name", "input_mapping", "output_mapping", "skip", "description"]
 
@@ -619,7 +643,6 @@ class Step:
             filtered_step_data = {key: value for key, value in step_data.items() if key in keys_to_keep}
 
             new_step = IndexedStep(new_step, **filtered_step_data)
-
         return new_step
 
 
@@ -628,14 +651,18 @@ from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInterac
 
 
 
-
 if __name__ == "__main__":
     log_format = '%(levelname)s : %(name)s : %(message)s'
     logging.basicConfig(level=logging.INFO, format=log_format)
 
-    # recipe = Recipe("recipe1.yaml")
-    # recipe.sequences["Main"].list_steps()
-    # recipe.run()
+    yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
+    yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
+    validate_recipe_filepath(yaml_path)
+    # give time to print to stdout
+    time.sleep(0.1)
+    recipe = Recipe(yaml_path)
+    recipe.sequences["Main"].list_steps()
+    recipe.run()
     # recipe.sequences["Main"].run()
     # print(recipe.sequences["Subsequence"])
     # step = WaitStep(id="1", step_name="Wait Step", input_mapping={"wait_time": {"type": "direct", "value": 5}}, output_mapping={})
