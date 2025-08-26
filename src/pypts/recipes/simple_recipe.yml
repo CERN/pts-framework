@@ -48,7 +48,7 @@ steps:
 - steptype: PythonModuleStep
   step_name: Run a other_test
   action_type: method
-  module: example_tests.py
+  module: example_tests
   method_name: other_test
   input_mapping: {}
   output_mapping:

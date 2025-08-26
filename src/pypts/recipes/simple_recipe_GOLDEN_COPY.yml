@@ -49,6 +49,8 @@ steps:
   step_name: Run a other_test
   action_type: method
   module: src/pypts/example_tests.py
+  #  module: /home/pts/dev/pypts/src/pypts/example_tests.py
+  #  module: example_tests.py
   method_name: other_test
   input_mapping: {}
   output_mapping:
