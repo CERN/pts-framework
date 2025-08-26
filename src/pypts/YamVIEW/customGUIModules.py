@@ -315,6 +315,7 @@ class RecipeCreatorApp(QWidget):
             'recipe_version': data['recipe_version'],
             'description': data['description'],
             'main_sequence': data['main_sequence'],
+            'continue_on_error': 'true',
             'globals': {}
         }
 
