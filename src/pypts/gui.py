@@ -208,8 +208,7 @@ class MainWindow(QWidget):
         response_q: SimpleQueue = event_dict["response_q"]
         message = event_dict["message"]
         image_path = event_dict["image_path"]
-        print(image_path)
-        flat_options = {k: v for d in event_dict.get("options", []) if isinstance(d, dict) for k, v in d.items()}
+        flat_options = {k: v for d in event_dict.get("options") or [] if isinstance(d, dict) for k, v in d.items()}
         # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":

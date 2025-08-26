@@ -304,8 +304,9 @@ class PythonModuleStep(Step):
         Raises:
             ImportError: If the test package is not configured or module cannot be imported.
         """
-        if not runtime.test_package:
-            raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
+        # This below is not needed as the code below can handle it with or without a test_package
+        # if not runtime.test_package:
+        #     raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
         
         # Parse the module path - convert from file path format to module format
         # e.g., "tests/test_status.py" -> "test_status"
