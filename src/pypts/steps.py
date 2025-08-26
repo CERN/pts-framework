@@ -353,7 +353,7 @@ class PythonModuleStep(Step):
             try:
                 importlib.resources.files(runtime.test_package)
             except (ModuleNotFoundError, AttributeError) as e:
-                raise ImportError(f"Test package '{runtime.test_package}' not found or not accessible: {e}")
+                logger.debug(f"Test package '{runtime.test_package}' not found or not accessible: {e}. Software will continue to dynamically find the module")
             
             # Try to import the module
             logger.debug(f"Attempting to import module '{full_module_name}'")
