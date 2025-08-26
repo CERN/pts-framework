@@ -6,6 +6,7 @@ version: 0.1.0
 recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
+continue_on_error: true
 globals: {}
 ---
 sequence_name: Main
@@ -45,6 +46,18 @@ steps:
     output:
       type: equals
       value: 'yes'
+- steptype: PythonModuleStep
+  step_name: Run a other_test
+  action_type: method
+  module: example_testsa
+  method_name: other_testa
+  input_mapping: {}
+  output_mapping:
+    some_return:
+      type: passfail
+    value:
+      type: local
+      local_name: test_value
 - steptype: PythonModuleStep
   step_name: Run a other_test
   action_type: method

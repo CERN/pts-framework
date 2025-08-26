@@ -6,6 +6,7 @@ version: 0.1.0
 recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
+continue_on_error: true
 globals: {}
 ---
 sequence_name: Main

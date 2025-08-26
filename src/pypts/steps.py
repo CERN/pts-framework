@@ -231,7 +231,7 @@ class PythonModuleStep(Step):
                         method_to_call = getattr(loaded_module, self.method_name)
                     except AttributeError:
                         logger.error(f"Method '{self.method_name}' not found in module '{self.module_path_str}' for step '{self.name}'")
-                        raise AttributeError(f"Method '{self.method_name}' not found in module.") # Re-raise specific error
+                        raise #AttributeError(f"Method '{self.method_name}' not found in module.") # Re-raise specific error
 
                     logger.debug(f"Calling method '{self.method_name}' in '{self.module_path_str}' with inputs: {input}")
                     # Call the method, passing the resolved 'input' dictionary as keyword arguments
