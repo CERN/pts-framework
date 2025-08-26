@@ -87,9 +87,6 @@ class RecipeEventProxy(QObject):
             elif event_name == "pre_run_sequence":
                 event_dict = {"sequence": event_data[0]}
             elif event_name == "user_interact":
-
-                print(str(get_project_root()))
-                print(str(event_data))
                 event_dict = {
                     "response_q": event_data[0],
                     "message": event_data[1],
