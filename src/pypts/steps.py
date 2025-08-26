@@ -14,6 +14,7 @@ from importlib import import_module
 import importlib.resources
 from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
+from pypts.utils import get_package_root, find_resource_path, get_project_root
 
 logger = logging.getLogger(__name__)
 
@@ -303,21 +304,49 @@ class PythonModuleStep(Step):
         Raises:
             ImportError: If the test package is not configured or module cannot be imported.
         """
-        if not runtime.test_package:
-            raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
+        # This below is not needed as the code below can handle it with or without a test_package
+        # if not runtime.test_package:
+        #     raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
         
         # Parse the module path - convert from file path format to module format
         # e.g., "tests/test_status.py" -> "test_status"
         # Since test_package already includes the directory (e.g., "fsi_pts.tests"),
         # we only need the filename part
-        module_path = Path(self.module_path_str)
+        
+        #module_path = Path(self.module_path_str)
+        if runtime.test_package:
+            root = get_package_root(runtime.test_package)
+        else:
+            root = get_project_root()
+        module_path = find_resource_path(self.module_path_str, root=root)
+        folder_name = None
         if module_path.suffix == '.py':
             module_path = module_path.with_suffix('')
+
+        if module_path.parent != Path("."):
+            folder_path = module_path.parent
+            folder_name = ".".join(folder_path.parts)
+            if not runtime.test_package:
+                folder_name = ".".join([Path.cwd().name, folder_name])
+            
+            redundant_prefix = "pypts.src"
+            if folder_name.startswith(redundant_prefix + "."):
+                folder_name = folder_name[len(redundant_prefix) + 1 :]
+        else:
+            folder_name = get_project_root().name
         
         # Build the full module name: test_package + filename only
         # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
         module_name = module_path.name  # Just the filename part
-        full_module_name = f"{runtime.test_package}.{module_name}"
+
+        if runtime.test_package and folder_name == runtime.test_package:
+            folder_name = None
+        
+        parts = [runtime.test_package, folder_name, module_name]
+        full_module_name = ".".join(part for part in parts if part)
+        logger.debug(f"{full_module_name}" )
+
+        #This one above tries to include a test_package that never was found or existed as a key in the recipe.
         
         try:
             # First check if the test package exists

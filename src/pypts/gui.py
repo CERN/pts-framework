@@ -208,7 +208,7 @@ class MainWindow(QWidget):
         response_q: SimpleQueue = event_dict["response_q"]
         message = event_dict["message"]
         image_path = event_dict["image_path"]
-        print(image_path)
+        flat_options = {k: v for d in event_dict.get("options") or [] if isinstance(d, dict) for k, v in d.items()}
         # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
@@ -223,6 +223,8 @@ class MainWindow(QWidget):
             else:
                 logger.warning(f"Image not found at {image_path}, using default logo")
                 self.picture_box.setPixmap(self.cern_logo)
+        self.yes_button.setText(flat_options.get("yes") or "Yes")
+        self.no_button.setText(flat_options.get("no") or "No")
         self.yes_button.setEnabled(True)
         self.no_button.setEnabled(True)
         self.response_q = response_q

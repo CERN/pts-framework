@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 # src/pypts/event_proxy.py
-from pypts.utils import get_project_root
+from pypts.utils import get_project_root, find_resource_path
 import logging
 from PySide6.QtCore import QObject, Signal
 from queue import SimpleQueue
@@ -93,7 +93,7 @@ class RecipeEventProxy(QObject):
                 event_dict = {
                     "response_q": event_data[0],
                     "message": event_data[1],
-                    "image_path": str(get_project_root() / "images" / str(event_data[2])),
+                    "image_path": str(get_project_root() / str(find_resource_path(str(event_data[2]), get_project_root()))),
                     "options": event_data[3]
                 }
             elif event_name == "get_serial_number":

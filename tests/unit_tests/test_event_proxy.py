@@ -48,7 +48,7 @@ def test_pre_run_recipe_signal(proxy, event_q):
 
 def test_user_interact_signal(proxy, event_q):
     q = SimpleQueue()
-    event_q.put(("user_interact", (q, "Choose wisely", "/some/image.png", ["Yes", "No"])))
+    event_q.put(("user_interact", (q, "Choose wisely", "image.png", ["Yes", "No"])))
     proxy.run_once()
 
     proxy.user_interact_signal.emit.assert_called_once()
