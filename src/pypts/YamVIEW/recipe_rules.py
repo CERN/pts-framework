@@ -25,6 +25,6 @@ RECIPE_SEQUENCE_REQUIRED_FIELDS = {
 STEP_REQUIRED_FIELDS = {
     "userinteractionstep": ["steptype", "step_name", "description"],
     "waitstep": ["steptype", "step_name", "description"],
-    "pythonmodulestep": ["steptype", "step_name", "action_type", "module", "method_name"],
-    "default": ["steptype", "step_name", "action_type", "module", "method_name"],
+    "pythonmodulestep": ["steptype", "step_name", "action_type", "module", "method_name", "description"],
+    "default": ["steptype", "step_name", "action_type", "module", "method_name", "description"],
 }

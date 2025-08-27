@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-##todo - test it, build documentation on the subsequences
+# todo - test it, build documentation on the subsequences
+# todo - the subsequence execution was never actually tested yet
+
 #    if this sequence is run as a subsequence
 #
 #

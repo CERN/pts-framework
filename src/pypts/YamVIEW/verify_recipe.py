@@ -91,6 +91,21 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
             if not isinstance(skip_value, bool):
                 faults.append(f"[{context}] Field 'skip' should be a boolean but got {type(skip_value).__name__} (line {skip_line})")
 
+def validate_all_recipes_in_folders(folder_paths):
+    if isinstance(folder_paths, str):
+        folder_paths = [folder_paths]  # allow single path input
+
+    errors = []
+    for folder_path in folder_paths:
+        for filename in os.listdir(folder_path):
+            if filename.endswith((".yaml", ".yml")):
+                full_path = os.path.join(folder_path, filename)
+                try:
+                    validate_recipe_file(full_path)
+                except RecipeValidationError as e:
+                    errors.append((filename, e, folder_path))
+    return errors
+
 def validate_all_recipes_in_folder(folder_path):
     errors = []
     for filename in os.listdir(folder_path):
@@ -264,15 +279,18 @@ def validate_recipe_string_variable(content):
 if __name__ == "__main__":
     current_dir = os.path.dirname(__file__)  # directory of current file
     parent_dir = os.path.dirname(current_dir)  # one directory up
+
     recipes_dir = os.path.join(parent_dir, "recipes")
+    extra_recipes_dir = os.path.join(parent_dir, "example_commented_recipes")
+    folders_to_validate = [recipes_dir, extra_recipes_dir]
 
     try:
-        if (validate_all_recipes_in_folder(recipes_dir)):
-            print("✅ Recipe file validated successfully.")
+        errors = validate_all_recipes_in_folders(folders_to_validate)
+        if errors:
+            print("❌ Summary: Some recipe files failed validation!")
+            for filename, err, folder in errors:
+                print(f"   - {os.path.join(folder, filename)}: {err}")
         else:
-            print("❌ Summary: Recipe file failed the validation!")
+            print("✅ All recipe files validated successfully.")
     except Exception as e:
-        print(f"❌ Unhandled expception while validating the recipe: {e}")
-
-    # todo - fix the prints, add a flag that would determine if functions shall print on the stdout or not.
-    # For now, the prints are just commented
+        print(f"❌ Unhandled exception while validating the recipes: {e}")
