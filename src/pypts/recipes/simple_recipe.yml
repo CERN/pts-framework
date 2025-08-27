@@ -59,18 +59,6 @@ steps:
       type: local
       local_name: test_value
 - steptype: PythonModuleStep
-  step_name: Run a other_test
-  action_type: method
-  module: example_tests
-  method_name: other_test
-  input_mapping: {}
-  output_mapping:
-    some_return:
-      type: passfail
-    value:
-      type: local
-      local_name: test_value
-- steptype: PythonModuleStep
   step_name: Run some precondition steps
   action_type: method
   module: example_tests.py
