@@ -560,16 +560,8 @@ class Step:
             step_result.set_skip() 
         else:
             logger.info(f"Running step {self.name}")
-
-            # try:
-            #     step_input = self.process_inputs(runtime)
-            # except:
-            #     logger.error(f"Error occurred while running step {self.name}. Unable to create step input")
-            #     error_info = traceback.format_exc()
-            #     step_result.set_error(error_info)
-            #     logger.error(error_info)
-
             try:
+                #define input in case it will got exception
                 step_input = {}
                 step_input = self.process_inputs(runtime)
                 step_output = self._step(runtime, step_input, step_result.uuid)
