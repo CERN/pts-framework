@@ -56,7 +56,7 @@ def test_recipe_loading():
     '''
     # Prepare test data
     recipe_data = [
-        {"name": "Test Recipe", "description": "For testing", "version": "1.0", "globals": {}},
+        {"name": "Test Recipe", "description": "For testing", "version": "1.0","main_sequence":"Main", "globals": {}},
         {"sequence_name": "Main", "locals": {}, "parameters": {}, "outputs": {},
          "setup_steps": [], "steps": [], "teardown_steps": []}
     ]
