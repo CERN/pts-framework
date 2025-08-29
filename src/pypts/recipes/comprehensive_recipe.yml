@@ -1,0 +1,267 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+name: Comprehensive Example Test recipe
+version: 0.1.0
+recipe_version: 1.0.0
+description: A sample recipe demonstrating many different combinations of input/outputs.
+main_sequence: Comprehensive_IO_Types
+test_package: pypts
+continue_on_error: true
+globals: {}
+---
+sequence_name: Comprehensive_IO_Types
+description: Sequence covering all input and output types
+parameters:
+  global_value: '42'
+locals:
+  local_val: 10
+  some_value: 5
+  my_direct: 7
+  passthrough_result: None
+  equals_check: 5
+  result_check: None
+  range_result: None
+  value_global: None
+  value_local: None
+  input_from_global: None
+  input_from_local: None
+outputs:
+  final_result: None
+setup_steps: []
+steps:
+- steptype: UserInteractionStep
+  step_name: Initial Buttonpush
+  description: Asking user for confirmation before test starts.
+  skip: false
+  input_mapping:
+    message:
+      type: direct
+      value: 'Hello there. Are you doing all right?
+
+        Please let us know by pressing the correct button :)
+
+        '
+    image_path:
+      type: direct
+      value: lego2.jpg
+    options:
+      type: direct
+      value:
+      - 'yes': ''
+      - 'no': ''
+  output_mapping:
+    output:
+      type: equals
+      value: 'yes'
+
+# === INPUT: direct | OUTPUT: passthrough ===
+- steptype: PythonModuleStep
+  step_name: Direct Input - Passthrough Output
+  description: Using direct input and passthrough output
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: direct
+      value: 5
+  output_mapping:
+    my_output:
+      type: passthrough
+
+# === INPUT: direct | OUTPUT: passfail ===
+- steptype: PythonModuleStep
+  step_name: Direct Input - PassFail Output
+  description: Direct input to produce a pass/fail
+  action_type: method
+  module: example_tests.py
+  method_name: test_to_run
+  input_mapping:
+    target:
+      type: direct
+      value: 45
+  output_mapping:
+    compare:
+      type: passfail
+
+# === INPUT: direct | OUTPUT: equals ===
+- steptype: PythonModuleStep
+  step_name: Direct Input - Equals Output
+  description: Direct input and check equality
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: direct
+      value: 4
+  output_mapping:
+    my_output:
+      type: equals
+      value: 5
+
+# === INPUT: direct | OUTPUT: range ===
+- steptype: PythonModuleStep
+  step_name: Direct Input - Range Output
+  description: Direct input and check range
+  action_type: method
+  module: example_tests.py
+  method_name: range_test
+  input_mapping:
+    value:
+      type: direct
+      value: 15
+    min:
+      type: direct
+      value: 10
+    max:
+      type: direct
+      value: 20
+  output_mapping:
+    compare:
+      type: range
+      min: '10'
+      max: '20'
+
+# === INPUT: direct | OUTPUT: global ===
+- steptype: PythonModuleStep
+  step_name: Direct Input - Global Output
+  description: Store output to global
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: direct
+      value: 1
+  output_mapping:
+    my_output:
+      type: global
+      global_name: value_global
+
+# === INPUT: direct | OUTPUT: local ===
+- steptype: PythonModuleStep
+  step_name: Direct Input - Local Output
+  description: Store output to local
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: direct
+      value: 2
+  output_mapping:
+    my_output:
+      type: local
+      local_name: value_local
+
+# === INPUT: local | OUTPUT: passthrough ===
+- steptype: PythonModuleStep
+  step_name: Local Input - Passthrough Output
+  description: Local input and passthrough output
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: local
+      local_name: some_value
+  output_mapping:
+    my_output:
+      type: passthrough
+
+# === INPUT: global | OUTPUT: passfail ===
+- steptype: PythonModuleStep
+  step_name: Global Input - PassFail Output
+  description: Using global input with pass/fail output
+  action_type: method
+  module: example_tests.py
+  method_name: test_to_run
+  input_mapping:
+    target:
+      type: global
+      global_name: global_value
+  output_mapping:
+    compare:
+      type: passfail
+
+# === INPUT: local | OUTPUT: equals ===
+- steptype: PythonModuleStep
+  step_name: Local Input - Equals Output
+  description: Local input and equals output
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: local
+      local_name: equals_check
+  output_mapping:
+    my_output:
+      type: equals
+      value: 5
+
+# === INPUT: global | OUTPUT: range ===
+- steptype: PythonModuleStep
+  step_name: Global Input - Range Output
+  description: Use global inputs and return range-checked value
+  action_type: method
+  module: example_tests.py
+  method_name: range_test
+  input_mapping:
+    value:
+      type: global
+      global_name: global_value
+    min:
+      type: direct
+      value: 40
+    max:
+      type: direct
+      value: 50
+  output_mapping:
+    compare:
+      type: range
+      min: '40'
+      max: '50'
+
+# === INPUT: local | OUTPUT: global ===
+- steptype: PythonModuleStep
+  step_name: Local Input - Output to Global
+  description: Local input with output stored globally
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: local
+      local_name: some_value
+  output_mapping:
+    my_output:
+      type: global
+      global_name: result_check
+
+# === INPUT: global | OUTPUT: local ===
+- steptype: PythonModuleStep
+  step_name: Global Input - Output to Local
+  description: Global input and local output
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: global
+      global_name: global_value
+  output_mapping:
+    my_output:
+      type: local
+      local_name: final_result
+- steptype: WaitStep
+  step_name: Wait for 3s
+  description: Waiting 3 seconds to let user check confirm
+  skip: true
+  input_mapping:
+    wait_time:
+      value: '3'
+  output_mapping: {}
+teardown_steps: []
