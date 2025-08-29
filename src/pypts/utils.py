@@ -5,12 +5,13 @@
 from pathlib import Path
 import sys
 from importlib import util
+from importlib.resources import files
+
 
 """Module that provides the utilities to the project.
     """
 EXCLUDE_DIRS = {
     '.git',
-    '.venv',
     '__pycache__',
     'archive',
     'backup',
@@ -28,6 +29,22 @@ EXCLUDE_DIRS = {
     '.vscode',       # VSCode config
     '.cache',        # generic cache dirs
 }
+
+def get_step_result_colors(result_value, result_type_enum) -> tuple[str, str]:
+    """
+    result_type_enum: the enum class (e.g., recipe.ResultType)
+    result_value: an enum member from that class (e.g., recipe.ResultType.PASS)
+    """
+    color_map = {
+        result_type_enum.PASS:  ("#C8E6C9", "#1B4F24"),
+        result_type_enum.FAIL:  ("#F28B82", "#7B0000"),
+        result_type_enum.DONE:  ("#B2EBF2", "#004D52"),
+        result_type_enum.SKIP:  ("#FFF9C4", "#C49000"),
+        result_type_enum.ERROR: ("#FFCC80", "#BF360C"),
+    }
+    return color_map.get(result_value, ("#FFFFFF", "#000000"))
+
+
 
 # def get_project_root() -> Path:
 #     return Path(__file__).parent.parent.parent
@@ -79,8 +96,26 @@ def find_resource_path(module_name_str: str, root: Path) -> Path:
                 continue
             if path.name == name:
                 return path.relative_to(root)
+    if module_name.suffix.lower in (".png", ".jpg"):
+        return files('pypts') / 'images' / 'CERN_Logo.png'
+    #raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
 
-    raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
+def path_to_importable_module(file_path: Path) -> str:
+    """
+    Convert an absolute file path (in site-packages) to an importable module path.
+    E.g., /.../.venv/lib/site-packages/pypts/example_tests.py -> pypts.example_tests
+
+    It is used for if the user desires to load the pypts package downloaded as an example to how it runs. 
+    """
+    parts = file_path.resolve().parts
+    try:
+        idx = parts.index("site-packages")
+        relevant_parts = parts[idx + 1:]  # Skip 'site-packages' itself
+    except ValueError:
+        raise ValueError("Path is not inside site-packages")
+
+    mod_path = Path(*relevant_parts).with_suffix("")  # remove .py
+    return ".".join(mod_path.parts)
 
 
 if __name__ == "__main__":

@@ -517,7 +517,7 @@ class Step:
                 case "range":       # Output is a numeric value. Passes if within given range
                     step_result = (
                         ResultType.PASS
-                        if (output_config["min"] <= step_output[output_name] <= output_config["max"])
+                        if (float(output_config["min"]) <= float(step_output[output_name]) <= float(output_config["max"]))
                         else ResultType.FAIL
                     )
                 case "global":      # Output to be written to global variable

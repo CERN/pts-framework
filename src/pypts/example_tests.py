@@ -31,7 +31,7 @@ def simple_return():
 
 def range_test(value, min, max):
     # time.sleep(1)
-    return {"compare": min < value < max}
+    return {"compare": value}
 
 def generate_error():
     raise AttributeError

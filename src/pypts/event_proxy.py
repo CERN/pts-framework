@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 # src/pypts/event_proxy.py
-from pypts.utils import get_project_root, find_resource_path
+from pypts.utils import get_project_root, find_resource_path, get_step_result_colors
 import logging
 from PySide6.QtCore import QObject, Signal
 from queue import SimpleQueue
@@ -58,25 +58,8 @@ class RecipeEventProxy(QObject):
                 # Ignore events from SequenceStep itself as they aren't in the table
                 if not isinstance(step_result.step, recipe.SequenceStep):
                     result_type = step_result.get_result()
-                    match result_type:
-                        case recipe.ResultType.PASS:
-                            background_color = "#C8E6C9"
-                            text_color = "#1B4F24"
-                        case recipe.ResultType.FAIL:
-                            background_color = "#F28B82"
-                            text_color = "#7B0000"
-                        case recipe.ResultType.DONE:
-                            background_color = "#B2EBF2"
-                            text_color = "#004D52"
-                        case recipe.ResultType.SKIP:
-                            background_color = "#FFF9C4"
-                            text_color = "#C49000"
-                        case recipe.ResultType.ERROR:
-                            background_color = "#FFCC80"
-                            text_color = "#BF360C"
-                        case _:
-                            background_color = "#FFFFFF"
-                            text_color = "#000000"
+                    
+                    background_color, text_color = get_step_result_colors(result_type, recipe.ResultType)
 
                     event_dict = {
                         "step_uuid": step_result.step.id,

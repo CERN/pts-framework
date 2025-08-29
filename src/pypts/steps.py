@@ -14,7 +14,7 @@ from importlib import import_module
 import importlib.resources
 from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
-from pypts.utils import get_package_root, find_resource_path, get_project_root
+from pypts.utils import get_package_root, find_resource_path, get_project_root, path_to_importable_module
 
 logger = logging.getLogger(__name__)
 
@@ -311,40 +311,42 @@ class PythonModuleStep(Step):
         else:
             root = get_project_root()
 
+        folder_name = None
         # --- 2. Resolve module path ---
         module_path = find_resource_path(self.module_path_str, root=root)
-        folder_name = None
-        if module_path.suffix == '.py':
-            module_path = module_path.with_suffix('')
-            print(module_path)
+        try:
+            #Below function is used for finding and running the pypts as an example when downloading it from wheel.
+            full_module_name = path_to_importable_module(module_path)
+            logger.debug(f"[DEBUG] Resolved via site-packages: {full_module_name}")
 
+        except:
+            if module_path.suffix == '.py':
+                module_path = module_path.with_suffix('')
 
-        # --- 3. Work out folder part ---
-        if module_path.parent != Path("."):
-            folder_path = module_path.parent
-            folder_name = ".".join(folder_path.parts)
-            if not runtime.test_package:
-                folder_name = ".".join([Path.cwd().name, folder_name])
+            # --- 3. Work out folder part ---
+            if module_path.parent != Path("."):
+                folder_path = module_path.parent
+                folder_name = ".".join(folder_path.parts)
+                
+                redundant_prefix = "pypts.src"
+                if folder_name.startswith(redundant_prefix + "."):
+                    folder_name = folder_name[len(redundant_prefix) + 1 :]
+            else:
+                folder_name = get_project_root().name
+
+        
+            # Build the full module name: test_package + filename only
+            # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
+            module_name = module_path.name  # Just the filename part
+            if runtime.test_package and folder_name == runtime.test_package:
+                folder_name = None
             
-            redundant_prefix = "pypts.src"
-            if folder_name.startswith(redundant_prefix + "."):
-                folder_name = folder_name[len(redundant_prefix) + 1 :]
-        else:
-            folder_name = get_project_root().name
-        
-        # Build the full module name: test_package + filename only
-        # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
-        module_name = module_path.name  # Just the filename part
-
-        if runtime.test_package and folder_name == runtime.test_package:
-            folder_name = None
-        
-        parts = [runtime.test_package, folder_name, module_name]
-        full_module_name = ".".join(part for part in parts if part)
-        logger.debug(f"{full_module_name}" )
+            parts = [runtime.test_package, folder_name, module_name]
+            full_module_name = ".".join(part for part in parts if part)
+            logger.debug(f"{full_module_name}" )
 
         # This one above tries to include a test_package that never was found or existed as a key in the recipe.
-        # --- 5. Import attempt ---
+        # --- 4. Import attempt ---
         try:
             # First check if the test package exists
             try:

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, 
                              QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
                              QTreeView, QAbstractItemView)
 from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex
-from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
+from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
@@ -16,6 +16,7 @@ import uuid # Import uuid
 import threading
 import os
 from importlib.resources import files
+from pypts.utils import get_step_result_colors
 
 logger = logging.getLogger(__name__)
 
@@ -253,6 +254,7 @@ class MainWindow(QWidget):
         # Adjust column widths to contents
         self.result_list.resizeColumnToContents(0)
         self.result_list.resizeColumnToContents(1)
+        self.result_list.resizeColumnToContents(2)
         # Note: In PySide6, the view will refresh automatically when the model is set
 
     def show_message(self, event_dict):
@@ -446,19 +448,40 @@ class StepResultModel(QAbstractItemModel):
         return len(parent_item)
 
     def columnCount(self, parent):
-        return 2
+        return 3
     
     def data(self, index, role):
         if not index.isValid():
             return None
         
+
         index_item: recipe.StepResult = index.internalPointer()
         
+        outputs_str = ""
+        if index_item.outputs:
+            output_lines = []
+            for name, value in index_item.outputs.items():
+                config = index_item.step.output_mapping.get(name, {})
+                config_str = ", ".join(f"{k}={v}" for k, v in config.items()) if config else "no config"
+                output_lines.append(f"{name}={value} ({config_str})")
+            outputs_str = "; ".join(output_lines)
+        
+        result_type = index_item.result
+        if index.column() == 1:
+            background_color, text_color = get_step_result_colors(result_type, recipe.ResultType)
+            
+            if role == Qt.BackgroundRole:
+                return QBrush(QColor(background_color))
+
+            if role == Qt.ForegroundRole:
+                return QBrush(QColor(text_color))
+
         columns = [
             index_item.step.name,
-            str(index_item.result)
+            str(index_item.result),
+            outputs_str
         ]
-
+        
         match role:
             case Qt.ItemDataRole.DisplayRole:
                 return columns[index.column()]
