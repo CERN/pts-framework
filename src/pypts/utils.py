@@ -6,7 +6,7 @@ from pathlib import Path
 import sys
 from importlib import util
 from importlib.resources import files
-
+from PySide6.QtGui import QImageReader
 
 """Module that provides the utilities to the project.
     """
@@ -96,7 +96,8 @@ def find_resource_path(module_name_str: str, root: Path) -> Path:
                 continue
             if path.name == name:
                 return path.relative_to(root)
-    if module_name.suffix.lower in (".png", ".jpg"):
+            
+    if module_name.suffix.lower in (str(fmt.data().decode()) for fmt in QImageReader.supportedImageFormats()):
         return files('pypts') / 'images' / 'CERN_Logo.png'
     #raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
 

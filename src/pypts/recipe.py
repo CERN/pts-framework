@@ -286,6 +286,7 @@ class Recipe:
                     raise
 
             self.name: str = recipe_main_data["name"]
+            self.main_sequence: str = recipe_main_data["main_sequence"]
             self.description: str = recipe_main_data["description"]
             self.version: str = recipe_main_data["version"]
             self.globals: dict[str, any] = recipe_main_data["globals"]
@@ -330,6 +331,7 @@ class Recipe:
         runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
         runtime.test_package = self.test_package    # Set test package in runtime
         runtime.continue_on_error = self.continue_on_error # Set continue on error setting in runtime
+        sequence_name = self.main_sequence
 
         # Use the event sender instead of direct calls
         self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
@@ -662,6 +664,7 @@ if __name__ == "__main__":
     # give time to print to stdout
     time.sleep(0.1)
     recipe = Recipe(yaml_path)
+    
     recipe.sequences["Main"].list_steps()
     recipe.run()
     # recipe.sequences["Main"].run()
