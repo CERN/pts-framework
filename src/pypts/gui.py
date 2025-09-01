@@ -16,7 +16,7 @@ import uuid # Import uuid
 import threading
 import os
 from importlib.resources import files
-from utils import setup_status_logger
+from pypts.utils import setup_status_logger
 
 logger = logging.getLogger(__name__)
 status = logging.getLogger("status")
