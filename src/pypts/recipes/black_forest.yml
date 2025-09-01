@@ -7,6 +7,7 @@ version: 0.0.1
 recipe_version: 1.0.0
 description: preparing the cake and checking the flavours
 main_sequence: my beautiful sequence
+continue_on_error: true
 globals: {}
 ---
 sequence_name: my beautiful sequence

@@ -231,7 +231,7 @@ class PythonModuleStep(Step):
                         method_to_call = getattr(loaded_module, self.method_name)
                     except AttributeError:
                         logger.error(f"Method '{self.method_name}' not found in module '{self.module_path_str}' for step '{self.name}'")
-                        raise AttributeError(f"Method '{self.method_name}' not found in module.") # Re-raise specific error
+                        raise #AttributeError(f"Method '{self.method_name}' not found in module.") # Re-raise specific error
 
                     logger.debug(f"Calling method '{self.method_name}' in '{self.module_path_str}' with inputs: {input}")
                     # Call the method, passing the resolved 'input' dictionary as keyword arguments
@@ -302,27 +302,24 @@ class PythonModuleStep(Step):
             The loaded module object.
 
         Raises:
-            ImportError: If the test package is not configured or module cannot be imported.
+            Exception: If the test module cannot be imported.
         """
-        # This below is not needed as the code below can handle it with or without a test_package
-        # if not runtime.test_package:
-        #     raise ImportError(f"No test_package configured in recipe for step '{self.name}'")
-        
-        # Parse the module path - convert from file path format to module format
-        # e.g., "tests/test_status.py" -> "test_status"
-        # Since test_package already includes the directory (e.g., "fsi_pts.tests"),
-        # we only need the filename part
-        
-        #module_path = Path(self.module_path_str)
+
+        # --- 1. Figure out root ---
         if runtime.test_package:
             root = get_package_root(runtime.test_package)
         else:
             root = get_project_root()
+
+        # --- 2. Resolve module path ---
         module_path = find_resource_path(self.module_path_str, root=root)
         folder_name = None
         if module_path.suffix == '.py':
             module_path = module_path.with_suffix('')
+            print(module_path)
 
+
+        # --- 3. Work out folder part ---
         if module_path.parent != Path("."):
             folder_path = module_path.parent
             folder_name = ".".join(folder_path.parts)
@@ -346,14 +343,14 @@ class PythonModuleStep(Step):
         full_module_name = ".".join(part for part in parts if part)
         logger.debug(f"{full_module_name}" )
 
-        #This one above tries to include a test_package that never was found or existed as a key in the recipe.
-        
+        # This one above tries to include a test_package that never was found or existed as a key in the recipe.
+        # --- 5. Import attempt ---
         try:
             # First check if the test package exists
             try:
                 importlib.resources.files(runtime.test_package)
             except (ModuleNotFoundError, AttributeError) as e:
-                raise ImportError(f"Test package '{runtime.test_package}' not found or not accessible: {e}")
+                logger.debug(f"Test package '{runtime.test_package}' not found or not accessible: {e}. Software will continue to dynamically find the module")
             
             # Try to import the module
             logger.debug(f"Attempting to import module '{full_module_name}'")

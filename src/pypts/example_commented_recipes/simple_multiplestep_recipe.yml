@@ -1,15 +1,22 @@
 # SPDX-FileCopyrightText: 2025 CERN <home.cern>
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
+
+# This section is related to the whole recipe.
+# We could define the name, version and description herem as well as the
+# continue_on_error flag, which could abort tests on failure
 name: Example Test Recipe
 version: 0.1.0
 recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
+continue_on_error: true
 globals: {}
 ---
+# Recipe can contain multiple sequences. Essentially, sequence is just a group of steps
 sequence_name: Main
 description: The main sequence of steps for the example recipe.
+# we can define sequence - scope variables, that can be used by other steps as inputs
 parameters:
   target_value: '0'
 locals:
@@ -20,18 +27,17 @@ locals:
 outputs:
   my_output: None
 setup_steps: []
+# we define multiple step types. Following implementations can be treated as examples
 steps:
 - steptype: UserInteractionStep
   step_name: Are you all right?
-  description: Asking user for something
+  description: Asking user for confirmation
   skip: false
   input_mapping:
     message:
       type: direct
       value: 'Hello there. Are you doing all right?
-
         Please let us know by pressing the correct button :)
-
         '
     image_path:
       type: direct
@@ -46,10 +52,24 @@ steps:
       type: equals
       value: 'yes'
 - steptype: PythonModuleStep
-  step_name: Run a other_test
+  step_name: other_test
+  description: Python existing method - expect pass
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests
   method_name: other_test
+  input_mapping: {}
+  output_mapping:
+    some_return:
+      type: passfail
+    value:
+      type: local
+      local_name: some_value
+- steptype: PythonModuleStep
+  step_name: other_testa
+  description: Python non-existing method - expect error
+  action_type: method
+  module: example_testsa
+  method_name: other_testa
   input_mapping: {}
   output_mapping:
     some_return:
@@ -58,9 +78,10 @@ steps:
       type: local
       local_name: test_value
 - steptype: PythonModuleStep
-  step_name: Run some precondition steps
+  step_name: simple_output
+  description: Python method, while providing non-existing inputs - expect error
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: simple_output
   input_mapping:
     value:
@@ -71,9 +92,10 @@ steps:
       type: local
       local_name: calculated_output
 - steptype: PythonModuleStep
-  step_name: Run test_to_run (Check value 45)
+  step_name: test_to_run (Check value 45)
+  description: Python existing method - invalid range
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: test_to_run
   input_mapping:
     target:
@@ -86,9 +108,10 @@ steps:
       type: local
       local_name: some_string
 - steptype: PythonModuleStep
-  step_name: Run range_test (valid Range)
+  step_name: range_test (valid Range)
+  description: Python existing method - invalid range
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: range_test
   input_mapping:
     value:
@@ -105,16 +128,17 @@ steps:
       type: passfail
 - steptype: WaitStep
   step_name: Wait for 3s
-  description: Waiting 3 seconds to let user check the LEDs
-  skip: false
+  description: Waiting 3 seconds to let user check confirm
+  skip: true
   input_mapping:
     wait_time:
       value: '3'
   output_mapping: {}
 - steptype: PythonModuleStep
   step_name: Run range_test (outside Range)
+  description: Some description
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: range_test
   input_mapping:
     value:
@@ -131,8 +155,9 @@ steps:
       type: passfail
 - steptype: PythonModuleStep
   step_name: Generate Error Deliberately
+  description: Some description
   action_type: method
-  module: src/pypts/example_tests.py
+  module: example_tests.py
   method_name: generate_error
   input_mapping: {}
   output_mapping: {}

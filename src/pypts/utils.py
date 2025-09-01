@@ -56,13 +56,31 @@ def get_package_root(package_name: str) -> Path:
     return Path(spec.origin).parent
 
 def find_resource_path(module_name_str: str, root: Path) -> Path:
-    for path in root.rglob(module_name_str):
-        if any(part in EXCLUDE_DIRS for part in path.parts):
-            continue
-        if path.name == module_name_str:
-            return path.relative_to(root)
-    #raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
+    """
+    Resolve a module path under `root` from either:
+      - 'example_test'   (no suffix)
+      - 'example_test.py'
+      - 'subdir/example_test' or 'subdir/example_test.py'
 
+    Returns a path *relative to* root.
+    Raises FileNotFoundError if not found.
+    """
+    module_name = Path(module_name_str)
+    search_root = root / module_name.parent if str(module_name.parent) not in ("", ".") else root
+
+    # Try both with and without ".py" when no suffix was provided
+    names_to_try = (
+        [module_name.name] if module_name.suffix == ".py" else [module_name.name, f"{module_name.name}.py"]
+    )
+
+    for name in names_to_try:
+        for path in search_root.rglob(name):
+            if any(part in EXCLUDE_DIRS for part in path.parts):
+                continue
+            if path.name == name:
+                return path.relative_to(root)
+
+    raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
 
 
 if __name__ == "__main__":

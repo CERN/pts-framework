@@ -560,9 +560,10 @@ class Step:
             step_result.set_skip() 
         else:
             logger.info(f"Running step {self.name}")
-            step_input = self.process_inputs(runtime)
-
             try:
+                #define input in case it will got exception
+                step_input = {}
+                step_input = self.process_inputs(runtime)
                 step_output = self._step(runtime, step_input, step_result.uuid)
             except:
                 logger.error(f"Error occurred while running step {self.name}")

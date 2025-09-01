@@ -46,15 +46,29 @@ def test_pre_run_recipe_signal(proxy, event_q):
         "recipe_description": "Does something"
     })
 
+
+from unittest.mock import MagicMock, patch
+from queue import SimpleQueue
+
 def test_user_interact_signal(proxy, event_q):
+    # --- Mock the signal ---
+    proxy.user_interact_signal = MagicMock()
+
+    # --- Put event into the proxy's queue ---
     q = SimpleQueue()
     event_q.put(("user_interact", (q, "Choose wisely", "image.png", ["Yes", "No"])))
-    proxy.run_once()
 
+    # --- Patch find_resource_path so it doesn't raise FileNotFoundError ---
+    with patch("pypts.event_proxy.find_resource_path", return_value="image.png"):
+        proxy.run_once()
+
+    # --- Assertions ---
     proxy.user_interact_signal.emit.assert_called_once()
     emitted = proxy.user_interact_signal.emit.call_args[0][0]
     assert emitted["message"] == "Choose wisely"
     assert emitted["options"] == ["Yes", "No"]
+    assert emitted["response_q"] == q
+    assert emitted["image_path"].endswith("image.png")
 
 def test_unsupported_event_logs_warning(proxy, event_q, caplog):
     '''

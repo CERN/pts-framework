@@ -1035,6 +1035,9 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 1.0 - bugfix - ensure, that the textview is saved
 # done 1.0 - 1.0 unit tests
 
+# todo fix the module recognition, so we expect either file, path or name
+
+
 # todo 1.1 - if i delete whole recipe - its valid - well shout not be
 # todo 1.1 - database of valid recipes
 # todo 1.1 - include more information about what is missing in the structure

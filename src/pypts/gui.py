@@ -67,17 +67,29 @@ class MainWindow(QWidget):
         self.recipe_label = QLabel(self)
 
         self.step_list = QTableWidget(self)
-        self.step_list.setMaximumWidth(600)
-        self.step_list.setColumnCount(2)
-        self.step_list.setHorizontalHeaderLabels(["Step name", "Status"])
+        self.step_list.setMaximumWidth(800)
+        self.step_list.setColumnCount(3)
+        self.step_list.setHorizontalHeaderLabels(["Step name", "Description", "Result"])
         self.step_list.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.step_list.setColumnWidth(0, 450)
+        self.step_list.setColumnWidth(0, 250)  # Name
+        self.step_list.setColumnWidth(1, 350)  # Description
         self.step_list.horizontalHeader().setStretchLastSection(True)
+
+        # Apply font to whole table
+        font = self.step_list.font()
+        font.setPointSize(12)
+        self.step_list.setFont(font)
+
+        # Restore bigger font for header labels
+        header_font = self.step_list.horizontalHeader().font()
+        header_font.setPointSize(12)
+        self.step_list.horizontalHeader().setFont(header_font)
 
         # Note: In PySide6, we don't need to call update() here as the widget will refresh automatically
 
         self.result_list = QTreeView(self)
-        self.result_list.setMaximumWidth(600)
+        self.result_list.setMaximumWidth(800)
+        self.result_list.setMaximumHeight(200)
 
         left_half_layout.addWidget(self.recipe_label)
         left_half_layout.addWidget(self.step_list)
@@ -140,22 +152,50 @@ class MainWindow(QWidget):
         sequence: recipe.Sequence = event_dict["sequence"]
         if not self.already_updated:
             self.step_list.setRowCount(len(sequence.steps))
+
+            # Global font for table (used as default for name and result)
+            table_font = self.step_list.font()
+            table_font.setPointSize(12)
+            self.step_list.setFont(table_font)
+
+            # Enable word wrap
+            self.step_list.setWordWrap(True)
+
             for i, step in enumerate(sequence.steps):
-                # Store step name in the first column
+                # --- Step name (first column) ---
                 name_item = QTableWidgetItem(step.name)
                 name_item.setFlags(name_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
-                # Store the step's UUID in the UserRole for later lookup
                 name_item.setData(Qt.ItemDataRole.UserRole, str(step.id))
+                # Bold font
+                name_font = name_item.font()
+                name_font.setBold(True)
+                name_font.setPointSize(12)  # same as global font
+                name_item.setFont(name_font)
+                name_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
                 self.step_list.setItem(i, 0, name_item)
 
-                # Optionally add an initial empty/pending status item
+                # --- Step description (second column) ---
+                desc_item = QTableWidgetItem(getattr(step, "description", ""))
+                desc_item.setFlags(desc_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
+                desc_font = desc_item.font()
+                desc_font.setPointSize(10)  # slightly smaller
+                desc_item.setFont(desc_font)
+                desc_item.setTextAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+                self.step_list.setItem(i, 1, desc_item)
+
+                # --- Step result (third column) ---
                 status_item = QTableWidgetItem("Pending")
-                status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
                 status_item.setFlags(status_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
-                self.step_list.setItem(i, 1, status_item)
+                status_font = status_item.font()
+                status_font.setPointSize(12)  # same as global
+                status_item.setFont(status_font)
+                status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                self.step_list.setItem(i, 2, status_item)
+
+            # Adjust row heights to fit wrapped text
+            self.step_list.resizeRowsToContents()
 
             self.already_updated = True
-            # Note: In PySide6, the widget will refresh automatically after setItem calls
 
     def update_step_result(self, step_status_vm: dict):
         """Updates the status of a step in the live step list table.
@@ -167,6 +207,7 @@ class MainWindow(QWidget):
         step_uuid_to_find = step_status_vm["step_uuid"]
         result_string = step_status_vm["status_text"]
         background_color = step_status_vm["status_color"]
+        text_color = step_status_vm["text_color"]
 
         # Find the row corresponding to the step UUID
         target_row = -1
@@ -183,10 +224,14 @@ class MainWindow(QWidget):
             new_result_item = QTableWidgetItem(result_string)
             new_result_item.setFlags(new_result_item.flags() ^ Qt.ItemFlag.ItemIsEditable)
             new_result_item.setBackground(QColor(background_color))
+            new_result_item.setForeground(QColor(text_color))
             new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-            # Update the status in the found row (second column)
-            self.step_list.setItem(target_row, 1, new_result_item)
+
+            # Update the status in the found row (hird column)
+            self.step_list.setItem(target_row, 2, new_result_item)
+
+
         else:
             # Handle case where UUID wasn't found (optional logging/error)
             logging.warning(f"Could not find step with UUID {step_uuid_to_find} in the step list to update status.")
@@ -201,6 +246,13 @@ class MainWindow(QWidget):
         results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
         self.result_list.setModel(myResultModel)
+
+        # Automatically expand all nodes so leaves are visible
+        self.result_list.expandAll()
+
+        # Adjust column widths to contents
+        self.result_list.resizeColumnToContents(0)
+        self.result_list.resizeColumnToContents(1)
         # Note: In PySide6, the view will refresh automatically when the model is set
 
     def show_message(self, event_dict):
@@ -296,13 +348,13 @@ class MainWindow(QWidget):
         if target_row != -1:
             # Highlight the name item (column 0)
             name_item = self.step_list.item(target_row, 0)
-            if name_item:
-                font = name_item.font()
-                font.setBold(True)
-                name_item.setFont(font)
+            # if name_item:
+            #     font = name_item.font()
+            #     font.setBold(True)
+            #     name_item.setFont(font)
 
-            # Highlight the status item (column 1)
-            status_item = self.step_list.item(target_row, 1)
+            # Highlight the status item (column 2)
+            status_item = self.step_list.item(target_row, 2)
             if status_item:
                  # Set status to 'Running...' and make bold
                  status_item.setText("Running...")
