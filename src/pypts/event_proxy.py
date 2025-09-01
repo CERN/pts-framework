@@ -12,6 +12,7 @@ from pypts import recipe
 import uuid
 
 logger = logging.getLogger(__name__)
+status = logging.getLogger("status")
 
 class RecipeEventProxy(QObject):
     """Proxies events from the recipe execution thread's event queue 
@@ -62,18 +63,23 @@ class RecipeEventProxy(QObject):
                         case recipe.ResultType.PASS:
                             background_color = "#C8E6C9"
                             text_color = "#1B4F24"
+                            status.info(f"Step {str(step_result.name)} passed" )
                         case recipe.ResultType.FAIL:
                             background_color = "#F28B82"
                             text_color = "#7B0000"
+                            status.info(f"Step {str(step_result.name)} failed" )
                         case recipe.ResultType.DONE:
                             background_color = "#B2EBF2"
                             text_color = "#004D52"
+                            status.info(f"Step {str(step_result.name)} finished" )
                         case recipe.ResultType.SKIP:
                             background_color = "#FFF9C4"
                             text_color = "#C49000"
+                            status.info(f"Step {str(step_result.name)} skipped" )
                         case recipe.ResultType.ERROR:
                             background_color = "#FFCC80"
                             text_color = "#BF360C"
+                            status.info(f"Step {str(step_result.name)} raised an error!" )
                         case _:
                             background_color = "#FFFFFF"
                             text_color = "#000000"
@@ -95,7 +101,7 @@ class RecipeEventProxy(QObject):
                 event_dict = {"sequence": event_data[0]}
             elif event_name == "user_interact":
 
-                default_image = get_project_root() / "images" / "lego2.jpg"
+                default_image = get_project_root() / "images" / "not_found.png"
                 try:
                     image_path = str(get_project_root() / find_resource_path(str(event_data[2]), get_project_root()))
                 except Exception:

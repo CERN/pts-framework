@@ -24,11 +24,11 @@ from pypts.gui import MainWindow
 from pypts.event_proxy import RecipeEventProxy
 import time
 import atexit
-from utils import setup_logging
+from pypts.utils import setup_logging, setup_status_logger
 
 # Initialize logging
 logger = setup_logging()
-
+status = setup_status_logger()
 
 def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
     """Runs the PTS application with the given recipe file.

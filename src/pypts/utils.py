@@ -115,18 +115,19 @@ def setup_status_logger():
     Creates a dedicated logger for status updates.
     Optionally connects it to an existing QTextEdit handler.
     """
-    logger = logging.getLogger("status")
-    logger.setLevel(logging.DEBUG)
+    status_logger = logging.getLogger("status")
+    status_logger.setLevel(logging.DEBUG)
+    status_logger.handlers.clear()  # remove old handlers
 
     # Avoid duplicate handlers
-    if not logger.handlers:
+    if not status_logger.handlers:
         # Console handler (optional, you can skip if you only want GUI)
-        console_handler = logging.StreamHandler()
+        status_handler = logging.StreamHandler()
         formatter = logging.Formatter('%(message)s')
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        status_handler.setFormatter(formatter)
+        status_logger.addHandler(status_handler)
 
-    return logger
+    return status_logger
 
 
 if __name__ == "__main__":

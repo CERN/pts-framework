@@ -33,6 +33,18 @@ class TextEditLoggerHandler(QObject, logging.Handler):
         msg = self.format(record)
         self.new_message.emit(msg)
 
+class TextEditStatusHandler(QObject, logging.Handler):
+    """A logging handler that emits Qt signals for log messages."""
+    new_message = Signal(str)
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        super(logging.Handler).__init__()
+
+    def emit(self, record):
+        msg = self.format(record)
+        self.new_message.emit(msg)
+
 
 class MainWindow(QWidget):
     """The main application window, displaying recipe progress and results."""
@@ -47,7 +59,7 @@ class MainWindow(QWidget):
 
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
-        
+
         """Load CERN logo from package resources"""
         try:
             # Access the image resource from the pypts package
@@ -158,6 +170,7 @@ class MainWindow(QWidget):
         self.log_text_box.setStyleSheet("background-color: whitesmoke")
         self.log_text_box.setVisible(False)  # start hidden
 
+
         # create the log box
         self.status_text_box = QPlainTextEdit()
         self.status_text_box.setReadOnly(True)
@@ -166,12 +179,13 @@ class MainWindow(QWidget):
         self.status_text_box.setStyleSheet("background-color: whitesmoke")
         self.status_text_box.setVisible(True)  # start shown
         # TODO - fill it with the logger, set up the signals etc
-        self.status_text_box.setPlainText(
-            "Status: PENDING\n"
-            "Step 1: OK\n"
-            "Step 2: FAIL\n"
-            "Step 3: INFO\n"
-        )
+        # self.status_text_box.setPlainText(
+        #     "Status: PENDING\n"
+        #     "Step 1: OK\n"
+        #     "Step 2: FAIL\n"
+        #     "Step 3: INFO\n"
+        # )
+
 
         right_half_layout.addWidget(self.picture_box)
         right_half_layout.addWidget(self.message_box)
@@ -188,6 +202,12 @@ class MainWindow(QWidget):
         self.log_handler.setFormatter(logging.Formatter('%(asctime)s.%(msecs)03d : %(levelname)s : %(name)s : %(message)s'))
         self.log_handler.new_message.connect(self.log_text_box.appendPlainText)
 
+        self.status_text_box_handler = TextEditStatusHandler(self)
+        self.status_text_box_handler.setFormatter(logging.Formatter('%(asctime)s : %(message)s', datefmt='%H:%M:%S'))
+        self.status_text_box_handler.new_message.connect(self.status_text_box.appendPlainText)
+        status.addHandler(self.status_text_box_handler)  # <-- missing in your code
+
+        status.info("Application started")
         self.show()
 
     # connect button to toggle visibility
