@@ -37,6 +37,7 @@ dependencies = [
   "PySide6==6.9.1",
   "PyYAML==6.0.2",
   "ruamel.yaml",
+  "PyQt6-QScintilla"
 ]
 
 [project.optional-dependencies]

@@ -5,6 +5,8 @@
 from pathlib import Path
 import sys
 from importlib import util
+import logging
+
 
 """Module that provides the utilities to the project.
     """
@@ -81,6 +83,50 @@ def find_resource_path(module_name_str: str, root: Path) -> Path:
                 return path.relative_to(root)
 
     raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
+
+
+def setup_logging():
+    """
+    Configures the root logger with:
+      - Console output with timestamp + milliseconds
+      - Reduces noisy libraries
+    """
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.DEBUG)
+    root_logger.handlers.clear()  # remove old handlers
+
+    # Console handler
+    console_handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        '%(asctime)s.%(msecs)03d : %(levelname)s : %(name)s : %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # Reduce verbosity of noisy libraries
+    logging.getLogger("paramiko.transport").setLevel(logging.WARN)
+
+    return root_logger
+
+
+def setup_status_logger():
+    """
+    Creates a dedicated logger for status updates.
+    Optionally connects it to an existing QTextEdit handler.
+    """
+    logger = logging.getLogger("status")
+    logger.setLevel(logging.DEBUG)
+
+    # Avoid duplicate handlers
+    if not logger.handlers:
+        # Console handler (optional, you can skip if you only want GUI)
+        console_handler = logging.StreamHandler()
+        formatter = logging.Formatter('%(message)s')
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+    return logger
 
 
 if __name__ == "__main__":

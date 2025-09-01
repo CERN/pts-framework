@@ -24,14 +24,10 @@ from pypts.gui import MainWindow
 from pypts.event_proxy import RecipeEventProxy
 import time
 import atexit
+from utils import setup_logging
 
-logger = logging.getLogger(__name__)
-
-# Configure basic logging
-log_format = '%(levelname)s : %(name)s : %(message)s'
-logging.basicConfig(level=logging.DEBUG, format=log_format)
-# Reduce verbosity of noisy libraries
-logging.getLogger("paramiko.transport").setLevel("WARN")
+# Initialize logging
+logger = setup_logging()
 
 
 def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):

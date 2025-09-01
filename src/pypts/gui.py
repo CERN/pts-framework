@@ -16,8 +16,10 @@ import uuid # Import uuid
 import threading
 import os
 from importlib.resources import files
+from utils import setup_status_logger
 
 logger = logging.getLogger(__name__)
+status = logging.getLogger("status")
 
 class TextEditLoggerHandler(QObject, logging.Handler):
     """A logging handler that emits Qt signals for log messages."""
@@ -26,7 +28,7 @@ class TextEditLoggerHandler(QObject, logging.Handler):
     def __init__(self, parent):
         super().__init__(parent)
         super(logging.Handler).__init__()
-        
+
     def emit(self, record):
         msg = self.format(record)
         self.new_message.emit(msg)
@@ -114,15 +116,68 @@ class MainWindow(QWidget):
         self.yes_button.pressed.connect(lambda: self.interaction_response("yes"))
         self.no_button.pressed.connect(lambda: self.interaction_response("no"))
 
-        self.log_text_box = QPlainTextEdit(self)
+        # create a container widget
+        container = QWidget(self)  # parent is MainWindow
+        layout = QVBoxLayout(container)
+
+
+        # # initialize QScintilla with no parent
+        # self.log_text_box = QsciScintilla()  # <- parent removed
+        # layout.addWidget(self.log_text_box)
+        #
+        # # apply your previous settings
+        # self.log_text_box.setReadOnly(True)
+        # self.log_text_box.setFont(QFont("Courier", 8))
+        # self.log_text_box.setWrapMode(QsciScintilla.WrapNone)
+        # self.log_text_box.setMarginsBackgroundColor(QColor("whitesmoke"))
+        #
+        # self.log_text_box.setMarginWidth(0, "00000")
+        # self.log_text_box.setMarginLineNumbers(0, True)
+        # self.log_text_box.setFolding(QsciScintilla.BoxedTreeFoldStyle)
+        #
+        # self.log_text_box.setCaretLineVisible(False)
+        # self.log_text_box.setCaretForegroundColor(QColor("black"))
+
+        # self.log_text_box = QPlainTextEdit(self)
+        # self.log_text_box.setReadOnly(True)
+        # self.log_text_box.setFont(QFont("Courier", 8))
+        # self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        # self.log_text_box.setStyleSheet('background-color: whitesmoke')
+
+        # create toggle button
+        self.toggle_log_button = QPushButton("Show debug logs ▼", container)
+        self.toggle_log_button.setCheckable(True)
+
+        self.toggle_log_button.clicked.connect(self.toggle_log)
+
+        # create the log box
+        self.log_text_box = QPlainTextEdit()
         self.log_text_box.setReadOnly(True)
         self.log_text_box.setFont(QFont("Courier", 8))
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.log_text_box.setStyleSheet('background-color: whitesmoke')
+        self.log_text_box.setStyleSheet("background-color: whitesmoke")
+        self.log_text_box.setVisible(False)  # start hidden
+
+        # create the log box
+        self.status_text_box = QPlainTextEdit()
+        self.status_text_box.setReadOnly(True)
+        self.status_text_box.setFont(QFont("Courier", 14))
+        self.status_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        self.status_text_box.setStyleSheet("background-color: whitesmoke")
+        self.status_text_box.setVisible(True)  # start shown
+        # TODO - fill it with the logger, set up the signals etc
+        self.status_text_box.setPlainText(
+            "Status: PENDING\n"
+            "Step 1: OK\n"
+            "Step 2: FAIL\n"
+            "Step 3: INFO\n"
+        )
 
         right_half_layout.addWidget(self.picture_box)
         right_half_layout.addWidget(self.message_box)
         right_half_layout.addLayout(self.button_list_layout)
+        right_half_layout.addWidget(self.toggle_log_button)
+        right_half_layout.addWidget(self.status_text_box)
         right_half_layout.addWidget(self.log_text_box)
 
         top_level_layout.addLayout(left_half_layout)
@@ -130,12 +185,17 @@ class MainWindow(QWidget):
         self.setLayout(top_level_layout)
 
         self.log_handler = TextEditLoggerHandler(self)
-        self.log_handler.setFormatter(logging.Formatter('%(levelname)s : %(name)s : %(message)s'))
+        self.log_handler.setFormatter(logging.Formatter('%(asctime)s.%(msecs)03d : %(levelname)s : %(name)s : %(message)s'))
         self.log_handler.new_message.connect(self.log_text_box.appendPlainText)
-        logging.getLogger().addHandler(self.log_handler)
 
         self.show()
 
+    # connect button to toggle visibility
+    def toggle_log(self):
+        show_log = self.toggle_log_button.isChecked()
+        self.log_text_box.setVisible(show_log)
+        self.status_text_box.setVisible(not show_log)
+        self.toggle_log_button.setText("Show debug logs ▼" if show_log else "Show status logs ▼")
 
     def update_recipe_name(self, event_dict):
         """Updates the recipe name label and window title from the event dictionary."""
@@ -468,7 +528,7 @@ class StepResultModel(QAbstractItemModel):
 if __name__ == "__main__":
     import sys
 
-    logging.basicConfig(level=logging.DEBUG)  # Optional: Configure logging level
+    # logging.basicConfig(level=logging.DEBUG)  # Optional: Configure logging level
 
     app = QApplication(sys.argv)
     window = MainWindow()

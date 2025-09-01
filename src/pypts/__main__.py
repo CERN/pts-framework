@@ -29,14 +29,10 @@ import os
 import uuid # Import uuid
 import atexit
 import time
+from utils import setup_logging
 
-logger = logging.getLogger(__name__)
-
-# Configure basic logging
-log_format = '%(levelname)s : %(name)s : %(message)s'
-logging.basicConfig(level=logging.DEBUG, format=log_format)
-# Reduce verbosity of noisy libraries
-logging.getLogger("paramiko.transport").setLevel("WARN")
+# Initialize logging
+logger = setup_logging()
 
 
 if __name__ == '__main__':
@@ -48,7 +44,8 @@ if __name__ == '__main__':
     """
 
     yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
-    yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
+    yaml_path = os.path.join(yaml_dir, 'driveFLEX_Acceptance_Tests.yml')
+    # yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
 
     api = run_pts(yaml_path, sequence_name="Main")
 

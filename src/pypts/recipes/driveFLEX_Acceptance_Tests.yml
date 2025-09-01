@@ -1,0 +1,43 @@
+# spdx-filecopyrighttext: 2025 cern <home.cern>
+#
+# spdx-license-identifier: lgpl-2.1-or-later
+name: driveflex_acceptance_tests
+version: 0.0.1
+recipe_version: 1.0.0
+description: recipe containing the tests necessary to be executed for the acceptance
+  test coverage of the driveflex controller.
+main_sequence: Main
+continue_on_error: true
+globals: {}
+#globals:
+#  serial_number: ""
+#  hardware_revision: ""
+---
+sequence_name: Main
+description: Main sequence covers the Acceptance Tests necessary to verify the design only.
+parameters: {}
+locals: {}
+outputs: {}
+setup_steps: []
+steps:
+- steptype: UserInteractionStep
+  step_name: step 1
+  description: step 1 description
+  skip: false
+  input_mapping:
+    message:
+      type: direct
+      value: Please scan the barcode and continue...
+    image_path:
+      type: direct
+      value: lego3.jpg
+    options:
+      type: direct
+      value:
+      - 'yes': ''
+      - 'no': ''
+  output_mapping:
+    output:
+      type: equals
+      value: 'yes'
+teardown_steps: []

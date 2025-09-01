@@ -18,8 +18,6 @@ logger = logging.getLogger(__name__)
 # appropriate behaviors. It gets set to True when a PTS recipe starts.
 _pts_context = False
 
-
-
 @dataclass
 class PtsApi:
     input_queue: Queue
@@ -41,6 +39,7 @@ class PtsApi:
             - event_queue: Queue for receiving events from the recipe
             - recipe_queue: Queue for receiving recipe execution reports
     """
+
 
 def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
     input_queue = Queue()
@@ -141,11 +140,14 @@ class DataChannel:
 
 _channel_manager = DataChannelManager()
 
+
 def create_channel(name):
     return _channel_manager.create_channel(name)
 
+
 def destroy_channel(name):
     _channel_manager.destroy_channel(name)
+
 
 def get_channel(name):
     return _channel_manager.get_channel(name)

@@ -94,10 +94,18 @@ class RecipeEventProxy(QObject):
             elif event_name == "pre_run_sequence":
                 event_dict = {"sequence": event_data[0]}
             elif event_name == "user_interact":
+
+                default_image = get_project_root() / "images" / "lego2.jpg"
+                try:
+                    image_path = str(get_project_root() / find_resource_path(str(event_data[2]), get_project_root()))
+                except Exception:
+                    # this case will be executed if the path is non existing or None
+                    image_path = str(default_image)
+
                 event_dict = {
                     "response_q": event_data[0],
                     "message": event_data[1],
-                    "image_path": str(get_project_root() / str(find_resource_path(str(event_data[2]), get_project_root()))),
+                    "image_path": image_path,
                     "options": event_data[3]
                 }
             elif event_name == "get_serial_number":

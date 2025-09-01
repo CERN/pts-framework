@@ -184,7 +184,10 @@ class Runtime:
         self.globals = globals
 
     def get_sequence(self, name):
-        return self.sequences[name]
+        try:
+            return self.sequences[name]
+        except KeyError:
+            raise
     
     def set_sequences(self, sequences):
         self.sequences = sequences
@@ -560,20 +563,35 @@ class Step:
             step_result.set_skip() 
         else:
             logger.info(f"Running step {self.name}")
+
+            # this try allows us to abort on any exception below
             try:
-                #define input in case it will got exception
-                step_input = {}
-                step_input = self.process_inputs(runtime)
-                step_output = self._step(runtime, step_input, step_result.uuid)
-            except:
-                logger.error(f"Error occurred while running step {self.name}")
+                # inputs
+                try:
+                    step_input = self.process_inputs(runtime)
+                except Exception as e:
+                    raise # re-raise existing exception
+                # execution
+                try:
+                    step_output = self._step(runtime, step_input, step_result.uuid)
+                except Exception as e:
+                    raise # re-raise existing exception
+                # outputs
+                try:
+                    result_type = self.process_outputs(runtime, step_output)
+                except Exception as e:
+                    raise # re-raise existing exception
+
+            # if any of the above failed
+            except Exception as e:
+                logger.error(f"Error in step {self.name}: {e}")
                 error_info = traceback.format_exc()
-                step_result.set_error(error_info, step_input)
+                step_result.set_error(error_info, locals().get("step_input", {}))
                 logger.error(error_info)
+            # if nothing above failed
             else:
-                result_type = self.process_outputs(runtime, step_output)
                 step_result.set_result(result_type, step_input, step_output)
-        
+
         runtime.send_event("post_run_step", step_result)
         # Add result to the report queue for processing by the listener
         runtime.report_queue.put(step_result)

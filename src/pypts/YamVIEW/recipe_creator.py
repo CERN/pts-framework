@@ -1035,11 +1035,10 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 1.0 - bugfix - ensure, that the textview is saved
 # done 1.0 - 1.0 unit tests
 
-# todo fix the module recognition, so we expect either file, path or name
+# done fix the module recognition, so we expect either file, path or name
 
-
-# todo 1.1 - if i delete whole recipe - its valid - well shout not be
-# todo 1.1 - database of valid recipes
+# todo 1.1 - if i delete whole recipe - its valid - well, it shoud not be
+# todo 1.1 - database of valid recipes (or maybe dynamic recovery only)
 # todo 1.1 - include more information about what is missing in the structure
 # todo 1.1 - bug [17/07/2025 12:00:41] ❌ Error in on_yaml_cursor_changed: Internal C++ object (PySide6.QtWidgets.QTreeWidgetItem) already deleted.
 # todo 1.1 - generate the steps, but also have a way to recreate from template, based on instrument used or test type

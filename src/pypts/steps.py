@@ -422,7 +422,8 @@ class SequenceStep(Step):
                         logger.info(f"SequenceStep '{self.name}': Executing internal sequence '{sequence_name}'.")
                     except KeyError:
                         logger.error(f"Internal sequence '{sequence_name}' not found in runtime for step '{self.name}'.")
-                        raise ValueError(f"Internal sequence '{sequence_name}' not found.")
+                        raise
+                        # raise ValueError(f"Internal sequence '{sequence_name}' not found.")
 
                 # case "external": # Example for future extension
                 #     sequence_path = self.sequence_config.get("path")
