@@ -8,12 +8,12 @@ description: A sample recipe demonstrating many different combinations of input/
 main_sequence: Comprehensive_IO_Types
 test_package: pypts
 continue_on_error: true
-globals: {}
+globals: 
+  global_value: 45
 ---
 sequence_name: Comprehensive_IO_Types
 description: Sequence covering all input and output types
-parameters:
-  global_value: '42'
+parameters: {}
 locals:
   local_val: 10
   some_value: 5
@@ -134,7 +134,7 @@ steps:
   input_mapping:
     value:
       type: direct
-      value: 1
+      value: 45
   output_mapping:
     my_output:
       type: global
@@ -200,7 +200,7 @@ steps:
   output_mapping:
     my_output:
       type: equals
-      value: 5
+      value: 6
 
 # === INPUT: global | OUTPUT: range ===
 - steptype: PythonModuleStep
@@ -259,7 +259,7 @@ steps:
 - steptype: WaitStep
   step_name: Wait for 3s
   description: Waiting 3 seconds to let user check confirm
-  skip: true
+  skip: false
   input_mapping:
     wait_time:
       value: '3'

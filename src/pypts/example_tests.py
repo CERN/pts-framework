@@ -37,7 +37,7 @@ def generate_error():
     raise AttributeError
 
 def simple_output(value):
-    return {"my_output": value + 1}
+    return {"my_output":value + 1}
 
 def is_PSU_disconnected():
     return (True)

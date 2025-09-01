@@ -15,7 +15,7 @@ import traceback
 import threading
 import queue
 import time
-from enum import Enum
+from enum import Enum, IntEnum
 import json
 import uuid
 import os
@@ -24,7 +24,7 @@ import os
 logger = logging.getLogger(__name__)
 
 
-class ResultType(Enum):
+class ResultType(IntEnum):
     SKIP  = 0
     DONE  = 1
     PASS  = 2
@@ -93,7 +93,7 @@ class StepResult():
         results = [result.get_result() for result in step_results]
 
         for result in results:
-            if result.value > highest_result.value:
+            if result> highest_result:
                 highest_result = result
 
         return highest_result

@@ -104,16 +104,6 @@ class MainWindow(QWidget):
         self.message_box = QLabel(self)
 
         self.button_list_layout = QHBoxLayout()
-        self.yes_button = QPushButton()
-        self.yes_button.setText("Yes")
-        self.yes_button.setEnabled(False)
-        self.no_button = QPushButton()
-        self.no_button.setText("No")
-        self.no_button.setEnabled(False)
-        self.button_list_layout.addWidget(self.yes_button)
-        self.button_list_layout.addWidget(self.no_button)
-        self.yes_button.pressed.connect(lambda: self.interaction_response("yes"))
-        self.no_button.pressed.connect(lambda: self.interaction_response("no"))
 
         self.log_text_box = QPlainTextEdit(self)
         self.log_text_box.setReadOnly(True)
@@ -136,7 +126,18 @@ class MainWindow(QWidget):
         logging.getLogger().addHandler(self.log_handler)
 
         self.show()
+        
+    def add_interaction_button(self, label, value = None):
+        button = QPushButton()
+        button.setText(label)
+        button.pressed.connect(lambda: self.interaction_response(value or label))
+        self.button_list_layout.addWidget(button)
 
+    def clear_interaction_buttons(self):
+        while self.button_list_layout.count():
+            button = self.button_list_layout.itemAt(0).widget()
+            self.button_list_layout.removeWidget(button)
+            button.deleteLater()
 
     def update_recipe_name(self, event_dict):
         """Updates the recipe name label and window title from the event dictionary."""
@@ -263,7 +264,6 @@ class MainWindow(QWidget):
         message = event_dict["message"]
         image_path = event_dict["image_path"]
         flat_options = {k: v for d in event_dict.get("options") or [] if isinstance(d, dict) for k, v in d.items()}
-        # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
             # Add error handling for image loading
@@ -277,17 +277,16 @@ class MainWindow(QWidget):
             else:
                 logger.warning(f"Image not found at {image_path}, using default logo")
                 self.picture_box.setPixmap(self.cern_logo)
-        self.yes_button.setText(flat_options.get("yes") or "Yes")
-        self.no_button.setText(flat_options.get("no") or "No")
-        self.yes_button.setEnabled(True)
-        self.no_button.setEnabled(True)
+
+        for value, label in flat_options.items():
+            Fallback_labels = label or value.capitalize()
+            self.add_interaction_button(label=Fallback_labels,value=value)
         self.response_q = response_q
 
     def interaction_response(self, response):
         """Sends the user's response back via the response queue and resets UI."""
         self.response_q.put(response)
-        self.yes_button.setEnabled(False)
-        self.no_button.setEnabled(False)
+        self.clear_interaction_buttons()
         self.picture_box.setPixmap(self.cern_logo)
         self.message_box.clear()
 

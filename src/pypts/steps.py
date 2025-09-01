@@ -594,7 +594,7 @@ class WaitStep(Step):
             input: Dictionary of resolved inputs, must contain 'wait_time'.
             parent_step_result_uuid: UUID of the parent StepResult.
         """
-        wait_time = input.get("wait_time")
+        wait_time = float(input.get("wait_time"))
 
         # Validate wait_time
         if not isinstance(wait_time, (int, float)):
