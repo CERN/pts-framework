@@ -37,7 +37,7 @@ class ResultType(Enum):
 class StepResult():
     def __init__(self, step=None, parent=None):
         self.step: Step = step
-        self.name = self.step.name
+        self.name = ""
         self.result: ResultType = None
         self.inputs: dict = {}
         self.outputs: dict = {}
