@@ -8,6 +8,7 @@ from importlib import util
 from importlib.resources import files
 from PySide6.QtGui import QImageReader
 import serial
+from serial.tools import list_ports
 
 """Module that provides the utilities to the project.
     """
@@ -132,26 +133,48 @@ def query_device_id(port, baudrate=9600, timeout=1):
     except (serial.SerialException, UnicodeDecodeError):
         return None
 
-def find_serial_device(device_id: str = None, port_name: str = None, baudrate=9600, timeout=1):
+def find_serial_device(target: str = None,  baudrate: int=None, timeout=1):
     # Situation: If port_name is given, find the device ID
-    if port_name:
-        id_response = query_device_id(port_name, baudrate, timeout)
-        if id_response:
-            return port_name, id_response
-        else:
-            raise RuntimeError(f"Could not read ID from port {port_name}")
+    common_baudrates = [
+    300,1200,2400,4800,
+    9600,14400,19200, 28800,
+    38400, 57600, 74880, 115200,
+    128000,230400,250000, 256000,
+    460800, 500000, 576000, 921600,
+    1000000, 1500000,2000000,3000000,4000000,]
+    
+    available_ports = [port.device for port in list_ports.comports()]
 
-    # Situation: If device_id is given, scan all ports to find it
-    elif device_id:
-        ports = serial.tools.list_ports.comports()
-        for port in ports:
-            id_response = query_device_id(port.device, baudrate, timeout)
-            if id_response == device_id:
-                return port.device, device_id
-        raise RuntimeError(f"Device with ID '{device_id}' not found on any COM port.")
+    try:
+        baud_int = int(baudrate) if baudrate is not None else None
+    except ValueError:
+        baud_int = None
 
+    # Build the baudrate list with optional prioritization
+    baudrate_list = (
+        [baud_int] + [b for b in common_baudrates if b != baud_int]
+        if baud_int is not None
+        else common_baudrates
+    )
+
+    def is_valid_port_name(name: str):
+        return any(name == port for port in available_ports)
+    
+    if is_valid_port_name(target):
+        for baud_r in baudrate_list:
+            id_response = query_device_id(target, baud_r, timeout)
+            if id_response:
+                return target, id_response, baud_r
+        return target, "Error", baud_r
     else:
-        raise ValueError("Either device_id or SerialPort must be provided.")
+        # Assume it's a device ID; scan all ports
+        for port in available_ports:
+            for baud_r in baudrate_list:
+                id_response = query_device_id(port, baud_r, timeout)
+                if id_response == target:
+                    return port, target, baud_r
+        raise RuntimeError(f"Device with ID '{target}' not found on any available COM port.")
+
 
 
 if __name__ == "__main__":

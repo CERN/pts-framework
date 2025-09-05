@@ -6,15 +6,15 @@ import logging
 from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
                              QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, 
                              QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
-                             QTreeView, QAbstractItemView, QFileDialog)
-from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex
+                             QTreeView, QAbstractItemView, QFileDialog, QTextEdit, QDialog, QComboBox, QDialogButtonBox)
+from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex,Slot
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
 import threading
-import os
+import os, serial, serial.tools.list_ports
 from importlib.resources import files
 from pypts.utils import get_step_result_colors
 
@@ -317,10 +317,15 @@ class MainWindow(QWidget):
         if str(response) == 'file':
             loader = ConfigFileLoader()
             self.response_q.put(loader)
-        elif str(response) == 'ID':
+        elif str(response) == 'wrt':
             dialog = QInputDialog(self)
-            ID, ok = dialog.getText(self, "Device ID or COMPORT")
-            logger.debug(f"Dialog result: ok={ok}, text='{ID}'")
+            Written, ok = dialog.getText(self, "", "Input:")
+            logger.debug(f"Dialog result: ok={ok}, text='{Written}'")
+            self.response_q.put(Written)
+        elif str(response) == 'ID':
+            (port, baudrate, IDN), ok = SerialPortDialog.getPort(self)
+            logger.debug(f"Dialog result: ok={ok}, text='{port}', baudrate='{baudrate}', IDN={IDN}")
+            self.response_q.put((port, baudrate, IDN))
 
         self.clear_interaction_buttons()
         #self.picture_box.setPixmap(self.cern_logo)
@@ -522,6 +527,133 @@ class StepResultModel(QAbstractItemModel):
                 return columns[index.column()]
             case _:
                 return None
+
+class SerialWorker(QThread):
+    result_ready = Signal(str, str)  # Signal: (result_text, idn_response)
+
+    def __init__(self, port, baudrate, parent=None):
+        super().__init__(parent)
+        self.port = port
+        self.baudrate = baudrate
+
+    def run(self):
+        try:
+            with serial.Serial(self.port, self.baudrate, timeout=0.5) as ser:
+                ser.write(b'*IDN?\n')
+                response = ser.readline().decode(errors='replace').strip()
+                idn = response or None
+                self.result_ready.emit(f"{self.port} @ {self.baudrate} → {idn}", idn)
+        except Exception as e:
+            self.result_ready.emit(f"Error on {self.port}: {str(e)}", "")
+
+class SerialPortDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Serial Port")
+        self.resize(400, 200)
+        self.worker_thread = None
+        self.idn_response = None
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel("Available Serial Ports:"))
+        self.combo = QComboBox()
+        layout.addWidget(self.combo)
+        self.refresh_ports()
+
+        layout.addWidget(QLabel("Baudrate:"))
+        self.baud_combo = QComboBox()
+        self.common_baudrates = [
+            300, 1200, 2400, 4800,
+            9600, 14400, 19200, 28800,
+            38400, 57600, 74880, 115200,
+            128000, 230400, 250000, 256000,
+            460800, 500000, 576000, 921600,
+            1000000, 1500000, 2000000, 3000000, 4000000,
+        ]
+        for rate in self.common_baudrates:
+            self.baud_combo.addItem(str(rate))
+        layout.addWidget(self.baud_combo)
+
+        # Set default baudrate
+        self.baudrate = int(self.baud_combo.currentText())
+        self.baud_combo.currentIndexChanged.connect(self.update_baudrate)
+
+        self.send_button = QPushButton("Send *IDN?")
+        self.send_button.clicked.connect(self.send_idn)
+        layout.addWidget(self.send_button)
+
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+        layout.addWidget(self.output)
+
+        # OK/Cancel buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.ok_button = buttons.button(QDialogButtonBox.Ok)
+        self.ok_button.clicked.connect(self.ok_clicked)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def update_baudrate(self):
+        try:
+            self.baudrate = int(self.baud_combo.currentText())
+        except ValueError:
+            self.baudrate = 9600  # fallback
+
+    def refresh_ports(self):
+        ports = serial.tools.list_ports.comports()
+        self.combo.clear()
+        for port in ports:
+            self.combo.addItem(port.device)
+
+    def send_idn(self):
+        port = self.combo.currentText()
+        baud = self.baudrate
+        self.output.append(f"Querying {port} @ {baud}...")
+        self.send_button.setEnabled(False)
+
+        self.worker_thread = SerialWorker(port, baud)
+        self.worker_thread.result_ready.connect(self.handle_idn_result)
+        self.worker_thread.finished.connect(lambda: self.send_button.setEnabled(True))
+        self.worker_thread.start()
+
+    def handle_idn_result(self, result_text, idn_response):
+        self.output.append(result_text)
+        self.idn_response = idn_response
+
+    def ok_clicked(self):
+        # Disable OK button until thread completes
+        print("OK clicked - starting final IDN thread")
+        self.ok_button.setEnabled(False)
+        port = self.combo.currentText()
+        baud = self.baudrate
+        self.output.append(f"Running final *IDN? query before accepting...")
+
+        self.worker_thread = SerialWorker(port, baud)
+        self.worker_thread.result_ready.connect(self._final_idn_done)
+        self.worker_thread.start()
+
+    def _final_idn_done(self, result_text, idn_response):
+        print("Final IDN received:", result_text)
+        self.output.append(result_text)
+        self.idn_response = idn_response
+        self.ok_button.setEnabled(True)
+        self.accept()
+
+    def selected_port(self):
+        return self.combo.currentText()
+    
+    def selected_baudrate(self):
+        return self.baudrate
+    def idn(self):
+        return self.idn_response
+    @staticmethod
+    def getPort(parent=None):
+        dialog = SerialPortDialog(parent)
+        result = dialog.exec()
+        return (dialog.selected_port(), dialog.selected_baudrate(), dialog.idn()), result == QDialog.Accepted
+
+
 
 if __name__ == "__main__":
     import sys

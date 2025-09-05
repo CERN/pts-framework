@@ -14,7 +14,7 @@ from importlib import import_module
 import importlib.resources
 from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
-from pypts.utils import get_package_root, find_resource_path, get_project_root, path_to_importable_module, AbortTestException
+from pypts.utils import get_package_root, find_resource_path, get_project_root, path_to_importable_module, AbortTestException, find_serial_device
 
 logger = logging.getLogger(__name__)
 
@@ -897,7 +897,7 @@ class UserWriteStep(Step):
             runtime.send_event("user_interact", response_q, message, image_path, options)
             logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
 
-            response = response_q.get(block=True) # No timeout for now
+            response = response_q.get(block=True)
 
             logger.info(f"Step '{self.name}': User responded.")
             logger.debug(f"Step '{self.name}': Received response: {response}")
@@ -906,8 +906,24 @@ class UserWriteStep(Step):
                         runtime.continue_on_error = self.continue_on_error
                         raise AbortTestException(f"wrong button")
             
+            if str(response).strip() == runtime.get_global('wrt_key'):
+                        Value = response_q.get(block=True)
+                        print("testing")
+                        print(self.output_mapping)
+                        if self.output_mapping["output"]["type"] == "local":
+                            runtime.set_local(self.output_mapping["output"]["global_name"], Value)
+                        elif self.output_mapping["output"]["type"] == "global":
+                            runtime.set_global(self.output_mapping["output"]["global_name"], Value)
 
             
+            if str(response).strip() == runtime.get_global('ID_key'):
+                        port, baudrate, IDN = response_q.get(block=True)
+                        print(IDN)
+                        runtime.set_local('serial_ID', IDN)
+                        runtime.set_local('serialport', port)
+                        runtime.set_local('baudrate', baudrate)
+
+
             else:
                 logger.info(f"No trigger matched. Skipping module execution.")
 

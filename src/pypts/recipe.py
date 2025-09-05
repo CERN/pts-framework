@@ -633,6 +633,7 @@ class Step:
             case "waitstep": step_type = "WaitStep"
             case "userloadingstep": step_type = "UserLoadingStep"
             case "userrunmethodstep": step_type = "UserRunMethodStep"
+            case "userwritestep": step_type = "UserWriteStep"
 
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
@@ -655,7 +656,7 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep
+from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep
 
 
 
