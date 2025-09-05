@@ -717,7 +717,6 @@ class UserLoadingStep(Step):
         response_q = queue.SimpleQueue()
 
         try:
-
             runtime.send_event("user_interact", response_q, message, image_path, options)
             logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
 
@@ -839,6 +838,7 @@ class UserRunMethodStep(Step):
                 except Exception as e:
                     logger.error(f"Module method failed: {e}")
                     status["status"] = "error"
+                    response = "error"
             else:
                 logger.info(f"No trigger matched. Skipping module execution.")
                 status["status"] = ""
@@ -908,10 +908,8 @@ class UserWriteStep(Step):
             
             if str(response).strip() == runtime.get_global('wrt_key'):
                         Value = response_q.get(block=True)
-                        print("testing")
-                        print(self.output_mapping)
                         if self.output_mapping["output"]["type"] == "local":
-                            runtime.set_local(self.output_mapping["output"]["global_name"], Value)
+                            runtime.set_local(self.output_mapping["output"]["local_name"], Value)
                         elif self.output_mapping["output"]["type"] == "global":
                             runtime.set_global(self.output_mapping["output"]["global_name"], Value)
 

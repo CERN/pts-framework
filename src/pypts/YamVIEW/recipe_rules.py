@@ -26,5 +26,8 @@ STEP_REQUIRED_FIELDS = {
     "userinteractionstep": ["steptype", "step_name", "description"],
     "waitstep": ["steptype", "step_name", "description"],
     "pythonmodulestep": ["steptype", "step_name", "action_type", "module", "method_name", "description"],
+    "userloadingstep" : ["steptype", "step_name", "description"],
+    "userrunmethodstep": ["steptype", "step_name", "action_type", "module", "description"],
+    "userwritestep": ["steptype", "step_name", "description"],
     "default": ["steptype", "step_name", "action_type", "module", "method_name", "description"],
 }
