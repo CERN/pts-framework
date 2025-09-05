@@ -56,7 +56,7 @@ def test_recipe_loading():
     '''
     # Prepare test data
     recipe_data = [
-        {"name": "Test Recipe", "description": "For testing", "version": "1.0", "globals": {}},
+        {"name": "Test Recipe", "description": "For testing", "version": "1.0","main_sequence":"Main", "globals": {}},
         {"sequence_name": "Main", "locals": {}, "parameters": {}, "outputs": {},
          "setup_steps": [], "steps": [], "teardown_steps": []}
     ]
@@ -419,12 +419,12 @@ def test_range_check_pass_fail(recipe, runtime):
     inside_step = recipe.sequences["Main"].steps[3]
     outside_step = recipe.sequences["Main"].steps[4]
 
-    inside_result = inside_step.run(runtime, {})
-    outside_result = outside_step.run(runtime, {})
+    inside_result = inside_step.process_outputs(runtime, inside_step.run(runtime, {}).outputs)
+    outside_result = outside_step.process_outputs(runtime, outside_step.run(runtime, {}).outputs)
 
     # compare is probably just a boolean
-    assert inside_result.outputs["compare"] is True
-    assert outside_result.outputs["compare"] is False
+    assert inside_result is ResultType.PASS
+    assert outside_result is ResultType.FAIL
 
 
 def test_sequence_init_missing_data_raises():

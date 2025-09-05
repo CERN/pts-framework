@@ -15,7 +15,7 @@ import traceback
 import threading
 import queue
 import time
-from enum import Enum
+from enum import Enum, IntEnum
 import json
 import uuid
 import os
@@ -24,7 +24,7 @@ import os
 logger = logging.getLogger(__name__)
 
 
-class ResultType(Enum):
+class ResultType(IntEnum):
     SKIP  = 0
     DONE  = 1
     PASS  = 2
@@ -93,7 +93,7 @@ class StepResult():
         results = [result.get_result() for result in step_results]
 
         for result in results:
-            if result.value > highest_result.value:
+            if result> highest_result:
                 highest_result = result
 
         return highest_result
@@ -286,6 +286,7 @@ class Recipe:
                     raise
 
             self.name: str = recipe_main_data["name"]
+            self.main_sequence: str = recipe_main_data["main_sequence"]
             self.description: str = recipe_main_data["description"]
             self.version: str = recipe_main_data["version"]
             self.globals: dict[str, any] = recipe_main_data["globals"]
@@ -330,6 +331,7 @@ class Recipe:
         runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
         runtime.test_package = self.test_package    # Set test package in runtime
         runtime.continue_on_error = self.continue_on_error # Set continue on error setting in runtime
+        sequence_name = self.main_sequence
 
         # Use the event sender instead of direct calls
         self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
@@ -494,6 +496,9 @@ class Step:
                     # go get the value in the global variables
                     direct_inputs[input_name] = runtime.get_global(input_config["global_name"])
                     # del direct_inputs[input_name]["global_name"]
+                case "method":
+
+                    direct_inputs[input_name] = input_config["value"]
             # del direct_inputs[input_name]["type"] # at this point it is always type direct so we remove the key
         return direct_inputs
     
@@ -508,16 +513,16 @@ class Step:
                 case "passfail":    # Output is boolean. Passes on True
                     step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":      # Output is a value. Passes if equal to the target value
+                        print(output_config["value"])
                         step_result = (
                         ResultType.PASS
-                        
                         if step_output[output_name] == output_config["value"]
                         else ResultType.FAIL
                     )
                 case "range":       # Output is a numeric value. Passes if within given range
                     step_result = (
                         ResultType.PASS
-                        if (output_config["min"] <= step_output[output_name] <= output_config["max"])
+                        if (float(output_config["min"]) <= float(step_output[output_name]) <= float(output_config["max"]))
                         else ResultType.FAIL
                     )
                 case "global":      # Output to be written to global variable
@@ -626,6 +631,8 @@ class Step:
             case "sequencestep": step_type = "SequenceStep"
             case "userinteractionstep": step_type = "UserInteractionStep"
             case "waitstep": step_type = "WaitStep"
+            case "userloadingstep": step_type = "UserLoadingStep"
+            case "userrunmethodstep": step_type = "UserRunMethodStep"
 
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
@@ -648,7 +655,7 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep
+from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep
 
 
 
@@ -662,6 +669,7 @@ if __name__ == "__main__":
     # give time to print to stdout
     time.sleep(0.1)
     recipe = Recipe(yaml_path)
+    
     recipe.sequences["Main"].list_steps()
     recipe.run()
     # recipe.sequences["Main"].run()

@@ -56,7 +56,7 @@ steps:
       min: {type: direct, value: 10}
       max: {type: direct, value: 20}
     output_mapping:
-      compare: {type: passfail} # Should pass
+      compare: {type: range, min: 10, max: 20} # Should pass
 
   - steptype: PythonModuleStep
     step_name: Run Range Test (Outside Range)
@@ -68,7 +68,7 @@ steps:
       min: {type: direct, value: 10}
       max: {type: direct, value: 20}
     output_mapping:
-      compare: {type: passfail} # Should fail
+      compare: {type: range, min: 10, max: 20} # Should fail
 
   # Uncomment the following step to test error handling
   # - steptype: PythonModuleStep

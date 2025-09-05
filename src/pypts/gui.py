@@ -6,9 +6,9 @@ import logging
 from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
                              QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, 
                              QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
-                             QTreeView, QAbstractItemView)
+                             QTreeView, QAbstractItemView, QFileDialog)
 from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex
-from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption
+from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
@@ -16,6 +16,7 @@ import uuid # Import uuid
 import threading
 import os
 from importlib.resources import files
+from pypts.utils import get_step_result_colors
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +31,31 @@ class TextEditLoggerHandler(QObject, logging.Handler):
     def emit(self, record):
         msg = self.format(record)
         self.new_message.emit(msg)
+
+
+
+class ConfigFileLoader(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.load_config_file()
+
+    def load_config_file(self):
+        # Define allowed extensions
+        file_filter = (
+            "Configuration Files (*.yaml *.yml *.json *.xml *.ini *.env *.sta *.csa *.cal *.snp *.mat *.bin);;"
+            "All Files (*)"
+        )
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Configuration File",
+            "",
+            file_filter
+        )
+
+        if file_path:
+            print(f"Selected file: {file_path}")
+
 
 
 class MainWindow(QWidget):
@@ -103,16 +129,6 @@ class MainWindow(QWidget):
         self.message_box = QLabel(self)
 
         self.button_list_layout = QHBoxLayout()
-        self.yes_button = QPushButton()
-        self.yes_button.setText("Yes")
-        self.yes_button.setEnabled(False)
-        self.no_button = QPushButton()
-        self.no_button.setText("No")
-        self.no_button.setEnabled(False)
-        self.button_list_layout.addWidget(self.yes_button)
-        self.button_list_layout.addWidget(self.no_button)
-        self.yes_button.pressed.connect(lambda: self.interaction_response("yes"))
-        self.no_button.pressed.connect(lambda: self.interaction_response("no"))
 
         self.log_text_box = QPlainTextEdit(self)
         self.log_text_box.setReadOnly(True)
@@ -135,7 +151,18 @@ class MainWindow(QWidget):
         logging.getLogger().addHandler(self.log_handler)
 
         self.show()
+        
+    def add_interaction_button(self, label, value = None):
+        button = QPushButton()
+        button.setText(label)
+        button.pressed.connect(lambda: self.interaction_response(value or label))
+        self.button_list_layout.addWidget(button)
 
+    def clear_interaction_buttons(self):
+        while self.button_list_layout.count():
+            button = self.button_list_layout.itemAt(0).widget()
+            self.button_list_layout.removeWidget(button)
+            button.deleteLater()
 
     def update_recipe_name(self, event_dict):
         """Updates the recipe name label and window title from the event dictionary."""
@@ -253,6 +280,7 @@ class MainWindow(QWidget):
         # Adjust column widths to contents
         self.result_list.resizeColumnToContents(0)
         self.result_list.resizeColumnToContents(1)
+        self.result_list.resizeColumnToContents(2)
         # Note: In PySide6, the view will refresh automatically when the model is set
 
     def show_message(self, event_dict):
@@ -260,8 +288,8 @@ class MainWindow(QWidget):
         response_q: SimpleQueue = event_dict["response_q"]
         message = event_dict["message"]
         image_path = event_dict["image_path"]
+        print(f"we got response {event_dict}")
         flat_options = {k: v for d in event_dict.get("options") or [] if isinstance(d, dict) for k, v in d.items()}
-        # options = event_dict["options"] # Currently unused
         self.message_box.setText(message)
         if image_path != "":
             # Add error handling for image loading
@@ -275,18 +303,27 @@ class MainWindow(QWidget):
             else:
                 logger.warning(f"Image not found at {image_path}, using default logo")
                 self.picture_box.setPixmap(self.cern_logo)
-        self.yes_button.setText(flat_options.get("yes") or "Yes")
-        self.no_button.setText(flat_options.get("no") or "No")
-        self.yes_button.setEnabled(True)
-        self.no_button.setEnabled(True)
+
+        for value, label in flat_options.items():
+            Fallback_labels = label or value.capitalize()
+            self.add_interaction_button(label=Fallback_labels,value=value)
+        if not flat_options:
+            self.add_interaction_button(label="")
         self.response_q = response_q
 
     def interaction_response(self, response):
         """Sends the user's response back via the response queue and resets UI."""
         self.response_q.put(response)
-        self.yes_button.setEnabled(False)
-        self.no_button.setEnabled(False)
-        self.picture_box.setPixmap(self.cern_logo)
+        if str(response) == 'file':
+            loader = ConfigFileLoader()
+            self.response_q.put(loader)
+        elif str(response) == 'ID':
+            dialog = QInputDialog(self)
+            ID, ok = dialog.getText(self, "Device ID or COMPORT")
+            logger.debug(f"Dialog result: ok={ok}, text='{ID}'")
+
+        self.clear_interaction_buttons()
+        #self.picture_box.setPixmap(self.cern_logo)
         self.message_box.clear()
 
     def get_serial_number(self, event_dict):
@@ -446,19 +483,40 @@ class StepResultModel(QAbstractItemModel):
         return len(parent_item)
 
     def columnCount(self, parent):
-        return 2
+        return 3
     
     def data(self, index, role):
         if not index.isValid():
             return None
         
+
         index_item: recipe.StepResult = index.internalPointer()
         
+        outputs_str = ""
+        if index_item.outputs:
+            output_lines = []
+            for name, value in index_item.outputs.items():
+                config = index_item.step.output_mapping.get(name, {})
+                config_str = ", ".join(f"{k}={v}" for k, v in config.items()) if config else "no config"
+                output_lines.append(f"{name}={value} ({config_str})")
+            outputs_str = "; ".join(output_lines)
+        
+        result_type = index_item.result
+        if index.column() == 1:
+            background_color, text_color = get_step_result_colors(result_type, recipe.ResultType)
+            
+            if role == Qt.BackgroundRole:
+                return QBrush(QColor(background_color))
+
+            if role == Qt.ForegroundRole:
+                return QBrush(QColor(text_color))
+
         columns = [
             index_item.step.name,
-            str(index_item.result)
+            str(index_item.result),
+            outputs_str
         ]
-
+        
         match role:
             case Qt.ItemDataRole.DisplayRole:
                 return columns[index.column()]

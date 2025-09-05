@@ -31,13 +31,13 @@ def simple_return():
 
 def range_test(value, min, max):
     # time.sleep(1)
-    return {"compare": min < value < max}
+    return {"compare": value}
 
 def generate_error():
     raise AttributeError
 
 def simple_output(value):
-    return {"my_output": value + 1}
+    return {"my_output":value + 1}
 
 def is_PSU_disconnected():
     return (True)
@@ -147,3 +147,10 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0, serial_number=N
         "tdms_file": tdms_filepath
     }
 
+def loadconfigFile(file= None):
+    print("We went into config function")
+    if file:
+        print("we properly found the file.")
+        return True
+    else:
+        return False

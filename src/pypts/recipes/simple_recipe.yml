@@ -95,7 +95,7 @@ steps:
   input_mapping:
     target:
       type: direct
-      value: '45'
+      value: 45
   output_mapping:
     compare:
       type: passfail
@@ -120,7 +120,9 @@ steps:
       value: '20'
   output_mapping:
     compare:
-      type: passfail
+      type: range
+      min: '10'
+      max: '20'
 - steptype: WaitStep
   step_name: Wait for 3s
   description: Waiting 3 seconds to let user check confirm
@@ -147,7 +149,9 @@ steps:
       value: '20'
   output_mapping:
     compare:
-      type: passfail
+      type: range
+      min: '10'
+      max: '20'
 - steptype: PythonModuleStep
   step_name: Generate Error Deliberately
   description: Some description

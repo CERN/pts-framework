@@ -48,9 +48,9 @@ if __name__ == '__main__':
     """
 
     yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
-    yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
+    yaml_path = os.path.join(yaml_dir, 'comprehensive_recipe.yml')
 
-    api = run_pts(yaml_path, sequence_name="Main")
+    api = run_pts(yaml_path)
 
     window, app = create_and_start_gui(api)
 
