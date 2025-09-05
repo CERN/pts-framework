@@ -8,7 +8,6 @@ from importlib import util
 from importlib.resources import files
 from PySide6.QtGui import QImageReader
 import serial
-import serial.tools.list_ports
 
 """Module that provides the utilities to the project.
     """
