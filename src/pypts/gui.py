@@ -3,16 +3,20 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 import logging
-from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
-                             QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, 
-                             QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
-                             QTreeView, QAbstractItemView, QFileDialog)
-from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex
-from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush
+import webbrowser
+
+from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QMenuBar, QApplication, QLabel, QTableWidget,
+                               QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout,
+                               QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit,
+                               QTreeView, QAbstractItemView, QFileDialog, QToolBar, QWidgetAction, QStyle, QSizePolicy,
+                               QMainWindow)
+from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex, QSize, QTimer
+from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush, QAction
 from queue import SimpleQueue
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
+import subprocess
 import threading
 import os
 from importlib.resources import files
@@ -31,7 +35,6 @@ class TextEditLoggerHandler(QObject, logging.Handler):
     def emit(self, record):
         msg = self.format(record)
         self.new_message.emit(msg)
-
 
 
 class ConfigFileLoader(QWidget):
@@ -57,7 +60,6 @@ class ConfigFileLoader(QWidget):
             print(f"Selected file: {file_path}")
 
 
-
 class MainWindow(QWidget):
     """The main application window, displaying recipe progress and results."""
     def __init__(self, *args, **kwargs):
@@ -66,7 +68,6 @@ class MainWindow(QWidget):
 
         self.q_in = None
         self.response_q = None
-
         self.already_updated = False
 
         self.setWindowTitle("PTS")
@@ -86,10 +87,95 @@ class MainWindow(QWidget):
             self.cern_logo = QPixmap(800, 500)
             self.cern_logo.fill(Qt.GlobalColor.lightGray)
 
-        top_level_layout = QHBoxLayout()
-        left_half_layout = QVBoxLayout()
-        right_half_layout = QVBoxLayout()
 
+        self.top_level_layout = QVBoxLayout()
+        self.main_layout = QHBoxLayout()
+        self.left_half_layout = QVBoxLayout()
+        self.right_half_layout = QVBoxLayout()
+
+        self.setup_left_half_layout()
+        self.setup_right_half_layout()
+        self.setup_toolbar()
+        self.setup_menubar()
+
+        # Putting the layouts together to fit the GUI
+        self.main_layout.addLayout(self.left_half_layout)
+        self.main_layout.addLayout(self.right_half_layout)
+
+        self.top_level_layout.addWidget(self.toolbar)
+        self.top_level_layout.addLayout(self.main_layout)
+
+        self.setLayout(self.top_level_layout)
+
+        # setting up the logging hook
+        self.log_handler = TextEditLoggerHandler(self)
+        self.log_handler.setFormatter(logging.Formatter('%(levelname)s : %(name)s : %(message)s'))
+        self.log_handler.new_message.connect(self.log_text_box.appendPlainText)
+        logging.getLogger().addHandler(self.log_handler)
+
+        self.show()
+
+# Initialization related methods
+    def setup_menubar(self):
+        # menu bar
+        menubar = QMenuBar(self)
+        self.top_level_layout.setMenuBar(menubar)  # set it in the layout
+
+        # File menu
+        self.file_menu = menubar.addMenu("File")
+        self.open_recipe_action = QAction("Open Recipe", self)
+        self.exit_action = QAction("Exit", self)
+        self.file_menu.addAction(self.open_recipe_action)
+        self.file_menu.addAction(self.exit_action)
+        self.open_recipe_action.triggered.connect(self.on_open_clicked)
+        self.exit_action.triggered.connect(self.application_close)
+
+        # Edit menu
+        self.edit_menu = menubar.addMenu("Edit")
+        self.edit_recipe_action = QAction("Edit Recipe", self)
+        self.edit_menu.addAction(self.edit_recipe_action)
+        self.edit_recipe_action.triggered.connect(self.on_edit_clicked)
+
+        # View menu
+        self.view_menu = menubar.addMenu("View")
+
+        # About menu
+        self.about_menu = menubar.addMenu("About")
+        self.open_gitlab = QAction("Gitlab", self)
+        self.open_wiki = QAction("Wiki", self)
+
+        self.about_menu.addAction(self.open_gitlab)
+        self.about_menu.addAction(self.open_wiki)
+
+        self.open_wiki.triggered.connect(self.on_open_wiki_clicked)
+        self.open_gitlab.triggered.connect(self.on_open_gitlab_clicked)
+
+    def setup_toolbar(self):
+        # --- toolbar setup ---
+        self.toolbar = QToolBar()
+        self.toolbar.setIconSize(QSize(16, 16))
+        self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+        self.toolbar.setContentsMargins(4, 4, 4, 4)
+        self.toolbar.setStyleSheet("QToolBar { spacing: 10px; }")
+
+        # --- Actions ---
+        self.action_open_recipe = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_DirOpenIcon), "Open", self)
+        self.action_start_recipe_execution = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaPlay), "Start", self)
+        self.action_abort_recipe_execution = QAction(self.style().standardIcon(QStyle.StandardPixmap.SP_MediaStop), "Stop", self)
+
+        self.toolbar.addAction(self.action_open_recipe)
+        self.toolbar.addAction(self.action_start_recipe_execution)
+        self.toolbar.addAction(self.action_abort_recipe_execution)
+
+        self.action_open_recipe.triggered.connect(self.on_open_clicked)
+        self.action_start_recipe_execution.triggered.connect(self.on_start_clicked)
+        self.action_abort_recipe_execution.triggered.connect(self.on_abort_clicked)
+
+        self.action_open_recipe.setEnabled(True)
+        self.action_start_recipe_execution.setEnabled(False)
+        self.action_abort_recipe_execution.setEnabled(False)
+
+    def setup_left_half_layout(self):
         self.recipe_label = QLabel(self)
 
         self.step_list = QTableWidget(self)
@@ -117,10 +203,11 @@ class MainWindow(QWidget):
         self.result_list.setMaximumWidth(800)
         self.result_list.setMaximumHeight(200)
 
-        left_half_layout.addWidget(self.recipe_label)
-        left_half_layout.addWidget(self.step_list)
-        left_half_layout.addWidget(self.result_list)
+        self.left_half_layout.addWidget(self.recipe_label)
+        self.left_half_layout.addWidget(self.step_list)
+        self.left_half_layout.addWidget(self.result_list)
 
+    def setup_right_half_layout(self):
         self.picture_box = QLabel(self)
         self.picture_box.setPixmap(self.cern_logo)
         self.picture_box.setMinimumSize(800, 600)
@@ -136,22 +223,39 @@ class MainWindow(QWidget):
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_text_box.setStyleSheet('background-color: whitesmoke')
 
-        right_half_layout.addWidget(self.picture_box)
-        right_half_layout.addWidget(self.message_box)
-        right_half_layout.addLayout(self.button_list_layout)
-        right_half_layout.addWidget(self.log_text_box)
+        self.right_half_layout.addWidget(self.picture_box)
+        self.right_half_layout.addWidget(self.message_box)
+        self.right_half_layout.addLayout(self.button_list_layout)
+        self.right_half_layout.addWidget(self.log_text_box)
 
-        top_level_layout.addLayout(left_half_layout)
-        top_level_layout.addLayout(right_half_layout)
-        self.setLayout(top_level_layout)
+# Callback methods
+    def on_open_wiki_clicked(self):
+        url = "https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/master/"
+        webbrowser.open(url)
 
-        self.log_handler = TextEditLoggerHandler(self)
-        self.log_handler.setFormatter(logging.Formatter('%(levelname)s : %(name)s : %(message)s'))
-        self.log_handler.new_message.connect(self.log_text_box.appendPlainText)
-        logging.getLogger().addHandler(self.log_handler)
+    def on_open_gitlab_clicked(self):
+        url = "https://gitlab.cern.ch/pts/framework/pypts"
+        webbrowser.open(url)
 
-        self.show()
-        
+    def on_edit_clicked(self):
+        logger.info("Opening YamVIEW - recipe creation tool")
+        subprocess.Popen([sys.executable, "YamVIEW/recipe_creator.py"])
+
+    def application_close(self):
+        logger.info("Closing application")
+        #todo - implement teardown
+        self.close()
+
+    def on_open_clicked(self):
+        logger.info("clicked open icon (no action implemented)")
+
+    def on_start_clicked(self):
+        logger.info("clicked start icon (no action implemented)")
+
+    def on_abort_clicked(self):
+        logger.info("clicked abort icon (no action implemented)")
+
+# Misc
     def add_interaction_button(self, label, value = None):
         button = QPushButton()
         button.setText(label)
@@ -164,6 +268,87 @@ class MainWindow(QWidget):
             self.button_list_layout.removeWidget(button)
             button.deleteLater()
 
+    def get_serial_number(self, event_dict):
+        """Prompts the user for a serial number and sends it back via the response queue from the event dictionary."""
+        logger.debug("get_serial_number method called")
+        response_q: SimpleQueue = event_dict["response_q"]
+        max_attempts = 3
+        attempts = 0
+
+        while attempts < max_attempts:
+            attempts += 1
+            logger.debug(f"Serial number dialog attempt {attempts}")
+            try:
+                # QInputDialog static methods were deprecated in PyQt6, but still work in PySide6
+                dialog = QInputDialog(self)
+                text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
+                logger.debug(f"Dialog result: ok={ok}, text='{text}'")
+
+                if ok and text.strip():  # Check for non-empty text after stripping whitespace
+                    response_q.put(text.strip())
+                    logger.debug(f"Serial number '{text.strip()}' sent to queue")
+                    break
+                elif ok and not text.strip():
+                    logger.warning("Empty serial number entered, retrying...")
+                    continue
+                else:
+                    logger.warning("User cancelled serial number dialog")
+                    # Put a default value to prevent the recipe from hanging
+                    response_q.put("CANCELLED")
+                    break
+            except Exception as e:
+                logger.error(f"Error in serial number dialog: {e}", exc_info=True)
+                response_q.put("ERROR")
+                break
+
+        if attempts >= max_attempts:
+            logger.error("Maximum attempts reached for serial number input")
+            response_q.put("MAX_ATTEMPTS_REACHED")
+
+    def interaction_response(self, response):
+        """Sends the user's response back via the response queue and resets UI."""
+        self.response_q.put(response)
+        if str(response) == 'file':
+            loader = ConfigFileLoader()
+            self.response_q.put(loader)
+        elif str(response) == 'ID':
+            dialog = QInputDialog(self)
+            ID, ok = dialog.getText(self, "Device ID or COMPORT")
+            logger.debug(f"Dialog result: ok={ok}, text='{ID}'")
+
+        self.clear_interaction_buttons()
+        #self.picture_box.setPixmap(self.cern_logo)
+        self.message_box.clear()
+
+    def show_message(self, event_dict):
+        """Displays a user message and interaction options from the event dictionary."""
+        response_q: SimpleQueue = event_dict["response_q"]
+        message = event_dict["message"]
+        image_path = event_dict["image_path"]
+        print(f"we got response {event_dict}")
+        flat_options = {k: v for d in event_dict.get("options") or [] if isinstance(d, dict) for k, v in d.items()}
+        self.message_box.setText(message)
+        if image_path != "":
+            # Add error handling for image loading
+            if os.path.exists(image_path):
+                image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
+                if not image_pixmap.isNull():
+                    self.picture_box.setPixmap(image_pixmap)
+                else:
+                    logger.warning(f"Failed to load image from {image_path}, using default logo")
+                    self.picture_box.setPixmap(self.cern_logo)
+            else:
+                logger.warning(f"Image not found at {image_path}, using default logo")
+                self.picture_box.setPixmap(self.cern_logo)
+
+        for value, label in flat_options.items():
+            Fallback_labels = label or value.capitalize()
+            self.add_interaction_button(label=Fallback_labels,value=value)
+        if not flat_options:
+            self.add_interaction_button(label="")
+        self.response_q = response_q
+
+# Update GUI methods
     def update_recipe_name(self, event_dict):
         """Updates the recipe name label and window title from the event dictionary."""
         recipe_name = event_dict["recipe_name"]
@@ -282,86 +467,6 @@ class MainWindow(QWidget):
         self.result_list.resizeColumnToContents(1)
         self.result_list.resizeColumnToContents(2)
         # Note: In PySide6, the view will refresh automatically when the model is set
-
-    def show_message(self, event_dict):
-        """Displays a user message and interaction options from the event dictionary."""
-        response_q: SimpleQueue = event_dict["response_q"]
-        message = event_dict["message"]
-        image_path = event_dict["image_path"]
-        print(f"we got response {event_dict}")
-        flat_options = {k: v for d in event_dict.get("options") or [] if isinstance(d, dict) for k, v in d.items()}
-        self.message_box.setText(message)
-        if image_path != "":
-            # Add error handling for image loading
-            if os.path.exists(image_path):
-                image_pixmap = QPixmap(image_path).scaled(800, 600, Qt.AspectRatioMode.KeepAspectRatio)
-                if not image_pixmap.isNull():
-                    self.picture_box.setPixmap(image_pixmap)
-                else:
-                    logger.warning(f"Failed to load image from {image_path}, using default logo")
-                    self.picture_box.setPixmap(self.cern_logo)
-            else:
-                logger.warning(f"Image not found at {image_path}, using default logo")
-                self.picture_box.setPixmap(self.cern_logo)
-
-        for value, label in flat_options.items():
-            Fallback_labels = label or value.capitalize()
-            self.add_interaction_button(label=Fallback_labels,value=value)
-        if not flat_options:
-            self.add_interaction_button(label="")
-        self.response_q = response_q
-
-    def interaction_response(self, response):
-        """Sends the user's response back via the response queue and resets UI."""
-        self.response_q.put(response)
-        if str(response) == 'file':
-            loader = ConfigFileLoader()
-            self.response_q.put(loader)
-        elif str(response) == 'ID':
-            dialog = QInputDialog(self)
-            ID, ok = dialog.getText(self, "Device ID or COMPORT")
-            logger.debug(f"Dialog result: ok={ok}, text='{ID}'")
-
-        self.clear_interaction_buttons()
-        #self.picture_box.setPixmap(self.cern_logo)
-        self.message_box.clear()
-
-    def get_serial_number(self, event_dict):
-        """Prompts the user for a serial number and sends it back via the response queue from the event dictionary."""
-        logger.debug("get_serial_number method called")
-        response_q: SimpleQueue = event_dict["response_q"]
-        max_attempts = 3
-        attempts = 0
-        
-        while attempts < max_attempts:
-            attempts += 1
-            logger.debug(f"Serial number dialog attempt {attempts}")
-            try:
-                # QInputDialog static methods were deprecated in PyQt6, but still work in PySide6
-                dialog = QInputDialog(self)
-                text, ok = dialog.getText(self, "Serial Number of DUT", "Serial Number:")
-                logger.debug(f"Dialog result: ok={ok}, text='{text}'")
-                
-                if ok and text.strip():  # Check for non-empty text after stripping whitespace
-                    response_q.put(text.strip())
-                    logger.debug(f"Serial number '{text.strip()}' sent to queue")
-                    break
-                elif ok and not text.strip():
-                    logger.warning("Empty serial number entered, retrying...")
-                    continue
-                else:
-                    logger.warning("User cancelled serial number dialog")
-                    # Put a default value to prevent the recipe from hanging
-                    response_q.put("CANCELLED")
-                    break
-            except Exception as e:
-                logger.error(f"Error in serial number dialog: {e}", exc_info=True)
-                response_q.put("ERROR")
-                break
-        
-        if attempts >= max_attempts:
-            logger.error("Maximum attempts reached for serial number input")
-            response_q.put("MAX_ATTEMPTS_REACHED")
 
     def update_running_step(self, event_dict):
         """Highlights the step that is currently running in the step list table."""
