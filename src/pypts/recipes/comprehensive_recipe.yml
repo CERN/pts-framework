@@ -7,14 +7,19 @@ recipe_version: 1.0.0
 description: A sample recipe demonstrating many different combinations of input/outputs.
 main_sequence: Comprehensive_IO_Types
 test_package: pypts
-continue_on_error: true
 globals: 
+  continue_on_error: true
   global_value: 45
+  file: None
+  loadFile_key: 'file'
+  cancel_key: 'cancel'
 ---
 sequence_name: Comprehensive_IO_Types
 description: Sequence covering all input and output types
 parameters: {}
 locals:
+  serial_ID: None
+  SerialPort: None
   local_val: 10
   some_value: 5
   my_direct: 7
@@ -30,21 +35,132 @@ outputs:
   final_result: None
 setup_steps: []
 steps:
+
+- steptype: UserLoadingStep
+  step_name: Load config file
+  description: Asking user to find the file needed
+  skip: false
+  input_mapping:
+    message:
+      type: direct
+      value: 'Find the specified file'
+    options:
+      type: direct
+      value:
+      - 'cancel': 'cancel'
+      - 'file': 'next'
+  output_mapping:
+    output:
+      type: passfail
+  trigger_response: "next"
+  continue_on_error: True
+
+- steptype: UserRunMethodStep
+  step_name: Running the specified method
+  description: Runs the specified method
+  action_type: method
+  module: example_tests.py
+  skip: false
+  input_mapping:
+    message:
+      type: direct
+      value: 'Find the specified file'
+    options:
+      type: direct
+      value:
+      - 'cancel': 'cancel'
+      - 'run': 'Run'
+    method_name:
+      type: method
+      value: 'is_PSU_disconnected'
+  output_mapping:
+    output:
+      type: passfail
+  trigger_response: "run"
+  continue_on_error: True
+
+
+- steptype: UserRunMethodStep
+  step_name: Running the specified method
+  description: Asking user to find the file needed
+  action_type: method
+  module: example_tests.py
+  skip: false
+  input_mapping:
+    message:
+      type: direct
+      value: 'Find the specified file'
+    options:
+      type: direct
+      value:
+      - 'cancel': 'cancel'
+      - 'run': 'Run'
+    method_name:
+      type: method
+      value: 'loadconfigFile'
+  output_mapping:
+    output:
+      type: passfail
+  trigger_response: "run"
+  need_file: true
+  continue_on_error: True
+
+- steptype: UserWriteStep
+  step_name: Writing a command 
+  description: Write the ID or the port 
+  input_mapping:
+    message:
+      type: direct
+      value: 'Write the ID or serial port of device'
+    options:
+      type: direct
+      value:
+      - 'cancel': 'cancel'
+      - 'ID': 'Run'
+  output_mapping:
+    output:
+      type: passfail
+  continue_on_error: True
+
+
 - steptype: UserInteractionStep
   step_name: Initial Buttonpush
+  description: Asking user for confirmation before test starts.
+  action_type: method
+  module: example_tests.py
+  skip: false
+  input_mapping:
+    message:
+      type: direct
+      value: ['Connect devices', 'click to verify connection to the devices', 'load configuration file', 'click to read value to confirm connection']
+      indexed: true
+    image_path: 
+      type: direct
+      value: lego2.jpg
+    options:
+      type: direct
+      value:
+      - 'finish': 'cancel'
+      - 'next': 'next'
+    method_name:
+      type: method
+      value: 'is_PSU_disconnected'
+  output_mapping:
+    output:
+      type: equals
+      value: 'next'
+  trigger_response: "next"
+  continue_on_error: True
+
+- steptype: UserInteractionStep
+  step_name: Yes no window without image
   description: Asking user for confirmation before test starts.
   skip: false
   input_mapping:
     message:
       type: direct
-      value: 'Hello there. Are you doing all right?
-
-        Please let us know by pressing the correct button :)
-
+      value: 'We test with normal buttons without image.
         '
-    image_path:
-      type: direct
-      value: lego2.jpg
     options:
       type: direct
       value:

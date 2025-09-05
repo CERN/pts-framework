@@ -496,6 +496,9 @@ class Step:
                     # go get the value in the global variables
                     direct_inputs[input_name] = runtime.get_global(input_config["global_name"])
                     # del direct_inputs[input_name]["global_name"]
+                case "method":
+
+                    direct_inputs[input_name] = input_config["value"]
             # del direct_inputs[input_name]["type"] # at this point it is always type direct so we remove the key
         return direct_inputs
     
@@ -510,9 +513,9 @@ class Step:
                 case "passfail":    # Output is boolean. Passes on True
                     step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":      # Output is a value. Passes if equal to the target value
+                        print(output_config["value"])
                         step_result = (
                         ResultType.PASS
-                        
                         if step_output[output_name] == output_config["value"]
                         else ResultType.FAIL
                     )
@@ -628,6 +631,8 @@ class Step:
             case "sequencestep": step_type = "SequenceStep"
             case "userinteractionstep": step_type = "UserInteractionStep"
             case "waitstep": step_type = "WaitStep"
+            case "userloadingstep": step_type = "UserLoadingStep"
+            case "userrunmethodstep": step_type = "UserRunMethodStep"
 
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
@@ -650,7 +655,7 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep
+from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep
 
 
 

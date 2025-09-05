@@ -7,6 +7,8 @@ import sys
 from importlib import util
 from importlib.resources import files
 from PySide6.QtGui import QImageReader
+import serial
+import serial.tools.list_ports
 
 """Module that provides the utilities to the project.
     """
@@ -117,6 +119,40 @@ def path_to_importable_module(file_path: Path) -> str:
 
     mod_path = Path(*relevant_parts).with_suffix("")  # remove .py
     return ".".join(mod_path.parts)
+
+class AbortTestException(Exception):
+    """Raised to stop test execution cleanly if setup is not confirmed."""
+    pass
+
+def query_device_id(port, baudrate=9600, timeout=1):
+    try:
+        with serial.Serial(port, baudrate, timeout=timeout) as ser:
+            ser.write(b'ID?\n')  # Command to query the device ID
+            response = ser.readline().decode().strip()
+            return response
+    except (serial.SerialException, UnicodeDecodeError):
+        return None
+
+def find_serial_device(device_id: str = None, port_name: str = None, baudrate=9600, timeout=1):
+    # Situation: If port_name is given, find the device ID
+    if port_name:
+        id_response = query_device_id(port_name, baudrate, timeout)
+        if id_response:
+            return port_name, id_response
+        else:
+            raise RuntimeError(f"Could not read ID from port {port_name}")
+
+    # Situation: If device_id is given, scan all ports to find it
+    elif device_id:
+        ports = serial.tools.list_ports.comports()
+        for port in ports:
+            id_response = query_device_id(port.device, baudrate, timeout)
+            if id_response == device_id:
+                return port.device, device_id
+        raise RuntimeError(f"Device with ID '{device_id}' not found on any COM port.")
+
+    else:
+        raise ValueError("Either device_id or SerialPort must be provided.")
 
 
 if __name__ == "__main__":

@@ -6,7 +6,7 @@ import logging
 from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QApplication, QLabel, QTableWidget, 
                              QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout, 
                              QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit, 
-                             QTreeView, QAbstractItemView)
+                             QTreeView, QAbstractItemView, QFileDialog)
 from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush
 from queue import SimpleQueue
@@ -31,6 +31,31 @@ class TextEditLoggerHandler(QObject, logging.Handler):
     def emit(self, record):
         msg = self.format(record)
         self.new_message.emit(msg)
+
+
+
+class ConfigFileLoader(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.load_config_file()
+
+    def load_config_file(self):
+        # Define allowed extensions
+        file_filter = (
+            "Configuration Files (*.yaml *.yml *.json *.xml *.ini *.env *.sta *.csa *.cal *.snp *.mat *.bin);;"
+            "All Files (*)"
+        )
+
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open Configuration File",
+            "",
+            file_filter
+        )
+
+        if file_path:
+            print(f"Selected file: {file_path}")
+
 
 
 class MainWindow(QWidget):
@@ -263,6 +288,7 @@ class MainWindow(QWidget):
         response_q: SimpleQueue = event_dict["response_q"]
         message = event_dict["message"]
         image_path = event_dict["image_path"]
+        print(f"we got response {event_dict}")
         flat_options = {k: v for d in event_dict.get("options") or [] if isinstance(d, dict) for k, v in d.items()}
         self.message_box.setText(message)
         if image_path != "":
@@ -281,13 +307,23 @@ class MainWindow(QWidget):
         for value, label in flat_options.items():
             Fallback_labels = label or value.capitalize()
             self.add_interaction_button(label=Fallback_labels,value=value)
+        if not flat_options:
+            self.add_interaction_button(label="")
         self.response_q = response_q
 
     def interaction_response(self, response):
         """Sends the user's response back via the response queue and resets UI."""
         self.response_q.put(response)
+        if str(response) == 'file':
+            loader = ConfigFileLoader()
+            self.response_q.put(loader)
+        elif str(response) == 'ID':
+            dialog = QInputDialog(self)
+            ID, ok = dialog.getText(self, "Device ID or COMPORT")
+            logger.debug(f"Dialog result: ok={ok}, text='{ID}'")
+
         self.clear_interaction_buttons()
-        self.picture_box.setPixmap(self.cern_logo)
+        #self.picture_box.setPixmap(self.cern_logo)
         self.message_box.clear()
 
     def get_serial_number(self, event_dict):
