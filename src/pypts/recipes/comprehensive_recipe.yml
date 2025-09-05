@@ -7,6 +7,7 @@ recipe_version: 1.0.0
 description: A sample recipe demonstrating many different combinations of input/outputs.
 main_sequence: Comprehensive_IO_Types
 test_package: pypts
+continue_on_error: True
 globals: 
   continue_on_error: true
   global_value: 45
@@ -38,109 +39,6 @@ outputs:
   final_result: None
 setup_steps: []
 steps:
-
-- steptype: UserLoadingStep
-  step_name: Load config file
-  description: Asking user to find the file needed
-  skip: false
-  input_mapping:
-    message:
-      type: direct
-      value: 'Find the specified file'
-    options:
-      type: direct
-      value:
-      - 'cancel': 'cancel'
-      - 'file': 'next'
-  output_mapping:
-    output:
-      type: passfail
-  trigger_response: "next"
-  continue_on_error: True
-
-- steptype: UserRunMethodStep
-  step_name: Running the specified method
-  description: Runs the specified method
-  action_type: method
-  module: example_tests.py
-  skip: false
-  input_mapping:
-    message:
-      type: direct
-      value: 'Find the specified file'
-    options:
-      type: direct
-      value:
-      - 'cancel': 'cancel'
-      - 'run': 'Run'
-    method_name:
-      type: method
-      value: 'is_PSU_disconnected'
-  output_mapping:
-    output:
-      type: passfail
-  trigger_response: "run"
-  continue_on_error: True
-
-
-- steptype: UserRunMethodStep
-  step_name: Running the specified method
-  description: Asking user to find the file needed
-  action_type: method
-  module: example_tests.py
-  skip: false
-  input_mapping:
-    message:
-      type: direct
-      value: 'Find the specified file'
-    options:
-      type: direct
-      value:
-      - 'cancel': 'cancel'
-      - 'run': 'Run'
-    method_name:
-      type: method
-      value: 'loadconfigFile'
-  output_mapping:
-    output:
-      type: passfail
-  trigger_response: "run"
-  need_file: true
-  continue_on_error: True
-
-- steptype: UserWriteStep
-  step_name: Writing a command 
-  description: Write the ID or the port 
-  input_mapping:
-    message:
-      type: direct
-      value: 'Write the ID or serial port of device'
-    options:
-      type: direct
-      value:
-      - 'cancel': 'cancel'
-      - 'ID': 'Write'
-  output_mapping:
-    output:
-      type: passfail
-
-- steptype: UserWriteStep
-  step_name: Writing a command 
-  description: Write to a specified variable in local or global.  
-  input_mapping:
-    message:
-      type: direct
-      value: 'Write the ID or serial port of device'
-    options:
-      type: direct
-      value:
-      - 'cancel': 'cancel'
-      - 'wrt': 'Write'
-  output_mapping:
-    output:
-      type: local
-      local_name: my_direct
-
 
 - steptype: UserInteractionStep
   step_name: Initial Buttonpush
