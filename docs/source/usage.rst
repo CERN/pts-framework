@@ -1,9 +1,23 @@
+.. SPDX-FileCopyrightText: 2025 CERN <home.cern>
+..
+.. SPDX-License-Identifier: CC-BY-SA-4.0
+
 .. _usage:
 
 Usage
 =====
 
 This guide provides a basic overview of how to run a test recipe using the ``pypts`` framework.
+
+Installation
+------------
+
+Before using pypts, you may need to install the following system dependencies for PySide6 (Qt GUI framework):
+
+.. code-block:: bash
+
+   sudo dnf install libxcb libxcb-devel
+   sudo dnf install xcb-util xcb-util-wm xcb-util-keysyms xcb-util-image xcb-util-renderutil
 
 1. Define your Recipe (`my_recipe.yaml`)
 -----------------------------------------
@@ -39,7 +53,7 @@ Create a YAML file defining your test sequence. The recipe consists of a main do
          wait_time: { type: direct, value: 2 }
      - steptype: PythonModuleStep
        step_name: Configure Device
-       module: path/to/your/device_driver.py
+       module: device_driver.py
        action_type: method
        method_name: setup_device
        input_mapping:
@@ -49,7 +63,7 @@ Create a YAML file defining your test sequence. The recipe consists of a main do
          success: { type: passfail }
      - steptype: PythonModuleStep
        step_name: Take Measurement
-       module: path/to/your/device_driver.py
+       module: device_driver.py
        action_type: method
        method_name: read_measurement
        input_mapping: {}
@@ -60,14 +74,180 @@ Create a YAML file defining your test sequence. The recipe consists of a main do
    teardown_steps:
      - steptype: PythonModuleStep
        step_name: Disconnect Device
-       module: path/to/your/device_driver.py
+       module: device_driver.py
        action_type: method
        method_name: disconnect
        input_mapping: {}
        output_mapping: {}
 
 .. note::
-   Replace ``path/to/your/device_driver.py`` with the actual path to your Python module containing the methods called by ``PythonModuleStep``.
+   Replace ``device_driver.py`` with the actual name of your Python module containing the methods called by ``PythonModuleStep``. Adding the path should not be done as the system automatically 
+   detects the path to the specified test. Therefore, avoid naming modules the same unless you specify a ``test_package`` as described below.
+
+
+Alternative: Resource-Based Module Loading
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For better distribution and deployment, you can use resource-based module loading by organizing your test modules as Python packages:
+
+.. code-block:: yaml
+   :caption: my_recipe.yaml (resource-based)
+
+   # Main recipe definition with test_package
+   name: MyTestRecipe
+   description: Example recipe using resource-based loading.
+   version: "1.0"
+   test_package: my_project.tests  # NEW: Package containing test modules
+   globals:
+     device_address: "COM3"
+     test_voltage: 5.0
+   ---
+   # Main sequence definition
+   sequence_name: Main
+   parameters: []
+   locals:
+     measurement: null
+   outputs:
+     - measurement
+   setup_steps: []
+   steps:
+     - steptype: PythonModuleStep
+       step_name: Configure Device
+       module: device_driver.py  # Resolved to my_project.tests.device_driver
+       action_type: method
+       method_name: setup_device
+       input_mapping:
+         port: { type: global, global_name: device_address }
+         voltage: { type: global, global_name: test_voltage }
+       output_mapping:
+         success: { type: passfail }
+     - steptype: PythonModuleStep
+       step_name: Take Measurement
+       module: device_driver.py  # Same module, different method
+       action_type: method
+       method_name: read_measurement
+       input_mapping: {}
+       output_mapping:
+         measured_value: { type: local, local_name: measurement }
+         status: { type: range, min: 4.8, max: 5.2 }
+   teardown_steps:
+     - steptype: PythonModuleStep
+       step_name: Disconnect Device
+       module: device_driver.py
+       action_type: method
+       method_name: disconnect
+       input_mapping: {}
+       output_mapping: {}
+
+**Package Structure Example**:
+
+.. code-block:: text
+
+   my_project/
+   ├── __init__.py
+   ├── tests/
+   │   ├── __init__.py
+   │   ├── device_driver.py
+   │   └── other_test_modules.py
+   └── my_recipe.yaml
+
+**Benefits of Resource-Based Loading**:
+
+* **Distribution**: Test modules are bundled with your package
+* **Reliability**: No dependency on current working directory
+* **Deployment**: Tests are guaranteed available if package is installed
+* **Standards**: Uses Python's standard import mechanism
+* **Naming**: Avoids errors appearing as a result of tests having the same name between packages
+
+
+Steptypes applicable for the recipe
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Given there are different types of steps to take, it is required to describe the types and what can be put into the steps.
+ - UserInteractionStep
+ - PythonModuleStep
+ - WaitStep
+
+Each has its own template of required elements but with overlapping types of elements that will be explained in the following sections.
+The first type of step is the ``UserInteractionStep``.
+.. code-block:: yaml
+
+  steptype: UserInteractionStep
+  step_name: Are you all right?
+  description: Asking user for something
+  skip: false
+  input_mapping:
+    message:
+      type: direct
+      value: 'Hello there. This is an example
+        '
+    image_path:
+      type: direct
+      value: lego2.jpg
+    options:
+      type: direct
+      value:
+      - 'yes': ''
+      - 'no': ''
+  output_mapping:
+    output:
+      type: equals
+      value: 'yes'
+
+Of the full template for ``UserInteractionStep``, only the output_mapping, steptype and step_name are **required**, meaning the rest is optional.
+The skip is assumed false and therefore only required in scenarios where changing this is required. The ``input_mapping`` is not a requirement for running the tests however it can be useful for user interaction.
+The ``message`` is a description that is written above the buttons which could be a description of a test. The image_path is likewise for a nice to have if a image over the required testsetup is added as a visual guidance. 
+options is for changing what is written on the buttons that you push on. Standard values are "Yes" and "No".
+
+Other types of input other than **direct** is **global** and **local**. In the case of a type **local**, the next other item has to be called **local_name**. It will appear as:
+.. code-block:: yaml
+
+    input_mapping:
+    value:
+      type: local
+      local_name: test_value
+  output_mapping:
+    my_output:
+      type: local
+      local_name: calculated_output
+
+Output consists of 6 different types of outputs they receive which also changes the required input. The 6 output types are the following:
+ - passthrough
+ - passfail
+ - equals
+ - range
+ - global
+ - local
+
+Each is for its own type of tests. **passthrough** is for functions where the output is already a ``ResultType`` which is an enum class consisting of the possible outcomes. **passfail** returns an output as a boolean that then determines the ``ResultType``.
+**equals** is used for comparisons of specified value with the returned value from test. **range** is used for tests where the measured value is required to be within limits.
+**global** writes the output of the test to global variables. **local** writes the output to local variables in the runtime class. 
+ 
+
+
+The 6 types of outputs are applicable for all types of steps where the next one to describe is the ``PythonModuleStep``. The steptype is used for automated tests withouth required interaction by an operator from the framework. 
+This type is used for automated tests and will run the given function(``method``) inside the given python file. 
+
+.. code-block:: yaml
+
+  steptype: PythonModuleStep
+  step_name: Verify number is in range
+  action_type: method
+  module: example_tests.py
+  method_name: range_test
+  input_mapping:
+    value:
+      type: direct
+      value: '15'
+    min:
+      type: direct
+      value: '10'
+    max:
+      type: direct
+      value: '20'
+  output_mapping:
+    compare:
+      type: passfail
+
 
 2. Run the Recipe (`run_my_recipe.py`)
 ---------------------------------------
@@ -112,6 +292,51 @@ Use the ``run_pts`` function from the ``pypts.pts`` module to execute your recip
 
    print("Main script finished.")
 
+Alternative: Run recipe with user interaction.
+---------------------------------------
+In situations where a level of user interaction with buttons is required, the one above is not enough. For a level of user interaction with steptype ``UserInteractionStep``, a GUI is added.
+As the above, use the ``run_pts`` function from the ``pypts.pts`` module to execute the recipe file. Use the function ``create_and_start_gui()`` from the ``pypts.startup`` module to create a gui and start it, using the execution of the ``run_pts``.
+
+.. code-block:: python
+   :caption: __main__.py
+
+   from pypts._version import version as __version__
+   import logging
+   import sys
+   import os
+   from pypts.pts import run_pts
+   from pypts.startup import create_and_start_gui
+
+   logger = logging.getLogger(__name__)
+   # Configure basic logging
+   log_format = '%(levelname)s : %(name)s : %(message)s'
+   logging.basicConfig(level=logging.DEBUG, format=log_format)
+   # Reduce verbosity of noisy libraries
+   logging.getLogger("paramiko.transport").setLevel("WARN")
+
+
+   if __name__ == '__main__':
+       """Main entry point for the PTS application.
+       
+       Sets up the QApplication, MainWindow, logging, RecipeEventProxy, 
+       and connects signals/slots between the proxy and the window.
+       Starts the recipe execution and event processing threads.
+       """
+
+       yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
+       yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
+
+       api = run_pts(yaml_path, sequence_name="Main")
+ 
+       window, app = create_and_start_gui(api)
+ 
+       exit_code = app.exec()
+       sys.exit(exit_code)
+
+
+
+
+
 3. Check the Reports
 --------------------
 
@@ -119,3 +344,89 @@ After execution (or during, for the CSV), check the ``./pts_reports/`` directory
 
 *   ``report.csv``: Incrementally updated CSV file with detailed step results.
 *   ``report.html``: HTML version of the report generated after the recipe finishes.
+
+Migrating from File-Based to Resource-Based Loading
+----------------------------------------------------
+
+If you have existing recipes using file-based module loading, here's how to migrate:
+
+**Step 1: Organize Test Modules**
+
+Convert your test file structure to a proper Python package:
+
+.. code-block:: bash
+
+   # Before (file-based)
+   my_project/
+   ├── tests/
+   │   ├── test_module1.py
+   │   └── test_module2.py
+   └── recipe.yaml
+   
+   # After (resource-based)
+   my_project/
+   ├── __init__.py                    # NEW: Makes it a package
+   ├── tests/
+   │   ├── __init__.py               # NEW: Makes tests a subpackage  
+   │   ├── test_module1.py
+   │   └── test_module2.py
+   └── recipe.yaml
+
+**Step 2: Update Recipe Configuration**
+
+Add the ``test_package`` field and simplify module paths:
+
+.. code-block:: yaml
+
+   # Before
+   ---
+   name: My Recipe
+   globals: {}
+   
+   steps:
+   - steptype: PythonModuleStep
+     module: tests/test_module1.py     # File path
+     method_name: my_test
+   
+   # After  
+   ---
+   name: My Recipe
+   test_package: my_project.tests     # NEW: Package specification
+   globals: {}
+   
+   steps:
+   - steptype: PythonModuleStep
+     module: test_module1.py           # Just the filename
+     method_name: my_test
+
+**Step 3: Install and Test**
+
+Make sure your package is properly installed:
+
+.. code-block:: bash
+
+   # Install in development mode
+   pip install -e .
+   
+   # Or install normally
+   pip install .
+
+**Step 4: Verify Package Structure**
+
+Test that your modules can be imported:
+
+.. code-block:: python
+
+   # This should work without errors
+   import my_project.tests.test_module1
+
+Common Migration Issues
+~~~~~~~~~~~~~~~~~~~~~~~
+
+**Import Errors**: Make sure all directories have ``__init__.py`` files
+
+**Module Not Found**: Verify the ``test_package`` field matches your actual package structure
+
+**Path Issues**: Remove directory prefixes from module paths in the recipe - just use the filename
+
+**Package Installation**: Ensure your package is installed in the Python environment where you're running pypts

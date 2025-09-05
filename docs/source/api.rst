@@ -1,3 +1,7 @@
+.. SPDX-FileCopyrightText: 2025 CERN <home.cern>
+..
+.. SPDX-License-Identifier: CC-BY-SA-4.0
+
 .. _API_docs:
 
 pypts API documentation
@@ -16,6 +20,13 @@ Recipe Components (`recipe`)
 ----------------------------
 .. automodule:: pypts.recipe
    :members: Recipe, Sequence, Step, ResultType, StepResult, Runtime
+   :undoc-members:
+   :show-inheritance:
+
+Step Implementations (`steps`)
+------------------------------
+.. automodule:: pypts.steps
+   :members: PythonModuleStep, SequenceStep, IndexedStep, UserInteractionStep, WaitStep
    :undoc-members:
    :show-inheritance:
 

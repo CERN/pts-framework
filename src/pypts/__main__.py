@@ -1,23 +1,58 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# This file defines the script entry point for the PTS application.
+#
+# It allows the GUI to be launched directly by running:
+#     python -m pypts
+#
+# It sets up the full application stack: GUI, threading, event proxy, and recipe execution.
+# Intended for end users or developers running the app manually with a fixed recipe path.
+#
+# For programmatic use (e.g., testing or embedding), use `run_recipe_app()` in `__init__.py` instead.
+
+from pypts._version import version as __version__
 import logging
 import sys
+import os
+from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import QObject, Signal, QThread
+from pypts.pts import run_pts
+from pypts.gui import MainWindow, TextEditLoggerHandler # Import necessary GUI classes
+from pypts.event_proxy import RecipeEventProxy # Import the proxy class
+from queue import SimpleQueue
+from contextlib import suppress
+from pypts import recipe
+from pypts.startup import create_and_start_gui
+import os
+import uuid # Import uuid
+import atexit
+import time
 
-# Import the package itself to access launch_gui
-import pypts
-
-# Keep logger configuration if desired for standalone execution
 logger = logging.getLogger(__name__)
+
+# Configure basic logging
 log_format = '%(levelname)s : %(name)s : %(message)s'
 logging.basicConfig(level=logging.DEBUG, format=log_format)
+# Reduce verbosity of noisy libraries
 logging.getLogger("paramiko.transport").setLevel("WARN")
 
 
 if __name__ == '__main__':
-    """Main entry point for the PTS application when run as a script.
+    """Main entry point for the PTS application.
     
-    Simply calls the launch_gui function from the pypts package.
-    Command-line arguments for recipe loading could be added here later using argparse.
+    Sets up the QApplication, MainWindow, logging, RecipeEventProxy, 
+    and connects signals/slots between the proxy and the window.
+    Starts the recipe execution and event processing threads.
     """
-    # Directly call the launch function from the package
-    # No recipe path is provided, so it starts in the default mode (user selects file)
-    exit_code = pypts.launch_gui()
+
+    yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
+    yaml_path = os.path.join(yaml_dir, 'comprehensive_recipe.yml')
+
+    api = run_pts(yaml_path)
+
+    window, app = create_and_start_gui(api)
+
+    exit_code = app.exec()
     sys.exit(exit_code)

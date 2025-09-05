@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 from queue import Queue, SimpleQueue
 import logging
 from pypts import recipe
@@ -63,16 +67,32 @@ def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
     
     # Get and set pypts version
     try:
-        runtime.pypts_version = importlib.metadata.version('pypts')
+        runtime.pypts_version = importlib.metadata.version('pts-framework')
         logger.info(f"pypts version: {runtime.pypts_version}")
     except importlib.metadata.PackageNotFoundError:
         runtime.pypts_version = "unknown"
         logger.warning("Could not determine pypts version. Package not found by importlib.metadata.")
 
     # Create the recipe with default file_loader and event_sender
-    recipe_to_run = recipe.Recipe(recipe_file)
+    try:
+        recipe_to_run = recipe.Recipe(recipe_file)
+        logger.debug(f"Recipe created successfully. Name: {getattr(recipe_to_run, 'name', 'MISSING')}, Version: {getattr(recipe_to_run, 'version', 'MISSING')}")
+        logger.debug(f"Recipe object type: {type(recipe_to_run)}")
+        
+        # Validate recipe object before sending event
+        if not hasattr(recipe_to_run, 'name'):
+            logger.error("Recipe object missing 'name' attribute")
+            raise AttributeError("Recipe object missing 'name' attribute")
+        if not hasattr(recipe_to_run, 'version'):
+            logger.error("Recipe object missing 'version' attribute")
+            raise AttributeError("Recipe object missing 'version' attribute")
+            
+    except Exception as e:
+        logger.error(f"Failed to create recipe from {recipe_file}: {e}", exc_info=True)
+        raise
     
     # Send event using runtime's send_event method
+    logger.debug(f"Sending post_load_recipe event with recipe: {recipe_to_run}")
     runtime.send_event("post_load_recipe", recipe_to_run)
     
     # Start the recipe in a separate thread

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 import logging
 import copy
 import uuid
@@ -7,8 +11,10 @@ import time
 import contextlib
 from pathlib import Path
 from importlib import import_module
+import importlib.resources
 from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
+from pypts.utils import get_package_root, find_resource_path, get_project_root, path_to_importable_module, AbortTestException
 
 logger = logging.getLogger(__name__)
 
@@ -126,9 +132,17 @@ class IndexedStep(Step):
             output_mapping_keys = list(copied_step.output_mapping.keys())
             for key in output_mapping_keys:
                 output_conf = copied_step.output_mapping[key]
-                if isinstance(output_conf, dict) and output_conf.get("type") in ["local", "global"]:
-                    logger.debug(f"Removing output mapping '{key}' (type: {output_conf.get('type')}) from iteration {i} of '{self.name}'")
-                    del copied_step.output_mapping[key]
+                if isinstance(output_conf, dict):
+                    if output_conf.get("indexed", False):
+                        values = output_conf.get("value", [])
+                        if i < len(values):
+                            copied_step.output_mapping[key]["value"] = values[i]
+                        else:
+                            logger.warning(f"No indexed output value for iteration {i} in '{self.name}'")
+                            copied_step.output_mapping[key]["value"] = None #could also be a specified standard value.
+                    elif output_conf.get("type") in ["local", "global"]:
+                        logger.debug(f"Removing output mapping '{key}' (type: {output_conf.get('type')}) from iteration {i} of '{self.name}'")
+                        del copied_step.output_mapping[key]
 
             # Modify the name for clarity in logs and results
             copied_step.name = f"{self.template_step.name} - Iteration {i+1}/{num_runs}"
@@ -210,11 +224,10 @@ class PythonModuleStep(Step):
             parent_step_result_uuid: UUID of the parent StepResult.
         """
         step_output = {}
-        module_file_path = Path(self.module_path_str)
 
         try:
-            # Load the module dynamically and carefully
-            loaded_module = self.__load_module(module_file_path)
+            # Load the module dynamically using resources
+            loaded_module = self.__load_module(runtime)
         except ImportError as e:
             logger.error(f"Failed to import module '{self.module_path_str}' for step '{self.name}': {e}")
             raise # Re-raise to be caught by the main run loop and result in ERROR
@@ -225,10 +238,10 @@ class PythonModuleStep(Step):
                     try:
                         method_to_call = getattr(loaded_module, self.method_name)
                     except AttributeError:
-                        logger.error(f"Method '{self.method_name}' not found in module '{module_file_path.name}' for step '{self.name}'")
-                        raise AttributeError(f"Method '{self.method_name}' not found in module.") # Re-raise specific error
+                        logger.error(f"Method '{self.method_name}' not found in module '{self.module_path_str}' for step '{self.name}'")
+                        raise #AttributeError(f"Method '{self.method_name}' not found in module.") # Re-raise specific error
 
-                    logger.debug(f"Calling method '{self.method_name}' in '{module_file_path.name}' with inputs: {input}")
+                    logger.debug(f"Calling method '{self.method_name}' in '{self.module_path_str}' with inputs: {input}")
                     # Call the method, passing the resolved 'input' dictionary as keyword arguments
                     return_value = method_to_call(**input)
 
@@ -250,9 +263,9 @@ class PythonModuleStep(Step):
                         value = getattr(loaded_module, attribute_name)
                         # Store the read value in the step output dictionary using the attribute name as the key
                         step_output[attribute_name] = value
-                        logger.debug(f"Read attribute '{attribute_name}' from '{module_file_path.name}': {value}")
+                        logger.debug(f"Read attribute '{attribute_name}' from '{self.module_path_str}': {value}")
                     except AttributeError:
-                        logger.error(f"Attribute '{attribute_name}' not found in module '{module_file_path.name}' for step '{self.name}'")
+                        logger.error(f"Attribute '{attribute_name}' not found in module '{self.module_path_str}' for step '{self.name}'")
                         raise AttributeError(f"Attribute '{attribute_name}' not found.")
 
                 case "write_attribute":
@@ -266,11 +279,11 @@ class PythonModuleStep(Step):
                         # if not hasattr(loaded_module, attribute_name):
                         #    logger.warning(f"Attribute '{attribute_name}' does not exist in module '{module_file_path.name}'. Attempting to create it.")
                         setattr(loaded_module, attribute_name, attribute_value)
-                        logger.debug(f"Set attribute '{attribute_name}' in '{module_file_path.name}' to: {attribute_value}")
+                        logger.debug(f"Set attribute '{attribute_name}' in '{self.module_path_str}' to: {attribute_value}")
                         step_output = {} # Write action typically doesn't produce output data
                     except Exception as e:
                         # Catch potential errors during setattr (e.g., read-only property)
-                        logger.error(f"Failed to set attribute '{attribute_name}' on module '{module_file_path.name}' for step '{self.name}': {e}")
+                        logger.error(f"Failed to set attribute '{attribute_name}' on module '{self.module_path_str}' for step '{self.name}': {e}")
                         raise # Re-raise to indicate step failure
 
                 case _:
@@ -286,97 +299,81 @@ class PythonModuleStep(Step):
 
         return step_output
 
-    def __load_module(self, module_full_path: Path):
+    def __load_module(self, runtime: Runtime):
         """
-        Loads a Python module dynamically and safely from a given file path.
+        Loads a Python module dynamically from package resources.
 
         Args:
-            module_full_path (Path): The absolute or relative path to the .py file.
+            runtime (Runtime): The runtime environment containing test_package information.
 
         Returns:
             The loaded module object.
 
         Raises:
-            ImportError: If the module file is not found or cannot be imported.
+            Exception: If the test module cannot be imported.
         """
-        if not module_full_path.is_file():
-            raise ImportError(f"Module file not found: {module_full_path}")
 
-        module_path = module_full_path.parent.resolve() # Get absolute directory path
-        module_filename = module_full_path.stem
+        # --- 1. Figure out root ---
+        if runtime.test_package:
+            root = get_package_root(runtime.test_package)
+        else:
+            root = get_project_root()
 
-        # Ensure module directory is temporarily in sys.path
-        original_sys_path = list(sys.path)
-        cleanup_needed = False
-        module_to_delete = None
-
+        folder_name = None
+        # --- 2. Resolve module path ---
+        module_path = find_resource_path(self.module_path_str, root=root)
         try:
-            if str(module_path) not in sys.path:
-                 sys.path.insert(0, str(module_path)) # Prepend to prioritize this path
-                 cleanup_needed = True
+            #Below function is used for finding and running the pypts as an example when downloading it from wheel.
+            full_module_name = path_to_importable_module(module_path)
+            logger.debug(f"[DEBUG] Resolved via site-packages: {full_module_name}")
 
-            # Check if module is already imported *from the target path*
-            # to handle potential reloads or conflicts
-            if module_filename in sys.modules:
-                 existing_module = sys.modules[module_filename]
-                 # Heuristic: check if the existing module file seems to be the one we want
-                 try:
-                     existing_path = Path(existing_module.__file__).parent.resolve()
-                     if existing_path == module_path:
-                         logger.warning(f"Module '{module_filename}' already loaded from target directory. Consider using reload if updates are needed.")
-                         # For simplicity now, return existing; could add reload logic here.
-                         # from importlib import reload
-                         # module = reload(existing_module)
-                         module = existing_module
-                     else:
-                         # Conflict - module name exists but from different path
-                         logger.error(f"Module name conflict: '{module_filename}' already loaded from {existing_path}, expected {module_path}. Aborting import.")
-                         raise ImportError(f"Module name conflict for '{module_filename}'")
-                 except (AttributeError, TypeError):
-                      # Built-in modules or others might not have __file__
-                      logger.warning(f"Cannot verify path for already loaded module '{module_filename}'. Attempting import anyway.")
-                      module = import_module(module_filename)
-                      module_to_delete = module_filename # Mark for potential cleanup if newly imported
+        except:
+            if module_path.suffix == '.py':
+                module_path = module_path.with_suffix('')
+
+            # --- 3. Work out folder part ---
+            if module_path.parent != Path("."):
+                folder_path = module_path.parent
+                folder_name = ".".join(folder_path.parts)
+                
+                redundant_prefix = "pypts.src"
+                if folder_name.startswith(redundant_prefix + "."):
+                    folder_name = folder_name[len(redundant_prefix) + 1 :]
             else:
-                # Module not loaded, perform the import
-                module = import_module(module_filename)
-                module_to_delete = module_filename # Mark for potential cleanup
-                logger.debug(f"Successfully imported module '{module_filename}' from '{module_path}'")
+                folder_name = get_project_root().name
 
+        
+            # Build the full module name: test_package + filename only
+            # e.g., "fsi_pts.tests" + "test_status" -> "fsi_pts.tests.test_status"
+            module_name = module_path.name  # Just the filename part
+            if runtime.test_package and folder_name == runtime.test_package:
+                folder_name = None
+            
+            parts = [runtime.test_package, folder_name, module_name]
+            full_module_name = ".".join(part for part in parts if part)
+            logger.debug(f"{full_module_name}" )
+
+        # This one above tries to include a test_package that never was found or existed as a key in the recipe.
+        # --- 4. Import attempt ---
+        try:
+            # First check if the test package exists
+            try:
+                importlib.resources.files(runtime.test_package)
+            except (ModuleNotFoundError, AttributeError) as e:
+                logger.debug(f"Test package '{runtime.test_package}' not found or not accessible: {e}. Software will continue to dynamically find the module")
+            
+            # Try to import the module
+            logger.debug(f"Attempting to import module '{full_module_name}'")
+            module = import_module(full_module_name)
+            logger.debug(f"Successfully imported module '{full_module_name}'")
             return module
-
+            
+        except ModuleNotFoundError as e:
+            logger.error(f"Module '{full_module_name}' not found in package '{runtime.test_package}': {e}")
+            raise ImportError(f"Failed to load module '{full_module_name}': {e}") from e
         except Exception as e:
-            logger.error(f"Error loading module '{module_filename}' from '{module_path}': {e}")
-            raise ImportError(f"Failed to load module '{module_filename}': {e}") from e
-
-        finally:
-            # Restore original sys.path if it was modified
-            if cleanup_needed:
-                # Careful restoration: Only remove the path we added if it's still there at index 0
-                if sys.path[0] == str(module_path):
-                     sys.path.pop(0)
-                else:
-                     # Path got modified unexpectedly? Log a warning.
-                     logger.warning(f"sys.path modification conflict detected while cleaning up for module '{module_filename}'")
-                     # Try removing by value if it exists elsewhere
-                     with contextlib.suppress(ValueError):
-                         sys.path.remove(str(module_path))
-
-            # --- Module Unloading/Cleanup ---
-            # Generally, unloading modules in Python is complex and often discouraged
-            # due to potential issues with dangling references and shared state.
-            # If the loaded module modifies global state or holds resources,
-            # simply removing it from sys.modules might not be sufficient or safe.
-            # Consider if the steps *need* isolated module instances or if managing
-            # state within the module or via runtime variables is better.
-            #
-            # If cleanup is essential (e.g., to load updated code in a loop),
-            # investigate robust reloading patterns or running steps in separate processes.
-            #
-            # Basic cleanup attempt (use with caution):
-            # if module_to_delete and module_to_delete in sys.modules:
-            #     logger.debug(f"Attempting to remove '{module_to_delete}' from sys.modules.")
-            #     del sys.modules[module_to_delete]
+            logger.error(f"Error loading module '{full_module_name}': {e}")
+            raise ImportError(f"Failed to load module '{full_module_name}': {e}") from e
 
 
 class SequenceStep(Step):
@@ -513,7 +510,7 @@ class UserInteractionStep(Step):
     Pauses recipe execution and sends an event to request interaction from a user
     via a UI or other external interface. Waits for a response.
     """
-    def __init__(self, **kwargs):
+    def __init__(self, trigger_response: str = None, module: str = None, action_type: str = None, method_name: str = None, continue_on_error: bool = False, **kwargs):
         """
         Args:
             **kwargs: Common Step arguments. Input mapping should define:
@@ -523,11 +520,16 @@ class UserInteractionStep(Step):
                       Output mapping should define how to store the 'user_response'.
         """
         super().__init__(**kwargs)
+        self.trigger_response = trigger_response
+        self.module = module
+        self.action_type = action_type
+        self.method_name = method_name
+        self.continue_on_error = continue_on_error
         # Example: Ensure output mapping expects the response.
         # This should be defined in the YAML, but we can add a default/check.
-        if "user_response" not in self.output_mapping:
-             logger.warning(f"UserInteractionStep '{self.name}' might need an output mapping for 'user_response' to store the result.")
-             # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
+        if "output" not in self.output_mapping:
+            logger.warning(f"UserInteractionStep '{self.name}' might need an output mapping for 'output' to store the result.")
+            # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
 
     def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
         """
@@ -538,9 +540,11 @@ class UserInteractionStep(Step):
             input: Dictionary of resolved inputs ('message', 'image_path', 'options').
             parent_step_result_uuid: UUID of the parent StepResult.
         """
+        print(input)
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+
 
         # Create a temporary queue for this specific interaction to receive the response.
         response_q = queue.SimpleQueue()
@@ -563,12 +567,66 @@ class UserInteractionStep(Step):
             #     raise TimeoutError("User did not respond in time.")
             response = response_q.get(block=True) # No timeout for now
 
+            status = {}
             logger.info(f"Step '{self.name}': User responded.")
             logger.debug(f"Step '{self.name}': Received response: {response}")
 
-            # Return the response in a dictionary. The key 'user_response' should match
-            # what the output mapping expects.
-            return {"user_response": response}
+            if str(response).strip().lower() == runtime.get_global('cancel_key'):
+                        runtime.continue_on_error = self.continue_on_error
+                        raise AbortTestException(f"wrong button")
+            
+            if self.trigger_response and str(response).strip().lower() in ([str(v).strip().lower() for v in (self.trigger_response.keys() if isinstance(self.trigger_response, dict) else self.trigger_response)] if isinstance(self.trigger_response, (dict, list, set))else [str(self.trigger_response).strip().lower()]):
+                logger.info(f"Trigger matched: '{response}' → Executing setup/calibration method.")
+                
+                try:
+                    module_step = PythonModuleStep(
+                        step_name=f"{self.name}",
+                        action_type=self.action_type,
+                        module=self.module,
+                        method_name=self.input_mapping["method_name"]["value"],
+                    )
+                    if str(response).strip().lower() == runtime.get_global('loadFile_key'):
+                        file = response_q.get(block=True)
+                        runtime.set_global('file', file)
+                    
+                    # Determine input based on action_type
+                    if self.action_type == 'method':
+                        module_input = {}  # No inputs expected
+                        file_position = runtime.get_global('file')
+                        if file_position  != "None":
+                            module_input["file"] = file_position
+                    elif self.action_type == 'read_attribute':
+                        module_input = {'attribute_name': input.get('attribute_name')}
+                    elif self.action_type == 'write_attribute':
+                        module_input = {
+                            'attribute_name': input.get('attribute_name'),
+                            'attribute_value': input.get('attribute_value')
+                        }
+                    else:
+                        module_input = {}
+
+                    result = module_step._step(runtime,module_input, parent_step_result_uuid=parent_step_result_uuid)
+
+                    if result:
+                        logger.info(f"Module method returned: {result}")
+                    else:
+                        logger.info(f"Module method returned no output (None or empty).")
+
+                    status["status"] = "ok"
+                except Exception as e:
+                    logger.error(f"Module method failed: {e}")
+                    status["status"] = "error"
+            else:
+                logger.info(f"No trigger matched. Skipping module execution.")
+                status["status"] = ""
+
+            # Return the response in a dictionary. The key should match
+            # what the output mapping expects - therefore the yaml mapping is used
+
+            # todo - dynamically resolve what is the string for output
+            # but then, itr raises a question of "what if multiple outputs are processed?"
+            # Maybe we shall pass whole input/output mapping instead and handle those mappings internally in the step?
+            return {"output": response, "status": status}
 
         except Exception as e:
             # Catch potential errors during event sending or queue operations
@@ -600,7 +658,7 @@ class WaitStep(Step):
             input: Dictionary of resolved inputs, must contain 'wait_time'.
             parent_step_result_uuid: UUID of the parent StepResult.
         """
-        wait_time = input.get("wait_time")
+        wait_time = float(input.get("wait_time"))
 
         # Validate wait_time
         if not isinstance(wait_time, (int, float)):
@@ -619,3 +677,246 @@ class WaitStep(Step):
 
         # Wait step typically doesn't produce data output
         return {} 
+
+
+
+class UserLoadingStep(Step):
+    """
+    Pauses recipe execution and sends an event to request interaction from a user
+    via a UI or other external interface. Waits for a response.
+    """
+    def __init__(self, trigger_response: str = None, continue_on_error: bool = False, **kwargs):
+        """
+        Args:
+            **kwargs: Common Step arguments. Input mapping should define:
+                      - 'message' (str): Text prompt for the user.
+                      - 'image_path' (str, optional): Path to an image to display.
+                      - 'options' (list, optional): List of response options (e.g., button labels).
+                      Output mapping should define how to store the 'user_response'.
+        """
+        super().__init__(**kwargs)
+        self.trigger_response = trigger_response
+        self.continue_on_error = continue_on_error
+        if "output" not in self.output_mapping:
+            logger.warning(f"UserLoadingStep '{self.name}' might need an output mapping for 'output' to store the result.")
+            # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        """
+        Sends the 'user_interact' event and waits for a response on a queue.
+
+        Args:
+            runtime: The recipe runtime, used for sending events.
+            input: Dictionary of resolved inputs ('message', 'image_path', 'options').
+            parent_step_result_uuid: UUID of the parent StepResult.
+        """
+        message = input.get("message", "User interaction required.") # Default message
+        image_path = input.get("image_path") # Can be None
+        options = input.get("options") # Can be None or list/dict
+
+        response_q = queue.SimpleQueue()
+
+        try:
+
+            runtime.send_event("user_interact", response_q, message, image_path, options)
+            logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
+
+            response = response_q.get(block=True) # No timeout for now
+
+            logger.info(f"Step '{self.name}': User responded.")
+            logger.debug(f"Step '{self.name}': Received response: {response}")
+
+            if str(response).strip().lower() == runtime.get_global('loadFile_key'):
+                        file = response_q.get(block=True)
+                        runtime.set_global('file', file)
+            if str(response).strip().lower() == runtime.get_global('cancel_key'):
+                        runtime.continue_on_error = self.continue_on_error
+                        raise AbortTestException(f"wrong button")
+            else:
+                logger.info(f"No trigger matched. Skipping module execution.")
+
+            return {"output": response}
+
+        except Exception as e:
+            # Catch potential errors during event sending or queue operations
+            logger.error(f"Error during user interaction step '{self.name}': {e}")
+            raise # Propagate error to mark step as ERROR
+        finally:
+            # Clean up queue reference (though SimpleQueue doesn't strictly need it)
+            del response_q
+
+
+
+class UserRunMethodStep(Step):
+    """
+    Pauses recipe execution and sends an event to request interaction from a user
+    via a UI or other external interface. Waits for a response.
+    """
+    def __init__(self, trigger_response: str = None, module: str = None, action_type: str = None, method_name: str = None, continue_on_error: bool = False, need_file: bool = False, **kwargs):
+        """
+        Args:
+            **kwargs: Common Step arguments. Input mapping should define:
+                      - 'message' (str): Text prompt for the user.
+                      - 'image_path' (str, optional): Path to an image to display.
+                      - 'options' (list, optional): List of response options (e.g., button labels).
+                      Output mapping should define how to store the 'user_response'.
+        """
+        super().__init__(**kwargs)
+        self.trigger_response = trigger_response
+        self.module = module
+        self.action_type = action_type
+        self.method_name = method_name
+        self.continue_on_error = continue_on_error
+        self.need_file = need_file
+        if "output" not in self.output_mapping:
+            logger.warning(f"UserRunMethodStep '{self.name}' might need an output mapping for 'output' to store the result.")
+            # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        """
+        Sends the 'user_interact' event and waits for a response on a queue.
+
+        Args:
+            runtime: The recipe runtime, used for sending events.
+            input: Dictionary of resolved inputs ('message', 'image_path', 'options').
+            parent_step_result_uuid: UUID of the parent StepResult.
+        """
+        print(input)
+        message = input.get("message", "User interaction required.") # Default message
+        image_path = input.get("image_path") # Can be None
+        options = input.get("options") # Can be None or list/dict
+
+        response_q = queue.SimpleQueue()
+
+        try:
+            runtime.send_event("user_interact", response_q, message, image_path, options)
+            logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
+
+            response = response_q.get(block=True) # No timeout for now
+
+            status = {}
+            logger.info(f"Step '{self.name}': User responded.")
+            logger.debug(f"Step '{self.name}': Received response: {response}")
+            
+            if str(response).strip().lower() == runtime.get_global('cancel_key'):
+                        runtime.continue_on_error = self.continue_on_error
+                        raise AbortTestException(f"wrong button")
+            
+            if self.trigger_response and str(response).strip().lower() in ([str(v).strip().lower() for v in (self.trigger_response.keys() if isinstance(self.trigger_response, dict) else self.trigger_response)] if isinstance(self.trigger_response, (dict, list, set))else [str(self.trigger_response).strip().lower()]):
+                logger.info(f"Trigger matched: '{response}' → Executing setup/calibration method.")
+            
+                try:
+                    module_step = PythonModuleStep(
+                        step_name=f"{self.name}",
+                        action_type=self.action_type,
+                        module=self.module,
+                        method_name=self.input_mapping["method_name"]["value"],
+                    )
+                    
+                    # Determine input based on action_type
+                    if self.action_type == 'method':
+                        module_input = {}  # No inputs expected
+                        if self.need_file:
+                            file_position = runtime.get_global('file')
+                            module_input["file"] = file_position
+                    elif self.action_type == 'read_attribute':
+                        module_input = {'attribute_name': input.get('attribute_name')}
+                    elif self.action_type == 'write_attribute':
+                        module_input = {
+                            'attribute_name': input.get('attribute_name'),
+                            'attribute_value': input.get('attribute_value')
+                        }
+                    else:
+                        module_input = {}
+
+                    result = module_step._step(runtime,module_input, parent_step_result_uuid=parent_step_result_uuid)
+
+                    if result:
+                        logger.info(f"Module method returned: {result}")
+                    else:
+                        logger.info(f"Module method returned no output (None or empty).")
+                    status["status"] = "ok"
+                except Exception as e:
+                    logger.error(f"Module method failed: {e}")
+                    status["status"] = "error"
+            else:
+                logger.info(f"No trigger matched. Skipping module execution.")
+                status["status"] = ""
+
+            return {"output": response, "status": status}
+
+        except Exception as e:
+            # Catch potential errors during event sending or queue operations
+            logger.error(f"Error during user interaction step '{self.name}': {e}")
+            raise # Propagate error to mark step as ERROR
+        finally:
+            # Clean up queue reference (though SimpleQueue doesn't strictly need it)
+            del response_q
+
+
+
+
+class UserWriteStep(Step):
+    """
+    Pauses recipe execution and sends an event to request interaction from a user
+    via a UI or other external interface. Waits for a response.
+    """
+    def __init__(self, trigger_response: str = None, continue_on_error: bool = False, **kwargs):
+        """
+        Args:
+            **kwargs: Common Step arguments. Input mapping should define:
+                      - 'message' (str): Text prompt for the user.
+                      - 'image_path' (str, optional): Path to an image to display.
+                      - 'options' (list, optional): List of response options (e.g., button labels).
+                      Output mapping should define how to store the 'user_response'.
+        """
+        super().__init__(**kwargs)
+        self.trigger_response = trigger_response
+        self.continue_on_error = continue_on_error
+        if "output" not in self.output_mapping:
+            logger.warning(f"UserLoadingStep '{self.name}' might need an output mapping for 'output' to store the result.")
+            # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        """
+        Sends the 'user_interact' event and waits for a response on a queue.
+
+        Args:
+            runtime: The recipe runtime, used for sending events.
+            input: Dictionary of resolved inputs ('message', 'image_path', 'options').
+            parent_step_result_uuid: UUID of the parent StepResult.
+        """
+        message = input.get("message", "User interaction required.") # Default message
+        image_path = input.get("image_path") # Can be None
+        options = input.get("options") # Can be None or list/dict
+
+        response_q = queue.SimpleQueue()
+
+        try:
+
+            runtime.send_event("user_interact", response_q, message, image_path, options)
+            logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
+
+            response = response_q.get(block=True) # No timeout for now
+
+            logger.info(f"Step '{self.name}': User responded.")
+            logger.debug(f"Step '{self.name}': Received response: {response}")
+
+            if str(response).strip().lower() == runtime.get_global('cancel_key'):
+                        runtime.continue_on_error = self.continue_on_error
+                        raise AbortTestException(f"wrong button")
+            
+
+            
+            else:
+                logger.info(f"No trigger matched. Skipping module execution.")
+
+            return {"output": response}
+
+        except Exception as e:
+            # Catch potential errors during event sending or queue operations
+            logger.error(f"Error during user interaction step '{self.name}': {e}")
+            raise # Propagate error to mark step as ERROR
+        finally:
+            # Clean up queue reference (though SimpleQueue doesn't strictly need it)
+            del response_q

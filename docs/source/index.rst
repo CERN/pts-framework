@@ -1,3 +1,7 @@
+.. SPDX-FileCopyrightText: 2025 CERN <home.cern>
+..
+.. SPDX-License-Identifier: CC-BY-SA-4.0
+
 pypts
 =====
 
@@ -24,9 +28,9 @@ Installation
 
 Using the `acc-py Python package index
 <https://wikis.cern.ch/display/ACCPY/Getting+started+with+acc-python#Gettingstartedwithacc-python-OurPythonPackageRepositoryrepo>`_
-``pypts`` can be pip installed with::
+``pts-framework`` can be pip installed with::
 
-   pip install pypts
+   pip install pts-framework
 
 
 Documentation contents
@@ -43,13 +47,16 @@ Documentation contents
     :maxdepth: 1
 
     usage
+    troubleshooting
 
 .. toctree::
     :caption: Reference docs
     :maxdepth: 1
 
     api
+    architecture
     yaml_format
     gui_event_handling
     report_generation
+    dependency_license_analysis
     genindex

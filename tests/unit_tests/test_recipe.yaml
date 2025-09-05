@@ -1,8 +1,13 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 ---
 name: Example Test Recipe
 version: 0.1.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
+test_package: pypts
 globals: {}
 
 ---
@@ -13,7 +18,7 @@ steps:
   - steptype: PythonModuleStep
     step_name: Run Other Test
     action_type: method
-    module: src/pypts/example_tests.py
+    module: example_tests.py
     method_name: other_test
     input_mapping: {}
     output_mapping:
@@ -23,7 +28,7 @@ steps:
   - steptype: PythonModuleStep
     step_name: Run Simple Output Test
     action_type: method
-    module: src/pypts/example_tests.py
+    module: example_tests.py
     method_name: simple_output
     input_mapping:
       value: {type: local, local_name: test_value}
@@ -33,7 +38,7 @@ steps:
   - steptype: PythonModuleStep
     step_name: Run Test To Run (Check 45)
     action_type: method
-    module: src/pypts/example_tests.py
+    module: example_tests.py
     method_name: test_to_run
     input_mapping:
       target: {type: direct, value: 45}
@@ -44,26 +49,26 @@ steps:
   - steptype: PythonModuleStep
     step_name: Run Range Test (Inside Range)
     action_type: method
-    module: src/pypts/example_tests.py
+    module: example_tests.py
     method_name: range_test
     input_mapping:
       value: {type: direct, value: 15}
       min: {type: direct, value: 10}
       max: {type: direct, value: 20}
     output_mapping:
-      compare: {type: passfail} # Should pass
+      compare: {type: range, min: 10, max: 20} # Should pass
 
   - steptype: PythonModuleStep
     step_name: Run Range Test (Outside Range)
     action_type: method
-    module: src/pypts/example_tests.py
+    module: example_tests.py
     method_name: range_test
     input_mapping:
       value: {type: direct, value: 25}
       min: {type: direct, value: 10}
       max: {type: direct, value: 20}
     output_mapping:
-      compare: {type: passfail} # Should fail
+      compare: {type: range, min: 10, max: 20} # Should fail
 
   # Uncomment the following step to test error handling
   # - steptype: PythonModuleStep

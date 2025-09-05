@@ -1,11 +1,23 @@
+# SPDX-FileCopyrightText: 2025 CERN (home.cern)
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 # Use the acc-py CI templates documented at 
 # https://acc-py.web.cern.ch/gitlab-mono/acc-co/devops/python/acc-py-gitlab-ci-templates/docs/templates/master/
 include:
  - project: acc-co/devops/python/acc-py-gitlab-ci-templates
    file: v2/python.gitlab-ci.yml
 
+# Define stages to include analyse stage for reuse linting
+stages:
+  - analyse
+  - test
+  - build
+  - deploy
+  - docs
+
 variables:
-  project_name: pypts
+  project_name: pts-framework
   project_root: "."
 
   # The PY_VERSION and ACC_PY_BASE_IMAGE_TAG variables control the default Python and Acc-Py versions used by Acc-Py jobs.
@@ -14,17 +26,31 @@ variables:
   PY_VERSION: '3.11'
   ACC_PY_BASE_IMAGE_TAG: '2023.06'
 
+# REUSE license compliance check
+reuse:
+  stage: analyse
+  image:
+    name: fsfe/reuse:latest
+    entrypoint: [""]
+  script:
+    - reuse lint
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_REF_NAME == "master"
+    - if: $CI_COMMIT_TAG
+
 dev_test:
   extends: .acc_py_dev_test
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
     - python -m pytest ./tests
-      --cov=${project_name}
+      --cov=pypts
       --cov-report term
       --cov-report html:coverage-html
       --cov-report xml:coverage-report.xml
       --junitxml=junit-report.xml
+      --ignore=tests/unit_tests/test_gui.py  # Ignore the GUI test file, because it requires X server, not present on gitlab machine
 
 # Build a source distribution for pypts.
 build_sdist:

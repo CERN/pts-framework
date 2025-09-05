@@ -1,9 +1,13 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 [build-system]
 requires = ["setuptools", "wheel", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pypts"
+name = "pts-framework"
 dynamic = [
   "version",  # The version is taken directly from the repository, using setuptools-scm.
 ]
@@ -26,17 +30,21 @@ requires-python = ">=3.11"
 # The core dependencies of the project.
 dependencies = [
   "hightime==0.2.2",
+  "matplotlib",
   "nidmm==1.4.8",
-  "PyQt6",
+  "nptdms==1.10.0",
+  "numpy",
+  "PySide6==6.9.1",
   "PyYAML==6.0.2",
-  # "numpy",
-  # "other-mandatory-requirement",
+  "ruamel.yaml",
+  "pyserial"
 ]
 
 [project.optional-dependencies]
 # The optional dependencies of the project, installable using the "extras" syntax.
 test = [
   "pytest",
+  "pytest-qt",
 ]
 doc = [
   "Sphinx",
@@ -49,7 +57,7 @@ dev = [
   # "requirement-for-development-purposes-only",
 
   # Include the "test" and "doc" dependencies in the dev dependencies.
-  "pypts[doc,test]",
+  "pts-framework[doc,test]",
   "ruff",
 ]
 

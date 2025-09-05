@@ -1,3 +1,9 @@
+<!--
+SPDX-FileCopyrightText: 2025 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # pypts
 
 Hardware-oriented testing framework developed by BE-CEM-MTA.

@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 #TODO: Rearange this files to be more adapted to the project itself
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -225,3 +229,8 @@ temp_report_output/report.csv
 pts_reports/report.csv
 temp_report_output/report.html
 pts_reports/report.html
+
+src/pypts/pts_reports/
+pts_reports/
+
+TODO.txt
