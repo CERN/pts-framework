@@ -96,14 +96,14 @@ def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
     runtime.send_event("post_load_recipe", recipe_to_run)
     
     # Start the recipe in a separate thread
-    threading.Thread(
-        target=recipe_to_run.run, 
-        kwargs={
-            "runtime": runtime, 
-            "sequence_name": sequence_name
-        }, 
-        daemon=True
-    ).start()
+    # threading.Thread(
+    #     target=recipe_to_run.run, 
+    #     kwargs={
+    #         "runtime": runtime, 
+    #         "sequence_name": sequence_name
+    #     }, 
+    #     daemon=True
+    # ).start()
 
     return api
 

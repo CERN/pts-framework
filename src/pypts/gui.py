@@ -21,6 +21,8 @@ import threading
 import os, serial, serial.tools.list_ports
 from importlib.resources import files
 from pypts.utils import get_step_result_colors
+from queue import Queue, SimpleQueue
+import importlib.metadata
 
 logger = logging.getLogger(__name__)
 
@@ -249,11 +251,30 @@ class MainWindow(QWidget):
         #todo - implement teardown
         self.close()
 
-    def on_open_clicked(self):
-        logger.info("clicked open icon (no action implemented)")
+    def on_open_clicked(self, event_dict):
+        loader = ConfigFileLoader(return_content=False)
+        recipe_file = str(loader.result[0])
+        try:
+            recipe_to_run = recipe.Recipe(recipe_file)
+            self.recipe_to_run = recipe_to_run
+            # Validate recipe object before using
+            sequence = recipe_to_run.sequences[recipe_to_run.main_sequence]
+            #  Build the event_dict
+            event_dict = {
+                "sequence": sequence 
+            }
+            #  Update the GUI using the data
+            self.update_sequence(event_dict)
+            self.action_start_recipe_execution.setEnabled(True)
+
+        except Exception as e:
+            logger.error(f"Failed to create recipe from {recipe_file}: {e}", exc_info=True)
+            raise
+
+        logger.info("Clicked open icon and loaded recipe successfully.")
 
     def on_start_clicked(self):
-        logger.info("clicked start icon (no action implemented)")
+        logger.info("Started recipe execution thread.")
 
     def on_abort_clicked(self):
         logger.info("clicked abort icon (no action implemented)")
