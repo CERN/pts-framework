@@ -12,17 +12,16 @@ from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QMenuBar, QApp
                                QMainWindow,  QTextEdit, QDialog, QComboBox, QDialogButtonBox)
 from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex, QSize, QTimer
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush, QAction
-from queue import SimpleQueue
+
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
 import subprocess
-import threading
 import os, serial, serial.tools.list_ports
 from importlib.resources import files
 from pypts.utils import get_step_result_colors
 from queue import Queue, SimpleQueue
-import importlib.metadata
+
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +73,6 @@ class MainWindow(QWidget):
         self.q_in = None
         self.response_q = None
         self.already_updated = False
-
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -252,10 +250,11 @@ class MainWindow(QWidget):
         self.close()
 
     def on_open_clicked(self, event_dict):
+        self.on_abort_clicked()
         loader = ConfigFileLoader(return_content=False)
-        recipe_file = str(loader.result[0])
+        self.recipe_file = str(loader.result[0])
         try:
-            recipe_to_run = recipe.Recipe(recipe_file)
+            recipe_to_run = recipe.Recipe(self.recipe_file)
             self.recipe_to_run = recipe_to_run
             # Validate recipe object before using
             sequence = recipe_to_run.sequences[recipe_to_run.main_sequence]
@@ -265,19 +264,26 @@ class MainWindow(QWidget):
             }
             #  Update the GUI using the data
             self.update_sequence(event_dict)
+            self.already_updated = False
             self.action_start_recipe_execution.setEnabled(True)
 
         except Exception as e:
-            logger.error(f"Failed to create recipe from {recipe_file}: {e}", exc_info=True)
+            logger.error(f"Failed to create recipe from {self.recipe_file}: {e}", exc_info=True)
             raise
 
         logger.info("Clicked open icon and loaded recipe successfully.")
 
     def on_start_clicked(self):
-        logger.info("Started recipe execution thread.")
+        #recipe.Runtime.start() confirmed working but below for more separation
+        self.q_in.put(("START",))
+        self.action_abort_recipe_execution.setEnabled(True)
+
 
     def on_abort_clicked(self):
-        logger.info("clicked abort icon (no action implemented)")
+        #recipe.Runtime.stop()
+        self.q_in.put(("STOP",))
+        self.action_abort_recipe_execution.setEnabled(False)
+
 
 # Misc
     def add_interaction_button(self, label, value = None):

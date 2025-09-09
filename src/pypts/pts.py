@@ -8,6 +8,7 @@ from pypts import recipe
 import threading
 from dataclasses import dataclass
 from pypts.report import report_listener
+from pypts.recipe import Runtime
 from pathlib import Path
 import importlib.metadata
 
@@ -96,14 +97,17 @@ def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
     runtime.send_event("post_load_recipe", recipe_to_run)
     
     # Start the recipe in a separate thread
-    # threading.Thread(
-    #     target=recipe_to_run.run, 
-    #     kwargs={
-    #         "runtime": runtime, 
-    #         "sequence_name": sequence_name
-    #     }, 
-    #     daemon=True
-    # ).start()
+    threading.Thread(
+        target=recipe_to_run.run, 
+        kwargs={
+            "runtime": runtime, 
+            "sequence_name": sequence_name
+        }, 
+        daemon=True
+    ).start()
+
+    command_thread = threading.Thread(target=command_handler_loop, args=(api.input_queue,), daemon=True)
+    command_thread.start()
 
     return api
 
@@ -150,3 +154,24 @@ def destroy_channel(name):
 def get_channel(name):
     return _channel_manager.get_channel(name)
 
+
+def command_handler_loop(queue):
+    while True:
+        try:
+            command = queue.get()
+            if command is None:
+                break
+
+            if not isinstance(command, tuple):
+                continue
+
+            cmd = command[0]
+
+            if cmd == "START":
+                Runtime.start()
+            elif cmd == "STOP":
+                Runtime.stop()
+            elif cmd == "EXIT":
+                break
+        except Exception as e:
+            logger.error(f"Command handler failed: {e}", exc_info=True)

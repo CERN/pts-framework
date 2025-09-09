@@ -5,11 +5,11 @@
 # src/pypts/event_proxy.py
 from pypts.utils import get_project_root, find_resource_path, get_step_result_colors
 import logging
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, Signal, Slot
 from queue import SimpleQueue
 from contextlib import suppress
 from pypts import recipe
-import uuid
+import uuid, queue
 
 logger = logging.getLogger(__name__)
 
@@ -44,10 +44,16 @@ class RecipeEventProxy(QObject):
         """Initializes the proxy with the event queue to listen to."""
         super().__init__()
         self.event_q = event_q
+        self._running = True
 
     def RecipeEventProxyRunner(self):
         try:
-            event_name, event_data = self.event_q.get()
+            event = self.event_q.get()
+            if event is None:  # Sentinel to stop
+                self._running = False
+                return
+                
+            event_name, event_data = event
             logger.debug(f"Event Proxy received: {event_name}")
             logger.debug(f"Event data type: {type(event_data)}, length: {len(event_data) if hasattr(event_data, '__len__') else 'N/A'}")
 
@@ -155,14 +161,22 @@ class RecipeEventProxy(QObject):
             # Depending on desired behavior, you might want to break or continue
             # For robustness, we'll continue here
 
+    @Slot()
     def run(self):
         """Continuously fetches events from the queue, transforms data for 
            `post_run_step` into a ViewModel, and emits the corresponding Qt signal.
         """
         logger.info("RecipeEventProxy started.")
-        while True:
-            self.RecipeEventProxyRunner()
+        while self._running:
+                self.RecipeEventProxyRunner()
 
+
+    def stop(self):
+        if self._running:
+            self._running = False
+            self.event_q.put(None)  # Unblock queue.get
+            logger.info("Stopped recipe execution thread.")
+    
     def run_once(self):
         """
             This function is being run once for testability (pytest would block with while loop)

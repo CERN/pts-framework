@@ -10,15 +10,16 @@ import logging
 from typing import List, Dict, Self
 from pathlib import Path
 from importlib import import_module
-import sys
 import traceback
-import threading
 import queue
 import time
 from enum import Enum, IntEnum
 import json
 import uuid
-import os
+import os, atexit
+from pypts.event_proxy import RecipeEventProxy
+from PySide6.QtCore import QTimer, QThread
+from pypts.Thread_context import RuntimeContext
 # from pts import Runtime
 
 logger = logging.getLogger(__name__)
@@ -130,6 +131,8 @@ def serialize(obj):
             return str(obj)
 
 class Runtime:
+    recipe_thread = None
+    recipe_event_proxy = None
     def __init__(self, event_queue, report_queue):
         """Initializes the Runtime environment for recipe execution.
 
@@ -143,6 +146,7 @@ class Runtime:
         self.globals = []
         self.sequences = {}
         self.local_stack = []
+        
         # Metadata for reporting context
         self.recipe_name: str = None
         self.recipe_file_name: str = None
@@ -151,7 +155,90 @@ class Runtime:
         self.test_package: str = None
         self.pypts_version: str = "unknown" # Added pypts version
         self.continue_on_error: bool = False # Added continue_on_error setting
-        
+    
+    @classmethod
+    def setup(cls, window, api, app):
+        if getattr(cls, "recipe_thread", None) is not None:
+            cls._cleanup_thread()
+
+        cls._window = window
+        cls._api = api
+        cls._app = app
+        cls.recipe_thread = QThread()
+        cls.recipe_thread.setParent(cls._app)
+
+        cls.recipe_event_proxy = RecipeEventProxy(api.event_queue)
+        cls.recipe_event_proxy.moveToThread(cls.recipe_thread)
+        cls.recipe_thread.started.connect(cls.recipe_event_proxy.run)
+
+        # Connect signals
+        cls.recipe_event_proxy.pre_run_recipe_signal.connect(cls._window.update_recipe_name)
+        cls.recipe_event_proxy.post_run_recipe_signal.connect(cls._window.show_results)
+        cls.recipe_event_proxy.pre_run_sequence_signal.connect(cls._window.update_sequence)
+        cls.recipe_event_proxy.post_run_step_signal.connect(cls._window.update_step_result)
+        cls.recipe_event_proxy.pre_run_step_signal.connect(cls._window.update_running_step)
+        cls.recipe_event_proxy.user_interact_signal.connect(cls._window.show_message)
+        cls.recipe_event_proxy.get_serial_number_signal.connect(cls._window.get_serial_number)
+        cls.recipe_event_proxy.post_load_recipe_signal.connect(cls._window.handle_post_load_recipe)
+        cls.recipe_event_proxy.post_run_sequence_signal.connect(cls._window.handle_post_run_sequence)
+        if not getattr(Runtime, "_cleanup_registered", False):
+            atexit.register(Runtime._cleanup_thread)
+            app.aboutToQuit.connect(Runtime._cleanup_thread)
+            Runtime._cleanup_registered = True
+
+    @classmethod
+    def start(cls):
+        if cls.recipe_thread is None:
+            if not RuntimeContext.is_ready():
+                logger.error("RuntimeContext not ready. Can't start.")
+                return
+
+            window = RuntimeContext.get_window()
+            api = RuntimeContext.get_api()
+            app = RuntimeContext.get_app()
+            cls.setup(window, api, app)
+
+        if not cls.recipe_thread.isRunning():
+            cls.recipe_thread.start()
+            logger.info("Started recipe execution thread.")
+        else:
+            logger.warning("Recipe thread already running.")
+
+    @classmethod
+    def stop(cls):
+        if cls.recipe_thread and cls.recipe_thread.isRunning():
+            logger.info("Stopping Runtime...")
+
+            # Tell worker to stop
+            if cls.recipe_event_proxy and hasattr(cls.recipe_event_proxy, "stop"):
+                cls.recipe_event_proxy.stop()
+
+            # Quit thread after a delay, giving worker time to exit cleanly
+            def quit_and_wait():
+                cls.recipe_thread.quit()
+                def wait_thread():
+                    cls.recipe_thread.wait()
+                    logger.info("Runtime thread stopped.")
+                    cls._cleanup_thread()
+                QTimer.singleShot(100, wait_thread)
+
+            QTimer.singleShot(200, quit_and_wait)
+        else:
+            logger.warning("Runtime thread not running or already stopped.")
+
+    @classmethod
+    def _cleanup_thread(cls):
+        if cls.recipe_thread and cls.recipe_thread.isRunning():
+            logger.debug("Stopping recipe event processing thread...")
+            cls.recipe_thread.quit()
+            cls.recipe_thread.wait(5000)
+            if cls.recipe_thread.isRunning():
+                logger.warning("Thread did not stop gracefully, terminating...")
+                cls.recipe_thread.terminate()
+        cls.recipe_thread = None
+        cls.recipe_event_proxy = None
+
+
     def push_locals(self, locals):
         self.local_stack.append(locals)
         logger.debug(f"Pushing locals {locals}")
