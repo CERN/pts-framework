@@ -18,8 +18,9 @@ import json
 import uuid
 import os, atexit
 from pypts.event_proxy import RecipeEventProxy
-from PySide6.QtCore import QTimer, QThread
+from PySide6.QtCore import QTimer, QThread, QObject, Signal, Slot
 from pypts.Thread_context import RuntimeContext
+from threading import Timer, Event
 # from pts import Runtime
 
 logger = logging.getLogger(__name__)
@@ -133,6 +134,7 @@ def serialize(obj):
 class Runtime:
     recipe_thread = None
     recipe_event_proxy = None
+    stop_event = Event()
     def __init__(self, event_queue, report_queue):
         """Initializes the Runtime environment for recipe execution.
 
@@ -220,9 +222,9 @@ class Runtime:
                     cls.recipe_thread.wait()
                     logger.info("Runtime thread stopped.")
                     cls._cleanup_thread()
-                QTimer.singleShot(100, wait_thread)
+                Timer(0.1, wait_thread).start()
 
-            QTimer.singleShot(200, quit_and_wait)
+            Timer(0.2, quit_and_wait).start()
         else:
             logger.warning("Runtime thread not running or already stopped.")
 
@@ -296,6 +298,29 @@ class Runtime:
         self.event_queue.put((event_name, event_data))
         json_data = json.dumps({event_name: event_data}, default=serialize)
 
+class RuntimeBridge(QObject):
+    start_signal = Signal()
+    stop_signal = Signal()
+
+    def __init__(self):
+        super().__init__()
+        self.start_signal.connect(self.start_runtime)
+        self.stop_signal.connect(self.stop_runtime)
+
+    @Slot()
+    def start_runtime(self):
+        Runtime.stop_event.clear()
+        Runtime.start()
+
+    @Slot()
+    def stop_runtime(self):
+        logger.info("Setting stop_event from RuntimeBridge")
+        Runtime.stop_event.set()
+        print(f"this is stop_event push: {Runtime.stop_event}")
+        Runtime.stop()
+
+# Global singleton instance
+runtime_bridge = RuntimeBridge()
 
 class Recipe:
     """
@@ -412,6 +437,7 @@ class Recipe:
         Returns:
             List[StepResult]: A list of the top-level StepResult objects generated during the run.
         """
+        
         runtime.set_globals(self.globals)
         runtime.set_sequences(self.sequences)
         runtime.recipe_name = self.name             # Set recipe name in runtime
@@ -437,10 +463,16 @@ class Recipe:
         # Create folder structures needed here to store all results
         # starting_sequence: Sequence = runtime.get_sequence(sequence_name)
         # final_result = starting_sequence.run(runtime, {})
-
+        if runtime.stop_event.is_set():
+            logger.info(f"Recipe run aborted before executing sequence due to stop_event. {runtime.stop_event}")
+            return []
+            
         main_step_data = {"steptype": "SequenceStep", "step_name": sequence_name, "sequence": {"type": "internal", "name": sequence_name}, "input_mapping": {}, "output_mapping": {}}
+        
         main_step: Step = Step.build_step(main_step_data)
-        final_result = main_step.run(runtime, {})
+        final_result = main_step.run(runtime, {}, stop_event=runtime.stop_event)
+        print("stopping attempt")
+
         
         results: List[StepResult] = runtime.get_results()
         runtime.send_event("post_run_recipe", results)
@@ -458,6 +490,7 @@ class Recipe:
         runtime.report_queue.put(STOP_LISTENER)
         logger.debug("Sent STOP_LISTENER to report queue.")
 
+        Runtime.stop()
         return results
 
     
@@ -619,7 +652,7 @@ class Step:
         
         return step_result
 
-    def run(self, runtime: Runtime, input, parent_step: uuid.UUID=None):
+    def run(self, runtime: Runtime, input, parent_step: uuid.UUID=None, stop_event = None ):
         """Executes the step, handling setup, execution, error handling, and output processing.
 
         Processes inputs, calls the internal `_step` method, processes outputs,
@@ -634,7 +667,8 @@ class Step:
         Returns:
             StepResult: An object containing the results of the step execution.
         """
-        
+        if stop_event is None:
+            stop_event = getattr(runtime, "stop_event", None)
         step_result = StepResult(self, parent_step)
         # Populate metadata from runtime
         step_result.recipe_name = runtime.recipe_name
@@ -645,7 +679,9 @@ class Step:
 
         runtime.append_result(parent_step, step_result)
         runtime.send_event("pre_run_step", self)
-
+        if stop_event.is_set():
+            logger.info("Recipe run stopped by button.")
+            return self.handle_step_abort(step_result, runtime, input)
         logger.info("check before skip " + str(self.is_skipped()))
         if self.is_skipped():
             logger.info(f"Skipping step {self.name}")
@@ -669,7 +705,12 @@ class Step:
         runtime.send_event("post_run_step", step_result)
         # Add result to the report queue for processing by the listener
         runtime.report_queue.put(step_result)
-
+        return step_result
+    
+    def handle_step_abort(self, step_result, runtime, input, reason="Stopped by user"):
+        step_result.set_error(reason, input)
+        runtime.send_event("post_run_step", step_result)
+        runtime.report_queue.put(step_result)
         return step_result
 
     @staticmethod

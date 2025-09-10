@@ -525,6 +525,7 @@ class UserInteractionStep(Step):
         self.action_type = action_type
         self.method_name = method_name
         self.continue_on_error = continue_on_error
+        self.timeout_seconds = 1  # Check every 1 second
         # Example: Ensure output mapping expects the response.
         # This should be defined in the YAML, but we can add a default/check.
         if "output" not in self.output_mapping:
@@ -565,7 +566,18 @@ class UserInteractionStep(Step):
             # except queue.Empty:
             #     logger.error(f"Timeout waiting for user interaction in step '{self.name}'.")
             #     raise TimeoutError("User did not respond in time.")
-            response = response_q.get(block=True) # No timeout for now
+
+
+            while True:
+                if  runtime.stop_event.is_set():
+                    logger.info(f"UserInteractionStep '{self.name}': Stop event set during user interaction.")
+                    return {"output": None, "status": {"status": "aborted"}}
+
+                try:
+                    response = response_q.get(timeout=self.timeout_seconds)
+                    break  # Got response, continue normally
+                except queue.Empty:
+                    continue  # No response yet, keep checking stop_event
 
             status = {}
             logger.info(f"Step '{self.name}': User responded.")
@@ -697,6 +709,7 @@ class UserLoadingStep(Step):
         super().__init__(**kwargs)
         self.trigger_response = trigger_response
         self.continue_on_error = continue_on_error
+        self.timeout_seconds = 1 
         if "output" not in self.output_mapping:
             logger.warning(f"UserLoadingStep '{self.name}' might need an output mapping for 'output' to store the result.")
             # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
@@ -720,7 +733,16 @@ class UserLoadingStep(Step):
             runtime.send_event("user_interact", response_q, message, image_path, options)
             logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
 
-            response = response_q.get(block=True) # No timeout for now
+            while True:
+                if  runtime.stop_event.is_set():
+                    logger.info(f"UserInteractionStep '{self.name}': Stop event set during user interaction.")
+                    return {"output": None, "status": {"status": "aborted"}}
+
+                try:
+                    response = response_q.get(timeout=self.timeout_seconds)
+                    break  # Got response, continue normally
+                except queue.Empty:
+                    continue  # No response yet, keep checking stop_event
 
             logger.info(f"Step '{self.name}': User responded.")
             logger.debug(f"Step '{self.name}': Received response: {response}")
@@ -767,6 +789,7 @@ class UserRunMethodStep(Step):
         self.method_name = method_name
         self.continue_on_error = continue_on_error
         self.need_file = need_file
+        self.timeout_seconds = 1
         if "output" not in self.output_mapping:
             logger.warning(f"UserRunMethodStep '{self.name}' might need an output mapping for 'output' to store the result.")
             # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
@@ -791,7 +814,16 @@ class UserRunMethodStep(Step):
             runtime.send_event("user_interact", response_q, message, image_path, options)
             logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
 
-            response = response_q.get(block=True) # No timeout for now
+            while True:
+                if  runtime.stop_event.is_set():
+                    logger.info(f"UserInteractionStep '{self.name}': Stop event set during user interaction.")
+                    return {"output": None, "status": {"status": "aborted"}}
+
+                try:
+                    response = response_q.get(timeout=self.timeout_seconds)
+                    break  # Got response, continue normally
+                except queue.Empty:
+                    continue  # No response yet, keep checking stop_event
 
             status = {}
             logger.info(f"Step '{self.name}': User responded.")
@@ -873,6 +905,7 @@ class UserWriteStep(Step):
         super().__init__(**kwargs)
         self.trigger_response = trigger_response
         self.continue_on_error = continue_on_error
+        self.timeout_seconds = 1
         if "output" not in self.output_mapping:
             logger.warning(f"UserLoadingStep '{self.name}' might need an output mapping for 'output' to store the result.")
             # Add a default? e.g., self.output_mapping["user_response"] = {"type": "local", "local_name": "user_response"}
@@ -897,7 +930,16 @@ class UserWriteStep(Step):
             runtime.send_event("user_interact", response_q, message, image_path, options)
             logger.info(f"Step '{self.name}': Waiting for user interaction (message: '{message[:50]}...').")
 
-            response = response_q.get(block=True)
+            while True:
+                if  runtime.stop_event.is_set():
+                    logger.info(f"UserInteractionStep '{self.name}': Stop event set during user interaction.")
+                    return {"output": None, "status": {"status": "aborted"}}
+
+                try:
+                    response = response_q.get(timeout=self.timeout_seconds)
+                    break  # Got response, continue normally
+                except queue.Empty:
+                    continue  # No response yet, keep checking stop_event
 
             logger.info(f"Step '{self.name}': User responded.")
             logger.debug(f"Step '{self.name}': Received response: {response}")

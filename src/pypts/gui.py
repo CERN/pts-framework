@@ -249,40 +249,73 @@ class MainWindow(QWidget):
         #todo - implement teardown
         self.close()
 
-    def on_open_clicked(self, event_dict):
+    def on_open_clicked(self):
         self.on_abort_clicked()
         loader = ConfigFileLoader(return_content=False)
-        self.recipe_file = str(loader.result[0])
-        try:
-            recipe_to_run = recipe.Recipe(self.recipe_file)
-            self.recipe_to_run = recipe_to_run
-            # Validate recipe object before using
-            sequence = recipe_to_run.sequences[recipe_to_run.main_sequence]
-            #  Build the event_dict
-            event_dict = {
-                "sequence": sequence 
-            }
-            #  Update the GUI using the data
-            self.update_sequence(event_dict)
-            self.already_updated = False
-            self.action_start_recipe_execution.setEnabled(True)
+        if loader.result[0] is not None:
+            self.recipe_file = str(loader.result[0])
+            try:
+                self.load_recipe()
+                self.q_in.put(("LOAD",self.recipe_file))
+                self.action_start_recipe_execution.setEnabled(True)
 
-        except Exception as e:
-            logger.error(f"Failed to create recipe from {self.recipe_file}: {e}", exc_info=True)
-            raise
+            except Exception as e:
+                logger.error(f"Failed to create recipe from {self.recipe_file}: {e}", exc_info=True)
+                raise
 
-        logger.info("Clicked open icon and loaded recipe successfully.")
+            logger.info("Clicked open icon and loaded recipe successfully.")
 
     def on_start_clicked(self):
         #recipe.Runtime.start() confirmed working but below for more separation
+        self.reset_gui()
+        self.load_recipe()
         self.q_in.put(("START",))
         self.action_abort_recipe_execution.setEnabled(True)
+        self.action_open_recipe.setEnabled(False)
 
 
     def on_abort_clicked(self):
         #recipe.Runtime.stop()
         self.q_in.put(("STOP",))
         self.action_abort_recipe_execution.setEnabled(False)
+        self.action_open_recipe.setEnabled(True)
+
+    def reset_gui(self):
+        # Clear step list table
+        self.step_list.setRowCount(0)
+
+        # Clear result tree view (QTreeView)
+        empty_model = StepResultModel([])
+        self.result_list.setModel(empty_model)
+
+        # Clear log box
+        self.log_text_box.clear()
+
+        # Clear message and recipe labels
+        self.recipe_label.setText("")
+        self.message_box.setText("")
+
+        # Reset picture/logo
+        self.picture_box.setPixmap(self.cern_logo)
+
+        # Clear all buttons from the interaction area
+        self.clear_interaction_buttons()
+
+    def load_recipe(self):
+        recipe_to_run = recipe.Recipe(self.recipe_file)
+        self.recipe_to_run = recipe_to_run
+        # Validate recipe object before using
+        sequence = recipe_to_run.sequences[recipe_to_run.main_sequence]
+        #  Build the event_dict
+        event_dict = {
+            "sequence": sequence 
+        }
+        #  Update the GUI using the data
+        self.update_sequence(event_dict)
+        self.already_updated = False
+
+
+
 
 
 # Misc
@@ -395,6 +428,7 @@ class MainWindow(QWidget):
 
         Stores the step UUID in the UserRole for later identification.
         """
+        self.step_list.show()
         sequence: recipe.Sequence = event_dict["sequence"]
         if not self.already_updated:
             self.step_list.setRowCount(len(sequence.steps))
@@ -489,12 +523,15 @@ class MainWindow(QWidget):
 
         Uses StepResultModel to populate the QTreeView.
         """
+        self.result_list.show()
         results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
         self.result_list.setModel(myResultModel)
 
         # Automatically expand all nodes so leaves are visible
         self.result_list.expandAll()
+
+        self.action_abort_recipe_execution.setEnabled(False)
 
         # Adjust column widths to contents
         self.result_list.resizeColumnToContents(0)

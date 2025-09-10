@@ -195,6 +195,7 @@ import time # For demonstration/potential sleep
 # Sentinel object to signal the listener to stop
 # Using a dedicated object instance avoids confusion with None if None could be valid data
 STOP_LISTENER = object()
+LISTENER_RUNNING = False
 
 def report_listener(result_queue: SimpleQueue, output_dir: str):
     """
@@ -213,9 +214,10 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
     while active:
         try:
             item = result_queue.get() # Blocks until an item is available
-
             if item is STOP_LISTENER:
                 logger.info("Report listener received stop signal.")
+                global LISTENER_RUNNING
+                LISTENER_RUNNING = False
                 active = False
             elif isinstance(item, StepResult):
                 logger.debug(f"Listener received StepResult: {item.step.name if item.step else 'N/A'}")
