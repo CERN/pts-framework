@@ -9,6 +9,7 @@ from importlib.resources import files
 from PySide6.QtGui import QImageReader
 import serial
 from serial.tools import list_ports
+import threading
 
 """Module that provides the utilities to the project.
     """
@@ -31,6 +32,8 @@ EXCLUDE_DIRS = {
     '.vscode',       # VSCode config
     '.cache',        # generic cache dirs
 }
+
+WAIT_FOR_TERMINATION = threading.Event()
 
 def get_step_result_colors(result_value, result_type_enum) -> tuple[str, str]:
     """

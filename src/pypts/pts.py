@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 # appropriate behaviors. It gets set to True when a PTS recipe starts.
 _pts_context = False
 
+current_run_thread = None
+current_runtime = None
 
 
 @dataclass
@@ -106,13 +108,10 @@ def command_handler_loop(queue, report_queue, event_queue):
     report_output_dir = Path("./pts_reports")
     report_output_dir.mkdir(parents=True, exist_ok=True)
 
-    current_thread = None
-    current_stop_event =None
-
     recipe_to_run = None
     recipe_file = None
     runtime = None
-    initial_test = False
+    conseq_test = False
     while not report_queue.empty():
         try:
             report_queue.get_nowait()
@@ -129,7 +128,9 @@ def command_handler_loop(queue, report_queue, event_queue):
 
             cmd = command[0]
             if cmd == "LOAD":
+                global current_run_thread, current_runtime
                 recipe_file = command[1]
+                
                 try:
                     logger.info(f"Loading recipe from: {recipe_file}")
 
@@ -163,44 +164,48 @@ def command_handler_loop(queue, report_queue, event_queue):
                     # Send event using runtime's send_event method
                     logger.debug(f"Sending post_load_recipe event with recipe: {recipe_to_run}")
                     runtime.send_event("post_load_recipe", recipe_to_run)
-                    
-                    # Start the recipe in a separate thread
-                    current_thread = threading.Thread(
-                        target=recipe_to_run.run, 
-                        kwargs={
-                            "runtime": runtime, 
-                            "sequence_name": "Main"
-                        }, 
-                        daemon=True
-                    ).start()
-
 
                 except Exception as e:
                     logger.error(f"Failed to load recipe: {e}", exc_info=True)
 
             if cmd == "START":
+                global LISTENER_RUNNING
                 while not report_queue.empty():
                     try:
                         report_queue.get_nowait()
                     except Exception:
                         break
-                if initial_test:
-                    queue.put(("LOAD",recipe_file))
-                initial_test = True
 
-                global LISTENER_RUNNING
-                if not LISTENER_RUNNING:
-                    # Start the report listener thread
-                    #Moved to here so it is not initialized only once during setup
-                    threading.Thread(
-                            target=report_listener,
-                            args=(report_queue, str(report_output_dir)),
-                            daemon=True
-                        ).start()
-                    logger.info(f"Report listener started. Output directory: {report_output_dir.resolve()}")
-                    LISTENER_RUNNING = True
+                if current_run_thread and current_run_thread.is_alive():
+                    logger.warning("Recipe thread already running. Start command ignored.")
                 else:
-                    logger.debug("Report listener already running.")
+                    #added here so every time a new runtime thread is made, so is a new report thread.
+                    LISTENER_RUNNING = False
+                    # Start the recipe in a new thread
+                    current_run_thread = threading.Thread(
+                        target=recipe_to_run.run,
+                        kwargs={
+                            "runtime": runtime,
+                            "sequence_name": "Main"
+                        },
+                        daemon=True
+                    )
+                    current_run_thread.start()
+                    current_runtime = runtime  # save reference if you want to stop later
+                    logger.info("Recipe execution thread started.")
+
+                    if not LISTENER_RUNNING:
+                        # Start the report listener thread
+                        #Moved to here so it is not initialized only once during setup
+                        threading.Thread(
+                                target=report_listener,
+                                args=(report_queue, str(report_output_dir)),
+                                daemon=True
+                            ).start()
+                        logger.info(f"Report listener started. Output directory: {report_output_dir.resolve()}")
+                        LISTENER_RUNNING = True
+                    else:
+                        logger.debug("Report listener already running.")
 
                 runtime_bridge.start_signal.emit()
             elif cmd == "STOP":
@@ -209,6 +214,7 @@ def command_handler_loop(queue, report_queue, event_queue):
                 runtime_bridge.stop_signal.emit()
                 LISTENER_RUNNING = False
             elif cmd == "EXIT":
+                runtime_bridge.stop_signal.emit()
                 break
         except Exception as e:
             logger.error(f"Command handler failed: {e}", exc_info=True)

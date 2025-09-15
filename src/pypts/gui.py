@@ -10,16 +10,16 @@ from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QMenuBar, QApp
                                QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit,
                                QTreeView, QAbstractItemView, QFileDialog, QToolBar, QWidgetAction, QStyle, QSizePolicy,
                                QMainWindow,  QTextEdit, QDialog, QComboBox, QDialogButtonBox)
-from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex, QSize, QTimer
+from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex, QSize, QTimer, QEventLoop
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush, QAction
 
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
 import subprocess
-import os, serial, serial.tools.list_ports
+import os, serial, serial.tools.list_ports, sys
 from importlib.resources import files
-from pypts.utils import get_step_result_colors
+from pypts.utils import get_step_result_colors, get_package_root, find_resource_path, get_project_root, WAIT_FOR_TERMINATION
 from queue import Queue, SimpleQueue
 
 
@@ -73,6 +73,7 @@ class MainWindow(QWidget):
         self.q_in = None
         self.response_q = None
         self.already_updated = False
+        self.aborted = False
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -242,15 +243,18 @@ class MainWindow(QWidget):
 
     def on_edit_clicked(self):
         logger.info("Opening YamVIEW - recipe creation tool")
-        subprocess.Popen([sys.executable, "YamVIEW/recipe_creator.py"])
+        root = get_project_root()
+        recipe_editor_path = find_resource_path("recipe_creator.py", root=root)
+
+        subprocess.Popen([sys.executable, recipe_editor_path])
 
     def application_close(self):
         logger.info("Closing application")
-        #todo - implement teardown
+        self.q_in.put(("EXIT",))
         self.close()
 
     def on_open_clicked(self):
-        self.on_abort_clicked()
+        #self.on_abort_clicked()
         loader = ConfigFileLoader(return_content=False)
         if loader.result[0] is not None:
             self.recipe_file = str(loader.result[0])
@@ -266,19 +270,43 @@ class MainWindow(QWidget):
             logger.info("Clicked open icon and loaded recipe successfully.")
 
     def on_start_clicked(self):
-        #recipe.Runtime.start() confirmed working but below for more separation
         self.reset_gui()
         self.load_recipe()
         self.q_in.put(("START",))
         self.action_abort_recipe_execution.setEnabled(True)
+        print("abort is enabled now")
         self.action_open_recipe.setEnabled(False)
+        self.open_recipe_action.setEnabled(False)
 
 
     def on_abort_clicked(self):
-        #recipe.Runtime.stop()
-        self.q_in.put(("STOP",))
+        global WAIT_FOR_TERMINATION
         self.action_abort_recipe_execution.setEnabled(False)
+        self.action_start_recipe_execution.setEnabled(False)
+        #Feature not yet imported to change text when it is stopped.
+        #self.aborted - True
+
+        WAIT_FOR_TERMINATION.clear()
+        self.q_in.put(("STOP",))
+        loop = QEventLoop()
+
+        def check_if_done():
+            if WAIT_FOR_TERMINATION.is_set():
+                loop.quit()
+
+        # Check every 100ms
+        timer = QTimer()
+        timer.timeout.connect(check_if_done)
+        timer.start(100)
+
+        loop.exec_()  # Block here until loop.quit() is called
+
+        # Cleanup
+        timer.stop()
+
         self.action_open_recipe.setEnabled(True)
+        self.open_recipe_action.setEnabled(True)
+        self.action_start_recipe_execution.setEnabled(True)
 
     def reset_gui(self):
         # Clear step list table
@@ -311,6 +339,7 @@ class MainWindow(QWidget):
             "sequence": sequence 
         }
         #  Update the GUI using the data
+        self.already_updated = False
         self.update_sequence(event_dict)
         self.already_updated = False
 
@@ -531,7 +560,6 @@ class MainWindow(QWidget):
         # Automatically expand all nodes so leaves are visible
         self.result_list.expandAll()
 
-        self.action_abort_recipe_execution.setEnabled(False)
 
         # Adjust column widths to contents
         self.result_list.resizeColumnToContents(0)

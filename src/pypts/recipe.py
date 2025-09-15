@@ -21,6 +21,7 @@ from pypts.event_proxy import RecipeEventProxy
 from PySide6.QtCore import QTimer, QThread, QObject, Signal, Slot
 from pypts.Thread_context import RuntimeContext
 from threading import Timer, Event
+from pypts.utils import WAIT_FOR_TERMINATION
 # from pts import Runtime
 
 logger = logging.getLogger(__name__)
@@ -217,12 +218,15 @@ class Runtime:
 
             # Quit thread after a delay, giving worker time to exit cleanly
             def quit_and_wait():
-                cls.recipe_thread.quit()
-                def wait_thread():
-                    cls.recipe_thread.wait()
-                    logger.info("Runtime thread stopped.")
-                    cls._cleanup_thread()
-                Timer(0.1, wait_thread).start()
+                if cls.recipe_thread:
+                    cls.recipe_thread.quit()
+                    def wait_thread():
+                        cls.recipe_thread.wait()
+                        logger.info("Runtime thread stopped.")
+                        cls._cleanup_thread()
+                    Timer(0.1, wait_thread).start()
+                else:
+                    logger.warning("Attempted to quit recipe thread, but it was already None.")
 
             Timer(0.2, quit_and_wait).start()
         else:
@@ -230,14 +234,18 @@ class Runtime:
 
     @classmethod
     def _cleanup_thread(cls):
-        if cls.recipe_thread and cls.recipe_thread.isRunning():
-            logger.debug("Stopping recipe event processing thread...")
-            cls.recipe_thread.quit()
-            cls.recipe_thread.wait(5000)
+        if cls.recipe_thread:
             if cls.recipe_thread.isRunning():
-                logger.warning("Thread did not stop gracefully, terminating...")
-                cls.recipe_thread.terminate()
-        cls.recipe_thread = None
+                logger.debug("Stopping recipe event processing thread...")
+                cls.recipe_thread.quit()
+                cls.recipe_thread.wait(5000)
+                if cls.recipe_thread.isRunning():
+                    logger.warning("Thread did not stop gracefully, terminating...")
+                    cls.recipe_thread.terminate()
+            cls.recipe_thread = None
+        else:
+            logger.debug("No recipe_thread to clean up.")
+
         cls.recipe_event_proxy = None
 
 
@@ -437,61 +445,62 @@ class Recipe:
         Returns:
             List[StepResult]: A list of the top-level StepResult objects generated during the run.
         """
-        
-        runtime.set_globals(self.globals)
-        runtime.set_sequences(self.sequences)
-        runtime.recipe_name = self.name             # Set recipe name in runtime
-        runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
-        runtime.test_package = self.test_package    # Set test package in runtime
-        runtime.continue_on_error = self.continue_on_error # Set continue on error setting in runtime
-        sequence_name = self.main_sequence
+        try:
+            runtime.set_globals(self.globals)
+            runtime.set_sequences(self.sequences)
+            runtime.recipe_name = self.name             # Set recipe name in runtime
+            runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
+            runtime.test_package = self.test_package    # Set test package in runtime
+            runtime.continue_on_error = self.continue_on_error # Set continue on error setting in runtime
+            sequence_name = self.main_sequence
 
-        # Use the event sender instead of direct calls
-        self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
+            # Use the event sender instead of direct calls
+            self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
 
-        if serial_number is None:
-            # Allow passing a different function for getting serial numbers
-            get_serial = get_serial_number_func or self.__get_serial_number
-            # runtime.set_global("serial_number", get_serial(runtime))
-            _serial_number = get_serial(runtime)
-            runtime.set_global("serial_number", _serial_number)
-            runtime.serial_number = _serial_number # Set serial number in runtime
-        else:
-            runtime.set_global("serial_number", serial_number)
-            runtime.serial_number = serial_number # Set serial number in runtime
+            if serial_number is None:
+                # Allow passing a different function for getting serial numbers
+                get_serial = get_serial_number_func or self.__get_serial_number
+                # runtime.set_global("serial_number", get_serial(runtime))
+                _serial_number = get_serial(runtime)
+                runtime.set_global("serial_number", _serial_number)
+                runtime.serial_number = _serial_number # Set serial number in runtime
+            else:
+                runtime.set_global("serial_number", serial_number)
+                runtime.serial_number = serial_number # Set serial number in runtime
 
-        # Create folder structures needed here to store all results
-        # starting_sequence: Sequence = runtime.get_sequence(sequence_name)
-        # final_result = starting_sequence.run(runtime, {})
-        if runtime.stop_event.is_set():
-            logger.info(f"Recipe run aborted before executing sequence due to stop_event. {runtime.stop_event}")
-            return []
+            # Create folder structures needed here to store all results
+            # starting_sequence: Sequence = runtime.get_sequence(sequence_name)
+            # final_result = starting_sequence.run(runtime, {})
+            if runtime.stop_event.is_set():
+                logger.info(f"Recipe run aborted before executing sequence due to stop_event. {runtime.stop_event}")
+                return []
+                
+            main_step_data = {"steptype": "SequenceStep", "step_name": sequence_name, "sequence": {"type": "internal", "name": sequence_name}, "input_mapping": {}, "output_mapping": {}}
             
-        main_step_data = {"steptype": "SequenceStep", "step_name": sequence_name, "sequence": {"type": "internal", "name": sequence_name}, "input_mapping": {}, "output_mapping": {}}
-        
-        main_step: Step = Step.build_step(main_step_data)
-        final_result = main_step.run(runtime, {}, stop_event=runtime.stop_event)
-        print("stopping attempt")
+            main_step: Step = Step.build_step(main_step_data)
+            final_result = main_step.run(runtime, {}, stop_event=runtime.stop_event)
+            print("stopping attempt")
 
-        
-        results: List[StepResult] = runtime.get_results()
-        runtime.send_event("post_run_recipe", results)
-        print("\n==== RESULTS ====")
-        print(f"Final result: {final_result}")
-        print("-----------------")
-        for result in results:
-            result.print_result()
+            
+            results: List[StepResult] = runtime.get_results()
+            runtime.send_event("post_run_recipe", results)
+            print("\n==== RESULTS ====")
+            print(f"Final result: {final_result}")
+            print("-----------------")
+            for result in results:
+                result.print_result()
 
-        print(runtime.local_stack)
-        print(runtime.globals)
+            print(runtime.local_stack)
+            print(runtime.globals)
 
-        # Signal the report listener to stop
-        from pypts.report import STOP_LISTENER
-        runtime.report_queue.put(STOP_LISTENER)
-        logger.debug("Sent STOP_LISTENER to report queue.")
+            # Signal the report listener to stop
+            from pypts.report import STOP_LISTENER
+            runtime.report_queue.put(STOP_LISTENER)
+            logger.debug("Sent STOP_LISTENER to report queue.")
 
-        Runtime.stop()
-        return results
+            return results
+        finally:
+            Runtime.stop()
 
     
     # def parse_q_input(self, q_in):
@@ -708,6 +717,7 @@ class Step:
         return step_result
     
     def handle_step_abort(self, step_result, runtime, input, reason="Stopped by user"):
+        WAIT_FOR_TERMINATION.set()
         step_result.set_error(reason, input)
         runtime.send_event("post_run_step", step_result)
         runtime.report_queue.put(step_result)
@@ -719,6 +729,7 @@ class Step:
         next_step = 0
 
         while next_step < len(step_list):
+
             step: Step = step_list[next_step]
             
             step_result = step.run(runtime, input, parent_step)

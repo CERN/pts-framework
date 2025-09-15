@@ -525,7 +525,7 @@ class UserInteractionStep(Step):
         self.action_type = action_type
         self.method_name = method_name
         self.continue_on_error = continue_on_error
-        self.timeout_seconds = 1  # Check every 1 second
+        self.timeout_seconds = 0.1  # Check every 1 second
         # Example: Ensure output mapping expects the response.
         # This should be defined in the YAML, but we can add a default/check.
         if "output" not in self.output_mapping:

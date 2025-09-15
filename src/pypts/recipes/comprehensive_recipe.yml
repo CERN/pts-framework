@@ -40,6 +40,17 @@ outputs:
 setup_steps: []
 steps:
 
+# === sleeptest ===
+- steptype: WaitStep
+  step_name: Wait for 10s
+  description: Waiting 10 seconds to let user check confirm
+  skip: false
+  input_mapping:
+    wait_time:
+      value: '10'
+  output_mapping: {}
+
+
 - steptype: UserLoadingStep
   step_name: Load config file
   description: Asking user to find the file needed
