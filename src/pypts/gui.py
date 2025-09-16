@@ -21,6 +21,7 @@ import threading
 import os
 from importlib.resources import files
 from pypts.utils import get_step_result_colors
+from pypts.XYGraph.XY_graph import *
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,6 @@ class TextEditLoggerHandler(QObject, logging.Handler):
     def emit(self, record):
         msg = self.format(record)
         self.new_message.emit(msg)
-
 
 class ConfigFileLoader(QWidget):
     def __init__(self):
@@ -58,7 +58,6 @@ class ConfigFileLoader(QWidget):
 
         if file_path:
             print(f"Selected file: {file_path}")
-
 
 class MainWindow(QWidget):
     """The main application window, displaying recipe progress and results."""
@@ -88,6 +87,7 @@ class MainWindow(QWidget):
             self.cern_logo.fill(Qt.GlobalColor.lightGray)
 
 
+
         self.top_level_layout = QVBoxLayout()
         self.main_layout = QHBoxLayout()
         self.left_half_layout = QVBoxLayout()
@@ -97,6 +97,7 @@ class MainWindow(QWidget):
         self.setup_right_half_layout()
         self.setup_toolbar()
         self.setup_menubar()
+        self.setup_timer()
 
         # Putting the layouts together to fit the GUI
         self.main_layout.addLayout(self.left_half_layout)
@@ -111,9 +112,20 @@ class MainWindow(QWidget):
         self.log_handler = TextEditLoggerHandler(self)
         self.log_handler.setFormatter(logging.Formatter('%(levelname)s : %(name)s : %(message)s'))
         self.log_handler.new_message.connect(self.log_text_box.appendPlainText)
-        logging.getLogger().addHandler(self.log_handler)
 
+        logging.getLogger().addHandler(self.log_handler)
         self.show()
+
+    def setup_timer(self):
+        self.timer1000 = QtCore.QTimer()
+        self.timer1000.setInterval(1000)
+        self.timer1000.timeout.connect(self.update_picture_widget_when_stream_detected)
+        self.timer1000.start()
+
+    def update_picture_widget_when_stream_detected(self):
+        streamlist = container.get_all_streams()
+        if len(streamlist) > 0:
+            self.set_widget(self.plotWidget)
 
 # Initialization related methods
     def setup_menubar(self):
@@ -208,13 +220,27 @@ class MainWindow(QWidget):
         self.left_half_layout.addWidget(self.result_list)
 
     def setup_right_half_layout(self):
-        self.picture_box = QLabel(self)
+        # container that can hold either image or other widget
+        self.picture_container = QWidget(self)
+        self.picture_layout = QVBoxLayout(self.picture_container)
+        self.picture_layout.setContentsMargins(0, 0, 0, 0)
+        self.picture_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # enforce fixed minimum size on the container itself
+        self.picture_container.setMinimumSize(800, 600)
+
+        # default picture
+        self.picture_box = QLabel(self.picture_container)
         self.picture_box.setPixmap(self.cern_logo)
-        self.picture_box.setMinimumSize(800, 600)
         self.picture_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.message_box = QLabel(self)
+        # add default picture to layout
+        self.picture_layout.addWidget(self.picture_box)
 
+        # keep track of active widget
+        self.active_container_widget = self.picture_box
+
+        self.message_box = QLabel(self)
         self.button_list_layout = QHBoxLayout()
 
         self.log_text_box = QPlainTextEdit(self)
@@ -223,12 +249,41 @@ class MainWindow(QWidget):
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_text_box.setStyleSheet('background-color: whitesmoke')
 
-        self.right_half_layout.addWidget(self.picture_box)
+        self.right_half_layout.addWidget(self.picture_container)
         self.right_half_layout.addWidget(self.message_box)
         self.right_half_layout.addLayout(self.button_list_layout)
         self.right_half_layout.addWidget(self.log_text_box)
 
-# Callback methods
+        # create plot widget but do not show it yet
+        self.plotWidget = PlotWindow()
+        self.picture_layout.addWidget(self.plotWidget)
+        self.plotWidget.hide()
+
+    def set_picture(self, pixmap: QPixmap):
+        """Replace content with an image."""
+        if self.active_container_widget is self.plotWidget:
+            self.plotWidget.hide()
+        else:
+            self.active_container_widget.hide()
+
+        # reuse existing QLabel or create one once
+        if not hasattr(self, 'dynamic_picture_box'):
+            self.dynamic_picture_box = QLabel(self.picture_container)
+            self.dynamic_picture_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.picture_layout.addWidget(self.dynamic_picture_box)
+
+        self.dynamic_picture_box.setPixmap(pixmap)
+        self.dynamic_picture_box.show()
+        self.active_container_widget = self.dynamic_picture_box
+
+    def set_widget(self, widget: QWidget):
+        """Replace content with an arbitrary widget."""
+        if self.active_container_widget is not widget:
+            self.active_container_widget.hide()
+            widget.show()
+            self.active_container_widget = widget
+
+    # Callback methods
     def on_open_wiki_clicked(self):
         url = "https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/master/"
         webbrowser.open(url)
@@ -528,7 +583,6 @@ class MainWindow(QWidget):
         logging.info(f"Sequence '{sequence_name}' finished with result: {sequence_result}.")
         # Potential UI update: Could mark sequence as done in a separate list/view
 
-
 class StepResultModel(QAbstractItemModel):
     """A Qt model for displaying hierarchical StepResult data in a QTreeView.
 
@@ -636,4 +690,13 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
+    event_dict = {
+        "message": "WORKS",
+        "image_path": "",
+        "response_q": SimpleQueue()
+    }
+    window.show_message(event_dict)
+
+
+
     sys.exit(app.exec())
