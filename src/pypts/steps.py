@@ -15,8 +15,6 @@ import importlib.resources
 from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
 from pypts.utils import get_package_root, find_resource_path, get_project_root, path_to_importable_module, AbortTestException, find_serial_device
-from fabric import Connection, Config
-from invoke import UnexpectedExit, Responder
 
 logger = logging.getLogger(__name__)
 
@@ -1056,7 +1054,7 @@ class SSHConnectStep(Step):
                 "message": f"SSH connection to {host} successful."
             }
 
-        except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException, UnexpectedExit, Exception) as e:
+        except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException, Exception) as e:
             logger.error(f"[{self.name}] SSH connection failed: {e}", exc_info=True)
 
             # Raise or return based on error policy
