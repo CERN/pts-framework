@@ -104,14 +104,12 @@ def get_channel(name):
 
 def command_handler_loop(queue, report_queue, event_queue):
     # Define output directory for reports
-    report_thread = None
     report_output_dir = Path("./pts_reports")
     report_output_dir.mkdir(parents=True, exist_ok=True)
 
     recipe_to_run = None
     recipe_file = None
     runtime = None
-    conseq_test = False
     while not report_queue.empty():
         try:
             report_queue.get_nowait()
@@ -191,7 +189,7 @@ def command_handler_loop(queue, report_queue, event_queue):
                         daemon=True
                     )
                     current_run_thread.start()
-                    current_runtime = runtime  # save reference if you want to stop later
+                    current_runtime = runtime  # save reference to stop later
                     logger.info("Recipe execution thread started.")
 
                     if not LISTENER_RUNNING:

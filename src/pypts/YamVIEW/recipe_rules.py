@@ -29,5 +29,7 @@ STEP_REQUIRED_FIELDS = {
     "userloadingstep" : ["steptype", "step_name", "description"],
     "userrunmethodstep": ["steptype", "step_name", "action_type", "module", "description"],
     "userwritestep": ["steptype", "step_name", "description"],
+    "sshconnectstep": ["steptype", "step_name", "description"],
+    "sshclosestep": ["steptype", "step_name", "description"],
     "default": ["steptype", "step_name", "action_type", "module", "method_name", "description"],
 }

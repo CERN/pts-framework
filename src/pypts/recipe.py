@@ -274,7 +274,6 @@ class Runtime:
         return self.globals
     
     def set_global(self, name, value):
-        logger.debug(f"Setting global {name} to {value}")
         self.globals[name] = value
 
     def set_globals(self, globals):
@@ -560,9 +559,12 @@ class Sequence():
 
         for variable in input:
             runtime.set_local(variable, input[variable])
-
-        sequence_results: List[StepResult] = Step.run_steps(runtime, self.steps, parent_step)
-        teardown_results: List[StepResult] = Step.run_steps(runtime, self.teardown_steps, parent_step)
+        try: 
+            sequence_results: List[StepResult] = Step.run_steps(runtime, self.steps, parent_step)
+        finally:
+            stop_event = getattr(runtime, "stop_event", None)
+            teardown_results: List[StepResult] = Step.run_steps(runtime, self.teardown_steps, parent_step, stop_event=stop_event.clear())
+            print("Should run the teardown steps now.")
         if teardown_results:
             sequence_results += teardown_results
 
@@ -724,7 +726,7 @@ class Step:
         return step_result
 
     @staticmethod
-    def run_steps(runtime: Runtime, step_list: List[Self], parent_step: uuid.UUID) -> List[StepResult]:
+    def run_steps(runtime: Runtime, step_list: List[Self], parent_step: uuid.UUID, stop_event = None) -> List[StepResult]:
         step_results = []
         next_step = 0
 
@@ -732,7 +734,7 @@ class Step:
 
             step: Step = step_list[next_step]
             
-            step_result = step.run(runtime, input, parent_step)
+            step_result = step.run(runtime, input, parent_step, stop_event=stop_event)
             step_results.append(step_result)
 
             # Check if we should stop execution due to an error
@@ -773,6 +775,8 @@ class Step:
             case "userloadingstep": step_type = "UserLoadingStep"
             case "userrunmethodstep": step_type = "UserRunMethodStep"
             case "userwritestep": step_type = "UserWriteStep"
+            case "SSHConnectStep": step_type = "SSHConnectStep"
+            case "SSHCloseStep": step_type = "SSHCloseStep"
 
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
@@ -795,7 +799,7 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep
+from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SSHConnectStep, SSHCloseStep
 
 
 

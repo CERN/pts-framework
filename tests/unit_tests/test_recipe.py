@@ -468,7 +468,7 @@ def test_sequence_run_executes_steps(mock_evaluate, mock_run_steps):
 
     mock_step_result = MagicMock()
     mock_evaluate.return_value = "final_result"
-    mock_run_steps.side_effect = lambda runtime, steps, parent: [mock_step_result] * len(steps)
+    mock_run_steps.side_effect = lambda runtime, steps, parent, **kwargs: [mock_step_result] * len(steps) 
 
     sequence_data = {
         "sequence_name": "TestRun",

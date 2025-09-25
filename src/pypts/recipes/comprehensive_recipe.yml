@@ -16,6 +16,12 @@ globals:
   cancel_key: 'cancel'
   ID_key: 'ID'
   wrt_key: 'wrt'
+  ssh_client: None
+  host: arbitrary_IP
+  user: Rabbit
+  password: None
+  private_key: 'path/to/private_key'
+  port: None
 ---
 sequence_name: Comprehensive_IO_Types
 description: Sequence covering all input and output types
@@ -41,6 +47,14 @@ setup_steps: []
 steps:
 
 # === sleeptest ===
+
+- steptype: SSHConnectStep
+  step_name: Find the SSH client connection
+  description: Asking user to find the file needed
+  input_mapping: {}
+  output_mapping: {}
+  continue_on_error: false
+
 - steptype: WaitStep
   step_name: Wait for 10s
   description: Waiting 10 seconds to let user check confirm
@@ -404,4 +418,12 @@ steps:
     wait_time:
       value: '3'
   output_mapping: {}
-teardown_steps: []
+
+teardown_steps:
+
+- steptype: SSHCloseStep
+  step_name: Closes the SSH client
+  description: takes the global client and closes it
+  input_mapping: {}
+  output_mapping: {}
+  continue_on_error: false

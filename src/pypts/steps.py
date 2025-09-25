@@ -4,7 +4,7 @@
 
 import logging
 import copy
-import uuid
+import uuid, socket, paramiko
 import sys
 import queue
 import time
@@ -15,6 +15,8 @@ import importlib.resources
 from typing import List, Dict
 from pypts.recipe import Step, Runtime, StepResult, ResultType, Sequence
 from pypts.utils import get_package_root, find_resource_path, get_project_root, path_to_importable_module, AbortTestException, find_serial_device
+from fabric import Connection, Config
+from invoke import UnexpectedExit, Responder
 
 logger = logging.getLogger(__name__)
 
@@ -976,3 +978,134 @@ class UserWriteStep(Step):
         finally:
             # Clean up queue reference (though SimpleQueue doesn't strictly need it)
             del response_q
+
+
+
+
+
+
+class SSHConnectStep(Step):
+    """
+    Attempts an SSH connection to the given host and returns connection status.
+    """
+
+    def __init__(self, continue_on_error=False, **kwargs):
+        """
+        Args:
+            **kwargs: Common Step arguments.
+                      Global inputs required:
+                          - 'host' (str): The SSH hostname or IP address.
+                          - 'private_key' (str) The path to key file. important if no password is given.
+                          - 'user' (str): The SSH username.
+                          - 'port' (int, optional): SSH port (default: 22).
+                          - 'password' (str, optional): Password for SSH auth.
+                          - 'connect_timeout' (int, optional): Timeout for SSH connect (seconds).
+                      Output mapping will store:
+                          - 'status' (str): "connected" or "error".
+                          - 'message' (str): Optional message or error reason.
+        """
+        super().__init__(**kwargs)
+        self.continue_on_error = continue_on_error
+        self.timeout_seconds = 1
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        host = runtime.get_global("host")
+        private_key = runtime.get_global("private_key")
+        user = runtime.get_global("user")
+        password = runtime.get_global("password")
+        raw_port =runtime.get_global("port")
+        port = int(raw_port) if raw_port not in (None, "None", "") else 22
+        connect_timeout = input.get("connect_timeout", 5)
+        print(f"this is the {port}")
+        try:
+
+            if not all([user, host, password]) or not all([host, private_key]):
+                raise ValueError("Missing required SSH connection parameters.")
+
+            logger.debug(f"[{self.name}] Attempting SSH connection to {host}:{port} as {user}")
+
+            client = paramiko.SSHClient()
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            print(f"[DEBUG] SSH connect to host='{host}' port='{port}' user='{user}'")
+            if private_key and user:
+                private_key = paramiko.RSAKey.from_private_key_file(private_key)
+                client.connect(hostname=host, username=user, pkey=private_key,port=port, timeout=connect_timeout)
+            elif password and user:
+                client.connect(hostname=host, username=user, password=password,port=port, timeout=connect_timeout)
+
+            result = client.exec_command("whoami")
+            logger.debug(f"[{self.name}] SSH command output: {result[1].read().decode().strip()}")
+
+            if host:
+                try:
+                    stdin, stdout, stderr = client.exec_command(f"nc -zv {host} {port}")
+                    
+                    # Wait for command to complete and get exit code
+                    exit_status = stdout.channel.recv_exit_status()
+
+                    if exit_status == 0:
+                        logger.info(f"[{self.name}] Successfully connected to {host}:{port}")
+                    else:
+                        logger.warning(f"[{self.name}] Cannot connect to service at {host}:{port}")
+                        
+                except Exception as e:
+                    logger.error(f"[{self.name}] SSH command execution failed: {e}")
+            runtime.set_global("ssh_client",client)
+            return {
+                "status": "connected",
+                "message": f"SSH connection to {host} successful."
+            }
+
+        except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException, UnexpectedExit, Exception) as e:
+            logger.error(f"[{self.name}] SSH connection failed: {e}", exc_info=True)
+
+            # Raise or return based on error policy
+            if not self.continue_on_error:
+                raise
+
+            return {
+                "status": "error",
+                "message": str(e)
+            }
+        
+
+class SSHCloseStep(Step):
+    """
+    Closes an existing Paramiko SSH connection.
+    """
+
+    def __init__(self, continue_on_error=False, **kwargs):
+        """
+        Args:
+            continue_on_error (bool): If True, step won't raise on error.
+            **kwargs: Common Step arguments.
+        """
+        super().__init__(**kwargs)
+        self.continue_on_error = continue_on_error
+        self.timeout_seconds = 1
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        host = runtime.get_global("host") or "<unknown>"
+        
+        try:
+            client = runtime.get_global("ssh_client")
+            if client:
+                if client.get_transport() and client.get_transport().is_active():
+                    client.close()
+                    logger.info(f"[{self.name}] Closed SSH connection to {host}")
+                else:
+                    logger.info(f"[{self.name}] SSH connection was already inactive.")
+            runtime.set_global("ssh_client", None)
+            return {
+                "status": "closed",
+                "message": f"SSH connection to {host} closed."
+            }
+        except Exception as e:
+            logger.error(f"[{self.name}] Failed to close SSH connection: {e}", exc_info=True)
+
+            if not self.continue_on_error:
+                raise
+            return {
+                "status": "error",
+                "message": str(e)
+            }
