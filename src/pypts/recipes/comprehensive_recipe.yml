@@ -17,10 +17,10 @@ globals:
   ID_key: 'ID'
   wrt_key: 'wrt'
   ssh_client: None
-  host: arbitrary_IP
+  host: ip
   user: Rabbit
   password: None
-  private_key: 'path/to/private_key'
+  private_key: 'key'
   port: None
 ---
 sequence_name: Comprehensive_IO_Types
@@ -47,13 +47,6 @@ setup_steps: []
 steps:
 
 # === sleeptest ===
-
-- steptype: SSHConnectStep
-  step_name: Find the SSH client connection
-  description: Asking user to find the file needed
-  input_mapping: {}
-  output_mapping: {}
-  continue_on_error: false
 
 - steptype: WaitStep
   step_name: Wait for 10s
@@ -419,11 +412,4 @@ steps:
       value: '3'
   output_mapping: {}
 
-teardown_steps:
-
-- steptype: SSHCloseStep
-  step_name: Closes the SSH client
-  description: takes the global client and closes it
-  input_mapping: {}
-  output_mapping: {}
-  continue_on_error: false
+teardown_steps: []
