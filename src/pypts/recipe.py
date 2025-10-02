@@ -117,20 +117,37 @@ class StepResult():
                     subresult.print_result(indent + "| ")
         # print(indent + "=====================================")
 
-def serialize(obj):
+def serialize(obj, _seen=None):
+    if _seen is None:
+        _seen = set()
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return f"<Circular reference: {type(obj).__name__}>"
+    _seen.add(obj_id)
+
+    # Handle Enum
     if isinstance(obj, Enum):
         return obj.name
-    else:
-        try:
-            filtered_dict = {
-                k: v
-                for k, v in obj.__dict__.items()
-                if not k.startswith("__")
-            }
-            return filtered_dict
-        
-        except AttributeError:
-            return str(obj)
+
+    # Handle dict
+    if isinstance(obj, dict):
+        return {serialize(k, _seen): serialize(v, _seen) for k, v in obj.items()}
+
+    # Handle list, tuple, set
+    if isinstance(obj, (list, tuple, set)):
+        return [serialize(i, _seen) for i in obj]
+
+    # Handle objects with __dict__
+    try:
+        return {
+            k: serialize(v, _seen)
+            for k, v in vars(obj).items()
+            if not k.startswith("__") and not callable(v)
+        }
+    except Exception:
+        pass
+
+    return str(obj)
 
 class Runtime:
     recipe_thread = None
@@ -616,6 +633,13 @@ class Step:
             direct_inputs[input_name] = input_config
             if "type" not in input_config: # if unspecified, it's a direct value
                 input_config["type"] = "direct"
+
+            if input_config.get("global_name", False):
+                global_name = input_config.get("global_name")
+                if not global_name:
+                    raise ValueError(f"'global name' must be specified if global object is true.")
+                direct_inputs[input_name] =runtime.get_global(global_name)
+                continue
             match input_config["type"]:
                 case "direct":
                     # value provided in the dictionary directly. Just use it

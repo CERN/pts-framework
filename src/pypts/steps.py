@@ -583,9 +583,14 @@ class UserInteractionStep(Step):
             logger.info(f"Step '{self.name}': User responded.")
             logger.debug(f"Step '{self.name}': Received response: {response}")
 
-            if str(response).strip().lower() == runtime.get_global('cancel_key'):
-                        runtime.continue_on_error = self.continue_on_error
-                        raise AbortTestException(f"wrong button")
+            try:
+                cancel_key = runtime.get_global('cancel_key')
+                if str(response).strip().lower() == str(cancel_key).strip().lower():
+                    runtime.continue_on_error = self.continue_on_error
+                    raise AbortTestException("wrong button")
+            except Exception:
+                # 'cancel_key' doesn't exist or something went wrong — safely ignore
+                pass
             
             if self.trigger_response and str(response).strip().lower() in ([str(v).strip().lower() for v in (self.trigger_response.keys() if isinstance(self.trigger_response, dict) else self.trigger_response)] if isinstance(self.trigger_response, (dict, list, set))else [str(self.trigger_response).strip().lower()]):
                 logger.info(f"Trigger matched: '{response}' → Executing setup/calibration method.")

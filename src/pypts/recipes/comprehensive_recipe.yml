@@ -17,10 +17,10 @@ globals:
   ID_key: 'ID'
   wrt_key: 'wrt'
   ssh_client: None
-  host: ip
+  host: 188.184.95.206
   user: Rabbit
   password: None
-  private_key: 'key'
+  private_key: 'C:/Users/odamborg/ssh/PTS_WR.pem'
   port: None
 ---
 sequence_name: Comprehensive_IO_Types
@@ -43,10 +43,7 @@ locals:
   input_from_local: None
 outputs:
   final_result: None
-setup_steps: []
-steps:
-
-# === sleeptest ===
+setup_steps: 
 
 - steptype: SSHConnectStep
   step_name: Find the SSH client connection
@@ -55,14 +52,34 @@ steps:
   output_mapping: {}
   continue_on_error: false
 
+
+steps:
+
+# === sleeptest ===
+
 - steptype: WaitStep
   step_name: Wait for 10s
   description: Waiting 10 seconds to let user check confirm
   skip: false
   input_mapping:
     wait_time:
-      value: '10'
+      value: '3'
   output_mapping: {}
+
+  # === INPUT: global | OUTPUT: passfail ===
+- steptype: PythonModuleStep
+  step_name: Global client write file
+  description: Using global client to write a file to ssh connection.
+  action_type: method
+  module: example_tests.py
+  method_name: write_a_simple_filessh
+  input_mapping:
+    target:
+      type: global
+      global_name: ssh_client
+  output_mapping:
+    output:
+      type: passfail
 
 
 - steptype: UserLoadingStep
