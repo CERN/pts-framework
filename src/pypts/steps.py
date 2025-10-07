@@ -192,7 +192,7 @@ class PythonModuleStep(Step):
     """
     Executes a method or interacts with attributes within a specified Python module.
     """
-    def __init__(self, action_type: str, module: str, method_name: str = None, **kwargs):
+    def __init__(self, action_type: str, module: str, method_name: str = None, continue_on_error: bool = False, **kwargs):
         """
         Args:
             action_type (str): The action to perform ('method', 'read_attribute', 'write_attribute').
@@ -204,6 +204,7 @@ class PythonModuleStep(Step):
         self.action_type = action_type
         self.module_path_str = module # Store path as string
         self.method_name = method_name
+        self.continue_on_error = continue_on_error
 
         # Basic validation during init
         if self.action_type == "method" and not self.method_name:
@@ -224,6 +225,8 @@ class PythonModuleStep(Step):
             parent_step_result_uuid: UUID of the parent StepResult.
         """
         step_output = {}
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
+        
 
         try:
             # Load the module dynamically using resources
@@ -545,6 +548,7 @@ class UserInteractionStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
 
         # Create a temporary queue for this specific interaction to receive the response.
@@ -586,7 +590,6 @@ class UserInteractionStep(Step):
             try:
                 cancel_key = runtime.get_global('cancel_key')
                 if str(response).strip().lower() == str(cancel_key).strip().lower():
-                    runtime.continue_on_error = self.continue_on_error
                     raise AbortTestException("wrong button")
             except Exception:
                 # 'cancel_key' doesn't exist or something went wrong — safely ignore
@@ -731,6 +734,7 @@ class UserLoadingStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
         response_q = queue.SimpleQueue()
 
@@ -756,7 +760,6 @@ class UserLoadingStep(Step):
                         file = response_q.get(block=True)
                         runtime.set_global('file', file)
             if str(response).strip().lower() == runtime.get_global('cancel_key'):
-                        runtime.continue_on_error = self.continue_on_error
                         raise AbortTestException(f"wrong button")
             else:
                 logger.info(f"No trigger matched. Skipping module execution.")
@@ -812,6 +815,7 @@ class UserRunMethodStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+        runtime.continue_on_error = self.continue_on_error
 
         response_q = queue.SimpleQueue()
 
@@ -835,7 +839,6 @@ class UserRunMethodStep(Step):
             logger.debug(f"Step '{self.name}': Received response: {response}")
             
             if str(response).strip().lower() == runtime.get_global('cancel_key'):
-                        runtime.continue_on_error = self.continue_on_error
                         raise AbortTestException(f"wrong button")
             
             if self.trigger_response and str(response).strip().lower() in ([str(v).strip().lower() for v in (self.trigger_response.keys() if isinstance(self.trigger_response, dict) else self.trigger_response)] if isinstance(self.trigger_response, (dict, list, set))else [str(self.trigger_response).strip().lower()]):
@@ -927,6 +930,7 @@ class UserWriteStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
         response_q = queue.SimpleQueue()
 
@@ -950,7 +954,6 @@ class UserWriteStep(Step):
             logger.debug(f"Step '{self.name}': Received response: {response}")
 
             if str(response).strip().lower() == runtime.get_global('cancel_key'):
-                        runtime.continue_on_error = self.continue_on_error
                         raise AbortTestException(f"wrong button")
             
             if str(response).strip() == runtime.get_global('wrt_key'):
@@ -1019,7 +1022,7 @@ class SSHConnectStep(Step):
         raw_port =runtime.get_global("port")
         port = int(raw_port) if raw_port not in (None, "None", "") else 22
         connect_timeout = input.get("connect_timeout", 5)
-        print(f"this is the {port}")
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
         try:
 
             if not all([user, host, password]) or not all([host, private_key]):
@@ -1089,6 +1092,7 @@ class SSHCloseStep(Step):
 
     def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
         host = runtime.get_global("host") or "<unknown>"
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
         
         try:
             client = runtime.get_global("ssh_client")

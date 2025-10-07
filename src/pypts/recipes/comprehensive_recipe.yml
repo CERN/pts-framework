@@ -7,9 +7,8 @@ recipe_version: 1.0.0
 description: A sample recipe demonstrating many different combinations of input/outputs.
 main_sequence: Comprehensive_IO_Types
 test_package: pypts
-continue_on_error: True
-globals: 
-  continue_on_error: true
+globals:
+  #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
   file: None
   loadFile_key: 'file'
@@ -80,6 +79,7 @@ steps:
   output_mapping:
     output:
       type: passfail
+  continue_on_error: true
 
 
 - steptype: UserLoadingStep

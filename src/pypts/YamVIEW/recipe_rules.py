@@ -8,7 +8,6 @@ RECIPE_HEADER_REQUIRED_FIELDS = {
     "description": str,
     "main_sequence": str,
     "globals": dict,
-    "continue_on_error": bool,
 }
 
 RECIPE_SEQUENCE_REQUIRED_FIELDS = {

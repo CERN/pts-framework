@@ -427,7 +427,6 @@ class Recipe:
             self.version: str = recipe_main_data["version"]
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
-            self.continue_on_error: bool = recipe_main_data.get("continue_on_error", False)
             # self.tags: dict[str, str] = recipe_main_data["tags"]
             logger.info(f"Loaded recipe {self.name} version {self.version}.")
             logger.debug(f"Recipe has {len(self.sequences)} sequences: {list(self.sequences.keys())}")
@@ -467,7 +466,6 @@ class Recipe:
             runtime.recipe_name = self.name             # Set recipe name in runtime
             runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
             runtime.test_package = self.test_package    # Set test package in runtime
-            runtime.continue_on_error = self.continue_on_error # Set continue on error setting in runtime
             sequence_name = self.main_sequence
 
             # Use the event sender instead of direct calls
@@ -761,6 +759,12 @@ class Step:
             step_result = step.run(runtime, input, parent_step, stop_event=stop_event)
             step_results.append(step_result)
 
+
+            try:
+                runtime.continue_on_error = runtime.get_global('continue_on_error')
+                print("global continue exists")
+            except:
+                pass
             # Check if we should stop execution due to an error
             # Stop if: ERROR occurred AND (continue_on_error is disabled OR step is critical)
             if step_result.is_type(ResultType.ERROR) and (not runtime.continue_on_error or step.is_critical()):
