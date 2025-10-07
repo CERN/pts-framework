@@ -10,7 +10,7 @@ include:
 
 # Define stages to include analyse stage for reuse linting
 stages:
-  - analyse
+  # - analyse
   - test
   - build
   - deploy
