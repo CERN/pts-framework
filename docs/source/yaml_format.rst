@@ -239,16 +239,27 @@ Each value in the ``output_mapping`` dictionary is *another* dictionary specifyi
 Specific Step Types
 ===================
 
+Given there are different types of steps to take, it is required to describe the types and what can be put into the steps.
+ - PythonModuleStep
+ - WaitStep
+ - UserInteractionStep
+ - SSHConnectStep
+ - UserLoadingStep
+ - UserRunMethodStep
+ - UserWriteStep
+
+Each has its own template of required elements but with overlapping types of elements
+
 PythonModuleStep
 ----------------
-
-Executes Python code.
+Executes Python method or code. 
 
 .. code-block:: yaml
 
    steptype: PythonModuleStep
    step_name: Call Python Function
-   module: path/to/my_module.py
+   description: Describe the action of the step
+   module: my_module.py #the name of the file with the test initialization
    action_type: method # Or 'read_attribute', 'write_attribute'
    method_name: my_function # Required if action_type is 'method'
    input_mapping:
@@ -263,9 +274,88 @@ Executes Python code.
      result: { type: local, local_name: output_data }
      passed: { type: passfail } # Treats boolean output as pass/fail
 
-*   **module** (str): Path to the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``). Otherwise, this is a file path relative to the current working directory.
+*   **module** (str):Name of the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``).
 *   **action_type** (str): ``method``, ``read_attribute``, or ``write_attribute``.
-*   **method_name** (str): Name of the method to call (if ``
+*   **method_name** (str): Name of the method to call. 
+*   **input_mapping** (dictionary): Inputs to the method. Each input(``arg``) is required to have a ``type``. 
+
+Steptypes applicable for the recipe
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+ that will be explained in the following sections.
+The first type of step is the ``UserInteractionStep``.
+
+.. code-block:: yaml
+
+  - steptype: UserInteractionStep
+  step_name: Start test
+  skip: false
+  input_mapping:
+    message: {type: direct, value: "Connect the WRS as shown and click Yes", indexed: false}
+    image_path: {type: direct, value: "tester.png", indexed: false}
+    options: {type: direct, value: [{'yes': 'yes'},{two: 'no'}], indexed: false}
+  output_mapping:
+    output: {type: equals, value: "yes"}
+  
+
+Of the full template for ``UserInteractionStep``, only the output_mapping, steptype and step_name are **required**, meaning the rest is optional.
+The skip is assumed false and therefore only required in scenarios where changing this is required. The ``input_mapping`` is not a requirement for running the tests however it can be useful for user interaction.
+The ``message`` is a description that is written above the buttons which could be a description of a test. The image_path is likewise for a nice to have if a image over the required testsetup is added as a visual guidance. 
+options is for changing what is written on the buttons that you push on. Standard values are "Yes" and "No".
+
+Other types of input other than **direct** is **global** and **local**. In the case of a type **local**, the next other item has to be called **local_name**. It will appear as:
+
+.. code-block:: yaml
+
+    input_mapping:
+    value:
+      type: local
+      local_name: test_value
+  output_mapping:
+    my_output:
+      type: local
+      local_name: calculated_output
+
+Output consists of 6 different types of outputs they receive which also changes the required input. The 6 output types are the following:
+ - passthrough
+ - passfail
+ - equals
+ - range
+ - global
+ - local
+
+Each is for its own type of tests. **passthrough** is for functions where the output is already a ``ResultType`` which is an enum class consisting of the possible outcomes. **passfail** returns an output as a boolean that then determines the ``ResultType``.
+**equals** is used for comparisons of specified value with the returned value from test. **range** is used for tests where the measured value is required to be within limits.
+**global** writes the output of the test to global variables. **local** writes the output to local variables in the runtime class. 
+ 
+
+
+The 6 types of outputs are applicable for all types of steps where the next one to describe is the ``PythonModuleStep``. The steptype is used for automated tests withouth required interaction by an operator from the framework. 
+This type is used for automated tests and will run the given function(``method``) inside the given python file. 
+
+.. code-block:: yaml
+
+  steptype: PythonModuleStep
+  step_name: Verify number is in range
+  action_type: method
+  module: example_tests.py
+  method_name: range_test
+  input_mapping:
+    value:
+      type: direct
+      value: '15'
+    min:
+      type: direct
+      value: '10'
+    max:
+      type: direct
+      value: '20'
+  output_mapping:
+    compare:
+      type: passfail
+
+
+
 
 Continue On Error Mechanism
 ============================
