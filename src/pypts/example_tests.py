@@ -5,7 +5,7 @@
 import logging
 import numpy as np
 from nptdms import TdmsWriter, RootObject, GroupObject, ChannelObject
-import os
+import os, paramiko
 from datetime import datetime
 
 '''
@@ -40,6 +40,11 @@ def simple_output(value):
     return {"my_output":value + 1}
 
 def is_PSU_disconnected():
+    return (True)
+
+def write_a_simple_filessh(target):
+    target.exec_command("echo 'Hello World' > myfile.txt")
+
     return (True)
 
 def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0, serial_number=None):

@@ -47,10 +47,7 @@ if __name__ == '__main__':
     Starts the recipe execution and event processing threads.
     """
 
-    yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
-    yaml_path = os.path.join(yaml_dir, 'comprehensive_recipe.yml')
-
-    api = run_pts(yaml_path)
+    api = run_pts()
 
     window, app = create_and_start_gui(api)
 
