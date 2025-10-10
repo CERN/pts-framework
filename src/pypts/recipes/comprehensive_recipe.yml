@@ -10,7 +10,6 @@ test_package: pypts
 globals:
   #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
-  file: None
   loadFile_key: 'file'
   cancel_key: 'cancel'
   ID_key: 'ID'
@@ -47,8 +46,6 @@ setup_steps:
 - steptype: SSHConnectStep
   step_name: Find the SSH client connection
   description: Asking user to find the file needed
-  input_mapping: {}
-  output_mapping: {}
   continue_on_error: false
 
 
@@ -63,7 +60,6 @@ steps:
   input_mapping:
     wait_time:
       value: '3'
-  output_mapping: {}
 
   # === INPUT: global | OUTPUT: passfail ===
 - steptype: PythonModuleStep
@@ -81,6 +77,12 @@ steps:
       type: passfail
   continue_on_error: true
 
+- steptype: SSHCloseStep
+  step_name: Closes the SSH client
+  description: takes the global client and closes it
+  input_mapping: {}
+  output_mapping: {}
+  continue_on_error: false
 
 - steptype: UserLoadingStep
   step_name: Load config file
@@ -89,15 +91,20 @@ steps:
     message:
       type: direct
       value: 'Find the specified file'
+    image_path: 
+      type: direct
+      value: lego2.jpg
     options:
       type: direct
       value:
-      - 'cancel': 'cancel'
-      - 'file': 'next'
+      - cancel: 'cancel'
+      - file: 'next'
   output_mapping:
     output:
       type: passfail
-  trigger_response: "next"
+  file_save_location: 
+    type: global
+    variable: file
   continue_on_error: True
 
 - steptype: UserRunMethodStep
@@ -112,8 +119,11 @@ steps:
     options:
       type: direct
       value:
-      - 'cancel': 'cancel'
-      - 'run': 'Run'
+      - cancel: 'cancel'
+      - run: 'Run'
+    image_path: 
+      type: direct
+      value: lego2.jpg
     method_name:
       type: method
       value: 'is_PSU_disconnected'
@@ -136,16 +146,21 @@ steps:
     options:
       type: direct
       value:
-      - 'cancel': 'cancel'
-      - 'run': 'Run'
+      - cancel: 'cancel'
+      - run: 'Run'
+    image_path: 
+      type: direct
+      value: lego2.jpg
     method_name:
       type: method
       value: 'loadconfigFile'
+    method_input:
+      type: global
+      global_name: file
   output_mapping:
     output:
       type: passfail
   trigger_response: "run"
-  need_file: true
   continue_on_error: True
 
 - steptype: UserWriteStep
@@ -155,6 +170,9 @@ steps:
     message:
       type: direct
       value: 'Write the ID or serial port of device'
+    image_path: 
+      type: direct
+      value: lego2.jpg
     options:
       type: direct
       value:
@@ -171,6 +189,9 @@ steps:
     message:
       type: direct
       value: 'Write the ID or serial port of device'
+    image_path: 
+      type: direct
+      value: lego2.jpg
     options:
       type: direct
       value:
@@ -440,7 +461,3 @@ teardown_steps:
 
 - steptype: SSHCloseStep
   step_name: Closes the SSH client
-  description: takes the global client and closes it
-  input_mapping: {}
-  output_mapping: {}
-  continue_on_error: false

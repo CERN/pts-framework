@@ -159,3 +159,42 @@ def loadconfigFile(file= None):
         return True
     else:
         return False
+    
+
+
+def get_sysmon_temperatures(ssh_client: paramiko.SSHClient) -> dict:
+    """
+    Reads sysmon temperature values from the remote system using an existing Paramiko SSH client.
+    Returns a dictionary where keys are sensor names (or thermal zones) and values are temperatures in Celsius.
+    """
+    temps = {}
+    
+    # Try reading thermal zones from /sys/class/thermal
+    command = "for zone in /sys/class/thermal/thermal_zone*/; do " \
+              "name=$(cat \"$zone/type\" 2>/dev/null); " \
+              "temp=$(cat \"$zone/temp\" 2>/dev/null); " \
+              "if [ -n \"$name\" ] && [ -n \"$temp\" ]; then " \
+              "echo \"$name $temp\"; fi; done"
+    
+    try:
+        stdin, stdout, stderr = ssh_client.exec_command(command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+        if error:
+            logger.warning(f"Warning: {error.strip()}")
+
+        for line in output.strip().splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                name, temp_milli = parts
+                # Conversion from millidegrees to degrees
+                try:
+                    temp_c = int(temp_milli) / 1000.0
+                    temps[name] = temp_c
+                except ValueError:
+                    continue
+
+    except Exception as e:
+        logger.error(f"Failed to get temperatures: {e}")
+
+    return temps

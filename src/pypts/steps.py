@@ -705,7 +705,7 @@ class UserLoadingStep(Step):
     Pauses recipe execution and sends an event to request interaction from a user
     via a UI or other external interface. Waits for a response.
     """
-    def __init__(self, trigger_response: str = None, continue_on_error: bool = False, **kwargs):
+    def __init__(self, continue_on_error: bool = False, file_save_location: dict = None, **kwargs):
         """
         Args:
             **kwargs: Common Step arguments. Input mapping should define:
@@ -715,8 +715,8 @@ class UserLoadingStep(Step):
                       Output mapping should define how to store the 'user_response'.
         """
         super().__init__(**kwargs)
-        self.trigger_response = trigger_response
         self.continue_on_error = continue_on_error
+        self.file_save_location = file_save_location
         self.timeout_seconds = 1 
         if "output" not in self.output_mapping:
             logger.warning(f"UserLoadingStep '{self.name}' might need an output mapping for 'output' to store the result.")
@@ -758,7 +758,12 @@ class UserLoadingStep(Step):
 
             if str(response).strip().lower() == runtime.get_global('loadFile_key'):
                         file = response_q.get(block=True)
-                        runtime.set_global('file', file)
+                        if self.file_save_location and self.file_save_location.get("type") == "global":
+                            runtime.set_global(self.file_save_location.get("variable"), file)
+                        elif self.file_save_location and self.file_save_location.get("type") == "local":
+                            runtime.set_global(self.file_save_location.get("variable"),file) 
+                        else:
+                            runtime.set_global('file', file)
             if str(response).strip().lower() == runtime.get_global('cancel_key'):
                         raise AbortTestException(f"wrong button")
             else:
@@ -781,7 +786,7 @@ class UserRunMethodStep(Step):
     Pauses recipe execution and sends an event to request interaction from a user
     via a UI or other external interface. Waits for a response.
     """
-    def __init__(self, trigger_response: str = None, module: str = None, action_type: str = None, method_name: str = None, continue_on_error: bool = False, need_file: bool = False, **kwargs):
+    def __init__(self, trigger_response: str = None, module: str = None, action_type: str = None, method_name: str = None, continue_on_error: bool = False, **kwargs):
         """
         Args:
             **kwargs: Common Step arguments. Input mapping should define:
@@ -796,7 +801,6 @@ class UserRunMethodStep(Step):
         self.action_type = action_type
         self.method_name = method_name
         self.continue_on_error = continue_on_error
-        self.need_file = need_file
         self.timeout_seconds = 1
         if "output" not in self.output_mapping:
             logger.warning(f"UserRunMethodStep '{self.name}' might need an output mapping for 'output' to store the result.")
@@ -815,6 +819,8 @@ class UserRunMethodStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+
+        other_keys = [key for key in input.keys() if key not in {"message", "image_path", "options"}]
         runtime.continue_on_error = self.continue_on_error
 
         response_q = queue.SimpleQueue()
@@ -855,9 +861,19 @@ class UserRunMethodStep(Step):
                     # Determine input based on action_type
                     if self.action_type == 'method':
                         module_input = {}  # No inputs expected
-                        if self.need_file:
-                            file_position = runtime.get_global('file')
-                            module_input["file"] = file_position
+                        if other_keys:
+                            for key in other_keys:
+                                key_input = input.get(key)
+                                input_type = key_input.get("type")
+                                
+                                if input_type == "global":
+                                    specified_value = runtime.get_global("global_name")
+                                elif input_type == "local":
+                                    specified_value = runtime.get_local("local_name")
+                                else:
+                                    specified_value = key_input.get("value")
+                                
+                                module_input[key] = specified_value
                     elif self.action_type == 'read_attribute':
                         module_input = {'attribute_name': input.get('attribute_name')}
                     elif self.action_type == 'write_attribute':
