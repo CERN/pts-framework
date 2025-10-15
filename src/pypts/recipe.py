@@ -33,6 +33,7 @@ class ResultType(IntEnum):
     PASS  = 2
     FAIL  = 3
     ERROR = 4
+    STOP = 5
 
     def __str__(self):
         return str(self.name)
@@ -64,6 +65,11 @@ class StepResult():
 
     def set_skip(self):
         self.result = ResultType.SKIP
+    
+    def set_stop(self,  error_info=None, inputs={}):
+        self.result = ResultType.STOP
+        self.error_info = error_info
+        self.inputs = inputs
 
     def set_result(self, result_type=ResultType.DONE, inputs={}, outputs={}):
         self.result = result_type
@@ -487,7 +493,9 @@ class Recipe:
             # final_result = starting_sequence.run(runtime, {})
             if runtime.stop_event.is_set():
                 logger.info(f"Recipe run aborted before executing sequence due to stop_event. {runtime.stop_event}")
-                return []
+                results = []  # Ensure results is defined
+                # Emit signal so GUI still updates
+                return results
                 
             main_step_data = {"steptype": "SequenceStep", "step_name": sequence_name, "sequence": {"type": "internal", "name": sequence_name}, "input_mapping": {}, "output_mapping": {}}
             
@@ -513,7 +521,12 @@ class Recipe:
 
             return results
         finally:
+            #results: List[StepResult] = runtime.get_results()
+            runtime.send_event("post_run_recipe", results)
+            time.sleep(0.1)
             Runtime.stop()
+
+            return results
 
     
     # def parse_q_input(self, q_in):
@@ -711,11 +724,12 @@ class Step:
         step_result.pypts_version = runtime.pypts_version # Copy version
 
         runtime.append_result(parent_step, step_result)
-        runtime.send_event("pre_run_step", self)
+
         if stop_event.is_set():
             logger.info("Recipe run stopped by button.")
             return self.handle_step_abort(step_result, runtime, input)
         
+        runtime.send_event("pre_run_step", self)        
         logger.info("check before skip " + str(self.is_skipped()))
         if self.is_skipped():
             logger.info(f"Skipping step {self.name}")
@@ -727,6 +741,9 @@ class Step:
                 step_input = {}
                 step_input = self.process_inputs(runtime)
                 step_output = self._step(runtime, step_input, step_result.uuid)
+                if stop_event.is_set():
+                    logger.info("Recipe run stopped by button.")
+                    return self.handle_step_abort(step_result, runtime, input)
             except:
                 logger.error(f"Error occurred while running step {self.name}")
                 error_info = traceback.format_exc()
@@ -743,7 +760,7 @@ class Step:
     
     def handle_step_abort(self, step_result, runtime, input, reason="Stopped by user"):
         WAIT_FOR_TERMINATION.set()
-        step_result.set_error(reason, input)
+        step_result.set_stop(reason, input)
         runtime.send_event("post_run_step", step_result)
         runtime.report_queue.put(step_result)
         return step_result

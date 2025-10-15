@@ -73,9 +73,7 @@ class MainWindow(QWidget):
         self.q_in = None
         self.response_q = None
         self.already_updated = False
-        self.aborted = False
-        self.latest_step = None
-        self.latest_results = None
+        self.running = False
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -273,8 +271,10 @@ class MainWindow(QWidget):
             logger.info("Clicked open icon and loaded recipe successfully.")
 
     def on_start_clicked(self):
-        self.reset_gui()
-        self.load_recipe()
+        if not self.running:
+            self.reset_gui()
+            self.load_recipe()
+            self.running = True
         self.q_in.put(("START",))
         self.action_abort_recipe_execution.setEnabled(True)
         self.action_open_recipe.setEnabled(False)
@@ -283,14 +283,12 @@ class MainWindow(QWidget):
 
     def on_abort_clicked(self):
         global WAIT_FOR_TERMINATION
+        self.running = False
         self.action_abort_recipe_execution.setEnabled(False)
         self.action_start_recipe_execution.setEnabled(False)
-        #Feature not yet imported to change text when it is stopped.
-        #self.aborted - True
 
         WAIT_FOR_TERMINATION.clear()
         self.clear_interaction_buttons()
-        self.update_running_step(self.latest_step, abort= True)
 
         self.q_in.put(("STOP",))
         loop = QEventLoop()
@@ -308,7 +306,6 @@ class MainWindow(QWidget):
 
         # Cleanup
         timer.stop()
-        #self.show_results(self.latest_results)
 
         self.action_open_recipe.setEnabled(True)
         self.open_recipe_action.setEnabled(True)
@@ -554,7 +551,6 @@ class MainWindow(QWidget):
 
         Uses StepResultModel to populate the QTreeView.
         """
-        self.latest_results = event_dict
         self.result_list.show()
         results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
@@ -570,11 +566,10 @@ class MainWindow(QWidget):
         self.result_list.resizeColumnToContents(2)
         # Note: In PySide6, the view will refresh automatically when the model is set
 
-    def update_running_step(self, event_dict, abort:bool = False):
+    def update_running_step(self, event_dict):
         """Highlights the step that is currently running in the step list table."""
         logger.debug("update_running_step method called")
         step_uuid_to_find = event_dict["step_uuid"]
-        self.latest_step= event_dict
 
         # Reset previous running step highlight (optional, depends on desired behavior)
         # You might need to keep track of the previously highlighted row index
@@ -605,10 +600,7 @@ class MainWindow(QWidget):
                  font = status_item.font()
                  font.setBold(True)
                  status_item.setFont(font)
-                 if abort:
-                     status_item.setText("Stopped...")
-                 else:
-                    status_item.setText("Running...")
+                 status_item.setText("Running...")
                  # Optionally change text color
                  # status_item.setForeground(QColor("blue"))
 

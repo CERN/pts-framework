@@ -245,3 +245,5 @@ def get_hwmon(target) -> dict:
     except Exception as e:
         logger.error(f"Failed to get hwmon: {e}")
     return {"output":temps}
+
+

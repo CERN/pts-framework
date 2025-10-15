@@ -15,9 +15,9 @@ globals:
   ID_key: 'ID'
   wrt_key: 'wrt'
   ssh_client: None
-  host: #the ip of the device
+  host: #the ip
   user: root
-  password: password #just example
+  password: 
   private_key: 
   port: None
 ---
@@ -48,7 +48,6 @@ setup_steps:
   step_name: Find the SSH client connection
   description: Asking user to find the file needed
   continue_on_error: false
-  skip: true
 
 
 steps:
@@ -70,7 +69,6 @@ steps:
   action_type: method
   module: example_tests.py
   method_name: write_a_simple_filessh
-  skip: true
   input_mapping:
     target:
       type: global
@@ -86,7 +84,6 @@ steps:
   action_type: method
   module: example_tests.py
   method_name: get_hwmon
-  skip: True
   input_mapping:
     target:
       type: global
