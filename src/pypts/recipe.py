@@ -341,7 +341,7 @@ class RuntimeBridge(QObject):
         logger.info("Setting stop_event from RuntimeBridge")
         Runtime.stop_event.set()
         print(f"this is stop_event push: {Runtime.stop_event}")
-        Runtime.stop()
+        #Runtime.stop()
 
 # Global singleton instance
 runtime_bridge = RuntimeBridge()
@@ -493,7 +493,6 @@ class Recipe:
             
             main_step: Step = Step.build_step(main_step_data)
             final_result = main_step.run(runtime, {}, stop_event=runtime.stop_event)
-            print("stopping attempt")
 
             
             results: List[StepResult] = runtime.get_results()
@@ -579,17 +578,18 @@ class Sequence():
         finally:
             stop_event = getattr(runtime, "stop_event", None)
             teardown_results: List[StepResult] = Step.run_steps(runtime, self.teardown_steps, parent_step, stop_event=stop_event.clear())
+
             print("Should run the teardown steps now.")
-        if teardown_results:
-            sequence_results += teardown_results
+            if teardown_results:
+                sequence_results += teardown_results
 
-        sequence_result = StepResult.evaluate_multiple_step_results(sequence_results)
+            sequence_result = StepResult.evaluate_multiple_step_results(sequence_results)
 
-        runtime.pop_locals()
-        runtime.send_event("post_run_sequence", self, sequence_result)
-        logger.info(f"Sequence {self.name} result: {sequence_result}")
+            runtime.pop_locals()
+            runtime.send_event("post_run_sequence", self, sequence_result)
+            logger.info(f"Sequence {self.name} result: {sequence_result}")
 
-        return sequence_result
+            return sequence_result
 
 
 class Step:
@@ -715,6 +715,7 @@ class Step:
         if stop_event.is_set():
             logger.info("Recipe run stopped by button.")
             return self.handle_step_abort(step_result, runtime, input)
+        
         logger.info("check before skip " + str(self.is_skipped()))
         if self.is_skipped():
             logger.info(f"Skipping step {self.name}")

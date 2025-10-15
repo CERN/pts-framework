@@ -1041,8 +1041,8 @@ class SSHConnectStep(Step):
         runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
         try:
 
-            if not all([user, host, password]) or not all([host, private_key]):
-                raise ValueError("Missing required SSH connection parameters.")
+            if not ((user and host and password) or (user and host and private_key)):
+                    raise ValueError("Missing required SSH connection parameters.")
 
             logger.debug(f"[{self.name}] Attempting SSH connection to {host}:{port} as {user}")
 
@@ -1050,6 +1050,7 @@ class SSHConnectStep(Step):
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             print(f"[DEBUG] SSH connect to host='{host}' port='{port}' user='{user}'")
             if private_key and user:
+                print("somehow i got in here")
                 private_key = paramiko.RSAKey.from_private_key_file(private_key)
                 client.connect(hostname=host, username=user, pkey=private_key,port=port, timeout=connect_timeout)
             elif password and user:

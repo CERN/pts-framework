@@ -74,6 +74,8 @@ class MainWindow(QWidget):
         self.response_q = None
         self.already_updated = False
         self.aborted = False
+        self.latest_step = None
+        self.latest_results = None
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -256,6 +258,7 @@ class MainWindow(QWidget):
     def on_open_clicked(self):
         #self.on_abort_clicked()
         loader = ConfigFileLoader(return_content=False)
+        self.q_in.put(("STOP",))
         if loader.result[0] is not None:
             self.recipe_file = str(loader.result[0])
             try:
@@ -274,7 +277,6 @@ class MainWindow(QWidget):
         self.load_recipe()
         self.q_in.put(("START",))
         self.action_abort_recipe_execution.setEnabled(True)
-        print("abort is enabled now")
         self.action_open_recipe.setEnabled(False)
         self.open_recipe_action.setEnabled(False)
 
@@ -287,6 +289,9 @@ class MainWindow(QWidget):
         #self.aborted - True
 
         WAIT_FOR_TERMINATION.clear()
+        self.clear_interaction_buttons()
+        self.update_running_step(self.latest_step, abort= True)
+
         self.q_in.put(("STOP",))
         loop = QEventLoop()
 
@@ -303,6 +308,7 @@ class MainWindow(QWidget):
 
         # Cleanup
         timer.stop()
+        #self.show_results(self.latest_results)
 
         self.action_open_recipe.setEnabled(True)
         self.open_recipe_action.setEnabled(True)
@@ -342,9 +348,6 @@ class MainWindow(QWidget):
         self.already_updated = False
         self.update_sequence(event_dict)
         self.already_updated = False
-
-
-
 
 
 # Misc
@@ -536,7 +539,6 @@ class MainWindow(QWidget):
             new_result_item.setForeground(QColor(text_color))
             new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-
             # Update the status in the found row (hird column)
             self.step_list.setItem(target_row, 2, new_result_item)
 
@@ -552,6 +554,7 @@ class MainWindow(QWidget):
 
         Uses StepResultModel to populate the QTreeView.
         """
+        self.latest_results = event_dict
         self.result_list.show()
         results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
@@ -567,10 +570,11 @@ class MainWindow(QWidget):
         self.result_list.resizeColumnToContents(2)
         # Note: In PySide6, the view will refresh automatically when the model is set
 
-    def update_running_step(self, event_dict):
+    def update_running_step(self, event_dict, abort:bool = False):
         """Highlights the step that is currently running in the step list table."""
         logger.debug("update_running_step method called")
         step_uuid_to_find = event_dict["step_uuid"]
+        self.latest_step= event_dict
 
         # Reset previous running step highlight (optional, depends on desired behavior)
         # You might need to keep track of the previously highlighted row index
@@ -596,12 +600,15 @@ class MainWindow(QWidget):
 
             # Highlight the status item (column 2)
             status_item = self.step_list.item(target_row, 2)
-            if status_item:
+            if status_item:             
                  # Set status to 'Running...' and make bold
-                 status_item.setText("Running...")
                  font = status_item.font()
                  font.setBold(True)
                  status_item.setFont(font)
+                 if abort:
+                     status_item.setText("Stopped...")
+                 else:
+                    status_item.setText("Running...")
                  # Optionally change text color
                  # status_item.setForeground(QColor("blue"))
 
@@ -626,8 +633,7 @@ class MainWindow(QWidget):
         sequence_result = event_dict["sequence_result"]
         logging.info(f"Sequence '{sequence_name}' finished with result: {sequence_result}.")
         # Potential UI update: Could mark sequence as done in a separate list/view
-
-
+    
 class StepResultModel(QAbstractItemModel):
     """A Qt model for displaying hierarchical StepResult data in a QTreeView.
 
