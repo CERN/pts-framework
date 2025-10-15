@@ -15,9 +15,9 @@ globals:
   ID_key: 'ID'
   wrt_key: 'wrt'
   ssh_client: None
-  host: #the ip
+  host: 128.141.157.44
   user: root
-  password: 
+  password: WhiteRabbitV4
   private_key: 
   port: None
 ---

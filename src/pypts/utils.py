@@ -10,7 +10,6 @@ from PySide6.QtGui import QImageReader
 import serial
 from serial.tools import list_ports
 import threading
-from scapy.all import ARP, Ether, srp
 
 """Module that provides the utilities to the project.
     """
