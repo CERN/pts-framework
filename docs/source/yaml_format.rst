@@ -163,7 +163,7 @@ Key fields common to most steps:
 
 
 Input Mapping Details (``input_mapping``)
-------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ``input_mapping`` dictionary maps internal step input names (e.g., argument names for a ``PythonModuleStep``) to data sources. The keys of ``input_mapping`` are the names the step internally uses for its inputs, and the values specify where that data comes from.
 
@@ -200,7 +200,7 @@ Each value in the ``input_mapping`` dictionary is *another* dictionary with the 
 .. _output_mapping_details:
 
 Output Mapping Details (``output_mapping``)
---------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ``output_mapping`` dictionary defines how the step's raw output is processed, evaluated for pass/fail status, and stored back into variables. The keys of the ``output_mapping`` dictionary correspond to the keys in the step's raw output data (typically a dictionary). If the step produces a non-dictionary output (e.g., a ``PythonModuleStep`` method returns a single value like a boolean or number), it's treated as a dictionary with a single key ``output`` (e.g., ``{"output": returned_value}``).
 
@@ -317,7 +317,7 @@ The elements ``step_name`` and ``description`` are not explained further in this
 
 
 PythonModuleStep
-----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Executes Python method or code. 
 
@@ -349,7 +349,7 @@ Executes Python method or code.
 
 
 WaitStep
-----------------
+~~~~~~~~~~~~~~~~~~~~
 
 Waits the specified period of time in seconds before next step starts.
 
@@ -368,7 +368,7 @@ Waits the specified period of time in seconds before next step starts.
 
 
 UserInteractionStep
-----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Allows for user to interact with gui through action on buttons. It allows for adding many buttons but it requires at least one button if test is to be successful. 
 
@@ -397,7 +397,7 @@ The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop 
 
 
 SSHConnectStep
-----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Allows to setup a SSH connection to be used globally during the test.
 
@@ -447,7 +447,7 @@ An Example of using it for a function can be seen below.
 
 
 UserLoadingStep
-----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Used to load a file to be used somewhere else. Could fx be a calibration file or configuration file for certain instruments. 
 
@@ -488,7 +488,7 @@ The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop 
 
 
 UserRunMethodStep
-----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Executes a method after interacting with next button. Step type is expected to be used in scenarios where an action by the operator is required before running a method.
 
@@ -551,7 +551,7 @@ Example function of input would be for the step above.
 
 
 UserWriteStep
-----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Executes step to write values to variables or setting up the settings required for a comport. 
 
@@ -615,6 +615,7 @@ To ensure the functionality of some of the step types, certain global and locals
 The following steps that require global or local variables are found below. 
 
  - **SSHConnectStep**
+
  Requires the following global variables:
   - cancel_key: 'cancel'
   - ssh_client: None
@@ -625,16 +626,16 @@ The following steps that require global or local variables are found below.
   - port: SSH port. standard is 22
  - **UserLoadingStep**
  Requires the following global variables:
- - cancel_key: 'cancel'
- - loadFile_key: 'file'
- - **UserRunMethodStep**
+  - cancel_key: 'cancel'
+  - loadFile_key: 'file'
+  - **UserRunMethodStep**
 Requires the following global variables:
- - cancel_key: 'cancel'
- - **UserWriteStep**
+  - cancel_key: 'cancel'
+- **UserWriteStep**
 Requires the following global variables:
- - cancel_key: 'cancel'
- - ID_key: 'ID'
- - wrt_key: 'wrt'
+  - cancel_key: 'cancel'
+  - ID_key: 'ID'
+  - wrt_key: 'wrt'
 
 Requires the following local variables **only** if ID_key is specified under options:
   - serial_ID: None
@@ -651,7 +652,7 @@ Continue On Error Mechanism
 Starting with ``recipe_version`` 1.1.0, the pypts framework supports a "Continue On Error" mechanism that allows test execution to continue even after encountering errors in non-critical steps.
 
 Global Setting
---------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 As of release version v0.1.8 The ``continue_on_error`` is not a global setting. It is a step specific setting, however by adding ``continue_on_error`` to globals, it will overwrite and return to similar functionality as pre-v0.1.8.
 
@@ -677,7 +678,7 @@ When ``continue_on_error`` is ``false`` (default):
 - The ``critical`` field has no effect
 
 Step-Level Critical Flag
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Individual steps can be marked as critical using the ``critical`` field:
 
@@ -699,7 +700,7 @@ Individual steps can be marked as critical using the ``critical`` field:
 
 
 Behavior Matrix
----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The interaction between ``continue_on_error`` and ``critical`` settings:
 
@@ -716,7 +717,7 @@ The interaction between ``continue_on_error`` and ``critical`` settings:
 +-------------------+------------------+------------------------+
 
 Use Cases
----------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This mechanism is useful for:
 
@@ -726,7 +727,7 @@ This mechanism is useful for:
 - **Critical Safety Checks**: Ensure essential safety or validation steps always stop execution on failure
 
 Example
--------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: yaml
 

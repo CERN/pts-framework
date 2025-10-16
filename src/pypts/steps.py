@@ -544,7 +544,6 @@ class UserInteractionStep(Step):
             input: Dictionary of resolved inputs ('message', 'image_path', 'options').
             parent_step_result_uuid: UUID of the parent StepResult.
         """
-        print(input)
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
@@ -815,7 +814,6 @@ class UserRunMethodStep(Step):
             input: Dictionary of resolved inputs ('message', 'image_path', 'options').
             parent_step_result_uuid: UUID of the parent StepResult.
         """
-        print(input)
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
@@ -1048,9 +1046,8 @@ class SSHConnectStep(Step):
 
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            print(f"[DEBUG] SSH connect to host='{host}' port='{port}' user='{user}'")
+            logger.debug(f"[DEBUG] SSH connect to host='{host}' port='{port}' user='{user}'")
             if private_key and user:
-                print("somehow i got in here")
                 private_key = paramiko.RSAKey.from_private_key_file(private_key)
                 client.connect(hostname=host, username=user, pkey=private_key,port=port, timeout=connect_timeout)
             elif password and user:

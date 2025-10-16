@@ -346,7 +346,6 @@ class RuntimeBridge(QObject):
     def stop_runtime(self):
         logger.info("Setting stop_event from RuntimeBridge")
         Runtime.stop_event.set()
-        print(f"this is stop_event push: {Runtime.stop_event}")
         #Runtime.stop()
 
 # Global singleton instance
@@ -592,7 +591,6 @@ class Sequence():
             stop_event = getattr(runtime, "stop_event", None)
             teardown_results: List[StepResult] = Step.run_steps(runtime, self.teardown_steps, parent_step, stop_event=stop_event.clear())
 
-            print("Should run the teardown steps now.")
             if teardown_results:
                 sequence_results += teardown_results
 
@@ -679,7 +677,6 @@ class Step:
                 case "passfail":    # Output is boolean. Passes on True
                     step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":      # Output is a value. Passes if equal to the target value
-                        print(output_config["value"])
                         step_result = (
                         ResultType.PASS
                         if step_output[output_name] == output_config["value"]
@@ -780,7 +777,6 @@ class Step:
 
             try:
                 runtime.continue_on_error = runtime.get_global('continue_on_error')
-                print("global continue exists")
             except:
                 pass
             # Check if we should stop execution due to an error

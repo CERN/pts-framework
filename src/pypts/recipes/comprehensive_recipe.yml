@@ -11,14 +11,14 @@ globals:
   #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
   loadFile_key: 'file'
-  cancel_key: 'cancel'
-  ID_key: 'ID'
-  wrt_key: 'wrt'
+  cancel_key: 'cancel' #key used for buttons that wishes to stop steps.
+  ID_key: 'ID' #If used as a step name, a gui will appear that helps set up a uart connection.
+  wrt_key: 'wrt' #writes the given input directly to the specified variable.
   ssh_client: None
-  host: 128.141.157.44
-  user: root
-  password: WhiteRabbitV4
-  private_key: 
+  host: CTDW-864-CWRSV4P2 #Host name, can either be name or IP
+  user: root #username of ssh
+  password: WhitePyptsV4 #password for ssh
+  private_key: #private key for ssh
   port: None
 ---
 sequence_name: Comprehensive_IO_Types
@@ -44,6 +44,7 @@ outputs:
   final_result: None
 setup_steps: 
 
+#Creates a threading holding the opened SSH connection so it can be called and used elsewhere. 
 - steptype: SSHConnectStep
   step_name: Find the SSH client connection
   description: Asking user to find the file needed
@@ -63,6 +64,7 @@ steps:
       value: '3'
 
   # === INPUT: global | OUTPUT: passfail ===
+  #Runs a method that sends commands to ssh.
 - steptype: PythonModuleStep
   step_name: Global client write file
   description: Using global client to write a file to ssh connection.
@@ -78,6 +80,7 @@ steps:
       type: passfail
   continue_on_error: true
 
+#Reads the hwmon class on ssh recipient.
 - steptype: PythonModuleStep
   step_name: Global client read hwmon
   description: Using global client to read the hwmon on PCB
@@ -212,7 +215,7 @@ steps:
       type: local
       local_name: my_direct
 
-
+#step running through the ssh 
 - steptype: UserInteractionStep
   step_name: Initial Buttonpush
   description: Asking user for confirmation before test starts.

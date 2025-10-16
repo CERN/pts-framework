@@ -566,6 +566,13 @@ class MainWindow(QWidget):
         self.result_list.resizeColumnToContents(2)
         # Note: In PySide6, the view will refresh automatically when the model is set
 
+        #Activates these buttons as in a case of the test finishing properly, they would stay active, where then pushing stop would initialize a deadlock
+        self.running = False
+        self.action_abort_recipe_execution.setEnabled(False)
+        self.action_open_recipe.setEnabled(True)
+        self.open_recipe_action.setEnabled(True)
+        self.action_start_recipe_execution.setEnabled(True)
+
     def update_running_step(self, event_dict):
         """Highlights the step that is currently running in the step list table."""
         logger.debug("update_running_step method called")
@@ -820,7 +827,6 @@ class SerialPortDialog(QDialog):
 
     def ok_clicked(self):
         # Disable OK button until thread completes
-        print("OK clicked - starting final IDN thread")
         self.ok_button.setEnabled(False)
         port = self.combo.currentText()
         baud = self.baudrate
@@ -831,7 +837,7 @@ class SerialPortDialog(QDialog):
         self.worker_thread.start()
 
     def _final_idn_done(self, result_text, idn_response):
-        print("Final IDN received:", result_text)
+        logger.debug("Final IDN received:", result_text)
         self.output.append(result_text)
         self.idn_response = idn_response
         self.ok_button.setEnabled(True)
