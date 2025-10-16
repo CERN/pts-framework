@@ -15,20 +15,8 @@
 from pypts._version import version as __version__
 import logging
 import sys
-import os
-from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QObject, Signal, QThread
 from pypts.pts import run_pts
-from pypts.gui import MainWindow, TextEditLoggerHandler # Import necessary GUI classes
-from pypts.event_proxy import RecipeEventProxy # Import the proxy class
-from queue import SimpleQueue
-from contextlib import suppress
-from pypts import recipe
 from pypts.startup import create_and_start_gui
-import os
-import uuid # Import uuid
-import atexit
-import time
 
 logger = logging.getLogger(__name__)
 

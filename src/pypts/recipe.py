@@ -33,6 +33,7 @@ class ResultType(IntEnum):
     PASS  = 2
     FAIL  = 3
     ERROR = 4
+    STOP = 5
 
     def __str__(self):
         return str(self.name)
@@ -64,6 +65,11 @@ class StepResult():
 
     def set_skip(self):
         self.result = ResultType.SKIP
+    
+    def set_stop(self,  error_info=None, inputs={}):
+        self.result = ResultType.STOP
+        self.error_info = error_info
+        self.inputs = inputs
 
     def set_result(self, result_type=ResultType.DONE, inputs={}, outputs={}):
         self.result = result_type
@@ -340,8 +346,7 @@ class RuntimeBridge(QObject):
     def stop_runtime(self):
         logger.info("Setting stop_event from RuntimeBridge")
         Runtime.stop_event.set()
-        print(f"this is stop_event push: {Runtime.stop_event}")
-        Runtime.stop()
+        #Runtime.stop()
 
 # Global singleton instance
 runtime_bridge = RuntimeBridge()
@@ -427,7 +432,6 @@ class Recipe:
             self.version: str = recipe_main_data["version"]
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
-            self.continue_on_error: bool = recipe_main_data.get("continue_on_error", False)
             # self.tags: dict[str, str] = recipe_main_data["tags"]
             logger.info(f"Loaded recipe {self.name} version {self.version}.")
             logger.debug(f"Recipe has {len(self.sequences)} sequences: {list(self.sequences.keys())}")
@@ -467,7 +471,6 @@ class Recipe:
             runtime.recipe_name = self.name             # Set recipe name in runtime
             runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
             runtime.test_package = self.test_package    # Set test package in runtime
-            runtime.continue_on_error = self.continue_on_error # Set continue on error setting in runtime
             sequence_name = self.main_sequence
 
             # Use the event sender instead of direct calls
@@ -489,13 +492,14 @@ class Recipe:
             # final_result = starting_sequence.run(runtime, {})
             if runtime.stop_event.is_set():
                 logger.info(f"Recipe run aborted before executing sequence due to stop_event. {runtime.stop_event}")
-                return []
+                results = []  # Ensure results is defined
+                # Emit signal so GUI still updates
+                return results
                 
             main_step_data = {"steptype": "SequenceStep", "step_name": sequence_name, "sequence": {"type": "internal", "name": sequence_name}, "input_mapping": {}, "output_mapping": {}}
             
             main_step: Step = Step.build_step(main_step_data)
             final_result = main_step.run(runtime, {}, stop_event=runtime.stop_event)
-            print("stopping attempt")
 
             
             results: List[StepResult] = runtime.get_results()
@@ -516,7 +520,12 @@ class Recipe:
 
             return results
         finally:
+            #results: List[StepResult] = runtime.get_results()
+            runtime.send_event("post_run_recipe", results)
+            time.sleep(0.1)
             Runtime.stop()
+
+            return results
 
     
     # def parse_q_input(self, q_in):
@@ -581,17 +590,17 @@ class Sequence():
         finally:
             stop_event = getattr(runtime, "stop_event", None)
             teardown_results: List[StepResult] = Step.run_steps(runtime, self.teardown_steps, parent_step, stop_event=stop_event.clear())
-            print("Should run the teardown steps now.")
-        if teardown_results:
-            sequence_results += teardown_results
 
-        sequence_result = StepResult.evaluate_multiple_step_results(sequence_results)
+            if teardown_results:
+                sequence_results += teardown_results
 
-        runtime.pop_locals()
-        runtime.send_event("post_run_sequence", self, sequence_result)
-        logger.info(f"Sequence {self.name} result: {sequence_result}")
+            sequence_result = StepResult.evaluate_multiple_step_results(sequence_results)
 
-        return sequence_result
+            runtime.pop_locals()
+            runtime.send_event("post_run_sequence", self, sequence_result)
+            logger.info(f"Sequence {self.name} result: {sequence_result}")
+
+            return sequence_result
 
 
 class Step:
@@ -668,7 +677,6 @@ class Step:
                 case "passfail":    # Output is boolean. Passes on True
                     step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":      # Output is a value. Passes if equal to the target value
-                        print(output_config["value"])
                         step_result = (
                         ResultType.PASS
                         if step_output[output_name] == output_config["value"]
@@ -713,10 +721,12 @@ class Step:
         step_result.pypts_version = runtime.pypts_version # Copy version
 
         runtime.append_result(parent_step, step_result)
-        runtime.send_event("pre_run_step", self)
+
         if stop_event.is_set():
             logger.info("Recipe run stopped by button.")
             return self.handle_step_abort(step_result, runtime, input)
+        
+        runtime.send_event("pre_run_step", self)        
         logger.info("check before skip " + str(self.is_skipped()))
         if self.is_skipped():
             logger.info(f"Skipping step {self.name}")
@@ -728,6 +738,9 @@ class Step:
                 step_input = {}
                 step_input = self.process_inputs(runtime)
                 step_output = self._step(runtime, step_input, step_result.uuid)
+                if stop_event.is_set():
+                    logger.info("Recipe run stopped by button.")
+                    return self.handle_step_abort(step_result, runtime, input)
             except:
                 logger.error(f"Error occurred while running step {self.name}")
                 error_info = traceback.format_exc()
@@ -744,7 +757,7 @@ class Step:
     
     def handle_step_abort(self, step_result, runtime, input, reason="Stopped by user"):
         WAIT_FOR_TERMINATION.set()
-        step_result.set_error(reason, input)
+        step_result.set_stop(reason, input)
         runtime.send_event("post_run_step", step_result)
         runtime.report_queue.put(step_result)
         return step_result
@@ -761,6 +774,11 @@ class Step:
             step_result = step.run(runtime, input, parent_step, stop_event=stop_event)
             step_results.append(step_result)
 
+
+            try:
+                runtime.continue_on_error = runtime.get_global('continue_on_error')
+            except:
+                pass
             # Check if we should stop execution due to an error
             # Stop if: ERROR occurred AND (continue_on_error is disabled OR step is critical)
             if step_result.is_type(ResultType.ERROR) and (not runtime.continue_on_error or step.is_critical()):

@@ -73,7 +73,7 @@ class MainWindow(QWidget):
         self.q_in = None
         self.response_q = None
         self.already_updated = False
-        self.aborted = False
+        self.running = False
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -256,6 +256,7 @@ class MainWindow(QWidget):
     def on_open_clicked(self):
         #self.on_abort_clicked()
         loader = ConfigFileLoader(return_content=False)
+        self.q_in.put(("STOP",))
         if loader.result[0] is not None:
             self.recipe_file = str(loader.result[0])
             try:
@@ -270,23 +271,25 @@ class MainWindow(QWidget):
             logger.info("Clicked open icon and loaded recipe successfully.")
 
     def on_start_clicked(self):
-        self.reset_gui()
-        self.load_recipe()
+        if not self.running:
+            self.reset_gui()
+            self.load_recipe()
+            self.running = True
         self.q_in.put(("START",))
         self.action_abort_recipe_execution.setEnabled(True)
-        print("abort is enabled now")
         self.action_open_recipe.setEnabled(False)
         self.open_recipe_action.setEnabled(False)
 
 
     def on_abort_clicked(self):
         global WAIT_FOR_TERMINATION
+        self.running = False
         self.action_abort_recipe_execution.setEnabled(False)
         self.action_start_recipe_execution.setEnabled(False)
-        #Feature not yet imported to change text when it is stopped.
-        #self.aborted - True
 
         WAIT_FOR_TERMINATION.clear()
+        self.clear_interaction_buttons()
+
         self.q_in.put(("STOP",))
         loop = QEventLoop()
 
@@ -342,9 +345,6 @@ class MainWindow(QWidget):
         self.already_updated = False
         self.update_sequence(event_dict)
         self.already_updated = False
-
-
-
 
 
 # Misc
@@ -536,7 +536,6 @@ class MainWindow(QWidget):
             new_result_item.setForeground(QColor(text_color))
             new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-
             # Update the status in the found row (hird column)
             self.step_list.setItem(target_row, 2, new_result_item)
 
@@ -567,6 +566,13 @@ class MainWindow(QWidget):
         self.result_list.resizeColumnToContents(2)
         # Note: In PySide6, the view will refresh automatically when the model is set
 
+        #Activates these buttons as in a case of the test finishing properly, they would stay active, where then pushing stop would initialize a deadlock
+        self.running = False
+        self.action_abort_recipe_execution.setEnabled(False)
+        self.action_open_recipe.setEnabled(True)
+        self.open_recipe_action.setEnabled(True)
+        self.action_start_recipe_execution.setEnabled(True)
+
     def update_running_step(self, event_dict):
         """Highlights the step that is currently running in the step list table."""
         logger.debug("update_running_step method called")
@@ -596,12 +602,12 @@ class MainWindow(QWidget):
 
             # Highlight the status item (column 2)
             status_item = self.step_list.item(target_row, 2)
-            if status_item:
+            if status_item:             
                  # Set status to 'Running...' and make bold
-                 status_item.setText("Running...")
                  font = status_item.font()
                  font.setBold(True)
                  status_item.setFont(font)
+                 status_item.setText("Running...")
                  # Optionally change text color
                  # status_item.setForeground(QColor("blue"))
 
@@ -626,8 +632,7 @@ class MainWindow(QWidget):
         sequence_result = event_dict["sequence_result"]
         logging.info(f"Sequence '{sequence_name}' finished with result: {sequence_result}.")
         # Potential UI update: Could mark sequence as done in a separate list/view
-
-
+    
 class StepResultModel(QAbstractItemModel):
     """A Qt model for displaying hierarchical StepResult data in a QTreeView.
 
@@ -822,7 +827,6 @@ class SerialPortDialog(QDialog):
 
     def ok_clicked(self):
         # Disable OK button until thread completes
-        print("OK clicked - starting final IDN thread")
         self.ok_button.setEnabled(False)
         port = self.combo.currentText()
         baud = self.baudrate
@@ -833,7 +837,7 @@ class SerialPortDialog(QDialog):
         self.worker_thread.start()
 
     def _final_idn_done(self, result_text, idn_response):
-        print("Final IDN received:", result_text)
+        logger.debug("Final IDN received:", result_text)
         self.output.append(result_text)
         self.idn_response = idn_response
         self.ok_button.setEnabled(True)

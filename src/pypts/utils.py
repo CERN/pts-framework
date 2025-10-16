@@ -46,6 +46,7 @@ def get_step_result_colors(result_value, result_type_enum) -> tuple[str, str]:
         result_type_enum.DONE:  ("#B2EBF2", "#004D52"),
         result_type_enum.SKIP:  ("#FFF9C4", "#C49000"),
         result_type_enum.ERROR: ("#FFCC80", "#BF360C"),
+        result_type_enum.STOP: ("#D3D3D3", "#4B4B4B"),
     }
     return color_map.get(result_value, ("#FFFFFF", "#000000"))
 
@@ -177,7 +178,6 @@ def find_serial_device(target: str = None,  baudrate: int=None, timeout=1):
                 if id_response == target:
                     return port, target, baud_r
         raise RuntimeError(f"Device with ID '{target}' not found on any available COM port.")
-
 
 
 if __name__ == "__main__":

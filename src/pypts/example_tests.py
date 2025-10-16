@@ -37,7 +37,7 @@ def generate_error():
     raise AttributeError
 
 def simple_output(value):
-    return {"my_output":value + 1}
+    return {"output":value + 1}
 
 def is_PSU_disconnected():
     return (True)
@@ -159,3 +159,91 @@ def loadconfigFile(file= None):
         return True
     else:
         return False
+    
+
+def write_a_simple_filessh(target):
+    target.exec_command("echo 'Hello World' > myfile.txt")
+
+    return (True)
+
+def get_sysmon_temperatures(target) -> dict:
+    """
+    Reads sysmon temperature values from the remote system using an existing Paramiko SSH client.
+    Returns a dictionary where keys are sensor names (or thermal zones) and values are temperatures in Celsius.
+    """
+    temps = {}
+    
+    # Try reading thermal zones from /sys/class/thermal
+    command = "for zone in /sys/class/thermal/thermal_zone*/; do " \
+              "name=$(cat \"$zone/type\" 2>/dev/null); " \
+              "temp=$(cat \"$zone/temp\" 2>/dev/null); " \
+              "if [ -n \"$name\" ] && [ -n \"$temp\" ]; then " \
+              "echo \"$name $temp\"; fi; done"
+    
+    try:
+        stdin, stdout, stderr = target.exec_command(command)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+        if error:
+            logger.warning(f"Warning: {error.strip()}")
+
+        for line in output.strip().splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                name, temp_milli = parts
+                # Conversion from millidegrees to degrees
+                try:
+                    temp_c = int(temp_milli) / 1000.0
+                    temps[name] = temp_c
+                except ValueError:
+                    continue
+
+    except Exception as e:
+        logger.error(f"Failed to get the temperatures: {e}")
+
+    return temps
+
+
+
+def get_hwmon(target) -> dict:
+
+    temps = {}
+    
+    command_hwmon = """
+            for hwmon in /sys/class/hwmon/hwmon*; do
+                name=$(cat "$hwmon/name" 2>/dev/null)
+                for temp in "$hwmon"/temp*_input; do
+                    label_file="${temp%_input}_label"
+                    label=$(cat "$label_file" 2>/dev/null || echo "$name")
+                    value=$(cat "$temp" 2>/dev/null)
+                    if [ -n "$value" ]; then
+                        echo "$label $value"
+                    fi
+                done
+            done
+            """
+
+    
+    try:
+        stdin, stdout, stderr = target.exec_command(command_hwmon)
+        output = stdout.read().decode()
+        error = stderr.read().decode()
+        if error:
+            logger.warning(f"Warning: {error.strip()}")
+
+        for line in output.strip().splitlines():
+            parts = line.split()
+            if len(parts) == 2:
+                name, temp_milli = parts
+                # Conversion from milli
+                try:
+                    temp_c = int(temp_milli) / 1000.0
+                    temps[name] = temp_c
+                except ValueError:
+                    continue
+
+    except Exception as e:
+        logger.error(f"Failed to get hwmon: {e}")
+    return {"output":temps}
+
+

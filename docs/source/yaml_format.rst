@@ -25,10 +25,10 @@ Document 1: Main Recipe Configuration
   description: A more complete description of this recipe
   main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
   test_package: my_package.tests # Optional: Python package containing test modules for PythonModuleStep
-  continue_on_error: false # Global setting that controls whether execution continues after errors in non-critical steps. Defaults to false. When true, only errors in steps marked as critical: true will stop execution. Requires recipe_version 1.1.0 or higher.
   globals: # Globals can be referenced and used from any step in the whole file
     global_name: value
     other_global: other_value
+    continue_on_error: false # Optional Global variable that controls whether execution continues after errors in non-critical steps if it exists. Overrides individual step "continue_on_error": true will stop execution. Requires recipe_version 1.1.0 or higher.
     # ...
   # tags:  # Optional tags (Currently commented out in code)
   #   key1: value1
@@ -75,6 +75,10 @@ When ``test_package`` is specified, ``PythonModuleStep`` loads test modules as P
      action_type: method
      method_name: my_test
 
+.. note::
+  Notice the indentation inside ``steps`` and the ``-`` in front of the step. Adding this - is crucial for the functionality of the recipe.
+
+
 **Package Structure Required:**
 
 .. code-block:: text
@@ -115,6 +119,8 @@ Each subsequent document defines a sequence.
    outputs: [] # List of which locals are to be used as outputs of the sequence when run as a subsequence
 
 
+.. _step_definition_details:
+
 Step Definition
 ===============
 
@@ -137,6 +143,7 @@ Each item in `setup_steps`, `steps`, and `teardown_steps` is a dictionary repres
    # --- Input/Output Mapping ---
    input_mapping: {} # Defines how the step gets its input data. See below.
    output_mapping: {} # Defines how the step's output is processed. See below.
+   continue_on_error: False
 
 
 Key fields common to most steps:
@@ -149,11 +156,14 @@ Key fields common to most steps:
 *   ``critical`` (bool, optional): If ``true``, errors in this step will always stop execution, even when ``continue_on_error`` is enabled globally. Defaults to ``false``. Requires ``recipe_version`` 1.1.0 or higher.
 *   ``input_mapping`` (dict): Defines how the step gets its input data. See :ref:`input_mapping_details`.
 *   ``output_mapping`` (dict): Defines how the step's output is processed and stored. See :ref:`output_mapping_details`.
+*   ``continue_on_error`` (bool,optional): Defines wheter this specific step will stop the test if failed. Default to ``false``.
+
 
 .. _input_mapping_details:
 
+
 Input Mapping Details (``input_mapping``)
-------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ``input_mapping`` dictionary maps internal step input names (e.g., argument names for a ``PythonModuleStep``) to data sources. The keys of ``input_mapping`` are the names the step internally uses for its inputs, and the values specify where that data comes from.
 
@@ -186,10 +196,11 @@ Each value in the ``input_mapping`` dictionary is *another* dictionary with the 
      # Inputs arg1, arg2, arg3 will keep their mapped values for each of these runs.
      items_to_process: {type: direct, value: [1, 2, 3], indexed: true}
 
+
 .. _output_mapping_details:
 
 Output Mapping Details (``output_mapping``)
---------------------------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The ``output_mapping`` dictionary defines how the step's raw output is processed, evaluated for pass/fail status, and stored back into variables. The keys of the ``output_mapping`` dictionary correspond to the keys in the step's raw output data (typically a dictionary). If the step produces a non-dictionary output (e.g., a ``PythonModuleStep`` method returns a single value like a boolean or number), it's treated as a dictionary with a single key ``output`` (e.g., ``{"output": returned_value}``).
 
@@ -236,10 +247,59 @@ Each value in the ``output_mapping`` dictionary is *another* dictionary specifyi
      # of the subsequence using its implicit '__result' output.
      __result: { type: passthrough }
 
+
+Step formatting
+===================
+
+There are multiple ways of formatting the recipe YAML file. 
+One way of doing it is compressing the arguments of ``input_mapping`` and ``output_mapping``. An example is visible below.
+
+.. code-block:: yaml
+
+   steptype: PythonModuleStep
+   step_name: Call Python Function
+   description: Describe the action of the step
+   module: my_module.py 
+   action_type: method
+   method_name: my_function
+   input_mapping:
+     arg1: { type: direct, value: "hello" }
+     arg2: { type: local, local_name: local_var1 }
+   output_mapping:
+     result: { type: local, local_name: output_data }
+     passed: { type: passfail } # Treats boolean output as pass/fail
+
+The other way of formatting each step is to expand the outputs so we get
+
+.. code-block:: yaml
+
+   steptype: PythonModuleStep
+   step_name: Call Python Function
+   description: Describe the action of the step
+   module: my_module.py 
+   action_type: method
+   method_name: my_function
+   input_mapping:
+     arg1:
+      type: direct
+      value: "hello"
+     arg2:
+      type: local
+      local_name: local_var1
+   output_mapping:
+     result:
+      type: local
+      local_name: output_data
+     passed:
+      type: passfail # Treats boolean output as pass/fail
+
+In this formatting, the indentation of input elements like ``type`` and ``value`` are important to achieve similar structure. The indentation scheme is of same structure as python programming.
+Both work as intendedn and either can be used, even mixed together. 
+
 Specific Step Types
 ===================
 
-Given there are different types of steps to take, it is required to describe the types and what can be put into the steps.
+Given the required different functionalities required for testing, multiple step types were developed. This section descrives the types, functionality, format and what input/output. The following are the available steptypes:
  - PythonModuleStep
  - WaitStep
  - UserInteractionStep
@@ -248,16 +308,23 @@ Given there are different types of steps to take, it is required to describe the
  - UserRunMethodStep
  - UserWriteStep
 
-Each has its own template of required elements but with overlapping types of elements
+Each has its own template of required elements but with overlapping types of elements.
+The elements ``step_name`` and ``description`` are not explained further in this section as they're descriptive elements for reporting and GUI with no change between steps. 
+
+.. note::
+  The optional arguments ``critical``, ``skip`` and ``continue_on_error`` all apply to the following step types. Check :ref:`_step_definition_details` for information on ``skip`` and ``critical`` and :ref:`_continue_on_error_details` for information on ``continue_on_error``.
+
+
 
 PythonModuleStep
-----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
 Executes Python method or code. 
 
 .. code-block:: yaml
 
    steptype: PythonModuleStep
-   step_name: Call Python Function
+   step_name: Call Python Function #the name of the 
    description: Describe the action of the step
    module: my_module.py #the name of the file with the test initialization
    action_type: method # Or 'read_attribute', 'write_attribute'
@@ -274,88 +341,310 @@ Executes Python method or code.
      result: { type: local, local_name: output_data }
      passed: { type: passfail } # Treats boolean output as pass/fail
 
-*   **module** (str):Name of the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``).
-*   **action_type** (str): ``method``, ``read_attribute``, or ``write_attribute``.
-*   **method_name** (str): Name of the method to call. 
-*   **input_mapping** (dictionary): Inputs to the method. Each input(``arg``) is required to have a ``type``. 
+*   ``module`` (str):Name of the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``).
+*   ``action_type`` (str): ``method``, ``read_attribute``, or ``write_attribute``.
+*   ``method_name`` (str): Name of the method to call. 
+*   ``input_mapping`` (dictionary): Inputs to the method. Each input(``arg``) is required to have a ``type``. 
+*   ``output_mapping`` (dictionary): outputs of the method. Each output(``arg``) is required to have a ``type``. If multiple outputs, ensure the returned output of method has same label, example ``passed`` as given in output_mapping.
 
-Steptypes applicable for the recipe
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
- that will be explained in the following sections.
-The first type of step is the ``UserInteractionStep``.
+WaitStep
+~~~~~~~~~~~~~~~~~~~~
+
+Waits the specified period of time in seconds before next step starts.
 
 .. code-block:: yaml
 
-  - steptype: UserInteractionStep
-  step_name: Start test
+  steptype: WaitStep
+  step_name: Wait for 3s
+  description: Waiting 3 seconds on this step
   skip: false
   input_mapping:
+    wait_time:
+      value: '3'
+
+*   ``steptype`` (str): Determines the type of action.
+*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
+
+
+UserInteractionStep
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Allows for user to interact with gui through action on buttons. It allows for adding many buttons but it requires at least one button if test is to be successful. 
+
+.. code-block:: yaml
+
+
+  steptype: UserInteractionStep
+  step_name: Start test
+  input_mapping:
     message: {type: direct, value: "Connect the WRS as shown and click Yes", indexed: false}
-    image_path: {type: direct, value: "tester.png", indexed: false}
+    image_path: {type: direct, value: "test.png"}
     options: {type: direct, value: [{'yes': 'yes'},{two: 'no'}], indexed: false}
   output_mapping:
     output: {type: equals, value: "yes"}
-  
 
-Of the full template for ``UserInteractionStep``, only the output_mapping, steptype and step_name are **required**, meaning the rest is optional.
-The skip is assumed false and therefore only required in scenarios where changing this is required. The ``input_mapping`` is not a requirement for running the tests however it can be useful for user interaction.
-The ``message`` is a description that is written above the buttons which could be a description of a test. The image_path is likewise for a nice to have if a image over the required testsetup is added as a visual guidance. 
-options is for changing what is written on the buttons that you push on. Standard values are "Yes" and "No".
+*   ``steptype`` (str): Determines the type of action.
+*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
+*  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
+*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
+These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
+The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
 
-Other types of input other than **direct** is **global** and **local**. In the case of a type **local**, the next other item has to be called **local_name**. It will appear as:
+*   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
+*   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
+
+
+
+SSHConnectStep
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Allows to setup a SSH connection to be used globally during the test.
 
 .. code-block:: yaml
 
-    input_mapping:
-    value:
-      type: local
-      local_name: test_value
+  steptype: SSHConnectStep
+  step_name: Find the SSH client connection
+  description: Asking user to find the file needed
+  continue_on_error: false
+
+*   ``steptype`` (str): Determines the type of action.
+
+This steptype has certain **requirements** to which globals exist. The following required are
+*  ``ssh_client: None`` : The variable holding the opened paramiko client to be called in functions.
+*  ``host: 129`` :The SSH hostname or IP address.
+*  ``user: username``:The SSH username
+*  ``password: None`` :Password for SSH auth. 
+*  ``private_key: 'path/to/your/key_file'`` :The path to key file. important if no password is given.
+*  ``port: None``(int) : SSH port (default: 22).
+
+If password is not supplied, the function will automatically use ``private_key`` as verification.
+
+**Important**. When this steptype is used, **always** put steptype ``SSHCloseStep`` under ``teardownsteps``. It can be placed multiple times, but always one in ``teardownsteps``.
+
+.. code-block:: yaml
+
+  teardown_steps:
+  - steptype: SSHCloseStep
+    step_name: Closes the SSH client
+
+To use the SSH client, add ``ssh_client`` to input_mapping.
+
+.. code-block:: yaml
+
+     target:
+      type: global
+      global_name: ssh_client
+
+An Example of using it for a function can be seen below.
+
+.. code-block:: python
+  def write_a_simple_filessh(target):
+    target.exec_command("echo 'Hello World' > myfile.txt")
+
+    return (True)
+
+
+
+UserLoadingStep
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Used to load a file to be used somewhere else. Could fx be a calibration file or configuration file for certain instruments. 
+
+.. code-block:: yaml
+
+  steptype: UserLoadingStep
+  step_name: Load config file
+  description: Asking user to find the file needed
+  input_mapping:
+    message:
+      type: direct
+      value: 'Find the specified file'
+    image_path: 
+      type: direct
+      value: lego2.jpg
+    options:
+      type: direct
+      value:
+      - cancel: 'cancel'
+      - file: 'next'
   output_mapping:
-    my_output:
-      type: local
-      local_name: calculated_output
+    output:
+      type: passfail
+  file_save_location: 
+    type: global
+    variable: file
 
-Output consists of 6 different types of outputs they receive which also changes the required input. The 6 output types are the following:
- - passthrough
- - passfail
- - equals
- - range
- - global
- - local
+*   ``steptype`` (str): Determines the type of action.
+*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
+*  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
+*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
+These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
+The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
 
-Each is for its own type of tests. **passthrough** is for functions where the output is already a ``ResultType`` which is an enum class consisting of the possible outcomes. **passfail** returns an output as a boolean that then determines the ``ResultType``.
-**equals** is used for comparisons of specified value with the returned value from test. **range** is used for tests where the measured value is required to be within limits.
-**global** writes the output of the test to global variables. **local** writes the output to local variables in the runtime class. 
- 
+*   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
+*   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
+*   ``file_save_location`` (dict, optional): Variable to save the loaded file. . If not existing, will default to ``type: local, variable: file``. 
 
 
-The 6 types of outputs are applicable for all types of steps where the next one to describe is the ``PythonModuleStep``. The steptype is used for automated tests withouth required interaction by an operator from the framework. 
-This type is used for automated tests and will run the given function(``method``) inside the given python file. 
+UserRunMethodStep
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Executes a method after interacting with next button. Step type is expected to be used in scenarios where an action by the operator is required before running a method.
 
 .. code-block:: yaml
 
-  steptype: PythonModuleStep
-  step_name: Verify number is in range
+  steptype: UserRunMethodStep
+  step_name: Running the specified method
+  description: Runs the specified method
   action_type: method
   module: example_tests.py
-  method_name: range_test
   input_mapping:
-    value:
+    message:
       type: direct
-      value: '15'
-    min:
+      value: 'Find the specified file'
+    options:
       type: direct
-      value: '10'
-    max:
+      value:
+      - cancel: 'cancel'
+      - run: 'Run'
+    image_path: 
       type: direct
-      value: '20'
+      value: test.jpg
+    method_name:
+      type: method
+      value: 'is_PSU_disconnected'
+    argument1:
+      type: global
+      global_name: test
+    argument2:
+      type: local
+      local_name: testing
+    argument3:
+      type: direct
+      value: 5
   output_mapping:
-    compare:
+    output:
+      type: passfail
+  trigger_response: "run"
+
+*   ``steptype`` (str): Determines the type of action.
+*  ``action_type`` (str): ``method``, ``read_attribute``, or ``write_attribute``.
+*   ``module`` (str):Name of the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``).
+*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
+*  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
+*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
+These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
+The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
+*   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
+*   ``method_name`` (dict): specifies the method to run.
+*   ``argument1-3`` (dict): Any dict that is not message, option or image path in input mapping will be considered input to method. multiple inputs are possible with them being ordered from top to bottom as inputs to the method.
+*   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
+*   ``trigger_response`` (str): you can choose the key to consider what button to push for a futher action. In this example, the key is "run". Keep the key similar to the specified value key in options.
+
+Example function of input would be for the step above.
+
+.. code-block:: python
+  def simpleMethod(argument1, argument2, argument3)
+    #the input sequence seen from the above step. It shows the order of the 
+    return 
+
+
+UserWriteStep
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Executes step to write values to variables or setting up the settings required for a comport. 
+
+.. code-block:: yaml
+
+  steptype: UserWriteStep
+  step_name: Writing a command 
+  description: Write the ID or the port 
+  input_mapping:
+    message:
+      type: direct
+      value: 'Write the ID or serial port of device'
+    image_path: 
+      type: direct
+      value: test.jpg
+    options:
+      type: direct
+      value:
+      - 'cancel': 'cancel'
+      - 'ID': 'Write'
+  output_mapping:
+    output:
       type: passfail
 
 
+*   ``steptype`` (str): Determines the type of action.
+*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
+*  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
+*  ``options`` (dict): options to add buttons. For the main functionality of this function, two keys are defined: ``'ID'`` for setting up a comport through gui and ``'wrt'`` for writing a string to a variable.
+These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
+The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
 
+*   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
+*   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
+
+
+This step requires some local variables depending on which **key** is specified under ``options``.
+If the **key** chosen is ``'ID'``, it requires the following local variables.
+* serial_ID
+*  serialport
+*  baudrate
+When the key is applied and button is pushed, a GUI pops up letting you choose baudrate and what comport that is available you want to connect to. you can send an IDN? command through button and when found to work it will save the values to the local variables.
+The output mapping should just be pass/faill for this key.
+
+If the **key** chosen is ``'wrt'``, it requires an output mapping of either global or local scale to a variable. 
+The input written into the GUI window is sent to the output mapping to be saved as a ``str``. The following is the required ``output_mapping`` if the **key** is ``'wrt'` on a button.
+
+.. code-block:: yaml
+
+  output_mapping:
+    output:
+      type: local
+      local_name: example
+
+
+
+Required globals and locals for certain steps.
+============================
+
+To ensure the functionality of some of the step types, certain global and locals are required for different datatypes. This section explains which step requires what specific variables in the recipe.
+The following steps that require global or local variables are found below. 
+
+ - **SSHConnectStep**
+
+ Requires the following global variables:
+  - cancel_key: 'cancel'
+  - ssh_client: None
+  - host: Ip of the host
+  - user: root or user
+  - password: None
+  - private_key: 'path/to/private_key'
+  - port: SSH port. standard is 22
+ - **UserLoadingStep**
+ Requires the following global variables:
+  - cancel_key: 'cancel'
+  - loadFile_key: 'file'
+  - **UserRunMethodStep**
+Requires the following global variables:
+  - cancel_key: 'cancel'
+- **UserWriteStep**
+Requires the following global variables:
+  - cancel_key: 'cancel'
+  - ID_key: 'ID'
+  - wrt_key: 'wrt'
+
+Requires the following local variables **only** if ID_key is specified under options:
+  - serial_ID: None
+  - serialport: None
+  - baudrate: None
+
+
+
+.. _continue_on_error_details:
 
 Continue On Error Mechanism
 ============================
@@ -363,7 +652,9 @@ Continue On Error Mechanism
 Starting with ``recipe_version`` 1.1.0, the pypts framework supports a "Continue On Error" mechanism that allows test execution to continue even after encountering errors in non-critical steps.
 
 Global Setting
---------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+As of release version v0.1.8 The ``continue_on_error`` is not a global setting. It is a step specific setting, however by adding ``continue_on_error`` to globals, it will overwrite and return to similar functionality as pre-v0.1.8.
 
 The ``continue_on_error`` field in the main recipe configuration enables this functionality:
 
@@ -372,7 +663,9 @@ The ``continue_on_error`` field in the main recipe configuration enables this fu
    ---
    name: My Recipe
    recipe_version: 1.1.0
-   continue_on_error: true  # Enable continue on error globally
+   continue_on_error: true  # Enable continue on error globally on version v0.1.7 and below
+   globals:
+    continue_on_error: true # As of v0.1.8 the continue_on_error is a global value. If it is existing it will overwrite the step specific continue_on_error.
    # ... other fields
 
 When ``continue_on_error`` is ``true``:
@@ -385,7 +678,7 @@ When ``continue_on_error`` is ``false`` (default):
 - The ``critical`` field has no effect
 
 Step-Level Critical Flag
-------------------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Individual steps can be marked as critical using the ``critical`` field:
 
@@ -402,8 +695,12 @@ Individual steps can be marked as critical using the ``critical`` field:
      critical: true   # Errors will always stop execution
      # ... other fields
 
+.. note::
+  Notice the indentation inside ``steps`` and the ``-`` in front of the step. Adding this - is crucial for the functionality of the recipe.
+
+
 Behavior Matrix
----------------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The interaction between ``continue_on_error`` and ``critical`` settings:
 
@@ -420,7 +717,7 @@ The interaction between ``continue_on_error`` and ``critical`` settings:
 +-------------------+------------------+------------------------+
 
 Use Cases
----------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 This mechanism is useful for:
 
@@ -430,7 +727,7 @@ This mechanism is useful for:
 - **Critical Safety Checks**: Ensure essential safety or validation steps always stop execution on failure
 
 Example
--------
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: yaml
 

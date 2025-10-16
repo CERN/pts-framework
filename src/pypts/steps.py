@@ -192,7 +192,7 @@ class PythonModuleStep(Step):
     """
     Executes a method or interacts with attributes within a specified Python module.
     """
-    def __init__(self, action_type: str, module: str, method_name: str = None, **kwargs):
+    def __init__(self, action_type: str, module: str, method_name: str = None, continue_on_error: bool = False, **kwargs):
         """
         Args:
             action_type (str): The action to perform ('method', 'read_attribute', 'write_attribute').
@@ -204,6 +204,7 @@ class PythonModuleStep(Step):
         self.action_type = action_type
         self.module_path_str = module # Store path as string
         self.method_name = method_name
+        self.continue_on_error = continue_on_error
 
         # Basic validation during init
         if self.action_type == "method" and not self.method_name:
@@ -224,6 +225,8 @@ class PythonModuleStep(Step):
             parent_step_result_uuid: UUID of the parent StepResult.
         """
         step_output = {}
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
+        
 
         try:
             # Load the module dynamically using resources
@@ -541,10 +544,10 @@ class UserInteractionStep(Step):
             input: Dictionary of resolved inputs ('message', 'image_path', 'options').
             parent_step_result_uuid: UUID of the parent StepResult.
         """
-        print(input)
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
 
         # Create a temporary queue for this specific interaction to receive the response.
@@ -586,7 +589,6 @@ class UserInteractionStep(Step):
             try:
                 cancel_key = runtime.get_global('cancel_key')
                 if str(response).strip().lower() == str(cancel_key).strip().lower():
-                    runtime.continue_on_error = self.continue_on_error
                     raise AbortTestException("wrong button")
             except Exception:
                 # 'cancel_key' doesn't exist or something went wrong — safely ignore
@@ -702,7 +704,7 @@ class UserLoadingStep(Step):
     Pauses recipe execution and sends an event to request interaction from a user
     via a UI or other external interface. Waits for a response.
     """
-    def __init__(self, trigger_response: str = None, continue_on_error: bool = False, **kwargs):
+    def __init__(self, continue_on_error: bool = False, file_save_location: dict = None, **kwargs):
         """
         Args:
             **kwargs: Common Step arguments. Input mapping should define:
@@ -712,8 +714,8 @@ class UserLoadingStep(Step):
                       Output mapping should define how to store the 'user_response'.
         """
         super().__init__(**kwargs)
-        self.trigger_response = trigger_response
         self.continue_on_error = continue_on_error
+        self.file_save_location = file_save_location
         self.timeout_seconds = 1 
         if "output" not in self.output_mapping:
             logger.warning(f"UserLoadingStep '{self.name}' might need an output mapping for 'output' to store the result.")
@@ -731,6 +733,7 @@ class UserLoadingStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
         response_q = queue.SimpleQueue()
 
@@ -754,9 +757,13 @@ class UserLoadingStep(Step):
 
             if str(response).strip().lower() == runtime.get_global('loadFile_key'):
                         file = response_q.get(block=True)
-                        runtime.set_global('file', file)
+                        if self.file_save_location and self.file_save_location.get("type") == "global":
+                            runtime.set_global(self.file_save_location.get("variable"), file)
+                        elif self.file_save_location and self.file_save_location.get("type") == "local":
+                            runtime.set_global(self.file_save_location.get("variable"),file) 
+                        else:
+                            runtime.set_global('file', file)
             if str(response).strip().lower() == runtime.get_global('cancel_key'):
-                        runtime.continue_on_error = self.continue_on_error
                         raise AbortTestException(f"wrong button")
             else:
                 logger.info(f"No trigger matched. Skipping module execution.")
@@ -778,7 +785,7 @@ class UserRunMethodStep(Step):
     Pauses recipe execution and sends an event to request interaction from a user
     via a UI or other external interface. Waits for a response.
     """
-    def __init__(self, trigger_response: str = None, module: str = None, action_type: str = None, method_name: str = None, continue_on_error: bool = False, need_file: bool = False, **kwargs):
+    def __init__(self, trigger_response: str = None, module: str = None, action_type: str = None, method_name: str = None, continue_on_error: bool = False, **kwargs):
         """
         Args:
             **kwargs: Common Step arguments. Input mapping should define:
@@ -793,7 +800,6 @@ class UserRunMethodStep(Step):
         self.action_type = action_type
         self.method_name = method_name
         self.continue_on_error = continue_on_error
-        self.need_file = need_file
         self.timeout_seconds = 1
         if "output" not in self.output_mapping:
             logger.warning(f"UserRunMethodStep '{self.name}' might need an output mapping for 'output' to store the result.")
@@ -808,10 +814,12 @@ class UserRunMethodStep(Step):
             input: Dictionary of resolved inputs ('message', 'image_path', 'options').
             parent_step_result_uuid: UUID of the parent StepResult.
         """
-        print(input)
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+
+        other_keys = [key for key in input.keys() if key not in {"message", "image_path", "options"}]
+        runtime.continue_on_error = self.continue_on_error
 
         response_q = queue.SimpleQueue()
 
@@ -835,7 +843,6 @@ class UserRunMethodStep(Step):
             logger.debug(f"Step '{self.name}': Received response: {response}")
             
             if str(response).strip().lower() == runtime.get_global('cancel_key'):
-                        runtime.continue_on_error = self.continue_on_error
                         raise AbortTestException(f"wrong button")
             
             if self.trigger_response and str(response).strip().lower() in ([str(v).strip().lower() for v in (self.trigger_response.keys() if isinstance(self.trigger_response, dict) else self.trigger_response)] if isinstance(self.trigger_response, (dict, list, set))else [str(self.trigger_response).strip().lower()]):
@@ -852,9 +859,19 @@ class UserRunMethodStep(Step):
                     # Determine input based on action_type
                     if self.action_type == 'method':
                         module_input = {}  # No inputs expected
-                        if self.need_file:
-                            file_position = runtime.get_global('file')
-                            module_input["file"] = file_position
+                        if other_keys:
+                            for key in other_keys:
+                                key_input = input.get(key)
+                                input_type = key_input.get("type")
+                                
+                                if input_type == "global":
+                                    specified_value = runtime.get_global("global_name")
+                                elif input_type == "local":
+                                    specified_value = runtime.get_local("local_name")
+                                else:
+                                    specified_value = key_input.get("value")
+                                
+                                module_input[key] = specified_value
                     elif self.action_type == 'read_attribute':
                         module_input = {'attribute_name': input.get('attribute_name')}
                     elif self.action_type == 'write_attribute':
@@ -927,6 +944,7 @@ class UserWriteStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
         response_q = queue.SimpleQueue()
 
@@ -950,7 +968,6 @@ class UserWriteStep(Step):
             logger.debug(f"Step '{self.name}': Received response: {response}")
 
             if str(response).strip().lower() == runtime.get_global('cancel_key'):
-                        runtime.continue_on_error = self.continue_on_error
                         raise AbortTestException(f"wrong button")
             
             if str(response).strip() == runtime.get_global('wrt_key'):
@@ -1019,17 +1036,17 @@ class SSHConnectStep(Step):
         raw_port =runtime.get_global("port")
         port = int(raw_port) if raw_port not in (None, "None", "") else 22
         connect_timeout = input.get("connect_timeout", 5)
-        print(f"this is the {port}")
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
         try:
 
-            if not all([user, host, password]) or not all([host, private_key]):
-                raise ValueError("Missing required SSH connection parameters.")
+            if not ((user and host and password) or (user and host and private_key)):
+                    raise ValueError("Missing required SSH connection parameters.")
 
             logger.debug(f"[{self.name}] Attempting SSH connection to {host}:{port} as {user}")
 
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            print(f"[DEBUG] SSH connect to host='{host}' port='{port}' user='{user}'")
+            logger.debug(f"[DEBUG] SSH connect to host='{host}' port='{port}' user='{user}'")
             if private_key and user:
                 private_key = paramiko.RSAKey.from_private_key_file(private_key)
                 client.connect(hostname=host, username=user, pkey=private_key,port=port, timeout=connect_timeout)
@@ -1089,6 +1106,7 @@ class SSHCloseStep(Step):
 
     def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
         host = runtime.get_global("host") or "<unknown>"
+        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
         
         try:
             client = runtime.get_global("ssh_client")
