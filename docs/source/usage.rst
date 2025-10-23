@@ -23,11 +23,13 @@ Before using pypts, you may need to install the following system dependencies fo
 To setup the test, start in the desired directory. Make a virtual environment. Name is arbitrary.
 
 .. code-block:: bash
+  
    python -m venv .venv
 
 Activate the environment. Install the package from Acc-PyPI CERN.
 
 .. code-block:: bash
+
    python -m pip install pts-framework==0.2.0
 
 
@@ -51,6 +53,7 @@ But the only requirements is the recipe and the tests described in the recipe. *
 To run the test, the following command is required.
 
 .. code-block:: bash
+
    python -m pypts
 
 This initializes the GUI where the recipe can be loaded and run.
