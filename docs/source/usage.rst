@@ -38,7 +38,7 @@ There are two ways of setting up the pypts framework after the package has been 
 1. Minimal setup pypts-framework
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-The minimal setup does not use package-based recipe, see :ref:`_yaml_format`, but uses a gui. Through the gui, the recipe is loaded, which runs the tests.
+The minimal setup does not use package-based recipe, see "Recipe YAML format", but uses a gui. Through the gui, the recipe is loaded, which runs the tests.
 An example of the package structure is:
 
 .. code-block:: text
@@ -49,7 +49,7 @@ An example of the package structure is:
    │   └── tests.py
    └── my_recipe.yaml
 
-But the only requirements is the recipe and the tests described in the recipe. **Note**: tests and  are required to be at least one directory down from the ``cwd``. 
+But the only requirements is the recipe and the tests described in the recipe. **Note**: tests are required to be at least one directory down from the ``cwd``. 
 To run the test, the following command is required.
 
 .. code-block:: bash

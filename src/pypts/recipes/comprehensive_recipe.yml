@@ -15,9 +15,9 @@ globals:
   ID_key: 'ID' #If used as a step name, a gui will appear that helps set up a uart connection.
   wrt_key: 'wrt' #writes the given input directly to the specified variable.
   ssh_client: None
-  host:  #Host name, can either be name or IP
+  host: CTDW-864-CWRSV4P2 #Host name, can either be name or IP
   user: root #username of ssh
-  password:  #password for ssh
+  password: WhiteV4Pypts #password for ssh
   private_key: #private key for ssh
   port: None
 ---
@@ -49,6 +49,7 @@ setup_steps:
   step_name: Find the SSH client connection
   description: Asking user to find the file needed
   continue_on_error: false
+  skip: true
 
 
 steps:
@@ -79,6 +80,7 @@ steps:
     output:
       type: passfail
   continue_on_error: true
+  skip: true
 
 #Reads the hwmon class on ssh recipient.
 - steptype: PythonModuleStep
@@ -96,6 +98,7 @@ steps:
       type: local
       local_name: hwmon_measured
   continue_on_error: true
+  skip: true
 
 - steptype: UserLoadingStep
   step_name: Load config file
