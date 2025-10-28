@@ -14,7 +14,7 @@ from pypts.Thread_context import RuntimeContext
 
 logger = logging.getLogger(__name__)
 
-def create_and_start_gui(api):
+def create_and_start_gui(api,  recipe_file: str = None):
     """
     todo
     """
@@ -24,6 +24,15 @@ def create_and_start_gui(api):
     logging.getLogger().addHandler(window.log_handler)
 
     RuntimeContext.set(window, api, app)
+
+    if recipe_file:
+        window.recipe_file = recipe_file
+        try:
+            window.load_recipe()
+            window.q_in.put(("LOAD",window.recipe_file))
+            window.action_start_recipe_execution.setEnabled(True)
+        except:
+           pass
 
     time.sleep(1)  # Prevents a race condition. To be properly fixed!!
     # If we don't put the sleep, recipe_event_processing_thread.start() may not
