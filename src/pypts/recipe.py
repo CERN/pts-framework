@@ -432,7 +432,7 @@ class Recipe:
             self.version: str = recipe_main_data["version"]
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
-            if "." in self.test_package:
+            if self.test_package and "." in self.test_package:
                 logger.error("test_package must not contain '.' in its name. Dont include subdirectories")
                 raise
             # self.tags: dict[str, str] = recipe_main_data["tags"]
