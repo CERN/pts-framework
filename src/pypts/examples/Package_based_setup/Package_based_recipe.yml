@@ -5,11 +5,12 @@
 # This section is related to the whole recipe.
 # We could define the name, version and description herem as well as the
 # continue_on_error flag, which could abort tests on failure
-name: Minimal setup Recipe
+name: Package_based recipe
 version: 0.1.0
 recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py in a minimal pypts setup
 main_sequence: Main
+test_package: package_architecture_example
 globals: 
   #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
@@ -185,7 +186,6 @@ steps:
   method_name: generate_error
   input_mapping: {}
   output_mapping: {}
-  
 teardown_steps: 
 - steptype: SSHCloseStep
   step_name: Closes the SSH client
