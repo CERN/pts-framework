@@ -720,7 +720,11 @@ class RecipeEditorMainMenu(QMainWindow):
         return result, description
 
     def open_recipe(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
+        if not hasattr(self,"_file_path_initial"):
+            file_path = self.current_file_path
+            
+        else:
+            file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
         self.load_yaml_recipe(file_path)
         self.save_as_action.setEnabled(True)
         self.save_action.setEnabled(True)
@@ -1075,8 +1079,16 @@ class RecipeEditorMainMenu(QMainWindow):
 
 
 if __name__ == "__main__":
+    
     app = QApplication(sys.argv)
     window = RecipeEditorMainMenu()
 
     window.show()
+
+    if len(sys.argv) > 1:
+        file_path = sys.argv[1]
+        window.current_file_path = file_path
+        print("Loaded a recipe from gui")
+        window.open_recipe()
+
     sys.exit(app.exec())

@@ -41,9 +41,10 @@ There are two ways of setting up the pypts framework after the package has been 
 The minimal setup does not use package-based recipe, see "Recipe YAML format", but uses a gui. Through the gui, the recipe is loaded, which runs the tests.
 An example of the package structure is:
 
-.. code-block:: text
+.. code-block:: bash
 
    my_cwd/
+   ├── .venv
    ├── tests/
    │   ├── __init__.py
    │   └── tests.py
@@ -67,7 +68,8 @@ If the test is expected to be package-based, a different setup is required. With
 .. code-block:: bash
 
    CWD/
-  ├── requirements.txt             # or pyproject.toml, at root
+  ├── .venv
+  ├── pyproject.toml           
   └── package/
       ├── __init__.py              # package root
       ├── __main__.py              # required to initialize the package
@@ -95,6 +97,35 @@ That can run the desired package and the tests inside.
 The package requires a ``__main__.py`` file. See :ref:`__main__` for how the code in the main file should look. 
 The ``__main__.py`` is similar between the pypts-framework package and the new package.
 
+
+Setting up required files for package-based pypts-framework
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The required files for a package based setup are the files ``__main__.py`` and ``pyproject.toml`` mentioned in the section above.
+The ``__main__.py`` file is responsible for running the code. It is constructed as below.
+
+.. code-block:: python
+
+  from pypts import run_pts
+  from pypts.startup import create_and_start_gui
+  import sys
+
+  if __name__ == '__main__':
+
+      api = run_pts()
+
+      window, app = create_and_start_gui(api, recipe_file="optional path to recipe if gui should start with preloaded recipe") 
+      # Start the Qt event loop
+      exit_code = app.exec()
+      
+      # Exit with the application's exit code
+      sys.exit(exit_code)
+
+The main file does not require anything else to initialize and run the GUI. In ``create_and_start_gui()`` there is an optional 
+
+The pyproject file operates similarily to a makefile and is the construction of a package based on the files inside. This allows for calling the package like ``python -m package``
+
+ 
 1. Define your Recipe (`my_recipe.yaml`)
 -----------------------------------------
 

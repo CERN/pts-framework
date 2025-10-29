@@ -15,9 +15,9 @@ globals:
   ID_key: 'ID' #If used as a step name, a gui will appear that helps set up a uart connection.
   wrt_key: 'wrt' #writes the given input directly to the specified variable.
   ssh_client: None
-  host: CTDW-864-CWRSV4P2 #Host name, can either be name or IP
+  host:  #Host name, can either be name or IP
   user: root #username of ssh
-  password: WhiteV4Pypts #password for ssh
+  password:  #password for ssh
   private_key: #private key for ssh
   port: None
 ---
