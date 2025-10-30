@@ -42,7 +42,7 @@ def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
     Starts the recipe execution and event processing threads.
     """
 
-    api = run_pts(recipe_path, sequence_name=sequence_name)
+    api = run_pts()
 
     window, app = create_and_start_gui(api)
 
