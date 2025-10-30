@@ -38,7 +38,7 @@ if __name__ == '__main__':
 
     api = run_pts()
 
-    window, app = create_and_start_gui(api, recipe_file=None)
+    window, app = create_and_start_gui(api)
 
     
 

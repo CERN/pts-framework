@@ -36,7 +36,7 @@ Activate the environment. Install the package from Acc-PyPI CERN.
 There are two ways of setting up the pypts framework after the package has been installed. A package-based setup or a minimal setup consisting of only test and recipe. 
 
 1. Minimal setup pypts-framework
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 The minimal setup does not use package-based recipe, see "Recipe YAML format", but uses a gui. Through the gui, the recipe is loaded, which runs the tests.
 An example of the package structure is:
@@ -61,7 +61,7 @@ This initializes the GUI where the recipe can be loaded and run.
 This ``pypts`` framework should **not** have a package in its recipe.
 
 2. Package based pypts-framework
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 If the test is expected to be package-based, a different setup is required. With the installed package based, the following is required.
 
@@ -121,7 +121,7 @@ The ``__main__.py`` file is responsible for running the code. It is constructed 
       # Exit with the application's exit code
       sys.exit(exit_code)
 
-The main file does not require anything else to initialize and run the GUI. In ``create_and_start_gui()`` there is an optional 
+The main file does not require anything else to initialize and run the GUI. In ``create_and_start_gui()`` there is an optional argument which is the ``recipe_file=``. By giving this the path to your recipe, the GUI will have the recipe preloaded upon startup. 
 
 The pyproject file operates similarily to a makefile and is the construction of a package based on the files inside. This allows for calling the package like ``python -m package``
 

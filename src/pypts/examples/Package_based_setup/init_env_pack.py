@@ -13,10 +13,13 @@ from pathlib import Path
 def main():
     package_example = "example_package"
     project_root = get_project_root()
-    package_dir = project_root / "src" / package_example
+    src_dir = project_root / "src"
+    package_dir = src_dir / package_example
     bin_dir = package_dir / "bin"
     resource_dir = package_dir / "resources"
     tests_dir = package_dir/ "tests"
+    src_dir.mkdir(exist_ok=True)
+    package_dir.mkdir(exist_ok=True)
     bin_dir.mkdir(exist_ok=True)
     resource_dir.mkdir(exist_ok=True)
     tests_dir.mkdir(exist_ok=True)
@@ -59,21 +62,21 @@ def main():
     #write the main file
 
     main_code = """\
-    from pypts import run_pts
-    from pypts.startup import create_and_start_gui
-    import sys
+from pypts import run_pts
+from pypts.startup import create_and_start_gui
+import sys
 
-    if __name__ == '__main__':
-        api = run_pts()
-        
-        window, app = create_and_start_gui(api)
-        # Start the Qt event loop
-        exit_code = app.exec()
-        
-        # Exit with the application's exit code
-        sys.exit(exit_code)
+if __name__ == '__main__':
+    api = run_pts()
+    
+    window, app = create_and_start_gui(api)
+    # Start the Qt event loop
+    exit_code = app.exec()
+    
+    # Exit with the application's exit code
+    sys.exit(exit_code)
     """
-    with open(package_root / "__main__.py", "w", encoding="utf-8") as f:
+    with open(package_dir / "__main__.py", "w", encoding="utf-8") as f:
         f.write(main_code)
 
     print("\n Environment initialized successfully.")
