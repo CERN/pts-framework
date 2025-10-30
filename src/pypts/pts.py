@@ -59,47 +59,47 @@ def run_pts(sequence_name: str = "Main") -> PtsApi:
     return api
 
 
-class DataChannelManager:
-    def __init__(self):
-        self.channels = dict()
-    
-    def create_channel(self, name):
-        channel = DataChannel(name)
-        self.channels[name] = channel
-        return channel
-    
-    def destroy_channel(self, name):
-        del self.channels[name]
-
-    def get_channel(self, name):
-        return self.channels[name]
-    
-    def list_available_channels(self):
-        return self.channels.keys()
-
-
-class DataChannel:
-    def __init__(self, name):
-        self.name = name
-        self.queue = SimpleQueue()
-
-    def send(self, data):
-        self.queue.put(data)
-
-    def receive(self):
-        return self.queue.get()
-    
-
-_channel_manager = DataChannelManager()
-
-def create_channel(name):
-    return _channel_manager.create_channel(name)
-
-def destroy_channel(name):
-    _channel_manager.destroy_channel(name)
-
-def get_channel(name):
-    return _channel_manager.get_channel(name)
+# class DataChannelManager:
+#     def __init__(self):
+#         self.channels = dict()
+#
+#     def create_channel(self, name):
+#         channel = DataChannel(name)
+#         self.channels[name] = channel
+#         return channel
+#
+#     def destroy_channel(self, name):
+#         del self.channels[name]
+#
+#     def get_channel(self, name):
+#         return self.channels[name]
+#
+#     def list_available_channels(self):
+#         return self.channels.keys()
+#
+#
+# class DataChannel:
+#     def __init__(self, name):
+#         self.name = name
+#         self.queue = SimpleQueue()
+#
+#     def send(self, data):
+#         self.queue.put(data)
+#
+#     def receive(self):
+#         return self.queue.get()
+#
+#
+# _channel_manager = DataChannelManager()
+#
+# def create_channel(name):
+#     return _channel_manager.create_channel(name)
+#
+# def destroy_channel(name):
+#     _channel_manager.destroy_channel(name)
+#
+# def get_channel(name):
+#     return _channel_manager.get_channel(name)
 
 
 def command_handler_loop(queue, report_queue, event_queue):
