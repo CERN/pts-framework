@@ -1,0 +1,1 @@
+# This file have to contain interface class that would connect to the CORE pyqt signals

@@ -1,0 +1,1 @@
+# global logger class overwriting the python logging library

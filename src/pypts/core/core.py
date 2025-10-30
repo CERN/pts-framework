@@ -1,0 +1,1 @@
+# Here we need to build a central business logic agent, getting signals from outside and reacting with recipe/sequencer/hmi/report etc

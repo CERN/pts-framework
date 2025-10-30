@@ -1,0 +1,1 @@
+# This have to be a singleton class handling the local config file
