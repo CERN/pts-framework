@@ -4,12 +4,12 @@
 
 import datetime
 
-import pypts
+#import pypts
 
 
 project = "pypts"
 author = "Alvaro Martinez Landete"
-version = pypts.__version__
+#version = pypts.__version__
 
 copyright = "{0}, CERN".format(datetime.datetime.now().year)
 
