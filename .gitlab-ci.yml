@@ -45,6 +45,7 @@ dev_test:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
     - python -m pytest ./tests
+      -p no:qt
       --cov=pypts
       --cov-report term
       --cov-report html:coverage-html
