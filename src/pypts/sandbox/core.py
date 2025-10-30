@@ -1,8 +1,8 @@
 # core.py
 from hmi import QueueHMI
 
-def core(gui_to_core, core_to_gui):
-    hmi = QueueHMI(gui_to_core, core_to_gui)
+def core(hmi_to_core, core_to_hmi):
+    hmi = QueueHMI(hmi_to_core, core_to_hmi)
 
     while True:
         msg = hmi.HMI_to_core.get()
