@@ -9,19 +9,19 @@ from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QMenuBar, QApp
                                QTableWidgetItem, QPlainTextEdit, QMessageBox, QHBoxLayout,
                                QVBoxLayout, QTableView, QPushButton, QInputDialog, QLineEdit,
                                QTreeView, QAbstractItemView, QFileDialog, QToolBar, QWidgetAction, QStyle, QSizePolicy,
-                               QMainWindow)
-from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex, QSize, QTimer
+                               QMainWindow,  QTextEdit, QDialog, QComboBox, QDialogButtonBox)
+from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex, QSize, QTimer, QEventLoop
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush, QAction
-from queue import SimpleQueue
+
 from typing import List
 from pypts import recipe
 import uuid # Import uuid
 import subprocess
-import threading
-import os
+import os, serial, serial.tools.list_ports, sys
 from importlib.resources import files
-from pypts.utils import get_step_result_colors
-from pypts.XYGraph.XY_graph import *
+from pypts.utils import get_step_result_colors, get_package_root, find_resource_path, get_project_root, WAIT_FOR_TERMINATION
+from queue import Queue, SimpleQueue
+
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +38,9 @@ class TextEditLoggerHandler(QObject, logging.Handler):
         self.new_message.emit(msg)
 
 class ConfigFileLoader(QWidget):
-    def __init__(self):
+    def __init__(self, return_content=True, binary=False):
         super().__init__()
-        self.load_config_file()
 
-    def load_config_file(self):
-        # Define allowed extensions
         file_filter = (
             "Configuration Files (*.yaml *.yml *.json *.xml *.ini *.env *.sta *.csa *.cal *.snp *.mat *.bin);;"
             "All Files (*)"
@@ -56,8 +53,16 @@ class ConfigFileLoader(QWidget):
             file_filter
         )
 
-        if file_path:
-            print(f"Selected file: {file_path}")
+        self.file_path = file_path or None
+        self.content = None
+
+        if self.file_path and return_content:
+            mode = 'rb' if binary else 'r'
+            with open(self.file_path, mode) as f:
+                self.content = f.read()
+
+        # self.result is a (path, content) tuple for queue
+        self.result = (self.file_path, self.content)
 
 class MainWindow(QWidget):
     """The main application window, displaying recipe progress and results."""
@@ -68,7 +73,7 @@ class MainWindow(QWidget):
         self.q_in = None
         self.response_q = None
         self.already_updated = False
-
+        self.running = False
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -87,7 +92,6 @@ class MainWindow(QWidget):
             self.cern_logo.fill(Qt.GlobalColor.lightGray)
 
 
-
         self.top_level_layout = QVBoxLayout()
         self.main_layout = QHBoxLayout()
         self.left_half_layout = QVBoxLayout()
@@ -97,7 +101,6 @@ class MainWindow(QWidget):
         self.setup_right_half_layout()
         self.setup_toolbar()
         self.setup_menubar()
-        self.setup_timer()
 
         # Putting the layouts together to fit the GUI
         self.main_layout.addLayout(self.left_half_layout)
@@ -112,20 +115,9 @@ class MainWindow(QWidget):
         self.log_handler = TextEditLoggerHandler(self)
         self.log_handler.setFormatter(logging.Formatter('%(levelname)s : %(name)s : %(message)s'))
         self.log_handler.new_message.connect(self.log_text_box.appendPlainText)
-
         logging.getLogger().addHandler(self.log_handler)
+
         self.show()
-
-    def setup_timer(self):
-        self.timer1000 = QtCore.QTimer()
-        self.timer1000.setInterval(1000)
-        self.timer1000.timeout.connect(self.update_picture_widget_when_stream_detected)
-        self.timer1000.start()
-
-    def update_picture_widget_when_stream_detected(self):
-        streamlist = container.get_all_streams()
-        if len(streamlist) > 0:
-            self.set_widget(self.plotWidget)
 
 # Initialization related methods
     def setup_menubar(self):
@@ -220,27 +212,13 @@ class MainWindow(QWidget):
         self.left_half_layout.addWidget(self.result_list)
 
     def setup_right_half_layout(self):
-        # container that can hold either image or other widget
-        self.picture_container = QWidget(self)
-        self.picture_layout = QVBoxLayout(self.picture_container)
-        self.picture_layout.setContentsMargins(0, 0, 0, 0)
-        self.picture_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # enforce fixed minimum size on the container itself
-        self.picture_container.setMinimumSize(800, 600)
-
-        # default picture
-        self.picture_box = QLabel(self.picture_container)
+        self.picture_box = QLabel(self)
         self.picture_box.setPixmap(self.cern_logo)
+        self.picture_box.setMinimumSize(800, 600)
         self.picture_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # add default picture to layout
-        self.picture_layout.addWidget(self.picture_box)
-
-        # keep track of active widget
-        self.active_container_widget = self.picture_box
-
         self.message_box = QLabel(self)
+
         self.button_list_layout = QHBoxLayout()
 
         self.log_text_box = QPlainTextEdit(self)
@@ -249,41 +227,12 @@ class MainWindow(QWidget):
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
         self.log_text_box.setStyleSheet('background-color: whitesmoke')
 
-        self.right_half_layout.addWidget(self.picture_container)
+        self.right_half_layout.addWidget(self.picture_box)
         self.right_half_layout.addWidget(self.message_box)
         self.right_half_layout.addLayout(self.button_list_layout)
         self.right_half_layout.addWidget(self.log_text_box)
 
-        # create plot widget but do not show it yet
-        self.plotWidget = PlotWindow()
-        self.picture_layout.addWidget(self.plotWidget)
-        self.plotWidget.hide()
-
-    def set_picture(self, pixmap: QPixmap):
-        """Replace content with an image."""
-        if self.active_container_widget is self.plotWidget:
-            self.plotWidget.hide()
-        else:
-            self.active_container_widget.hide()
-
-        # reuse existing QLabel or create one once
-        if not hasattr(self, 'dynamic_picture_box'):
-            self.dynamic_picture_box = QLabel(self.picture_container)
-            self.dynamic_picture_box.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.picture_layout.addWidget(self.dynamic_picture_box)
-
-        self.dynamic_picture_box.setPixmap(pixmap)
-        self.dynamic_picture_box.show()
-        self.active_container_widget = self.dynamic_picture_box
-
-    def set_widget(self, widget: QWidget):
-        """Replace content with an arbitrary widget."""
-        if self.active_container_widget is not widget:
-            self.active_container_widget.hide()
-            widget.show()
-            self.active_container_widget = widget
-
-    # Callback methods
+# Callback methods
     def on_open_wiki_clicked(self):
         url = "https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/master/"
         webbrowser.open(url)
@@ -294,21 +243,109 @@ class MainWindow(QWidget):
 
     def on_edit_clicked(self):
         logger.info("Opening YamVIEW - recipe creation tool")
-        subprocess.Popen([sys.executable, "YamVIEW/recipe_creator.py"])
+        root = get_project_root()
+        recipe_editor_path = find_resource_path("recipe_creator.py", root=root)
+
+        subprocess.Popen([sys.executable, recipe_editor_path])
 
     def application_close(self):
         logger.info("Closing application")
-        #todo - implement teardown
+        self.q_in.put(("EXIT",))
         self.close()
 
     def on_open_clicked(self):
-        logger.info("clicked open icon (no action implemented)")
+        #self.on_abort_clicked()
+        loader = ConfigFileLoader(return_content=False)
+        self.q_in.put(("STOP",))
+        if loader.result[0] is not None:
+            self.recipe_file = str(loader.result[0])
+            try:
+                self.load_recipe()
+                self.q_in.put(("LOAD",self.recipe_file))
+                self.action_start_recipe_execution.setEnabled(True)
+
+            except Exception as e:
+                logger.error(f"Failed to create recipe from {self.recipe_file}: {e}", exc_info=True)
+                raise
+
+            logger.info("Clicked open icon and loaded recipe successfully.")
 
     def on_start_clicked(self):
-        logger.info("clicked start icon (no action implemented)")
+        if not self.running:
+            self.reset_gui()
+            self.load_recipe()
+            self.running = True
+        self.q_in.put(("START",))
+        self.action_abort_recipe_execution.setEnabled(True)
+        self.action_open_recipe.setEnabled(False)
+        self.open_recipe_action.setEnabled(False)
+
 
     def on_abort_clicked(self):
-        logger.info("clicked abort icon (no action implemented)")
+        global WAIT_FOR_TERMINATION
+        self.running = False
+        self.action_abort_recipe_execution.setEnabled(False)
+        self.action_start_recipe_execution.setEnabled(False)
+
+        WAIT_FOR_TERMINATION.clear()
+        self.clear_interaction_buttons()
+
+        self.q_in.put(("STOP",))
+        loop = QEventLoop()
+
+        def check_if_done():
+            if WAIT_FOR_TERMINATION.is_set():
+                loop.quit()
+
+        # Check every 100ms
+        timer = QTimer()
+        timer.timeout.connect(check_if_done)
+        timer.start(100)
+
+        loop.exec_()  # Block here until loop.quit() is called
+
+        # Cleanup
+        timer.stop()
+
+        self.action_open_recipe.setEnabled(True)
+        self.open_recipe_action.setEnabled(True)
+        self.action_start_recipe_execution.setEnabled(True)
+
+    def reset_gui(self):
+        # Clear step list table
+        self.step_list.setRowCount(0)
+
+        # Clear result tree view (QTreeView)
+        empty_model = StepResultModel([])
+        self.result_list.setModel(empty_model)
+
+        # Clear log box
+        self.log_text_box.clear()
+
+        # Clear message and recipe labels
+        self.recipe_label.setText("")
+        self.message_box.setText("")
+
+        # Reset picture/logo
+        self.picture_box.setPixmap(self.cern_logo)
+
+        # Clear all buttons from the interaction area
+        self.clear_interaction_buttons()
+
+    def load_recipe(self):
+        recipe_to_run = recipe.Recipe(self.recipe_file)
+        self.recipe_to_run = recipe_to_run
+        # Validate recipe object before using
+        sequence = recipe_to_run.sequences[recipe_to_run.main_sequence]
+        #  Build the event_dict
+        event_dict = {
+            "sequence": sequence 
+        }
+        #  Update the GUI using the data
+        self.already_updated = False
+        self.update_sequence(event_dict)
+        self.already_updated = False
+
 
 # Misc
     def add_interaction_button(self, label, value = None):
@@ -365,11 +402,16 @@ class MainWindow(QWidget):
         self.response_q.put(response)
         if str(response) == 'file':
             loader = ConfigFileLoader()
-            self.response_q.put(loader)
-        elif str(response) == 'ID':
+            self.response_q.put(loader.result)
+        elif str(response) == 'wrt':
             dialog = QInputDialog(self)
-            ID, ok = dialog.getText(self, "Device ID or COMPORT")
-            logger.debug(f"Dialog result: ok={ok}, text='{ID}'")
+            Written, ok = dialog.getText(self, "", "Input:")
+            logger.debug(f"Dialog result: ok={ok}, text='{Written}'")
+            self.response_q.put(Written)
+        elif str(response) == 'ID':
+            (port, baudrate, IDN), ok = SerialPortDialog.getPort(self)
+            logger.debug(f"Dialog result: ok={ok}, text='{port}', baudrate='{baudrate}', IDN={IDN}")
+            self.response_q.put((port, baudrate, IDN))
 
         self.clear_interaction_buttons()
         #self.picture_box.setPixmap(self.cern_logo)
@@ -380,7 +422,6 @@ class MainWindow(QWidget):
         response_q: SimpleQueue = event_dict["response_q"]
         message = event_dict["message"]
         image_path = event_dict["image_path"]
-        print(f"we got response {event_dict}")
         flat_options = {k: v for d in event_dict.get("options") or [] if isinstance(d, dict) for k, v in d.items()}
         self.message_box.setText(message)
         if image_path != "":
@@ -416,6 +457,7 @@ class MainWindow(QWidget):
 
         Stores the step UUID in the UserRole for later identification.
         """
+        self.step_list.show()
         sequence: recipe.Sequence = event_dict["sequence"]
         if not self.already_updated:
             self.step_list.setRowCount(len(sequence.steps))
@@ -494,7 +536,6 @@ class MainWindow(QWidget):
             new_result_item.setForeground(QColor(text_color))
             new_result_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
 
-
             # Update the status in the found row (hird column)
             self.step_list.setItem(target_row, 2, new_result_item)
 
@@ -510,6 +551,7 @@ class MainWindow(QWidget):
 
         Uses StepResultModel to populate the QTreeView.
         """
+        self.result_list.show()
         results: List[recipe.StepResult] = event_dict["results"]
         myResultModel = StepResultModel(results)
         self.result_list.setModel(myResultModel)
@@ -517,11 +559,19 @@ class MainWindow(QWidget):
         # Automatically expand all nodes so leaves are visible
         self.result_list.expandAll()
 
+
         # Adjust column widths to contents
         self.result_list.resizeColumnToContents(0)
         self.result_list.resizeColumnToContents(1)
         self.result_list.resizeColumnToContents(2)
         # Note: In PySide6, the view will refresh automatically when the model is set
+
+        #Activates these buttons as in a case of the test finishing properly, they would stay active, where then pushing stop would initialize a deadlock
+        self.running = False
+        self.action_abort_recipe_execution.setEnabled(False)
+        self.action_open_recipe.setEnabled(True)
+        self.open_recipe_action.setEnabled(True)
+        self.action_start_recipe_execution.setEnabled(True)
 
     def update_running_step(self, event_dict):
         """Highlights the step that is currently running in the step list table."""
@@ -552,12 +602,12 @@ class MainWindow(QWidget):
 
             # Highlight the status item (column 2)
             status_item = self.step_list.item(target_row, 2)
-            if status_item:
+            if status_item:             
                  # Set status to 'Running...' and make bold
-                 status_item.setText("Running...")
                  font = status_item.font()
                  font.setBold(True)
                  status_item.setFont(font)
+                 status_item.setText("Running...")
                  # Optionally change text color
                  # status_item.setForeground(QColor("blue"))
 
@@ -582,7 +632,7 @@ class MainWindow(QWidget):
         sequence_result = event_dict["sequence_result"]
         logging.info(f"Sequence '{sequence_name}' finished with result: {sequence_result}.")
         # Potential UI update: Could mark sequence as done in a separate list/view
-
+    
 class StepResultModel(QAbstractItemModel):
     """A Qt model for displaying hierarchical StepResult data in a QTreeView.
 
@@ -682,6 +732,132 @@ class StepResultModel(QAbstractItemModel):
             case _:
                 return None
 
+class SerialWorker(QThread):
+    result_ready = Signal(str, str)  # Signal: (result_text, idn_response)
+
+    def __init__(self, port, baudrate, parent=None):
+        super().__init__(parent)
+        self.port = port
+        self.baudrate = baudrate
+
+    def run(self):
+        try:
+            with serial.Serial(self.port, self.baudrate, timeout=0.5) as ser:
+                ser.write(b'*IDN?\n')
+                response = ser.readline().decode(errors='replace').strip()
+                idn = response or None
+                self.result_ready.emit(f"{self.port} @ {self.baudrate} → {idn}", idn)
+        except Exception as e:
+            self.result_ready.emit(f"Error on {self.port}: {str(e)}", "")
+
+class SerialPortDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Serial Port")
+        self.resize(300, 150)
+        self.worker_thread = None
+        self.idn_response = None
+
+        layout = QVBoxLayout(self)
+
+        layout.addWidget(QLabel("Available Serial Ports:"))
+        self.combo = QComboBox()
+        layout.addWidget(self.combo)
+        self.refresh_ports()
+
+        layout.addWidget(QLabel("Baudrate:"))
+        self.baud_combo = QComboBox()
+        self.common_baudrates = [
+            300, 1200, 2400, 4800,
+            9600, 14400, 19200, 28800,
+            38400, 57600, 74880, 115200,
+            128000, 230400, 250000, 256000,
+            460800, 500000, 576000, 921600,
+            1000000, 1500000, 2000000, 3000000, 4000000,
+        ]
+        for rate in self.common_baudrates:
+            self.baud_combo.addItem(str(rate))
+        layout.addWidget(self.baud_combo)
+
+        # Set default baudrate
+        self.baudrate = int(self.baud_combo.currentText())
+        self.baud_combo.currentIndexChanged.connect(self.update_baudrate)
+
+        self.send_button = QPushButton("Send *IDN?")
+        self.send_button.clicked.connect(self.send_idn)
+        layout.addWidget(self.send_button)
+
+        self.output = QTextEdit()
+        self.output.setReadOnly(True)
+        layout.addWidget(self.output)
+
+        # OK/Cancel buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.ok_button = buttons.button(QDialogButtonBox.Ok)
+        self.ok_button.clicked.connect(self.ok_clicked)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def update_baudrate(self):
+        try:
+            self.baudrate = int(self.baud_combo.currentText())
+        except ValueError:
+            self.baudrate = 9600  # fallback
+
+    def refresh_ports(self):
+        ports = serial.tools.list_ports.comports()
+        self.combo.clear()
+        for port in ports:
+            self.combo.addItem(port.device)
+
+    def send_idn(self):
+        port = self.combo.currentText()
+        baud = self.baudrate
+        self.output.append(f"Querying {port} @ {baud}...")
+        self.send_button.setEnabled(False)
+
+        self.worker_thread = SerialWorker(port, baud)
+        self.worker_thread.result_ready.connect(self.handle_idn_result)
+        self.worker_thread.finished.connect(lambda: self.send_button.setEnabled(True))
+        self.worker_thread.start()
+
+    def handle_idn_result(self, result_text, idn_response):
+        self.output.append(result_text)
+        self.idn_response = idn_response
+
+    def ok_clicked(self):
+        # Disable OK button until thread completes
+        self.ok_button.setEnabled(False)
+        port = self.combo.currentText()
+        baud = self.baudrate
+        self.output.append(f"Running final *IDN? query before accepting...")
+
+        self.worker_thread = SerialWorker(port, baud)
+        self.worker_thread.result_ready.connect(self._final_idn_done)
+        self.worker_thread.start()
+
+    def _final_idn_done(self, result_text, idn_response):
+        logger.debug("Final IDN received:", result_text)
+        self.output.append(result_text)
+        self.idn_response = idn_response
+        self.ok_button.setEnabled(True)
+        self.accept()
+
+    def selected_port(self):
+        return self.combo.currentText()
+    
+    def selected_baudrate(self):
+        return self.baudrate
+    def idn(self):
+        return self.idn_response
+    @staticmethod
+    def getPort(parent=None):
+        dialog = SerialPortDialog(parent)
+        result = dialog.exec()
+        return (dialog.selected_port(), dialog.selected_baudrate(), dialog.idn()), result == QDialog.Accepted
+
+
+
 if __name__ == "__main__":
     import sys
 
@@ -690,13 +866,4 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    event_dict = {
-        "message": "WORKS",
-        "image_path": "",
-        "response_q": SimpleQueue()
-    }
-    window.show_message(event_dict)
-
-
-
     sys.exit(app.exec())

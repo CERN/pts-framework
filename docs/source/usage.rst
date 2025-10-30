@@ -7,11 +7,11 @@
 Usage
 =====
 
-This guide provides a basic overview of how to run a test recipe using the ``pypts`` framework.
+This guide provides a basic overview of how to install and run a test recipe using the ``pypts`` framework.
 
 Installation
 ------------
-
+This section provides the neccesary information needed to setup the environment and test to run.
 Before using pypts, you may need to install the following system dependencies for PySide6 (Qt GUI framework):
 
 .. code-block:: bash
@@ -19,10 +19,86 @@ Before using pypts, you may need to install the following system dependencies fo
    sudo dnf install libxcb libxcb-devel
    sudo dnf install xcb-util xcb-util-wm xcb-util-keysyms xcb-util-image xcb-util-renderutil
 
+
+To setup the test, start in the desired directory. Make a virtual environment. Name is arbitrary.
+
+.. code-block:: bash
+  
+   python -m venv .venv
+
+Activate the environment. Install the package from Acc-PyPI CERN.
+
+.. code-block:: bash
+
+   python -m pip install pts-framework==0.2.0
+
+
+There are two ways of setting up the pypts framework after the package has been installed. A package-based setup or a minimal setup consisting of only test and recipe. 
+
+1. Minimal setup pypts-framework
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The minimal setup does not use package-based recipe, see "Recipe YAML format", but uses a gui. Through the gui, the recipe is loaded, which runs the tests.
+An example of the package structure is:
+
+.. code-block:: text
+
+   my_cwd/
+   ├── tests/
+   │   ├── __init__.py
+   │   └── tests.py
+   └── my_recipe.yaml
+
+But the only requirements is the recipe and the tests described in the recipe. **Note**: tests are required to be at least one directory down from the ``cwd``. 
+To run the test, the following command is required.
+
+.. code-block:: bash
+
+   python -m pypts
+
+This initializes the GUI where the recipe can be loaded and run.
+This ``pypts`` framework should **not** have a package in its recipe.
+
+2. Package based pypts-framework
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If the test is expected to be package-based, a different setup is required. With the installed package based, the following is required.
+
+.. code-block:: bash
+
+   CWD/
+  ├── requirements.txt             # or pyproject.toml, at root
+  └── package/
+      ├── __init__.py              # package root
+      ├── __main__.py              # required to initialize the package
+      ├── recipe.yaml              # inside package folder
+      └── tests/                   # Not required to put tests in their own directory.
+          ├── __init__.py          # tests as subpackage
+          ├── test_module1.py
+          └── test_module2.py
+
+The recipe is not required to be inside the package, however the tests are.
+To compile into its own package, run:
+
+.. code-block:: bash
+
+  pip install -e .
+
+
+This will initialize your software as a package that can now be called. 
+
+.. code-block:: bash
+
+  python -m package
+
+That can run the desired package and the tests inside. 
+The package requires a ``__main__.py`` file. See :ref:`__main__` for how the code in the main file should look. 
+The ``__main__.py`` is similar between the pypts-framework package and the new package.
+
 1. Define your Recipe (`my_recipe.yaml`)
 -----------------------------------------
 
-Create a YAML file defining your test sequence. The recipe consists of a main document defining metadata and global variables, followed by documents defining named sequences.
+Create a YAML file defining your test sequence. The recipe consists of a main document defining metadata and global variables, followed by documents defining named sequences. See :ref:`_yaml_format` for full explaination of all steps available for recipe.
 
 .. code-block:: yaml
    :caption: my_recipe.yaml
@@ -160,140 +236,10 @@ For better distribution and deployment, you can use resource-based module loadin
 * **Naming**: Avoids errors appearing as a result of tests having the same name between packages
 
 
-Steptypes applicable for the recipe
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-Given there are different types of steps to take, it is required to describe the types and what can be put into the steps.
- - UserInteractionStep
- - PythonModuleStep
- - WaitStep
-
-Each has its own template of required elements but with overlapping types of elements that will be explained in the following sections.
-The first type of step is the ``UserInteractionStep``.
-.. code-block:: yaml
-
-  steptype: UserInteractionStep
-  step_name: Are you all right?
-  description: Asking user for something
-  skip: false
-  input_mapping:
-    message:
-      type: direct
-      value: 'Hello there. This is an example
-        '
-    image_path:
-      type: direct
-      value: lego2.jpg
-    options:
-      type: direct
-      value:
-      - 'yes': ''
-      - 'no': ''
-  output_mapping:
-    output:
-      type: equals
-      value: 'yes'
-
-Of the full template for ``UserInteractionStep``, only the output_mapping, steptype and step_name are **required**, meaning the rest is optional.
-The skip is assumed false and therefore only required in scenarios where changing this is required. The ``input_mapping`` is not a requirement for running the tests however it can be useful for user interaction.
-The ``message`` is a description that is written above the buttons which could be a description of a test. The image_path is likewise for a nice to have if a image over the required testsetup is added as a visual guidance. 
-options is for changing what is written on the buttons that you push on. Standard values are "Yes" and "No".
-
-Other types of input other than **direct** is **global** and **local**. In the case of a type **local**, the next other item has to be called **local_name**. It will appear as:
-.. code-block:: yaml
-
-    input_mapping:
-    value:
-      type: local
-      local_name: test_value
-  output_mapping:
-    my_output:
-      type: local
-      local_name: calculated_output
-
-Output consists of 6 different types of outputs they receive which also changes the required input. The 6 output types are the following:
- - passthrough
- - passfail
- - equals
- - range
- - global
- - local
-
-Each is for its own type of tests. **passthrough** is for functions where the output is already a ``ResultType`` which is an enum class consisting of the possible outcomes. **passfail** returns an output as a boolean that then determines the ``ResultType``.
-**equals** is used for comparisons of specified value with the returned value from test. **range** is used for tests where the measured value is required to be within limits.
-**global** writes the output of the test to global variables. **local** writes the output to local variables in the runtime class. 
- 
-
-
-The 6 types of outputs are applicable for all types of steps where the next one to describe is the ``PythonModuleStep``. The steptype is used for automated tests withouth required interaction by an operator from the framework. 
-This type is used for automated tests and will run the given function(``method``) inside the given python file. 
-
-.. code-block:: yaml
-
-  steptype: PythonModuleStep
-  step_name: Verify number is in range
-  action_type: method
-  module: example_tests.py
-  method_name: range_test
-  input_mapping:
-    value:
-      type: direct
-      value: '15'
-    min:
-      type: direct
-      value: '10'
-    max:
-      type: direct
-      value: '20'
-  output_mapping:
-    compare:
-      type: passfail
-
-
-2. Run the Recipe (`run_my_recipe.py`)
+2. Run the Recipe (`__main__.py`)
 ---------------------------------------
 
-Use the ``run_pts`` function from the ``pypts.pts`` module to execute your recipe file. This will start the recipe execution in a background thread.
 
-.. code-block:: python
-   :caption: run_my_recipe.py
-
-   import logging
-   from pypts.pts import run_pts
-   import time
-
-   # Configure logging (optional but recommended)
-   logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
-
-   print("Starting the pypts recipe...")
-   # Specify the path to your recipe file
-   recipe_file = "my_recipe.yaml"
-
-   # Run the default 'Main' sequence
-   api = run_pts(recipe_file=recipe_file)
-
-   print(f"Recipe '{recipe_file}' started in background thread.")
-   print("Monitoring event queue (press Ctrl+C to stop early):")
-
-   # Example: Monitor the event queue for completion or errors
-   # In a real application, you might have more sophisticated handling
-   try:
-       while True:
-           event_name, event_data = api.event_queue.get() # Blocking call
-           print(f"EVENT: {event_name} - Data: {event_data}")
-           if event_name == "post_run_recipe":
-               print("Recipe finished.")
-               break
-           # Add handling for specific errors or other events if needed
-           time.sleep(0.1)
-   except KeyboardInterrupt:
-       print("\nStopping monitoring.")
-   except Exception as e:
-       print(f"An error occurred: {e}")
-
-   print("Main script finished.")
-
-Alternative: Run recipe with user interaction.
----------------------------------------
 In situations where a level of user interaction with buttons is required, the one above is not enough. For a level of user interaction with steptype ``UserInteractionStep``, a GUI is added.
 As the above, use the ``run_pts`` function from the ``pypts.pts`` module to execute the recipe file. Use the function ``create_and_start_gui()`` from the ``pypts.startup`` module to create a gui and start it, using the execution of the ``run_pts``.
 
@@ -322,17 +268,19 @@ As the above, use the ``run_pts`` function from the ``pypts.pts`` module to exec
        and connects signals/slots between the proxy and the window.
        Starts the recipe execution and event processing threads.
        """
-
-       yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
-       yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
-
-       api = run_pts(yaml_path, sequence_name="Main")
+       api = run_pts()
  
        window, app = create_and_start_gui(api)
  
        exit_code = app.exec()
        sys.exit(exit_code)
 
+
+It can also be initialized through the command:
+
+.. code-block:: bash
+
+  python -m pypts
 
 
 
@@ -347,7 +295,7 @@ After execution (or during, for the CSV), check the ``./pts_reports/`` directory
 
 Migrating from File-Based to Resource-Based Loading
 ----------------------------------------------------
-
+Both file-based and ressource-based loading are possible for the framework.
 If you have existing recipes using file-based module loading, here's how to migrate:
 
 **Step 1: Organize Test Modules**

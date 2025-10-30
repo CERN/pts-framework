@@ -3,11 +3,12 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 from queue import Queue, SimpleQueue
-import logging
+import logging, time
 from pypts import recipe
 import threading
 from dataclasses import dataclass
-from pypts.report import report_listener
+from pypts.report import report_listener, STOP_LISTENER, LISTENER_RUNNING
+from pypts.recipe import Runtime, runtime_bridge
 from pathlib import Path
 import importlib.metadata
 
@@ -18,6 +19,8 @@ logger = logging.getLogger(__name__)
 # appropriate behaviors. It gets set to True when a PTS recipe starts.
 _pts_context = False
 
+current_run_thread = None
+current_runtime = None
 
 
 @dataclass
@@ -42,68 +45,16 @@ class PtsApi:
             - recipe_queue: Queue for receiving recipe execution reports
     """
 
-def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
+def run_pts(sequence_name: str = "Main") -> PtsApi:
     input_queue = Queue()
     event_queue = SimpleQueue()
     report_queue = SimpleQueue()
     global _pts_context
     _pts_context = True
     api = PtsApi(input_queue, event_queue, report_queue)
-    
-    # Define output directory for reports
-    report_output_dir = Path("./pts_reports")
-    report_output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Start the report listener thread
-    report_thread = threading.Thread(
-        target=report_listener,
-        args=(report_queue, str(report_output_dir)),
-        daemon=True
-    )
-    report_thread.start()
-    logger.info(f"Report listener started. Output directory: {report_output_dir.resolve()}")
-
-    runtime = recipe.Runtime(event_queue, report_queue)
-    
-    # Get and set pypts version
-    try:
-        runtime.pypts_version = importlib.metadata.version('pts-framework')
-        logger.info(f"pypts version: {runtime.pypts_version}")
-    except importlib.metadata.PackageNotFoundError:
-        runtime.pypts_version = "unknown"
-        logger.warning("Could not determine pypts version. Package not found by importlib.metadata.")
-
-    # Create the recipe with default file_loader and event_sender
-    try:
-        recipe_to_run = recipe.Recipe(recipe_file)
-        logger.debug(f"Recipe created successfully. Name: {getattr(recipe_to_run, 'name', 'MISSING')}, Version: {getattr(recipe_to_run, 'version', 'MISSING')}")
-        logger.debug(f"Recipe object type: {type(recipe_to_run)}")
-        
-        # Validate recipe object before sending event
-        if not hasattr(recipe_to_run, 'name'):
-            logger.error("Recipe object missing 'name' attribute")
-            raise AttributeError("Recipe object missing 'name' attribute")
-        if not hasattr(recipe_to_run, 'version'):
-            logger.error("Recipe object missing 'version' attribute")
-            raise AttributeError("Recipe object missing 'version' attribute")
-            
-    except Exception as e:
-        logger.error(f"Failed to create recipe from {recipe_file}: {e}", exc_info=True)
-        raise
-    
-    # Send event using runtime's send_event method
-    logger.debug(f"Sending post_load_recipe event with recipe: {recipe_to_run}")
-    runtime.send_event("post_load_recipe", recipe_to_run)
-    
-    # Start the recipe in a separate thread
-    threading.Thread(
-        target=recipe_to_run.run, 
-        kwargs={
-            "runtime": runtime, 
-            "sequence_name": sequence_name
-        }, 
-        daemon=True
-    ).start()
+    command_thread = threading.Thread(target=command_handler_loop, args=(api.input_queue, report_queue,event_queue), daemon=True)
+    command_thread.start()
 
     return api
 
@@ -150,3 +101,118 @@ def run_pts(recipe_file: str, sequence_name: str = "Main") -> PtsApi:
 # def get_channel(name):
 #     return _channel_manager.get_channel(name)
 
+
+def command_handler_loop(queue, report_queue, event_queue):
+    # Define output directory for reports
+    report_output_dir = Path("./pts_reports")
+    report_output_dir.mkdir(parents=True, exist_ok=True)
+
+    recipe_to_run = None
+    recipe_file = None
+    runtime = None
+    while not report_queue.empty():
+        try:
+            report_queue.get_nowait()
+        except Exception:
+            break
+    while True:
+        try:
+            command = queue.get()
+            if command is None:
+                break
+
+            if not isinstance(command, tuple):
+                continue
+
+            cmd = command[0]
+            if cmd == "LOAD":
+                global current_run_thread, current_runtime
+                recipe_file = command[1]
+                
+                try:
+                    logger.info(f"Loading recipe from: {recipe_file}")
+
+                    # Set up queues and runtime
+                    runtime = recipe.Runtime(event_queue, report_queue)
+                    try:
+                        runtime.pypts_version = importlib.metadata.version('pts-framework')
+                        logger.info(f"pypts version: {runtime.pypts_version}")
+                    except importlib.metadata.PackageNotFoundError:
+                        runtime.pypts_version = "unknown"
+                        logger.warning("Could not determine pypts version. Package not found by importlib.metadata.")
+
+                    # Create the recipe with default file_loader and event_sender
+                    try:
+                        recipe_to_run = recipe.Recipe(recipe_file)
+                        logger.debug(f"Recipe created successfully. Name: {getattr(recipe_to_run, 'name', 'MISSING')}, Version: {getattr(recipe_to_run, 'version', 'MISSING')}")
+                        logger.debug(f"Recipe object type: {type(recipe_to_run)}")
+                        
+                        # Validate recipe object before sending event
+                        if not hasattr(recipe_to_run, 'name'):
+                            logger.error("Recipe object missing 'name' attribute")
+                            raise AttributeError("Recipe object missing 'name' attribute")
+                        if not hasattr(recipe_to_run, 'version'):
+                            logger.error("Recipe object missing 'version' attribute")
+                            raise AttributeError("Recipe object missing 'version' attribute")
+                            
+                    except Exception as e:
+                        logger.error(f"Failed to create recipe from {recipe_file}: {e}", exc_info=True)
+                        raise
+                    
+                    # Send event using runtime's send_event method
+                    logger.debug(f"Sending post_load_recipe event with recipe: {recipe_to_run}")
+                    runtime.send_event("post_load_recipe", recipe_to_run)
+
+                except Exception as e:
+                    logger.error(f"Failed to load recipe: {e}", exc_info=True)
+
+            if cmd == "START":
+                global LISTENER_RUNNING
+                while not report_queue.empty():
+                    try:
+                        report_queue.get_nowait()
+                    except Exception:
+                        break
+
+                if current_run_thread and current_run_thread.is_alive():
+                    logger.warning("Recipe thread already running. Start command ignored.")
+                else:
+                    #added here so every time a new runtime thread is made, so is a new report thread.
+                    LISTENER_RUNNING = False
+                    # Start the recipe in a new thread
+                    current_run_thread = threading.Thread(
+                        target=recipe_to_run.run,
+                        kwargs={
+                            "runtime": runtime,
+                            "sequence_name": "Main"
+                        },
+                        daemon=True
+                    )
+                    current_run_thread.start()
+                    current_runtime = runtime  # save reference to stop later
+                    logger.info("Recipe execution thread started.")
+
+                    if not LISTENER_RUNNING:
+                        # Start the report listener thread
+                        #Moved to here so it is not initialized only once during setup
+                        threading.Thread(
+                                target=report_listener,
+                                args=(report_queue, str(report_output_dir)),
+                                daemon=True
+                            ).start()
+                        logger.info(f"Report listener started. Output directory: {report_output_dir.resolve()}")
+                        LISTENER_RUNNING = True
+                    else:
+                        logger.debug("Report listener already running.")
+
+                runtime_bridge.start_signal.emit()
+            elif cmd == "STOP":
+                report_queue.put(STOP_LISTENER)
+                logger.info("STOP command received. Sent STOP_LISTENER to report queue.")
+                runtime_bridge.stop_signal.emit()
+                LISTENER_RUNNING = False
+            elif cmd == "EXIT":
+                runtime_bridge.stop_signal.emit()
+                break
+        except Exception as e:
+            logger.error(f"Command handler failed: {e}", exc_info=True)
