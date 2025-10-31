@@ -67,36 +67,26 @@ class Core:
         print("[core] Stopped main event loop.")
 
     # --- Polling mechanism - to be able to handle multiple modules in a clean way ---
+    def poll_queue(self, queue, handler):
+        try:
+            event = queue.get_nowait()
+            if event:
+                handler(event)
+        except Empty:
+            pass
+
     def poll_all_sources(self):
         """Polls all communication sources (HMI, Sequencer, HW, etc.)"""
         self.poll_hmi()
-        self.poll_sequencer()
-        self.poll_report()
+        self.poll_queue(self.sequencer_to_core_queue, self.handle_sequencer_event)
+        self.poll_queue(self.report_to_core_queue, self.handle_report_event)
 
     def poll_hmi(self):
         if not self.hmi: return
         try:
-            event = self.hmi.receive_command_from_hmi(timeout=0)
+            event = self.hmi.receive_command_from_hmi(timeout=0.1)
             if event:
                 self.handle_hmi_event(event)
-        except Empty:
-            pass
-
-    def poll_report(self):
-        if not self.report: return
-        try:
-            event = self.report.receive_command_from_report(timeout=0)
-            if event:
-                self.handle_report_event(event)
-        except Empty:
-            pass
-
-    def poll_sequencer(self):
-        if not self.sequencer: return
-        try:
-            event = self.sequencer.receive_command_from_sequencer(timeout=0)
-            if event:
-                self.handle_sequencer_event(event)
         except Empty:
             pass
 
@@ -109,13 +99,16 @@ class Core:
     # --- Event handlers - one per module ---
     def handle_hmi_event(self, event):
         print(f"[core] HMI event: {event}")
-        # todo - change to case structure
-        if event == "exit":
-            self.running = False
-            # todo: implement clean shutdown and propagate it
-        else:
-            # process commands or pass to subsystems
-            pass
+        match event:
+            case "exit":
+                # todo: implement clean shutdown and propagate it
+                self.running = False
+            case "run_sequence":
+                self.core_to_sequencer_queue.put("run")
+            case "generate_report":
+                self.core_to_report_queue.put("generate")
+            case _:
+                print(f"[core] Unknown HMI event: {event}")
 
     def handle_sequencer_event(self, event):
         print(f"[core] SEQUENCER event: {event}")
