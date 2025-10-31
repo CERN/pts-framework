@@ -170,7 +170,6 @@ class RecipeEventProxy(QObject):
         while self._running:
                 self.RecipeEventProxyRunner()
 
-
     def stop(self):
         if self._running:
             self._running = False
