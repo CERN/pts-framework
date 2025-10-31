@@ -13,7 +13,7 @@ def main():
     tests_dir = project_root / "tests"
     tests_dir.mkdir(exist_ok=True)
 
-
+    open(tests_dir/"__init__.py", "a").close()
     #locating path of this script. will be used to copy the examples out.
     package_root = Path(__file__).resolve().parent
 
@@ -27,7 +27,7 @@ def main():
         print(f"Example recipe already exists at {recipe_dest}")
 
     # Copy Minimal setup tests
-    tests_src = package_root / "example_tests"
+    tests_src = package_root/ "tests"
     for file in tests_src.glob("*.py"):
         dest_file = tests_dir / file.name
         if not dest_file.exists():

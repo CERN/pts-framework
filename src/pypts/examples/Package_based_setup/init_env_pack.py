@@ -9,6 +9,7 @@
 from pypts.utils import get_project_root
 import shutil
 from pathlib import Path
+import subprocess, sys
 
 def main():
     package_example = "example_package"
@@ -42,7 +43,7 @@ def main():
         print(f"Example recipe already exists at {recipe_dest}")
 
     # Copy Minimal setup tests
-    tests_src = package_root / "example_tests"
+    tests_src = package_root/ "tests"
     for file in tests_src.glob("*.py"):
         dest_file = tests_dir / file.name
         if not dest_file.exists():
@@ -79,7 +80,10 @@ if __name__ == '__main__':
     with open(package_dir / "__main__.py", "w", encoding="utf-8") as f:
         f.write(main_code)
 
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "-e", "."])
+
     print("\n Environment initialized successfully.")
+
 
 
 if __name__ == "__main__":

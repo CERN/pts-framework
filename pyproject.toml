@@ -66,6 +66,11 @@ dev = [
 # Homepage = "PyPTS repository"
 Repository = "https://gitlab.cern.ch/pts/framework/pypts"
 
+[project.scripts]
+init_env_min = "pypts.examples.Minimal_setup.init_env_min:main"
+init_env_pack = "pypts.examples.Package_based_setup.init_env_pack:main"
+
+
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["pypts", "pypts.*"]
