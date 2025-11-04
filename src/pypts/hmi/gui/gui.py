@@ -730,6 +730,8 @@ class StepResultModel(QAbstractItemModel):
             case _:
                 return None
 
+
+# todo - we need to move all non-gui implementations out of GUI. Serial is definitely not a GUI part
 class SerialWorker(QThread):
     result_ready = Signal(str, str)  # Signal: (result_text, idn_response)
 
