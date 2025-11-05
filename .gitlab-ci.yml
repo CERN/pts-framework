@@ -29,17 +29,17 @@ variables:
   
 
 # # REUSE license compliance check
-# reuse:
-#   stage: analyse
-#   image:
-#     name: fsfe/reuse:latest
-#     entrypoint: [""]
-#   script:
-#     - reuse lint
-#   rules:
-#     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-#     - if: $CI_COMMIT_REF_NAME == "master"
-#     - if: $CI_COMMIT_TAG
+reuse:
+  stage: analyse
+  image:
+    name: fsfe/reuse:latest
+    entrypoint: [""]
+  script:
+    - reuse lint
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_REF_NAME == "master"
+    - if: $CI_COMMIT_TAG
 
 .build_for_gui:
   extends: .acc_py_run_on_acc_py
@@ -51,6 +51,9 @@ dev_test:
   extends: 
     - .acc_py_dev_test
     - .build_for_gui
+  before_script:
+    - !reference [.acc_py_dev_test, before_script]
+    - !reference [.build_docs_for_gui, before_script]
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
