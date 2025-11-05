@@ -40,19 +40,21 @@ variables:
 #     - if: $CI_COMMIT_REF_NAME == "master"
 #     - if: $CI_COMMIT_TAG
 
-.build_docs_for_gui:
+.build_for_gui:
   extends: .acc_py_run_on_acc_py
   variables:
     ACC_PY_BASE_IMAGE_NAME: acc-py_el9_gui_ci
 
 
 dev_test:
-  extends: .acc_py_dev_test
+  extends: 
+    - .acc_py_dev_test
+    - .build_for_gui
+
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
     - python -m pytest ./tests
-      -p no:pytestqt \
       --cov=pypts
       --cov-report term
       --cov-report html:coverage-html
@@ -79,7 +81,7 @@ publish:
 build_docs:
   extends:
     - .acc_py_build_docs
-    - .build_docs_for_gui
+    - .build_for_gui
   before_script:
     - !reference [.acc_py_build_docs, before_script]
 
@@ -87,6 +89,6 @@ build_docs:
 build_docs_on_tag:
   extends:
     - .acc_py_build_docs_on_tag
-    - .build_docs_for_gui
+    - .build_for_gui
   before_script:
     - !reference [.acc_py_build_docs_on_tag, before_script]
