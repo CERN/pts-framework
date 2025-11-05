@@ -50,10 +50,12 @@ variables:
 dev_test:
   extends: 
     - .acc_py_dev_test
+    - .build_for_gui
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
     - python -m pytest ./tests
+      -p no:pytestqt
       --cov=pypts
       --cov-report term
       --cov-report html:coverage-html
