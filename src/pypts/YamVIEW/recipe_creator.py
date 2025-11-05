@@ -25,13 +25,18 @@ from PySide6.QtWidgets import (
     QToolBar,
     QStyle,
     QSizePolicy,
+    QFrame,
+    QListWidgetItem,
+    QListWidget,
+    QToolButton
 )
 from PySide6.QtGui import (
     QAction,
     QTextCursor,
     QPixmap,
+    QDrag
 )
-from PySide6.QtCore import QSize, QMargins
+from PySide6.QtCore import QSize, QMargins, Qt, QMimeData, QByteArray, QDataStream, QIODevice, QPoint, Signal
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from datetime import datetime
@@ -180,19 +185,19 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def setup_tree_and_yaml(self):
         # YAML Tree widget
-        self.tree = QTreeWidget()
-        self.tree.setColumnCount(2)
-        self.tree.setHeaderLabels(["Field", "Value"])
-        self.tree.setColumnWidth(0, 200)
-        self.tree.setAlternatingRowColors(True)
-        self.tree.itemChanged.connect(self.on_treeview_item_changed)
-        self.tree.itemClicked.connect(self.on_tree_item_clicked)
-        self.tree.setEditTriggers(
-            QTreeWidget.EditTrigger.DoubleClicked |
-            QTreeWidget.EditTrigger.SelectedClicked |
-            QTreeWidget.EditTrigger.EditKeyPressed
-        )
-        self.tree.setColumnWidth(0, 250)
+        # self.tree = QTreeWidget()
+        # self.tree.setColumnCount(2)
+        # self.tree.setHeaderLabels(["Field", "Value"])
+        # self.tree.setColumnWidth(0, 200)
+        # self.tree.setAlternatingRowColors(True)
+        # self.tree.itemChanged.connect(self.on_treeview_item_changed)
+        # self.tree.itemClicked.connect(self.on_tree_item_clicked)
+        # self.tree.setEditTriggers(
+        #     QTreeWidget.EditTrigger.DoubleClicked |
+        #     QTreeWidget.EditTrigger.SelectedClicked |
+        #     QTreeWidget.EditTrigger.EditKeyPressed
+        # )
+        # self.tree.setColumnWidth(0, 250)
 
         # YAML Viewer (custom ScintillaYamlEditor)
         self.yaml_viewer = ScintillaYamlEditor(self)
@@ -204,10 +209,15 @@ class RecipeEditorMainMenu(QMainWindow):
         font.setFixedPitch(True)
         self.yaml_viewer.setFont(font)
 
+        #Sequencer
+        self.sequencer = SequencerWidget(yaml_viewer=self.yaml_viewer)
+        self.sequencer.yaml_update_callback = self.on_sequencer_updated
+
         # Horizontal container for tree + yaml viewer
         self.tree_and_yaml_widget = QWidget()
         self.tree_and_yaml_hlayout = QHBoxLayout(self.tree_and_yaml_widget)
-        self.tree_and_yaml_hlayout.addWidget(self.tree)
+        #self.tree_and_yaml_hlayout.addWidget(self.tree)
+        self.tree_and_yaml_hlayout.addWidget(self.sequencer)
         self.tree_and_yaml_hlayout.addWidget(self.yaml_viewer)
 
     def setup_status_and_layouts(self):
@@ -312,39 +322,136 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def update_yaml_treeview(self):
         try:
-            try:
-                self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
-            except Exception as e:
-                self.log(f"❌ Failed to parse YAML content: {e}")
+            # try:
+            #     self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
+            # except Exception as e:
+            #     self.log(f"❌ Failed to parse YAML content: {e}")
+            #     return False
+
+            # try:
+            #     self.tree.blockSignals(True)  # ⛔ Block signals while populating
+            #     self.tree.clear()
+            #     self.item_to_line.clear()  # Clear previous mappings
+            # except Exception as e:
+            #     self.log(f"❌ Failed to reset TreeView state: {e}")
+            #     return False
+
+            # for idx, doc in enumerate(self.yaml_documents):
+            #     try:
+            #         doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
+            #         self.tree.addTopLevelItem(doc_root)
+            #         self.populate_tree(doc, doc_root)
+            #         doc_root.setExpanded(True)
+            #     except Exception as e:
+            #         self.log(f"❌ Failed to populate tree for document {idx + 1}: {e}")
+            #         continue  # Try to load next document anyway
+
+            # try:
+            #     self.tree.blockSignals(False)
+            # except Exception as e:
+            #     self.log(f"❌ Failed to unblock TreeView signals: {e}")
+            # return True
+
+            self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
+            if not self.yaml_documents:
+                self.log("⚠️ No YAML documents found.")
+                self.sequencer.set_yaml_data([])
                 return False
 
-            try:
-                self.tree.blockSignals(True)  # ⛔ Block signals while populating
-                self.tree.clear()
-                self.item_to_line.clear()  # Clear previous mappings
-            except Exception as e:
-                self.log(f"❌ Failed to reset TreeView state: {e}")
-                return False
+            sequencer_steps = []
 
-            for idx, doc in enumerate(self.yaml_documents):
-                try:
-                    doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
-                    self.tree.addTopLevelItem(doc_root)
-                    self.populate_tree(doc, doc_root)
-                    doc_root.setExpanded(True)
-                except Exception as e:
-                    self.log(f"❌ Failed to populate tree for document {idx + 1}: {e}")
-                    continue  # Try to load next document anyway
+            # 1️⃣ First document → treat as preamble step
+            first_doc = self.yaml_documents[0]
+            sequencer_steps.append({
+                "step_name": "Preamble",
+                "description": str(first_doc),
+                "steptype": "preamble",
+                "_node": first_doc,
+            })
 
-            try:
-                self.tree.blockSignals(False)
-            except Exception as e:
-                self.log(f"❌ Failed to unblock TreeView signals: {e}")
+            # 2️⃣ Second document → pre-step blocks (setup_steps etc.)
+            for doc_index, doc in enumerate(self.yaml_documents[1:], start=1):
+                sequence_name = doc.get("sequence_name", f"Sequence {doc_index}")
+                sequence_block = {
+                    "step_name": f"Sequence: {sequence_name}",
+                    "description": doc.get("description", ""),
+                    "steptype": "sequence_folder",
+                    "children": [],  # container for setup + steps
+                    "_node": doc,
+                }
+
+                # 🔹 Setup steps
+                setup_steps = doc.get("setup_steps", [])
+                if isinstance(setup_steps, list) and setup_steps:
+                    # Check if setup_steps actually contains real steps
+                    valid_setup_steps = [s for s in setup_steps if isinstance(s, dict) and s.get("step_name")]
+                    if valid_setup_steps:
+                        setup_folder = {
+                            "step_name": "Setup Steps",
+                            "steptype": "setup_folder",
+                            "children": [],
+                            "_node": setup_steps,
+                        }
+                        for s in valid_setup_steps:
+                            setup_folder["children"].append({
+                                "step_name": s.get("step_name", "Unnamed Setup Step"),
+                                "steptype": s.get("steptype", "unknown"),
+                                "_node": s,
+                            })
+                        sequence_block["children"].append(setup_folder)
+                    # If setup_steps empty or malformed, skip
+
+                # 🔹 Main steps
+                main_steps = doc.get("steps", [])
+                if isinstance(main_steps, list):
+                    for step_node in main_steps:
+                        if isinstance(step_node, dict):
+                            sequence_block["children"].append({
+                                "step_name": step_node.get("step_name", "Unnamed Step"),
+                                "steptype": step_node.get("steptype", "unknown"),
+                                "_node": step_node,
+                            })
+
+                # Only add sequence if it has something
+                if sequence_block["children"]:
+                    sequencer_steps.append(sequence_block)
+                else:
+                    self.log(f"ℹ️ Sequence '{sequence_name}' has no valid steps; skipped.")
+
+
+            self.sequencer.set_yaml_data(sequencer_steps)
+            self.log(f"✅ Sequencer received {len(sequencer_steps)} steps including preamble/setup.")
             return True
+
 
         except Exception as e:
             self.log(f"❌ Unexpected error during TreeView update: {e}")
             return False
+
+    def on_sequencer_updated(self, steps):
+        # Only reorder the nodes inside the second document
+        if len(self.yaml_documents) < 2:
+            return
+
+        doc2 = self.yaml_documents[1]
+        new_order_nodes = [s["_node"] for s in steps if "_node" in s]
+
+        # Replace the steps in place — preserves comments / formatting
+        doc2["steps"][:] = new_order_nodes
+
+        # Dump YAML
+        from ruamel.yaml import YAML
+        yaml = YAML()
+        yaml.indent(mapping=2, sequence=4, offset=2)
+        import io
+        stream = io.StringIO()
+        yaml.dump_all(self.yaml_documents, stream)
+        new_yaml = stream.getvalue()
+
+        self.yaml_viewer.setText(new_yaml)
+        self.temporary_recipe_contents = new_yaml
+        self.log("✅ Sequencer order updated and YAML synced.")
+
 
     def set_recipe_status(self, message: str, color: str = "#333"):
         """Sets the status message and text color in the top recipe status field."""
@@ -404,7 +511,7 @@ class RecipeEditorMainMenu(QMainWindow):
         for i in range(self.tree.topLevelItemCount()):
             top_item = self.tree.topLevelItem(i)
             recurse_and_collapse(top_item)
-
+    
     def on_yaml_cursor_changed(self):
         try:
             cursor = self.yaml_viewer.textCursor()
@@ -430,7 +537,7 @@ class RecipeEditorMainMenu(QMainWindow):
             return
         self.temporary_recipe_contents = self.last_valid_recipe
         self.update_yaml_viewer()
-        self.collapse_inside_steps()
+        #self.collapse_inside_steps()
 
     def on_save_as_clicked(self):
         try:
@@ -553,7 +660,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.current_file_path = None
         self.stacked_layout.setCurrentIndex(1)
 
-        self.collapse_inside_steps()
+        #self.collapse_inside_steps()
 
         self.action_save.setEnabled(False)
         self.action_save_as.setEnabled(True)
@@ -581,7 +688,8 @@ class RecipeEditorMainMenu(QMainWindow):
         webbrowser.open(url)
 
     def on_close_recipe_clicked(self):
-        self.tree.clear()
+        #self.tree.clear()
+        self.sequencer.clear()
         self.stacked_layout.setCurrentIndex(0)  # Show logo
         self.close_recipe.setEnabled(False)  # 🔒 Disable it - gray out
         self.action_save.setEnabled(False)
@@ -701,7 +809,7 @@ class RecipeEditorMainMenu(QMainWindow):
                 self.show_recipe_error("❌ Recipe file is invalid!")
                 return False
         except Exception as e:
-            self.tree.blockSignals(False)  # Safety catch
+            self.sequencer.blockSignals(False)  # Safety catch
             self.log(f"❌ Expception while validating the recipe, recipe might be corrupted.")
             return False
 
@@ -720,7 +828,7 @@ class RecipeEditorMainMenu(QMainWindow):
         return result, description
 
     def open_recipe(self):
-        if not hasattr(self,"_file_path_initial"):
+        if getattr(self, "current_file_path", None):
             file_path = self.current_file_path
             
         else:
@@ -730,7 +838,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.save_action.setEnabled(True)
         self.action_save.setEnabled(True)
         self.action_save_as.setEnabled(True)
-        self.collapse_inside_steps()
+        #self.collapse_inside_steps()
 
         filename = os.path.basename(file_path)
         if filename == "":
@@ -776,9 +884,9 @@ class RecipeEditorMainMenu(QMainWindow):
                 self.close_recipe.setEnabled(True)  # 🔒 Enable it
 
             except YAMLError as e:
-                self.tree.blockSignals(False)  # Safety catch
+                #self.tree.blockSignals(False)  # Safety catch
                 self.log(f"❌ YAML parse error: {e}")
-            self.collapse_inside_steps()
+            #self.collapse_inside_steps()
             QApplication.processEvents()
 
     def populate_tree(self, data, parent_item, path=()):
@@ -864,6 +972,19 @@ class RecipeEditorMainMenu(QMainWindow):
 
         # Expand all items after population
         self.tree.expandAll()
+    def on_steps_reordered(self, parent, start, end, destination, row):
+        new_order = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            block = self.list_widget.itemWidget(item)
+            step = block.step_data
+            step["step_name"] = block.step_name
+            new_order.append(step)
+
+        self.steps = new_order
+        if callable(self.yaml_update_callback):
+            self.yaml_update_callback(self.steps)
+
 
     def extract_treeView_to_data(self):
         documents = []
@@ -985,6 +1106,207 @@ class RecipeEditorMainMenu(QMainWindow):
         else:
             # Other types (int, float, bool, None, etc) returned as is
             return data
+
+
+class StepBlock(QFrame):
+    def __init__(self, step_name, step_data, parent=None):
+        super().__init__(parent)
+        self.step_name = step_name
+        self.step_data = step_data
+        self.setMaximumWidth(200)
+        self.setFrameShape(QFrame.StyledPanel)
+
+        layout = QHBoxLayout(self)
+        label = QLabel(step_name)
+        layout.addWidget(label)
+        layout.addStretch()
+
+
+class SequencerWidget(QWidget):
+    def __init__(self,yaml_viewer=None, parent=None):
+        super().__init__(parent)
+        self.yaml_viewer = yaml_viewer 
+        self.steps = []  # list of step dicts
+        self.yaml_update_callback = None
+
+        self.layout = QVBoxLayout(self)
+        #self.list_widget = QListWidget()
+        self.list_widget = StepListWidget()
+        #self.list_widget.setDragDropMode(QListWidget.InternalMove)
+        #self.list_widget.setDefaultDropAction(Qt.MoveAction)
+        self.list_widget.model().rowsMoved.connect(self.on_steps_reordered)
+        self.list_widget.itemClicked.connect(self.on_item_clicked)
+        self.list_widget.step_clicked.connect(self.navigate_to_step)
+
+
+        self.layout.addWidget(self.list_widget)
+
+    def set_yaml_data(self, steps_list):
+        self.steps = steps_list
+        self.refresh()
+
+    def refresh(self):
+        """Flattened steps with collapsible folders and indentation."""
+        self.list_widget.clear()
+
+        for step in self.steps:
+            step_type = step.get("steptype", "")
+            step_name = step.get("step_name", "Unnamed Step")
+
+            # Folder/Sequence
+            if step_type in ("sequence_folder", "setup_folder"):
+                # Header with "plus" icon to indicate collapsed initially
+                header_item = QListWidgetItem(f"➕ {step_name}")
+                header_item.setFlags(Qt.ItemIsEnabled)  # not draggable
+                # Store step data in header
+                header_item.setData(Qt.UserRole, step)
+                self.list_widget.addItem(header_item)
+
+                child_items = []
+                for child in step.get("children", []):
+                    block = StepBlock(child.get("step_name", "Unnamed Step"), child)
+                    block.setStyleSheet("margin-left: 20px;")  # visual indentation
+
+                    item = QListWidgetItem()
+                    item.setSizeHint(block.sizeHint())
+                    self.list_widget.addItem(item)
+                    self.list_widget.setItemWidget(item, block)
+
+                    # Store step data in child
+                    item.setData(Qt.UserRole, child)
+                    child_items.append(item)
+
+                # Store children in header for toggling
+                header_item.setData(Qt.UserRole + 1, child_items)
+
+                # Initially hide children
+                for child_item in child_items:
+                    child_item.setHidden(True)
+
+            else:
+                # Normal single step
+                block = StepBlock(step_name, step)
+                item = QListWidgetItem()
+                item.setSizeHint(block.sizeHint())
+                self.list_widget.addItem(item)
+                self.list_widget.setItemWidget(item, block)
+                item.setData(Qt.UserRole, step)
+
+
+    def on_steps_reordered(self, parent, start, end, destination, row):
+        """Update self.steps after drag & drop."""
+        new_order = []
+
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            step_data = item.data(Qt.UserRole)
+
+            if step_data is None:
+                continue  # this is likely a header
+
+            # Include child steps
+            new_order.append(step_data)
+
+        self.steps = new_order
+
+        if callable(self.yaml_update_callback):
+            self.yaml_update_callback(self.steps)
+
+
+    def on_item_clicked(self, item):
+        """Toggle collapsible folder visibility."""
+        children = item.data(Qt.UserRole + 1)
+        if not children:
+            return  # Not a folder
+
+        hidden = children[0].isHidden()  # toggle state
+        for child_item in children:
+            child_item.setHidden(not hidden)
+
+        # Update header icon
+        if hidden:
+            item.setText(f"➖ {item.data(Qt.UserRole).get('step_name', 'Unnamed Step')}")
+        else:
+            item.setText(f"➕ {item.data(Qt.UserRole).get('step_name', 'Unnamed Step')}")
+    
+    def navigate_to_step(self, step_data):
+        if not self.yaml_viewer:
+            return
+
+        yaml_text = self.yaml_viewer.toPlainText()
+        cursor = self.yaml_viewer.textCursor()
+
+        # Try line number if stored
+        line_number = step_data.get("__line__")
+        if line_number is not None:
+            lines = yaml_text.splitlines()
+            position = sum(len(l) + 1 for l in lines[:line_number])
+            cursor.setPosition(position)
+        else:
+            # fallback: search by step_name
+            step_name = step_data.get("step_name", "")
+            position = yaml_text.find(step_name)
+            if position == -1:
+                return
+            cursor.setPosition(position)
+
+        self.yaml_viewer.setTextCursor(cursor)
+        self.yaml_viewer.setFocus()
+
+    
+
+
+class StepListWidget(QListWidget):
+    step_clicked = Signal(dict)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragDropMode(QListWidget.InternalMove)
+        self.setDefaultDropAction(Qt.MoveAction)
+        self.setSelectionMode(QListWidget.SingleSelection)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(True)  
+        self.setDragEnabled(True)
+        self._mouse_press_pos = None
+
+    def startDrag(self, supportedActions):
+        item = self.currentItem()
+        if not item:
+            return
+
+        widget = self.itemWidget(item)
+        if not widget:
+            return
+
+        # Create a pixmap of the widget (the “ghost” that follows the mouse)
+        pixmap = widget.grab()
+        # Optionally make it semi-transparent
+        pixmap.setDevicePixelRatio(widget.devicePixelRatioF())
+
+        # Create the drag object
+        drag = QDrag(self)
+        selected_items = self.selectedItems()
+        mime_data = self.mimeData(selected_items)  # <-- important!
+        drag.setMimeData(mime_data)
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
+
+        # Start the drag
+        drag.exec(Qt.MoveAction)
+    
+    def mousePressEvent(self, event):
+        self._mouse_press_pos = event.position().toPoint()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        delta = (event.position().toPoint() - self._mouse_press_pos).manhattanLength()
+        if delta < QApplication.startDragDistance():
+            item = self.itemAt(event.position().toPoint())
+            if item:
+                step_data = item.data(Qt.UserRole)
+                if step_data:
+                    self.step_clicked.emit(step_data)  # notify parent
+        super().mouseReleaseEvent(event)
 
 # done 0.1 - VIEWER
 # done 0.1 - Show some indicator that the changes are unsaved

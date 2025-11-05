@@ -24,8 +24,7 @@ variables:
   # It is recommended to keep the two values consistent.
   # More details https://acc-py.web.cern.ch/gitlab-mono/acc-co/devops/python/acc-py-gitlab-ci-templates/docs/templates/master/generated/v2.html#global-variables.
   PY_VERSION: '3.11'
-  #ACC_PY_BASE_IMAGE_TAG: '2023.06'
-  ACC_PY_BASE_IMAGE_NAME: acc-py_el9_gui_ci
+  ACC_PY_BASE_IMAGE_TAG: '2023.06'
   
 
 # # REUSE license compliance check
