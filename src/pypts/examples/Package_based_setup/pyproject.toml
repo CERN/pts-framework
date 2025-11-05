@@ -7,11 +7,9 @@ requires = ["setuptools", "wheel", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "package_architecture_example"
-dynamic = [
-  "version",  # The version is taken directly from the repository, using setuptools-scm.
-]
-# description = "<Insert short description of the project>"
+name = "example_package"
+version = "0.2.0"
+# description = "<Simple package_based setup example>"
 readme = "README.md"
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -36,6 +34,17 @@ dependencies = [
   "PySide6==6.9.1",
   "PyYAML==6.0.2",
   "ruamel.yaml",
+]
+[project.optional-dependencies]
+# The optional dependencies of the project, installable using the "extras" syntax.
+test = [
+  "pytest",
+  "pytest-qt",
+]
+doc = [
+  "Sphinx",
+  "sphinx",
+  "acc-py-sphinx",
 ]
 dev = [
   # Dependencies for development of the project, such as type checkers,

@@ -40,12 +40,19 @@ variables:
 #     - if: $CI_COMMIT_REF_NAME == "master"
 #     - if: $CI_COMMIT_TAG
 
+.build_docs_for_gui:
+  extends: .acc_py_run_on_acc_py
+  variables:
+    ACC_PY_BASE_IMAGE_NAME: acc-py_el9_gui_ci
+
+
 dev_test:
   extends: .acc_py_dev_test
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
     - python -m pytest ./tests
+      -p no:pytestqt \
       --cov=pypts
       --cov-report term
       --cov-report html:coverage-html
@@ -62,16 +69,24 @@ build_sdist:
 build_wheel:
   extends: .acc_py_build_wheel
 
-# A dev build of the documentation, made available through cern.ch/acc-py.
-build_docs:
-  extends: .acc_py_build_docs
-
 
 # Release the source distribution and the wheel to the acc-py package index, only on git tag.
 publish:
   extends: .acc_py_publish
 
 
-# A release build of the documentation, made available through cern.ch/acc-py.
+# A dev build of the documentation, made available through cern.ch/acc-py. Now operational with GUI
+build_docs:
+  extends:
+    - .acc_py_build_docs
+    - .build_docs_for_gui
+  before_script:
+    - !reference [.acc_py_build_docs, before_script]
+
+# A release build of the documentation, made available through cern.ch/acc-py. Now operational with GUI
 build_docs_on_tag:
-  extends: .acc_py_build_docs_on_tag
+  extends:
+    - .acc_py_build_docs_on_tag
+    - .build_docs_for_gui
+  before_script:
+    - !reference [.acc_py_build_docs_on_tag, before_script]

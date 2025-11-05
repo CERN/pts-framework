@@ -14,16 +14,9 @@
 
 from pypts._version import version as __version__
 import logging
-import sys
 from pypts.startup import create_and_start_gui
-import os
-from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import QThread
 from pypts.pts import run_pts
-from pypts.gui import MainWindow
-from pypts.event_proxy import RecipeEventProxy
-import time
-import atexit
+
 
 logger = logging.getLogger(__name__)
 

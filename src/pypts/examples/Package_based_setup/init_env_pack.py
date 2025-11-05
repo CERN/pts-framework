@@ -35,7 +35,7 @@ def main():
 
     # Copy example recipe for minimal setup
     recipe_src = package_root / "Package_based_recipe.yml"
-    recipe_dest = resource_dir / "Package_based_recipe.yml"
+    recipe_dest = resource_dir /"Package_based_recipe.yml"
     if not recipe_dest.exists():
         shutil.copy(recipe_src, recipe_dest)
         print(f"Copied example recipe → {recipe_dest}")
@@ -53,6 +53,7 @@ def main():
             print(f"Test file already exists: {dest_file}")
 
     pyproject_toml = package_root / "pyproject.toml"
+    print(pyproject_toml)
     pyproject_dest = project_root/ "pyproject.toml"
     if not pyproject_dest.exists():
         shutil.copy(pyproject_toml, pyproject_dest)
