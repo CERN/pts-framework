@@ -46,6 +46,24 @@ steps:
     output:
       type: equals
       value: 'yes'
+
+# === INPUT: direct | OUTPUT: equals ===
+- steptype: PythonModuleStep
+  step_name: Direct Input - Equals Output
+  description: Direct input and check equality
+  action_type: method
+  module: example_tests.py
+  method_name: simple_output
+  input_mapping:
+    value:
+      type: direct
+      value: 4
+  output_mapping:
+    output:
+      type: equals
+      value: 5
+
+
 - steptype: PythonModuleStep
   step_name: other_test
   description: Python existing method - expect pass
@@ -59,12 +77,26 @@ steps:
     value:
       type: local
       local_name: some_value
+
+- steptype: PythonModuleStep
+  step_name: other_test
+  description: Python existing method - expect pass
+  action_type: method
+  module: example_tests
+  method_name: other_test
+  input_mapping: {}
+  output_mapping:
+    some_value:
+      type: local
+    value:
+      type: equals
+      value: 3
 - steptype: PythonModuleStep
   step_name: other_testa
   description: Python non-existing method - expect error
   action_type: method
-  module: example_testsa
-  method_name: other_testa
+  module: example_tests
+  method_name: other_test
   input_mapping: {}
   output_mapping:
     some_return:
