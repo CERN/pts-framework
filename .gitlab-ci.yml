@@ -50,7 +50,8 @@ dev_test:
   extends: 
     - .acc_py_dev_test
     - .build_for_gui
-
+  before_script:
+    - pip install pytest pytest-cov
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
