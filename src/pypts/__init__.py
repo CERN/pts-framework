@@ -12,7 +12,6 @@
 # use `__main__.py` which runs the same stack with a hardcoded recipe.
 
 
-from pypts._version import version as __version__
 import logging
 
 
@@ -34,7 +33,7 @@ def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
     """
     from pypts.startup import create_and_start_gui
     from pypts.pts import run_pts
-    
+
     api = run_pts()
 
     window, app = create_and_start_gui(api)

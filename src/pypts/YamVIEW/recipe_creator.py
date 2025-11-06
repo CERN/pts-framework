@@ -9,7 +9,7 @@ from pypts.YamVIEW.customGUIModules import (
 )
 
 import re
-import io
+import io, copy
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -322,36 +322,6 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def update_yaml_treeview(self):
         try:
-            # try:
-            #     self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
-            # except Exception as e:
-            #     self.log(f"❌ Failed to parse YAML content: {e}")
-            #     return False
-
-            # try:
-            #     self.tree.blockSignals(True)  # ⛔ Block signals while populating
-            #     self.tree.clear()
-            #     self.item_to_line.clear()  # Clear previous mappings
-            # except Exception as e:
-            #     self.log(f"❌ Failed to reset TreeView state: {e}")
-            #     return False
-
-            # for idx, doc in enumerate(self.yaml_documents):
-            #     try:
-            #         doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
-            #         self.tree.addTopLevelItem(doc_root)
-            #         self.populate_tree(doc, doc_root)
-            #         doc_root.setExpanded(True)
-            #     except Exception as e:
-            #         self.log(f"❌ Failed to populate tree for document {idx + 1}: {e}")
-            #         continue  # Try to load next document anyway
-
-            # try:
-            #     self.tree.blockSignals(False)
-            # except Exception as e:
-            #     self.log(f"❌ Failed to unblock TreeView signals: {e}")
-            # return True
-
             self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
             if not self.yaml_documents:
                 self.log("⚠️ No YAML documents found.")
@@ -410,20 +380,43 @@ class RecipeEditorMainMenu(QMainWindow):
                                 "step_name": step_node.get("step_name", "Unnamed Step"),
                                 "steptype": step_node.get("steptype", "unknown"),
                                 "_node": step_node,
+                                "_doc_index": 1,
                             })
+                
 
                 # Only add sequence if it has something
                 if sequence_block["children"]:
                     sequencer_steps.append(sequence_block)
                 else:
                     self.log(f"ℹ️ Sequence '{sequence_name}' has no valid steps; skipped.")
+                
+                # 🔹 Teardown steps
+                teardown_steps = doc.get("teardown_steps", [])
+                if isinstance(teardown_steps, list) and teardown_steps:
+                    # Check if setup_steps actually contains real steps
+                    valid_teardown_steps = [s for s in teardown_steps if isinstance(s, dict) and s.get("step_name")]
+                    if valid_teardown_steps:
+                        teardown_folder = {
+                            "step_name": "Teardown Steps",
+                            "steptype": "Teardown_folder",
+                            "children": [],
+                            "_node": teardown_steps,
+                        }
+                        for s in valid_teardown_steps:
+                            teardown_folder["children"].append({
+                                "step_name": s.get("step_name", "Unnamed Setup Step"),
+                                "steptype": s.get("steptype", "unknown"),
+                                "_node": s,
+                            })
+                        sequence_block["children"].append(teardown_folder)
+                    # If setup_steps empty or malformed, skip
 
 
             self.sequencer.set_yaml_data(sequencer_steps)
             self.log(f"✅ Sequencer received {len(sequencer_steps)} steps including preamble/setup.")
             return True
 
-
+        
         except Exception as e:
             self.log(f"❌ Unexpected error during TreeView update: {e}")
             return False
@@ -434,9 +427,9 @@ class RecipeEditorMainMenu(QMainWindow):
             return
 
         doc2 = self.yaml_documents[1]
-        new_order_nodes = [s["_node"] for s in steps if "_node" in s]
 
         # Replace the steps in place — preserves comments / formatting
+        new_order_nodes = [s["_node"] for s in steps if "_node" in s and s.get("_doc_index") == 1]
         doc2["steps"][:] = new_order_nodes
 
         # Dump YAML
@@ -1128,12 +1121,10 @@ class SequencerWidget(QWidget):
         self.yaml_viewer = yaml_viewer 
         self.steps = []  # list of step dicts
         self.yaml_update_callback = None
+        self.expanded = False
 
         self.layout = QVBoxLayout(self)
-        #self.list_widget = QListWidget()
         self.list_widget = StepListWidget()
-        #self.list_widget.setDragDropMode(QListWidget.InternalMove)
-        #self.list_widget.setDefaultDropAction(Qt.MoveAction)
         self.list_widget.model().rowsMoved.connect(self.on_steps_reordered)
         self.list_widget.itemClicked.connect(self.on_item_clicked)
         self.list_widget.step_clicked.connect(self.navigate_to_step)
@@ -1156,7 +1147,10 @@ class SequencerWidget(QWidget):
             # Folder/Sequence
             if step_type in ("sequence_folder", "setup_folder"):
                 # Header with "plus" icon to indicate collapsed initially
-                header_item = QListWidgetItem(f"➕ {step_name}")
+                if self.expanded:
+                    header_item = QListWidgetItem(f"➖ {step_name}")
+                else:
+                    header_item = QListWidgetItem(f"➕ {step_name}")
                 header_item.setFlags(Qt.ItemIsEnabled)  # not draggable
                 # Store step data in header
                 header_item.setData(Qt.UserRole, step)
@@ -1178,10 +1172,10 @@ class SequencerWidget(QWidget):
 
                 # Store children in header for toggling
                 header_item.setData(Qt.UserRole + 1, child_items)
-
-                # Initially hide children
-                for child_item in child_items:
-                    child_item.setHidden(True)
+                if not self.expanded:
+                    # Initially hide children
+                    for child_item in child_items:
+                        child_item.setHidden(True)
 
             else:
                 # Normal single step
@@ -1226,8 +1220,10 @@ class SequencerWidget(QWidget):
         # Update header icon
         if hidden:
             item.setText(f"➖ {item.data(Qt.UserRole).get('step_name', 'Unnamed Step')}")
+            self.expanded = True
         else:
             item.setText(f"➕ {item.data(Qt.UserRole).get('step_name', 'Unnamed Step')}")
+            self.expanded = False
     
     def navigate_to_step(self, step_data):
         if not self.yaml_viewer:
