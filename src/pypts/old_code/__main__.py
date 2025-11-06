@@ -15,7 +15,7 @@
 import logging
 import sys
 from pypts.pts import run_pts
-from pypts.launcher.startup import create_and_start_gui
+from pypts.old_code.startup import create_and_start_gui
 
 logger = logging.getLogger(__name__)
 

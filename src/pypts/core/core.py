@@ -2,7 +2,7 @@ from multiprocessing import Process, Queue
 import time
 from queue import Empty
 
-from pypts.sandbox.hmi import QueueHMI
+from pypts.hmi.hmi import QueueHMI
 from pypts.messages.CORE_MESSAGES import CoreCommand, CoreMessage
 from pypts.messages.HMI_MESSAGES import HMIEvent, HMIMessage
 from sequencer import sequencer_main

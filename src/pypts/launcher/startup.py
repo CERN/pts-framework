@@ -1,39 +1,48 @@
-# SPDX-FileCopyrightText: 2025 CERN <home.cern>
-#
-# SPDX-License-Identifier: LGPL-2.1-or-later
+from multiprocessing import Process, Queue
+from pypts.hmi.hmi import QueueHMI
+from core import core_main
+from pypts.hmi.gui.gui import gui_main
+from pypts.hmi.cli.cli import cli_main
 
-import sys
-import logging
-import time
-from PySide6.QtWidgets import QApplication
-from pypts import MainWindow
-from pypts import RuntimeContext
+import argparse
+def main():
+    parser = argparse.ArgumentParser(description="System launcher")
+    parser.add_argument("--cli", action="store_true", help="Run in CLI mode instead of GUI")
+    parser.add_argument("--gui", action="store_true", help="Run in GUI mode (default)")
+    args = parser.parse_args()
+    # todo - initialize logger and config singletons
+    # todo - add runtime and debug logs showing the status
 
-logger = logging.getLogger(__name__)
+    # initialize the CORE - HMI queues
+    hmi_to_core_queue = Queue()
+    core_to_hmi_queue = Queue()
+    hmi = QueueHMI(hmi_to_core_queue, core_to_hmi_queue)
 
-def create_and_start_gui(api,  recipe_file: str = None):
-    """
-    todo
-    """
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.q_in = api.input_queue
-    logging.getLogger().addHandler(window.log_handler)
+    # --- Determine which UI to run ---
+    if args.cli:
+        ui_target = cli_main
+        ui_name = "CLI"
+    elif args.gui or not (args.cli or args.gui):
+        # default to GUI if nothing specified
+        ui_target_main = gui_main
+        ui_name = "GUI"
+    else:
+        raise ValueError("Invalid mode selected. Use --cli or --gui.")
 
-    RuntimeContext.set(window, api, app)
+    # spawn the CORE main -> it will create the object and spawn necessary submodules
+    p_core = Process(target=core_main, args=(hmi,))
+    p_core.start()
+    print(f"[launcher] CORE started.")
 
-    if recipe_file:
-        window.recipe_file = recipe_file
-        try:
-            window.load_recipe()
-            window.q_in.put(("LOAD",window.recipe_file))
-            window.action_start_recipe_execution.setEnabled(True)
-        except:
-           pass
+    # spawn the GUI/CLI main
+    p_ui = Process(target=ui_target_main, args=(hmi,))
+    p_ui.start()
+    print(f"[launcher] {ui_name} started.")
 
-    time.sleep(1)  # Prevents a race condition. To be properly fixed!!
-    # If we don't put the sleep, recipe_event_processing_thread.start() may not
-    # be finished before the app.exec() call.
+    # todo - add the exit codes and parse -> log them
+    p_core.join()
+    p_ui.join()
 
-    return window, app
 
+if __name__ == "__main__":
+    main()

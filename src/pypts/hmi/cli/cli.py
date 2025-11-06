@@ -1,4 +1,4 @@
-from hmi import *
+from pypts.hmi.hmi import *
 import time
 
 def cli_main(hmi: HMIInterface):
