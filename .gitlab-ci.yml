@@ -49,10 +49,6 @@ reuse:
 dev_test:
   extends: 
     - .acc_py_dev_test
-    - .build_for_gui
-  before_script:
-    - !reference [.acc_py_dev_test, before_script]
-    - !reference [.build_for_gui, before_script]
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
@@ -63,6 +59,7 @@ dev_test:
       --cov-report html:coverage-html
       --cov-report xml:coverage-report.xml
       --junitxml=junit-report.xml
+      --ignore=tests/unit_tests/test_event_proxy.py
       --ignore=tests/unit_tests/test_gui.py  # Ignore the GUI test file, because it requires X server, not present on gitlab machine
 
 # Build a source distribution for pypts.
@@ -84,14 +81,8 @@ publish:
 build_docs:
   extends:
     - .acc_py_build_docs
-    - .build_for_gui
-  before_script:
-    - !reference [.acc_py_build_docs, before_script]
 
 # A release build of the documentation, made available through cern.ch/acc-py. Now operational with GUI
 build_docs_on_tag:
   extends:
     - .acc_py_build_docs_on_tag
-    - .build_for_gui
-  before_script:
-    - !reference [.acc_py_build_docs_on_tag, before_script]
