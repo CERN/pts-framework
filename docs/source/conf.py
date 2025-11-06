@@ -4,7 +4,7 @@
 
 import datetime
 
-from pypts import __version__
+from pypts._version import __version__
 
 
 project = "pypts"
