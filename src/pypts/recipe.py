@@ -17,7 +17,6 @@ from enum import Enum, IntEnum
 import json
 import uuid
 import os, atexit
-from pypts.event_proxy import RecipeEventProxy
 from PySide6.QtCore import QTimer, QThread, QObject, Signal, Slot
 from pypts.Thread_context import RuntimeContext
 from threading import Timer, Event
@@ -187,6 +186,7 @@ class Runtime:
         if getattr(cls, "recipe_thread", None) is not None:
             cls._cleanup_thread()
 
+        from pypts.event_proxy import RecipeEventProxy
         cls._window = window
         cls._api = api
         cls._app = app

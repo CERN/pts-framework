@@ -14,7 +14,6 @@
 
 from pypts._version import version as __version__
 import logging
-from pypts.pts import run_pts
 
 
 logger = logging.getLogger(__name__)
@@ -34,6 +33,8 @@ def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
     Starts the recipe execution and event processing threads.
     """
     from pypts.startup import create_and_start_gui
+    from pypts.pts import run_pts
+    
     api = run_pts()
 
     window, app = create_and_start_gui(api)
