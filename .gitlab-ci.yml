@@ -49,6 +49,10 @@ reuse:
 dev_test:
   extends: 
     - .acc_py_dev_test
+    - .build_for_gui
+  before_script:
+    - !reference [.acc_py_dev_test, before_script]
+    - !reference [.build_for_gui, before_script]
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
