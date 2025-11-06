@@ -12,7 +12,6 @@
 # use `__main__.py` which runs the same stack with a hardcoded recipe.
 
 
-from pypts._version import version as __version__
 import logging
 
 
