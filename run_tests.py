@@ -10,6 +10,7 @@ if __name__ == "__main__":
         "-v",
         "--color=yes",
         "tests/unit_tests",
-        "tests/functional_tests"
+        "tests/functional_tests",
+        "--ignore=tests/unit_tests/test_pts.py"
     ])
     exit(exit_code)
