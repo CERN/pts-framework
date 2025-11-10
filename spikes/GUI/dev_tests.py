@@ -7,8 +7,8 @@ import numpy as np
 from nptdms import TdmsWriter, RootObject, GroupObject, ChannelObject
 import os
 from datetime import datetime
-from pypts.stream_handler.StreamContainer import Stream, container
-from pypts.hmi.gui.XYGraph.simulated_signals import Simulated_sine_wave
+from pypts import Stream, container
+from pypts import Simulated_sine_wave
 import time
 logger = logging.getLogger(__name__)
 
