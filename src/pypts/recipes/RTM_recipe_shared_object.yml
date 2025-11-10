@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+name: Example Test Recipe
+version: 0.1.0
+recipe_version: 1.0.0
+description: A sample recipe demonstrating how to call functions from example_tests.py
+main_sequence: Main
+continue_on_error: true
+globals:
+  test_object: None
+---
+sequence_name: Main
+description: The main sequence of steps for the example recipe.
+parameters: {}
+locals:
+  test: None
+outputs: {}
+setup_steps: []
+steps:
+- steptype: PythonModuleStep
+  step_name: create_object
+  description: create_object
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_object_example.py"
+  method_name: create_object
+  input_mapping: {}
+  output_mapping:
+    test_object:
+      type: global
+      global_name: test_object
+
+
+- steptype: PythonModuleStep
+  step_name: get_object_value
+  description: get_object_value
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_object_example.py"
+  method_name: get_object_value
+  input_mapping:
+    object:
+      type: global
+      global_name: test_object
+  output_mapping:
+    object_value:
+      type: equals
+      value: "just created"
+
+
+- steptype: PythonModuleStep
+  step_name: get_object_value
+  description: get_object_value
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_object_example.py"
+  method_name: update_object_value
+  input_mapping:
+    object:
+      type: global
+      global_name: test_object
+    value:
+      type: direct
+      value: "updated string"
+  output_mapping: {}
+
+
+- steptype: PythonModuleStep
+  step_name: get_object_value
+  description: get_object_value
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_object_example.py"
+  method_name: get_object_value
+  input_mapping:
+    object:
+      type: global
+      global_name: test_object
+  output_mapping:
+    object_value:
+      type: equals
+      value: "updated string"
+
+
+teardown_steps: []
