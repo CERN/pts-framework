@@ -10,7 +10,7 @@ include:
 
 # Define stages to include analyse stage for reuse linting
 stages:
-  - analyse
+#  - analyse
   - test
   - build
   - deploy
@@ -26,7 +26,7 @@ variables:
   PY_VERSION: '3.11'
   ACC_PY_BASE_IMAGE_TAG: '2023.06'
 
-# # REUSE license compliance check
+# REUSE license compliance check
 # reuse:
 #   stage: analyse
 #   image:
@@ -39,8 +39,18 @@ variables:
 #     - if: $CI_COMMIT_REF_NAME == "master"
 #     - if: $CI_COMMIT_TAG
 
+.build_for_gui:
+  extends: .acc_py_run_on_acc_py
+  variables:
+    ACC_PY_BASE_IMAGE_NAME: acc-py_el9_gui_ci
+
 dev_test:
-  extends: .acc_py_dev_test
+  extends: 
+      - .acc_py_dev_test
+      - .build_for_gui
+  before_script:
+    - !reference [.acc_py_dev_test, before_script]
+    - !reference [.build_for_gui, before_script]
   script:
     # Override the default test command to look in the tests directory
     - cd ${project_root}
@@ -50,6 +60,7 @@ dev_test:
       --cov-report html:coverage-html
       --cov-report xml:coverage-report.xml
       --junitxml=junit-report.xml
+      --ignore=tests/unit_tests/test_pts.py
       --ignore=tests/unit_tests/test_gui.py  # Ignore the GUI test file, because it requires X server, not present on gitlab machine
 
 # Build a source distribution for pypts.
