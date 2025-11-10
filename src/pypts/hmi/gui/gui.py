@@ -1,36 +1,65 @@
 # SPDX-FileCopyrightText: 2025 CERN <home.cern>
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
-
+from PySide6.QtWidgets import (
+    QApplication, QWidget, QVBoxLayout, QPushButton, QLabel
+)
+from PySide6.QtCore import QTimer
 from queue import Empty
-from time import sleep
+import sys
 from pypts.core.core_interface import HMIToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToHMIEvent, CoreToHMICommand
 from pypts.logger.log import log
 
 
-def gui_main(core: HMIToCoreInterface, core_to_hmi_queue):
+def gui_main(hmiToCoreInterface: HMIToCoreInterface, core_to_hmi_queue):
     """Entry point called by launcher"""
-    gui = GUI(core, core_to_hmi_queue)
-    gui.start()
+    app = QApplication(sys.argv)
+    gui = GUI(hmiToCoreInterface, core_to_hmi_queue)
+    gui.show()
+    sys.exit(app.exec())
 
 
-class GUI:
-    def __init__(self, core_interface: HMIToCoreInterface, core_to_hmi_queue):
-        self.core = core_interface                # interface for sending to Core
-        self.core_to_hmi_queue = core_to_hmi_queue            # queue for receiving from Core
-        self.running = True
+class GUI(QWidget):
+    def __init__(self, hmiToCoreInterface: HMIToCoreInterface, core_to_hmi_queue):
+        super().__init__()
+        self.hmiToCoreInterface = hmiToCoreInterface
+        self.core_to_hmi_queue = core_to_hmi_queue
 
-    def start(self):
+        self.setWindowTitle("PTS GUI")
+
         log.info("[gui] Starting module...")
-        self.main_loop()
-        log.info("[gui] Stopping module...")
+        layout = QVBoxLayout()
 
-    def main_loop(self):
-        while self.running:
-            self.poll_core()
-            self.do_periodic_tasks()
-            sleep(0.01)
+        self.status_label = QLabel("Status: Idle")
+        layout.addWidget(self.status_label)
+
+        # --- Explicit buttons + connects ---
+        btn_start_A = QPushButton("Start Sequence A")
+        btn_start_A.clicked.connect(lambda: self.hmiToCoreInterface.start_sequence("A"))
+        layout.addWidget(btn_start_A)
+
+        btn_start_B = QPushButton("Start Sequence B")
+        btn_start_B.clicked.connect(lambda: self.hmiToCoreInterface.start_sequence("B"))
+        layout.addWidget(btn_start_B)
+
+        btn_recipe_X = QPushButton("Load Recipe X")
+        btn_recipe_X.clicked.connect(lambda: self.hmiToCoreInterface.load_recipe("/tmp/recipe_x.yml"))
+        layout.addWidget(btn_recipe_X)
+
+        btn_recipe_Y = QPushButton("Load Recipe Y")
+        btn_recipe_Y.clicked.connect(lambda: self.hmiToCoreInterface.load_recipe("/tmp/recipe_y.yml"))
+        layout.addWidget(btn_recipe_Y)
+
+        btn_stop = QPushButton("STOP CORE")
+        btn_stop.clicked.connect(self.hmiToCoreInterface.stop)
+        layout.addWidget(btn_stop)
+        self.setLayout(layout)
+
+        self.timer = QTimer()
+        log.info("[gui] Starting main event loop.")
+        self.timer.timeout.connect(self.poll_core)
+        self.timer.start(50)  # ms
 
     def poll_core(self):
         try:

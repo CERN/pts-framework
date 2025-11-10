@@ -25,6 +25,7 @@ class Report:
         log.info("[report] Starting module...")
 
     def main_loop(self):
+        log.info("[report] Starting main event loop.")
         while self.running:
             self.poll_core()
             self.do_periodic_tasks()

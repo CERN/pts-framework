@@ -2,6 +2,9 @@ from multiprocessing import Process, Queue
 import time
 from queue import Empty
 
+from pypts.core.core_interface import SequencerToCoreInterface, SequencerToCoreQueue
+from pypts.core.core_interface import ReportToCoreInterface, ReportToCoreQueue
+
 from pypts.hmi.HMIInterface import CoreToHMIQueue
 from pypts.hmi.HMI_MESSAGES import HMIToCoreCommand, HMIToCoreEvent
 
@@ -28,11 +31,13 @@ class Core:
         self.coreToHMIInterface = coreToHMIInterface
         self.hmi_to_core_queue = hmi_to_core_queue
 
-        self.sequencer = CoreToSequencerQueue
+        self.core_to_sequencer_queue = Queue()
         self.sequencer_to_core_queue = Queue()
+        self.sequencerToCoreInterface = SequencerToCoreQueue(self.sequencer_to_core_queue)
 
-        self.report = CoreToReportQueue
+        self.core_to_report_queue = Queue()
         self.report_to_core_queue = Queue()
+        self.reportToCoreInterface = CoreToReportQueue(self.report_to_core_queue)
 
         self.running = True
 
@@ -46,16 +51,13 @@ class Core:
     def start_submodules(self):
         self.sequencer = Process(
             target=sequencer_main,
-            args=(SequencerToCoreInterface, self.core_to_sequencer_queue)
+            args=(self.sequencerToCoreInterface, self.core_to_sequencer_queue)
         )
         self.sequencer.start()
 
-        # def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
-
-
         self.report = Process(
             target=report_main,
-            args=(self.report_to_core_queue, self.core_to_report_queue)
+            args=(self.reportToCoreInterface, self.core_to_report_queue)
         )
         self.report.start()
 

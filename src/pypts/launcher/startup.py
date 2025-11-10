@@ -15,14 +15,11 @@ def main():
     parser.add_argument("--gui", action="store_true", help="Run in GUI mode (default)")
     args = parser.parse_args()
 
-    # initialize the CORE - HMI queues
     hmi_to_core_queue = Queue()
-    core_to_hmi_queue = Queue()
-    CoreToHmiInterface = CoreToHMIQueue(core_to_hmi_queue)
     HMIToCoreInterface = HMIToCoreQueue(hmi_to_core_queue)
 
-    # hmiInterface: CoreToHMIQueue
-    # hmi_to_core_queue: Queue
+    core_to_hmi_queue = Queue()
+    CoreToHmiInterface = CoreToHMIQueue(core_to_hmi_queue)
 
     # --- Determine which UI to run ---
     if args.cli:

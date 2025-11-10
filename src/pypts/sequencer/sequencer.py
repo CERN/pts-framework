@@ -5,7 +5,7 @@
 from queue import Empty
 from pypts.core.core_interface import SequencerToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToSequencerEvent, CoreToSequencerCommand
-from pypts.logger import log
+from pypts.logger.log import log
 import time
 
 def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
@@ -25,6 +25,7 @@ class Sequencer:
         log.info("[sequencer] Stopping module...")
 
     def main_loop(self):
+        log.info("[sequencer] Starting main event loop.")
         while self.running:
             self.poll_core()
             self.do_periodic_tasks()

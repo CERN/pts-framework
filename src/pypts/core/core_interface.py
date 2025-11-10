@@ -51,7 +51,7 @@ class SequencerToCoreQueue(SequencerToCoreInterface):
     def __init__(self, sequencer_to_core_queue: Queue):
         self.sequencer_to_core_queue = sequencer_to_core_queue
 
-    def start_sequence(self, text: str):
+    def sequence_result(self, text: str):
         event = SequencerToCoreEvent(cmd=SequencerToCoreCommand.SEQUENCE_RESULT)
         self.sequencer_to_core_queue.put(event)
 
@@ -70,8 +70,8 @@ class ReportToCoreInterface(ABC):
     def stop(self):
         pass
 
-    @report_exported
-    def stop(self):
+    @abstractmethod
+    def report_exported(self):
         pass
 
 
