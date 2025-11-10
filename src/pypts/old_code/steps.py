@@ -11,8 +11,8 @@ from pathlib import Path
 from importlib import import_module
 import importlib.resources
 from typing import List
-from pypts.utilities.recipe import Step, Runtime, StepResult, ResultType, Sequence
-from pypts.utilities.utils import get_package_root, find_resource_path, get_project_root, path_to_importable_module, AbortTestException
+from pypts import Step, Runtime, StepResult, ResultType, Sequence
+from pypts import get_package_root, find_resource_path, get_project_root, path_to_importable_module, AbortTestException
 
 logger = logging.getLogger(__name__)
 

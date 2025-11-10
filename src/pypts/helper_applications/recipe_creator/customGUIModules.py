@@ -23,7 +23,6 @@ from PySide6.QtGui import (
 from PySide6.QtCore import QSize, QRect
 from PySide6.QtGui import QSyntaxHighlighter, QTextCharFormat, QColor, QFont
 from PySide6.QtCore import Qt, QRegularExpression
-from pypts.helper_applications.recipe_creator.styles import *
 import sys
 import yaml
 

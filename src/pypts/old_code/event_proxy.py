@@ -3,12 +3,12 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 # src/pypts/event_proxy.py
-from pypts.utilities.utils import get_project_root, find_resource_path, get_step_result_colors
+from pypts import get_project_root, find_resource_path, get_step_result_colors
 import logging
 from PySide6.QtCore import QObject, Signal, Slot
 from queue import SimpleQueue
 from contextlib import suppress
-from pypts.utilities import recipe
+from pypts import recipe
 
 logger = logging.getLogger(__name__)
 

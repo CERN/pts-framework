@@ -8,7 +8,7 @@ import csv
 from typing import Dict, Any
 from pathlib import Path
 import logging
-from pypts.utilities.recipe import StepResult, Step
+from pypts import StepResult, Step
 import argparse
 import html # Added for HTML escaping
 import matplotlib
@@ -607,7 +607,7 @@ def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = Non
 if __name__ == "__main__":
     import uuid
     from datetime import datetime
-    from pypts.utilities.recipe import Step, StepResult, ResultType # Ensure these are importable
+    from pypts import Step, StepResult, ResultType # Ensure these are importable
 
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description="Generate a sample pypts report CSV.")

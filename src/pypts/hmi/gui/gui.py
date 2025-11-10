@@ -1,19 +1,16 @@
-from pypts.hmi.hmi import *
-import time
+# gui.py
+from time import sleep
+from queue import Queue
+from pypts.core.CoreInterface import HMIToCoreInterface
 
-def gui_main(hmi: HMIInterface):
+def gui_main(coreInterface: HMIToCoreInterface, core_to_hmi_queue: Queue):
     while True:
-        time.sleep(1)
-        hmi.send_command_to_core("Hello core, from GUI")
+        # GUI sends commands TO core
+        coreInterface.start_sequence("Test sequence")
 
+        # GUI receives messages FROM core
+        event = core_to_hmi_queue.get_nowait()
+        if event:
+            print("[GUI] Received:", event)
 
-
-if __name__ == "__main__":
-    import sys
-
-    logging.basicConfig(level=logging.DEBUG)  # Optional: Configure logging level
-
-    app = QApplication(sys.argv)
-    window = MainWindow()
-    window.show()
-    sys.exit(app.exec())
+        sleep(1)

@@ -2,28 +2,34 @@ from multiprocessing import Process, Queue
 import time
 from queue import Empty
 
-from pypts.hmi.hmi import QueueHMI
-from pypts.messages.CORE_MESSAGES import CoreCommand, CoreMessage
-from pypts.messages.HMI_MESSAGES import HMIEvent, HMIMessage
-from sequencer import sequencer_main
-from report import report_main
+from pypts.hmi.HMIInterface import CoreToHMIQueue
+from pypts.hmi.HMI_MESSAGES import HMIToCoreCommand, HMIToCoreEvent
+from pypts.sequencer.SEQUENCER_MESSAGES import SequencerToCoreCommand, SequencerToCoreEvent
+from pypts.sequencer.sequencer import sequencer_main
+from pypts.report.report import report_main
+from pypts.report.REPORT_MESSAGES import ReportToCoreEvent, ReportToCoreCommand
+from pypts.logger.log import log
 
 
-def core_main(hmi: QueueHMI):
+def core_main(hmiInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
     """Entry point for launcher"""
-    core = Core(hmi)
+    core = Core(hmiInterface, hmi_to_core_queue)
     core.start()
 
 
 class Core:
-    def __init__(self, hmi: QueueHMI):
-        self.hmi = hmi
+    def __init__(self, hmiInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
+        self.hmiInterface = hmiInterface
         self.running = True
 
         # inter-module queues
+        self.hmi_to_core_queue = hmi_to_core_queue
+
         self.core_to_sequencer_queue = Queue()
+        #change to iface
         self.sequencer_to_core_queue = Queue()
         self.core_to_report_queue = Queue()
+        #change to iface
         self.report_to_core_queue = Queue()
 
         self.sequencer = None
@@ -31,10 +37,10 @@ class Core:
 
     # --- Startup ---
     def start(self):
-        print("[core] Initializing subsystems...")
-
+        log.info("[core] Starting module...")
         self.start_submodules()
         self.main_loop()
+        log.info("[core] Stopping module...")
 
     def start_submodules(self):
         self.sequencer = Process(
@@ -51,12 +57,12 @@ class Core:
 
     # --- Main loop ---
     def main_loop(self):
-        print("[core] Starting main event loop.")
+        log.info("[core] Starting main event loop.")
         while self.running:
             self.poll_all_sources()
             self.do_periodic_tasks()
             time.sleep(0.01)
-        print("[core] Stopped main event loop.")
+        log.info("[core] Stopped main event loop.")
 
     def poll_queue(self, queue, handler):
         try:
@@ -67,42 +73,51 @@ class Core:
             pass
 
     def poll_all_sources(self):
-        self.poll_hmi()
+        self.poll_queue(self.hmi_to_core_queue, self.handle_hmi_event)
         self.poll_queue(self.sequencer_to_core_queue, self.handle_sequencer_event)
         self.poll_queue(self.report_to_core_queue, self.handle_report_event)
 
-    def poll_hmi(self):
-        if not self.hmi:
-            return
-        event = self.hmi.receive_command_from_hmi(timeout=0.1)
-        if event:
-            self.handle_hmi_event(event)
-
     # --- Event handlers ---
-    def handle_hmi_event(self, msg: CoreMessage):
-        print(f"[core] HMI -> CORE: {msg}")
-        match msg.cmd:
-            case CoreCommand.EXIT:
-                self.running = False
-                self.hmi.send_command_to_hmi(HMIMessage(HMIEvent.INFO, {"text": "Core shutting down"}))
-            case CoreCommand.RUN_SEQUENCE:
-                self.hmi.send_command_to_hmi(HMIMessage(HMIEvent.SEQUENCE_STARTED, {}))
-                self.core_to_sequencer_queue.put("run")
-            case CoreCommand.GENERATE_REPORT:
-                self.core_to_report_queue.put("generate")
+    def handle_hmi_event(self, event: HMIToCoreEvent):
+        log.info(f"[core] Handling HMI event: {event}")
+        match event.cmd:
+            case HMIToCoreCommand.STOP:
+                pass
+                # todo - implement action on stop
+            case HMIToCoreCommand.LOAD_RECIPE:
+                pass
+                # todo - implement action
+            case HMIToCoreCommand.START_SEQUENCE:
+                pass
+                # todo - implement action
             case _:
-                self.hmi.send_command_to_hmi(
-                    HMIMessage(HMIEvent.ERROR, {"text": f"Unknown command {msg.cmd}"})
-                )
+                pass
+                # todo - implement action
 
-    def handle_sequencer_event(self, event):
-        print(f"[core] SEQUENCER event: {event}")
-        # translate low-level event into HMI message
-        self.hmi.send_command_to_hmi(HMIMessage(HMIEvent.SEQUENCE_FINISHED, {"status": event}))
+    def handle_sequencer_event(self, event: SequencerToCoreEvent):
+        log.info(f"[core] Handling Sequencer event: {event}")
+        match event.cmd:
+            case SequencerToCoreCommand.STOP:
+                pass
+                # todo - implement action on stop
+            case SequencerToCoreCommand.SEQUENCE_RESULT:
+                pass
+            case _:
+                pass
+                # todo - implement action
 
-    def handle_report_event(self, event):
-        print(f"[core] REPORT event: {event}")
-        self.hmi.send_command_to_hmi(HMIMessage(HMIEvent.REPORT_GENERATED, {"status": event}))
+    def handle_report_event(self, event: ReportToCoreEvent):
+        log.info(f"[core] Handling Report event: {event}")
+        match event.cmd:
+            case ReportToCoreCommand.STOP:
+                pass
+                # todo - implement action on stop
+            case ReportToCoreCommand.REPORT_GENERATED:
+                # todo - implement action
+                pass
+            case _:
+                # todo - implement action
+                pass
 
     # --- Background tasks ---
     def do_periodic_tasks(self):

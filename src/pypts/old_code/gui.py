@@ -13,11 +13,11 @@ from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QMo
 from PySide6.QtGui import QFont, QColor, QPixmap, QBrush, QAction
 
 from typing import List
-from pypts.utilities import recipe
+from pypts import recipe
 import subprocess
 import os, serial, serial.tools.list_ports
 from importlib.resources import files
-from pypts.utilities.utils import get_step_result_colors, find_resource_path, get_project_root
+from pypts import get_step_result_colors, find_resource_path, get_project_root
 from queue import SimpleQueue
 
 

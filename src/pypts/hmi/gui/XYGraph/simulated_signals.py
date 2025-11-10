@@ -6,7 +6,6 @@ import csv
 import random 
 
 # framework related imports
-from pypts.stream_handler.StreamContainer import *
 
 class Simulated_sine_wave(threading.Thread):
     def __init__(self, name, randomize=False, frequency=2, sampling_rate=100, amplitude=1):

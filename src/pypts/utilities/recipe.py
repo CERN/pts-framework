@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 
-from pypts.helper_applications.recipe_verificator.verify_recipe import validate_recipe_filepath
+from pypts import validate_recipe_filepath
 import yaml
 import logging
 from typing import List, Self
@@ -15,11 +15,11 @@ from enum import Enum, IntEnum
 import json
 import uuid
 import os, atexit
-from pypts.core.event_proxy import RecipeEventProxy
+from pypts import RecipeEventProxy
 from PySide6.QtCore import QThread, QObject, Signal, Slot
-from pypts.Thread_context import RuntimeContext
+from pypts import RuntimeContext
 from threading import Timer, Event
-from pypts.utilities.utils import WAIT_FOR_TERMINATION
+from pypts import WAIT_FOR_TERMINATION
 # from pts import Runtime
 
 logger = logging.getLogger(__name__)
@@ -512,7 +512,7 @@ class Recipe:
             print(runtime.globals)
 
             # Signal the report listener to stop
-            from pypts.report.report import STOP_LISTENER
+            from pypts import STOP_LISTENER
             runtime.report_queue.put(STOP_LISTENER)
             logger.debug("Sent STOP_LISTENER to report queue.")
 
@@ -839,7 +839,7 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.step.steps import IndexedStep
+from pypts import IndexedStep
 
 if __name__ == "__main__":
     log_format = '%(levelname)s : %(name)s : %(message)s'

@@ -4,11 +4,11 @@
 
 from queue import Queue, SimpleQueue
 import logging
-from pypts.utilities import recipe
+from pypts import recipe
 import threading
 from dataclasses import dataclass
-from pypts.report.report import report_listener, STOP_LISTENER
-from pypts.utilities.recipe import runtime_bridge
+from pypts import report_listener, STOP_LISTENER
+from pypts import runtime_bridge
 from pathlib import Path
 import importlib.metadata
 

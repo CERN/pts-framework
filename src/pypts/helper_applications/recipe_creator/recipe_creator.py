@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2025 CERN <home.cern>
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
-from pypts.helper_applications.recipe_creator.customGUIModules import (
+from pypts import (
     ScintillaYamlEditor,
     WatermarkWidget,
     HashableTreeItem,
@@ -36,7 +36,6 @@ from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from datetime import datetime
 import webbrowser
-from pypts.helper_applications.recipe_creator.styles import *
 import sys
 from PySide6.QtGui import QTextCharFormat, QFont
 from PySide6.QtCore import Qt
