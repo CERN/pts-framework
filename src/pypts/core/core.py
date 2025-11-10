@@ -4,36 +4,37 @@ from queue import Empty
 
 from pypts.hmi.HMIInterface import CoreToHMIQueue
 from pypts.hmi.HMI_MESSAGES import HMIToCoreCommand, HMIToCoreEvent
-from pypts.sequencer.SEQUENCER_MESSAGES import SequencerToCoreCommand, SequencerToCoreEvent
+
+from pypts.sequencer.sequencer_interface import CoreToSequencerQueue
 from pypts.sequencer.sequencer import sequencer_main
+from pypts.sequencer.SEQUENCER_MESSAGES import SequencerToCoreCommand, SequencerToCoreEvent
+
+from pypts.report.report_interface import CoreToReportQueue
 from pypts.report.report import report_main
 from pypts.report.REPORT_MESSAGES import ReportToCoreEvent, ReportToCoreCommand
+
 from pypts.logger.log import log
 
-
-def core_main(hmiInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
-    """Entry point for launcher"""
-    core = Core(hmiInterface, hmi_to_core_queue)
+"""Entry point for launcher"""
+def core_main(
+        coreToHMIInterface: CoreToHMIQueue,
+        hmi_to_core_queue: Queue):
+    core = Core(coreToHMIInterface, hmi_to_core_queue)
     core.start()
 
 
 class Core:
-    def __init__(self, hmiInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
-        self.hmiInterface = hmiInterface
-        self.running = True
-
-        # inter-module queues
+    def __init__(self, coreToHMIInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
+        self.coreToHMIInterface = coreToHMIInterface
         self.hmi_to_core_queue = hmi_to_core_queue
 
-        self.core_to_sequencer_queue = Queue()
-        #change to iface
+        self.sequencer = CoreToSequencerQueue
         self.sequencer_to_core_queue = Queue()
-        self.core_to_report_queue = Queue()
-        #change to iface
+
+        self.report = CoreToReportQueue
         self.report_to_core_queue = Queue()
 
-        self.sequencer = None
-        self.report = None
+        self.running = True
 
     # --- Startup ---
     def start(self):
@@ -45,9 +46,12 @@ class Core:
     def start_submodules(self):
         self.sequencer = Process(
             target=sequencer_main,
-            args=(self.sequencer_to_core_queue, self.core_to_sequencer_queue)
+            args=(SequencerToCoreInterface, self.core_to_sequencer_queue)
         )
         self.sequencer.start()
+
+        # def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
+
 
         self.report = Process(
             target=report_main,

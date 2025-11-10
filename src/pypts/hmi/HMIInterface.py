@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 from queue import Queue, Empty
 from pypts.core.CORE_MESSAGES import CoreToHMIEvent, CoreToHMICommand
 from abc import ABC, abstractmethod
@@ -13,7 +17,6 @@ class CoreToHMIInterface(ABC):
     @abstractmethod
     def stop(self):
         pass
-
 
 
 class CoreToHMIQueue(CoreToHMIInterface):

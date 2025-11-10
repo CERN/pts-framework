@@ -41,7 +41,6 @@ class SequencerToCoreInterface(ABC):
     """Messages for usage by Sequencer"""
     @abstractmethod
     def sequence_result(self):
-        #todo - payload to be defined
         pass
 
     @abstractmethod
@@ -53,7 +52,7 @@ class SequencerToCoreQueue(SequencerToCoreInterface):
         self.sequencer_to_core_queue = sequencer_to_core_queue
 
     def start_sequence(self, text: str):
-        event = SequencerToCoreEvent(cmd=SequencerToCoreCommand.SEQUENCE_RESULT, payload={"sequence_name": text})
+        event = SequencerToCoreEvent(cmd=SequencerToCoreCommand.SEQUENCE_RESULT)
         self.sequencer_to_core_queue.put(event)
 
     def stop(self):
@@ -71,13 +70,21 @@ class ReportToCoreInterface(ABC):
     def stop(self):
         pass
 
+    @report_exported
+    def stop(self):
+        pass
+
 
 class ReportToCoreQueue(ReportToCoreInterface):
     def __init__(self, report_to_core_queue: Queue):
         self.report_to_core_queue = report_to_core_queue
 
     def report_generated(self,):
-        event = ReportToCoreEvent(cmd=ReportToCoreCommand.REPORT_GENERATED, payload={"sequence_name": text})
+        event = ReportToCoreEvent(cmd=ReportToCoreCommand.REPORT_GENERATED)
+        self.report_to_core_queue.put(event)
+
+    def report_exported(self,):
+        event = ReportToCoreEvent(cmd=ReportToCoreCommand.REPORT_EXPORTED)
         self.report_to_core_queue.put(event)
 
     def stop(self):

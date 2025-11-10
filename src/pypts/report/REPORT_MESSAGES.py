@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 """
-This file defines all possible messages that modules can exchange.
+This file defines all possible messages that modules can send.
 Keep all messaging defined there first, then follow with the implementation
 on the module side.
 
@@ -25,6 +25,7 @@ class ReportInternalEvent:
 class ReportToCoreCommand(Enum):
     STOP = auto() # message sent on the module crash
     REPORT_GENERATED = auto()
+    REPORT_EXPORTED = auto()
 
 @dataclass
 class ReportToCoreEvent:

@@ -1,15 +1,17 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 from queue import Empty
-import time
-from pypts.core.CoreInterface import SequencerToCoreInterface
+from pypts.core.core_interface import SequencerToCoreInterface
+from pypts.core.CORE_MESSAGES import CoreToSequencerEvent, CoreToSequencerCommand
 from pypts.logger import log
 import time
-
 
 def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
     """Entry point called by Core process"""
     seq = Sequencer(core, core_to_sequencer_queue)
     seq.start()
-
 
 class Sequencer:
     def __init__(self, coreInterface: SequencerToCoreInterface, core_to_sequencer_queue):
@@ -36,14 +38,15 @@ class Sequencer:
         except Empty:
             pass
 
-    def handle_command(self, cmd):
-        print(f"[sequencer] Handle event from core: {cmd}")
-        if cmd == "run":
-            self.run_sequence()
-        elif cmd == "exit":
-            self.running = False
-        else:
-            print(f"[sequencer] Unknown event: {cmd}")
+    def handle_command(self, event: CoreToSequencerEvent):
+        print(f"[sequencer] Received event from core: {event}")
+        match event.cmd:
+            case CoreToSequencerCommand.RUN_SEQUENCE:
+                self.run_sequence()
+            case CoreToSequencerCommand.STOP:
+                self.running = False
+            case _:
+                print(f"[sequencer] Unknown event: {event}")
 
     def run_sequence(self):
         print("[sequencer] Running sequence...")

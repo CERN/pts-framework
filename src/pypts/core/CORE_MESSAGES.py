@@ -6,7 +6,7 @@ from enum import Enum, auto
 from dataclasses import dataclass
 
 """
-This file defines all possible messages that modules can exchange.
+This file defines all possible messages that modules can send.
 Keep all messaging defined there first, then follow with the implementation
 on the module side.
 
