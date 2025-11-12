@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 from queue import Empty
-from pypts.core.core_interface import ReportToCoreInterface
+from pypts.core.report_to_core_interface import ReportToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToReportEvent, CoreToReportCommand
 from pypts.logger.log import log
 import time
@@ -20,16 +20,17 @@ class Report:
         self.running = True
 
     def start(self):
-        log.info("[report] Starting module...")
+        log.info("Starting module...")
         self.main_loop()
-        log.info("[report] Starting module...")
+        log.info("Stopping module...")
 
     def main_loop(self):
-        log.info("[report] Starting main event loop.")
+        log.info("Starting main event loop.")
         while self.running:
             self.poll_core()
             self.do_periodic_tasks()
             time.sleep(0.01)
+        log.info("exited main event loop.")
 
     def poll_core(self):
         try:
@@ -39,30 +40,34 @@ class Report:
             pass
 
     def handle_command(self, event: CoreToReportEvent):
-        print(f"[sequencer] Received event from core: {event}")
+        log.info(f"Received core event: {event}")
         match event.cmd:
             case CoreToReportCommand.GENERATE:
                 self.generate_report()
             case CoreToReportCommand.EXPORT:
                 self.export_report()
             case CoreToReportCommand.STOP:
-                self.running = False
+                self.stop()
             case _:
-                print(f"[sequencer] Unknown event: {event}")
+                log.error(f"Unknown event: {event}")
 
     def generate_report(self):
-        print("[report] Generating report...")
-        # simulate report generation
-        time.sleep(1.5)
-        self.core.report_generated()
-
+        pass
 
     def export_report(self):
-        print("[report] Exporting report...")
-        # simulate report generation
-        time.sleep(1.5)
-        self.core.report_exported()
+        pass
 
     def do_periodic_tasks(self):
-        """Periodic housekeeping, status updates, etc."""
+        """Periodic tasks, status updates, etc."""
         pass
+
+    def stop(self):
+        self.running = False
+        log.info("stopping module")
+        self.core.stop()
+        # add any teardown methods here
+
+    def _test_all_messages(self):
+        self.core.report_generated()
+        self.core.report_exported()
+        self.core.stop()

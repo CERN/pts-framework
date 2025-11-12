@@ -2,73 +2,88 @@ from multiprocessing import Process, Queue
 import time
 from queue import Empty
 
-from pypts.core.core_interface import SequencerToCoreInterface, SequencerToCoreQueue
-from pypts.core.core_interface import ReportToCoreInterface, ReportToCoreQueue
+from pypts.core.sequencer_to_core_interface import SequencerToCoreInterface, SequencerToCoreQueue
+from pypts.core.report_to_core_interface import ReportToCoreInterface, ReportToCoreQueue
 
-from pypts.hmi.HMIInterface import CoreToHMIQueue
+from pypts.hmi.core_to_HMI_interface import CoreToHMIQueue
 from pypts.hmi.HMI_MESSAGES import HMIToCoreCommand, HMIToCoreEvent
 
-from pypts.sequencer.sequencer_interface import CoreToSequencerQueue
+from pypts.sequencer.core_to_sequencer_interface import CoreToSequencerQueue
 from pypts.sequencer.sequencer import sequencer_main
 from pypts.sequencer.SEQUENCER_MESSAGES import SequencerToCoreCommand, SequencerToCoreEvent
 
-from pypts.report.report_interface import CoreToReportQueue
+from pypts.report.core_to_report_interface import CoreToReportQueue
 from pypts.report.report import report_main
 from pypts.report.REPORT_MESSAGES import ReportToCoreEvent, ReportToCoreCommand
 
 from pypts.logger.log import log
 
-"""Entry point for launcher"""
+"""
+Entry point for launcher. This is used to spawn an object of a class and run its thread.
+"""
 def core_main(
         coreToHMIInterface: CoreToHMIQueue,
         hmi_to_core_queue: Queue):
     core = Core(coreToHMIInterface, hmi_to_core_queue)
     core.start()
-
+#
 
 class Core:
     def __init__(self, coreToHMIInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
-        self.coreToHMIInterface = coreToHMIInterface
+        """Interface and queues definitions"""
+        self.hmi = coreToHMIInterface
         self.hmi_to_core_queue = hmi_to_core_queue
 
-        self.core_to_sequencer_queue = Queue()
+        # sequencer -> core
         self.sequencer_to_core_queue = Queue()
         self.sequencerToCoreInterface = SequencerToCoreQueue(self.sequencer_to_core_queue)
+        # core -> sequencer
+        self.core_to_sequencer_queue = Queue()
+        self.sequencer = CoreToSequencerQueue(self.core_to_sequencer_queue)
 
-        self.core_to_report_queue = Queue()
+        # report -> core
         self.report_to_core_queue = Queue()
-        self.reportToCoreInterface = CoreToReportQueue(self.report_to_core_queue)
+        self.reportToCoreInterface = ReportToCoreQueue(self.report_to_core_queue)
+        # core -> report
+        self.core_to_report_queue = Queue()
+        self.report = CoreToReportQueue(self.core_to_report_queue)
 
         self.running = True
 
+        # todo - implement mechanism to check if the modules are really running
+        # todo - add watchdog, so we know when modules are dying
+        self.report_running = True
+        self.sequencer_running = True
+        self.hmi_running = True
+
     # --- Startup ---
     def start(self):
-        log.info("[core] Starting module...")
+        log.info("Starting module...")
         self.start_submodules()
         self.main_loop()
-        log.info("[core] Stopping module...")
+        log.info("Stopping module...")
 
     def start_submodules(self):
-        self.sequencer = Process(
+        self.sequencerProcess = Process(
             target=sequencer_main,
             args=(self.sequencerToCoreInterface, self.core_to_sequencer_queue)
         )
-        self.sequencer.start()
+        self.sequencerProcess.start()
 
-        self.report = Process(
+        self.reportProcess = Process(
             target=report_main,
             args=(self.reportToCoreInterface, self.core_to_report_queue)
         )
-        self.report.start()
+        self.reportProcess.start()
 
-    # --- Main loop ---
+    # --- Main loop - it is where the messages from other modules (or internal messages) are received ---
     def main_loop(self):
-        log.info("[core] Starting main event loop.")
+        log.info("Starting main event loop.")
         while self.running:
             self.poll_all_sources()
             self.do_periodic_tasks()
+            self.check_stop_status()
             time.sleep(0.01)
-        log.info("[core] Stopped main event loop.")
 
     def poll_queue(self, queue, handler):
         try:
@@ -85,46 +100,65 @@ class Core:
 
     # --- Event handlers ---
     def handle_hmi_event(self, event: HMIToCoreEvent):
-        log.info(f"[core] Handling HMI event: {event}")
+        log.info(f"Received HMI event: {event}")
         match event.cmd:
+            case HMIToCoreCommand.EXIT:
+                self.stop_all_modules()
             case HMIToCoreCommand.STOP:
-                pass
-                # todo - implement action on stop
+                self.hmi_stopped()
             case HMIToCoreCommand.LOAD_RECIPE:
                 pass
-                # todo - implement action
             case HMIToCoreCommand.START_SEQUENCE:
                 pass
-                # todo - implement action
             case _:
                 pass
-                # todo - implement action
 
     def handle_sequencer_event(self, event: SequencerToCoreEvent):
-        log.info(f"[core] Handling Sequencer event: {event}")
+        log.info(f"Received sequencer event: {event}")
         match event.cmd:
             case SequencerToCoreCommand.STOP:
+                self.sequencer_stopped()
                 pass
-                # todo - implement action on stop
             case SequencerToCoreCommand.SEQUENCE_RESULT:
                 pass
             case _:
                 pass
-                # todo - implement action
 
     def handle_report_event(self, event: ReportToCoreEvent):
-        log.info(f"[core] Handling Report event: {event}")
+        log.info(f"Received report event: {event}")
         match event.cmd:
             case ReportToCoreCommand.STOP:
-                pass
-                # todo - implement action on stop
+                self.report_stopped()
             case ReportToCoreCommand.REPORT_GENERATED:
-                # todo - implement action
+                pass
+            case ReportToCoreCommand.REPORT_EXPORTED:
                 pass
             case _:
-                # todo - implement action
-                pass
+                log.error(f"Unknown event: {event}")
 
     # --- Background tasks ---
     def do_periodic_tasks(self):
         pass
+
+    def stop_all_modules(self):
+        self.report.stop()
+        self.sequencer.stop()
+        self.hmi.stop()
+
+    def report_stopped(self):
+        self.report_running = False
+
+    def sequencer_stopped(self):
+        self.sequencer_running = False
+
+    def hmi_stopped(self):
+        self.hmi_running = False
+
+    def check_stop_status(self):
+        # todo - add timeout mechanism. Normally we expect clean closing of the modules,
+        # but if module silently died already, we need to stop after 10s of timeout.
+        if (self.hmi_running or self.report_running or self.sequencer_running):
+            pass
+        else:
+            log.info("All modules stopped cleanly")
+            self.running = False

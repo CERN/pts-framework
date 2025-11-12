@@ -6,9 +6,12 @@ from queue import Queue, Empty
 from pypts.core.CORE_MESSAGES import CoreToReportCommand, CoreToReportEvent
 from abc import ABC, abstractmethod
 
+"""
+Interface class that defines methods available for other modules.
+All messages that are added here needs to be implemented by a data layer class (queue)
+"""
 class CoreToReportInterface(ABC):
     """Core uses this interface to talk to Report."""
-
     @abstractmethod
     def generate_report(self):
         pass
@@ -21,10 +24,11 @@ class CoreToReportInterface(ABC):
     def stop(self):
         pass
 
-
+"""
+Data layer class, that exposes the interface to be used by modules.
+It implements a communication layer (queue) and payloads for the messages.
+"""
 class CoreToReportQueue(CoreToReportInterface):
-    """Queue-based Report wrapper implementing ReportInterface."""
-
     def __init__(self, core_to_report_queue: Queue):
         self.core_to_report_queue = core_to_report_queue
 

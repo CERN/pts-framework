@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 from queue import Empty
-from pypts.core.core_interface import SequencerToCoreInterface
+from pypts.core.sequencer_to_core_interface import SequencerToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToSequencerEvent, CoreToSequencerCommand
 from pypts.logger.log import log
 import time
@@ -15,21 +15,22 @@ def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
 
 class Sequencer:
     def __init__(self, coreInterface: SequencerToCoreInterface, core_to_sequencer_queue):
-        self.coreInterface = coreInterface
+        self.core = coreInterface
         self.core_to_sequencer_queue = core_to_sequencer_queue
         self.running = True
 
     def start(self):
-        log.info("[sequencer] Starting module...")
+        log.info("Starting module...")
         self.main_loop()
-        log.info("[sequencer] Stopping module...")
+        log.info("Stopping module...")
 
     def main_loop(self):
-        log.info("[sequencer] Starting main event loop.")
+        log.info("Starting main event loop.")
         while self.running:
             self.poll_core()
             self.do_periodic_tasks()
             time.sleep(0.01)
+        log.info("exited main event loop.")
 
     def poll_core(self):
         try:
@@ -40,21 +41,29 @@ class Sequencer:
             pass
 
     def handle_command(self, event: CoreToSequencerEvent):
-        print(f"[sequencer] Received event from core: {event}")
+        log.info(f"Received core event: {event}")
         match event.cmd:
             case CoreToSequencerCommand.RUN_SEQUENCE:
                 self.run_sequence()
             case CoreToSequencerCommand.STOP:
-                self.running = False
+                self.stop()
             case _:
-                print(f"[sequencer] Unknown event: {event}")
+                log.error(f"Unknown event: {event}")
 
     def run_sequence(self):
-        print("[sequencer] Running sequence...")
-        # simulate doing something
-        time.sleep(2)
-        self.coreInterface.sequence_result()
+        pass
 
     def do_periodic_tasks(self):
         """Periodic checks, health updates, etc."""
         pass
+
+    def stop(self):
+        self.running = False
+        log.info("stopping module")
+
+        self.core.stop()
+        # add any teardown methods here
+
+    def _test_all_messages(self):
+        self.core.sequence_result(text = "PASSED")
+        self.core.stop()

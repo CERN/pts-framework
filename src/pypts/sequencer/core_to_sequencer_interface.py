@@ -6,10 +6,12 @@ from queue import Queue, Empty
 from pypts.core.CORE_MESSAGES import CoreToSequencerEvent, CoreToSequencerCommand
 from abc import ABC, abstractmethod
 
-
+"""
+Interface class that defines methods available for other modules.
+All messages that are added here needs to be implemented by a data layer class (queue)
+"""
 class CoreToSequencerInterface(ABC):
     """Core uses this interface to talk to Sequencer."""
-
     @abstractmethod
     def run_sequence(self):
         pass
@@ -22,10 +24,11 @@ class CoreToSequencerInterface(ABC):
     def stop(self):
         pass
 
-
+"""
+Data layer class, that exposes the interface to be used by modules.
+It implements a communication layer (queue) and payloads for the messages.
+"""
 class CoreToSequencerQueue(CoreToSequencerInterface):
-    """Queue-based Sequencer wrapper implementing SequencerInterface."""
-
     def __init__(self, core_to_sequencer_queue: Queue):
         self.core_to_sequencer_queue = core_to_sequencer_queue
 

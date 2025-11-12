@@ -6,20 +6,27 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 """
-This file defines all possible messages that modules can send.
-Keep all messaging defined there first, then follow with the implementation
-on the module side.
+This file defines all possible messages that sequencer module can send.
+Messages are grouped by the module scope - where the message goes.
+As sequencer can communicate with core, only the SequencerToCoreEvent and SequencerInternalEvent classes are defined.
 
-Messages are inspired from what is known from LabVIEW T-pattern design
+Workflow for adding a sequencer --> core message:
+1. Define the message enum in this file
+2. Go to the interface core/sequencer_to_core_interface.py (messages that core accepts).
+    Add new abstract method in interface class SequencerToCoreInterface
+    Add a data layer method in the SequencerToCoreQueue class
+3. Add the message handling in the core main loop - core.py --> handle_sequencer_event()
 """
+### INTERNAL EVENTS DISABLED AT THE MOMENT, UNTIL THE DEVELOPMENT REQUIRES THAT
 ### Sequencer internal events
-class SequencerInternalCommand(Enum):
-    pass  # no events defined yet
-
-@dataclass
-class SequencerInternalEvent:
-    cmd: SequencerInternalCommand
-    payload: dict | None = None
+# class SequencerInternalCommand(Enum):
+#     pass  # no events defined yet, add internal events here if necessary
+#
+# @dataclass
+# class SequencerInternalEvent:
+#     """Message sent from Sequencer back to Sequencer."""
+#     cmd: SequencerInternalCommand
+#     payload: dict | None = None
 
 ### Sequencer -> Core events
 class SequencerToCoreCommand(Enum):
@@ -31,3 +38,5 @@ class SequencerToCoreEvent:
     """Message sent from Sequencer to Core."""
     cmd: SequencerToCoreCommand
     payload: dict | None = None
+
+

@@ -1,7 +1,7 @@
 from multiprocessing import Process, Queue
 from pypts.core.core import core_main
-from pypts.core.core_interface import HMIToCoreQueue
-from pypts.hmi.HMIInterface import CoreToHMIQueue
+from pypts.core.HMI_to_core_interface import HMIToCoreQueue
+from pypts.hmi.core_to_HMI_interface import CoreToHMIQueue
 from pypts.hmi.gui.gui import gui_main
 from pypts.hmi.cli.cli import cli_main
 from pypts.logger.log import log
@@ -35,12 +35,12 @@ def main():
     # spawn the CORE main -> it will create the object and spawn necessary submodules
     p_core = Process(target=core_main, args=(CoreToHmiInterface, hmi_to_core_queue))
     p_core.start()
-    log.info(f"[launcher] CORE started.")
+    log.info(f"CORE launcher spawned.")
 
     # spawn the GUI/CLI main
     p_ui = Process(target=ui_target, args=(HMIToCoreInterface, core_to_hmi_queue))
     p_ui.start()
-    log.info(f"[launcher] {ui_name} started.")
+    log.info(f"{ui_name} launcher spawned.")
 
     p_core.join()
     p_ui.join()

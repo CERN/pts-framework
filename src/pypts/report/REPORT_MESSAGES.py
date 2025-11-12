@@ -6,20 +6,28 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 """
-This file defines all possible messages that modules can send.
-Keep all messaging defined there first, then follow with the implementation
-on the module side.
+This file defines all possible messages that report module can send.
+Messages are grouped by the module scope - where the message goes.
+As report can communicate with core, only the ReportToCoreEvent and ReportInternalEvent classes are defined.
 
-Messages are inspired from what is known from LabVIEW T-pattern design
+Workflow for adding a report --> core message:
+1. Define the message enum in this file
+2. Go to the interface core/report_to_core_interface.py (messages that core accepts).
+    Add new abstract method in interface class ReportToCoreInterface
+    Add new abstract method in interface class ReportToCoreInterface
+    Add a data layer method in the ReportToCoreQueue class
+3. Add the message handling in the core main loop - core.py --> handle_report_event()
 """
+### INTERNAL EVENTS DISABLED AT THE MOMENT, UNTIL THE DEVELOPMENT REQUIRES THAT
 ### Report internal events
-class ReportInternalCommand(Enum):
-    pass  # no events defined yet
-
-@dataclass
-class ReportInternalEvent:
-    cmd: ReportInternalCommand
-    payload: dict | None = None
+# class ReportInternalCommand(Enum):
+#     pass  # no events defined yet
+#
+# @dataclass
+# class ReportInternalEvent:
+#     """Message sent from Report back to Report."""
+#     cmd: ReportInternalCommand
+#     payload: dict | None = None
 
 ### Report -> Core events
 class ReportToCoreCommand(Enum):

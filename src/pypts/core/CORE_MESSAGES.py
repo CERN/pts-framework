@@ -6,21 +6,26 @@ from enum import Enum, auto
 from dataclasses import dataclass
 
 """
-This file defines all possible messages that modules can send.
-Keep all messaging defined there first, then follow with the implementation
-on the module side.
+This file defines all possible messages that core module can send.
+Messages are grouped by the module scope - where the message goes.
+As core can communicate with HMI, sequencer and report, multiple classes are defined here.
 
-Messages are inspired from what is known from LabVIEW T-pattern design
+Workflow for adding a core --> sequencer/hmi/report message:
+1. Define the message enum in this file
+2. Go to the module interface (for example HMI/core_to_HMI_interface.py (messages that HMI accepts)).
+    Add new abstract method in interface class CoreToHMIInterface
+    Add a data layer method in the CoreToHMIQueue class
+3. Add the message handling in the module specific main loop - in this case it will be the main loop of GUI or CLI --> handle_core_event()
 """
+### INTERNAL EVENTS DISABLED AT THE MOMENT, UNTIL THE DEVELOPMENT REQUIRES THAT
 ### Core internal events
-class CoreInternalCommand(Enum):
-    LOAD_RECIPE = auto()
-    STOP = auto() # to stop the module
-
-@dataclass
-class CoreInternalEvent:
-    cmd: CoreInternalCommand
-    payload: dict | None = None
+# class CoreInternalCommand(Enum):
+#     pass # no messages defined yet
+#
+# @dataclass
+# class CoreInternalEvent:
+#     cmd: CoreInternalCommand
+#     payload: dict | None = None
 
 ### Core -> Sequencer events
 class CoreToSequencerCommand(Enum):

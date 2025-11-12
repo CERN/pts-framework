@@ -6,10 +6,12 @@ from queue import Queue, Empty
 from pypts.core.CORE_MESSAGES import CoreToHMIEvent, CoreToHMICommand
 from abc import ABC, abstractmethod
 
-
+"""
+Interface class that defines methods available for other modules.
+All messages that are added here needs to be implemented by a data layer class (queue)
+"""
 class CoreToHMIInterface(ABC):
     """Core uses this interface to talk to HMI."""
-
     @abstractmethod
     def update_status(self, text: str):
         pass
@@ -18,10 +20,11 @@ class CoreToHMIInterface(ABC):
     def stop(self):
         pass
 
-
+"""
+Data layer class, that exposes the interface to be used by modules.
+It implements a communication layer (queue) and payloads for the messages.
+"""
 class CoreToHMIQueue(CoreToHMIInterface):
-    """Queue-based HMI wrapper implementing HMIInterface."""
-
     def __init__(self, core_to_hmi_queue: Queue):
         self.core_to_hmi_queue = core_to_hmi_queue
 
