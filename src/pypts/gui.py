@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (QWidget, QListWidget, QGridLayout, QMenuBar, QApp
                                QTreeView, QAbstractItemView, QFileDialog, QToolBar, QWidgetAction, QStyle, QSizePolicy,
                                QMainWindow,  QTextEdit, QDialog, QComboBox, QDialogButtonBox)
 from PySide6.QtCore import QObject, Signal, QThread, Qt, QAbstractItemModel, QModelIndex, QSize, QTimer, QEventLoop
-from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush, QAction
+from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QTextOption, QBrush, QAction, QGuiApplication
 
 from typing import List
 from pypts import recipe
@@ -76,7 +76,8 @@ class MainWindow(QWidget):
         self.running = False
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
-        
+        scheme = QGuiApplication.styleHints().colorScheme()
+
         """Load CERN logo from package resources"""
         try:
             # Access the image resource from the pypts package
@@ -225,7 +226,10 @@ class MainWindow(QWidget):
         self.log_text_box.setReadOnly(True)
         self.log_text_box.setFont(QFont("Courier", 8))
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.log_text_box.setStyleSheet('background-color: whitesmoke')
+        if scheme == Qt.ColorScheme.Light:
+            self.log_text_box.setStyleSheet('background-color: whitesmoke')
+        else:
+            self.log_text_box.setStyleSheet('background-color: gray4')
 
         self.right_half_layout.addWidget(self.picture_box)
         self.right_half_layout.addWidget(self.message_box)
