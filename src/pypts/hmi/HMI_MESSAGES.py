@@ -6,40 +6,46 @@ from dataclasses import dataclass
 from enum import Enum, auto
 
 """
-This file defines all possible messages that HMI modules can send.
-Messages are grouped by the module scope - where the message goes.
-As HMI can communicate with core, only the HMIToCoreEvent and HMIInternalEvent classes are defined.
+This file defines all possible messages that HMI (Human Machine Interface) modules can send.
+Messages are grouped by module scope, i.e., the target module.
+Since HMI modules communicate only with the Core, only HMIToCoreEvent and HMIInternalEvent
+classes are defined here.
 
-Workflow for adding a HMI --> core message:
-1. Define the message enum in this file
-2. Go to the interface core/HMI_to_core_interface.py (messages that core accepts).
-    Add new abstract method in interface class HMIToCoreInterface
-    Add a data layer method in the HMIToCoreQueue class
-3. Add the message handling in the core main loop - core.py --> handle_HMI_event()
+Workflow for adding a HMI-to-Core message:
+1. Define the new message enum entry in this file.
+2. Update the interface in core/HMI_to_core_interface.py:
+   - Add the corresponding abstract method in HMIToCoreInterface.
+   - Add the data layer method in HMIToCoreQueue.
+3. Add handling for the new message in core.py within handle_HMI_event().
+
+Note:
+Internal HMI events are currently disabled and can be added if necessary.
 """
 
-### INTERNAL EVENTS DISABLED AT THE MOMENT, UNTIL THE DEVELOPMENT REQUIRES THAT
-### HMI internal events
+### INTERNAL EVENTS DISABLED AT THE MOMENT, UNTIL DEVELOPMENT REQUIRES THAT
 # class HMIInternalCommand(Enum):
-#     pass  # no events defined yet, add internal events here if necessary
+#     pass  # Placeholder for possible internal HMI commands
 #
 # @dataclass
 # class HMIInternalEvent:
-#     """Message sent from HMI back to HMI."""
+#     """Message sent internally within the HMI module."""
 #     cmd: HMIInternalCommand
 #     payload: dict | None = None
 
 ### HMI -> Core events
 class HMIToCoreCommand(Enum):
-    STOP = auto()  # on the module crash
-    LOAD_RECIPE = auto()
-    START_SEQUENCE = auto()
-    EXIT = auto()
+    STOP = auto()  # Message sent when the HMI module crashes or stops
+    LOAD_RECIPE = auto()  # Command to load a recipe in core
+    START_SEQUENCE = auto()  # Command to start a sequence operation
+    EXIT = auto()  # Command to exit the HMI module or application
 
 @dataclass
 class HMIToCoreEvent:
-    """Message sent from HMI to Core."""
+    """
+    Represents a message sent from an HMI module to Core.
+    Attributes:
+      - cmd: Command type from the HMIToCoreCommand enum
+      - payload: Optional dictionary carrying additional event details
+    """
     cmd: HMIToCoreCommand
     payload: dict | None = None
-
-

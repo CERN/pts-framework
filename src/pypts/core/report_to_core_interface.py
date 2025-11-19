@@ -8,46 +8,84 @@ from pypts.report.REPORT_MESSAGES import *
 from pypts.common.COMMON_MESSAGES import *
 
 """
-Interface class that defines methods available for other modules.
-All messages that are added here needs to be implemented by a data layer class (queue)
+Abstract interface class defining messages the Report module sends to Core.
+All messages defined here must be implemented by a data layer class utilizing a communication queue.
 """
+
 class ReportToCoreInterface(ABC):
-    """Report uses this interface to talk to Core."""
+    """
+    Interface used by the Report module to send events or commands to the Core module.
+    Each method corresponds to a specific message the Report module can send.
+    """
+
     @abstractmethod
     def report_generated(self):
+        """
+        Notify Core that a report has been generated successfully.
+        """
         pass
 
     @abstractmethod
     def stop(self):
+        """
+        Command to stop the Report module.
+        """
         pass
 
     @abstractmethod
     def report_exported(self):
+        """
+        Notify Core that a report has been successfully exported.
+        """
         pass
 
     @abstractmethod
     def report_error(self, error: ModuleErrorEvent):
+        """
+        Send an error event encapsulated by ModuleErrorEvent to Core.
+        """
         pass
 
 """
-Data layer class, that exposes the interface to be used by modules.
-It implements a communication layer (queue) and payloads for the messages.
+Concrete data layer class implementing ReportToCoreInterface.
+This class sends the appropriate ReportToCoreEvent messages or error events
+to the Core module over an inter-process queue.
 """
+
 class ReportToCoreQueue(ReportToCoreInterface):
+    """
+    Implements the report-to-core communication interface using a queue.
+    """
+
     def __init__(self, report_to_core_queue: Queue):
+        """
+        Initialize with the queue used for report-to-core communication.
+        """
         self.report_to_core_queue = report_to_core_queue
 
-    def report_generated(self,):
+    def report_generated(self):
+        """
+        Sends a REPORT_GENERATED event to notify core of successful report generation.
+        """
         event = ReportToCoreEvent(cmd=ReportToCoreCommand.REPORT_GENERATED)
         self.report_to_core_queue.put(event)
 
-    def report_exported(self,):
+    def report_exported(self):
+        """
+        Sends a REPORT_EXPORTED event notifying core of successful report export.
+        """
         event = ReportToCoreEvent(cmd=ReportToCoreCommand.REPORT_EXPORTED)
         self.report_to_core_queue.put(event)
 
     def stop(self):
+        """
+        Sends a STOP command event to stop the Report module.
+        """
         event = ReportToCoreEvent(cmd=ReportToCoreCommand.STOP)
         self.report_to_core_queue.put(event)
 
     def report_error(self, error: ModuleErrorEvent):
+        """
+        Sends a ModuleErrorEvent instance directly to Core for error reporting.
+        """
         self.report_to_core_queue.put(error)

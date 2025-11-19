@@ -19,51 +19,65 @@ from pypts.report.REPORT_MESSAGES import ReportToCoreEvent, ReportToCoreCommand
 from pypts.logger.log import log
 
 """
-Entry point for launcher. This is used to spawn an object of a class and run its thread.
+Entry point for launcher. Responsible for instantiating Core class 
+and starting its execution thread.
 """
 def core_main(
         coreToHMIInterface: CoreToHMIQueue,
         hmi_to_core_queue: Queue):
     core = Core(coreToHMIInterface, hmi_to_core_queue)
     core.start()
-#
+
 
 class Core:
+    """
+    Main central module managing communication and lifecycle of HMI, Sequencer, and Report modules.
+    Maintains queues and interfaces for message passing and spawns subprocesses for submodules.
+    """
+
     def __init__(self, coreToHMIInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
-        """Interface and queues definitions"""
+        """
+        Initializes interfaces and communication queues for all submodules.
+        Sets running flags and placeholders for watchdog/timeouts (to be implemented).
+        """
         self.hmi = coreToHMIInterface
         self.hmi_to_core_queue = hmi_to_core_queue
 
-        # sequencer -> core
+        # Sequencer communication setup
         self.sequencer_to_core_queue = Queue()
         self.sequencerToCoreInterface = SequencerToCoreQueue(self.sequencer_to_core_queue)
-        # core -> sequencer
         self.core_to_sequencer_queue = Queue()
         self.sequencer = CoreToSequencerQueue(self.core_to_sequencer_queue)
 
-        # report -> core
+        # Report communication setup
         self.report_to_core_queue = Queue()
         self.reportToCoreInterface = ReportToCoreQueue(self.report_to_core_queue)
-        # core -> report
         self.core_to_report_queue = Queue()
         self.report = CoreToReportQueue(self.core_to_report_queue)
 
         self.running = True
 
-        # todo - implement mechanism to check if the modules are really running
-        # todo - add watchdog, so we know when modules are dying
+        # Flags for module running statuses - for monitoring and graceful shutdown
         self.report_running = True
         self.sequencer_running = True
         self.hmi_running = True
 
     # --- Startup ---
     def start(self):
+        """
+        Begins Core module execution by spawning submodules and entering main event loop.
+        Logs lifecycle events.
+        """
         log.info("Starting module...")
         self.start_submodules()
         self.main_loop()
         log.info("Stopping module...")
 
     def start_submodules(self):
+        """
+        Spawns Sequencer and Report modules in separate processes.
+        Passes their respective communication interfaces and queues.
+        """
         self.sequencerProcess = Process(
             target=sequencer_main,
             args=(self.sequencerToCoreInterface, self.core_to_sequencer_queue)
@@ -76,8 +90,13 @@ class Core:
         )
         self.reportProcess.start()
 
-    # --- Main loop - it is where the messages from other modules (or internal messages) are received ---
+    # --- Main event loop ---
     def main_loop(self):
+        """
+        Continuously polls all message queues for incoming events from submodules.
+        Executes periodic background tasks and checks stop conditions.
+        Sleeps briefly to avoid busy waiting.
+        """
         log.info("Starting main event loop.")
         while self.running:
             self.poll_all_sources()
@@ -86,6 +105,10 @@ class Core:
             time.sleep(0.01)
 
     def poll_queue(self, queue, handler):
+        """
+        Helper to poll a given queue non-blockingly and call handler on received event.
+        Ignores queue.Empty exceptions silently.
+        """
         try:
             event = queue.get_nowait()
             if event:
@@ -94,12 +117,20 @@ class Core:
             pass
 
     def poll_all_sources(self):
+        """
+        Polls queues for HMI, Sequencer and Report events, dispatching to appropriate handlers.
+        """
         self.poll_queue(self.hmi_to_core_queue, self.handle_hmi_event)
         self.poll_queue(self.sequencer_to_core_queue, self.handle_sequencer_event)
         self.poll_queue(self.report_to_core_queue, self.handle_report_event)
 
     # --- Event handlers ---
     def handle_hmi_event(self, event: HMIToCoreEvent):
+        """
+        Handles events from HMI module.
+        Supports exit and stop commands.
+        Placeholders for additional commands like load_recipe and start_sequence.
+        """
         log.info(f"Received HMI event: {event}")
         match event.cmd:
             case HMIToCoreCommand.EXIT:
@@ -107,44 +138,59 @@ class Core:
             case HMIToCoreCommand.STOP:
                 self.hmi_stopped()
             case HMIToCoreCommand.LOAD_RECIPE:
-                pass
+                pass  # Implement recipe loading logic here
             case HMIToCoreCommand.START_SEQUENCE:
-                pass
+                pass  # Implement sequence starting logic here
             case _:
-                pass
+                pass  # Unknown or unhandled command
 
     def handle_sequencer_event(self, event: SequencerToCoreEvent):
+        """
+        Handles events from Sequencer module.
+        Supports STOP and SEQUENCE_RESULT commands.
+        """
         log.info(f"Received sequencer event: {event}")
         match event.cmd:
             case SequencerToCoreCommand.STOP:
                 self.sequencer_stopped()
-                pass
             case SequencerToCoreCommand.SEQUENCE_RESULT:
-                pass
+                pass  # Handle sequence results here
             case _:
-                pass
+                pass  # Unknown command
 
     def handle_report_event(self, event: ReportToCoreEvent):
+        """
+        Handles events from Report module.
+        Supports STOP, REPORT_GENERATED and REPORT_EXPORTED commands.
+        Logs unknown events as errors.
+        """
         log.info(f"Received report event: {event}")
         match event.cmd:
             case ReportToCoreCommand.STOP:
                 self.report_stopped()
             case ReportToCoreCommand.REPORT_GENERATED:
-                pass
+                pass  # Handle report generated notification here
             case ReportToCoreCommand.REPORT_EXPORTED:
-                pass
+                pass  # Handle report exported notification here
             case _:
                 log.error(f"Unknown event: {event}")
 
     # --- Background tasks ---
     def do_periodic_tasks(self):
+        """
+        Placeholder for periodic background tasks, e.g., health monitoring or housekeeping.
+        """
         pass
 
     def stop_all_modules(self):
+        """
+        Commands all submodules to stop via their interfaces.
+        """
         self.report.stop()
         self.sequencer.stop()
         self.hmi.stop()
 
+    # Update running flags for clean shutdown detection
     def report_stopped(self):
         self.report_running = False
 
@@ -155,8 +201,10 @@ class Core:
         self.hmi_running = False
 
     def check_stop_status(self):
-        # todo - add timeout mechanism. Normally we expect clean closing of the modules,
-        # but if module silently died already, we need to stop after 10s of timeout.
+        """
+        Checks running flags of all modules; stops Core if all have cleanly exited.
+        TODO: Implement watchdog timeout to handle silent module deaths.
+        """
         if (self.hmi_running or self.report_running or self.sequencer_running):
             pass
         else:
