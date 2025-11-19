@@ -7,6 +7,7 @@ from pypts.core.report_to_core_interface import ReportToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToReportEvent, CoreToReportCommand
 from pypts.logger.log import log
 import time
+from pypts.utilities.error_handling import catch_and_report_errors  # Assuming decorator is here
 
 
 def report_main(core: ReportToCoreInterface, core_to_report_queue):
@@ -33,6 +34,7 @@ class Report:
         self.core_to_report_queue = core_to_report_queue
         self.running = True
 
+    @catch_and_report_errors()
     def start(self):
         """
         Begins module operation, logs start and stop events.
@@ -42,6 +44,7 @@ class Report:
         self.main_loop()
         log.info("Stopping module...")
 
+    @catch_and_report_errors()
     def main_loop(self):
         """
         Main processing loop: polls for commands, executes periodic tasks,
@@ -54,6 +57,7 @@ class Report:
             time.sleep(0.01)
         log.info("exited main event loop.")
 
+    @catch_and_report_errors()
     def poll_core(self):
         """
         Checks the command queue for new messages without blocking.
@@ -66,6 +70,7 @@ class Report:
             # No message present, continue polling
             pass
 
+    @catch_and_report_errors()
     def handle_command(self, event: CoreToReportEvent):
         """
         Routes incoming commands based on the event's command type.
@@ -81,24 +86,28 @@ class Report:
             case _:
                 log.error(f"Unknown event: {event}")
 
+    @catch_and_report_errors()
     def generate_report(self):
         """
         Placeholder to implement report generation logic.
         """
         pass
 
+    @catch_and_report_errors()
     def export_report(self):
         """
         Placeholder to implement report export logic.
         """
         pass
 
+    @catch_and_report_errors()
     def do_periodic_tasks(self):
         """
         Executes any periodic status updates or maintenance tasks.
         """
         pass
 
+    @catch_and_report_errors()
     def stop(self):
         """
         Signals main loop to exit, logs, and calls core to shut down.
@@ -106,8 +115,8 @@ class Report:
         self.running = False
         log.info("stopping module")
         self.core.stop()
-        # Add any additional cleanup here
 
+    @catch_and_report_errors()
     def _test_all_messages(self):
         """
         Sends all test messages for validating communication.

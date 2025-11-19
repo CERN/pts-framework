@@ -7,7 +7,7 @@ from pypts.core.sequencer_to_core_interface import SequencerToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToSequencerEvent, CoreToSequencerCommand
 from pypts.logger.log import log
 import time
-
+from pypts.utilities.error_handling import catch_and_report_errors
 
 def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
     """
@@ -42,6 +42,7 @@ class Sequencer:
         self.main_loop()
         log.info("Stopping module...")
 
+    @catch_and_report_errors()
     def main_loop(self):
         """
         Main event loop processes incoming commands and performs periodic tasks.
@@ -56,6 +57,7 @@ class Sequencer:
             time.sleep(0.01)
         log.info("exited main event loop.")
 
+    @catch_and_report_errors()
     def poll_core(self):
         """
         Attempts to get a command from core_to_sequencer_queue without waiting.
@@ -63,12 +65,13 @@ class Sequencer:
         Ignores exception when queue is empty (no messages).
         """
         try:
-            cmd = self.core_to_sequencer_queue.get(timeout=0)
-            if cmd:
-                self.handle_command(cmd)
+            event = self.core_to_sequencer_queue.get(timeout=0)
+            if event:
+                self.handle_command(event)
         except Empty:
             pass
 
+    @catch_and_report_errors()
     def handle_command(self, event: CoreToSequencerEvent):
         """
         Handle commands received from Core.
@@ -84,18 +87,21 @@ class Sequencer:
             case _:
                 log.error(f"Unknown event: {event}")
 
+    @catch_and_report_errors()
     def run_sequence(self):
         """
         Placeholder method where sequencing operations should be implemented.
         """
         pass
 
+    @catch_and_report_errors()
     def do_periodic_tasks(self):
         """
         Placeholder for periodic checks, health monitoring, or housekeeping tasks.
         """
         pass
 
+    @catch_and_report_errors()
     def stop(self):
         """
         Stops the sequencer by disabling the running flag,
@@ -106,6 +112,7 @@ class Sequencer:
         log.info("stopping module")
         self.core.stop()
 
+    @catch_and_report_errors()
     def _test_all_messages(self):
         """
         Internal test method to send a sequence result and stop signal to Core.

@@ -33,8 +33,9 @@ Internal events for the sequencer are currently disabled until development requi
 
 ### Sequencer -> Core events
 class SequencerToCoreCommand(Enum):
-    STOP = auto()  # Signals that the sequencer module has crashed or is stopping
-    SEQUENCE_RESULT = auto()  # Conveys the result of a sequence execution
+    STOP = auto()
+    SEQUENCE_RESULT = auto()
+    ERROR = auto()  # Add this for error messages
 
 @dataclass
 class SequencerToCoreEvent:

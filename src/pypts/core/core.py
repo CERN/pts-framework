@@ -145,16 +145,17 @@ class Core:
                 pass  # Unknown or unhandled command
 
     def handle_sequencer_event(self, event: SequencerToCoreEvent):
-        """
-        Handles events from Sequencer module.
-        Supports STOP and SEQUENCE_RESULT commands.
-        """
         log.info(f"Received sequencer event: {event}")
         match event.cmd:
             case SequencerToCoreCommand.STOP:
                 self.sequencer_stopped()
             case SequencerToCoreCommand.SEQUENCE_RESULT:
-                pass  # Handle sequence results here
+                # handle sequence result here
+                pass
+            case SequencerToCoreCommand.ERROR:
+                # Extract error details from payload
+                error_info = event.payload
+                # Decide on further action, e.g. notify, restart, alert, etc.
             case _:
                 pass  # Unknown command
 
@@ -172,8 +173,14 @@ class Core:
                 pass  # Handle report generated notification here
             case ReportToCoreCommand.REPORT_EXPORTED:
                 pass  # Handle report exported notification here
+            case ReportToCoreCommand.ERROR:
+                # Extract error details from payload
+                error_info = event.payload
+                # Decide on further action, e.g. notify, restart, alert, etc.
+                pass
             case _:
                 log.error(f"Unknown event: {event}")
+
 
     # --- Background tasks ---
     def do_periodic_tasks(self):

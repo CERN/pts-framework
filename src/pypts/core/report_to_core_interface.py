@@ -85,7 +85,13 @@ class ReportToCoreQueue(ReportToCoreInterface):
         self.report_to_core_queue.put(event)
 
     def report_error(self, error: ModuleErrorEvent):
-        """
-        Sends a ModuleErrorEvent instance directly to Core for error reporting.
-        """
-        self.report_to_core_queue.put(error)
+        # Here, encode the error as a message payload with error command
+        event = ReportToCoreEvent(cmd=ReportToCoreCommand.ERROR, payload={
+            "source": error.source,
+            "severity": error.severity.name,
+            "message": error.message,
+            "exception": error.exception,
+            "traceback": error.traceback,
+        })
+        self.report_to_core_queue.put(event)
+

@@ -38,6 +38,7 @@ class HMIToCoreCommand(Enum):
     LOAD_RECIPE = auto()  # Command to load a recipe in core
     START_SEQUENCE = auto()  # Command to start a sequence operation
     EXIT = auto()  # Command to exit the HMI module or application
+    ERROR = auto()
 
 @dataclass
 class HMIToCoreEvent:

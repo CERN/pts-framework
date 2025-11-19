@@ -73,7 +73,13 @@ class SequencerToCoreQueue(SequencerToCoreInterface):
         self.sequencer_to_core_queue.put(event)
 
     def report_error(self, error: ModuleErrorEvent):
-        """
-        Sends the ModuleErrorEvent error object directly to Core.
-        """
-        self.sequencer_to_core_queue.put(error)
+        # Here, encode the error as a message payload with error command
+        event = SequencerToCoreEvent(cmd=SequencerToCoreCommand.ERROR, payload={
+            "source": error.source,
+            "severity": error.severity.name,
+            "message": error.message,
+            "exception": error.exception,
+            "traceback": error.traceback,
+        })
+        self.sequencer_to_core_queue.put(event)
+

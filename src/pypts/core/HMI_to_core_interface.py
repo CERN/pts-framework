@@ -98,7 +98,13 @@ class HMIToCoreQueue(HMIToCoreInterface):
         self.hmi_to_core_queue.put(event)
 
     def report_error(self, error: ModuleErrorEvent):
-        """
-        Sends a ModuleErrorEvent instance directly to Core for error reporting.
-        """
-        self.hmi_to_core_queue.put(error)
+        # Here, encode the error as a message payload with error command
+        event = HMIToCoreEvent(cmd=HMIToCoreCommand.ERROR, payload={
+            "source": error.source,
+            "severity": error.severity.name,
+            "message": error.message,
+            "exception": error.exception,
+            "traceback": error.traceback,
+        })
+        self.hmi_to_core_queue.put(event)
+

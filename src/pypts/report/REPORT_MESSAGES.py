@@ -37,6 +37,7 @@ class ReportToCoreCommand(Enum):
     STOP = auto()  # Message sent when the report module crashes or stops
     REPORT_GENERATED = auto()  # Indicates a report has been generated
     REPORT_EXPORTED = auto()   # Indicates a report has been exported
+    ERROR = auto()  # Add this for error messages
 
 @dataclass
 class ReportToCoreEvent:
