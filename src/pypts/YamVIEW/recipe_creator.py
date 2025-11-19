@@ -9,7 +9,7 @@ from pypts.YamVIEW.customGUIModules import (
 )
 
 import re
-import io, copy
+import io, uuid
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -25,18 +25,13 @@ from PySide6.QtWidgets import (
     QToolBar,
     QStyle,
     QSizePolicy,
-    QFrame,
-    QListWidgetItem,
-    QListWidget,
-    QToolButton
 )
 from PySide6.QtGui import (
     QAction,
     QTextCursor,
-    QPixmap,
-    QDrag
+    QPixmap
 )
-from PySide6.QtCore import QSize, QMargins, Qt, QMimeData, QByteArray, QDataStream, QIODevice, QPoint, Signal
+from PySide6.QtCore import QSize, QMargins, Qt
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from datetime import datetime
@@ -46,8 +41,8 @@ from pypts.YamVIEW.verify_recipe import *
 import sys
 from PySide6.QtGui import QTextCharFormat, QFont
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 from PySide6.QtGui import QKeySequence, QShortcut
+from pypts.YamVIEW.recipe_sequencer_setup import *
 
 
 class RecipeEditorMainMenu(QMainWindow):
@@ -147,7 +142,7 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def setup_toolbar(self):
         self.toolbar = QToolBar()
-        self.toolbar.setIconSize(QSize(32, 32))
+        self.toolbar.setIconSize(QSize(28, 28))
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         self.action_add = QAction(self.style().standardIcon(QStyle.SP_FileDialogNewFolder), "Create recipe from the template", self)
@@ -183,22 +178,8 @@ class RecipeEditorMainMenu(QMainWindow):
         icon_action.setDefaultWidget(icon_label)
         self.toolbar.addAction(icon_action)
 
-    def setup_tree_and_yaml(self):
-        # YAML Tree widget
-        # self.tree = QTreeWidget()
-        # self.tree.setColumnCount(2)
-        # self.tree.setHeaderLabels(["Field", "Value"])
-        # self.tree.setColumnWidth(0, 200)
-        # self.tree.setAlternatingRowColors(True)
-        # self.tree.itemChanged.connect(self.on_treeview_item_changed)
-        # self.tree.itemClicked.connect(self.on_tree_item_clicked)
-        # self.tree.setEditTriggers(
-        #     QTreeWidget.EditTrigger.DoubleClicked |
-        #     QTreeWidget.EditTrigger.SelectedClicked |
-        #     QTreeWidget.EditTrigger.EditKeyPressed
-        # )
-        # self.tree.setColumnWidth(0, 250)
 
+    def setup_tree_and_yaml(self):
         # YAML Viewer (custom ScintillaYamlEditor)
         self.yaml_viewer = ScintillaYamlEditor(self)
         self.yaml_viewer.setReadOnly(False)
@@ -216,7 +197,6 @@ class RecipeEditorMainMenu(QMainWindow):
         # Horizontal container for tree + yaml viewer
         self.tree_and_yaml_widget = QWidget()
         self.tree_and_yaml_hlayout = QHBoxLayout(self.tree_and_yaml_widget)
-        #self.tree_and_yaml_hlayout.addWidget(self.tree)
         self.tree_and_yaml_hlayout.addWidget(self.sequencer)
         self.tree_and_yaml_hlayout.addWidget(self.yaml_viewer)
 
@@ -270,14 +250,6 @@ class RecipeEditorMainMenu(QMainWindow):
         self.main_layout.addWidget(self.log_console)
 
 # Helper GUI methods - colouring, viewing
-    def mark_required_field(self, tree_item, is_required: bool):
-        if is_required:
-            # Append star
-            original_text = tree_item.text(0)
-            tree_item.setText(0, "* " + original_text)
-
-        else:
-            pass
 
     def toggle_dark_mode(self, enabled):
         if enabled:
@@ -319,8 +291,9 @@ class RecipeEditorMainMenu(QMainWindow):
     def update_yaml_viewer(self):
         self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
         self.yaml_viewer.setText(self.temporary_recipe_contents)
-
+    
     def update_yaml_treeview(self):
+        """Load YAML documents and populate the sequencer with folders for setup, main, and teardown steps."""
         try:
             self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
             if not self.yaml_documents:
@@ -330,113 +303,105 @@ class RecipeEditorMainMenu(QMainWindow):
 
             sequencer_steps = []
 
-            # 1️⃣ First document → treat as preamble step
+            # First document → Preamble
             first_doc = self.yaml_documents[0]
             sequencer_steps.append({
                 "step_name": "Preamble",
                 "description": str(first_doc),
                 "steptype": "preamble",
                 "_node": first_doc,
+                "_id": str(uuid.uuid4())
             })
 
-            # 2️⃣ Second document → pre-step blocks (setup_steps etc.)
+            # Process remaining documents
             for doc_index, doc in enumerate(self.yaml_documents[1:], start=1):
                 sequence_name = doc.get("sequence_name", f"Sequence {doc_index}")
                 sequence_block = {
                     "step_name": f"Sequence: {sequence_name}",
                     "description": doc.get("description", ""),
                     "steptype": "sequence_folder",
-                    "children": [],  # container for setup + steps
+                    "children": [],
                     "_node": doc,
+                    "_doc_index": doc_index,
+                    "_id": str(uuid.uuid4())
                 }
 
-                # 🔹 Setup steps
-                setup_steps = doc.get("setup_steps", [])
-                if isinstance(setup_steps, list) and setup_steps:
-                    # Check if setup_steps actually contains real steps
-                    valid_setup_steps = [s for s in setup_steps if isinstance(s, dict) and s.get("step_name")]
-                    if valid_setup_steps:
-                        setup_folder = {
-                            "step_name": "Setup Steps",
-                            "steptype": "setup_folder",
-                            "children": [],
-                            "_node": setup_steps,
-                        }
-                        for s in valid_setup_steps:
-                            setup_folder["children"].append({
-                                "step_name": s.get("step_name", "Unnamed Setup Step"),
+                def build_folder(folder_name, folder_type, steps_list):
+                    """Create a folder dict with child steps."""
+                    folder = {
+                        "step_name": folder_name,
+                        "steptype": folder_type,
+                        "children": [],
+                        "_node": steps_list,  # original YAML list
+                        "_expanded": False
+                    }
+                    for s in steps_list:
+                        if isinstance(s, dict) and s.get("step_name"):
+                            folder["children"].append({
+                                "step_name": s.get("step_name", "Unnamed Step"),
                                 "steptype": s.get("steptype", "unknown"),
                                 "_node": s,
+                                "_parent": folder_type,
+                                "_id": s.get("_id", str(uuid.uuid4()))
                             })
-                        sequence_block["children"].append(setup_folder)
-                    # If setup_steps empty or malformed, skip
+                    return folder
 
-                # 🔹 Main steps
-                main_steps = doc.get("steps", [])
-                if isinstance(main_steps, list):
-                    for step_node in main_steps:
-                        if isinstance(step_node, dict):
-                            sequence_block["children"].append({
-                                "step_name": step_node.get("step_name", "Unnamed Step"),
-                                "steptype": step_node.get("steptype", "unknown"),
-                                "_node": step_node,
-                                "_doc_index": 1,
-                            })
-                
+                # Build folders in chronological order: setup → main → teardown
+                folders = [
+                    build_folder("Setup Steps", "setup_folder", doc.get("setup_steps", [])),
+                    build_folder("Main Steps", "main_folder", doc.get("steps", [])),
+                    build_folder("Teardown Steps", "teardown_folder", doc.get("teardown_steps", [])),
+                ]
 
-                # Only add sequence if it has something
-                if sequence_block["children"]:
-                    sequencer_steps.append(sequence_block)
-                else:
-                    self.log(f"ℹ️ Sequence '{sequence_name}' has no valid steps; skipped.")
-                
-                # 🔹 Teardown steps
-                teardown_steps = doc.get("teardown_steps", [])
-                if isinstance(teardown_steps, list) and teardown_steps:
-                    # Check if setup_steps actually contains real steps
-                    valid_teardown_steps = [s for s in teardown_steps if isinstance(s, dict) and s.get("step_name")]
-                    if valid_teardown_steps:
-                        teardown_folder = {
-                            "step_name": "Teardown Steps",
-                            "steptype": "Teardown_folder",
-                            "children": [],
-                            "_node": teardown_steps,
-                        }
-                        for s in valid_teardown_steps:
-                            teardown_folder["children"].append({
-                                "step_name": s.get("step_name", "Unnamed Setup Step"),
-                                "steptype": s.get("steptype", "unknown"),
-                                "_node": s,
-                            })
-                        sequence_block["children"].append(teardown_folder)
-                    # If setup_steps empty or malformed, skip
-
+                sequence_block["children"].extend(folders)
+                sequencer_steps.append(sequence_block)
 
             self.sequencer.set_yaml_data(sequencer_steps)
+            self.sequencer.receive_globals(self.yaml_documents[0].get("globals", {}))
             self.log(f"✅ Sequencer received {len(sequencer_steps)} steps including preamble/setup.")
             return True
 
-        
         except Exception as e:
             self.log(f"❌ Unexpected error during TreeView update: {e}")
             return False
 
+
     def on_sequencer_updated(self, steps):
-        # Only reorder the nodes inside the second document
+        """Update the YAML document with the current sequencer order."""
         if len(self.yaml_documents) < 2:
             return
+        
+        if self.sequencer.updated_preamble_globals:
+            yaml_globals = self.yaml_documents[0].get("globals", {})
+            yaml_globals.update(self.sequencer.updated_preamble_globals)
+            self.yaml_documents[0]["globals"] = yaml_globals
+            self.sequencer.receive_globals(yaml_globals)
+            self.sequencer.updated_preamble_globals = {}
 
         doc2 = self.yaml_documents[1]
 
-        # Replace the steps in place — preserves comments / formatting
-        new_order_nodes = [s["_node"] for s in steps if "_node" in s and s.get("_doc_index") == 1]
-        doc2["steps"][:] = new_order_nodes
+        # Walk all sequences → update their YAML lists
+        for seq_step in steps:
+            if seq_step.get("steptype") != "sequence_folder":
+                continue
 
-        # Dump YAML
+            for folder in seq_step.get("children", []):
+                folder_type = folder.get("steptype")
+                children_nodes = [child["_node"] for child in folder.get("children", [])]
+
+                if folder_type == "setup_folder":
+                    doc2["setup_steps"] = children_nodes
+                elif folder_type == "main_folder":
+                    doc2["steps"] = children_nodes
+                elif folder_type == "teardown_folder":
+                    doc2["teardown_steps"] = children_nodes
+
+        # Dump YAML in order: preamble → setup → main → teardown
         from ruamel.yaml import YAML
+        import io
+
         yaml = YAML()
         yaml.indent(mapping=2, sequence=4, offset=2)
-        import io
         stream = io.StringIO()
         yaml.dump_all(self.yaml_documents, stream)
         new_yaml = stream.getvalue()
@@ -464,47 +429,6 @@ class RecipeEditorMainMenu(QMainWindow):
     def show_recipe_info(self, message: str):
         self.set_recipe_status(f"ℹ️ {message}", color="gray")
 
-    def collapse_by_labels(self, labels_to_collapse: set[str]):
-        def recurse_and_collapse(item: QTreeWidgetItem):
-            for i in range(item.childCount()):
-                child = item.child(i)
-                label = child.text(0)
-
-                if label in labels_to_collapse:
-                    self.tree.collapseItem(child)
-
-                recurse_and_collapse(child)
-
-        top_level_count = self.tree.topLevelItemCount()
-        for i in range(top_level_count):
-            top_item = self.tree.topLevelItem(i)
-            recurse_and_collapse(top_item)
-
-    def collapse_inside_steps(self):
-        labels_to_collapse = {
-            "globals", "locals", "outputs", "parameters",
-            "setup_steps", "teardown_steps", "steps"
-        }
-        self.collapse_by_labels(labels_to_collapse)
-        def recurse_and_collapse(item: QTreeWidgetItem):
-            for i in range(item.childCount()):
-                child = item.child(i)
-                label = child.text(0)
-
-                if label == "steps":
-                    self.tree.expandItem(child)  # keep "steps" expanded
-
-                    # collapse every step under "steps"
-                    for step_i in range(child.childCount()):
-                        step_item = child.child(step_i)
-                        self.tree.collapseItem(step_item)
-
-                recurse_and_collapse(child)
-
-        for i in range(self.tree.topLevelItemCount()):
-            top_item = self.tree.topLevelItem(i)
-            recurse_and_collapse(top_item)
-    
     def on_yaml_cursor_changed(self):
         try:
             cursor = self.yaml_viewer.textCursor()
@@ -776,7 +700,7 @@ class RecipeEditorMainMenu(QMainWindow):
             self.delete_selected_items()
         else:
             super().keyPressEvent(event)
-
+    
 # Recipe parsing and processing
     def sanitize_booleans(self, yaml_str: str) -> str:
         sanitized_lines = []
@@ -882,89 +806,6 @@ class RecipeEditorMainMenu(QMainWindow):
             #self.collapse_inside_steps()
             QApplication.processEvents()
 
-    def populate_tree(self, data, parent_item, path=()):
-        from ruamel.yaml.comments import CommentedMap, CommentedSeq
-
-        if isinstance(data, CommentedMap):
-            # Determine context to select required fields list
-            context_required_fields = set()
-
-            if path == ():  # Top-level document
-                context_required_fields = set(RECIPE_HEADER_REQUIRED_FIELDS)
-            elif path and path[-1] == "steps":
-                pass  # The "steps" key contains a list — children are handled separately
-            elif path and isinstance(path[-1], int):
-                # We are inside a step dictionary
-                step_dict = data
-                step_type = step_dict.get("steptype") or ""
-                step_type_lower = step_type.lower()
-
-                if step_type_lower == "userinteractionstep":
-                    context_required_fields = {"steptype", "step_name", "description"}
-                elif step_type_lower == "waitstep":
-                    context_required_fields = {"steptype", "step_name", "description"}
-                else:
-                    context_required_fields = {"steptype", "step_name", "action_type", "module", "method_name"}
-
-            for key, value in data.items():
-                # Show scalar values in the second column
-                if isinstance(value, (str, int, float, bool, type(None))):
-                    child_item = QTreeWidgetItem(parent_item, [str(key), str(value)])
-                else:
-                    child_item = QTreeWidgetItem(parent_item, [str(key), ""])
-
-                child_item.setFlags(child_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make the field editable
-                parent_item.addChild(child_item)
-
-                # Store line number if available
-                line_number = None
-                if hasattr(data, 'lc'):
-                    try:
-                        line_info = data.lc.key(key)
-                        if line_info is not None:
-                            line_number = line_info[0]
-                    except Exception:
-                        pass
-                if line_number is not None:
-                    item = HashableTreeItem(child_item)
-                    self.item_to_line[item] = line_number
-                    self.line_to_item[line_number] = item  # Add this line
-                # Mark required field
-                is_required = key in context_required_fields
-                self.mark_required_field(child_item, is_required)
-
-                # Recurse for nested structures
-                if not isinstance(value, (str, int, float, bool, type(None))):
-                    self.populate_tree(value, child_item, path + (key,))
-
-        elif isinstance(data, CommentedSeq):
-            for idx, value in enumerate(data):
-                child_item = QTreeWidgetItem(parent_item, [f"[{idx}]", ""])
-                child_item.setFlags(child_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make editable
-                parent_item.addChild(child_item)
-
-                # Line number for sequence item
-                line_number = None
-                if hasattr(data, 'lc'):
-                    try:
-                        line_info = data.lc.item(idx)
-                        if line_info is not None:
-                            line_number = line_info[0]
-                    except Exception as e:
-                        pass
-                if line_number is not None:
-                    self.item_to_line[HashableTreeItem(child_item)] = line_number
-
-                self.populate_tree(value, child_item, path + (idx,))
-
-        else:
-            # Scalar value directly under a sequence or map
-            leaf_item = QTreeWidgetItem(parent_item, [str(data), ""])
-            leaf_item.setFlags(leaf_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make editable
-            parent_item.addChild(leaf_item)
-
-        # Expand all items after population
-        self.tree.expandAll()
     def on_steps_reordered(self, parent, start, end, destination, row):
         new_order = []
         for i in range(self.list_widget.count()):
@@ -1100,209 +941,6 @@ class RecipeEditorMainMenu(QMainWindow):
             # Other types (int, float, bool, None, etc) returned as is
             return data
 
-
-class StepBlock(QFrame):
-    def __init__(self, step_name, step_data, parent=None):
-        super().__init__(parent)
-        self.step_name = step_name
-        self.step_data = step_data
-        self.setMaximumWidth(200)
-        self.setFrameShape(QFrame.StyledPanel)
-
-        layout = QHBoxLayout(self)
-        label = QLabel(step_name)
-        layout.addWidget(label)
-        layout.addStretch()
-
-
-class SequencerWidget(QWidget):
-    def __init__(self,yaml_viewer=None, parent=None):
-        super().__init__(parent)
-        self.yaml_viewer = yaml_viewer 
-        self.steps = []  # list of step dicts
-        self.yaml_update_callback = None
-        self.expanded = False
-
-        self.layout = QVBoxLayout(self)
-        self.list_widget = StepListWidget()
-        self.list_widget.model().rowsMoved.connect(self.on_steps_reordered)
-        self.list_widget.itemClicked.connect(self.on_item_clicked)
-        self.list_widget.step_clicked.connect(self.navigate_to_step)
-
-
-        self.layout.addWidget(self.list_widget)
-
-    def set_yaml_data(self, steps_list):
-        self.steps = steps_list
-        self.refresh()
-
-    def refresh(self):
-        """Flattened steps with collapsible folders and indentation."""
-        self.list_widget.clear()
-
-        for step in self.steps:
-            step_type = step.get("steptype", "")
-            step_name = step.get("step_name", "Unnamed Step")
-
-            # Folder/Sequence
-            if step_type in ("sequence_folder", "setup_folder"):
-                # Header with "plus" icon to indicate collapsed initially
-                if self.expanded:
-                    header_item = QListWidgetItem(f"➖ {step_name}")
-                else:
-                    header_item = QListWidgetItem(f"➕ {step_name}")
-                header_item.setFlags(Qt.ItemIsEnabled)  # not draggable
-                # Store step data in header
-                header_item.setData(Qt.UserRole, step)
-                self.list_widget.addItem(header_item)
-
-                child_items = []
-                for child in step.get("children", []):
-                    block = StepBlock(child.get("step_name", "Unnamed Step"), child)
-                    block.setStyleSheet("margin-left: 20px;")  # visual indentation
-
-                    item = QListWidgetItem()
-                    item.setSizeHint(block.sizeHint())
-                    self.list_widget.addItem(item)
-                    self.list_widget.setItemWidget(item, block)
-
-                    # Store step data in child
-                    item.setData(Qt.UserRole, child)
-                    child_items.append(item)
-
-                # Store children in header for toggling
-                header_item.setData(Qt.UserRole + 1, child_items)
-                if not self.expanded:
-                    # Initially hide children
-                    for child_item in child_items:
-                        child_item.setHidden(True)
-
-            else:
-                # Normal single step
-                block = StepBlock(step_name, step)
-                item = QListWidgetItem()
-                item.setSizeHint(block.sizeHint())
-                self.list_widget.addItem(item)
-                self.list_widget.setItemWidget(item, block)
-                item.setData(Qt.UserRole, step)
-
-
-    def on_steps_reordered(self, parent, start, end, destination, row):
-        """Update self.steps after drag & drop."""
-        new_order = []
-
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            step_data = item.data(Qt.UserRole)
-
-            if step_data is None:
-                continue  # this is likely a header
-
-            # Include child steps
-            new_order.append(step_data)
-
-        self.steps = new_order
-
-        if callable(self.yaml_update_callback):
-            self.yaml_update_callback(self.steps)
-
-
-    def on_item_clicked(self, item):
-        """Toggle collapsible folder visibility."""
-        children = item.data(Qt.UserRole + 1)
-        if not children:
-            return  # Not a folder
-
-        hidden = children[0].isHidden()  # toggle state
-        for child_item in children:
-            child_item.setHidden(not hidden)
-
-        # Update header icon
-        if hidden:
-            item.setText(f"➖ {item.data(Qt.UserRole).get('step_name', 'Unnamed Step')}")
-            self.expanded = True
-        else:
-            item.setText(f"➕ {item.data(Qt.UserRole).get('step_name', 'Unnamed Step')}")
-            self.expanded = False
-    
-    def navigate_to_step(self, step_data):
-        if not self.yaml_viewer:
-            return
-
-        yaml_text = self.yaml_viewer.toPlainText()
-        cursor = self.yaml_viewer.textCursor()
-
-        # Try line number if stored
-        line_number = step_data.get("__line__")
-        if line_number is not None:
-            lines = yaml_text.splitlines()
-            position = sum(len(l) + 1 for l in lines[:line_number])
-            cursor.setPosition(position)
-        else:
-            # fallback: search by step_name
-            step_name = step_data.get("step_name", "")
-            position = yaml_text.find(step_name)
-            if position == -1:
-                return
-            cursor.setPosition(position)
-
-        self.yaml_viewer.setTextCursor(cursor)
-        self.yaml_viewer.setFocus()
-
-    
-
-
-class StepListWidget(QListWidget):
-    step_clicked = Signal(dict)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setDragDropMode(QListWidget.InternalMove)
-        self.setDefaultDropAction(Qt.MoveAction)
-        self.setSelectionMode(QListWidget.SingleSelection)
-        self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)  
-        self.setDragEnabled(True)
-        self._mouse_press_pos = None
-
-    def startDrag(self, supportedActions):
-        item = self.currentItem()
-        if not item:
-            return
-
-        widget = self.itemWidget(item)
-        if not widget:
-            return
-
-        # Create a pixmap of the widget (the “ghost” that follows the mouse)
-        pixmap = widget.grab()
-        # Optionally make it semi-transparent
-        pixmap.setDevicePixelRatio(widget.devicePixelRatioF())
-
-        # Create the drag object
-        drag = QDrag(self)
-        selected_items = self.selectedItems()
-        mime_data = self.mimeData(selected_items)  # <-- important!
-        drag.setMimeData(mime_data)
-        drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
-
-        # Start the drag
-        drag.exec(Qt.MoveAction)
-    
-    def mousePressEvent(self, event):
-        self._mouse_press_pos = event.position().toPoint()
-        super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        delta = (event.position().toPoint() - self._mouse_press_pos).manhattanLength()
-        if delta < QApplication.startDragDistance():
-            item = self.itemAt(event.position().toPoint())
-            if item:
-                step_data = item.data(Qt.UserRole)
-                if step_data:
-                    self.step_clicked.emit(step_data)  # notify parent
-        super().mouseReleaseEvent(event)
 
 # done 0.1 - VIEWER
 # done 0.1 - Show some indicator that the changes are unsaved

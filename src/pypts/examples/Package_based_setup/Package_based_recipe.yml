@@ -1,191 +1,195 @@
-# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+# spdx-filecopyrighttext: 2025 cern <home.cern>
 #
-# SPDX-License-Identifier: LGPL-2.1-or-later
+# spdx-license-identifier: lgpl-2.1-or-later
 
-# This section is related to the whole recipe.
-# We could define the name, version and description herem as well as the
+# this section is related to the whole recipe.
+# we could define the name, version and description herem as well as the
 # continue_on_error flag, which could abort tests on failure
-name: Package_based recipe
+name: package_based recipe
 version: 0.1.0
 recipe_version: 1.0.0
-description: A sample recipe demonstrating how to call functions from example_tests.py in a minimal pypts setup
-main_sequence: Main
+description: a sample recipe demonstrating how to call functions from 
+  example_tests.py in a minimal pypts setup
+main_sequence: main
 test_package: example_package
-globals: 
-  #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
+globals:
+  #continue_on_error: false #overall continue_on_error. if it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
-  loadFile_key: 'file'
+  loadfile_key: 'file'
   cancel_key: 'cancel' #key used for buttons that wishes to stop steps.
-  ID_key: 'ID' #If used as a step name, a gui will appear that helps set up a uart connection.
+  id_key: 'id' #if used as a step name, a gui will appear that helps set up a uart connection.
   wrt_key: 'wrt' #writes the given input directly to the specified variable.
-  ssh_client: None
-  host:  #Host name, can either be name or IP
+  ssh_client: none
+  host:  macda #host name, can either be name or ip
   user: root #username of ssh
-  password:  #password for ssh
+  password: testing  #password for ssh
   private_key: #private key for ssh
-  port: None
+  port: none
 ---
-# Recipe can contain multiple sequences. Essentially, sequence is just a group of steps
-sequence_name: Main #Name is not bound to Main and can be whatever.
-description: The main sequence of steps for the example recipe.
+# recipe can contain multiple sequences. essentially, sequence is just a group of steps
+sequence_name: main #name is not bound to main and can be whatever.
+description: the main sequence of steps for the example recipe.
 # we can define sequence - scope variables, that can be used by other steps as inputs
 parameters:
   target_value: '0'
 locals:
   target_value: '45'
-  test_name: Hello
-  wonderful: None
-  wunderbar: None
+  test_name: hello
+  wonderful: none
+  wunderbar: none
 outputs:
-  my_output: None
-setup_steps: 
+  my_output: none
+setup_steps:
 
-  #Creates a threading holding the opened SSH connection so it can be called and used elsewhere. 
-- steptype: SSHConnectStep
-  step_name: Find the SSH client connection
-  description: Asking user to find the file needed
-  continue_on_error: false
-  skip: true
-# we define multiple step types. Following implementations can be treated as examples
+  #creates a threading holding the opened ssh connection so it can be called and used elsewhere. 
+  - steptype: sshconnectstep
+    step_name: find the ssh client connection
+    description: asking user to find the file needed
+    continue_on_error: false
+    skip: true
+# we define multiple step types. following implementations can be treated as examples
 steps:
-- steptype: UserInteractionStep
-  step_name: Are you all right?
-  description: Asking user for confirmation
-  skip: false
-  input_mapping:
-    message:
-      type: direct
-      value: 'Hello there. Are you doing all right?
-        Please let us know by pressing the correct button :)
-        '
-    image_path:
-      type: direct
-      value: lego2.jpg
-    options:
-      type: direct
+  - steptype: userinteractionstep
+    step_name: are you all right?
+    description: asking user for confirmation
+    skip: false
+    input_mapping:
+      message:
+        type: direct
+        value: 'hello there. are you doing all right? please let us know by pressing
+          the correct button :) '
+      image_path:
+        type: direct
+        value: lego2.jpg
+      options:
+        type: direct
+        value:
+          - 'yes': 'test'
+          - 'no': 'value'
+    output_mapping:
+      output:
+        type: equals
+        value: 'yes'
+  - steptype: pythonmodulestep
+    step_name: other_test
+    description: python existing method - expect pass
+    action_type: method
+    module: example_tests
+    method_name: other_test
+    input_mapping: {}
+    output_mapping:
+      some_return:
+        type: passfail
       value:
-      - 'yes': ''
-      - 'no': ''
-  output_mapping:
-    output:
-      type: equals
-      value: 'yes'
-- steptype: PythonModuleStep
-  step_name: other_test
-  description: Python existing method - expect pass
-  action_type: method
-  module: example_tests
-  method_name: other_test
-  input_mapping: {}
-  output_mapping:
-    some_return:
-      type: passfail
-    value:
-      type: local
-      local_name: some_value
-- steptype: PythonModuleStep
-  step_name: other_testa
-  description: Python non-existing method - expect error
-  action_type: method
-  module: example_testsa
-  method_name: other_testa
-  input_mapping: {}
-  output_mapping:
-    some_return:
-      type: passfail
-    value:
-      type: local
-      local_name: test_value
-  continue_on_error: True
+        type: local
+        local_name: some_value
+  - steptype: pythonmodulestep
+    step_name: other_testa
+    description: python non-existing method - expect error
+    action_type: method
+    module: example_testsa
+    method_name: other_testa
+    input_mapping: {}
+    output_mapping:
+      some_return:
+        type: passfail
+      value:
+        type: local
+        local_name: test_value
+    continue_on_error: true
 
-- steptype: PythonModuleStep
-  step_name: simple_output
-  description: Python method, while providing non-existing inputs - expect error
-  action_type: method
-  module: example_tests.py
-  method_name: simple_output
-  input_mapping:
-    value:
-      type: local
-      local_name: test_value
-  output_mapping:
-    my_output:
-      type: local
-      local_name: calculated_output
-  continue_on_error: True
+  - steptype: pythonmodulestep
+    step_name: simple_output
+    description: python method, while providing non-existing inputs - expect 
+      error
+    action_type: method
+    module: example_tests.py
+    method_name: simple_output
+    input_mapping:
+      value:
+        type: local
+        local_name: test_value
+    output_mapping:
+      my_output:
+        type: local
+        local_name: calculated_output
+    continue_on_error: true
 
-- steptype: PythonModuleStep
-  step_name: test_to_run (Check value 45)
-  description: Python existing method - invalid range
-  action_type: method
-  module: example_tests.py
-  method_name: test_to_run
-  input_mapping:
-    target:
-      type: direct
-      value: 45
-  output_mapping:
-    compare:
-      type: passfail
-    other_output:
-      type: local
-      local_name: some_string
-  continue_on_error: True
-  
-- steptype: PythonModuleStep
-  step_name: range_test (valid Range)
-  description: Python existing method - invalid range
-  action_type: method
-  module: example_tests.py
-  method_name: range_test
-  input_mapping:
-    value:
-      type: direct
-      value: '15'
-    min:
-      type: direct
-      value: '10'
-    max:
-      type: direct
-      value: '20'
-  output_mapping:
-    compare:
-      type: passfail
-- steptype: WaitStep
-  step_name: Wait for 3s
-  description: Waiting 3 seconds to let user check confirm
-  skip: true
-  input_mapping:
-    wait_time:
-      value: '3'
-  output_mapping: {}
-- steptype: PythonModuleStep
-  step_name: Run range_test (outside Range)
-  description: Some description
-  action_type: method
-  module: example_tests.py
-  method_name: range_test
-  input_mapping:
-    value:
-      type: direct
-      value: '25'
-    min:
-      type: direct
-      value: '10'
-    max:
-      type: direct
-      value: '20'
-  output_mapping:
-    compare:
-      type: passfail
-- steptype: PythonModuleStep
-  step_name: Generate Error Deliberately
-  description: Some description
-  action_type: method
-  module: example_tests.py
-  method_name: generate_error
-  input_mapping: {}
-  output_mapping: {}
-teardown_steps: 
-- steptype: SSHCloseStep
-  step_name: Closes the SSH client
+  - steptype: pythonmodulestep
+    step_name: test_to_run (check value 45)
+    description: python existing method - invalid range
+    action_type: method
+    module: example_tests.py
+    method_name: test_to_run
+    input_mapping:
+      target:
+        type: direct
+        value: 45
+    output_mapping:
+      compare:
+        type: passfail
+      other_output:
+        type: local
+        local_name: some_string
+    continue_on_error: true
+
+  - steptype: pythonmodulestep
+    step_name: range_test (valid range)
+    description: python existing method - invalid range
+    action_type: method
+    module: example_tests.py
+    method_name: range_test
+    input_mapping:
+      value:
+        type: direct
+        value: '15'
+      min:
+        type: direct
+        value: '10'
+      max:
+        type: direct
+        value: '20'
+    output_mapping:
+      compare:
+        type: passfail
+  - steptype: waitstep
+    step_name: wait for 3s
+    description: waiting 3 seconds to let user check confirm
+    skip: true
+    input_mapping:
+      wait_time:
+        value: '3'
+    output_mapping: {}
+  - steptype: pythonmodulestep
+    step_name: run range_test (outside range)
+    description: some description
+    action_type: method
+    module: example_tests.py
+    method_name: range_test
+    input_mapping:
+      value:
+        type: direct
+        value: '25'
+      min:
+        type: direct
+        value: '10'
+      max:
+        type: direct
+        value: '20'
+    output_mapping:
+      compare:
+        type: passfail
+  - steptype: pythonmodulestep
+    step_name: generate error deliberately
+    description: some description
+    action_type: method
+    module: example_tests.py
+    method_name: generate_error
+    input_mapping: {}
+    output_mapping: {}
+  - steptype: sshclosestep
+    step_name: sshclose
+    description: describe the test in this box
+teardown_steps:
+  - steptype: sshclosestep
+    step_name: closes the ssh client

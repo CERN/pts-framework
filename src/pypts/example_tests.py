@@ -5,7 +5,7 @@
 import logging
 import numpy as np
 from nptdms import TdmsWriter, RootObject, GroupObject, ChannelObject
-import os, paramiko
+import os
 from datetime import datetime
 
 '''
