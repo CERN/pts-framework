@@ -7,11 +7,9 @@ requires = ["setuptools", "wheel", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "pts-framework"
-dynamic = [
-  "version",  # The version is taken directly from the repository, using setuptools-scm.
-]
-# description = "<Insert short description of the project>"
+name = "example_package"
+version = "0.2.0"
+# description = "<Simple package_based setup example>"
 readme = "README.md"
 classifiers = [
   "Programming Language :: Python :: 3",
@@ -19,15 +17,14 @@ classifiers = [
 ]
 authors = [
   { name = "Odd Oyvind Andreassen", email = "odd.oyvind.andreassen@cern.ch" },
-  { name = "Joseph Tagg", email = "joseph.tagg@cern.ch" },
-  { name = "Bartlomiej Banas", email = "joseph.tagg@cern.ch" },
   { name = "Alvaro Martinez Landete", email = "alvaro.martinez.landete@cern.ch" },
+  { name = "Oliver Falkenberg Damborg", email = "oliver.falkenberg.damborg@cern.ch" },
 ]
 # Specify the minimum Python version required. It is not safe to use
 # this to control the *upper* version of Python.
 requires-python = ">=3.11"
 
-# The core dependencies of the project.
+# The core dependencies of the project. Add more if project requires
 dependencies = [
   "hightime==0.2.2",
   "matplotlib",
@@ -37,10 +34,7 @@ dependencies = [
   "PySide6==6.9.1",
   "PyYAML==6.0.2",
   "ruamel.yaml",
-  "pyserial",
-  "paramiko"
 ]
-
 [project.optional-dependencies]
 # The optional dependencies of the project, installable using the "extras" syntax.
 test = [
@@ -62,15 +56,6 @@ dev = [
   "ruff",
 ]
 
-[project.urls]
-# Homepage = "PyPTS repository"
-Repository = "https://gitlab.cern.ch/pts/framework/pypts"
-
-[project.scripts]
-init_env_min = "pypts.examples.Minimal_setup.init_env_min:main"
-init_env_pack = "pypts.examples.Package_based_setup.init_env_pack:main"
-
-
 [tool.setuptools.packages.find]
 where = ["src"]
 include = ["pypts", "pypts.*"]
@@ -83,7 +68,7 @@ include = ["pypts", "pypts.*"]
 [tool.setuptools_scm]
 # Tell setuptools_scm to write a _version.py file in the package. The
 # _version.py file must not be committed to the repository.
-version_file = "src/pypts/_version.py"
+version_file = "src/package_architecture_example/_version.py"
 
 [tool.acc_py_template]
 features = [

@@ -760,7 +760,7 @@ class UserLoadingStep(Step):
                         if self.file_save_location and self.file_save_location.get("type") == "global":
                             runtime.set_global(self.file_save_location.get("variable"), file)
                         elif self.file_save_location and self.file_save_location.get("type") == "local":
-                            runtime.set_global(self.file_save_location.get("variable"),file) 
+                            runtime.set_local(self.file_save_location.get("variable"),file) 
                         else:
                             runtime.set_global('file', file)
             if str(response).strip().lower() == runtime.get_global('cancel_key'):
@@ -916,7 +916,7 @@ class UserWriteStep(Step):
     via a UI or other external interface. Waits for a response.
     """
     def __init__(self, trigger_response: str = None, continue_on_error: bool = False, **kwargs):
-        """
+        """F
         Args:
             **kwargs: Common Step arguments. Input mapping should define:
                       - 'message' (str): Text prompt for the user.
@@ -1038,7 +1038,6 @@ class SSHConnectStep(Step):
         connect_timeout = input.get("connect_timeout", 5)
         runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
         try:
-
             if not ((user and host and password) or (user and host and private_key)):
                     raise ValueError("Missing required SSH connection parameters.")
 

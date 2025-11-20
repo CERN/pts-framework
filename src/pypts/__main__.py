@@ -34,7 +34,6 @@ if __name__ == '__main__':
     and connects signals/slots between the proxy and the window.
     Starts the recipe execution and event processing threads.
     """
-    recipe_file="./src/pypts/recipes/comprehensive_recipe.yml"
 
     api = run_pts()
     

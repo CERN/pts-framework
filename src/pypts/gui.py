@@ -74,6 +74,7 @@ class MainWindow(QWidget):
         self.response_q = None
         self.already_updated = False
         self.running = False
+        self.recipe_file = None
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
         
@@ -127,10 +128,13 @@ class MainWindow(QWidget):
 
         # File menu
         self.file_menu = menubar.addMenu("File")
+        self.new_recipe_action = QAction("New Recipe", self)
         self.open_recipe_action = QAction("Open Recipe", self)
         self.exit_action = QAction("Exit", self)
+        self.file_menu.addAction(self.new_recipe_action)
         self.file_menu.addAction(self.open_recipe_action)
         self.file_menu.addAction(self.exit_action)
+        self.new_recipe_action.triggered.connect(self.on_new_clicked)
         self.open_recipe_action.triggered.connect(self.on_open_clicked)
         self.exit_action.triggered.connect(self.application_close)
 
@@ -241,12 +245,21 @@ class MainWindow(QWidget):
         url = "https://gitlab.cern.ch/pts/framework/pypts"
         webbrowser.open(url)
 
+    def on_new_clicked(self):
+        recipe = self.recipe_file
+        self.recipe_file = None
+        self.on_edit_clicked()
+        self.recipe_file = recipe      
+
     def on_edit_clicked(self):
         logger.info("Opening YamVIEW - recipe creation tool")
         root = get_project_root()
         recipe_editor_path = find_resource_path("recipe_creator.py", root=root)
 
-        subprocess.Popen([sys.executable, recipe_editor_path])
+        if self.recipe_file:
+            subprocess.Popen([sys.executable, recipe_editor_path, self.recipe_file])
+        else:
+            subprocess.Popen([sys.executable, recipe_editor_path])
 
     def application_close(self):
         logger.info("Closing application")

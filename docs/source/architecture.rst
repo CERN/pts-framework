@@ -3,7 +3,7 @@
 .. SPDX-License-Identifier: CC-BY-SA-4.0
 
 Architecture Overview
-====================
+==============================
 
 This document describes the overall architecture of the PyPTS (Python Test Sequence) framework and recent improvements made to consolidate and clean up the codebase.
 

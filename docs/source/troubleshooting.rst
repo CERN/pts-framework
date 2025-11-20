@@ -5,14 +5,14 @@
 .. _troubleshooting:
 
 Troubleshooting
-=====
+=========================
 
 This guide provides a basic overview troubleshooting for commonly occuring problems and basic setup of the environment.
 
 
 
 basic ``pypts`` environment setup.
-------------
+------------------------------------------------
 Issues can often occur due to missing libraries, conflicting versions or conflicting elements in the environment.
 
 If you come into any difficulties, making a fresh virtual environment is recommended.

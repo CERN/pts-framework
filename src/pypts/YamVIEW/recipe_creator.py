@@ -9,7 +9,7 @@ from pypts.YamVIEW.customGUIModules import (
 )
 
 import re
-import io
+import io, uuid
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -29,9 +29,9 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import (
     QAction,
     QTextCursor,
-    QPixmap,
+    QPixmap
 )
-from PySide6.QtCore import QSize, QMargins
+from PySide6.QtCore import QSize, QMargins, Qt
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
 from datetime import datetime
@@ -41,8 +41,8 @@ from pypts.YamVIEW.verify_recipe import *
 import sys
 from PySide6.QtGui import QTextCharFormat, QFont
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 from PySide6.QtGui import QKeySequence, QShortcut
+from pypts.YamVIEW.recipe_sequencer_setup import *
 
 
 class RecipeEditorMainMenu(QMainWindow):
@@ -142,7 +142,7 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def setup_toolbar(self):
         self.toolbar = QToolBar()
-        self.toolbar.setIconSize(QSize(32, 32))
+        self.toolbar.setIconSize(QSize(28, 28))
         self.toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
 
         self.action_add = QAction(self.style().standardIcon(QStyle.SP_FileDialogNewFolder), "Create recipe from the template", self)
@@ -178,22 +178,8 @@ class RecipeEditorMainMenu(QMainWindow):
         icon_action.setDefaultWidget(icon_label)
         self.toolbar.addAction(icon_action)
 
-    def setup_tree_and_yaml(self):
-        # YAML Tree widget
-        self.tree = QTreeWidget()
-        self.tree.setColumnCount(2)
-        self.tree.setHeaderLabels(["Field", "Value"])
-        self.tree.setColumnWidth(0, 200)
-        self.tree.setAlternatingRowColors(True)
-        self.tree.itemChanged.connect(self.on_treeview_item_changed)
-        self.tree.itemClicked.connect(self.on_tree_item_clicked)
-        self.tree.setEditTriggers(
-            QTreeWidget.EditTrigger.DoubleClicked |
-            QTreeWidget.EditTrigger.SelectedClicked |
-            QTreeWidget.EditTrigger.EditKeyPressed
-        )
-        self.tree.setColumnWidth(0, 250)
 
+    def setup_tree_and_yaml(self):
         # YAML Viewer (custom ScintillaYamlEditor)
         self.yaml_viewer = ScintillaYamlEditor(self)
         self.yaml_viewer.setReadOnly(False)
@@ -204,10 +190,14 @@ class RecipeEditorMainMenu(QMainWindow):
         font.setFixedPitch(True)
         self.yaml_viewer.setFont(font)
 
+        #Sequencer
+        self.sequencer = SequencerWidget(yaml_viewer=self.yaml_viewer)
+        self.sequencer.yaml_update_callback = self.on_sequencer_updated
+
         # Horizontal container for tree + yaml viewer
         self.tree_and_yaml_widget = QWidget()
         self.tree_and_yaml_hlayout = QHBoxLayout(self.tree_and_yaml_widget)
-        self.tree_and_yaml_hlayout.addWidget(self.tree)
+        self.tree_and_yaml_hlayout.addWidget(self.sequencer)
         self.tree_and_yaml_hlayout.addWidget(self.yaml_viewer)
 
     def setup_status_and_layouts(self):
@@ -260,14 +250,6 @@ class RecipeEditorMainMenu(QMainWindow):
         self.main_layout.addWidget(self.log_console)
 
 # Helper GUI methods - colouring, viewing
-    def mark_required_field(self, tree_item, is_required: bool):
-        if is_required:
-            # Append star
-            original_text = tree_item.text(0)
-            tree_item.setText(0, "* " + original_text)
-
-        else:
-            pass
 
     def toggle_dark_mode(self, enabled):
         if enabled:
@@ -309,42 +291,125 @@ class RecipeEditorMainMenu(QMainWindow):
     def update_yaml_viewer(self):
         self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
         self.yaml_viewer.setText(self.temporary_recipe_contents)
-
+    
     def update_yaml_treeview(self):
+        """Load YAML documents and populate the sequencer with folders for setup, main, and teardown steps."""
         try:
-            try:
-                self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
-            except Exception as e:
-                self.log(f"❌ Failed to parse YAML content: {e}")
+            self.yaml_documents = list(self.yaml_parser.load_all(self.temporary_recipe_contents))
+            if not self.yaml_documents:
+                self.log("⚠️ No YAML documents found.")
+                self.sequencer.set_yaml_data([])
                 return False
 
-            try:
-                self.tree.blockSignals(True)  # ⛔ Block signals while populating
-                self.tree.clear()
-                self.item_to_line.clear()  # Clear previous mappings
-            except Exception as e:
-                self.log(f"❌ Failed to reset TreeView state: {e}")
-                return False
+            sequencer_steps = []
 
-            for idx, doc in enumerate(self.yaml_documents):
-                try:
-                    doc_root = QTreeWidgetItem([f"Document {idx + 1}"])
-                    self.tree.addTopLevelItem(doc_root)
-                    self.populate_tree(doc, doc_root)
-                    doc_root.setExpanded(True)
-                except Exception as e:
-                    self.log(f"❌ Failed to populate tree for document {idx + 1}: {e}")
-                    continue  # Try to load next document anyway
+            # First document → Preamble
+            first_doc = self.yaml_documents[0]
+            sequencer_steps.append({
+                "step_name": "Preamble",
+                "description": str(first_doc),
+                "steptype": "preamble",
+                "_node": first_doc,
+                "_id": str(uuid.uuid4())
+            })
 
-            try:
-                self.tree.blockSignals(False)
-            except Exception as e:
-                self.log(f"❌ Failed to unblock TreeView signals: {e}")
+            # Process remaining documents
+            for doc_index, doc in enumerate(self.yaml_documents[1:], start=1):
+                sequence_name = doc.get("sequence_name", f"Sequence {doc_index}")
+                sequence_block = {
+                    "step_name": f"Sequence: {sequence_name}",
+                    "description": doc.get("description", ""),
+                    "steptype": "sequence_folder",
+                    "children": [],
+                    "_node": doc,
+                    "_doc_index": doc_index,
+                    "_id": str(uuid.uuid4())
+                }
+
+                def build_folder(folder_name, folder_type, steps_list):
+                    """Create a folder dict with child steps."""
+                    folder = {
+                        "step_name": folder_name,
+                        "steptype": folder_type,
+                        "children": [],
+                        "_node": steps_list,  # original YAML list
+                        "_expanded": False
+                    }
+                    for s in steps_list:
+                        if isinstance(s, dict) and s.get("step_name"):
+                            folder["children"].append({
+                                "step_name": s.get("step_name", "Unnamed Step"),
+                                "steptype": s.get("steptype", "unknown"),
+                                "_node": s,
+                                "_parent": folder_type,
+                                "_id": s.get("_id", str(uuid.uuid4()))
+                            })
+                    return folder
+
+                # Build folders in chronological order: setup → main → teardown
+                folders = [
+                    build_folder("Setup Steps", "setup_folder", doc.get("setup_steps", [])),
+                    build_folder("Main Steps", "main_folder", doc.get("steps", [])),
+                    build_folder("Teardown Steps", "teardown_folder", doc.get("teardown_steps", [])),
+                ]
+
+                sequence_block["children"].extend(folders)
+                sequencer_steps.append(sequence_block)
+
+            self.sequencer.set_yaml_data(sequencer_steps)
+            self.sequencer.receive_globals(self.yaml_documents[0].get("globals", {}))
+            self.log(f"✅ Sequencer received {len(sequencer_steps)} steps including preamble/setup.")
             return True
 
         except Exception as e:
             self.log(f"❌ Unexpected error during TreeView update: {e}")
             return False
+
+
+    def on_sequencer_updated(self, steps):
+        """Update the YAML document with the current sequencer order."""
+        if len(self.yaml_documents) < 2:
+            return
+        
+        if self.sequencer.updated_preamble_globals:
+            yaml_globals = self.yaml_documents[0].get("globals", {})
+            yaml_globals.update(self.sequencer.updated_preamble_globals)
+            self.yaml_documents[0]["globals"] = yaml_globals
+            self.sequencer.receive_globals(yaml_globals)
+            self.sequencer.updated_preamble_globals = {}
+
+        doc2 = self.yaml_documents[1]
+
+        # Walk all sequences → update their YAML lists
+        for seq_step in steps:
+            if seq_step.get("steptype") != "sequence_folder":
+                continue
+
+            for folder in seq_step.get("children", []):
+                folder_type = folder.get("steptype")
+                children_nodes = [child["_node"] for child in folder.get("children", [])]
+
+                if folder_type == "setup_folder":
+                    doc2["setup_steps"] = children_nodes
+                elif folder_type == "main_folder":
+                    doc2["steps"] = children_nodes
+                elif folder_type == "teardown_folder":
+                    doc2["teardown_steps"] = children_nodes
+
+        # Dump YAML in order: preamble → setup → main → teardown
+        from ruamel.yaml import YAML
+        import io
+
+        yaml = YAML()
+        yaml.indent(mapping=2, sequence=4, offset=2)
+        stream = io.StringIO()
+        yaml.dump_all(self.yaml_documents, stream)
+        new_yaml = stream.getvalue()
+
+        self.yaml_viewer.setText(new_yaml)
+        self.temporary_recipe_contents = new_yaml
+        self.log("✅ Sequencer order updated and YAML synced.")
+
 
     def set_recipe_status(self, message: str, color: str = "#333"):
         """Sets the status message and text color in the top recipe status field."""
@@ -363,47 +428,6 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def show_recipe_info(self, message: str):
         self.set_recipe_status(f"ℹ️ {message}", color="gray")
-
-    def collapse_by_labels(self, labels_to_collapse: set[str]):
-        def recurse_and_collapse(item: QTreeWidgetItem):
-            for i in range(item.childCount()):
-                child = item.child(i)
-                label = child.text(0)
-
-                if label in labels_to_collapse:
-                    self.tree.collapseItem(child)
-
-                recurse_and_collapse(child)
-
-        top_level_count = self.tree.topLevelItemCount()
-        for i in range(top_level_count):
-            top_item = self.tree.topLevelItem(i)
-            recurse_and_collapse(top_item)
-
-    def collapse_inside_steps(self):
-        labels_to_collapse = {
-            "globals", "locals", "outputs", "parameters",
-            "setup_steps", "teardown_steps", "steps"
-        }
-        self.collapse_by_labels(labels_to_collapse)
-        def recurse_and_collapse(item: QTreeWidgetItem):
-            for i in range(item.childCount()):
-                child = item.child(i)
-                label = child.text(0)
-
-                if label == "steps":
-                    self.tree.expandItem(child)  # keep "steps" expanded
-
-                    # collapse every step under "steps"
-                    for step_i in range(child.childCount()):
-                        step_item = child.child(step_i)
-                        self.tree.collapseItem(step_item)
-
-                recurse_and_collapse(child)
-
-        for i in range(self.tree.topLevelItemCount()):
-            top_item = self.tree.topLevelItem(i)
-            recurse_and_collapse(top_item)
 
     def on_yaml_cursor_changed(self):
         try:
@@ -430,7 +454,7 @@ class RecipeEditorMainMenu(QMainWindow):
             return
         self.temporary_recipe_contents = self.last_valid_recipe
         self.update_yaml_viewer()
-        self.collapse_inside_steps()
+        #self.collapse_inside_steps()
 
     def on_save_as_clicked(self):
         try:
@@ -553,7 +577,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.current_file_path = None
         self.stacked_layout.setCurrentIndex(1)
 
-        self.collapse_inside_steps()
+        #self.collapse_inside_steps()
 
         self.action_save.setEnabled(False)
         self.action_save_as.setEnabled(True)
@@ -581,7 +605,8 @@ class RecipeEditorMainMenu(QMainWindow):
         webbrowser.open(url)
 
     def on_close_recipe_clicked(self):
-        self.tree.clear()
+        #self.tree.clear()
+        self.sequencer.clear()
         self.stacked_layout.setCurrentIndex(0)  # Show logo
         self.close_recipe.setEnabled(False)  # 🔒 Disable it - gray out
         self.action_save.setEnabled(False)
@@ -675,7 +700,7 @@ class RecipeEditorMainMenu(QMainWindow):
             self.delete_selected_items()
         else:
             super().keyPressEvent(event)
-
+    
 # Recipe parsing and processing
     def sanitize_booleans(self, yaml_str: str) -> str:
         sanitized_lines = []
@@ -701,7 +726,7 @@ class RecipeEditorMainMenu(QMainWindow):
                 self.show_recipe_error("❌ Recipe file is invalid!")
                 return False
         except Exception as e:
-            self.tree.blockSignals(False)  # Safety catch
+            self.sequencer.blockSignals(False)  # Safety catch
             self.log(f"❌ Expception while validating the recipe, recipe might be corrupted.")
             return False
 
@@ -720,13 +745,17 @@ class RecipeEditorMainMenu(QMainWindow):
         return result, description
 
     def open_recipe(self):
-        file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
+        if getattr(self, "current_file_path", None):
+            file_path = self.current_file_path
+            
+        else:
+            file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
         self.load_yaml_recipe(file_path)
         self.save_as_action.setEnabled(True)
         self.save_action.setEnabled(True)
         self.action_save.setEnabled(True)
         self.action_save_as.setEnabled(True)
-        self.collapse_inside_steps()
+        #self.collapse_inside_steps()
 
         filename = os.path.basename(file_path)
         if filename == "":
@@ -772,94 +801,24 @@ class RecipeEditorMainMenu(QMainWindow):
                 self.close_recipe.setEnabled(True)  # 🔒 Enable it
 
             except YAMLError as e:
-                self.tree.blockSignals(False)  # Safety catch
+                #self.tree.blockSignals(False)  # Safety catch
                 self.log(f"❌ YAML parse error: {e}")
-            self.collapse_inside_steps()
+            #self.collapse_inside_steps()
             QApplication.processEvents()
 
-    def populate_tree(self, data, parent_item, path=()):
-        from ruamel.yaml.comments import CommentedMap, CommentedSeq
+    def on_steps_reordered(self, parent, start, end, destination, row):
+        new_order = []
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            block = self.list_widget.itemWidget(item)
+            step = block.step_data
+            step["step_name"] = block.step_name
+            new_order.append(step)
 
-        if isinstance(data, CommentedMap):
-            # Determine context to select required fields list
-            context_required_fields = set()
+        self.steps = new_order
+        if callable(self.yaml_update_callback):
+            self.yaml_update_callback(self.steps)
 
-            if path == ():  # Top-level document
-                context_required_fields = set(RECIPE_HEADER_REQUIRED_FIELDS)
-            elif path and path[-1] == "steps":
-                pass  # The "steps" key contains a list — children are handled separately
-            elif path and isinstance(path[-1], int):
-                # We are inside a step dictionary
-                step_dict = data
-                step_type = step_dict.get("steptype") or ""
-                step_type_lower = step_type.lower()
-
-                if step_type_lower == "userinteractionstep":
-                    context_required_fields = {"steptype", "step_name", "description"}
-                elif step_type_lower == "waitstep":
-                    context_required_fields = {"steptype", "step_name", "description"}
-                else:
-                    context_required_fields = {"steptype", "step_name", "action_type", "module", "method_name"}
-
-            for key, value in data.items():
-                # Show scalar values in the second column
-                if isinstance(value, (str, int, float, bool, type(None))):
-                    child_item = QTreeWidgetItem(parent_item, [str(key), str(value)])
-                else:
-                    child_item = QTreeWidgetItem(parent_item, [str(key), ""])
-
-                child_item.setFlags(child_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make the field editable
-                parent_item.addChild(child_item)
-
-                # Store line number if available
-                line_number = None
-                if hasattr(data, 'lc'):
-                    try:
-                        line_info = data.lc.key(key)
-                        if line_info is not None:
-                            line_number = line_info[0]
-                    except Exception:
-                        pass
-                if line_number is not None:
-                    item = HashableTreeItem(child_item)
-                    self.item_to_line[item] = line_number
-                    self.line_to_item[line_number] = item  # Add this line
-                # Mark required field
-                is_required = key in context_required_fields
-                self.mark_required_field(child_item, is_required)
-
-                # Recurse for nested structures
-                if not isinstance(value, (str, int, float, bool, type(None))):
-                    self.populate_tree(value, child_item, path + (key,))
-
-        elif isinstance(data, CommentedSeq):
-            for idx, value in enumerate(data):
-                child_item = QTreeWidgetItem(parent_item, [f"[{idx}]", ""])
-                child_item.setFlags(child_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make editable
-                parent_item.addChild(child_item)
-
-                # Line number for sequence item
-                line_number = None
-                if hasattr(data, 'lc'):
-                    try:
-                        line_info = data.lc.item(idx)
-                        if line_info is not None:
-                            line_number = line_info[0]
-                    except Exception as e:
-                        pass
-                if line_number is not None:
-                    self.item_to_line[HashableTreeItem(child_item)] = line_number
-
-                self.populate_tree(value, child_item, path + (idx,))
-
-        else:
-            # Scalar value directly under a sequence or map
-            leaf_item = QTreeWidgetItem(parent_item, [str(data), ""])
-            leaf_item.setFlags(leaf_item.flags() | Qt.ItemFlag.ItemIsEditable)  # make editable
-            parent_item.addChild(leaf_item)
-
-        # Expand all items after population
-        self.tree.expandAll()
 
     def extract_treeView_to_data(self):
         documents = []
@@ -982,6 +941,7 @@ class RecipeEditorMainMenu(QMainWindow):
             # Other types (int, float, bool, None, etc) returned as is
             return data
 
+
 # done 0.1 - VIEWER
 # done 0.1 - Show some indicator that the changes are unsaved
 # done 0.1 - allow to clear any field
@@ -1075,8 +1035,16 @@ class RecipeEditorMainMenu(QMainWindow):
 
 
 if __name__ == "__main__":
+    
     app = QApplication(sys.argv)
     window = RecipeEditorMainMenu()
 
     window.show()
+
+    if len(sys.argv) > 1:
+        file_path = sys.argv[1]
+        window.current_file_path = file_path
+        print("Loaded a recipe from gui")
+        window.open_recipe()
+
     sys.exit(app.exec())
