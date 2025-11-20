@@ -77,7 +77,7 @@ class MainWindow(QWidget):
         self.recipe_file = None
         self.setWindowTitle("PTS")
         self.setGeometry(100, 100, 1600, 1000)
-        scheme = QGuiApplication.styleHints().colorScheme()
+        self.scheme = QGuiApplication.styleHints().colorScheme()
 
         """Load CERN logo from package resources"""
         try:
@@ -230,7 +230,7 @@ class MainWindow(QWidget):
         self.log_text_box.setReadOnly(True)
         self.log_text_box.setFont(QFont("Courier", 8))
         self.log_text_box.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        if scheme == Qt.ColorScheme.Light:
+        if self.scheme == Qt.ColorScheme.Light:
             self.log_text_box.setStyleSheet('background-color: whitesmoke')
         else:
             self.log_text_box.setStyleSheet('background-color: gray4')
