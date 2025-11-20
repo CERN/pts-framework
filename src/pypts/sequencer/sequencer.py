@@ -8,6 +8,7 @@ from pypts.core.CORE_MESSAGES import CoreToSequencerEvent, CoreToSequencerComman
 from pypts.logger.log import log
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import HeartbeatManager
+from pypts.utilities.common import poll_queue
 import time
 
 def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
@@ -60,20 +61,10 @@ class Sequencer:
 
     @catch_and_report_errors()
     def poll_core(self):
-        """
-        Attempts to get a command from core_to_sequencer_queue without waiting.
-        If a command is received, passes it for handling.
-        Ignores exception when queue is empty (no messages).
-        """
-        try:
-            event = self.core_to_sequencer_queue.get(timeout=0)
-            if event:
-                self.handle_command(event)
-        except Empty:
-            pass
+        poll_queue(self.core_to_sequencer_queue, self.handle_core_event)
 
     @catch_and_report_errors()
-    def handle_command(self, event: CoreToSequencerEvent):
+    def handle_core_event(self, event: CoreToSequencerEvent):
         """
         Handle commands received from Core.
         Supports RUN_SEQUENCE to perform sequencing and STOP to end the module.

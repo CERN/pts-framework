@@ -9,6 +9,7 @@ from pypts.logger.log import log
 import time
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import HeartbeatManager
+from pypts.utilities.common import poll_queue
 
 
 def report_main(core: ReportToCoreInterface, core_to_report_queue):
@@ -61,19 +62,10 @@ class Report:
 
     @catch_and_report_errors()
     def poll_core(self):
-        """
-        Checks the command queue for new messages without blocking.
-        If a message is received, passes it for handling.
-        """
-        try:
-            event: CoreToReportEvent = self.core_to_report_queue.get(timeout=0)
-            self.handle_command(event)
-        except Empty:
-            # No message present, continue polling
-            pass
+        poll_queue(self.core_to_report_queue, self.handle_core_event)
 
     @catch_and_report_errors()
-    def handle_command(self, event: CoreToReportEvent):
+    def handle_core_event(self, event: CoreToReportEvent):
         """
         Routes incoming commands based on the event's command type.
         """

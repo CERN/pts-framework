@@ -1,6 +1,5 @@
 from multiprocessing import Process, Queue
 import time
-from queue import Empty
 
 from pypts.core.sequencer_to_core_interface import SequencerToCoreInterface, SequencerToCoreQueue
 from pypts.core.report_to_core_interface import ReportToCoreInterface, ReportToCoreQueue
@@ -17,6 +16,7 @@ from pypts.report.report import report_main
 from pypts.report.REPORT_MESSAGES import ReportToCoreEvent, ReportToCoreCommand
 
 from pypts.logger.log import log
+from pypts.utilities.common import poll_queue
 
 """
 Entry point for launcher. Responsible for instantiating Core class 
@@ -108,26 +108,13 @@ class Core:
             self.check_stop_status()
             time.sleep(0.01)
 
-    # --- Event handlers ---
-    def poll_queue(self, queue, handler):
-        """
-        Helper to poll a given queue non-blockingly and call handler on received event.
-        Ignores queue.Empty exceptions silently.
-        """
-        try:
-            event = queue.get_nowait()
-            if event:
-                handler(event)
-        except Empty:
-            pass
-
     def poll_all_sources(self):
         """
         Polls queues for HMI, Sequencer and Report events, dispatching to appropriate handlers.
         """
-        self.poll_queue(self.hmi_to_core_queue, self.handle_hmi_event)
-        self.poll_queue(self.sequencer_to_core_queue, self.handle_sequencer_event)
-        self.poll_queue(self.report_to_core_queue, self.handle_report_event)
+        poll_queue(self.hmi_to_core_queue, self.handle_hmi_event)
+        poll_queue(self.sequencer_to_core_queue, self.handle_sequencer_event)
+        poll_queue(self.report_to_core_queue, self.handle_report_event)
 
     def handle_hmi_event(self, event: HMIToCoreEvent):
         """

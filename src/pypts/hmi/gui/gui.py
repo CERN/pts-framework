@@ -13,6 +13,7 @@ from pypts.core.CORE_MESSAGES import CoreToHMIEvent, CoreToHMICommand
 from pypts.logger.log import log
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import HeartbeatManager
+from pypts.utilities.common import poll_queue
 
 def gui_main(hmiToCoreInterface: HMIToCoreInterface, core_to_hmi_queue):
     app = QApplication(sys.argv)
@@ -48,14 +49,10 @@ class GUI(QWidget):
 
     @catch_and_report_errors()
     def poll_core(self):
-        try:
-            event: CoreToHMIEvent = self.core_to_hmi_queue.get(timeout=0)
-            self.handle_command(event)
-        except Empty:
-            pass
+        poll_queue(self.core_to_hmi_queue, self.handle_core_event)
 
     @catch_and_report_errors()
-    def handle_command(self, event: CoreToHMIEvent):
+    def handle_core_event(self, event: CoreToHMIEvent):
         log.info(f"Received core event: {event}")
         match event.cmd:
             case CoreToHMICommand.UPDATE_STATUS:

@@ -1,25 +1,46 @@
 import logging
 import sys
+import os
 
-_logger = logging.getLogger("myapp")
-_logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter(
+    "%(asctime)s.%(msecs)03d;%(levelname)s;%(filename)s:%(funcName)s;%(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
-if not _logger.handlers:  # prevent multiple handlers on reload
-    handler = logging.StreamHandler(sys.stdout)
+# Setup root logger
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
 
-    formatter = logging.Formatter(
-        "%(asctime)s.%(msecs)03d;%(levelname)s;%(filename)s:%(funcName)s;%(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    handler.setFormatter(formatter)
-    _logger.addHandler(handler)
+# Remove old handlers if any
+for hdlr in list(root_logger.handlers):
+    root_logger.removeHandler(hdlr)
 
-# Available functions
-def runtime(msg, *a, **kw):     _logger.debug(msg, *a, **kw)
-def debug(msg, *a, **kw):     _logger.debug(msg, *a, **kw)
-def info(msg, *a, **kw):      _logger.info(msg, *a, **kw)
-def warning(msg, *a, **kw):   _logger.warning(msg, *a, **kw)
-def error(msg, *a, **kw):     _logger.error(msg, *a, **kw)
-def critical(msg, *a, **kw):  _logger.critical(msg, *a, **kw)
+# Add file handler to root logger
+file_handler = logging.FileHandler("pypts.log")
+file_handler.setFormatter(formatter)
+root_logger.addHandler(file_handler)
 
-log = _logger
+# Now all logs from root and child loggers go to file
+
+# Optionally add StreamHandler for stdout if needed
+def enable_stdout_logging():
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    root_logger.addHandler(stream_handler)
+
+def silence_stdout_logging():
+    for handler in list(root_logger.handlers):
+        if isinstance(handler, logging.StreamHandler):
+            root_logger.removeHandler(handler)
+
+# For convenience, define wrappers around root logger
+def info(msg, *args, **kwargs): root_logger.info(msg, *args, **kwargs)
+def debug(msg, *args, **kwargs): root_logger.debug(msg, *args, **kwargs)
+def warning(msg, *args, **kwargs): root_logger.warning(msg, *args, **kwargs)
+def error(msg, *args, **kwargs): root_logger.error(msg, *args, **kwargs)
+def critical(msg, *args, **kwargs): root_logger.critical(msg, *args, **kwargs)
+
+log = root_logger
+
+
+# todo - logger is broken, need to figure out whats going on, but not today
