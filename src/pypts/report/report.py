@@ -7,7 +7,8 @@ from pypts.core.report_to_core_interface import ReportToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToReportEvent, CoreToReportCommand
 from pypts.logger.log import log
 import time
-from pypts.utilities.error_handling import catch_and_report_errors  # Assuming decorator is here
+from pypts.utilities.error_handling import catch_and_report_errors
+from pypts.utilities.heartbeat_manager import HeartbeatManager
 
 
 def report_main(core: ReportToCoreInterface, core_to_report_queue):
@@ -33,6 +34,7 @@ class Report:
         self.core = core_interface
         self.core_to_report_queue = core_to_report_queue
         self.running = True
+        self.heartbeat_manager = HeartbeatManager(self.core.send_heartbeat)
 
     @catch_and_report_errors()
     def start(self):
@@ -105,7 +107,7 @@ class Report:
         """
         Executes any periodic status updates or maintenance tasks.
         """
-        pass
+        self.heartbeat_manager.tick()
 
     @catch_and_report_errors()
     def stop(self):

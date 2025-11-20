@@ -22,9 +22,7 @@ from pypts.logger.log import log
 Entry point for launcher. Responsible for instantiating Core class 
 and starting its execution thread.
 """
-def core_main(
-        coreToHMIInterface: CoreToHMIQueue,
-        hmi_to_core_queue: Queue):
+def core_main(coreToHMIInterface: CoreToHMIQueue,hmi_to_core_queue: Queue):
     core = Core(coreToHMIInterface, hmi_to_core_queue)
     core.start()
 
@@ -34,7 +32,6 @@ class Core:
     Main central module managing communication and lifecycle of HMI, Sequencer, and Report modules.
     Maintains queues and interfaces for message passing and spawns subprocesses for submodules.
     """
-
     def __init__(self, coreToHMIInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
         """
         Initializes interfaces and communication queues for all submodules.
@@ -61,6 +58,13 @@ class Core:
         self.report_running = True
         self.sequencer_running = True
         self.hmi_running = True
+
+        self.last_heartbeat = {
+            "sequencer": time.time(),
+            "report": time.time(),
+            "hmi": time.time()
+        }
+        self.heartbeat_timeout = 5.0  # seconds, adjust as needed
 
     # --- Startup ---
     def start(self):
@@ -104,6 +108,7 @@ class Core:
             self.check_stop_status()
             time.sleep(0.01)
 
+    # --- Event handlers ---
     def poll_queue(self, queue, handler):
         """
         Helper to poll a given queue non-blockingly and call handler on received event.
@@ -124,7 +129,6 @@ class Core:
         self.poll_queue(self.sequencer_to_core_queue, self.handle_sequencer_event)
         self.poll_queue(self.report_to_core_queue, self.handle_report_event)
 
-    # --- Event handlers ---
     def handle_hmi_event(self, event: HMIToCoreEvent):
         """
         Handles events from HMI module.
@@ -141,6 +145,8 @@ class Core:
                 pass  # Implement recipe loading logic here
             case HMIToCoreCommand.START_SEQUENCE:
                 pass  # Implement sequence starting logic here
+            case HMIToCoreCommand.HEARTBEAT:
+                self.last_heartbeat["hmi"] = time.time()
             case _:
                 pass  # Unknown or unhandled command
 
@@ -156,6 +162,8 @@ class Core:
                 # Extract error details from payload
                 error_info = event.payload
                 # Decide on further action, e.g. notify, restart, alert, etc.
+            case SequencerToCoreCommand.HEARTBEAT:
+                self.last_heartbeat["sequencer"] = time.time()
             case _:
                 pass  # Unknown command
 
@@ -178,17 +186,23 @@ class Core:
                 error_info = event.payload
                 # Decide on further action, e.g. notify, restart, alert, etc.
                 pass
+            case ReportToCoreCommand.HEARTBEAT:
+                self.last_heartbeat["report"] = time.time()
             case _:
                 log.error(f"Unknown event: {event}")
-
 
     # --- Background tasks ---
     def do_periodic_tasks(self):
         """
         Placeholder for periodic background tasks, e.g., health monitoring or housekeeping.
         """
-        pass
+        now = time.time()
+        for module, last_time in self.last_heartbeat.items():
+            if now - last_time > self.heartbeat_timeout:
+                log.warning(f"Heartbeat timeout detected for module: {module}!!!")
+                # Example action: log, send restart command, alert, etc.
 
+    # shutdown detection
     def stop_all_modules(self):
         """
         Commands all submodules to stop via their interfaces.
@@ -197,7 +211,6 @@ class Core:
         self.sequencer.stop()
         self.hmi.stop()
 
-    # Update running flags for clean shutdown detection
     def report_stopped(self):
         self.report_running = False
 

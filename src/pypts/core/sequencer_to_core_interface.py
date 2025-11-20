@@ -42,6 +42,13 @@ class SequencerToCoreInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    def send_heartbeat(self, time: float):
+        """
+        Sends an heartbeat event to Core.
+        """
+        pass
+
 """
 Concrete data layer class implementing SequencerToCoreInterface.
 It sends appropriate SequencerToCoreEvent messages or error objects through a queue.
@@ -83,3 +90,10 @@ class SequencerToCoreQueue(SequencerToCoreInterface):
         })
         self.sequencer_to_core_queue.put(event)
 
+    def send_heartbeat(self, time: float):
+        # Construct heartbeat event and send to Core
+        heartbeat_event = SequencerToCoreEvent(
+            cmd=SequencerToCoreCommand.HEARTBEAT,
+            payload={"timestamp": time}
+        )
+        self.sequencer_to_core_queue.put(heartbeat_event)

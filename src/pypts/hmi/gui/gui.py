@@ -11,8 +11,8 @@ import sys
 from pypts.core.HMI_to_core_interface import HMIToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToHMIEvent, CoreToHMICommand
 from pypts.logger.log import log
-from pypts.utilities.error_handling import catch_and_report_errors  # Assuming decorator location
-
+from pypts.utilities.error_handling import catch_and_report_errors
+from pypts.utilities.heartbeat_manager import HeartbeatManager
 
 def gui_main(hmiToCoreInterface: HMIToCoreInterface, core_to_hmi_queue):
     app = QApplication(sys.argv)
@@ -26,6 +26,7 @@ class GUI(QWidget):
         super().__init__()
         self.core = hmiToCoreInterface
         self.core_to_hmi_queue = core_to_hmi_queue
+        self.heartbeat_manager = HeartbeatManager(self.core.send_heartbeat)
 
         self.setWindowTitle("PTS GUI")
         log.info("Starting module...")
@@ -71,7 +72,10 @@ class GUI(QWidget):
 
     @catch_and_report_errors()
     def do_periodic_tasks(self):
-        pass
+        """
+        Executes any periodic status updates or maintenance tasks.
+        """
+        self.heartbeat_manager.tick()
 
     @catch_and_report_errors()
     def stop(self):

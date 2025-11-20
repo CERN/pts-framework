@@ -38,6 +38,7 @@ class ReportToCoreCommand(Enum):
     REPORT_GENERATED = auto()  # Indicates a report has been generated
     REPORT_EXPORTED = auto()   # Indicates a report has been exported
     ERROR = auto()  # Add this for error messages
+    HEARTBEAT = auto()
 
 @dataclass
 class ReportToCoreEvent:

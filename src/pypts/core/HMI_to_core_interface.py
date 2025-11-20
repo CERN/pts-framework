@@ -53,6 +53,12 @@ class HMIToCoreInterface(ABC):
         """
         pass
 
+    @abstractmethod
+    def send_heartbeat(self, time: float):
+        """
+        Sends an heartbeat event to Core.
+        """
+        pass
 """
 Data layer class that implements HMIToCoreInterface.
 Handles sending messages asynchronously via a multiprocessing queue.
@@ -108,3 +114,10 @@ class HMIToCoreQueue(HMIToCoreInterface):
         })
         self.hmi_to_core_queue.put(event)
 
+    def send_heartbeat(self, time: float):
+        # Construct heartbeat event and send to Core
+        heartbeat_event = HMIToCoreEvent(
+            cmd=HMIToCoreCommand.HEARTBEAT,
+            payload={"timestamp": time}
+        )
+        self.hmi_to_core_queue.put(heartbeat_event)

@@ -7,7 +7,7 @@ from functools import wraps
 def catch_and_report_errors(module_name=None):
     """
     Decorator to catch and report exceptions to Core module.
-    If no module_name is provided, automatically infer it from the caller's module.
+    If no module_name is provided, automatically detect it from the caller's module.
 
     This decorator wraps the decorated function, executing it inside a try-except block.
     If an exception occurs, it captures and logs detailed traceback information,
@@ -15,7 +15,7 @@ def catch_and_report_errors(module_name=None):
 
     Args:
       module_name (str, optional): Name of the module using the decorator.
-                                   If not provided, it is inferred from the caller's context.
+                                   If not provided, it is detected from the caller's context.
     """
 
     def decorator(func):

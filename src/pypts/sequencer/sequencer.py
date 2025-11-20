@@ -6,8 +6,9 @@ from queue import Empty
 from pypts.core.sequencer_to_core_interface import SequencerToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToSequencerEvent, CoreToSequencerCommand
 from pypts.logger.log import log
-import time
 from pypts.utilities.error_handling import catch_and_report_errors
+from pypts.utilities.heartbeat_manager import HeartbeatManager
+import time
 
 def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
     """
@@ -16,7 +17,6 @@ def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
     """
     seq = Sequencer(core, core_to_sequencer_queue)
     seq.start()
-
 
 class Sequencer:
     """
@@ -32,6 +32,7 @@ class Sequencer:
         self.core = coreInterface
         self.core_to_sequencer_queue = core_to_sequencer_queue
         self.running = True
+        self.heartbeat_manager = HeartbeatManager(self.core.send_heartbeat)
 
     def start(self):
         """
@@ -99,7 +100,7 @@ class Sequencer:
         """
         Placeholder for periodic checks, health monitoring, or housekeeping tasks.
         """
-        pass
+        self.heartbeat_manager.tick()
 
     @catch_and_report_errors()
     def stop(self):

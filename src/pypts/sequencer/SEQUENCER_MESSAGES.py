@@ -36,6 +36,7 @@ class SequencerToCoreCommand(Enum):
     STOP = auto()
     SEQUENCE_RESULT = auto()
     ERROR = auto()  # Add this for error messages
+    HEARTBEAT = auto()
 
 @dataclass
 class SequencerToCoreEvent:

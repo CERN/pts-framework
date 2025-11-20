@@ -39,6 +39,7 @@ class HMIToCoreCommand(Enum):
     START_SEQUENCE = auto()  # Command to start a sequence operation
     EXIT = auto()  # Command to exit the HMI module or application
     ERROR = auto()
+    HEARTBEAT = auto()
 
 @dataclass
 class HMIToCoreEvent:
