@@ -1,0 +1,105 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+name: Example Test Recipe
+version: 0.1.0
+recipe_version: 1.0.0
+description: A sample recipe demonstrating how to call functions from example_tests.py
+main_sequence: Main
+continue_on_error: true
+globals: {}
+---
+sequence_name: Main
+description: The main sequence of steps for the example recipe.
+parameters: {}
+locals: {}
+outputs: {}
+setup_steps: []
+steps:
+- steptype: UserInteractionStep
+  step_name: Are you all right?
+  description: Asking user for confirmation
+  skip: false
+  input_mapping:
+    message:
+      type: direct
+      value: 'Hello there. Are you doing all right?
+
+        Please let us know by pressing the correct button :)
+
+        '
+    image_path:
+      type: direct
+      value: lego2.jpg
+    options:
+      type: direct
+      value:
+      - 'yes': ''
+      - 'no': ''
+  output_mapping:
+    output:
+      type: equals
+      value: 'yes'
+
+
+- steptype: PythonModuleStep
+  step_name: setup_resource_server
+  description: setup_resource_server
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_resource_tests_example.py"
+  method_name: setup_resource_server
+  input_mapping: {}
+  output_mapping: {}
+
+
+
+
+- steptype: PythonModuleStep
+  step_name: get_value
+  description: get_value - 0
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_resource_tests_example.py"
+  method_name: get_value
+  input_mapping: {}
+  output_mapping:
+    output:
+      type: equals
+      value: 0
+
+- steptype: PythonModuleStep
+  step_name: increment_40
+  description: increment_40
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_resource_tests_example.py"
+  method_name: increment_value
+  input_mapping:
+    how_much:
+      type: direct
+      value: 40
+  output_mapping:
+    output:
+      type: equals
+      value: 40
+
+- steptype: PythonModuleStep
+  step_name: get_value - 40
+  description: get_value - 40
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_resource_tests_example.py"
+  method_name: get_value
+  input_mapping: {}
+  output_mapping:
+    output:
+      type: equals
+      value: 40
+
+- steptype: PythonModuleStep
+  step_name: stop_resource_server
+  description: stop_resource_server
+  action_type: method
+  module: "/home/pts/dev/pypts/src/pypts/recipes/shared_resource_tests_example.py"
+  method_name: stop_resource_server
+  input_mapping: {}
+  output_mapping: {}
+
+teardown_steps: []

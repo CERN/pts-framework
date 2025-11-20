@@ -1,0 +1,62 @@
+# spdx-filecopyrighttext: 2025 cern <home.cern>
+#
+# spdx-license-identifier: lgpl-2.1-or-later
+
+name: recipe designed for the graph testing
+version: 0.0.1
+recipe_version: 1.0.0
+description: satart acquisition and load the graph into the gui
+main_sequence: main
+continue_on_error: true
+globals: {}
+---
+sequence_name: main
+description: well, description
+parameters: {}
+locals: {}
+outputs: {}
+setup_steps: []
+steps:
+- steptype: userinteractionstep
+  step_name: step 1
+  description: step 1 will be skipped
+  skip: true
+  input_mapping:
+    message:
+      type: direct
+      value: asd
+    options:
+      type: direct
+      value:
+      - 'yes': ''
+      - 'no': ''
+  output_mapping:
+    output:
+      type: equals
+      value: 'yes'
+- steptype: pythonmodulestep
+  step_name: load_existing_graph
+  description: loading a file that already contains data
+  action_type: method
+  module: dev_tests
+  method_name: load_existing_graph
+  input_mapping:
+    stream_name:
+      type: direct
+      value: "sine_wave"
+    stream_hook:
+      type: direct
+      value: "/home/pts/dev/pypts/src/pypts/XYGraph/123.csv"
+  output_mapping: {}
+- steptype: pythonmodulestep
+  step_name: simulate_sine_wave
+  description: Simulates acquisition
+  action_type: method
+  module: dev_tests
+  method_name: simulate_sine_wave
+  input_mapping:
+    stream_name:
+      type: direct
+      value: "simulated_sine_wave"
+  output_mapping: {}
+teardown_steps: []

@@ -185,7 +185,6 @@ class Runtime:
     def setup(cls, window, api, app):
         if getattr(cls, "recipe_thread", None) is not None:
             cls._cleanup_thread()
-
         from pypts.event_proxy import RecipeEventProxy
         cls._window = window
         cls._api = api

@@ -62,18 +62,18 @@ def run_pts(sequence_name: str = "Main") -> PtsApi:
 class DataChannelManager:
     def __init__(self):
         self.channels = dict()
-    
+
     def create_channel(self, name):
         channel = DataChannel(name)
         self.channels[name] = channel
         return channel
-    
+
     def destroy_channel(self, name):
         del self.channels[name]
 
     def get_channel(self, name):
         return self.channels[name]
-    
+
     def list_available_channels(self):
         return self.channels.keys()
 
@@ -88,7 +88,7 @@ class DataChannel:
 
     def receive(self):
         return self.queue.get()
-    
+
 
 _channel_manager = DataChannelManager()
 

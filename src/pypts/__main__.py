@@ -36,10 +36,8 @@ if __name__ == '__main__':
     """
 
     api = run_pts()
-
-    window, app = create_and_start_gui(api)
-
     
+    window, app = create_and_start_gui(api)
 
     exit_code = app.exec()
     sys.exit(exit_code)
