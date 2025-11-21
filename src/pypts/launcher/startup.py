@@ -68,7 +68,7 @@ from pypts.hmi.cli.cli import cli_main
 from pypts.hmi.core_to_HMI_interface import CoreToHMIQueue
 from pypts.core.HMI_to_core_interface import HMIToCoreQueue
 import argparse
-from pypts.logger.log import log, enable_stdout_logging, silence_stdout_logging
+from pypts.logger.log import log, set_stdout_logging_enabled
 
 
 def main():
@@ -85,24 +85,23 @@ def main():
     hmi_interface = HMIToCoreQueue(hmi_to_core_queue)
     core_interface = CoreToHMIQueue(core_to_hmi_queue)
 
-    if args.mode == "connect":
-        # Connect CLI client to previously started Core (assumed IPC/shared queues)
-        cli_main(hmi_interface, core_to_hmi_queue)
+    if args.mode == "gui":
+        set_stdout_logging_enabled(True)
     else:
-        # Spawn Core process
-        p_core = Process(target=core_main, args=(core_interface, hmi_to_core_queue))
-        p_core.start()
+        set_stdout_logging_enabled(False)
 
-        if args.mode == "gui":
-            enable_stdout_logging()
-            p_ui = Process(target=gui_main, args=(hmi_interface, core_to_hmi_queue))
-            p_ui.start()
-            p_ui.join()
-        else:
-            silence_stdout_logging()
-            cli_main(hmi_interface, core_to_hmi_queue)
+    # Spawn Core process
+    p_core = Process(target=core_main, args=(core_interface, hmi_to_core_queue))
+    p_core.start()
 
-        p_core.terminate()
+    if args.mode == "gui":
+        p_ui = Process(target=gui_main, args=(hmi_interface, core_to_hmi_queue))
+        p_ui.start()
+        p_ui.join()
+    else:
+        cli_main(hmi_interface, core_to_hmi_queue)
+
+    p_core.terminate()
 
 if __name__ == "__main__":
     main()

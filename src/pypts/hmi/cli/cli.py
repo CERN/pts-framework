@@ -86,6 +86,7 @@ class CLI:
                 # Use match-case on the command keyword
                 match parts[0] if parts else "":
                     case "exit" | "quit" | "stop":
+                        print("STOP request received, exiting...")
                         self.stop()
                     case "start_sequence":
                         # Command: start_sequence <name>
@@ -136,4 +137,4 @@ class CLI:
         log.info("Stopping module")
         self.running = False
         self.core.stop()  # send stop command to core
-        print("STOP request sent, aborting...\nGoodbye!")
+        print("Goodbye!")

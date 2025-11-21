@@ -10,7 +10,7 @@ from queue import Empty
 import sys
 from pypts.core.HMI_to_core_interface import HMIToCoreInterface
 from pypts.core.CORE_MESSAGES import CoreToHMIEvent, CoreToHMICommand
-from pypts.logger.log import log
+from pypts.logger.log import log, set_stdout_logging_enabled
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import HeartbeatManager
 from pypts.utilities.common import poll_queue
@@ -28,7 +28,6 @@ class GUI(QWidget):
         self.core = hmiToCoreInterface
         self.core_to_hmi_queue = core_to_hmi_queue
         self.heartbeat_manager = HeartbeatManager(self.core.send_heartbeat)
-
         self.setWindowTitle("PTS GUI")
         log.info("Starting module...")
 
