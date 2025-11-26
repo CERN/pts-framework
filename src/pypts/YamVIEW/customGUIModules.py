@@ -316,7 +316,6 @@ class RecipeCreatorApp(QWidget):
             'recipe_version': data['recipe_version'],
             'description': data['description'],
             'main_sequence': data['main_sequence'],
-            'continue_on_error': 'true',
             'globals': {}
         }
 
@@ -331,12 +330,28 @@ class RecipeCreatorApp(QWidget):
             'teardown_steps': []
         }
 
+        setup_step = {
+            'steptype': 'UserInteractionStep',
+                'step_name': f'Setupstep',
+                'description': f'Empty setupstep',
+                'skip': 'False',
+                'continue_on_error': 'true',
+                'input_mapping': {
+                    'message': {'type': 'direct', 'value': 'Tell the cook what to do'},
+                    'options': {'type': 'direct', 'value': [{'yes': ''}, {'no': ''}]}
+                },
+                'output_mapping': {
+                    'output': {'type': 'equals', 'value': 'yes'}
+                }
+            }
+        sequence['setup_steps'].append(setup_step)
         for i in range(data['num_steps']):
             step = {
                 'steptype': 'UserInteractionStep',
                 'step_name': f'Step {i + 1}',
                 'description': f'Step {i + 1} description',
                 'skip': 'False',
+                'continue_on_error': 'true',
                 'input_mapping': {
                     'message': {'type': 'direct', 'value': 'Tell the cook what to do'},
                     'options': {'type': 'direct', 'value': [{'yes': ''}, {'no': ''}]}
@@ -346,7 +361,21 @@ class RecipeCreatorApp(QWidget):
                 }
             }
             sequence['steps'].append(step)
-
+        teardown_step = {
+            'steptype': 'UserInteractionStep',
+                'step_name': f'Teardownstep',
+                'description': f'Empty teardown step. Doesnt do anything',
+                'skip': 'False',
+                'continue_on_error': 'true',
+                'input_mapping': {
+                    'message': {'type': 'direct', 'value': 'This is where you functions that are required to run after every test, even if it fails in the middle. fx closing SSH connection'},
+                    'options': {'type': 'direct', 'value': [{'yes': ''}, {'no': ''}]}
+                },
+                'output_mapping': {
+                    'output': {'type': 'equals', 'value': 'yes'}
+                }
+            }
+        sequence['teardown_steps'].append(teardown_step)
         # SPDX header string
         spdx_header = (
             "# SPDX-FileCopyrightText: 2025 CERN <home.cern>\n"

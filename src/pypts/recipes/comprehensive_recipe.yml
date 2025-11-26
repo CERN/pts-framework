@@ -240,7 +240,6 @@ steps:
     output:
       type: equals
       value: 'next'
-  trigger_response: "next"
   continue_on_error: True
 
 - steptype: UserInteractionStep

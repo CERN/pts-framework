@@ -513,7 +513,7 @@ class UserInteractionStep(Step):
     Pauses recipe execution and sends an event to request interaction from a user
     via a UI or other external interface. Waits for a response.
     """
-    def __init__(self, trigger_response: str = None, module: str = None, action_type: str = None, method_name: str = None, continue_on_error: bool = False, **kwargs):
+    def __init__(self, module: str = None, action_type: str = None, method_name: str = None, continue_on_error: bool = False, **kwargs):
         """
         Args:
             **kwargs: Common Step arguments. Input mapping should define:
@@ -523,7 +523,6 @@ class UserInteractionStep(Step):
                       Output mapping should define how to store the 'user_response'.
         """
         super().__init__(**kwargs)
-        self.trigger_response = trigger_response
         self.module = module
         self.action_type = action_type
         self.method_name = method_name
@@ -593,51 +592,7 @@ class UserInteractionStep(Step):
             except Exception:
                 # 'cancel_key' doesn't exist or something went wrong — safely ignore
                 pass
-            
-            if self.trigger_response and str(response).strip().lower() in ([str(v).strip().lower() for v in (self.trigger_response.keys() if isinstance(self.trigger_response, dict) else self.trigger_response)] if isinstance(self.trigger_response, (dict, list, set))else [str(self.trigger_response).strip().lower()]):
-                logger.info(f"Trigger matched: '{response}' → Executing setup/calibration method.")
-                
-                try:
-                    module_step = PythonModuleStep(
-                        step_name=f"{self.name}",
-                        action_type=self.action_type,
-                        module=self.module,
-                        method_name=self.input_mapping["method_name"]["value"],
-                    )
-                    if str(response).strip().lower() == runtime.get_global('loadFile_key'):
-                        file = response_q.get(block=True)
-                        runtime.set_global('file', file)
-                    
-                    # Determine input based on action_type
-                    if self.action_type == 'method':
-                        module_input = {}  # No inputs expected
-                        file_position = runtime.get_global('file')
-                        if file_position  != "None":
-                            module_input["file"] = file_position
-                    elif self.action_type == 'read_attribute':
-                        module_input = {'attribute_name': input.get('attribute_name')}
-                    elif self.action_type == 'write_attribute':
-                        module_input = {
-                            'attribute_name': input.get('attribute_name'),
-                            'attribute_value': input.get('attribute_value')
-                        }
-                    else:
-                        module_input = {}
-
-                    result = module_step._step(runtime,module_input, parent_step_result_uuid=parent_step_result_uuid)
-
-                    if result:
-                        logger.info(f"Module method returned: {result}")
-                    else:
-                        logger.info(f"Module method returned no output (None or empty).")
-
-                    status["status"] = "ok"
-                except Exception as e:
-                    logger.error(f"Module method failed: {e}")
-                    status["status"] = "error"
-            else:
-                logger.info(f"No trigger matched. Skipping module execution.")
-                status["status"] = ""
+            status["status"] = ""
 
             # Return the response in a dictionary. The key should match
             # what the output mapping expects - therefore the yaml mapping is used
@@ -915,7 +870,7 @@ class UserWriteStep(Step):
     Pauses recipe execution and sends an event to request interaction from a user
     via a UI or other external interface. Waits for a response.
     """
-    def __init__(self, trigger_response: str = None, continue_on_error: bool = False, **kwargs):
+    def __init__(self, continue_on_error: bool = False, **kwargs):
         """F
         Args:
             **kwargs: Common Step arguments. Input mapping should define:
@@ -925,7 +880,6 @@ class UserWriteStep(Step):
                       Output mapping should define how to store the 'user_response'.
         """
         super().__init__(**kwargs)
-        self.trigger_response = trigger_response
         self.continue_on_error = continue_on_error
         self.timeout_seconds = 1
         if "output" not in self.output_mapping:

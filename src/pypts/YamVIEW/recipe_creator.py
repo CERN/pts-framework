@@ -315,6 +315,7 @@ class RecipeEditorMainMenu(QMainWindow):
 
             # Process remaining documents
             for doc_index, doc in enumerate(self.yaml_documents[1:], start=1):
+                sequence_id = str(uuid.uuid4())
                 sequence_name = doc.get("sequence_name", f"Sequence {doc_index}")
                 sequence_block = {
                     "step_name": f"Sequence: {sequence_name}",
@@ -323,7 +324,7 @@ class RecipeEditorMainMenu(QMainWindow):
                     "children": [],
                     "_node": doc,
                     "_doc_index": doc_index,
-                    "_id": str(uuid.uuid4())
+                    "_sequence_id": sequence_id
                 }
 
                 def build_folder(folder_name, folder_type, steps_list):
@@ -333,7 +334,8 @@ class RecipeEditorMainMenu(QMainWindow):
                         "steptype": folder_type,
                         "children": [],
                         "_node": steps_list,  # original YAML list
-                        "_expanded": False
+                        "_expanded": False,
+                        "_sequence_id": sequence_id
                     }
                     for s in steps_list:
                         if isinstance(s, dict) and s.get("step_name"):
@@ -342,7 +344,8 @@ class RecipeEditorMainMenu(QMainWindow):
                                 "steptype": s.get("steptype", "unknown"),
                                 "_node": s,
                                 "_parent": folder_type,
-                                "_id": s.get("_id", str(uuid.uuid4()))
+                                "_id": s.get("_id", str(uuid.uuid4())),
+                                "_sequence_id": sequence_id
                             })
                     return folder
 
@@ -358,6 +361,7 @@ class RecipeEditorMainMenu(QMainWindow):
 
             self.sequencer.set_yaml_data(sequencer_steps)
             self.sequencer.receive_globals(self.yaml_documents[0].get("globals", {}))
+            self.sequencer.receive_locals(self.yaml_documents[1].get("locals", {}))
             self.log(f"✅ Sequencer received {len(sequencer_steps)} steps including preamble/setup.")
             return True
 
@@ -378,23 +382,59 @@ class RecipeEditorMainMenu(QMainWindow):
             self.sequencer.receive_globals(yaml_globals)
             self.sequencer.updated_preamble_globals = {}
 
-        doc2 = self.yaml_documents[1]
+        if self.sequencer.updated_sequence_locals:
+            yaml_locals = self.yaml_documents[1].get("locals", {})
+            yaml_locals.update(self.sequencer.updated_sequence_locals)
+            self.yaml_documents[1]["locals"] = yaml_locals
+            self.sequencer.receive_locals(yaml_locals)
+            self.sequencer.updated_sequence_locals = {}
 
-        # Walk all sequences → update their YAML lists
+        if self.sequencer.new_sequence_request:
+            seq = self.sequencer.new_sequence_request
+
+            new_doc = {
+                "sequence_name": seq.get("sequence_name", "New Sequence"),
+                "description": seq.get("description", ""),
+                "parameters": seq.get("parameters", {}),
+                "locals": seq.get("locals", {}),
+                "outputs": seq.get("outputs", {}),
+                "setup_steps": [],
+                "steps": [],
+                "teardown_steps": []
+            }
+            # Add new document
+            self.yaml_documents.append(new_doc)
+
+            # attach index inside sequencer structure
+            seq["_doc_index"] = len(self.yaml_documents) - 1
+
+            # clear request
+            self.sequencer.new_sequence_request = None
+
+
+        yaml_doc_index = 1   # doc 0 is preamble
+
         for seq_step in steps:
             if seq_step.get("steptype") != "sequence_folder":
                 continue
+
+            if yaml_doc_index >= len(self.yaml_documents):
+                break
+
+            doc = self.yaml_documents[yaml_doc_index]
 
             for folder in seq_step.get("children", []):
                 folder_type = folder.get("steptype")
                 children_nodes = [child["_node"] for child in folder.get("children", [])]
 
                 if folder_type == "setup_folder":
-                    doc2["setup_steps"] = children_nodes
+                    doc["setup_steps"] = children_nodes
                 elif folder_type == "main_folder":
-                    doc2["steps"] = children_nodes
+                    doc["steps"] = children_nodes
                 elif folder_type == "teardown_folder":
-                    doc2["teardown_steps"] = children_nodes
+                    doc["teardown_steps"] = children_nodes
+
+            yaml_doc_index += 1
 
         # Dump YAML in order: preamble → setup → main → teardown
         from ruamel.yaml import YAML
@@ -409,7 +449,6 @@ class RecipeEditorMainMenu(QMainWindow):
         self.yaml_viewer.setText(new_yaml)
         self.temporary_recipe_contents = new_yaml
         self.log("✅ Sequencer order updated and YAML synced.")
-
 
     def set_recipe_status(self, message: str, color: str = "#333"):
         """Sets the status message and text color in the top recipe status field."""
@@ -648,7 +687,6 @@ class RecipeEditorMainMenu(QMainWindow):
             self.extract_treeView_to_data()
             self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
             self.update_yaml_viewer()
-            print(self.temporary_recipe_contents)
             result, description = self.validate_yaml_documents()
             if result == True:
                 self.show_recipe_ok()
