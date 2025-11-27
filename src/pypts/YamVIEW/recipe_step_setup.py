@@ -21,7 +21,7 @@ class Sequence_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test here")
+        self.description_input.setPlaceholdertext("describe the test here")
         main_layout.addWidget(QLabel("<b>Description<b>"))
         main_layout.addWidget(self.description_input)
 
@@ -384,7 +384,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test here")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
         
@@ -424,7 +424,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(100)
-        self.description_input.setPlainText("describe the test in this box")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("Description"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -452,7 +452,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test here")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -489,7 +489,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test in this box")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -533,13 +533,13 @@ class Step_setup(QDialog):
 
     def setup_userwritestep(self):
         self.step_name_input = QLineEdit()
-        self.step_name_input.setPlaceholderText("New UserLoadingStep")
+        self.step_name_input.setPlaceholderText("New UserWriteStep")
         self.step_specific_container.addWidget(QLabel("<b>Step name<b>"))
         self.step_specific_container.addWidget(self.step_name_input)
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test here")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -597,7 +597,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test in this box")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -657,7 +657,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test in this box")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
    
@@ -689,6 +689,8 @@ class Step_setup(QDialog):
         }
         self.global_variables = {}
         self.local_variables = {}
+        g_in, l_in = None, None
+        g_out, l_out = None,None
         match step_type:
             case "PythonModuleStep":
                 self.result_step["step_name"] = self.step_name_input.text()
@@ -735,8 +737,6 @@ class Step_setup(QDialog):
                     "input_mapping": {"wait_time": {"value": self.wait_time_input.text()}},
                     "output_mapping": {}
                 }
-                g_in, l_in = None, None
-                g_out, l_out = None,None
 
             case "UserLoadingStep":
                 self.result_step["step_name"] = self.step_name_input.text()
@@ -949,7 +949,7 @@ class Step_setup(QDialog):
         if not self.step_name_input.text().strip():
             return False, "Step must have a name"
         
-        if not self.UART_setup.isChecked() or self.Write_variable.isChecked():
+        if not self.UART_setup.isChecked() and not self.Write_variable.isChecked():
             return False, "You must choose which functionType to use"
 
         # Validate input mapping
@@ -1113,6 +1113,7 @@ class Step_setup(QDialog):
                 row["name_edit"].setPlaceholderText("parameter (Set the name to be the input of your method)")
             elif self.loader:
                 row["name_edit"].setPlaceholderText("Specify variable to save the loaded file/element")
+                row["name_edit"].setVisible
             else:
                 row["name_edit"].setPlaceholderText("parameter (e.g. value)")
             row["name_edit"].textChanged.connect(self.on_edit_changed)
@@ -1164,6 +1165,8 @@ class Step_setup(QDialog):
             self.layout.addWidget(container)
             self.rows.append(row)
 
+            #self.on_type_changed(row)
+
             row["name_edit"].editingFinished.connect(lambda r=row: self.on_edit_finished(r))
             row["value_edit"].editingFinished.connect(lambda r=row: self.on_edit_finished(r))
             row["value_edit2"].editingFinished.connect(lambda r=row: self.on_edit_finished(r))
@@ -1205,9 +1208,8 @@ class Step_setup(QDialog):
                     new_rows.append(row)
 
             # Ensure at least one blank row at the end
-            if not new_rows or not is_blank(new_rows[-1]):
+            if not new_rows or not is_blank(new_rows[-1]) and not self.no_extraSteps:
                 self.add_row()
-
             self.rows = new_rows
 
         def on_edit_finished(self, row):
@@ -1322,15 +1324,13 @@ class Step_setup(QDialog):
                 row["name_edit"].setText("Deletionsaving")
                 row["name_edit"].setVisible(False)
             elif t == "method":
-                row["value_edit"].setText("Deletionsaving")
+                #row["value_edit"].setText("Deletionsaving")
                 row["name_edit"].setVisible(False)
             elif t == "options":
                 row["name_edit"].setVisible(False)
                 row["value_edit"].setVisible(False)
                 self.make_options_editor(row)
             if self.specific_method:
-                row["value_edit"].setText("Deletionsaving")
-                row["value_edit"].setVisible(False)
                 row["name_edit"].setText("output")
                 row["name_edit"].setVisible(False)
 
