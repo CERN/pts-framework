@@ -3,15 +3,238 @@ from PySide6.QtWidgets import (QDialog,QFileDialog, QComboBox,
                                 QLabel,
                                 QDialogButtonBox,
                                 QPushButton,QLineEdit,QTextEdit,QCheckBox, QHBoxLayout, QMessageBox,QWidget,QTableWidgetItem,QTableWidget,
-                                QAbstractItemView)
+                                QAbstractItemView, QScrollArea)
 import os, uuid
+
+class Sequence_setup(QDialog):
+    def __init__(self, steps, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("New Sequence Setup")
+        self.resize(600, 400)
+
+        main_layout = QVBoxLayout(self)
+
+        self.sequence_name_input = QLineEdit()
+        self.sequence_name_input.setPlaceholderText("New Sequence name")
+        main_layout.addWidget(QLabel("<b>Sequence name<b>"))
+        main_layout.addWidget(self.sequence_name_input)
+
+        self.description_input = QTextEdit()
+        self.description_input.setMaximumHeight(70)
+        self.description_input.setPlaceholdertext("describe the test here")
+        main_layout.addWidget(QLabel("<b>Description<b>"))
+        main_layout.addWidget(self.description_input)
+
+
+        main_layout.addStretch()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        main_layout.addWidget(buttons)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+    
+
+    def accept(self):
+
+
+        validate_method = f"validate_sequence"
+        if hasattr(self, validate_method):
+            ok, error_msg = getattr(self, validate_method)()
+            if not ok:
+                self.setStyleSheet("""QMessageBox QPushButton { color: black;}""")
+                msg = QMessageBox.warning(self,"Missing data", error_msg)
+                return 
+            
+        self.result_sequence = {
+            "sequence_name": self.sequence_name_input.text(),
+            "description": self.description_input.toPlainText(),
+            "parameters": {},
+            "locals": {},
+            "outputs": {},
+            "setup_steps": {},
+            "steps": {},
+            "teardown_steps": {},
+        }
+
+        super().accept()
+
+    def validate_sequence(self):
+        if not self.sequence_name_input.text().strip():
+            return False, "Step must have a name"
+
+        return True, ""
+
+
+class Skip_setup(QDialog):
+    def __init__(self, steps, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Step Manager")
+        self.resize(600, 400)
+
+        main_layout = QVBoxLayout(self)
+
+        self.steps = steps
+        self.all_sequences = [
+            s for s in self.steps if s.get("steptype") == "sequence_folder"
+        ]
+
+        self.sequence_selector = QComboBox()
+        for seq in self.all_sequences:
+            name = seq["step_name"]
+            seq_id = seq["_sequence_id"]
+            self.sequence_selector.addItem(name, seq_id)
+
+        self.sequence_selector.currentIndexChanged.connect(self.on_sequence_changed)
+        main_layout.addWidget(QLabel("Select Sequence:"))
+        main_layout.addWidget(self.sequence_selector)
+
+        self.skip = QCheckBox("Skip All")
+        self.skip.setChecked(False)
+
+        self.err = QCheckBox("Continue on All")
+        self.err.setChecked(False)
+        layout = QHBoxLayout()
+        layout.addWidget(self.skip)
+        layout.addWidget(self.err)
+        main_layout.addLayout(layout)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        main_layout.addWidget(scroll)
+
+        container = QWidget()
+        self.container_layout = QVBoxLayout(container)
+        scroll.setWidget(container)
+
+        self.rows = []  # list of dicts holding widgets for each step
+        self.on_sequence_changed(index=0)
+        self.container_layout.addStretch()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        main_layout.addWidget(buttons)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        self.skip.stateChanged.connect(self.toggle_skip_all)
+        self.err.stateChanged.connect(self.toggle_continue_all)
+
+    def build_row(self, step):
+
+        node = step.get("_node", {})
+        layout = QHBoxLayout()
+        #seq_name = self.get_sequence_name(step.get("_sequence_id"))
+
+        name = QLineEdit(node.get("step_name", ""))
+        name.setDisabled(True)
+
+        skip = QCheckBox("Skip")
+        skip.setChecked(node.get("skip", False))
+
+        err = QCheckBox("Continue on Error")
+        err.setChecked(node.get("continue_on_error", False))
+
+        #layout.addWidget(QLabel(f"Sequence: {seq_name}"))
+        layout.addWidget(QLabel("Name:"))
+        layout.addWidget(name)
+        layout.addWidget(skip)
+        layout.addWidget(err)
+
+        return {
+            "layout": layout,
+            "step_data": step,
+            "name": name,
+            "skip": skip,
+            "err": err,
+        }
+
+    def accept(self):
+        
+        for row in self.rows:
+            self.result_step = row["step_data"]
+            node = self.result_step.get("_node", {})
+
+            # Update only the skip/continue flags
+            node["skip"] = row["skip"].isChecked()
+            node["continue_on_error"] = row["err"].isChecked()
+
+        super().accept()
+
+    def get_steps(self):
+        return self.steps
+    
+    def toggle_skip_all(self, checked):
+        for row in self.rows:
+            row["skip"].setChecked(checked)
+
+    def toggle_continue_all(self, checked):
+        for row in self.rows:
+            row["err"].setChecked(checked)
+
+    def get_sequence_name(self, seq_id):
+        if not self.all_sequences:
+            return "Unknown"
+
+        for seq in self.all_sequences:
+            if seq.get("_sequence_id") == seq_id:
+                return seq.get("step_name", "Unknown")
+        return "Unknown"
+    
+    def on_sequence_changed(self, index):
+        self.skip.setChecked(False)
+        self.err.setChecked(False)
+        seq_id = self.sequence_selector.itemData(index)
+        if seq_id is None:
+            return
+        self.load_sequence(seq_id)
+
+    def load_steps(self, steps):
+        self.clear_container_layout()
+        self.rows.clear()
+        for step in steps:
+            row = self.build_row(step)
+            self.rows.append(row)
+            self.container_layout.addLayout(row["layout"])
+
+    def load_sequence(self, sequence_id):
+        seq = next((s for s in self.all_sequences 
+                    if s["_sequence_id"] == sequence_id), None)
+        if not seq:
+            return
+        
+        setup_folder = next((f for f in seq["children"] if f["steptype"] == "setup_folder"), None) 
+        setup_steps = setup_folder["children"] if setup_folder else []
+        main_folder = next((f for f in seq["children"] if f["steptype"] == "main_folder"), None)
+        main_steps = main_folder["children"] if main_folder else []
+        teardown_folder = next((f for f in seq["children"] if f["steptype"] == "teardown_folder"), None) 
+        teardown_steps = teardown_folder["children"] if teardown_folder else []
+        steps = setup_steps + main_steps + teardown_steps
+        self.load_steps(steps)
+        
+    def clear_container_layout(self):
+        while self.container_layout.count():
+            item = self.container_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self.clear_layout_recursive(item.layout())
+    def clear_layout_recursive(self, layout): 
+        while layout.count():
+            item = layout.takeAt(0) 
+            if item.widget():
+                item.widget().deleteLater() 
+            elif item.layout():
+                self.clear_layout_recursive(item.layout())
+        
+
+
+
+
 
 class Step_setup(QDialog):
     def __init__(self,use_input_mapping=True, use_output_mapping=True, parent=None):
         super().__init__(parent)
         self.setWindowTitle("New step creation")
-        self.resize(700, 800)
-
+        self.resize(500,500)
         layout = QVBoxLayout(self)
 
         layout.addWidget(QLabel("Steptype"))
@@ -35,9 +258,15 @@ class Step_setup(QDialog):
 
         # Container for step-specific widgets
         self.step_specific_container = QVBoxLayout()
+        container_widget = QWidget()
+        container_widget.setLayout(self.step_specific_container)
         self.setup_pythonmodulestep()
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(container_widget)
         self.step_specific_container.addStretch()
-        layout.addLayout(self.step_specific_container)
+        layout.addWidget(scroll)
 
         # OK/Cancel buttons
         buttons = QDialogButtonBox()
@@ -155,7 +384,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test here")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
         
@@ -195,7 +424,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(100)
-        self.description_input.setPlainText("describe the test in this box")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("Description"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -223,7 +452,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test here")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -260,7 +489,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test in this box")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -276,6 +505,12 @@ class Step_setup(QDialog):
         self.step_specific_container.addWidget(self.module_input)
 
         self.step_specific_container.addWidget(QLabel("<b>Input Mapping<b>"))
+        layout = QHBoxLayout()
+        layout.addWidget(QLabel("<b> Trigger response<b>:"))
+        self.trigger_response = QLineEdit()
+        self.trigger_response.setPlaceholderText("Name the value of the key for the options button desired to trigger method")
+        layout.addWidget(self.trigger_response)
+        self.step_specific_container.addLayout(layout)
         self.input_mapping_widget = self.InOutputMappingWidget(allow_message=True, allow_image=True, allow_method=True, allow_options=True)
         self.step_specific_container.addWidget(self.input_mapping_widget)
 
@@ -297,20 +532,38 @@ class Step_setup(QDialog):
         self.step_specific_container.addStretch()
 
     def setup_userwritestep(self):
-        print("UserWriteStep selected - configure here")
-        # TODO: target, content fields
+        self.step_name_input = QLineEdit()
+        self.step_name_input.setPlaceholderText("New UserWriteStep")
+        self.step_specific_container.addWidget(QLabel("<b>Step name<b>"))
+        self.step_specific_container.addWidget(self.step_name_input)
 
-        
-        self.SetupUART_checkbox = QCheckBox("UART connection setup")
-        self.SetupUART_checkbox.setChecked(False)
-        self.step_specific_container.addWidget(self.SetupUART_checkbox)
-        # if self.SetupUART_checkbox.isChecked(True):
-        #     self.input_mapping_widget.add_option_row()
-        #     table = self.input_mapping_widget.get_options_table()
-        #     row = table.rowCount() - 1
-        #     table.setItem(row, 0, QTableWidgetItem("baudrate"))
-        #     table.setItem(row, 1, QTableWidgetItem("115200"))
+        self.description_input = QTextEdit()
+        self.description_input.setMaximumHeight(70)
+        self.description_input.setPlaceholderText("describe the test in this box")
+        self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
+        self.step_specific_container.addWidget(self.description_input)
 
+        self.step_specific_container.addWidget(QLabel("<b>Input Mapping<b>"))
+        self.input_mapping_widget = self.InOutputMappingWidget(allow_message=True, allow_image=True, no_extraSteps=True)
+        self.step_specific_container.addWidget(self.input_mapping_widget)
+
+        self.step_specific_container.addWidget(QLabel("<b>Determine type of function<b>"))
+        self.UART_setup = QCheckBox("UART")
+        self.Write_variable = QCheckBox("Write to variable")
+        mode_choice = QHBoxLayout()
+        mode_choice.addWidget(self.UART_setup)
+        mode_choice.addWidget(self.Write_variable)
+        self.chosen_input = QLineEdit()
+        self.chosen_input.setPlaceholderText("Explaination of what will happen once either of the above are chosen. ")
+        self.chosen_input.setDisabled(True)
+        self.step_specific_container.addLayout(mode_choice)
+        self.step_specific_container.addWidget(self.chosen_input)
+        self.UART_setup.stateChanged.connect(self.Uart_Toggle)
+        self.Write_variable.stateChanged.connect(self.Write_toggle)
+
+        self.step_specific_container.addWidget(QLabel("<b>Output Mapping<b>"))
+        self.output_mapping_widget = self.InOutputMappingWidget(loader=True, no_extraSteps=False)
+        self.step_specific_container.addWidget(self.output_mapping_widget)
 
         self.skip_checkbox = QCheckBox("Skip")
         self.skip_checkbox.setChecked(True)
@@ -344,7 +597,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test in this box")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
 
@@ -404,7 +657,7 @@ class Step_setup(QDialog):
 
         self.description_input = QTextEdit()
         self.description_input.setMaximumHeight(70)
-        self.description_input.setPlainText("describe the test in this box")
+        self.description_input.setPlaceholderText("describe the test in this box")
         self.step_specific_container.addWidget(QLabel("<b>Description<b>"))
         self.step_specific_container.addWidget(self.description_input)
    
@@ -434,6 +687,10 @@ class Step_setup(QDialog):
             "_node": {},
              "_id": StepID
         }
+        self.global_variables = {}
+        self.local_variables = {}
+        g_in, l_in = None, None
+        g_out, l_out = None,None
         match step_type:
             case "PythonModuleStep":
                 self.result_step["step_name"] = self.step_name_input.text()
@@ -450,6 +707,9 @@ class Step_setup(QDialog):
                     "input_mapping": self.input_mapping_widget.get_data(),
                     "output_mapping": self.output_mapping_widget.get_data()
                 }
+                g_in, l_in = self.extract_locals_globals(self.input_mapping_widget.get_data())
+                g_out, l_out = self.extract_locals_globals(self.output_mapping_widget.get_data())
+
             case "UserInteractionStep":
                 self.result_step["step_name"] = self.step_name_input.text()
                 self.result_step["_parent"] = "main_folder"
@@ -462,6 +722,8 @@ class Step_setup(QDialog):
                     "input_mapping": self.input_mapping_widget.get_data(),
                     "output_mapping": self.output_mapping_widget.get_data()
                 }
+                g_in, l_in = self.extract_locals_globals(self.input_mapping_widget.get_data())
+                g_out, l_out = self.extract_locals_globals(self.output_mapping_widget.get_data())
 
             case "WaitStep":
                 self.result_step["step_name"] = self.step_name_input.text()
@@ -488,6 +750,11 @@ class Step_setup(QDialog):
                     "input_mapping": self.input_mapping_widget.get_data(),
                     "output_mapping": self.output_mapping_widget.get_data()
                 }
+                self.global_variables = {
+                    "loadFile": 'file'
+                }
+                g_in, l_in = self.extract_locals_globals(self.input_mapping_widget.get_data())
+                g_out, l_out = self.extract_locals_globals(self.output_mapping_widget.get_data())
 
             case "UserRunMethodStep":
                 self.result_step["step_name"] = self.step_name_input.text()
@@ -500,11 +767,39 @@ class Step_setup(QDialog):
                     "module": self.module_input.text(),
                     "skip": self.skip_checkbox.isChecked(),
                     "continue_on_error": self.continue_on_error_checkbox.isChecked(),
+                    "trigger_response": self.trigger_response.text(),
                     "input_mapping": self.input_mapping_widget.get_data(),
                     "output_mapping": self.output_mapping_widget.get_data()
                 }
+                g_in, l_in = self.extract_locals_globals(self.input_mapping_widget.get_data())
+                g_out, l_out = self.extract_locals_globals(self.output_mapping_widget.get_data())
             case "UserWriteStep":
-                print("Work in progress")
+                self.input_mapping_widget.add_special_row("options")
+                self.input_mapping_widget.add_option_row(key="cancel", value="cancel")
+                if self.Write_variable.isChecked():
+                    self.input_mapping_widget.add_option_row(key="wrt", value="Write to variable")
+                elif self.UART_setup.isChecked():
+                    self.input_mapping_widget.add_option_row(key="ID", value="Setup UART")
+                self.result_step["step_name"] = self.step_name_input.text()
+                self.result_step["_parent"] = "main_folder"
+                self.result_step["_node"] = {
+                    "steptype": "UserWriteStep",
+                    "step_name": self.result_step["step_name"],
+                    "description": self.description_input.toPlainText(),
+                    "skip": self.skip_checkbox.isChecked(),
+                    "continue_on_error": self.continue_on_error_checkbox.isChecked(),
+                    "input_mapping": self.input_mapping_widget.get_data(),
+                    "output_mapping": self.output_mapping_widget.get_data()
+                }
+                if self.UART_setup.isChecked():
+                    self.result_step["_node"]["output_mapping"] = {"output":{"type":"passfail"}}
+                self.global_variables = {
+                    "cancel_key": 'cancel',
+                    "ID_key": 'ID',
+                    "wrt_key": 'wrt',
+                }
+                g_in, l_in = self.extract_locals_globals(self.input_mapping_widget.get_data())
+                g_out, l_out = self.extract_locals_globals(self.output_mapping_widget.get_data())
 
             case "SSHConnectStep":
                 self.result_step["step_name"] = self.step_name_input.text()
@@ -534,6 +829,11 @@ class Step_setup(QDialog):
                 }
             case _:
                 print("Unknown step type")
+        if g_in and g_out and l_in and l_out is not None:
+            self.global_variables.update(g_in)
+            self.global_variables.update(g_out)
+            self.local_variables.update(l_in)
+            self.local_variables.update(l_out)
 
         super().accept()
 
@@ -580,7 +880,9 @@ class Step_setup(QDialog):
         # Validate input mapping
         ok, msg = self.input_mapping_widget.validate()
         if not ok:
-            return False, msg
+            if not "Image" in msg:
+                return False, msg
+
 
         # Validate output mapping
         ok, msg = self.output_mapping_widget.validate()
@@ -605,7 +907,9 @@ class Step_setup(QDialog):
         # Validate input mapping
         ok, msg = self.input_mapping_widget.validate()
         if not ok:
-            return False, msg
+            if not "Image" in msg:
+                return False, msg
+            
         
         table = self.input_mapping_widget.get_options_table()
         has_valid = False
@@ -631,7 +935,8 @@ class Step_setup(QDialog):
         # Validate input mapping
         ok, msg = self.input_mapping_widget.validate()
         if not ok:
-            return False, msg
+            if not "Image" in msg:
+                return False, msg
 
         # Validate output mapping
         ok, msg = self.output_mapping_widget.validate()
@@ -641,7 +946,25 @@ class Step_setup(QDialog):
         return True, ""
 
     def validate_userwritestep(self):
-        print("UserWriteStep validate - configure here")
+        if not self.step_name_input.text().strip():
+            return False, "Step must have a name"
+        
+        if not self.UART_setup.isChecked() and not self.Write_variable.isChecked():
+            return False, "You must choose which functionType to use"
+
+        # Validate input mapping
+        ok, msg = self.input_mapping_widget.validate()
+        if not ok:
+            if not "Image" in msg:
+                return False, msg
+
+        # Validate output mapping
+        ok, msg = self.output_mapping_widget.validate()
+        if not ok:
+            return False, msg
+
+        return True, ""
+
 
     def validate_sshconnectstep(self):
         if not self.step_name_input.text().strip():
@@ -655,6 +978,40 @@ class Step_setup(QDialog):
         
         return True, ""
         
+    def Write_toggle(self):
+        if self.Write_variable.isChecked():
+            self.UART_setup.setChecked(False)
+            self.chosen_input.setText("Chosing this will allow the function to write to a specific output")
+
+    def Uart_Toggle(self):
+        if self.UART_setup.isChecked():
+            self.Write_variable.setChecked(False)
+            self.chosen_input.setText("Chosing this will make the step setup a UART that can be used for other tests. Choosing this will bypass the output mapping")
+
+    def extract_locals_globals(self, mapping):
+        IGNORED = {"message", "options", "image_path", "method"}
+        
+        globals_found = {}
+        locals_found = {}
+
+        for key, entry in mapping.items():
+            if key in IGNORED:
+                continue
+
+            if not isinstance(entry, dict):
+                continue
+
+            var_type = entry.get("type")
+            value = entry.get("value")
+            if var_type == "global":
+                value = entry.get("global_name")
+                globals_found[value] = ""
+            elif var_type == "local":
+                value = entry.get("local_name")
+                locals_found[value] = ""
+
+        return globals_found, locals_found
+
 
     class InOutputMappingWidget(QWidget):
         def __init__(self, parent=None, output= False, allow_image = False, allow_options=False,allow_message=False, allow_method = False, no_extraSteps=False, specific_method = None, loader = None):
@@ -756,6 +1113,7 @@ class Step_setup(QDialog):
                 row["name_edit"].setPlaceholderText("parameter (Set the name to be the input of your method)")
             elif self.loader:
                 row["name_edit"].setPlaceholderText("Specify variable to save the loaded file/element")
+                row["name_edit"].setVisible
             else:
                 row["name_edit"].setPlaceholderText("parameter (e.g. value)")
             row["name_edit"].textChanged.connect(self.on_edit_changed)
@@ -807,6 +1165,8 @@ class Step_setup(QDialog):
             self.layout.addWidget(container)
             self.rows.append(row)
 
+            #self.on_type_changed(row)
+
             row["name_edit"].editingFinished.connect(lambda r=row: self.on_edit_finished(r))
             row["value_edit"].editingFinished.connect(lambda r=row: self.on_edit_finished(r))
             row["value_edit2"].editingFinished.connect(lambda r=row: self.on_edit_finished(r))
@@ -848,9 +1208,8 @@ class Step_setup(QDialog):
                     new_rows.append(row)
 
             # Ensure at least one blank row at the end
-            if not new_rows or not is_blank(new_rows[-1]):
+            if not new_rows or not is_blank(new_rows[-1]) and not self.no_extraSteps:
                 self.add_row()
-
             self.rows = new_rows
 
         def on_edit_finished(self, row):
@@ -868,7 +1227,8 @@ class Step_setup(QDialog):
                 
                 filename = os.path.basename(file_path)
                 destination = os.path.join(target_folder, filename)
-                shutil.copy(file_path, destination)
+                if not os.path.exists(destination):
+                    shutil.copy(file_path, destination)
                 
                 row["value_edit"].setText(filename)
 
@@ -964,14 +1324,13 @@ class Step_setup(QDialog):
                 row["name_edit"].setText("Deletionsaving")
                 row["name_edit"].setVisible(False)
             elif t == "method":
-                row["value_edit"].setText("Deletionsaving")
+                #row["value_edit"].setText("Deletionsaving")
                 row["name_edit"].setVisible(False)
             elif t == "options":
                 row["name_edit"].setVisible(False)
                 row["value_edit"].setVisible(False)
                 self.make_options_editor(row)
             if self.specific_method:
-                row["value_edit"].setText("Deletionsaving")
                 row["name_edit"].setText("output")
                 row["name_edit"].setVisible(False)
 

@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QDialog,
                                 QAbstractItemView, QFrame, QToolBar, QApplication, QStyle, QListWidgetItem, QListWidget)
 from PySide6.QtCore import QSize, Qt, QPoint, Signal
 from PySide6.QtGui import QAction,QDrag
-from pypts.YamVIEW.recipe_step_setup import Step_setup
+from pypts.YamVIEW.recipe_step_setup import Step_setup, Skip_setup, Sequence_setup
 import re
 
 class StepBlock(QFrame):
@@ -28,9 +28,12 @@ class SequencerWidget(QWidget):
         self.steps = []
         self.yaml_update_callback = None
         self.expanded = False
+        self.new_sequence_request = None
 
         self.preamble_globals = {}
+        self.sequence_locals = {}
         self.updated_preamble_globals = {}
+        self.updated_sequence_locals = {}
 
         # Main layout
         self.layout = QVBoxLayout(self)
@@ -70,6 +73,11 @@ class SequencerWidget(QWidget):
         act_new_step.triggered.connect(self.on_add_step)
         self.Yamlbar.addAction(act_new_step)
 
+        act_disable_enable = QAction("±", self)
+        act_disable_enable.setToolTip("Disable/enable steps")
+        act_disable_enable.triggered.connect(self.on_change_state_step)
+        self.Yamlbar.addAction(act_disable_enable)
+
         # ---- List ----
         self.list_widget = StepListWidget()
         self.list_widget.setContentsMargins(0, 0, 0, 0)
@@ -83,7 +91,6 @@ class SequencerWidget(QWidget):
         self.layout.addWidget(self.list_widget)
 
         self.skip_warning = False
-
 
     def set_yaml_data(self, steps_list):
         self.steps = steps_list
@@ -156,7 +163,24 @@ class SequencerWidget(QWidget):
     def on_steps_reordered(self, parent, start, end, destination, row):
         """Update folder order internally; don't touch YAML yet."""
         # Iterate visible items and reorder them inside their folder
-        folder_map = {f.get("steptype"): f for seq in self.steps if seq.get("steptype") == "sequence_folder" for f in seq.get("children", [])}
+        sequence_id = None
+        for i in range(self.list_widget.count()):
+            item = self.list_widget.item(i)
+            step_data = item.data(Qt.UserRole)
+            if step_data and "_sequence_id" in step_data:
+                sequence_id = step_data["_sequence_id"]
+                break
+
+        if sequence_id is None:
+            print("No sequence_id found during reorder.")
+            return
+
+        folder_map = {}
+        for seq in self.steps:
+            if seq.get("_sequence_id") == sequence_id:
+                for folder in seq.get("children", []):
+                    folder_map[folder["steptype"]] = folder
+                break
 
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
@@ -177,30 +201,42 @@ class SequencerWidget(QWidget):
         if callable(self.yaml_update_callback):
             self.yaml_update_callback(self.steps)
 
-    def move_step_to_folder(self, step, old_parent, new_parent):
+    def move_step_to_folder(self, step, old_parent, new_parent, old_seq_id, new_seq_id):
         print(f"Moving: {step['step_name']}  {old_parent} → {new_parent}")
-
         # Find actual folder dicts
         source_folder = None
         dest_folder = None
 
         for seq in self.steps:
-            if seq.get("steptype") != "sequence_folder":
+            if seq.get("_sequence_id") != old_seq_id:
                 continue
+
             for folder in seq["children"]:
                 if folder["steptype"] == old_parent:
                     source_folder = folder
+                    break
+
+        for seq in self.steps:
+            if seq.get("_sequence_id") != new_seq_id:
+                continue
+            for folder in seq["children"]:
                 if folder["steptype"] == new_parent:
                     dest_folder = folder
-
+                    break
         if not source_folder or not dest_folder:
-            print("❌ Folder lookup failed")
+            print("Folder lookup failed (source or destination missing).")
             return
 
-        source_folder["children"].remove(step)
+        try:
+            source_folder["children"].remove(step)
+        except ValueError:
+            print("Step not found in source folder. Possibly already moved or inconsistent tree.")
+            return
+
+
         step["_parent"] = new_parent
+        step["_sequence_id"] = new_seq_id
         dest_folder["children"].append(step)
-        print(step)
         self.refresh()
 
         if callable(self.yaml_update_callback):
@@ -356,14 +392,24 @@ class SequencerWidget(QWidget):
     def receive_globals(self, globals_dict: dict):
         """Update the internal globals reference."""
         self.preamble_globals = globals_dict
-        print(self.preamble_globals)
 
     def update_global_value(self, key, value):
         """Update or add a global value."""
         self.updated_preamble_globals[key] = value
 
+    def receive_locals(self, globals_dict: dict):
+        """Update the internal locals reference."""
+        self.sequence_locals = globals_dict
+
+    def update_local_value(self, key, value):
+        """Update or add a local value."""
+        self.updated_sequence_locals[key] = value
+
     def on_add_sequence(self):
-        print("Placeholder")
+
+        _sequence = Sequence_setup(self)
+        if _sequence.exec():
+            self.updatingYAMLFormat(_sequence)
 
     def on_add_step(self):
         _step = Step_setup(self)
@@ -371,13 +417,26 @@ class SequencerWidget(QWidget):
         if _step.exec():  # blocks until OK or Cancel
             self.updatingYAMLFormat(_step)
 
+    def on_change_state_step(self):
+
+        steps = self.steps[1]["children"][1]["children"]
+
+        dialog = Skip_setup(steps=self.steps)
+        if dialog.exec_():
+            self.updatingYAMLFormat(dialog, edit_child=True)
+
     def updatingYAMLFormat(self, _step, edit_child = False):
-        new_step = _step.result_step
+        new_step = getattr(_step, "result_step", None)
+        new_sequence = getattr(_step, "result_sequence", None)
         
         if hasattr(_step, "global_variables") and _step.global_variables:
             for key, value in _step.global_variables.items():
                 self.update_global_value(key, value)
-            
+
+        if hasattr(_step, "local_variables") and _step.local_variables:
+            for key, value in _step.local_variables.items():
+                self.update_local_value(key, value)    
+        
         if new_step and not edit_child:
             # Assign parent folder type before inserting
             new_step["_parent"] = "main_folder"  
@@ -405,6 +464,39 @@ class SequencerWidget(QWidget):
 
             if callable(self.yaml_update_callback):
                 self.yaml_update_callback(self.steps)
+        if new_sequence:
+
+            self.steps.append(new_sequence)
+            self.new_sequence_request = new_sequence
+
+            self.refresh()
+
+            if callable(self.yaml_update_callback):
+                self.yaml_update_callback(self.steps)
+
+    def clear(self):
+        """Completely removes all widgets and layouts from self.container_layout."""
+
+        lw = self.list_widget
+
+        lw.blockSignals(True)
+        # Remove widgets first
+        for i in range(lw.count()):
+            item = lw.item(i)
+            widget = lw.itemWidget(item)
+            if widget:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        # Now clear the QListWidgetItem objects
+        lw.clear()
+
+        # Clear internal drag/selection state
+        lw.clearSelection()
+        lw._mouse_press_pos = None
+        lw.blockSignals(False)
+
+
 
 
 class StepListWidget(QListWidget):
@@ -431,7 +523,13 @@ class StepListWidget(QListWidget):
             return
 
         # Create a pixmap of the widget (the “ghost” that follows the mouse)
-        pixmap = widget.grab()
+        label_widget = widget.findChild(QLabel)
+        if label_widget:
+            pixmap_widget = label_widget.parentWidget()
+        else:
+            pixmap_widget = widget
+        pixmap = pixmap_widget.grab()
+        #pixmap = widget.grab()
         # Optionally make it semi-transparent
         pixmap.setDevicePixelRatio(widget.devicePixelRatioF())
 
@@ -482,15 +580,25 @@ class StepListWidget(QListWidget):
         dragged_step = dragged_item.data(Qt.UserRole)
         target_step = target_item.data(Qt.UserRole)
 
+
         # Only handle drop ON a folder header
         if target_step and "children" in target_step:
             new_parent = target_step["steptype"]
             old_parent = dragged_step["_parent"]
 
-            if new_parent != old_parent:
+            new_seq_id = target_step.get("_sequence_id")
+            old_seq_id = dragged_step.get("_sequence_id")
+
+            if new_parent != old_parent or new_seq_id != old_seq_id:
                 sequencer = self.parent()
                 if hasattr(sequencer, "move_step_to_folder"):
-                    sequencer.move_step_to_folder(dragged_step, old_parent, new_parent)
+                    sequencer.move_step_to_folder(
+                    step=dragged_step,
+                    old_parent=old_parent,
+                    new_parent=new_parent,
+                    old_seq_id=old_seq_id,
+                    new_seq_id=new_seq_id,
+                )
 
             event.accept()
             return
