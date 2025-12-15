@@ -935,8 +935,7 @@ class Step_setup(QDialog):
         # Validate input mapping
         ok, msg = self.input_mapping_widget.validate()
         if not ok:
-            if not "Image" in msg:
-                return False, msg
+            return False, msg
 
         # Validate output mapping
         ok, msg = self.output_mapping_widget.validate()
@@ -1079,6 +1078,11 @@ class Step_setup(QDialog):
             row["value_edit2"].setVisible(False)
             h.addWidget(row["value_edit2"])
 
+            row["special"] = QLineEdit()
+            row["special"].setText(type_name)
+            row["special"].setVisible(False)
+            h.addWidget(row["special"])
+
             # File button or options table
             row["file_button"] = QPushButton("📁")
             row["file_button"].setVisible(False)
@@ -1090,7 +1094,6 @@ class Step_setup(QDialog):
 
             self.layout.addWidget(container)
             self.rows.append(row)
-
             self.on_type_changed(row)
 
             row["name_edit"].editingFinished.connect(lambda r=row: self.on_edit_finished(r))
@@ -1200,10 +1203,11 @@ class Step_setup(QDialog):
                 blank = is_blank(row)
                 if blank and i < last_non_blank_index:
                     # Remove middle blank rows
-                    widget = row["name_edit"].parentWidget()
-                    self.layout.removeWidget(widget)
-                    widget.setParent(None)
-                    widget.deleteLater()
+                    if not row["special"]:
+                        widget = row["name_edit"].parentWidget()
+                        self.layout.removeWidget(widget)
+                        widget.setParent(None)
+                        widget.deleteLater()
                 else:
                     new_rows.append(row)
 
@@ -1443,8 +1447,6 @@ class Step_setup(QDialog):
                 if type_ == "range" and (not value1 or not value2):
                     return False, f"Parameter '{name}' needs min and max."
 
-                if type_ == "image_path" and not value1:
-                    return False, f"Image path for '{name}' missing."
 
                 if type_ == "options":
                     table = row["options_widget"]

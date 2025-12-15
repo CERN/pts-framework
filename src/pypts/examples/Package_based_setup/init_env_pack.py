@@ -64,7 +64,7 @@ def main():
     #write the main file
 
     main_code = """\
-from pypts import run_pts
+from pypts.pts import run_pts
 from pypts.startup import create_and_start_gui
 import sys
 
