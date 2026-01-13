@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+name: Instrument Example Use Test recipe
+version: 0.1.0
+recipe_version: 1.0.0
+description: A sample recipe used to run instruments through the inputs given.
+main_sequence: Instrument_run
+test_package: pypts
+globals:
+  #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
+  global_value: 45
+  loadFile_key: 'file'
+  cancel_key: 'cancel' #key used for buttons that wishes to stop steps.
+  ID_key: 'ID' #If used as a step name, a gui will appear that helps set up a uart connection.
+  wrt_key: 'wrt' #writes the given input directly to the specified variable.
+  ssh_client: None
+  host:  #Host name, can either be name or IP
+  user: root #username of ssh
+  password:  #password for ssh
+  private_key: #private key for ssh
+  port: None
+---
+sequence_name: Instrument_run
+description: Sequence covering execution of instruments from core.
+parameters: {}
+locals:
+  serial_ID: None
+  serialport: None
+  baudrate: None
+outputs:
+  final_result: None
+setup_steps: []
+
+steps:
+
+# === sleeptest ===
+- steptype: WaitStep
+  step_name: Wait for 10s
+  description: Waiting 10 seconds to let user check confirm
+  skip: false
+  input_mapping:
+    wait_time:
+      value: '3'
+
+#Measure from the CNT91 device and read back the values. The input is for the visa device, aka the ID and device type.
+- steptype: PythonModuleStep
+  step_name: Run CNT91 test
+  description: Trying out HAL layer using CNT91
+  action_type: method
+  module: Instrument_test_examples.py
+  method_name: run_cnt91
+  input_mapping:
+    device_name:
+      type: direct
+      value: "USB0::0x14EB::0x0091::205575::INSTR"
+  output_mapping:
+    output:
+      type: passfail
+  continue_on_error: true
+  skip: false
+
+
+- steptype: WaitStep
+  step_name: Wait for 10s
+  description: Waiting 10 seconds to let user check confirm
+  skip: false
+  input_mapping:
+    wait_time:
+      value: '3'
+
+#This test pings the device through using the basic instrument class to showcase that even the normal instrument class operates as planned
+- steptype: PythonModuleStep
+  step_name: Run instrument ping test
+  description: Trying out HAL layer using normal instrument class
+  action_type: method
+  module: Instrument_test_examples.py
+  method_name: ping_instrument
+  input_mapping:
+    device_name:
+      type: direct
+      value: "USB0::0x14EB::0x0091::205575::INSTR"
+  output_mapping:
+    output:
+      type: passfail
+  continue_on_error: true
+  skip: false
+  
+
+teardown_steps: []
+

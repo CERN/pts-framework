@@ -106,7 +106,7 @@ class Report:
     """
     _CSV_HEADERS = ["recipe_name", "recipe_file_name", "sequence_name", "serial_number", "pypts_version", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
 
-    def __init__(self, output_dir: str | Path):
+    def __init__(self, output_dir: str | Path, timestamp):
         """
         Initializes the Report manager for CSV output.
 
@@ -117,6 +117,8 @@ class Report:
 
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+        self.timestamp = timestamp
+
         self._csv_file_handle = None
         self._csv_writer: csv.DictWriter | None = None
 
@@ -125,7 +127,7 @@ class Report:
 
     def _init_csv(self):
         """Initializes the CSV file and writer."""
-        path = self.output_dir / "report.csv"
+        path = self.output_dir / f"report_{self.timestamp}.csv"
         try:
             # Use 'w' to start fresh each time
             self._csv_file_handle = open(path, 'w', newline='', encoding='utf-8')
@@ -208,7 +210,8 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
         result_queue (SimpleQueue): Queue to receive StepResult objects or STOP_LISTENER.
         output_dir (str): The directory for report output.
     """
-    report_manager = Report(output_dir=output_dir)
+    timestamp = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+    report_manager = Report(output_dir=output_dir, timestamp=timestamp)
     logger.info(f"Report listener started. Output dir: {output_dir}. Waiting for results...")
     active = True
     while active:
@@ -234,8 +237,9 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
     try:
         report_manager.finish_reports()
         # --- Generate HTML Report after CSV is finalized ---
-        csv_report_path = report_manager.output_dir / 'report.csv'
-        html_report_path = report_manager.output_dir / 'report.html'
+        
+        csv_report_path = report_manager.output_dir / f'report_{timestamp}.csv'
+        html_report_path = report_manager.output_dir / f'report_{timestamp}.html'
         if csv_report_path.exists():
             logger.info(f"Generating HTML report from {csv_report_path}...")
             # Generate TDMS plots before HTML report
@@ -575,8 +579,19 @@ def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = Non
                 formatted_content = f'<pre>{escaped_content}</pre>'
             else:
                 formatted_content = "" # Empty content if nothing
+
+            if col == 'outputs' and formatted_content:
+                summary = f"Show output ({len(content)} chars)"
+                cell_html = (
+                    "<details>"
+                    f"<summary>{summary}</summary>"
+                    f"{formatted_content}"
+                    "</details>"
+                )
+            else:
+                cell_html = formatted_content           
             
-            html_content += f"<td>{formatted_content}</td>"
+            html_content += f"<td>{cell_html}</td>"
 
         html_content += "</tr>"
 
@@ -613,6 +628,8 @@ if __name__ == "__main__":
     from datetime import datetime
     from pypts.recipe import Step, StepResult, ResultType # Ensure these are importable
 
+    timestamp = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description="Generate a sample pypts report CSV.")
     parser.add_argument(
@@ -629,7 +646,7 @@ if __name__ == "__main__":
     print(f"Example report will be generated in: {output_directory.resolve()}")
 
     # --- Simulate Recipe Execution ---
-    report_manager = Report(output_dir=output_directory) # Use the parsed output directory
+    report_manager = Report(output_dir=output_directory, timestamp=timestamp) # Use the parsed output directory
 
     # Simulate some steps (minimal Step objects for reporting)
     step1 = Step(step_name="Run Other Test", id=uuid.uuid4(), description="First step")
@@ -700,8 +717,9 @@ if __name__ == "__main__":
     # --- Finalize ---
     report_manager.finish_reports()
 
-    csv_report_path = report_manager.output_dir / 'report.csv'
-    html_report_path = report_manager.output_dir / 'report.html'
+
+    csv_report_path = report_manager.output_dir / f'report_{timestamp}.csv'
+    html_report_path = report_manager.output_dir / f'report_{timestamp}.html'
     print(f"Sample report generated: {csv_report_path}")
     print("Review the contents of the CSV file.")
 
