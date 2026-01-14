@@ -17,13 +17,15 @@ from pypts.recipe import ResultType
 # Define the project root relative to this test file
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
+timestamp = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+
 def test_main_report_generation(tmp_path):
     """
     Tests the __main__ block of report.py to ensure it runs and creates a report file.
     """
     report_py_path = PROJECT_ROOT / "src" / "pypts" / "report.py"
     output_dir = tmp_path / "temp_report_output"
-    expected_report_path = output_dir / "report.csv"
+    expected_report_path = output_dir / f"report_{timestamp}.csv"
 
     # Ensure the script path exists
     assert report_py_path.exists(), f"Script not found at {report_py_path}"
@@ -33,7 +35,8 @@ def test_main_report_generation(tmp_path):
     command = [
         sys.executable,
         str(report_py_path),
-        "-o", str(output_dir)
+        "-o", str(output_dir),
+        "-t", str(timestamp)
     ]
 
     # Execute the script as a subprocess
@@ -60,7 +63,7 @@ def test_main_report_content(tmp_path):
     """
     report_py_path = PROJECT_ROOT / "src" / "pypts" / "report.py"
     output_dir = tmp_path / "temp_report_output"
-    report_path = output_dir / "report.csv"
+    report_path = output_dir / f"report_{timestamp}.csv"
 
     # --- Run the script (similar to test_main_report_generation) ---
     assert report_py_path.exists(), f"Script not found at {report_py_path}"

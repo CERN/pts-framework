@@ -628,7 +628,7 @@ if __name__ == "__main__":
     from datetime import datetime
     from pypts.recipe import Step, StepResult, ResultType # Ensure these are importable
 
-    timestamp = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+    pre_timestamp = datetime.now().strftime('%Y-%m-%d_%Hh%M')
 
     # --- Argument Parsing ---
     parser = argparse.ArgumentParser(description="Generate a sample pypts report CSV.")
@@ -638,8 +638,15 @@ if __name__ == "__main__":
         default="./temp_report_output",
         help="Directory to save the report.csv file."
     )
+    parser.add_argument(
+        "-t", "--timestamp",
+        type=str,
+        default=pre_timestamp,
+        help="Insert a given timestamp for report for individuality."
+    )
     args = parser.parse_args()
     output_directory = Path(args.output_dir)
+    timestamp = args.timestamp
 
     # --- Configuration ---
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(name)s - %(message)s')
@@ -717,9 +724,9 @@ if __name__ == "__main__":
     # --- Finalize ---
     report_manager.finish_reports()
 
-
-    csv_report_path = report_manager.output_dir / f'report_{timestamp}.csv'
-    html_report_path = report_manager.output_dir / f'report_{timestamp}.html'
+    report_name = f"report_{timestamp}"
+    csv_report_path = report_manager.output_dir / f"{report_name}.csv"
+    html_report_path = report_manager.output_dir / f"{report_name}.html"
     print(f"Sample report generated: {csv_report_path}")
     print("Review the contents of the CSV file.")
 
