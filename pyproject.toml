@@ -38,7 +38,8 @@ dependencies = [
   "PyYAML==6.0.2",
   "ruamel.yaml",
   "pyserial",
-  "paramiko"
+  "paramiko",
+  "pyvisa"
 ]
 
 [project.optional-dependencies]

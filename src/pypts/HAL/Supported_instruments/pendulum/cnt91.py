@@ -170,6 +170,7 @@ class CNT91(Instrument):
         gate_time=None,
         trigger_source=None,
         back_to_back=True,
+        trigger_level=None,
     ):
         """
         Record a time series to the buffer and read it out after completion.
@@ -193,6 +194,16 @@ class CNT91(Instrument):
             gate_time = 1 / sample_rate
         self.clear()
         self.format = "ASCII"
+
+        if trigger_level is not None:
+            channel_map = {"A": 1, "B": 2}
+            try:
+                ch = channel_map[channel]
+            except KeyError:
+                raise ValueError(f"Invalid channel '{channel}', expected 'A' or 'B'")
+
+            self.write(f":INP{ch}:LEV {trigger_level}")
+
         self.configure_frequency_array_measurement(n_samples, channel, back_to_back=back_to_back)
         self.continuous = False
         self.gate_time = gate_time

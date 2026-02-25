@@ -6,7 +6,6 @@ version: 0.1.0
 recipe_version: 1.0.0
 description: A sample recipe used to run instruments through the inputs given.
 main_sequence: Instrument_run
-test_package: pypts
 globals:
   #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
