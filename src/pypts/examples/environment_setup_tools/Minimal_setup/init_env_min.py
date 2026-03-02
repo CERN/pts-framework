@@ -9,7 +9,7 @@ import shutil
 from pathlib import Path
 
 def main():
-    project_root = get_project_root()
+    project_root = Path.cwd()
     tests_dir = project_root / "tests"
     tests_dir.mkdir(exist_ok=True)
 

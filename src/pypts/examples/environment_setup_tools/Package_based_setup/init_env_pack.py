@@ -13,7 +13,7 @@ import subprocess, sys
 
 def main():
     package_example = "example_package"
-    project_root = get_project_root()
+    project_root = Path.cwd()
     src_dir = project_root / "src"
     package_dir = src_dir / package_example
     bin_dir = package_dir / "bin"

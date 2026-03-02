@@ -69,8 +69,8 @@ dev = [
 Repository = "https://gitlab.cern.ch/pts/framework/pypts"
 
 [project.scripts]
-init_env_min = "pypts.examples.Minimal_setup.init_env_min:main"
-init_env_pack = "pypts.examples.Package_based_setup.init_env_pack:main"
+init_env_min = "pypts.examples.environment_setup_tools.Minimal_setup.init_env_min:main"
+init_env_pack = "pypts.examples.environment_setup_tools.Package_based_setup.init_env_pack:main"
 
 
 [tool.setuptools.packages.find]
