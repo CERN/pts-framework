@@ -37,6 +37,7 @@ dependencies = [
   "PySide6==6.9.1",
   "PyYAML==6.0.2",
   "ruamel.yaml",
+  "pymeasure==0.15.0",
   "pyserial",
   "paramiko",
   "pyvisa"

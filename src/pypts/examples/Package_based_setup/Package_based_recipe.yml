@@ -1,6 +1,6 @@
-# spdx-filecopyrighttext: 2025 cern <home.cern>
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
 #
-# spdx-license-identifier: lgpl-2.1-or-later
+# SPDX-License-Identifier: LGPL-2.1-or-later
 
 # this section is related to the whole recipe.
 # we could define the name, version and description herem as well as the

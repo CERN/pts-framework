@@ -442,16 +442,7 @@ class Recipe:
             logger.error(f"Failed to load recipe from {recipe_file_path}: {e}", exc_info=True)
             raise
 
-    def __get_serial_number(self, runtime: Runtime):
-        response_q = queue.SimpleQueue()
-        logger.info("Asking user for serial number")
-        runtime.send_event("get_serial_number", response_q)
-        serial_number = response_q.get()
-        del(response_q)
-        logger.info(f"Serial number: {serial_number}")
-        return serial_number
-
-    def run(self, runtime: Runtime, sequence_name: str="Main", serial_number: str=None, get_serial_number_func=None):
+    def run(self, runtime: Runtime, sequence_name: str="Main"):
         """Executes the main sequence of the recipe.
 
         Sets up the runtime, determines the serial number, runs the specified sequence,
@@ -479,16 +470,6 @@ class Recipe:
             self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
 
             time.sleep(1)
-            # if serial_number is None:
-            #     # Allow passing a different function for getting serial numbers
-            #     get_serial = get_serial_number_func or self.__get_serial_number
-            #     # runtime.set_global("serial_number", get_serial(runtime))
-            #     _serial_number = get_serial(runtime)
-            #     runtime.set_global("serial_number", _serial_number)
-            #     runtime.serial_number = _serial_number # Set serial number in runtime
-            # else:
-            #     runtime.set_global("serial_number", serial_number)
-            #     runtime.serial_number = serial_number # Set serial number in runtime
 
             # Create folder structures needed here to store all results
             # starting_sequence: Sequence = runtime.get_sequence(sequence_name)
@@ -819,6 +800,7 @@ class Step:
             case "userloadingstep": step_type = "UserLoadingStep"
             case "userrunmethodstep": step_type = "UserRunMethodStep"
             case "userwritestep": step_type = "UserWriteStep"
+            case "serialnumberstep": step_type = "SerialNumberStep"
             case "SSHConnectStep": step_type = "SSHConnectStep"
             case "SSHCloseStep": step_type = "SSHCloseStep"
 
@@ -843,7 +825,7 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SSHConnectStep, SSHCloseStep
+from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SerialNumberStep, SSHConnectStep, SSHCloseStep
 
 
 

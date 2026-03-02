@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
 # This is an example of how to implement a class that will be shared across the execution.
 # Generally, framework will at some point provide an instance of the shared resource handler (hardware layer)
 # But at this point, anyone is allowed to use bare-bone python code
