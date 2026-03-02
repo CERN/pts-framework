@@ -377,11 +377,13 @@ class RecipeCreatorApp(QWidget):
             }
         sequence['teardown_steps'].append(teardown_step)
         # SPDX header string
+        # REUSE-IgnoreStart
         spdx_header = (
             "# SPDX-FileCopyrightText: 2025 CERN <home.cern>\n"
             "#\n"
             "# SPDX-License-Identifier: LGPL-2.1-or-later\n"
         )
+        # REUSE-IgnoreEnd
 
         # Generate YAML
         yaml_body = yaml.dump_all([header, sequence], sort_keys=False)
