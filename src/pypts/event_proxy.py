@@ -92,7 +92,6 @@ class RecipeEventProxy(QObject):
             elif event_name == "get_serial_number":
                 event_dict = {"response_q": event_data[0]}
             elif event_name == "pre_run_step":
-                print("eventproxy pre")
                 step_object: recipe.Step = event_data[0]  # event_data is a tuple (step,)
                 # Ignore events from SequenceStep itself as they aren't in the table
                 if not isinstance(step_object, recipe.SequenceStep):

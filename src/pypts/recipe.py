@@ -203,7 +203,7 @@ class Runtime:
         cls.recipe_event_proxy.post_run_step_signal.connect(cls._window.update_step_result)
         cls.recipe_event_proxy.pre_run_step_signal.connect(cls._window.update_running_step)
         cls.recipe_event_proxy.user_interact_signal.connect(cls._window.show_message)
-        cls.recipe_event_proxy.get_serial_number_signal.connect(cls._window.get_serial_number)
+        #cls.recipe_event_proxy.get_serial_number_signal.connect(cls._window.get_serial_number)
         cls.recipe_event_proxy.post_load_recipe_signal.connect(cls._window.handle_post_load_recipe)
         cls.recipe_event_proxy.post_run_sequence_signal.connect(cls._window.handle_post_run_sequence)
         if not getattr(Runtime, "_cleanup_registered", False):
@@ -478,16 +478,17 @@ class Recipe:
             # Use the event sender instead of direct calls
             self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
 
-            if serial_number is None:
-                # Allow passing a different function for getting serial numbers
-                get_serial = get_serial_number_func or self.__get_serial_number
-                # runtime.set_global("serial_number", get_serial(runtime))
-                _serial_number = get_serial(runtime)
-                runtime.set_global("serial_number", _serial_number)
-                runtime.serial_number = _serial_number # Set serial number in runtime
-            else:
-                runtime.set_global("serial_number", serial_number)
-                runtime.serial_number = serial_number # Set serial number in runtime
+            time.sleep(1)
+            # if serial_number is None:
+            #     # Allow passing a different function for getting serial numbers
+            #     get_serial = get_serial_number_func or self.__get_serial_number
+            #     # runtime.set_global("serial_number", get_serial(runtime))
+            #     _serial_number = get_serial(runtime)
+            #     runtime.set_global("serial_number", _serial_number)
+            #     runtime.serial_number = _serial_number # Set serial number in runtime
+            # else:
+            #     runtime.set_global("serial_number", serial_number)
+            #     runtime.serial_number = serial_number # Set serial number in runtime
 
             # Create folder structures needed here to store all results
             # starting_sequence: Sequence = runtime.get_sequence(sequence_name)
@@ -502,7 +503,6 @@ class Recipe:
             
             main_step: Step = Step.build_step(main_step_data)
             final_result = main_step.run(runtime, {}, stop_event=runtime.stop_event)
-
             
             results: List[StepResult] = runtime.get_results()
             runtime.send_event("post_run_recipe", results)
