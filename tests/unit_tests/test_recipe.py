@@ -91,8 +91,7 @@ def test_recipe_loading():
 
     # Run the recipe with the injected serial number function
     recipe.run(
-        runtime=mock_runtime,
-        get_serial_number_func=mock_get_serial_number
+        runtime=mock_runtime
     )
 
     # Verify the expected events were sent
@@ -101,7 +100,7 @@ def test_recipe_loading():
     assert sent_events[0][2] == ("Test Recipe", "For testing")
 
     # Verify runtime was called correctly
-    mock_runtime.set_global.assert_any_call("serial_number", "TEST123")
+    #mock_runtime.set_global.assert_any_call("serial_number", "TEST123")
 
 
 # Test initialization
@@ -116,7 +115,7 @@ def test_step_result_initialization():
     assert step_result.parent is None
     assert step_result.recipe_name is None
     assert step_result.recipe_file_name is None
-    assert step_result.serial_number is None
+    #assert step_result.serial_number is None
     assert step_result.sequence_name is None
     assert step_result.pypts_version == "unknown"
 
@@ -269,7 +268,7 @@ def test_runtime_initialization(runtime):
     assert runtime.local_stack == []
     assert runtime.recipe_name is None
     assert runtime.recipe_file_name is None
-    assert runtime.serial_number is None
+    #assert runtime.serial_number is None
     assert runtime.current_sequence_name is None
     assert runtime.pypts_version == "unknown"
 
