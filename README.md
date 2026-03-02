@@ -21,7 +21,7 @@ Hardware-oriented testing framework developed by BE-CEM-MTA.
 *   **Event System:** Uses queues for inter-thread communication and event reporting (e.g., step start/end).
 
 For full documentation, please visit [PTS Framework Documentation](https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/stable/).
-<<<<<<< Updated upstream
+
 =======
 
 ## Licences
