@@ -958,6 +958,49 @@ class UserWriteStep(Step):
 
 
 
+class SerialNumberStep(Step):
+    """
+    Prompts the user for a serial number via the UI and stores it in the runtime.
+
+    Sends a 'get_serial_number' event with a response queue. The UI handler must
+    put the serial number string into that queue. The serial number is stored in
+    both runtime.serial_number and the global variable serial_number.
+    """
+
+    def __init__(self, continue_on_error: bool = False, **kwargs):
+        super().__init__(**kwargs)
+        self.continue_on_error = continue_on_error
+        self.timeout_seconds = 1
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        runtime.continue_on_error = self.continue_on_error
+        response_q = queue.SimpleQueue()
+        try:
+            runtime.send_event("get_serial_number", response_q)
+            logger.info(f"Step '{self.name}': Waiting for serial number input.")
+
+            while True:
+                if runtime.stop_event.is_set():
+                    logger.info(f"SerialNumberStep '{self.name}': Stop event set while waiting for serial number.")
+                    return {"serial_number": None}
+                try:
+                    serial_number = response_q.get(timeout=self.timeout_seconds)
+                    break
+                except queue.Empty:
+                    continue
+
+            logger.info(f"Step '{self.name}': Serial number received: {serial_number}")
+            runtime.serial_number = serial_number
+            runtime.set_global("serial_number", serial_number)
+            return {"serial_number": serial_number}
+
+        except Exception as e:
+            logger.error(f"Error during serial number step '{self.name}': {e}")
+            raise
+        finally:
+            del response_q
+
+
 class SSHConnectStep(Step):
     """
     Attempts an SSH connection to the given host and returns connection status.

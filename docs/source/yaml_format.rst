@@ -307,6 +307,7 @@ Given the required different functionalities required for testing, multiple step
  - UserLoadingStep
  - UserRunMethodStep
  - UserWriteStep
+ - SerialNumberStep
 
 Each has its own template of required elements but with overlapping types of elements.
 The elements ``step_name`` and ``description`` are not explained further in this section as they're descriptive elements for reporting and GUI with no change between steps. 
@@ -608,6 +609,77 @@ The input written into the GUI window is sent to the output mapping to be saved 
 
 
 
+SerialNumberStep
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Prompts the operator for a device serial number via the GUI and stores it for the rest of the
+recipe run. The serial number is written to both ``runtime.serial_number`` (used automatically
+in all reports) and to the global variable ``serial_number`` so that subsequent steps can
+reference it.
+
+Add this step wherever serial-number capture fits your workflow — typically as the first step
+in the main sequence, but it can equally be placed inside a setup or sub-sequence.
+
+.. code-block:: yaml
+
+  steptype: SerialNumberStep
+  step_name: Scan Serial Number
+  description: Ask the operator to scan or type the device serial number
+  input_mapping: {}
+  output_mapping:
+    serial_number: {type: global, global_name: serial_number}
+
+*   ``steptype`` (str): Must be ``SerialNumberStep``.
+*   ``input_mapping`` (dict): No inputs required — leave as ``{}``.
+*   ``output_mapping`` (dict, optional): The step always stores the serial number in
+    ``runtime.serial_number`` and the ``serial_number`` global automatically.
+    Use the output mapping only when you additionally want to store the value
+    in a local variable or a differently-named global.
+
+    .. code-block:: yaml
+
+       # Store additionally in a local variable:
+       output_mapping:
+         serial_number: {type: local, local_name: device_sn}
+
+.. note::
+   The GUI must handle the ``get_serial_number`` event and respond with the serial
+   number string on the provided response queue.  See :doc:`gui_event_handling` for
+   details on wiring up the signal in your UI.
+
+**Minimal recipe example with serial number capture:**
+
+.. code-block:: yaml
+
+   ---
+   name: Example Recipe
+   version: 1.0.0
+   description: Recipe with serial number capture
+   main_sequence: Main
+   globals:
+     serial_number: null
+
+   ---
+   sequence_name: Main
+   setup_steps:
+     - steptype: SerialNumberStep
+       step_name: Scan Serial Number
+       input_mapping: {}
+       output_mapping: {}
+   steps:
+     - steptype: PythonModuleStep
+       step_name: Run Tests
+       module: my_tests.py
+       action_type: method
+       method_name: run_all
+       input_mapping: {}
+       output_mapping: {}
+   teardown_steps: []
+   locals: {}
+   parameters: []
+   outputs: []
+
+
 Required globals and locals for certain steps.
 ============================
 
@@ -641,6 +713,17 @@ Requires the following local variables **only** if ID_key is specified under opt
   - serial_ID: None
   - serialport: None
   - baudrate: None
+
+- **SerialNumberStep**
+
+Requires no global or local variables to be pre-declared.  The step automatically
+creates or updates the ``serial_number`` global with the value entered by the operator.
+If you want to reference the serial number in subsequent steps, declare it in globals:
+
+.. code-block:: yaml
+
+   globals:
+     serial_number: null
 
 
 
