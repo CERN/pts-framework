@@ -41,32 +41,35 @@ def run_cnt91(device_name,gate_times = 0.1, samples = 100, channels = 1):
     gate_time = gate_times
     n_samples = samples
     channel = channels
+    channel_map = {1: "A", 2: "B"}
+    channel = channel_map[channel]
     #"USB0::0x14EB::0x0091::205575::INSTR"
     logger.info("Initializing CNT-91")
     counter = CNT91(device_name)
 
-    counter.clear()
-    counter.format = "ASCII"
-    counter.continuous = False
-    counter.gate_time = gate_time
+    #This command line will replace everything else commented below.
+    counter.buffer_frequency_time_series(channel=channel, n_samples=n_samples, gate_time=gate_time, trigger_level=2.4)
 
-    print("Instrument ID: %s", counter.id)
-    sleep(0.2)
+    # counter.clear()
+    # counter.format = "ASCII"
+    # counter.continuous = False
+    # counter.gate_time = gate_time
 
-    logger.info("Starting frequency buffer measurement")
+    # print("Instrument ID: %s", counter.id)
+    # sleep(0.2)
 
-    # Map numeric channel to CNT-91 channel name
-    channel_map = {1: "A", 2: "B"}
-    channel = channel_map[channel]
+    # logger.info("Starting frequency buffer measurement")
+
+    # # Map numeric channel to CNT-91 channel name
     
-    # Configure buffered frequency measurement
-    counter.configure_frequency_array_measurement(
-        n_samples=n_samples,
-        channel=channel,
-        back_to_back=True,
-    )
-    # Start measurement
-    counter.write(":INIT")
+    # # Configure buffered frequency measurement
+    # counter.configure_frequency_array_measurement(
+    #     n_samples=n_samples,
+    #     channel=channel,
+    #     back_to_back=True,
+    # )
+    # # Start measurement
+    # counter.write(":INIT")
 
     frequencies = counter.read_buffer(n_samples)
 

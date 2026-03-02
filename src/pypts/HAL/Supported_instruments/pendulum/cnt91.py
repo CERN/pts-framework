@@ -213,3 +213,34 @@ class CNT91(Instrument):
 
         # start the measurement (or wait for trigger)
         self.write(":INIT")
+
+
+    def configure_pulse_output(
+            self,
+            enabled=True,
+            period=1.0,
+            width=0.01,
+            source="TIME",
+        ):
+            """
+            Configure the rear panel pulse output.
+            Parameters
+            ----------
+            enabled : bool
+                Enable or disable pulse output.
+            period : float
+                Pulse period in seconds.
+            width : float
+                Pulse width in seconds.
+            source : str
+                Pulse source (TIME, MEAS, etc depending on firmware).
+            """
+            if width >= period:
+                raise ValueError("Pulse width must be smaller than pulse period.")
+
+            self.write(f"OUTP:PULS:STAT {'ON' if enabled else 'OFF'}")
+            self.write(f"OUTP:PULS:SOUR {source}")
+
+            # Configure timing
+            self.write(f"OUTP:PULS:PER {period}")
+            self.write(f"OUTP:PULS:WIDT {width}")
