@@ -2,110 +2,104 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-import logging
-from time import sleep
+"""
+Example instrument routines that can be called from pypts recipe steps.
 
-'''
-This file contains a collection of example Instrument uses that can be used to develop the PTS framework.
-'''
+These functions demonstrate how to use the pymeasure-based instrument layer
+from within the pts-framework.  They are intended as working reference
+implementations rather than production code.
+"""
+
+import logging
+
+from pymeasure.experiment import FloatParameter, IntegerParameter
+from pymeasure.instruments import Instrument, SCPIMixin
+
+from pypts.instruments.pendulum import CNT91
+
 logger = logging.getLogger(__name__)
 
-def run_cnt91(device_name,gate_times = 0.1, samples = 100, channels = 1):
-    
-    from .HAL.parameters import  FloatParameter, IntegerParameter
-    from .HAL.Supported_instruments.pendulum.cnt91 import CNT91
 
-    #These parameters help explain the variables and will raise and value error if the inserted value is too high or too low.
-    gate_time = FloatParameter(
+def run_cnt91(device_name, gate_times=0.1, samples=100, channels=1):
+    """Perform a buffered frequency measurement on the Pendulum CNT-91.
+
+    :param str device_name: VISA resource string (e.g.
+        ``"USB0::0x14EB::0x0091::205575::INSTR"``).
+    :param float gate_times: Gate time per sample in seconds.
+    :param int samples: Number of frequency samples to acquire (4 – 10 000).
+    :param int channels: Physical input channel: 1 for A, 2 for B.
+    :returns: ``{"output": True, "data": [{"Index": i, "Frequency (Hz)": f}, …]}``
+    """
+    # Parameters document the valid ranges and units; they raise ValueError
+    # if a value falls outside the declared bounds.
+    gate_time_param = FloatParameter(
         "Gate Time",
         units="s",
         default=0.1,
         minimum=2e-8,
         maximum=1000,
     )
-
-    n_samples = IntegerParameter(
+    n_samples_param = IntegerParameter(
         "Number of Samples",
         default=100,
         minimum=4,
         maximum=10000,
     )
-
-    channel = IntegerParameter(
+    channel_param = IntegerParameter(
         "Channel (A=1, B=2)",
         default=1,
         minimum=1,
         maximum=2,
     )
+    gate_time_param.value = gate_times
+    n_samples_param.value = samples
+    channel_param.value = channels
 
-    gate_time = gate_times
-    n_samples = samples
-    channel = channels
     channel_map = {1: "A", 2: "B"}
-    channel = channel_map[channel]
-    #"USB0::0x14EB::0x0091::205575::INSTR"
-    logger.info("Initializing CNT-91")
+    channel = channel_map[channel_param.value]
+
+    logger.info("Initializing CNT-91 at %s", device_name)
     counter = CNT91(device_name)
 
-    #This command line will replace everything else commented below.
-    counter.buffer_frequency_time_series(channel=channel, n_samples=n_samples, gate_time=gate_time, trigger_level=2.4)
+    counter.buffer_frequency_time_series(
+        channel=channel,
+        n_samples=n_samples_param.value,
+        gate_time=gate_time_param.value,
+        trigger_level=2.4,
+    )
 
-    # counter.clear()
-    # counter.format = "ASCII"
-    # counter.continuous = False
-    # counter.gate_time = gate_time
+    frequencies = counter.read_buffer(n_samples_param.value)
 
-    # print("Instrument ID: %s", counter.id)
-    # sleep(0.2)
+    measured_data = [
+        {"Index": i, "Frequency (Hz)": freq}
+        for i, freq in enumerate(frequencies)
+    ]
 
-    # logger.info("Starting frequency buffer measurement")
-
-    # # Map numeric channel to CNT-91 channel name
-    
-    # # Configure buffered frequency measurement
-    # counter.configure_frequency_array_measurement(
-    #     n_samples=n_samples,
-    #     channel=channel,
-    #     back_to_back=True,
-    # )
-    # # Start measurement
-    # counter.write(":INIT")
-
-    frequencies = counter.read_buffer(n_samples)
-
-    measured_data = []
-    for i, freq in enumerate(frequencies):
-        data = {
-            "Index": i,
-            "Frequency (Hz)": freq,
-        }
-        measured_data.append(data)
-    
     logger.info("Shutting down CNT-91")
     try:
         counter.shutdown()
     except Exception:
         pass
 
-    return{"output":True, "data": measured_data}
+    return {"output": True, "data": measured_data}
+
+
+class _GenericSCPIDevice(SCPIMixin, Instrument):
+    """Minimal SCPI-capable instrument used only for probing."""
 
 
 def ping_instrument(device_name):
-    from .HAL.instrument import Instrument
+    """Query the ``*IDN?`` string of any SCPI-compatible instrument.
 
-    logger.info(f"Initializing device {device_name}")
-    #Initialization of an instrument. It requires the device location in the form of the device name AND an actual name. The name "test" is only used for logging purposes.
-    equipment = Instrument(adapter=device_name, name="test")
+    :param str device_name: VISA resource string.
+    :returns: ``{"output": True, "details": "<id string>"}`` on success,
+              ``{"output": False, "details": None}`` otherwise.
+    """
+    logger.info("Probing device at %s", device_name)
+    equipment = _GenericSCPIDevice(adapter=device_name, name="probe")
     equipment.clear()
-    equipment.format = "ASCII"
 
     found_id = equipment.id
-    print("Instrument ID: %s", found_id)
+    logger.info("Instrument ID: %s", found_id)
 
-    if found_id:
-        return {"output": True, "details": found_id }
-    else:
-        return {"output": False, "details": found_id }
-
-
-
+    return {"output": bool(found_id), "details": found_id}

@@ -59,6 +59,11 @@ The following table shows all core runtime dependencies and their license compat
      - MIT
      - ✅ Yes
      - National Instruments Python bindings
+   * - pymeasure
+     - 0.15.0
+     - MIT
+     - ✅ Yes
+     - Instrument HAL; MIT is fully permissive and compatible with LGPL
    * - nptdms
      - Latest
      - LGPL
@@ -101,6 +106,16 @@ nidmm (1.4.8)
 :License: MIT
 :Source: nimi-python GitHub repository
 :Compatibility: ✅ **Full compatibility** - MIT licensed National Instruments drivers
+
+pymeasure (0.15.0)
+~~~~~~~~~~~~~~~~~~
+:License: MIT
+:Source: `pymeasure GitHub repository <https://github.com/pymeasure/pymeasure>`_ and PyPI
+:Compatibility: ✅ **Full compatibility** - MIT is a permissive license compatible with LGPL
+:Note: pymeasure is used as a **runtime dependency** (imported, not bundled).  Its source
+   code is not distributed with pts-framework.  An LGPL library may link against MIT
+   libraries without restriction.  The pymeasure package itself is not affected by pypts'
+   LGPL licence; end users may use pymeasure under its own MIT terms independently.
 
 nptdms
 ~~~~~~

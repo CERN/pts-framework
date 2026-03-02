@@ -56,6 +56,7 @@ Documentation contents
     api
     architecture
     yaml_format
+    instruments
     gui_event_handling
     report_generation
     dependency_license_analysis
