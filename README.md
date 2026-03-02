@@ -21,3 +21,13 @@ Hardware-oriented testing framework developed by BE-CEM-MTA.
 *   **Event System:** Uses queues for inter-thread communication and event reporting (e.g., step start/end).
 
 For full documentation, please visit [PTS Framework Documentation](https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/stable/).
+
+## Licences
+
+pypts is distributed under the **LGPL-2.1-or-later** licence.
+
+pypts uses [pymeasure](https://pymeasure.readthedocs.io) (MIT licence) as a
+runtime dependency for instrument communication.  The pymeasure source code is
+not distributed with pypts; it is fetched from PyPI at install time.  This
+arrangement is fully compatible with the LGPL: an LGPL-licensed library may
+link against and depend upon MIT-licensed libraries without restriction.

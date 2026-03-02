@@ -1,6 +1,6 @@
-# spdx-filecopyrighttext: 2025 cern <home.cern>
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
 #
-# spdx-license-identifier: lgpl-2.1-or-later
+# SPDX-License-Identifier: LGPL-2.1-or-later
 
 name: recipe designed for the graph testing
 version: 0.0.1

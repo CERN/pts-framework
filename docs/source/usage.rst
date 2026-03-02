@@ -44,11 +44,11 @@ An example of the package structure is:
 .. code-block:: bash
 
    my_cwd/
-   ├── .venv
-   ├── tests/
-   │   ├── __init__.py
-   │   └── tests.py
-   └── my_recipe.yaml
+   â”œâ”€â”€ .venv
+   â”œâ”€â”€ tests/
+   â”‚   â”œâ”€â”€ __init__.py
+   â”‚   â””â”€â”€ tests.py
+   â””â”€â”€ my_recipe.yaml
 
 But the only requirements is the recipe and the tests described in the recipe. **Note**: tests are required to be at least one directory down from the ``cwd``. 
 To run the test, the following command is required.
@@ -68,16 +68,16 @@ If the test is expected to be package-based, a different setup is required. With
 .. code-block:: bash
 
    CWD/
-  ├── .venv
-  ├── pyproject.toml           
-  └── package/
-      ├── __init__.py              # package root
-      ├── __main__.py              # required to initialize the package
-      ├── recipe.yaml              # inside package folder
-      └── tests/                   # Not required to put tests in their own directory.
-          ├── __init__.py          # tests as subpackage
-          ├── test_module1.py
-          └── test_module2.py
+  â”œâ”€â”€ .venv
+  â”œâ”€â”€ pyproject.toml           
+  â””â”€â”€ package/
+      â”œâ”€â”€ __init__.py              # package root
+      â”œâ”€â”€ __main__.py              # required to initialize the package
+      â”œâ”€â”€ recipe.yaml              # inside package folder
+      â””â”€â”€ tests/                   # Not required to put tests in their own directory.
+          â”œâ”€â”€ __init__.py          # tests as subpackage
+          â”œâ”€â”€ test_module1.py
+          â””â”€â”€ test_module2.py
 
 The recipe is not required to be inside the package, however the tests are.
 To compile into its own package, run:
@@ -251,12 +251,12 @@ For better distribution and deployment, you can use resource-based module loadin
 .. code-block:: text
 
    my_project/
-   ├── __init__.py
-   ├── tests/
-   │   ├── __init__.py
-   │   ├── device_driver.py
-   │   └── other_test_modules.py
-   └── my_recipe.yaml
+   â”œâ”€â”€ __init__.py
+   â”œâ”€â”€ tests/
+   â”‚   â”œâ”€â”€ __init__.py
+   â”‚   â”œâ”€â”€ device_driver.py
+   â”‚   â””â”€â”€ other_test_modules.py
+   â””â”€â”€ my_recipe.yaml
 
 **Benefits of Resource-Based Loading**:
 
@@ -324,8 +324,8 @@ After execution (or during, for the CSV), check the ``./pts_reports/`` directory
 *   ``report.csv``: Incrementally updated CSV file with detailed step results.
 *   ``report.html``: HTML version of the report generated after the recipe finishes.
 
-Migrating from File-Based to Resource-Based Loading
-----------------------------------------------------
+4. Migrating from File-Based to Resource-Based Loading
+-------------------------------------------------------
 Both file-based and ressource-based loading are possible for the framework.
 If you have existing recipes using file-based module loading, here's how to migrate:
 
@@ -337,19 +337,19 @@ Convert your test file structure to a proper Python package:
 
    # Before (file-based)
    my_project/
-   ├── tests/
-   │   ├── test_module1.py
-   │   └── test_module2.py
-   └── recipe.yaml
+   â”œâ”€â”€ tests/
+   â”‚   â”œâ”€â”€ test_module1.py
+   â”‚   â””â”€â”€ test_module2.py
+   â””â”€â”€ recipe.yaml
    
    # After (resource-based)
    my_project/
-   ├── __init__.py                    # NEW: Makes it a package
-   ├── tests/
-   │   ├── __init__.py               # NEW: Makes tests a subpackage  
-   │   ├── test_module1.py
-   │   └── test_module2.py
-   └── recipe.yaml
+   â”œâ”€â”€ __init__.py                    # NEW: Makes it a package
+   â”œâ”€â”€ tests/
+   â”‚   â”œâ”€â”€ __init__.py               # NEW: Makes tests a subpackage  
+   â”‚   â”œâ”€â”€ test_module1.py
+   â”‚   â””â”€â”€ test_module2.py
+   â””â”€â”€ recipe.yaml
 
 **Step 2: Update Recipe Configuration**
 
@@ -409,3 +409,147 @@ Common Migration Issues
 **Path Issues**: Remove directory prefixes from module paths in the recipe - just use the filename
 
 **Package Installation**: Ensure your package is installed in the Python environment where you're running pypts
+
+
+5. Running a Recipe
+-------------------
+
+Once your recipe is defined and your environment is set up, you can execute the recipe through the graphical user interface.
+
+**Starting the GUI**
+
+Launch the application using one of these commands:
+
+.. code-block:: bash
+
+  # For minimal setup
+  python -m pypts
+
+  # For package-based setup
+  python -m package
+
+The GUI window will open, displaying the PTS (Python Test Suite) interface with a left panel showing available steps and a right panel for messages and interaction.
+
+**Loading a Recipe**
+
+In the GUI toolbar, click the **"Open"** button (folder icon) to load your recipe YAML file. The recipe will be validated and prepared for execution. Once loaded, the recipe name and description appear in the left panel, and the step list is populated with all steps defined in your recipe.
+
+**Executing the Recipe**
+
+After loading a recipe:
+
+1. Click the **"Start"** button (play icon) in the toolbar to begin recipe execution
+2. The GUI will display the current step being executed in the left panel
+3. Step results are updated in real-time with color-coded status indicators:
+  
+  * **Green**: Step passed
+  * **Red**: Step failed
+  * **Yellow**: Step skipped or warning
+  * **Blue**: Step in progress
+
+**User Interaction Steps**
+
+During recipe execution, if a ``UserInteractionStep`` is encountered:
+
+1. A message box appears on the right side of the GUI with instructions
+2. If the step includes an image, it will be displayed in the image panel
+3. Interactive buttons are dynamically created for user responses (e.g., "Pass", "Fail", "Retry", etc.)
+4. Click the appropriate button to respond to the step request
+5. The recipe will continue after your response is processed
+
+**Stopping Execution**
+
+To halt recipe execution at any time, click the **"Stop"** button (stop icon) in the toolbar. The current step will attempt to gracefully terminate, and results collected up to that point will be available for review.
+
+**Viewing Results**
+
+As the recipe executes:
+
+* **Left Panel - Step List**: Shows all steps with their execution status
+* **Left Panel - Results Tree**: Displays a hierarchical view of step results after execution completes
+* **Right Panel - Log Console**: Contains detailed logging information and debug messages
+* **Reports Directory**: After execution, check ``./pts_reports/`` for CSV and HTML reports
+
+
+6. Creating and Editing Recipes with Recipe Creator tool
+---------------------------------------------
+
+For users who prefer a visual approach to recipe creation and editing, the Recipe Creator tool provides an interactive recipe editor.
+
+**Launching Recipe Creator**
+
+You can access Recipe Creator through the main PTS GUI:
+
+1. Open the PTS application as described above
+2. In the menu bar, navigate to **Edit → Edit Recipe**
+3. A new window will open with the Recipe Creator recipe editor
+Alternatively, if you have Recipe Creator installed separately, you can launch it directly:
+
+.. code-block:: bash
+
+  python -m pypts.YamView.recipe_creator
+
+**Creating a New Recipe**
+
+In the Recipe Creator editor:
+1. Click **File → New Recipe** (or the folder icon in the toolbar)
+2. A dialog will appear prompting you to configure initial recipe settings
+3. Fill in the recipe metadata (name, description, version)
+4. Click **OK** to generate a template recipe
+5. The YAML preview will appear on the right side of the editor
+
+**Editing Recipes**
+
+The Recipe Creator editor provides three ways to edit recipes:
+* **Sequencer Panel (Left)**: Hierarchical tree view of sequences and steps with add/remove buttons
+* **YAML Editor (Right)**: Direct YAML text editing with syntax highlighting
+* **Interactive Dialogs**: Double-click any step to open a configuration dialog
+
+**Adding Sequences and Steps**
+
+In the Sequencer Panel:
+
+1. Click the **"Add Sequence Folder"** button (folder icon) to create a new sequence
+2. Click the **"➕"** button to add a new step to the selected sequence
+3. A dialog will open allowing you to configure the step type, parameters, and mappings
+4. Select the appropriate step type from the dropdown (e.g., PythonModuleStep, WaitStep, UserInteractionStep)
+5. Fill in the required fields for the selected step type
+6. Click **OK** to add the step to the recipe
+
+**Disabling Steps**
+
+To temporarily disable steps without removing them:
+
+1. Select one or more steps in the Sequencer Panel
+2. Click the **"±"** button (Disable/Enable button)
+3. A dialog will appear listing all steps in the selected sequence
+4. Check the "Skip" checkbox for any steps you want to skip during execution
+5. Check the "Continue on Error" checkbox to allow the recipe to continue even if a step fails
+6. Click **OK** to apply the changes
+
+**Saving Recipes**
+
+To save your recipe:
+
+* Click **File → Save Recipe** (Ctrl+S) to save to the current file
+* Click **File → Save Recipe As** to save to a new location
+* Use the **"Save"** button in the toolbar (disk icon)
+
+**Validation and Recovery**
+
+The YamVIEW editor includes safety features:
+
+* **Recipe Status Bar**: Shows validation status at the top (green for valid, red for errors)
+* **Recipe Verification**: Recipes are automatically verified on save; if invalid, you'll be prompted to fix errors
+* **Recovery**: Click **"Restore last working recipe state"** (reload icon) to revert to the last successfully validated version
+* **Dark Mode**: Toggle **View → Toggle Dark Mode** for comfortable editing in low-light environments
+
+**YAML Synchronization**
+
+The editor keeps the YAML view and the Sequencer in sync:
+
+* Edits in the YAML view are reflected in the Sequencer automatically
+* Changes in the Sequencer are immediately updated in the YAML view
+* Line highlighting shows which YAML section corresponds to the selected step
+
+
