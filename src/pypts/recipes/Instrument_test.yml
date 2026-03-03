@@ -47,7 +47,7 @@ steps:
   step_name: Run CNT91 test
   description: Trying out HAL layer using CNT91
   action_type: method
-  module: Instrument_test_examples.py
+  module: example_tests.py
   method_name: run_cnt91
   input_mapping:
     device_name:
