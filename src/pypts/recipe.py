@@ -739,14 +739,13 @@ class Step:
                 if stop_event.is_set():
                     logger.info("Recipe run stopped by button.")
                     return self.handle_step_abort(step_result, runtime, input)
+                result_type = self.process_outputs(runtime, step_output)
+                step_result.set_result(result_type, step_input, step_output)
             except:
                 logger.error(f"Error occurred while running step {self.name}")
                 error_info = traceback.format_exc()
                 step_result.set_error(error_info, step_input)
                 logger.error(error_info)
-            else:
-                result_type = self.process_outputs(runtime, step_output)
-                step_result.set_result(result_type, step_input, step_output)
         
         runtime.send_event("post_run_step", step_result)
         # Add result to the report queue for processing by the listener

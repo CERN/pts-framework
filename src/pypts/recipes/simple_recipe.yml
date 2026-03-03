@@ -113,7 +113,7 @@ steps:
       type: local
       local_name: test_value
   output_mapping:
-    my_output:
+    output:
       type: local
       local_name: calculated_output
 - steptype: PythonModuleStep
@@ -155,7 +155,7 @@ steps:
       max: '20'
 - steptype: WaitStep
   step_name: Wait for 3s
-  description: Waiting 3 seconds to let user check confirm
+  description: (Skip) Waiting 3 seconds to let user check confirm
   skip: true
   input_mapping:
     wait_time:
