@@ -339,7 +339,7 @@ class PythonModuleStep(Step):
                 folder_path = module_path.parent
                 folder_name = ".".join(folder_path.parts)
                 
-                redundant_prefix = "pypts.src"
+                redundant_prefix = "src"
                 if folder_name.startswith(redundant_prefix + "."):
                     folder_name = folder_name[len(redundant_prefix) + 1 :]
             else:
