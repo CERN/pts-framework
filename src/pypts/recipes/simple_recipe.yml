@@ -86,8 +86,6 @@ steps:
   method_name: other_test
   input_mapping: {}
   output_mapping:
-    some_value:
-      type: local
     value:
       type: equals
       value: 3
