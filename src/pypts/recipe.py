@@ -429,6 +429,16 @@ class Recipe:
             self.main_sequence: str = recipe_main_data["main_sequence"]
             self.description: str = recipe_main_data["description"]
             self.version: str = recipe_main_data["version"]
+
+            report_mode = recipe_main_data.get("report", "overwrite").lower()
+            if report_mode == "overwrite":
+                self.report_overwrite = True
+            elif report_mode == "append":
+                self.report_overwrite = False
+            else:
+                logger.error(f"'{report_mode}' is not a valid reporting mode. Use 'overwrite' or 'append'.")
+                raise
+
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
             if self.test_package and "." in self.test_package:

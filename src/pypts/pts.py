@@ -197,7 +197,7 @@ def command_handler_loop(queue, report_queue, event_queue):
                         #Moved to here so it is not initialized only once during setup
                         threading.Thread(
                                 target=report_listener,
-                                args=(report_queue, str(report_output_dir)),
+                                args=(report_queue, str(report_output_dir), recipe_to_run.report_overwrite),
                                 daemon=True
                             ).start()
                         logger.info(f"Report listener started. Output directory: {report_output_dir.resolve()}")

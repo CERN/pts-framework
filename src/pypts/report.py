@@ -19,6 +19,8 @@ import numpy as np
 from nptdms import TdmsFile
 import glob
 import os
+from itertools import groupby
+from operator import itemgetter
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +108,15 @@ class Report:
     """
     _CSV_HEADERS = ["recipe_name", "recipe_file_name", "sequence_name", "serial_number", "pypts_version", "step_name", "step_id", "step_type", "result", "inputs", "outputs", "error_info"]
 
-    def __init__(self, output_dir: str | Path, timestamp):
+    def __init__(self, output_dir: str | Path, timestamp, overwrite=True):
         """
         Initializes the Report manager for CSV output.
 
         Args:
             output_dir (str | Path): The directory where report files will be saved.
+            overwrite (bool): When true, previous report is overwritten with
+                new test results. When false, new test results are appended to
+                the report.
         """
         self.output_dir = Path(output_dir)
 
@@ -122,17 +127,21 @@ class Report:
         self._csv_file_handle = None
         self._csv_writer: csv.DictWriter | None = None
 
-        self._init_csv()
+        self._init_csv(overwrite)
         logger.info(f"CSV Report initialized. Output directory: {self.output_dir}")
 
-    def _init_csv(self):
+    def _init_csv(self, overwrite):
         """Initializes the CSV file and writer."""
         path = self.output_dir / f"report_{self.timestamp}.csv"
         try:
-            # Use 'w' to start fresh each time
-            self._csv_file_handle = open(path, 'w', newline='', encoding='utf-8')
+            open_mode = 'w' if overwrite else 'a'
+            write_csv_header = overwrite or not path.is_file()
+            self._csv_file_handle = open(path, open_mode, newline='', encoding='utf-8')
             self._csv_writer = csv.DictWriter(self._csv_file_handle, fieldnames=self._CSV_HEADERS)
-            self._csv_writer.writeheader()
+
+            if write_csv_header:
+                self._csv_writer.writeheader()
+
             logger.info(f"Initialized CSV report: {path}")
         except Exception as e:
             logger.error(f"Failed to initialize CSV report {path}: {e}")
@@ -199,7 +208,7 @@ import time # For demonstration/potential sleep
 STOP_LISTENER = object()
 LISTENER_RUNNING = False
 
-def report_listener(result_queue: SimpleQueue, output_dir: str):
+def report_listener(result_queue: SimpleQueue, output_dir: str, overwrite: bool):
     """
     Listens to a queue for StepResult objects and generates reports incrementally.
 
@@ -209,9 +218,10 @@ def report_listener(result_queue: SimpleQueue, output_dir: str):
     Args:
         result_queue (SimpleQueue): Queue to receive StepResult objects or STOP_LISTENER.
         output_dir (str): The directory for report output.
+        overwrite (bool): When enabled, overwrites the existing report with the new data.
     """
     timestamp = datetime.now().strftime('%Y-%m-%d_%Hh%M')
-    report_manager = Report(output_dir=output_dir, timestamp=timestamp)
+    report_manager = Report(output_dir=output_dir, timestamp=timestamp, overwrite=overwrite)
     logger.info(f"Report listener started. Output dir: {output_dir}. Waiting for results...")
     active = True
     while active:
@@ -464,12 +474,12 @@ def generate_single_tdms_plot(tdms_file_path: Path, img_dir: Path) -> Path:
 
 def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = None):
     """Reads a CSV report and generates an HTML version."""
-    results = []
+    all_results = []
     try:
         with open(csv_path, 'r', newline='', encoding='utf-8') as csvfile:
             reader = csv.DictReader(csvfile)
             for row in reader:
-                results.append(row)
+                all_results.append(row)
     except FileNotFoundError:
         logger.error(f"CSV file not found: {csv_path}")
         return
@@ -477,13 +487,13 @@ def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = Non
         logger.error(f"Error reading CSV file {csv_path}: {e}")
         return
 
-    if not results:
+    if not all_results:
         logger.warning("No results found in CSV to generate HTML report.")
         # Optionally create a basic HTML file indicating no results
         # For now, just return
         return
 
-    # --- HTML Structure --- 
+    # --- HTML Structure ---
     html_content = """
 <!DOCTYPE html>
 <html>
@@ -519,84 +529,91 @@ def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = Non
 <body>
 """
 
-    # --- Header --- 
+    # --- Header ---
     html_content += f"<h1>pypts Test Report</h1>"
     html_content += f"<p>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>"
 
-    # --- Run Context --- 
-    if results: # Ensure we have results before accessing
-        first_row = results[0]
-        recipe_name = html.escape(first_row.get('recipe_name', 'N/A'))
-        recipe_file = html.escape(first_row.get('recipe_file_name', 'N/A'))
-        serial_num = html.escape(first_row.get('serial_number', 'N/A'))
-        pypts_version = html.escape(first_row.get('pypts_version', 'unknown')) # Get version
-        html_content += f"<h2>Run Context</h2>"
-        html_content += f"<p><strong>Recipe:</strong> {recipe_name}<br>"
-        html_content += f"<strong>File:</strong> {recipe_file}<br>"
-        html_content += f"<strong>Serial Number:</strong> {serial_num}<br>"
-        html_content += f"<strong>pypts Version:</strong> {pypts_version}</p>" # Display version
-    else:
-        html_content += "<p><strong>Run Context:</strong> No results data found.</p>"
+    # --- Group results by tested device serial number ---
+    results_by_serial = {
+        serial: list(results)
+        for serial, results in groupby(all_results, key=itemgetter('serial_number'))
+    }
 
-    # --- Summary (Basic) --- 
-    # TODO: Add a more detailed summary (Pass/Fail counts)
-    total_steps = len(results)
-    html_content += f"<h2>Summary</h2>"
-    html_content += f"<p>Total steps: {total_steps}</p>"
+    for results in results_by_serial.values():
+        # --- Run Context ---
+        if results: # Ensure we have results before accessing
+            first_row = results[0]
+            recipe_name = html.escape(first_row.get('recipe_name', 'N/A'))
+            recipe_file = html.escape(first_row.get('recipe_file_name', 'N/A'))
+            serial_num = html.escape(first_row.get('serial_number', 'N/A'))
+            pypts_version = html.escape(first_row.get('pypts_version', 'unknown')) # Get version
+            html_content += f"<h2>Run Context</h2>"
+            html_content += f"<p><strong>Recipe:</strong> {recipe_name}<br>"
+            html_content += f"<strong>File:</strong> {recipe_file}<br>"
+            html_content += f"<strong>Serial Number:</strong> {serial_num}<br>"
+            html_content += f"<strong>pypts Version:</strong> {pypts_version}</p>" # Display version
+        else:
+            html_content += "<p><strong>Run Context:</strong> No results data found.</p>"
 
-    # --- Results Table --- 
-    html_content += "<h2>Details</h2>"
-    html_content += "<table>"
-    # Revert header, keep Sequence Name
-    html_content += "<thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th></tr></thead>"
-    html_content += "<tbody>"
+        # --- Summary (Basic) ---
+        # TODO: Add a more detailed summary (Pass/Fail counts)
+        total_steps = len(results)
+        html_content += f"<h2>Summary</h2>"
+        html_content += f"<p>Total steps: {total_steps}</p>"
 
-    for i, row in enumerate(results):
-        status = str(row.get('result', 'Unknown')).split('.')[-1].lower() # Extract status like 'pass'
-        css_class = f"status-{status}" if status in ['pass', 'fail', 'error', 'skip'] else "status-unknown"
-        
-        html_content += f'<tr class="{css_class}">'
-        # Revert cells, keep Sequence Name 
-        html_content += f"<td>{html.escape(row.get('sequence_name', 'N/A'))}</td>"
-        html_content += f"<td>{html.escape(row.get('step_name', 'N/A'))}</td>"
-        html_content += f"<td>{html.escape(status.upper())}</td>"
-        
-        # Inputs/Outputs/Error Info with toggles for large content
-        for col in ['inputs', 'outputs', 'error_info']:
-            content = row.get(col, '')
-            escaped_content = html.escape(content) # Escape potential HTML in the data
-            # Try to format if it looks like JSON
-            formatted_content = escaped_content
-            if content and content.strip().startswith(('{', '[')): 
-                try:
-                    # Basic JSON pretty print attempt within <pre>
-                    import json
-                    parsed = json.loads(content)
-                    formatted_content = f'<pre>{html.escape(json.dumps(parsed, indent=2))}</pre>'
-                except json.JSONDecodeError:
-                    formatted_content = f'<pre>{escaped_content}</pre>' # Fallback to preformatted escaped
-            elif content: # Handle non-empty, non-JSON content
-                formatted_content = f'<pre>{escaped_content}</pre>'
-            else:
-                formatted_content = "" # Empty content if nothing
+        # --- Results Table ---
+        html_content += "<h2>Details</h2>"
+        html_content += "<table>"
+        # Revert header, keep Sequence Name
+        html_content += "<thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th></tr></thead>"
+        html_content += "<tbody>"
 
-            if col == 'outputs' and formatted_content:
-                summary = f"Show output ({len(content)} chars)"
-                cell_html = (
-                    "<details>"
-                    f"<summary>{summary}</summary>"
-                    f"{formatted_content}"
-                    "</details>"
-                )
-            else:
-                cell_html = formatted_content           
-            
-            html_content += f"<td>{cell_html}</td>"
+        for i, row in enumerate(results):
+            status = str(row.get('result', 'Unknown')).split('.')[-1].lower() # Extract status like 'pass'
+            css_class = f"status-{status}" if status in ['pass', 'fail', 'error', 'skip'] else "status-unknown"
 
-        html_content += "</tr>"
+            html_content += f'<tr class="{css_class}">'
+            # Revert cells, keep Sequence Name
+            html_content += f"<td>{html.escape(row.get('sequence_name', 'N/A'))}</td>"
+            html_content += f"<td>{html.escape(row.get('step_name', 'N/A'))}</td>"
+            html_content += f"<td>{html.escape(status.upper())}</td>"
 
-    html_content += "</tbody></table>"
-    
+            # Inputs/Outputs/Error Info with toggles for large content
+            for col in ['inputs', 'outputs', 'error_info']:
+                content = row.get(col, '')
+                escaped_content = html.escape(content) # Escape potential HTML in the data
+                # Try to format if it looks like JSON
+                formatted_content = escaped_content
+                if content and content.strip().startswith(('{', '[')):
+                    try:
+                        # Basic JSON pretty print attempt within <pre>
+                        import json
+                        parsed = json.loads(content)
+                        formatted_content = f'<pre>{html.escape(json.dumps(parsed, indent=2))}</pre>'
+                    except json.JSONDecodeError:
+                        formatted_content = f'<pre>{escaped_content}</pre>' # Fallback to preformatted escaped
+                elif content: # Handle non-empty, non-JSON content
+                    formatted_content = f'<pre>{escaped_content}</pre>'
+                else:
+                    formatted_content = "" # Empty content if nothing
+
+                if col == 'outputs' and formatted_content:
+                    summary = f"Show output ({len(content)} chars)"
+                    cell_html = (
+                        "<details>"
+                        f"<summary>{summary}</summary>"
+                        f"{formatted_content}"
+                        "</details>"
+                    )
+                else:
+                    cell_html = formatted_content
+
+                html_content += f"<td>{cell_html}</td>"
+
+            html_content += "</tr>"
+
+        html_content += "</tbody></table>"
+
     # --- Add TDMS Plots Section ---
     if output_dir:
         img_dir = output_dir / "img"
@@ -611,7 +628,7 @@ def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = Non
                     html_content += f"<h3>{html.escape(test_name)}</h3>"
                     html_content += f'<img src="{relative_path}" alt="{html.escape(test_name)} plot" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin: 10px 0;">'
                     html_content += "<br><br>"
-    
+
     html_content += "</body></html>"
 
     # --- Write HTML File ---
