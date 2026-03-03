@@ -175,7 +175,7 @@ class Runtime:
         # Metadata for reporting context
         self.recipe_name: str = None
         self.recipe_file_name: str = None
-        self.serial_number: str = None
+        self.serial_number: str = "default_serial"
         self.current_sequence_name: str = None
         self.test_package: str = None
         self.pypts_version: str = "unknown" # Added pypts version
@@ -578,8 +578,9 @@ class Sequence():
 
         for variable in input:
             runtime.set_local(variable, input[variable])
-        try: 
-            sequence_results: List[StepResult] = Step.run_steps(runtime, self.steps, parent_step)
+        sequence_results: List[StepResult] = []
+        try:
+            sequence_results = Step.run_steps(runtime, self.steps, parent_step)
         finally:
             stop_event = getattr(runtime, "stop_event", None)
             teardown_results: List[StepResult] = Step.run_steps(runtime, self.teardown_steps, parent_step, stop_event=stop_event.clear())
@@ -684,6 +685,10 @@ class Step:
                 case "global":      # Output to be written to global variable
                     runtime.set_global(output_config["global_name"], step_output[output_name])
                 case "local":       # Output to be written to local variable
+                    if "local_name" not in output_config:
+                        raise ValueError(
+                            f"Output '{output_name}' in step '{self.name}' has type 'local' but is missing required field 'local_name'."
+                        )
                     runtime.set_local(output_config["local_name"], step_output[output_name])
         
         return step_result
