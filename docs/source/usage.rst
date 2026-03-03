@@ -44,11 +44,11 @@ An example of the package structure is:
 .. code-block:: bash
 
    my_cwd/
-   â”œâ”€â”€ .venv
-   â”œâ”€â”€ tests/
-   â”‚   â”œâ”€â”€ __init__.py
-   â”‚   â””â”€â”€ tests.py
-   â””â”€â”€ my_recipe.yaml
+   ├── .venv
+   ├── tests/
+   │   ├── __init__.py
+   │   └── tests.py
+   └── my_recipe.yaml
 
 But the only requirements is the recipe and the tests described in the recipe. **Note**: tests are required to be at least one directory down from the ``cwd``. 
 To run the test, the following command is required.
@@ -60,24 +60,52 @@ To run the test, the following command is required.
 This initializes the GUI where the recipe can be loaded and run.
 This ``pypts`` framework should **not** have a package in its recipe.
 
-2. Package based pypts-framework
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+Setting up the framework
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-If the test is expected to be package-based, a different setup is required. With the installed package based, the following is required.
+To setup the test from scratch, you can either use the provided initialization script or manually configure the environment. If using the ``init_env_min.exe`` executable:
 
 .. code-block:: bash
 
-   CWD/
-  â”œâ”€â”€ .venv
-  â”œâ”€â”€ pyproject.toml           
-  â””â”€â”€ package/
-      â”œâ”€â”€ __init__.py              # package root
-      â”œâ”€â”€ __main__.py              # required to initialize the package
-      â”œâ”€â”€ recipe.yaml              # inside package folder
-      â””â”€â”€ tests/                   # Not required to put tests in their own directory.
-          â”œâ”€â”€ __init__.py          # tests as subpackage
-          â”œâ”€â”€ test_module1.py
-          â””â”€â”€ test_module2.py
+  init_env_min
+
+This will set up the entire required framework. To understand the setup process, check the ``__main__.py`` file to see how the GUI is initialized.
+
+Using the framework
+~~~~~~~~~~~~~~~~~~~
+
+To use the framework, the ``__main__.py`` file is required. Once the entire framework is set up, execute the following command to run the tests:
+
+.. code-block:: bash
+
+  python -m pypts
+
+This initializes the standard GUI. From the GUI, you can perform the following actions:
+
+* **Open**: Click to load the recipe into the framework. The recipe will be displayed in the GUI.
+* **Start**: Click to begin recipe execution. The tests will run according to the recipe definition.
+* **Stop**: Click to halt the currently running test. The framework will cleanly shut down and finalize results before displaying a summary in the GUI.
+
+If the recipe includes a ``UserInteractionStep``, interactive buttons will appear on the right side of the GUI below any displayed images.
+
+2. Package-based pypts-framework
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+If the test is expected to be package-based, a different setup is required. With the installed package, the following structure is necessary:
+
+.. code-block:: bash
+
+  CWD/
+  ├── .venv
+  ├── pyproject.toml           
+  └── package/
+      ├── __init__.py              # package root
+      ├── __main__.py              # required to initialize the package
+      ├── recipe.yaml              # inside package folder
+      └── tests/                   # Not required to put tests in their own directory.
+          ├── __init__.py          # tests as subpackage
+          ├── test_module1.py
+          └── test_module2.py
 
 The recipe is not required to be inside the package, however the tests are.
 To compile into its own package, run:
@@ -86,16 +114,48 @@ To compile into its own package, run:
 
   pip install -e .
 
-
-This will initialize your software as a package that can now be called. 
+This will initialize your software as a package that can now be called:
 
 .. code-block:: bash
 
   python -m package
 
-That can run the desired package and the tests inside. 
-The package requires a ``__main__.py`` file. See :ref:`__main__` for how the code in the main file should look. 
-The ``__main__.py`` is similar between the pypts-framework package and the new package.
+Setting up the framework
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+To setup the test from scratch, you can either use the provided initialization script or manually configure the environment. If using the ``init_env_pack.exe`` executable:
+
+.. code-block:: bash
+
+  init_env_pack
+
+This will set up the entire required framework. When making package-based tests using the PTS framework, it is required to include a ``pyproject.toml`` file that describes the package contents and its required libraries.
+
+The framework requires the pts-framework to operate and must be installed. To make the package callable via ``python -m package``, run:
+
+.. code-block:: bash
+
+  python -m pip install -e .
+
+This installs the package in editable mode so it can be executed directly.
+
+Using the framework
+~~~~~~~~~~~~~~~~~~~
+
+To use the framework, the ``__main__.py`` file is required. Once the entire framework is set up, you can run the package-based framework with:
+
+.. code-block:: bash
+
+  python -m package
+
+This initializes the standard GUI. From the GUI, you can perform the following actions:
+
+* **Open**: Click to load the recipe into the framework. The recipe will be displayed in the GUI.
+* **Start**: Click to begin recipe execution. The tests will run according to the recipe definition.
+* **Stop**: Click to halt the currently running test. The framework will cleanly shut down and finalize results before displaying a summary in the GUI.
+
+If the recipe includes a ``UserInteractionStep``, interactive buttons will appear on the right side of the GUI below any displayed images.
+
 
 
 Setting up required files for package-based pypts-framework
@@ -251,12 +311,12 @@ For better distribution and deployment, you can use resource-based module loadin
 .. code-block:: text
 
    my_project/
-   â”œâ”€â”€ __init__.py
-   â”œâ”€â”€ tests/
-   â”‚   â”œâ”€â”€ __init__.py
-   â”‚   â”œâ”€â”€ device_driver.py
-   â”‚   â””â”€â”€ other_test_modules.py
-   â””â”€â”€ my_recipe.yaml
+   ├── __init__.py
+   ├── tests/
+   │   ├── __init__.py
+   │   ├── device_driver.py
+   │   └── other_test_modules.py
+   └── my_recipe.yaml
 
 **Benefits of Resource-Based Loading**:
 
@@ -337,19 +397,19 @@ Convert your test file structure to a proper Python package:
 
    # Before (file-based)
    my_project/
-   â”œâ”€â”€ tests/
-   â”‚   â”œâ”€â”€ test_module1.py
-   â”‚   â””â”€â”€ test_module2.py
-   â””â”€â”€ recipe.yaml
+   ├── tests/
+   │   ├── test_module1.py
+   │   └── test_module2.py
+   └── recipe.yaml
    
    # After (resource-based)
    my_project/
-   â”œâ”€â”€ __init__.py                    # NEW: Makes it a package
-   â”œâ”€â”€ tests/
-   â”‚   â”œâ”€â”€ __init__.py               # NEW: Makes tests a subpackage  
-   â”‚   â”œâ”€â”€ test_module1.py
-   â”‚   â””â”€â”€ test_module2.py
-   â””â”€â”€ recipe.yaml
+   ├── __init__.py                    # NEW: Makes it a package
+   ├── tests/
+   │   ├── __init__.py               # NEW: Makes tests a subpackage  
+   │   ├── test_module1.py
+   │   └── test_module2.py
+   └── recipe.yaml
 
 **Step 2: Update Recipe Configuration**
 
