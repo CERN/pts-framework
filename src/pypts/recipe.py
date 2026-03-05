@@ -289,8 +289,11 @@ class Runtime:
         logger.debug(f"Setting local {name} to {value}")
         self.local_stack[-1][name] = value
     
-    def get_global(self, name):
-        return self.globals[name]
+    def get_global(self, index):
+        try:
+            return self.globals[index]
+        except IndexError:
+            return None
     
     def get_globals(self):
         return self.globals

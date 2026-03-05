@@ -1025,15 +1025,28 @@ class SSHConnectStep(Step):
         self.continue_on_error = continue_on_error
         self.timeout_seconds = 1
 
+    def _normalize(self, v):
+        if v in (None, "", "None"):
+            return None
+        return v
+
     def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
-        host = runtime.get_global("host")
-        private_key = runtime.get_global("private_key")
-        user = runtime.get_global("user")
-        password = runtime.get_global("password")
-        raw_port =runtime.get_global("port")
-        port = int(raw_port) if raw_port not in (None, "None", "") else 22
+        host = self._normalize(runtime.get_global("host"))
+        private_key = self._normalize(runtime.get_global("private_key"))
+        user = self._normalize(runtime.get_global("user"))
+        password = self._normalize(runtime.get_global("password"))
+        raw_port = self._normalize(runtime.get_global("port"))
+
+        port = int(raw_port) if raw_port else 22
         connect_timeout = input.get("connect_timeout", 5)
-        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
+
+        if host is None or user is None:
+            raise ValueError("Missing required SSH connection parameters: host or user")
+
+        if password is None and private_key is None:
+            raise ValueError("Either password or private_key must be provided")
+        
+        runtime.continue_on_error = self.continue_on_error # Sets runtime continue on error on step
         try:
             if not ((user and host and password) or (user and host and private_key)):
                     raise ValueError("Missing required SSH connection parameters.")
@@ -1043,34 +1056,17 @@ class SSHConnectStep(Step):
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             logger.debug(f"[DEBUG] SSH connect to host='{host}' port='{port}' user='{user}'")
-            if private_key and user:
-                private_key = paramiko.RSAKey.from_private_key_file(private_key)
-                client.connect(hostname=host, username=user, pkey=private_key,port=port, timeout=connect_timeout)
-            elif password and user:
-                client.connect(hostname=host, username=user, password=password,port=port, timeout=connect_timeout)
-
+            try:
+                if (password is not None) and user:
+                    client.connect(hostname=host, username=user, password=password,port=port, timeout=connect_timeout)
+                elif (private_key is not None) and user:
+                    private_key = paramiko.RSAKey.from_private_key_file(private_key)
+                    client.connect(hostname=host, username=user, pkey=private_key,port=port, timeout=connect_timeout)
+            except Exception as e:
+                logger.error(f"[{self.name}] SSH connection attempt failed: {e}")
+                raise ValueError(f"SSH connection open failed: {e}")
             result = client.exec_command("whoami")
             logger.debug(f"[{self.name}] SSH command output: {result[1].read().decode().strip()}")
-
-            if host:
-                try:
-                    stdin, stdout, stderr = client.exec_command(f"nc -zv {host} {port}")
-                    
-                    # Wait for command to complete and get exit code
-                    exit_status = stdout.channel.recv_exit_status()
-
-                    if exit_status == 0:
-                        logger.info(f"[{self.name}] Successfully connected to {host}:{port}")
-                    else:
-                        logger.warning(f"[{self.name}] Cannot connect to service at {host}:{port}")
-                        
-                except Exception as e:
-                    logger.error(f"[{self.name}] SSH command execution failed: {e}")
-            runtime.set_global("ssh_client",client)
-            return {
-                "status": "connected",
-                "message": f"SSH connection to {host} successful."
-            }
 
         except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException, Exception) as e:
             logger.error(f"[{self.name}] SSH connection failed: {e}", exc_info=True)
