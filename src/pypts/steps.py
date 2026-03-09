@@ -343,7 +343,7 @@ class PythonModuleStep(Step):
                 if folder_name.startswith(redundant_prefix + "."):
                     folder_name = folder_name[len(redundant_prefix) + 1 :]
             else:
-                folder_name = get_project_root().name
+                folder_name = None
 
         
             # Build the full module name: test_package + filename only
@@ -1067,6 +1067,8 @@ class SSHConnectStep(Step):
                 raise ValueError(f"SSH connection open failed: {e}")
             result = client.exec_command("whoami")
             logger.debug(f"[{self.name}] SSH command output: {result[1].read().decode().strip()}")
+            runtime.set_global("ssh_client", client)
+            return {"status": "connected", "message": f"Connected to {host}"}
 
         except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException, Exception) as e:
             logger.error(f"[{self.name}] SSH connection failed: {e}", exc_info=True)
