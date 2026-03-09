@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
+import hashlib
 import logging
 import copy
 import uuid, socket, paramiko
@@ -9,6 +10,7 @@ import sys
 import queue
 import time
 import contextlib
+import stat as _stat
 from pathlib import Path
 from importlib import import_module
 import importlib.resources
@@ -1001,6 +1003,38 @@ class SerialNumberStep(Step):
             del response_q
 
 
+# ---------------------------------------------------------------------------
+# SSH helpers shared by SSHConnectStep and SSHUploadStep
+# ---------------------------------------------------------------------------
+
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 hex digest of a local file."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _remote_file_exists(sftp, remote_path: str) -> bool:
+    """Return True if *remote_path* exists on the SFTP server."""
+    try:
+        sftp.stat(remote_path)
+        return True
+    except FileNotFoundError:
+        return False
+
+
+def _remote_sha256(client, remote_path: str) -> str:
+    """Run ``sha256sum`` on the remote file; return hex digest or '' on failure."""
+    from pypts.utils import exec_command
+    stdout, _, rc = exec_command(client, f"sha256sum {remote_path}", timeout=10)
+    if rc != 0:
+        return ""
+    parts = stdout.split()
+    return parts[0] if parts else ""
+
+
 class SSHConnectStep(Step):
     """
     Attempts an SSH connection to the given host and returns connection status.
@@ -1124,3 +1158,119 @@ class SSHCloseStep(Step):
                 "status": "error",
                 "message": str(e)
             }
+
+
+class SSHUploadStep(Step):
+    """
+    Upload one or more local files to a remote host via SFTP.
+
+    Uses the ``ssh_client`` global populated by :class:`SSHConnectStep`.
+    Supports SHA-256 skip-if-match so repeated recipe runs do not re-upload
+    files whose content has not changed — important for large binaries.
+
+    YAML fields:
+
+    - **files** (list, required): List of ``{local: <path>, remote: <path>}``
+      mappings.  ``local`` may be relative to the project root or, when
+      ``local_package`` is set, relative to that installed package.
+    - **local_package** (str, optional): Resolve ``local`` paths via
+      ``importlib.resources.files(<package>)`` rather than the project root.
+      Use this when the files live inside an installed Python package (e.g.
+      packaged ARM binaries in a ``bin/`` directory).
+    - **permissions** (int or str, optional): ``chmod`` value applied after
+      each upload.  Accepts an integer (e.g. ``493``) or an octal string
+      (e.g. ``"0o755"``).  Default: ``0o755``.
+    - **skip_if_sha256_match** (bool, optional): Skip the upload when the
+      local and remote SHA-256 digests are identical.  Default: ``true``.
+    - **continue_on_error** (bool, optional): When ``true``, an upload
+      failure does not abort the recipe.  Default: ``false``.
+
+    Returns a dict ``{"passed": bool, "deployed": [names], "skipped": [names]}``.
+
+    Example YAML::
+
+        - steptype: SSHUploadStep
+          step_name: Deploy C tool binaries
+          local_package: pts_diot_mfe
+          files:
+            - local: bin/mfe-acq
+              remote: /tmp/mfe-acq
+            - local: bin/adcreg
+              remote: /tmp/adcreg
+          permissions: "0o755"
+          skip_if_sha256_match: true
+          continue_on_error: false
+          output_mapping:
+            passed:
+              type: passfail
+    """
+
+    def __init__(
+        self,
+        files: list,
+        permissions=0o755,
+        skip_if_sha256_match: bool = True,
+        local_package: str = None,
+        continue_on_error: bool = False,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.files = files
+        if isinstance(permissions, str):
+            self.permissions = int(permissions, 8) if permissions.startswith("0") else int(permissions)
+        else:
+            self.permissions = int(permissions)
+        self.skip_if_sha256_match = skip_if_sha256_match
+        self.local_package = local_package
+        self.continue_on_error = continue_on_error
+
+    def _resolve_local(self, local_str: str) -> Path:
+        if self.local_package:
+            resource = importlib.resources.files(self.local_package).joinpath(local_str)
+            with importlib.resources.as_file(resource) as p:
+                return p
+        return get_project_root() / local_str
+
+    def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
+        runtime.continue_on_error = self.continue_on_error
+        client = runtime.get_global("ssh_client")
+        if client is None:
+            raise ValueError("ssh_client global is None — SSHConnectStep must run first")
+
+        deployed: list = []
+        skipped: list = []
+
+        sftp = client.open_sftp()
+        try:
+            for entry in self.files:
+                local_str: str = entry["local"]
+                remote_path: str = entry["remote"]
+                local_path = self._resolve_local(local_str)
+
+                if not local_path.exists():
+                    raise FileNotFoundError(f"Local file not found: {local_path}")
+
+                name = local_path.name
+
+                if self.skip_if_sha256_match and _remote_file_exists(sftp, remote_path):
+                    local_hash = _sha256_file(local_path)
+                    remote_hash = _remote_sha256(client, remote_path)
+                    if local_hash and remote_hash and local_hash == remote_hash:
+                        logger.info("[%s] Skipping %s — remote SHA-256 matches", self.name, name)
+                        skipped.append(name)
+                        continue
+
+                logger.info("[%s] Uploading %s → %s", self.name, name, remote_path)
+                sftp.put(str(local_path), remote_path)
+                sftp.chmod(remote_path, self.permissions)
+                logger.info("[%s] Uploaded %s (chmod %s)", self.name, name, oct(self.permissions))
+                deployed.append(name)
+        except Exception as e:
+            logger.error("[%s] Upload failed: %s", self.name, e, exc_info=True)
+            sftp.close()
+            if not self.continue_on_error:
+                raise
+            return {"passed": False, "deployed": deployed, "skipped": skipped, "error": str(e)}
+
+        sftp.close()
+        return {"passed": True, "deployed": deployed, "skipped": skipped}

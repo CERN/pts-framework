@@ -26,7 +26,7 @@ Recipe Components (`recipe`)
 Step Implementations (`steps`)
 ------------------------------
 .. automodule:: pypts.steps
-   :members: PythonModuleStep, SequenceStep, IndexedStep, UserInteractionStep, WaitStep
+   :members: PythonModuleStep, SequenceStep, IndexedStep, UserInteractionStep, WaitStep, SSHConnectStep, SSHCloseStep, SSHUploadStep, SerialNumberStep
    :undoc-members:
    :show-inheritance:
 

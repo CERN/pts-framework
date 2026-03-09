@@ -842,7 +842,7 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SerialNumberStep, SSHConnectStep, SSHCloseStep
+from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SerialNumberStep, SSHConnectStep, SSHCloseStep, SSHUploadStep
 
 
 
