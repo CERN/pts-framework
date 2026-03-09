@@ -3,6 +3,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 from pathlib import Path
+import hashlib
+import io
 import sys
 from importlib import util
 from importlib.resources import files
@@ -178,6 +180,64 @@ def find_serial_device(target: str = None,  baudrate: int=None, timeout=1):
                 if id_response == target:
                     return port, target, baud_r
         raise RuntimeError(f"Device with ID '{target}' not found on any available COM port.")
+
+
+def exec_command(
+    client: "paramiko.SSHClient",
+    cmd: str,
+    timeout: int = 30,
+) -> "tuple[str, str, int]":
+    """
+    Execute a shell command on a remote host via an open paramiko SSH client.
+
+    Both stdout and stderr are drained concurrently in daemon threads to prevent
+    SSH channel buffer deadlock — the classic paramiko pitfall when a remote
+    command writes to both streams simultaneously.
+
+    Args:
+        client:  Connected ``paramiko.SSHClient`` (typically the ``ssh_client``
+                 global set by :class:`~pypts.steps.SSHConnectStep`).
+        cmd:     Shell command to run on the remote host.
+        timeout: Hard timeout in seconds. Raises ``TimeoutError`` if the command
+                 does not complete within this limit.
+
+    Returns:
+        A ``(stdout_text, stderr_text, exit_code)`` tuple with the full output
+        of the command.
+
+    Raises:
+        TimeoutError: if the command does not finish within ``timeout`` seconds.
+    """
+    import paramiko  # local import — pypts core does not hard-require paramiko
+
+    channel = client.get_transport().open_session()
+    channel.settimeout(timeout)
+    channel.exec_command(cmd)
+
+    stdout_buf: io.StringIO = io.StringIO()
+    stderr_buf: io.StringIO = io.StringIO()
+
+    def _drain(source, dest: io.StringIO) -> None:
+        while True:
+            chunk = source.read(4096)
+            if not chunk:
+                break
+            dest.write(chunk.decode("utf-8", errors="replace"))
+
+    t_out = threading.Thread(target=_drain, args=(channel.makefile("rb"), stdout_buf), daemon=True)
+    t_err = threading.Thread(target=_drain, args=(channel.makefile_stderr("rb"), stderr_buf), daemon=True)
+    t_out.start()
+    t_err.start()
+    t_out.join(timeout=timeout)
+    t_err.join(timeout=timeout)
+
+    if t_out.is_alive() or t_err.is_alive():
+        channel.close()
+        raise TimeoutError(f"exec_command timed out after {timeout}s: {cmd!r}")
+
+    exit_code = channel.recv_exit_status()
+    channel.close()
+    return stdout_buf.getvalue(), stderr_buf.getvalue(), exit_code
 
 
 if __name__ == "__main__":

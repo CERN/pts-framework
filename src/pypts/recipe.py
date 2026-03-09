@@ -203,7 +203,7 @@ class Runtime:
         cls.recipe_event_proxy.post_run_step_signal.connect(cls._window.update_step_result)
         cls.recipe_event_proxy.pre_run_step_signal.connect(cls._window.update_running_step)
         cls.recipe_event_proxy.user_interact_signal.connect(cls._window.show_message)
-        #cls.recipe_event_proxy.get_serial_number_signal.connect(cls._window.get_serial_number)
+        cls.recipe_event_proxy.get_serial_number_signal.connect(cls._window.get_serial_number)
         cls.recipe_event_proxy.post_load_recipe_signal.connect(cls._window.handle_post_load_recipe)
         cls.recipe_event_proxy.post_run_sequence_signal.connect(cls._window.handle_post_run_sequence)
         if not getattr(Runtime, "_cleanup_registered", False):
@@ -842,7 +842,7 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SerialNumberStep, SSHConnectStep, SSHCloseStep
+from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SerialNumberStep, SSHConnectStep, SSHCloseStep, SSHUploadStep
 
 
 

@@ -305,6 +305,7 @@ Given the required different functionalities required for testing, multiple step
  - WaitStep
  - UserInteractionStep
  - SSHConnectStep
+ - SSHUploadStep
  - UserLoadingStep
  - UserRunMethodStep
  - UserWriteStep
@@ -447,6 +448,52 @@ An Example of using it for a function can be seen below.
     return (True)
 
 
+
+SSHUploadStep
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Uploads one or more local files to the remote host via SFTP. Uses the ``ssh_client`` global
+set by ``SSHConnectStep``. Compares local and remote SHA-256 digests before uploading, so
+repeated recipe runs skip files that are already up to date.
+
+.. code-block:: yaml
+
+  - steptype: SSHUploadStep
+    step_name: Deploy C tool binaries
+    description: Upload ARM ELF binaries to /tmp/ on the test target
+    local_package: my_pts_package
+    files:
+      - local: bin/tool-a
+        remote: /tmp/tool-a
+      - local: bin/tool-b
+        remote: /tmp/tool-b
+    permissions: "0o755"
+    skip_if_sha256_match: true
+    continue_on_error: false
+    output_mapping:
+      passed:
+        type: passfail
+
+*   ``files`` (list, required): List of ``{local: ..., remote: ...}`` pairs.
+    ``local`` is a path string resolved relative to the project root, or relative
+    to ``local_package`` when that field is set.
+*   ``local_package`` (str, optional): Name of an installed Python package.
+    When set, ``local`` paths are resolved via ``importlib.resources`` inside
+    that package (use this for packaged binaries or data files).
+*   ``permissions`` (int or str, optional): ``chmod`` value applied after each
+    upload. Accepts an integer (e.g. ``493``) or an octal string (e.g. ``"0o755"``).
+    Default: ``0o755`` (rwxr-xr-x).
+*   ``skip_if_sha256_match`` (bool, optional): Skip the upload when the local
+    and remote SHA-256 digests match. Default: ``true``.
+*   ``continue_on_error`` (bool, optional): If ``true``, an upload failure does
+    not abort the recipe. Default: ``false``.
+
+The step returns ``{"passed": bool, "deployed": [names], "skipped": [names]}``.
+Map ``passed`` to ``type: passfail`` in ``output_mapping`` for automatic
+PASS/FAIL verdict reporting.
+
+**Important**: ``SSHConnectStep`` must appear before ``SSHUploadStep`` in
+``setup_steps`` so that the ``ssh_client`` global is populated.
 
 UserLoadingStep
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
