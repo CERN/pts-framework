@@ -810,51 +810,35 @@ class UserRunMethodStep(Step):
                         step_name=f"{self.name}",
                         action_type=self.action_type,
                         module=self.module,
-                        method_name=self.input_mapping["method_name"]["value"],
+                        method_name=self.method_name,
                     )
-                    
-                    # Determine input based on action_type
-                    if self.action_type == 'method':
-                        module_input = {}  # No inputs expected
-                        if other_keys:
-                            for key in other_keys:
-                                key_input = input.get(key)
-                                input_type = key_input.get("type")
-                                
-                                if input_type == "global":
-                                    specified_value = runtime.get_global("global_name")
-                                elif input_type == "local":
-                                    specified_value = runtime.get_local("local_name")
-                                else:
-                                    specified_value = key_input.get("value")
-                                
-                                module_input[key] = specified_value
-                    elif self.action_type == 'read_attribute':
-                        module_input = {'attribute_name': input.get('attribute_name')}
-                    elif self.action_type == 'write_attribute':
-                        module_input = {
-                            'attribute_name': input.get('attribute_name'),
-                            'attribute_value': input.get('attribute_value')
-                        }
-                    else:
-                        module_input = {}
 
-                    result = module_step._step(runtime,module_input, parent_step_result_uuid=parent_step_result_uuid)
+                    # Use input dict directly as kwargs
+                    module_input = {k: v.get("value") if isinstance(v, dict) else v
+                                    for k, v in input.items()
+                                    if k not in {"message", "image_path", "options"}}
 
-                    if result:
-                        logger.info(f"Module method returned: {result}")
+                    result = module_step._step(runtime, module_input, parent_step_result_uuid)
+
+
+                    if isinstance(result, dict):
+                        step_output = result
                     else:
-                        logger.info(f"Module method returned no output (None or empty).")
-                    status["status"] = "ok"
+                        step_output = {"output": bool(result), "value": result}
+
+                    status["status"] = "ok" if step_output.get("output", False) else "error"
+
+                    logger.info(f"Module method returned: {step_output}")
                 except Exception as e:
                     logger.error(f"Module method failed: {e}")
                     status["status"] = "error"
                     response = "error"
+                    step_output = {"output": response}
             else:
                 logger.info(f"No trigger matched. Skipping module execution.")
                 status["status"] = ""
 
-            return {"output": response, "status": status}
+            return {"output": step_output, "status": status}
 
         except Exception as e:
             # Catch potential errors during event sending or queue operations
