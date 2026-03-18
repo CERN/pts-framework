@@ -198,6 +198,40 @@ Each value in the ``input_mapping`` dictionary is *another* dictionary with the 
      items_to_process: {type: direct, value: [1, 2, 3], indexed: true}
 
 
+.. _indexed_step_naming:
+
+Indexed Step Naming
+""""""""""""""""""""
+
+By default, each iteration of an indexed step is named
+``"<step_name> [1/N]"``, ``"<step_name> [2/N]"``, etc.  To produce more
+informative report lines, use **Python format placeholders** in ``step_name``
+that reference the indexed input names.  The framework substitutes the actual
+value for each iteration automatically.
+
+.. code-block:: yaml
+
+   - steptype: PythonModuleStep
+     step_name: "ADC-03 axis {axis}"
+     module: tests/adc.py
+     action_type: method
+     method_name: test_adc_03_axis
+     input_mapping:
+       axis: {type: direct, value: [0, 1, 2, 3, 4, 5, 6, 7], indexed: true}
+     output_mapping:
+       passed: {type: passfail}
+
+This produces eight report lines: ``ADC-03 axis 0``, ``ADC-03 axis 1``, ...,
+``ADC-03 axis 7``.
+
+Standard Python format specifications are supported — for example
+``"AO-02 CH{channel:02d} FFT"`` produces ``AO-02 CH00 FFT``,
+``AO-02 CH01 FFT``, etc.
+
+If the ``step_name`` does not contain any ``{...}`` placeholders, the
+default ``[i/N]`` suffix is used.
+
+
 .. _output_mapping_details:
 
 Output Mapping Details (``output_mapping``)
