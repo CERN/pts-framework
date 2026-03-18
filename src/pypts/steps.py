@@ -146,8 +146,19 @@ class IndexedStep(Step):
                         logger.debug(f"Removing output mapping '{key}' (type: {output_conf.get('type')}) from iteration {i} of '{self.name}'")
                         del copied_step.output_mapping[key]
 
-            # Modify the name for clarity in logs and results
-            copied_step.name = f"{self.template_step.name} - Iteration {i+1}/{num_runs}"
+            # Modify the name for clarity in logs and results.
+            # If step_name contains {input_name} placeholders, substitute
+            # the actual indexed values so the report reads e.g.
+            # "ADC-03 axis 2" instead of "ADC-03 - Iteration 3/8".
+            _fmt_kwargs = {name: wrapper_inputs[name][i] for name in indexed_list_names}
+            try:
+                _formatted = self.template_step.name.format(**_fmt_kwargs)
+                if _formatted != self.template_step.name:
+                    copied_step.name = _formatted
+                else:
+                    copied_step.name = f"{self.template_step.name} [{i+1}/{num_runs}]"
+            except (KeyError, IndexError, ValueError):
+                copied_step.name = f"{self.template_step.name} [{i+1}/{num_runs}]"
             # Use a unique ID for the sub-step result? Or is the wrapper's sufficient?
             # Let StepResult handle UUID generation.
             self.steps.append(copied_step)

@@ -198,6 +198,40 @@ Each value in the ``input_mapping`` dictionary is *another* dictionary with the 
      items_to_process: {type: direct, value: [1, 2, 3], indexed: true}
 
 
+.. _indexed_step_naming:
+
+Indexed Step Naming
+""""""""""""""""""""
+
+By default, each iteration of an indexed step is named
+``"<step_name> [1/N]"``, ``"<step_name> [2/N]"``, etc.  To produce more
+informative report lines, use **Python format placeholders** in ``step_name``
+that reference the indexed input names.  The framework substitutes the actual
+value for each iteration automatically.
+
+.. code-block:: yaml
+
+   - steptype: PythonModuleStep
+     step_name: "ADC-03 axis {axis}"
+     module: tests/adc.py
+     action_type: method
+     method_name: test_adc_03_axis
+     input_mapping:
+       axis: {type: direct, value: [0, 1, 2, 3, 4, 5, 6, 7], indexed: true}
+     output_mapping:
+       passed: {type: passfail}
+
+This produces eight report lines: ``ADC-03 axis 0``, ``ADC-03 axis 1``, ...,
+``ADC-03 axis 7``.
+
+Standard Python format specifications are supported — for example
+``"AO-02 CH{channel:02d} FFT"`` produces ``AO-02 CH00 FFT``,
+``AO-02 CH01 FFT``, etc.
+
+If the ``step_name`` does not contain any ``{...}`` placeholders, the
+default ``[i/N]`` suffix is used.
+
+
 .. _output_mapping_details:
 
 Output Mapping Details (``output_mapping``)
@@ -247,6 +281,112 @@ Each value in the ``output_mapping`` dictionary is *another* dictionary specifyi
      # For SequenceStep: Propagate the overall Pass/Fail/Done status
      # of the subsequence using its implicit '__result' output.
      __result: { type: passthrough }
+
+
+.. _data_collection_vs_assertion:
+
+Separating Data Collection from Assertion
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+The output mapping system supports a powerful pattern: **decoupling data
+collection from pass/fail assertion**. This is achieved by using ``global``
+or ``local`` output types, which store raw data without performing any
+assertion. When *only* storage types are used in a step's output mapping,
+the step finishes with ``ResultType.DONE`` (neutral) — it neither passes
+nor fails.
+
+**Why use this pattern?**
+
+*   Keep test methods focused on *acquiring* data, not *judging* it.
+*   Reuse the same acquisition step with different assertion criteria.
+*   Inspect or log raw data before deciding pass/fail in a later step.
+*   Run multiple validations on the same dataset without re-acquiring.
+
+**Example — collect first, assert later:**
+
+.. code-block:: yaml
+
+   # Step 1: Pure data collection — no assertion
+   - steptype: PythonModuleStep
+     step_name: Acquire ADC channels
+     module: tests/adc.py
+     action_type: method
+     method_name: read_all_channels
+     input_mapping:
+       ssh_client: {type: global, global_name: ssh_client}
+     output_mapping:
+       channels:
+         type: global
+         global_name: adc_raw_data       # Raw dict stored, step returns DONE
+
+   # Step 2: Assert on the stored data
+   - steptype: PythonModuleStep
+     step_name: Validate ADC channels
+     module: tests/adc.py
+     action_type: method
+     method_name: validate_channels
+     input_mapping:
+       data: {type: global, global_name: adc_raw_data}
+     output_mapping:
+       passed: {type: passfail}          # Boolean assertion
+
+The Python method in step 1 only needs to return the raw data:
+
+.. code-block:: python
+
+   def read_all_channels(ssh_client=None, **kwargs):
+       # ... acquire data ...
+       return {"channels": channel_dict}  # No pass/fail logic here
+
+And the validation method in step 2 receives the stored data and judges it:
+
+.. code-block:: python
+
+   def validate_channels(data=None, **kwargs):
+       all_ok = all(abs(v - expected) < tolerance for v, expected in ...)
+       return {"passed": all_ok}
+
+**Example — mixed: assert AND store in one step:**
+
+A single step can combine assertion types with storage types. This is useful
+when you want an immediate pass/fail verdict *and* want to keep the raw data
+available for later steps or reporting:
+
+.. code-block:: yaml
+
+   output_mapping:
+     passed:
+       type: passfail                    # Determines step PASS/FAIL
+     raw_readings:
+       type: global
+       global_name: saved_readings       # Also stored for later use
+     summary:
+       type: local
+       local_name: test_summary          # Stored in sequence-local scope
+
+**Summary of assertion vs. storage types:**
+
++---------------+---------------------------+----------------------------+
+| Type          | Behaviour                 | Determines Pass/Fail?      |
++===============+===========================+============================+
+| ``passfail``  | Boolean → PASS / FAIL     | Yes                        |
++---------------+---------------------------+----------------------------+
+| ``equals``    | Compare to target value   | Yes                        |
++---------------+---------------------------+----------------------------+
+| ``range``     | Check within [min, max]   | Yes                        |
++---------------+---------------------------+----------------------------+
+| ``passthrough``| Propagate a ResultType   | Yes                        |
++---------------+---------------------------+----------------------------+
+| ``global``    | Store in global variable  | No — step returns DONE     |
++---------------+---------------------------+----------------------------+
+| ``local``     | Store in local variable   | No — step returns DONE     |
++---------------+---------------------------+----------------------------+
+
+.. note::
+   If a step's output mapping contains **only** ``global`` and/or ``local``
+   entries (no assertion types), the step always finishes with
+   ``ResultType.DONE``. This is treated as a neutral/successful completion —
+   it will not trigger ``continue_on_error`` or ``critical`` stop behaviour.
 
 
 Step formatting
