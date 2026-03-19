@@ -16,7 +16,7 @@ import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 import numpy as np
-from nptdms import TdmsFile
+import h5py
 import glob
 import os
 from itertools import groupby
@@ -252,8 +252,8 @@ def report_listener(result_queue: SimpleQueue, output_dir: str, overwrite: bool)
         html_report_path = report_manager.output_dir / f'report_{timestamp}.html'
         if csv_report_path.exists():
             logger.info(f"Generating HTML report from {csv_report_path}...")
-            # Generate TDMS plots before HTML report
-            generate_tdms_plots(report_manager.output_dir, csv_report_path)
+            # Generate HDF5 plots before HTML report
+            generate_hdf5_plots(report_manager.output_dir, csv_report_path)
             generate_html_report(csv_path=csv_report_path, html_path=html_report_path, output_dir=report_manager.output_dir)
         else:
             logger.warning(f"CSV report not found at {csv_report_path}, cannot generate HTML report.")
@@ -264,32 +264,29 @@ def report_listener(result_queue: SimpleQueue, output_dir: str, overwrite: bool)
         logger.info("Report listener finished.")
 
 
-# --- TDMS Data Processing and Plotting ---
+# --- HDF5 Data Processing and Plotting ---
 
-def _verify_tdms_serial_number(tdms_file_path: Path, expected_serial_number: str) -> bool:
-    """Verifies that a TDMS file contains the expected serial number in its properties."""
+def _verify_hdf5_serial_number(h5_file_path: Path, expected_serial_number: str) -> bool:
+    """Verifies that an HDF5 file contains the expected serial number in its attributes."""
     try:
-        with TdmsFile.read(tdms_file_path) as tdms_file:
-            # Check root properties for Serial_Number
-            root_props = tdms_file.properties
-            file_serial_number = root_props.get("Serial_Number")
-            
+        with h5py.File(h5_file_path, 'r') as f:
+            file_serial_number = f.attrs.get("Serial_Number")
             if file_serial_number == expected_serial_number:
-                logger.debug(f"TDMS file {tdms_file_path.name} serial number verified: {file_serial_number}")
+                logger.debug(f"HDF5 file {h5_file_path.name} serial number verified: {file_serial_number}")
                 return True
             else:
-                logger.debug(f"TDMS file {tdms_file_path.name} serial number mismatch. Expected: {expected_serial_number}, Found: {file_serial_number}")
+                logger.debug(f"HDF5 file {h5_file_path.name} serial number mismatch. Expected: {expected_serial_number}, Found: {file_serial_number}")
                 return False
     except Exception as e:
-        logger.warning(f"Could not read TDMS file {tdms_file_path.name} for serial number verification: {e}")
+        logger.warning(f"Could not read HDF5 file {h5_file_path.name} for serial number verification: {e}")
         return False
 
-def generate_tdms_plots(output_dir: Path, csv_path: Path = None):
-    """Generates matplotlib plots for TDMS files that match the current test run's serial number."""
+def generate_hdf5_plots(output_dir: Path, csv_path: Path = None):
+    """Generates matplotlib plots for HDF5 files that match the current test run's serial number."""
     # Create img directory
     img_dir = output_dir / "img"
     img_dir.mkdir(exist_ok=True)
-    
+
     # Get the serial number from the CSV report
     test_serial_number = None
     if csv_path and csv_path.exists():
@@ -302,145 +299,101 @@ def generate_tdms_plots(output_dir: Path, csv_path: Path = None):
                     logger.debug(f"Found test serial number from CSV: {test_serial_number}")
         except Exception as e:
             logger.warning(f"Could not read serial number from CSV report: {e}")
-    
+
     if not test_serial_number or test_serial_number == 'N/A':
-        logger.warning("No valid serial number found in CSV report - cannot match TDMS files.")
+        logger.warning("No valid serial number found in CSV report - cannot match HDF5 files.")
         return
-    
-    # Find TDMS files that match the serial number
-    tdms_files_to_plot = []
-    
-    # Look for TDMS files in the output directory
-    for tdms_file in output_dir.glob("*.tdms"):
-        # Check if filename contains the serial number
-        if test_serial_number in tdms_file.name:
-            # Also verify the serial number inside the TDMS file
-            if _verify_tdms_serial_number(tdms_file, test_serial_number):
-                tdms_files_to_plot.append(tdms_file)
-                logger.debug(f"Matched TDMS file: {tdms_file.name}")
+
+    # Find HDF5 files that match the serial number
+    h5_files_to_plot = []
+
+    for h5_file in output_dir.glob("*.h5"):
+        if test_serial_number in h5_file.name:
+            if _verify_hdf5_serial_number(h5_file, test_serial_number):
+                h5_files_to_plot.append(h5_file)
+                logger.debug(f"Matched HDF5 file: {h5_file.name}")
             else:
-                logger.debug(f"TDMS file {tdms_file.name} has serial number in filename but not in properties")
+                logger.debug(f"HDF5 file {h5_file.name} has serial number in filename but not in attributes")
         else:
-            logger.debug(f"TDMS file {tdms_file.name} does not contain serial number {test_serial_number}")
-    
-    if not tdms_files_to_plot:
-        logger.info(f"No TDMS files found matching serial number {test_serial_number}.")
+            logger.debug(f"HDF5 file {h5_file.name} does not contain serial number {test_serial_number}")
+
+    if not h5_files_to_plot:
+        logger.info(f"No HDF5 files found matching serial number {test_serial_number}.")
         return
-    
-    logger.info(f"Found {len(tdms_files_to_plot)} TDMS files matching serial number {test_serial_number}.")
-    
-    for tdms_file in tdms_files_to_plot:
+
+    logger.info(f"Found {len(h5_files_to_plot)} HDF5 files matching serial number {test_serial_number}.")
+
+    for h5_file in h5_files_to_plot:
         try:
-            logger.info(f"Generating plot for {tdms_file.name}")
-            plot_path = generate_single_tdms_plot(tdms_file, img_dir)
+            logger.info(f"Generating plot for {h5_file.name}")
+            plot_path = generate_single_hdf5_plot(h5_file, img_dir)
             if plot_path:
                 logger.info(f"Plot saved: {plot_path}")
         except Exception as e:
-            logger.error(f"Error generating plot for {tdms_file.name}: {e}")
+            logger.error(f"Error generating plot for {h5_file.name}: {e}")
 
-def generate_single_tdms_plot(tdms_file_path: Path, img_dir: Path) -> Path:
-    """Generates a plot for a single TDMS file and returns the plot path."""
+def generate_single_hdf5_plot(h5_file_path: Path, img_dir: Path) -> Path:
+    """Generates a plot for a single HDF5 file and returns the plot path."""
     try:
-        with TdmsFile.read(tdms_file_path) as tdms_file:
-            # Try to find appropriate data channels
+        with h5py.File(h5_file_path, 'r') as f:
             time_data = None
             amplitude_data = None
-            group = None
-            
-            # First, try the expected group structure
-            if "Sinewave_Test" in tdms_file:
-                group = tdms_file["Sinewave_Test"]
-                if "Time" in group and "Amplitude" in group:
-                    time_data = group["Time"][:]
-                    amplitude_data = group["Amplitude"][:]
-            
-            # If that didn't work, try to find any suitable channels
+            grp = None
+
+            if "Sinewave_Test" in f:
+                grp = f["Sinewave_Test"]
+                if "Time" in grp and "Amplitude" in grp:
+                    time_data = grp["Time"][:]
+                    amplitude_data = grp["Amplitude"][:]
+
             if time_data is None or amplitude_data is None:
-                logger.warning(f"Expected group/channels not found in {tdms_file_path.name}, searching for alternatives...")
-                
-                # Look through all groups for time/amplitude-like channels
-                for group_name in tdms_file.groups():
-                    try:
-                        test_group = tdms_file[group_name]
-                        channels = list(test_group.channels())
-                        
-                        # Look for channels with time/amplitude-like names or just use first two
-                        time_channel = None
-                        amplitude_channel = None
-                        
-                        for channel in channels:
-                            channel_name = channel.name.lower()
-                            if 'time' in channel_name or channel_name == 't':
-                                time_channel = channel
-                            elif 'amplitude' in channel_name or 'amp' in channel_name or 'data' in channel_name:
-                                amplitude_channel = channel
-                        
-                        # If we didn't find named channels, use first two channels
-                        if not time_channel and len(channels) >= 1:
-                            time_channel = channels[0]
-                        if not amplitude_channel and len(channels) >= 2:
-                            amplitude_channel = channels[1]
-                        
-                        if time_channel and amplitude_channel:
-                            time_data = time_channel[:]
-                            amplitude_data = amplitude_channel[:]
-                            group = test_group
-                            logger.info(f"Using group '{group_name}' with channels '{time_channel.name}' and '{amplitude_channel.name}'")
-                            break
-                    except Exception as e:
-                        logger.debug(f"Error checking group {group_name}: {e}")
-                        continue
-            
-            if time_data is None or amplitude_data is None:
-                logger.error(f"Could not find suitable time/amplitude data in {tdms_file_path.name}")
+                logger.error(f"Could not find suitable time/amplitude data in {h5_file_path.name}")
                 return None
-            
-            # Get properties for plot info
-            root_props = tdms_file.properties
-            group_props = group.properties
-            amplitude_props = group["Amplitude"].properties
-            
+
+            root_props = dict(f.attrs)
+            group_props = dict(grp.attrs)
+
             # Create the plot
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(12, 8))
-            
+
             # Time domain plot
             ax1.plot(time_data, amplitude_data, 'b-', linewidth=1)
             ax1.set_xlabel('Time (s)')
             ax1.set_ylabel('Amplitude (V)')
             ax1.set_title(f'Sinewave - Time Domain')
             ax1.grid(True, alpha=0.3)
-            
+
             # Add statistics text
             stats_text = f'Mean: {np.mean(amplitude_data):.6f} V\n'
             stats_text += f'RMS: {np.sqrt(np.mean(amplitude_data**2)):.6f} V\n'
             stats_text += f'Peak-to-Peak: {np.ptp(amplitude_data):.6f} V'
-            ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes, 
+            ax1.text(0.02, 0.98, stats_text, transform=ax1.transAxes,
                     verticalalignment='top', bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
-            
+
             # Frequency domain plot
             if len(amplitude_data) > 1:
                 sample_rate = 1.0 / (time_data[1] - time_data[0])
                 fft_result = np.fft.fft(amplitude_data)
                 fft_freq = np.fft.fftfreq(len(amplitude_data), 1/sample_rate)
-                
+
                 # Only positive frequencies
                 magnitude = np.abs(fft_result[:len(fft_result)//2])
                 freq_bins = fft_freq[:len(fft_freq)//2]
-                
+
                 ax2.plot(freq_bins, magnitude, 'r-', linewidth=1)
                 ax2.set_xlabel('Frequency (Hz)')
                 ax2.set_ylabel('Magnitude')
                 ax2.set_title('Frequency Domain (FFT)')
                 ax2.grid(True, alpha=0.3)
-                
+
                 # Find and mark peak frequency
                 peak_index = np.argmax(magnitude)
                 peak_freq = abs(freq_bins[peak_index])
                 ax2.axvline(peak_freq, color='red', linestyle='--', alpha=0.7)
-                ax2.text(peak_freq * 1.1, magnitude[peak_index] * 0.9, 
-                        f'Peak: {peak_freq:.1f} Hz', 
+                ax2.text(peak_freq * 1.1, magnitude[peak_index] * 0.9,
+                        f'Peak: {peak_freq:.1f} Hz',
                         verticalalignment='top', color='red')
-            
+
             # Add test metadata to the plot
             metadata_text = ""
             if "Expected_Frequency_Hz" in root_props:
@@ -450,24 +403,24 @@ def generate_single_tdms_plot(tdms_file_path: Path, img_dir: Path) -> Path:
             if "Test_Passed" in root_props:
                 test_result = "PASS" if root_props["Test_Passed"] else "FAIL"
                 metadata_text += f'Result: {test_result}'
-            
+
             if metadata_text:
-                fig.text(0.02, 0.02, metadata_text, fontsize=10, 
+                fig.text(0.02, 0.02, metadata_text, fontsize=10,
                         bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
-            
+
             plt.tight_layout()
             plt.subplots_adjust(bottom=0.15)  # Make room for metadata
-            
+
             # Save the plot
-            plot_filename = f"{tdms_file_path.stem}_plot.png"
+            plot_filename = f"{h5_file_path.stem}_plot.png"
             plot_path = img_dir / plot_filename
             plt.savefig(plot_path, dpi=150, bbox_inches='tight')
             plt.close(fig)
-            
+
             return plot_path
-            
+
     except Exception as e:
-        logger.error(f"Error processing TDMS file {tdms_file_path}: {e}")
+        logger.error(f"Error processing HDF5 file {h5_file_path}: {e}")
         return None
 
 # --- HTML Report Generation ---
@@ -614,7 +567,7 @@ def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = Non
 
         html_content += "</tbody></table>"
 
-    # --- Add TDMS Plots Section ---
+    # --- Add HDF5 Plots Section ---
     if output_dir:
         img_dir = output_dir / "img"
         if img_dir.exists():
@@ -749,8 +702,8 @@ if __name__ == "__main__":
 
     # --- Generate HTML Report ---
     if csv_report_path.exists():
-        # Generate TDMS plots before HTML report
-        generate_tdms_plots(report_manager.output_dir, csv_report_path)
+        # Generate HDF5 plots before HTML report
+        generate_hdf5_plots(report_manager.output_dir, csv_report_path)
         generate_html_report(csv_path=csv_report_path, html_path=html_report_path, output_dir=report_manager.output_dir)
         print(f"HTML report generated: {html_report_path}")
     else:

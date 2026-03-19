@@ -4,7 +4,7 @@
 
 import logging
 import numpy as np
-from nptdms import TdmsWriter, RootObject, GroupObject, ChannelObject
+import h5py
 import os
 from datetime import datetime
 from pymeasure.experiment import FloatParameter, IntegerParameter
@@ -88,62 +88,45 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0, serial_number=N
     frequency_error = abs(detected_frequency - frequency)
     test_passed = frequency_error <= tolerance
    
-    # Save data to TDMS file in reports directory
+    # Save data to HDF5 file in reports directory
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     # Include serial number in filename if provided
     if serial_number:
-        tdms_filename = f"sinewave_{frequency}Hz_{serial_number}_{timestamp}.tdms"
+        h5_filename = f"sinewave_{frequency}Hz_{serial_number}_{timestamp}.h5"
     else:
-        tdms_filename = f"sinewave_{frequency}Hz_{timestamp}.tdms"
-    tdms_filepath = os.path.join("pts_reports", tdms_filename)
-    
+        h5_filename = f"sinewave_{frequency}Hz_{timestamp}.h5"
+    h5_filepath = os.path.join("pts_reports", h5_filename)
+
     # Ensure the directory exists
     os.makedirs("pts_reports", exist_ok=True)
-    
-    # Create TDMS file with sinewave data
-    with TdmsWriter(tdms_filepath) as tdms_writer:
-        # Create root object with test metadata
-        root_properties = {
-            "Test_Name": "Sinewave Generation and Validation",
-            "Expected_Frequency_Hz": frequency,
-            "Detected_Frequency_Hz": detected_frequency,
-            "Frequency_Error_Hz": frequency_error,
-            "Test_Passed": test_passed,
-            "Tolerance_Hz": tolerance,
-        }
-        # Add serial number to TDMS properties if provided
+
+    # Create HDF5 file with sinewave data
+    with h5py.File(h5_filepath, 'w') as f:
+        # File-level attributes (replaces Root properties)
+        f.attrs["Test_Name"] = "Sinewave Generation and Validation"
+        f.attrs["Expected_Frequency_Hz"] = frequency
+        f.attrs["Detected_Frequency_Hz"] = detected_frequency
+        f.attrs["Frequency_Error_Hz"] = frequency_error
+        f.attrs["Test_Passed"] = test_passed
+        f.attrs["Tolerance_Hz"] = tolerance
         if serial_number:
-            root_properties["Serial_Number"] = serial_number
-        
-        root_object = RootObject(properties=root_properties)
-        
-        # Create group object with measurement info
-        group_object = GroupObject("Sinewave_Test", properties={
-            "Sampling_Rate_Hz": sampling_rate,
-            "Duration_s": duration,
-            "Num_Samples": len(data),
-        })
-        
-        # Create channel objects with data and properties
-        time_channel = ChannelObject("Sinewave_Test", "Time", t, properties={
-            "unit_string": "s",
-            "wf_increment": 1.0/sampling_rate,
-        })
-        
-        data_channel = ChannelObject("Sinewave_Test", "Amplitude", data, properties={
-            "unit_string": "V",
-            "wf_increment": 1.0/sampling_rate,
-        })
-        
-        # Write segment to file
-        tdms_writer.write_segment([
-            root_object,
-            group_object,
-            time_channel,
-            data_channel
-        ])
- 
-    
+            f.attrs["Serial_Number"] = serial_number
+
+        # Group (replaces TDMS Group)
+        grp = f.create_group("Sinewave_Test")
+        grp.attrs["Sampling_Rate_Hz"] = sampling_rate
+        grp.attrs["Duration_s"] = duration
+        grp.attrs["Num_Samples"] = len(data)
+
+        # Datasets (replaces TDMS Channels)
+        ds_time = grp.create_dataset("Time", data=t)
+        ds_time.attrs["unit_string"] = "s"
+        ds_time.attrs["wf_increment"] = 1.0 / sampling_rate
+
+        ds_amp = grp.create_dataset("Amplitude", data=data)
+        ds_amp.attrs["unit_string"] = "V"
+        ds_amp.attrs["wf_increment"] = 1.0 / sampling_rate
+
     return {
         "compare": test_passed,  # Pass/fail result for the test framework
         "expected_frequency": frequency,
@@ -153,7 +136,7 @@ def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0, serial_number=N
         "sampling_rate": sampling_rate,
         "duration": duration,
         "num_samples": len(data),
-        "tdms_file": tdms_filepath
+        "hdf5_file": h5_filepath
     }
 
 def loadconfigFile(file= None):
