@@ -72,10 +72,16 @@ def _loader_for(data):
 
 @pytest.fixture
 def runtime():
-    """Create a Runtime instance with SimpleQueue-based queues."""
+    """Create a Runtime instance with clean class-level state."""
+    Runtime.stop_event.clear()
+    Runtime.recipe_thread = None
+    Runtime.recipe_event_proxy = None
     eq = queue.SimpleQueue()
     rq = queue.SimpleQueue()
-    return Runtime(eq, rq)
+    yield Runtime(eq, rq)
+    Runtime.stop_event.clear()
+    Runtime.recipe_thread = None
+    Runtime.recipe_event_proxy = None
 
 
 @pytest.fixture
