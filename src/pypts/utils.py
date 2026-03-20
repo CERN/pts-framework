@@ -58,21 +58,22 @@ def get_step_result_colors(result_value, result_type_enum) -> tuple[str, str]:
 #     return Path(__file__).parent.parent.parent
 
 def get_project_root() -> Path:
-    current = Path(__file__).resolve()
+    # Walk up from CWD (the user's project), not from __file__ (pypts package).
+    current = Path.cwd().resolve()
 
     # Look for pyproject.toml up the tree. It should often be there
-    for parent in current.parents:
+    for parent in [current, *current.parents]:
         if (parent / "pyproject.toml").exists():
             return parent
     #trying other base settings
-    for parent in current.parents:
+    for parent in [current, *current.parents]:
         if (parent / "setup.py").exists() or (parent / "requirements.txt").exists():
             return parent
 
     #if in venv, return its parent
     if hasattr(sys, 'base_prefix') and sys.prefix != sys.base_prefix:
         return Path(sys.prefix).resolve().parent
-    return current.parent.parent
+    return current.parent
 
 def get_package_root(package_name: str) -> Path:
     spec = util.find_spec(package_name)
