@@ -48,6 +48,7 @@ dependencies = [
 test = [
   "pytest",
   "pytest-qt",
+  "pytest-cov",
 ]
 doc = [
   "Sphinx",
@@ -92,3 +93,34 @@ features = [
   {name = "core", version = 2},
   {name = "docs", version = 2},
 ]
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+addopts = "--strict-markers"
+testpaths = ["tests"]
+markers = [
+    "unit: unit tests",
+    "functional: functional tests",
+]
+
+[tool.coverage.run]
+source = ["src/pypts"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod",
+]
+precision = 2
