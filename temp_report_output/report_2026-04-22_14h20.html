@@ -1,0 +1,40 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<title>pypts Test Report</title>
+<meta charset="utf-8">
+<style>
+    body { font-family: sans-serif; margin: 20px; }
+    h1, h2 { color: #333; }
+    table { border-collapse: collapse; width: 100%; margin-top: 20px; }
+    th, td { border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top; }
+    th { background-color: #f2f2f2; }
+    .status-pass { background-color: #d4edda; color: #155724; }
+    .status-fail { background-color: #f8d7da; color: #721c24; }
+    .status-error { background-color: #f8d7da; color: #721c24; }
+    .status-skip { background-color: #fff3cd; color: #856404; }
+    .status-unknown { background-color: #e2e3e5; color: #383d41; }
+    pre { white-space: pre-wrap; word-wrap: break-word; background-color: #f8f9fa; padding: 5px; border: 1px solid #eee; margin: 0; }
+    figure { display: inline-block; margin: 10px; vertical-align: top; max-width: 600px; border: 1px solid #ddd; padding: 8px; border-radius: 4px; }
+    figure img { max-width: 100%; height: auto; display: block; }
+    figcaption { margin-top: 6px; font-size: 0.9em; color: #555; }
+</style>
+</head>
+<body>
+<h1>pypts Test Report</h1><p>Generated: 2026-04-22 14:20:30</p><h2>Run Context</h2><p><strong>Recipe:</strong> SampleRecipe<br><strong>File:</strong> sample_recipe.yaml<br><strong>Serial Number:</strong> DUMMY_SN_12345<br><strong>pypts Version:</strong> 0.1.0-dummy</p><h2>Summary</h2><p>Total steps: 4</p><h2>Details</h2><table><thead><tr><th>Sequence</th><th>Step Name</th><th>Status</th><th>Inputs</th><th>Outputs</th><th>Error Info</th></tr></thead><tbody><tr class="status-pass"><td>Main</td><td>Run Other Test</td><td>PASS</td><td><pre>{
+  &quot;arg1&quot;: 10
+}</pre></td><td><details><summary>Show output (37 chars)</summary><pre>{
+  &quot;some_return&quot;: true,
+  &quot;value&quot;: &quot;abc&quot;
+}</pre></details></td><td></td></tr><tr class="status-pass"><td>Main</td><td>Run Simple Output Test</td><td>PASS</td><td><pre>{
+  &quot;value&quot;: &quot;abc&quot;
+}</pre></td><td><details><summary>Show output (31 chars)</summary><pre>{
+  &quot;my_output&quot;: &quot;calculated_abc&quot;
+}</pre></details></td><td></td></tr><tr class="status-fail"><td>Main</td><td>Run Range Test (Fail)</td><td>FAIL</td><td><pre>{
+  &quot;value&quot;: 25,
+  &quot;min&quot;: 10,
+  &quot;max&quot;: 20
+}</pre></td><td><details><summary>Show output (18 chars)</summary><pre>{
+  &quot;compare&quot;: false
+}</pre></details></td><td></td></tr><tr class="status-error"><td>Main</td><td>Generate Error</td><td>ERROR</td><td><pre>{}</pre></td><td><details><summary>Show output (2 chars)</summary><pre>{}</pre></details></td><td><pre>ValueError: Something went wrong deliberately</pre></td></tr></tbody></table></body></html>

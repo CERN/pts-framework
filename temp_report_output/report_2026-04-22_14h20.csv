@@ -1,0 +1,5 @@
+recipe_name,recipe_file_name,sequence_name,serial_number,pypts_version,step_name,step_id,step_type,result,inputs,outputs,error_info,image_paths
+SampleRecipe,sample_recipe.yaml,Main,DUMMY_SN_12345,0.1.0-dummy,Run Other Test,d81ed77a-7911-4bc7-9ef8-42367a891ed7,Step,PASS,"{""arg1"": 10}","{""some_return"": true, ""value"": ""abc""}",,
+SampleRecipe,sample_recipe.yaml,Main,DUMMY_SN_12345,0.1.0-dummy,Run Simple Output Test,79bb2f32-6d32-48fc-b9cf-200a8bfc032b,Step,PASS,"{""value"": ""abc""}","{""my_output"": ""calculated_abc""}",,
+SampleRecipe,sample_recipe.yaml,Main,DUMMY_SN_12345,0.1.0-dummy,Run Range Test (Fail),0b34867e-6934-4338-b8ff-70cdb757be15,Step,FAIL,"{""value"": 25, ""min"": 10, ""max"": 20}","{""compare"": false}",,
+SampleRecipe,sample_recipe.yaml,Main,DUMMY_SN_12345,0.1.0-dummy,Generate Error,be5577ba-7a24-4ebb-a448-166d8bbaeb3e,Step,ERROR,{},{},ValueError: Something went wrong deliberately,
