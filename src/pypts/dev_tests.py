@@ -3,17 +3,19 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 import logging
+import tempfile
 import numpy as np
-from nptdms import TdmsWriter, RootObject, GroupObject, ChannelObject
-import os
-from datetime import datetime
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from pypts.XYGraph.StreamContainer import Stream, GlobalContainer, container
 from pypts.XYGraph.simulated_signals import Simulated_sine_wave
 import time
+
 logger = logging.getLogger(__name__)
 
 
-def load_existing_graph(stream_name = "", stream_hook = ""):
+def load_existing_graph(stream_name="", stream_hook=""):
     stream = Stream(name=stream_name, hook=stream_hook)
     streamlist = container.get_all_streams()
     time.sleep(10)
@@ -21,7 +23,7 @@ def load_existing_graph(stream_name = "", stream_hook = ""):
     pass
 
 
-def simulate_sine_wave(stream_name = ""):
+def simulate_sine_wave(stream_name=""):
     my_signal = Simulated_sine_wave(name=stream_name)
     my_signal.start_acquisition()
     streamlist = container.get_all_streams()
@@ -29,109 +31,52 @@ def simulate_sine_wave(stream_name = ""):
         print(f"Retrieved registered stream {stream.name}. Stream is tied with {stream.hook} hook.")
     time.sleep(10)
     my_signal.stop_acquisition()
-
     pass
 
-def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0, serial_number=None):
-    """
-    Generate a sinewave and validate its frequency content using FFT analysis.
+
+def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
+    """Generate a sinewave, validate its frequency via FFT, and plot the result.
 
     Args:
-        frequency: Expected frequency of the sinewave in Hz (default: 60)
-        duration: Duration of the signal in seconds (default: 1.0)
-        tolerance: Frequency tolerance in Hz for pass/fail (default: 1.0)
-        serial_number: Serial number for this test run (default: None)
+        frequency: Expected frequency in Hz (default: 60).
+        duration:  Signal duration in seconds (default: 1.0).
+        tolerance: Allowed frequency error in Hz for pass/fail (default: 1.0).
 
     Returns:
-        dict: Contains validation results and signal data
+        dict with keys:
+          ``passed`` (bool) – whether detected frequency is within tolerance;
+          ``chart``  (str)  – absolute path of the saved PNG plot.
     """
-    sampling_rate = frequency * 10  # 10x for Nyquist theorem
-
-    # Generate time vector
+    sampling_rate = frequency * 10
     t = np.linspace(0, duration, int(sampling_rate * duration), endpoint=False)
-
-    # Generate sinewave
     data = np.sin(2 * np.pi * frequency * t)
 
-    # Analyze frequency content using FFT FIRST
     fft_result = np.fft.fft(data)
     fft_freq = np.fft.fftfreq(len(data), 1 / sampling_rate)
+    magnitude = np.abs(fft_result[: len(fft_result) // 2])
+    freq_bins = fft_freq[: len(fft_freq) // 2]
+    detected_frequency = abs(freq_bins[np.argmax(magnitude)])
+    test_passed = abs(detected_frequency - frequency) <= tolerance
 
-    # Get magnitude spectrum (only positive frequencies)
-    magnitude = np.abs(fft_result[:len(fft_result) // 2])
-    freq_bins = fft_freq[:len(fft_freq) // 2]
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+    ax1.plot(t, data, linewidth=0.8)
+    ax1.set_xlabel("Time (s)")
+    ax1.set_ylabel("Amplitude")
+    ax1.set_title(f"Sinewave — {frequency} Hz")
+    ax1.grid(True, alpha=0.3)
 
-    # Find the peak frequency
-    peak_index = np.argmax(magnitude)
-    detected_frequency = abs(freq_bins[peak_index])
+    ax2.plot(freq_bins, magnitude, linewidth=0.8)
+    ax2.axvline(detected_frequency, color="red", linestyle="--",
+                label=f"Peak: {detected_frequency:.1f} Hz")
+    ax2.set_xlabel("Frequency (Hz)")
+    ax2.set_ylabel("Magnitude")
+    ax2.set_title("FFT Spectrum")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
 
-    # Check if detected frequency matches expected frequency within tolerance
-    frequency_error = abs(detected_frequency - frequency)
-    test_passed = frequency_error <= tolerance
+    plt.tight_layout()
+    tmp = tempfile.NamedTemporaryFile(suffix="_sinewave.png", delete=False)
+    fig.savefig(tmp.name, dpi=100, bbox_inches="tight")
+    plt.close(fig)
 
-    # Save data to TDMS file in reports directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Include serial number in filename if provided
-    if serial_number:
-        tdms_filename = f"sinewave_{frequency}Hz_{serial_number}_{timestamp}.tdms"
-    else:
-        tdms_filename = f"sinewave_{frequency}Hz_{timestamp}.tdms"
-    tdms_filepath = os.path.join("pts_reports", tdms_filename)
-
-    # Ensure the directory exists
-    os.makedirs("pts_reports", exist_ok=True)
-
-    # Create TDMS file with sinewave data
-    with TdmsWriter(tdms_filepath) as tdms_writer:
-        # Create root object with test metadata
-        root_properties = {
-            "Test_Name": "Sinewave Generation and Validation",
-            "Expected_Frequency_Hz": frequency,
-            "Detected_Frequency_Hz": detected_frequency,
-            "Frequency_Error_Hz": frequency_error,
-            "Test_Passed": test_passed,
-            "Tolerance_Hz": tolerance,
-        }
-        # Add serial number to TDMS properties if provided
-        if serial_number:
-            root_properties["Serial_Number"] = serial_number
-
-        root_object = RootObject(properties=root_properties)
-
-        # Create group object with measurement info
-        group_object = GroupObject("Sinewave_Test", properties={
-            "Sampling_Rate_Hz": sampling_rate,
-            "Duration_s": duration,
-            "Num_Samples": len(data),
-        })
-
-        # Create channel objects with data and properties
-        time_channel = ChannelObject("Sinewave_Test", "Time", t, properties={
-            "unit_string": "s",
-            "wf_increment": 1.0 / sampling_rate,
-        })
-
-        data_channel = ChannelObject("Sinewave_Test", "Amplitude", data, properties={
-            "unit_string": "V",
-            "wf_increment": 1.0 / sampling_rate,
-        })
-
-        # Write segment to file
-        tdms_writer.write_segment([
-            root_object,
-            group_object,
-            time_channel,
-            data_channel
-        ])
-
-    return {
-        "compare": test_passed,  # Pass/fail result for the test framework
-        "expected_frequency": frequency,
-        "detected_frequency": detected_frequency,
-        "frequency_error": frequency_error,
-        "tolerance": tolerance,
-        "sampling_rate": sampling_rate,
-        "duration": duration,
-        "num_samples": len(data),
-        "tdms_file": tdms_filepath
-    }
+    return {"passed": test_passed, "chart": tmp.name}

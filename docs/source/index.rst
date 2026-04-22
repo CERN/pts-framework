@@ -47,6 +47,7 @@ Documentation contents
     :maxdepth: 1
 
     usage
+    examples
     troubleshooting
 
 .. toctree::

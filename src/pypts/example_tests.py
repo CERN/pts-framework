@@ -3,10 +3,11 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 import logging
+import tempfile
 import numpy as np
-from nptdms import TdmsWriter, RootObject, GroupObject, ChannelObject
-import os
-from datetime import datetime
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 from pymeasure.experiment import FloatParameter, IntegerParameter
 from pymeasure.instruments import Instrument, SCPIMixin
 
@@ -21,198 +22,115 @@ logger = logging.getLogger(__name__)
 some_value = 5
 
 def test_to_run(target):
-    # with nidmm.Session("Dev1") as session:
-    #     print("Measurement: " + str(session.read()))
-    # logger.info(f"I received {target}.")
     return {"compare": target == 45, "other_output": "abc"}
 
 def other_test():
-    # logger.info("I could also do this.")
     return {"some_return": True, "value": 3}
 
 def simple_return():
     return (5, 4)
 
 def range_test(value, min, max):
-    # time.sleep(1)
     return {"compare": value}
 
 def generate_error():
     raise AttributeError
 
 def simple_output(value):
-    return {"output":value + 1}
+    return {"output": value + 1}
 
 def is_PSU_disconnected():
-    return (True)
+    return True
 
 def write_a_simple_filessh(target):
     target.exec_command("echo 'Hello World' > myfile.txt")
+    return True
 
-    return (True)
+def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0):
+    """Generate a sinewave, validate its frequency via FFT, and plot the result.
 
-def generate_sinewave(frequency=60, duration=1.0, tolerance=1.0, serial_number=None):
-    """
-    Generate a sinewave and validate its frequency content using FFT analysis.
-    
     Args:
-        frequency: Expected frequency of the sinewave in Hz (default: 60)
-        duration: Duration of the signal in seconds (default: 1.0)
-        tolerance: Frequency tolerance in Hz for pass/fail (default: 1.0)
-        serial_number: Serial number for this test run (default: None)
-    
-    Returns:
-        dict: Contains validation results and signal data
-    """
-    sampling_rate = frequency * 10  # 10x for Nyquist theorem
-    
-    # Generate time vector
-    t = np.linspace(0, duration, int(sampling_rate * duration), endpoint=False)
-    
-    # Generate sinewave
-    data = np.sin(2 * np.pi * frequency * t)
-    
-    # Analyze frequency content using FFT FIRST
-    fft_result = np.fft.fft(data)
-    fft_freq = np.fft.fftfreq(len(data), 1/sampling_rate)
-    
-    # Get magnitude spectrum (only positive frequencies)
-    magnitude = np.abs(fft_result[:len(fft_result)//2])
-    freq_bins = fft_freq[:len(fft_freq)//2]
-    
-    # Find the peak frequency
-    peak_index = np.argmax(magnitude)
-    detected_frequency = abs(freq_bins[peak_index])
-    
-    # Check if detected frequency matches expected frequency within tolerance
-    frequency_error = abs(detected_frequency - frequency)
-    test_passed = frequency_error <= tolerance
-   
-    # Save data to TDMS file in reports directory
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    # Include serial number in filename if provided
-    if serial_number:
-        tdms_filename = f"sinewave_{frequency}Hz_{serial_number}_{timestamp}.tdms"
-    else:
-        tdms_filename = f"sinewave_{frequency}Hz_{timestamp}.tdms"
-    tdms_filepath = os.path.join("pts_reports", tdms_filename)
-    
-    # Ensure the directory exists
-    os.makedirs("pts_reports", exist_ok=True)
-    
-    # Create TDMS file with sinewave data
-    with TdmsWriter(tdms_filepath) as tdms_writer:
-        # Create root object with test metadata
-        root_properties = {
-            "Test_Name": "Sinewave Generation and Validation",
-            "Expected_Frequency_Hz": frequency,
-            "Detected_Frequency_Hz": detected_frequency,
-            "Frequency_Error_Hz": frequency_error,
-            "Test_Passed": test_passed,
-            "Tolerance_Hz": tolerance,
-        }
-        # Add serial number to TDMS properties if provided
-        if serial_number:
-            root_properties["Serial_Number"] = serial_number
-        
-        root_object = RootObject(properties=root_properties)
-        
-        # Create group object with measurement info
-        group_object = GroupObject("Sinewave_Test", properties={
-            "Sampling_Rate_Hz": sampling_rate,
-            "Duration_s": duration,
-            "Num_Samples": len(data),
-        })
-        
-        # Create channel objects with data and properties
-        time_channel = ChannelObject("Sinewave_Test", "Time", t, properties={
-            "unit_string": "s",
-            "wf_increment": 1.0/sampling_rate,
-        })
-        
-        data_channel = ChannelObject("Sinewave_Test", "Amplitude", data, properties={
-            "unit_string": "V",
-            "wf_increment": 1.0/sampling_rate,
-        })
-        
-        # Write segment to file
-        tdms_writer.write_segment([
-            root_object,
-            group_object,
-            time_channel,
-            data_channel
-        ])
- 
-    
-    return {
-        "compare": test_passed,  # Pass/fail result for the test framework
-        "expected_frequency": frequency,
-        "detected_frequency": detected_frequency,
-        "frequency_error": frequency_error,
-        "tolerance": tolerance,
-        "sampling_rate": sampling_rate,
-        "duration": duration,
-        "num_samples": len(data),
-        "tdms_file": tdms_filepath
-    }
+        frequency: Expected frequency in Hz (default: 60).
+        duration:  Signal duration in seconds (default: 1.0).
+        tolerance: Allowed frequency error in Hz for pass/fail (default: 1.0).
 
-def loadconfigFile(file= None):
+    Returns:
+        dict with keys:
+          ``passed`` (bool) – whether detected frequency is within tolerance;
+          ``chart``  (str)  – absolute path of the saved PNG plot.
+    """
+    sampling_rate = frequency * 10
+    t = np.linspace(0, duration, int(sampling_rate * duration), endpoint=False)
+    data = np.sin(2 * np.pi * frequency * t)
+
+    fft_result = np.fft.fft(data)
+    fft_freq = np.fft.fftfreq(len(data), 1 / sampling_rate)
+    magnitude = np.abs(fft_result[: len(fft_result) // 2])
+    freq_bins = fft_freq[: len(fft_freq) // 2]
+    detected_frequency = abs(freq_bins[np.argmax(magnitude)])
+    test_passed = abs(detected_frequency - frequency) <= tolerance
+
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+    ax1.plot(t, data, linewidth=0.8)
+    ax1.set_xlabel("Time (s)")
+    ax1.set_ylabel("Amplitude")
+    ax1.set_title(f"Sinewave — {frequency} Hz")
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(freq_bins, magnitude, linewidth=0.8)
+    ax2.axvline(detected_frequency, color="red", linestyle="--",
+                label=f"Peak: {detected_frequency:.1f} Hz")
+    ax2.set_xlabel("Frequency (Hz)")
+    ax2.set_ylabel("Magnitude")
+    ax2.set_title("FFT Spectrum")
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    tmp = tempfile.NamedTemporaryFile(suffix="_sinewave.png", delete=False)
+    fig.savefig(tmp.name, dpi=100, bbox_inches="tight")
+    plt.close(fig)
+
+    return {"passed": test_passed, "chart": tmp.name}
+
+def loadconfigFile(file=None):
     print("We went into config function")
     if file:
         print("we properly found the file.")
         return True
     else:
         return False
-    
-
-def write_a_simple_filessh(target):
-    target.exec_command("echo 'Hello World' > myfile.txt")
-
-    return (True)
 
 def get_sysmon_temperatures(target) -> dict:
-    """
-    Reads sysmon temperature values from the remote system using an existing Paramiko SSH client.
-    Returns a dictionary where keys are sensor names (or thermal zones) and values are temperatures in Celsius.
-    """
+    """Reads sysmon temperature values from the remote system via SSH."""
     temps = {}
-    
-    # Try reading thermal zones from /sys/class/thermal
-    command = "for zone in /sys/class/thermal/thermal_zone*/; do " \
-              "name=$(cat \"$zone/type\" 2>/dev/null); " \
-              "temp=$(cat \"$zone/temp\" 2>/dev/null); " \
-              "if [ -n \"$name\" ] && [ -n \"$temp\" ]; then " \
-              "echo \"$name $temp\"; fi; done"
-    
+    command = (
+        "for zone in /sys/class/thermal/thermal_zone*/; do "
+        "name=$(cat \"$zone/type\" 2>/dev/null); "
+        "temp=$(cat \"$zone/temp\" 2>/dev/null); "
+        "if [ -n \"$name\" ] && [ -n \"$temp\" ]; then "
+        "echo \"$name $temp\"; fi; done"
+    )
     try:
         stdin, stdout, stderr = target.exec_command(command)
         output = stdout.read().decode()
         error = stderr.read().decode()
         if error:
             logger.warning(f"Warning: {error.strip()}")
-
         for line in output.strip().splitlines():
             parts = line.split()
             if len(parts) == 2:
                 name, temp_milli = parts
-                # Conversion from millidegrees to degrees
                 try:
-                    temp_c = int(temp_milli) / 1000.0
-                    temps[name] = temp_c
+                    temps[name] = int(temp_milli) / 1000.0
                 except ValueError:
                     continue
-
     except Exception as e:
         logger.error(f"Failed to get the temperatures: {e}")
-
     return temps
 
-
-
 def get_hwmon(target) -> dict:
-
     temps = {}
-    
     command_hwmon = """
             for hwmon in /sys/class/hwmon/hwmon*; do
                 name=$(cat "$hwmon/name" 2>/dev/null)
@@ -226,69 +144,34 @@ def get_hwmon(target) -> dict:
                 done
             done
             """
-
-    
     try:
         stdin, stdout, stderr = target.exec_command(command_hwmon)
         output = stdout.read().decode()
         error = stderr.read().decode()
         if error:
             logger.warning(f"Warning: {error.strip()}")
-
         for line in output.strip().splitlines():
             parts = line.split()
             if len(parts) == 2:
                 name, temp_milli = parts
-                # Conversion from milli
                 try:
-                    temp_c = int(temp_milli) / 1000.0
-                    temps[name] = temp_c
+                    temps[name] = int(temp_milli) / 1000.0
                 except ValueError:
                     continue
-
     except Exception as e:
         logger.error(f"Failed to get hwmon: {e}")
-    return {"output":temps}
+    return {"output": temps}
+
 
 """
 Example instrument routines that can be called from pypts recipe steps.
-
-These functions demonstrate how to use the pymeasure-based instrument layer
-from within the pts-framework.  They are intended as working reference
-implementations rather than production code.
 """
 
 def run_cnt91(device_name, gate_times=0.1, samples=100, channels=1):
-    """Perform a buffered frequency measurement on the Pendulum CNT-91.
-
-    :param str device_name: VISA resource string (e.g.
-        ``"USB0::0x14EB::0x0091::205575::INSTR"``).
-    :param float gate_times: Gate time per sample in seconds.
-    :param int samples: Number of frequency samples to acquire (4 – 10 000).
-    :param int channels: Physical input channel: 1 for A, 2 for B.
-    :returns: ``{"output": True, "data": [{"Index": i, "Frequency (Hz)": f}, …]}``
-    """
-    # Parameters document the valid ranges and units; they raise ValueError
-    # if a value falls outside the declared bounds.
-    gate_time_param = FloatParameter(
-        "Gate Time",
-        units="s",
-        default=0.1,
-        minimum=2e-8,
-        maximum=1000,
-    )
-    n_samples_param = IntegerParameter(
-        "Number of Samples",
-        default=100,
-        minimum=4,
-        maximum=10000,
-    )
-    channel_param = IntegerParameter(
-        "Channel (A=1, B=2)",
-        default=1,
-        minimum=1,
-        maximum=2,
-    )
+    """Perform a buffered frequency measurement on the Pendulum CNT-91."""
+    gate_time_param = FloatParameter("Gate Time", units="s", default=0.1, minimum=2e-8, maximum=1000)
+    n_samples_param = IntegerParameter("Number of Samples", default=100, minimum=4, maximum=10000)
+    channel_param = IntegerParameter("Channel (A=1, B=2)", default=1, minimum=1, maximum=2)
     gate_time_param.value = gate_times
     n_samples_param.value = samples
     channel_param.value = channels
@@ -298,20 +181,14 @@ def run_cnt91(device_name, gate_times=0.1, samples=100, channels=1):
 
     logger.info("Initializing CNT-91 at %s", device_name)
     counter = CNT91(device_name)
-
     counter.buffer_frequency_time_series(
         channel=channel,
         n_samples=n_samples_param.value,
         gate_time=gate_time_param.value,
         trigger_level=2.4,
     )
-
     frequencies = counter.read_buffer(n_samples_param.value)
-
-    measured_data = [
-        {"Index": i, "Frequency (Hz)": freq}
-        for i, freq in enumerate(frequencies)
-    ]
+    measured_data = [{"Index": i, "Frequency (Hz)": freq} for i, freq in enumerate(frequencies)]
 
     logger.info("Shutting down CNT-91")
     try:
@@ -327,17 +204,10 @@ class _GenericSCPIDevice(SCPIMixin, Instrument):
 
 
 def ping_instrument(device_name):
-    """Query the ``*IDN?`` string of any SCPI-compatible instrument.
-
-    :param str device_name: VISA resource string.
-    :returns: ``{"output": True, "details": "<id string>"}`` on success,
-              ``{"output": False, "details": None}`` otherwise.
-    """
+    """Query the ``*IDN?`` string of any SCPI-compatible instrument."""
     logger.info("Probing device at %s", device_name)
     equipment = _GenericSCPIDevice(adapter=device_name, name="probe")
     equipment.clear()
-
     found_id = equipment.id
     logger.info("Instrument ID: %s", found_id)
-
     return {"output": bool(found_id), "details": found_id}
