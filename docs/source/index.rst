@@ -56,6 +56,7 @@ Documentation contents
 
     api
     architecture
+    gui_architecture
     yaml_format
     instruments
     gui_event_handling
