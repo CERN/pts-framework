@@ -143,14 +143,18 @@ it.
 Where to find the example files
 ---------------------------------
 
-+------------------------------------------------------------------+------------------------------------------------------+
-| File                                                             | Role                                                 |
-+==================================================================+======================================================+
-| ``src/pypts/example_tests.py``                                   | Test methods (main example set)                      |
-+------------------------------------------------------------------+------------------------------------------------------+
-| ``src/pypts/recipes/simple_recipe.yml``                          | Reference recipe with all output mapping types       |
-+------------------------------------------------------------------+------------------------------------------------------+
-| ``src/pypts/examples/environment_setup_tools/Minimal_setup/``    | Minimal (file-based) setup example                   |
-+------------------------------------------------------------------+------------------------------------------------------+
-| ``src/pypts/examples/environment_setup_tools/Package_based_setup/`` | Package-based setup example                      |
-+------------------------------------------------------------------+------------------------------------------------------+
+.. list-table::
+   :header-rows: 1
+   :widths: 60 40
+
+   * - File
+     - Role
+   * - ``src/pypts/example_tests.py``
+     - Test methods (main example set)
+   * - ``src/pypts/recipes/simple_recipe.yml``
+     - Reference recipe with all output mapping types
+   * - ``src/pypts/examples/environment_setup_tools/Minimal_setup/``
+     - Minimal (file-based) setup example
+   * - ``src/pypts/examples/environment_setup_tools/Package_based_setup/``
+     - Package-based setup example
+
