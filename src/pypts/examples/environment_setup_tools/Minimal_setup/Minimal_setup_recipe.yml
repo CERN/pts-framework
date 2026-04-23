@@ -185,7 +185,26 @@ steps:
   method_name: generate_error
   input_mapping: {}
   output_mapping: {}
-  
-teardown_steps: 
+  continue_on_error: True
+- steptype: PythonModuleStep
+  step_name: Sinewave test (60 Hz)
+  description: Generate a 60 Hz sinewave, validate it via FFT, and attach the plot to the report
+  action_type: method
+  module: example_tests.py
+  method_name: generate_sinewave
+  input_mapping:
+    frequency:
+      type: direct
+      value: 60
+    tolerance:
+      type: direct
+      value: 1.0
+  output_mapping:
+    passed:
+      type: passfail
+    chart:
+      type: image
+
+teardown_steps:
 - steptype: SSHCloseStep
   step_name: Closes the SSH client

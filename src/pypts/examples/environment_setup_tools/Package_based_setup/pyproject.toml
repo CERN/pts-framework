@@ -29,7 +29,6 @@ dependencies = [
   "hightime==0.2.2",
   "matplotlib",
   "nidmm==1.4.8",
-  "nptdms==1.10.0",
   "numpy",
   "PySide6==6.9.1",
   "PyYAML==6.0.2",

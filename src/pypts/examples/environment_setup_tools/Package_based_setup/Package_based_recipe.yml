@@ -190,6 +190,24 @@ steps:
   - steptype: sshclosestep
     step_name: sshclose
     description: describe the test in this box
+  - steptype: pythonmodulestep
+    step_name: sinewave test (60 hz)
+    description: generate a 60 hz sinewave, validate it via fft, and attach the plot to the report
+    action_type: method
+    module: example_tests.py
+    method_name: generate_sinewave
+    input_mapping:
+      frequency:
+        type: direct
+        value: 60
+      tolerance:
+        type: direct
+        value: 1.0
+    output_mapping:
+      passed:
+        type: passfail
+      chart:
+        type: image
 teardown_steps:
   - steptype: sshclosestep
     step_name: closes the ssh client
