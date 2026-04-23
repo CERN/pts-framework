@@ -177,6 +177,55 @@ QSplitter::handle {{
     background-color: #e2e8f0;
     width: 1px;
 }}
+QAbstractScrollArea {{
+    background-clip: padding;
+}}
+QScrollBar:vertical {{
+    background: #edf2f7;
+    width: 12px;
+    margin: 6px 4px 6px 0;
+    border-radius: 6px;
+}}
+QScrollBar::handle:vertical {{
+    background: #b7c7db;
+    min-height: 32px;
+    border-radius: 6px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: #90a9c9;
+}}
+QScrollBar::handle:vertical:pressed {{
+    background: #6e8eb7;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: transparent;
+}}
+QScrollBar:horizontal {{
+    background: #edf2f7;
+    height: 12px;
+    margin: 0 6px 4px 6px;
+    border-radius: 6px;
+}}
+QScrollBar::handle:horizontal {{
+    background: #b7c7db;
+    min-width: 32px;
+    border-radius: 6px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: #90a9c9;
+}}
+QScrollBar::handle:horizontal:pressed {{
+    background: #6e8eb7;
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+}}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: transparent;
+}}
 """
 
 DARK_QSS = f"""
@@ -318,6 +367,55 @@ QStatusBar {{
 QSplitter::handle {{
     background-color: #3a3a3a;
     width: 1px;
+}}
+QAbstractScrollArea {{
+    background-clip: padding;
+}}
+QScrollBar:vertical {{
+    background: #232a33;
+    width: 12px;
+    margin: 6px 4px 6px 0;
+    border-radius: 6px;
+}}
+QScrollBar::handle:vertical {{
+    background: #55697f;
+    min-height: 32px;
+    border-radius: 6px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: #6b829b;
+}}
+QScrollBar::handle:vertical:pressed {{
+    background: #85a2c4;
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0px;
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: transparent;
+}}
+QScrollBar:horizontal {{
+    background: #232a33;
+    height: 12px;
+    margin: 0 6px 4px 6px;
+    border-radius: 6px;
+}}
+QScrollBar::handle:horizontal {{
+    background: #55697f;
+    min-width: 32px;
+    border-radius: 6px;
+}}
+QScrollBar::handle:horizontal:hover {{
+    background: #6b829b;
+}}
+QScrollBar::handle:horizontal:pressed {{
+    background: #85a2c4;
+}}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
+    width: 0px;
+}}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
+    background: transparent;
 }}
 """
 

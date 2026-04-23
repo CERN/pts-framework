@@ -4,11 +4,50 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFont, QBrush
-from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableWidget, QTableWidgetItem
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtGui import QColor, QFont, QBrush, QPainter, QPen
+from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QStyledItemDelegate, QStyle, QTableWidget, QTableWidgetItem
 
 from pypts.gui_components.styles import STATUS_COLORS
+
+
+class StatusBadgeDelegate(QStyledItemDelegate):
+    def paint(self, painter, option, index):
+        if index.column() != StepTable.COL_RESULT:
+            super().paint(painter, option, index)
+            return
+
+        painter.save()
+
+        style = option.widget.style() if option.widget is not None else None
+        if style is not None:
+            style.drawPrimitive(QStyle.PrimitiveElement.PE_PanelItemViewItem, option, painter, option.widget)
+
+        label = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        badge_color = index.data(Qt.ItemDataRole.UserRole)
+        text_color = index.data(Qt.ItemDataRole.UserRole + 1) or "#FFFFFF"
+        is_running = bool(index.data(Qt.ItemDataRole.UserRole + 2))
+
+        badge = QColor(badge_color or STATUS_COLORS["PENDING"]["text"])
+        badge_rect = option.rect.adjusted(12, 7, -12, -7)
+        radius = max(10, min(badge_rect.height() // 2, 14))
+
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(badge)
+        painter.drawRoundedRect(badge_rect, radius, radius)
+
+        font = option.font
+        font.setWeight(QFont.Weight.DemiBold)
+        font.setItalic(is_running)
+        painter.setFont(font)
+        painter.setPen(QPen(QColor(text_color)))
+        painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, label)
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        base = super().sizeHint(option, index)
+        return QSize(base.width(), max(base.height(), 34))
 
 
 class StepTable(QTableWidget):
@@ -21,6 +60,7 @@ class StepTable(QTableWidget):
         super().__init__(0, 3, parent)
         self._dark = False
         self._rows_by_id: dict[str, int] = {}
+        self._status_delegate = StatusBadgeDelegate(self)
 
         self.setHorizontalHeaderLabels(self.COLUMNS)
         header = self.horizontalHeader()
@@ -37,9 +77,11 @@ class StepTable(QTableWidget):
         self.setAlternatingRowColors(True)
         self.setWordWrap(True)
         self.setShowGrid(False)
+        self.setItemDelegateForColumn(self.COL_RESULT, self._status_delegate)
 
     def set_dark(self, dark: bool):
         self._dark = dark
+        self.viewport().update()
 
     def load_steps(self, steps: list[dict]):
         self._rows_by_id.clear()
@@ -105,8 +147,11 @@ class StepTable(QTableWidget):
         label = "Running..." if is_running else status
         status_item.setText(label)
         status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_item.setBackground(QBrush(QColor(colors["bg"])))
-        status_item.setForeground(QBrush(QColor(colors["text"])))
+        status_item.setBackground(QBrush(Qt.GlobalColor.transparent))
+        status_item.setForeground(QBrush(QColor("#FFFFFF")))
+        status_item.setData(Qt.ItemDataRole.UserRole, colors["text"])
+        status_item.setData(Qt.ItemDataRole.UserRole + 1, "#FFFFFF")
+        status_item.setData(Qt.ItemDataRole.UserRole + 2, is_running)
 
         font = status_item.font()
         font.setWeight(QFont.DemiBold)
