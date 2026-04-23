@@ -238,6 +238,74 @@ def test_user_interact_signal(proxy, event_q):
     assert emitted["image_path"].endswith("image.png")
 
 
+def test_user_interact_resolves_via_test_package(proxy, event_q):
+    """When test_package is set via post_load_recipe, resolve_package_resource is used."""
+    proxy.user_interact_signal = MagicMock()
+
+    # First, send post_load_recipe to set _test_package
+    mock_recipe = MagicMock()
+    mock_recipe.name = "TestRecipe"
+    mock_recipe.version = "1.0"
+    mock_recipe.test_package = "my_test_pkg"
+    event_q.put(("post_load_recipe", (mock_recipe,)))
+    proxy.run_once()
+
+    assert proxy._test_package == "my_test_pkg"
+
+    # Now send user_interact and mock resolve_package_resource to return a path
+    from pathlib import Path
+    q = SimpleQueue()
+    event_q.put(("user_interact", (q, "Check image", "power_Green.jpg", ["OK"])))
+
+    with patch("pypts.event_proxy.resolve_package_resource", return_value=Path("/fake/pkg/resources/power_Green.jpg")) as mock_resolve:
+        proxy.run_once()
+
+    mock_resolve.assert_called_once_with("power_Green.jpg", "my_test_pkg")
+    emitted = proxy.user_interact_signal.emit.call_args[0][0]
+    assert emitted["image_path"] == "/fake/pkg/resources/power_Green.jpg"
+
+
+def test_user_interact_falls_back_when_package_resolution_fails(proxy, event_q):
+    """When resolve_package_resource returns None, fall back to CWD-based resolution."""
+    proxy.user_interact_signal = MagicMock()
+
+    # Set _test_package
+    mock_recipe = MagicMock()
+    mock_recipe.name = "TestRecipe"
+    mock_recipe.version = "1.0"
+    mock_recipe.test_package = "my_test_pkg"
+    event_q.put(("post_load_recipe", (mock_recipe,)))
+    proxy.run_once()
+
+    q = SimpleQueue()
+    event_q.put(("user_interact", (q, "Check image", "missing.jpg", ["OK"])))
+
+    with patch("pypts.event_proxy.resolve_package_resource", return_value=None), \
+         patch("pypts.event_proxy.find_resource_path", return_value="images/missing.jpg") as mock_find, \
+         patch("pypts.event_proxy.get_project_root", return_value=MagicMock(__truediv__=lambda self, other: MagicMock(__str__=lambda s: f"/project/{other}"))):
+        proxy.run_once()
+
+    mock_find.assert_called_once()
+    emitted = proxy.user_interact_signal.emit.call_args[0][0]
+    assert "missing.jpg" in emitted["image_path"]
+
+
+def test_user_interact_without_test_package(proxy, event_q):
+    """When no post_load_recipe was sent, resolve_package_resource is never called."""
+    proxy.user_interact_signal = MagicMock()
+
+    q = SimpleQueue()
+    event_q.put(("user_interact", (q, "Check image", "image.png", ["OK"])))
+
+    with patch("pypts.event_proxy.resolve_package_resource") as mock_resolve, \
+         patch("pypts.event_proxy.find_resource_path", return_value="image.png"):
+        proxy.run_once()
+
+    mock_resolve.assert_not_called()
+    emitted = proxy.user_interact_signal.emit.call_args[0][0]
+    assert emitted["image_path"].endswith("image.png")
+
+
 # ============================================================
 # Unsupported events
 # ============================================================

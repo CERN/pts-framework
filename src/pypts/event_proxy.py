@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 # src/pypts/event_proxy.py
-from pypts.utils import get_project_root, find_resource_path, get_step_result_colors
+from pypts.utils import get_project_root, find_resource_path, get_step_result_colors, resolve_package_resource
 import logging
 from PySide6.QtCore import QObject, Signal, Slot
 from queue import SimpleQueue
@@ -45,6 +45,7 @@ class RecipeEventProxy(QObject):
         super().__init__()
         self.event_q = event_q
         self._running = True
+        self._test_package: str | None = None
 
     def RecipeEventProxyRunner(self):
         try:
@@ -83,10 +84,30 @@ class RecipeEventProxy(QObject):
             elif event_name == "pre_run_sequence":
                 event_dict = {"sequence": event_data[0]}
             elif event_name == "user_interact":
+                raw_image_path = str(event_data[2]) if event_data[2] else ""
+                resolved_image_path = ""
+
+                if raw_image_path:
+                    # Strategy 1: importlib.resources via test_package (CWD-independent)
+                    if self._test_package:
+                        pkg_path = resolve_package_resource(raw_image_path, self._test_package)
+                        if pkg_path is not None:
+                            resolved_image_path = str(pkg_path)
+
+                    # Strategy 2: Fall back to CWD-based resolution
+                    if not resolved_image_path:
+                        try:
+                            project_root = get_project_root()
+                            relative = find_resource_path(raw_image_path, project_root)
+                            if relative is not None:
+                                resolved_image_path = str(project_root / str(relative))
+                        except Exception as e:
+                            logger.warning(f"CWD-based image resolution failed for '{raw_image_path}': {e}")
+
                 event_dict = {
                     "response_q": event_data[0],
                     "message": event_data[1],
-                    "image_path": str(get_project_root() / str(find_resource_path(str(event_data[2]), get_project_root()))),
+                    "image_path": resolved_image_path,
                     "options": event_data[3]
                 }
             elif event_name == "get_serial_number":
@@ -122,6 +143,10 @@ class RecipeEventProxy(QObject):
                         logger.error(f"Recipe object has no 'version' attribute. Available attributes: {dir(recipe_object)}")
                         return
                     
+                    if hasattr(recipe_object, 'test_package') and recipe_object.test_package:
+                        self._test_package = recipe_object.test_package
+                        logger.debug(f"Captured test_package: {self._test_package}")
+
                     event_dict = {
                         "recipe_name": recipe_object.name,
                         "recipe_version": recipe_object.version

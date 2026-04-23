@@ -53,6 +53,7 @@ class StepResult():
         self.serial_number: str = None
         self.sequence_name: str = None
         self.pypts_version: str = "unknown" # Added pypts version
+        self.image_paths: List[str] = []  # absolute paths of images returned by the step
     
     def __str__(self):
         return str(self.result)
@@ -693,7 +694,9 @@ class Step:
                             f"Output '{output_name}' in step '{self.name}' has type 'local' but is missing required field 'local_name'."
                         )
                     runtime.set_local(output_config["local_name"], step_output[output_name])
-        
+                case "image":       # Image path — handled after set_result in run(); no effect on ResultType
+                    pass
+
         return step_result
 
     def run(self, runtime: Runtime, input, parent_step: uuid.UUID=None, stop_event = None ):
@@ -744,6 +747,11 @@ class Step:
                     return self.handle_step_abort(step_result, runtime, input)
                 result_type = self.process_outputs(runtime, step_output)
                 step_result.set_result(result_type, step_input, step_output)
+                for out_name, out_cfg in self.output_mapping.items():
+                    if out_cfg.get("type") == "image":
+                        path = step_output.get(out_name)
+                        if path:
+                            step_result.image_paths.append(str(path))
             except:
                 logger.error(f"Error occurred while running step {self.name}")
                 error_info = traceback.format_exc()

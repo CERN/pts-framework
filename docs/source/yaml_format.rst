@@ -241,12 +241,13 @@ The ``output_mapping`` dictionary defines how the step's raw output is processed
 
 Each value in the ``output_mapping`` dictionary is *another* dictionary specifying the action to take:
 
-*   ``type`` (str): How to handle the output value associated with this key. Must be one of ``local``, ``global``, ``passfail``, ``equals``, ``range``, or ``passthrough``.
+*   ``type`` (str): How to handle the output value associated with this key. Must be one of ``local``, ``global``, ``passfail``, ``equals``, ``range``, ``passthrough``, or ``image``.
 *   ``local_name``: Required if ``type`` is ``local``. The name of the sequence's local variable where this output value should be stored.
 *   ``global_name``: Required if ``type`` is ``global``. The name of the recipe's global variable where this output value should be stored.
 *   ``value``: Required if ``type`` is ``equals``. The target value for comparison. If the step's output value for this key equals ``value``, the check passes.
 *   ``min``, ``max``: Required if ``type`` is ``range``. The inclusive lower (``min``) and upper (``max``) bounds for comparison. If the step's output value for this key falls within [min, max], the check passes.
 *   ``passthrough``: Used to propagate a `ResultType` directly. This is often used with the implicit ``__result`` output key from a `SequenceStep` to propagate the overall status of the subsequence, or internally by `IndexedStep` to represent the aggregate result.
+*   ``image``: The output value is treated as a file path to an image (PNG, JPG, SVG, etc.). The framework copies the file into ``<report_dir>/img/`` and embeds it in the HTML report at the bottom of the page, captioned with the step name and result. Does not affect pass/fail determination.
 
 **Pass/Fail Determination:**
 
@@ -281,6 +282,10 @@ Each value in the ``output_mapping`` dictionary is *another* dictionary specifyi
      # For SequenceStep: Propagate the overall Pass/Fail/Done status
      # of the subsequence using its implicit '__result' output.
      __result: { type: passthrough }
+
+     # Copy the image file at the returned path into the report directory
+     # and embed it in the HTML report with the step name and result as caption.
+     chart_image: { type: image }
 
 
 .. _data_collection_vs_assertion:
@@ -380,6 +385,8 @@ available for later steps or reporting:
 | ``global``    | Store in global variable  | No — step returns DONE     |
 +---------------+---------------------------+----------------------------+
 | ``local``     | Store in local variable   | No — step returns DONE     |
++---------------+---------------------------+----------------------------+
+| ``image``     | Copy image file into report and embed in HTML | No — step returns DONE |
 +---------------+---------------------------+----------------------------+
 
 .. note::

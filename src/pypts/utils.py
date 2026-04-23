@@ -7,7 +7,7 @@ import hashlib
 import io
 import sys
 from importlib import util
-from importlib.resources import files
+from importlib.resources import files, as_file
 from PySide6.QtGui import QImageReader
 import serial
 from serial.tools import list_ports
@@ -109,6 +109,38 @@ def find_resource_path(module_name_str: str, root: Path) -> Path:
     if module_name.suffix.lower in (str(fmt.data().decode()) for fmt in QImageReader.supportedImageFormats()):
         return files('pypts') / 'images' / 'CERN_Logo.png'
     #raise FileNotFoundError(f"Module '{module_name_str}' not found under {root}")
+
+def resolve_package_resource(filename: str, package_name: str) -> Path | None:
+    """Resolve a resource file inside an installed Python package.
+    Returns absolute Path if found, None otherwise.
+    Works with both regular and editable installs.
+    """
+    try:
+        # Try exact path first (e.g. "resources/power_Green.jpg")
+        resource = files(package_name).joinpath(filename)
+        with as_file(resource) as p:
+            if p.exists():
+                return Path(p)
+    except (ModuleNotFoundError, TypeError, FileNotFoundError):
+        pass
+
+    # Bare filename — search one level of subdirs (resources/, bin/, images/)
+    if "/" not in filename and "\\" not in filename:
+        try:
+            package_root = files(package_name)
+            for item in package_root.iterdir():
+                if item.is_dir():
+                    candidate = item.joinpath(filename)
+                    try:
+                        with as_file(candidate) as p:
+                            if p.exists():
+                                return Path(p)
+                    except (TypeError, FileNotFoundError):
+                        continue
+        except (ModuleNotFoundError, TypeError):
+            pass
+
+    return None
 
 def path_to_importable_module(file_path: Path) -> str:
     """
