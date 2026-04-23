@@ -43,13 +43,14 @@ from PySide6.QtGui import QTextCharFormat, QFont
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from pypts.YamVIEW.recipe_sequencer_setup import *
+from pypts.gui_theme import detect_system_dark_mode, get_theme_colors, get_yamview_stylesheet, install_system_theme_sync
 
 
 class RecipeEditorMainMenu(QMainWindow):
 # Initialization methods
     def __init__(self):
         super().__init__()
-        self.dark_mode = False
+        self.dark_mode = detect_system_dark_mode()
         self.yaml_documents = []
         self.temporary_recipe_contents = ""
         self.last_valid_recipe = ""
@@ -68,6 +69,9 @@ class RecipeEditorMainMenu(QMainWindow):
         self.setup_toolbar()
         self.setup_tree_and_yaml()
         self.setup_status_and_layouts()
+        self.toggle_dark_mode_action.setChecked(self.dark_mode)
+        self.toggle_dark_mode(self.dark_mode, log_change=False)
+        install_system_theme_sync(QApplication.instance(), self._set_dark_mode)
 
         # Define the shortcut activation action
         save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
@@ -135,8 +139,8 @@ class RecipeEditorMainMenu(QMainWindow):
             self.dev_menu.addAction(action)
 
     def setup_central_widget(self):
-        self.setStyleSheet(light_style)
         self.central_widget = QWidget()
+        self.central_widget.setObjectName("yamRoot")
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
 
@@ -203,18 +207,10 @@ class RecipeEditorMainMenu(QMainWindow):
     def setup_status_and_layouts(self):
         # Recipe status bar
         self.recipeStatus = QTextEdit()
+        self.recipeStatus.setObjectName("recipeStatus")
         self.recipeStatus.setReadOnly(True)
         self.recipeStatus.setFixedHeight(30)
         self.recipeStatus.setViewportMargins(QMargins(5, 0, 0, 0))
-        self.recipeStatus.setStyleSheet("""
-            QTextEdit {
-                border: none;
-                background-color: transparent;
-                color: #333;
-                font-style: italic;
-                font-size: 12pt;
-            }
-        """)
 
         # Container for status + tree+yaml
         self.tree_status_container = QWidget()
@@ -242,6 +238,7 @@ class RecipeEditorMainMenu(QMainWindow):
 
         # Log console below everything
         self.log_console = QTextEdit()
+        self.log_console.setObjectName("yamLogConsole")
         self.log_console.setReadOnly(True)
         self.log_console.setFixedHeight(200)
 
@@ -251,17 +248,26 @@ class RecipeEditorMainMenu(QMainWindow):
 
 # Helper GUI methods - colouring, viewing
 
-    def toggle_dark_mode(self, enabled):
-        if enabled:
-            self.dark_mode = True
-            self.setStyleSheet(dark_style)
-            self.yaml_viewer.set_dark_mode(True)
-            self.log("🌙 Dark Mode enabled.")
-        else:
-            self.dark_mode = False
-            self.setStyleSheet(light_style)
-            self.yaml_viewer.set_dark_mode(False)
-            self.log("☀️ Light Mode restored.")
+    def toggle_dark_mode(self, enabled, log_change=True):
+        self.dark_mode = bool(enabled)
+        self.setStyleSheet(get_yamview_stylesheet(self.dark_mode))
+        self.yaml_viewer.set_dark_mode(self.dark_mode)
+        self.sequencer.set_dark(self.dark_mode)
+
+        colors = get_theme_colors(self.dark_mode)
+        self.recipeStatus.document().setDefaultStyleSheet(
+            f"body {{ color: {colors['header_text']}; }}"
+        )
+
+        if log_change:
+            if self.dark_mode:
+                self.log("🌙 Dark Mode enabled.")
+            else:
+                self.log("☀️ Light Mode restored.")
+
+    def _set_dark_mode(self, enabled):
+        self.toggle_dark_mode_action.setChecked(enabled)
+        self.toggle_dark_mode(enabled)
 
     def highlight_line(self, line_num):
         cursor = self.yaml_viewer.textCursor()

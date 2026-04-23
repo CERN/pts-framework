@@ -49,6 +49,7 @@ from pypts.gui_components.results_panel import ResultsPanel
 from pypts.gui_components.step_table import StepTable
 from pypts.gui_components.styles import CERN_BLUE, MTA_BLUE, get_stylesheet
 from pypts.gui_components.toolbar import PtsToolBar
+from pypts.gui_theme import detect_system_dark_mode, install_system_theme_sync
 from pypts.utils import WAIT_FOR_TERMINATION, find_resource_path, get_project_root, get_step_result_colors
 
 
@@ -107,7 +108,7 @@ class MainWindow(QMainWindow):
         self._screen_idx = SCREEN_IDLE
         self._current_recipe_name = None
         self._current_recipe_description = None
-        self._dark_mode = False
+        self._dark_mode = detect_system_dark_mode()
 
         self.cern_logo = load_cern_logo_pixmap()
 
@@ -120,6 +121,7 @@ class MainWindow(QMainWindow):
         self._build_central()
         self._build_statusbar()
         self._apply_theme()
+        install_system_theme_sync(QApplication.instance(), self._set_dark_mode)
         self._switch_screen(SCREEN_IDLE)
 
         self.log_handler = TextEditLoggerHandler(self)
@@ -265,6 +267,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_dark(self):
         self._dark_mode = not self._dark_mode
+        self._apply_theme()
+
+    def _set_dark_mode(self, dark: bool):
+        self._dark_mode = dark
         self._apply_theme()
 
     def _switch_screen(self, index: int):
