@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from unittest.mock import Mock, patch
+from PySide6.QtCore import Qt
 
 from pypts import gui, recipe
 from pypts.startup import create_and_start_gui
@@ -119,6 +120,35 @@ def test_show_message_uses_placeholder_when_image_missing(main_window):
     assert not pixmap.isNull()
 
 
+def test_show_message_arrow_keys_change_selected_button_and_enter_accepts(main_window, qtbot):
+    response_q = SimpleQueue()
+    main_window.show_message(
+        {
+            "response_q": response_q,
+            "message": "Choose an option.",
+            "image_path": None,
+            "options": [{"yes": "Yes"}, {"no": "No"}, {"cancel": "Cancel"}],
+        }
+    )
+
+    panel = main_window._interaction_panel
+    assert panel.selected_button() is not None
+    assert panel.selected_button().text() == "Yes"
+    assert panel.selected_button().property("promptSelected") is True
+
+    qtbot.keyClick(panel.selected_button(), Qt.Key_Right)
+    assert panel.selected_button() is not None
+    assert panel.selected_button().text() == "No"
+    assert panel.selected_button().property("promptSelected") is True
+    assert panel._buttons[0].property("promptSelected") is False
+
+    qtbot.keyClick(panel.selected_button(), Qt.Key_Enter)
+
+    assert response_q.get() == "no"
+    assert panel.selected_button() is None
+    assert main_window._screen_idx == gui.SCREEN_IDLE
+
+
 def test_show_results_binds_model_and_switches_screen(main_window, sample_results):
     main_window.show_results({"results": sample_results})
 
@@ -138,6 +168,38 @@ def test_logo_fallback_still_renders_placeholder(qapp, qtbot, monkeypatch):
     assert not pixmap.isNull()
 
 
+def test_toggle_theme_keeps_prompt_image(main_window, qtbot, tmp_path):
+    image_path = tmp_path / "prompt.png"
+    pixmap = interaction_panel.make_placeholder_pixmap(120, 80)
+    assert pixmap.save(str(image_path), "PNG")
+
+    response_q = SimpleQueue()
+    main_window.show_message(
+        {
+            "response_q": response_q,
+            "message": "Prompt with image",
+            "image_path": str(image_path),
+            "options": [{"yes": "Yes"}],
+        }
+    )
+
+    before = main_window._interaction_panel.current_pixmap()
+    assert before is not None
+    before_size = before.size()
+
+    main_window._toggle_dark()
+    qtbot.wait(10)
+    after_dark = main_window._interaction_panel.current_pixmap()
+    assert after_dark is not None
+    assert after_dark.size() == before_size
+
+    main_window._toggle_dark()
+    qtbot.wait(10)
+    after_light = main_window._interaction_panel.current_pixmap()
+    assert after_light is not None
+    assert after_light.size() == before_size
+
+
 def test_create_and_start_gui_shows_window(qapp):
     api = Mock()
     api.input_queue = SimpleQueue()
@@ -150,3 +212,47 @@ def test_create_and_start_gui_shows_window(qapp):
         assert window.isVisible()
     finally:
         window.close()
+
+
+def test_on_start_clicked_switches_to_running_tab_before_queue_start(main_window, monkeypatch):
+    start_queue = SimpleQueue()
+    main_window.q_in = start_queue
+    main_window.recipe_file = "C:/recipes/test.yml"
+    main_window.action_start_recipe_execution.setEnabled(True)
+
+    load_states = []
+
+    def fake_load_recipe():
+        load_states.append(main_window._screen_idx)
+        sequence = recipe.Sequence(
+            sequence_data={
+                "sequence_name": "Test Sequence",
+                "locals": {},
+                "parameters": {},
+                "outputs": {},
+                "setup_steps": [],
+                "steps": [],
+                "teardown_steps": [],
+            }
+        )
+        sequence.steps = [recipe.Step(step_name="Step 1", description="First")]
+        main_window.recipe_to_run = Mock(sequences={"main": sequence}, main_sequence="main")
+        main_window.update_sequence({"sequence": sequence})
+
+    monkeypatch.setattr(main_window, "load_recipe", fake_load_recipe)
+
+    main_window.on_start_clicked()
+
+    assert load_states == [gui.SCREEN_IDLE]
+    assert main_window._screen_idx == gui.SCREEN_RUNNING
+    assert start_queue.get() == ("START",)
+
+
+def test_update_sequence_shows_ready_to_start_when_loaded_not_running(main_window, sample_sequence):
+    main_window.running = False
+
+    main_window.update_sequence({"sequence": sample_sequence})
+
+    assert main_window._screen_idx == gui.SCREEN_IDLE
+    assert main_window.recipe_label.text() == "Loaded Test Sequence\nReady to start"
+    assert main_window.statusBar().currentMessage() == "Recipe loaded and ready to start"

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
@@ -20,6 +20,8 @@ class InteractionPanel(QWidget):
         super().__init__(parent)
         self._dark = False
         self._logo_pixmap = load_cern_logo_pixmap()
+        self._selected_button_index = -1
+        self._current_image_path: str | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -52,6 +54,7 @@ class InteractionPanel(QWidget):
         self._inner.addWidget(self._button_row)
 
         self._buttons: list[QPushButton] = []
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.set_idle()
 
     def set_dark(self, dark: bool):
@@ -65,7 +68,7 @@ class InteractionPanel(QWidget):
             "}"
         )
         self.message_label.setStyleSheet(f"font-size:13px; font-weight:500; color:{text_color}; padding:4px 0;")
-        self._refresh_idle_visual()
+        self._refresh_visual()
 
     def set_idle(self):
         self.clear_buttons()
@@ -84,17 +87,23 @@ class InteractionPanel(QWidget):
             value = button_def.get("value", label)
             self.add_button(label, value, primary=index == 0)
         self._button_row.setVisible(bool(buttons))
+        if self._buttons:
+            self._set_selected_button(0)
+            self._buttons[0].setFocus(Qt.FocusReason.OtherFocusReason)
+            self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     def set_image(self, image_path: str | None):
         self._set_image_from_path(image_path)
 
     def add_button(self, label: str, value: str, primary: bool = False):
         button = QPushButton(label)
+        button.setProperty("promptSelected", False)
         if primary:
             button.setObjectName("primaryBtn")
         elif label.lower() in {"abort", "stop", "cancel"}:
             button.setObjectName("stopBtn")
         button.clicked.connect(lambda _checked=False, response=value: self.response_given.emit(response))
+        button.installEventFilter(self)
         self._button_layout.insertWidget(self._button_layout.count() - 1, button)
         self._buttons.append(button)
 
@@ -103,11 +112,17 @@ class InteractionPanel(QWidget):
             self._button_layout.removeWidget(button)
             button.deleteLater()
         self._buttons.clear()
+        self._selected_button_index = -1
 
     def current_pixmap(self) -> QPixmap | None:
         return self.image_label.pixmap()
 
     def _set_image_from_path(self, image_path: str | None):
+        self._current_image_path = image_path
+        self._refresh_visual()
+
+    def _refresh_visual(self):
+        image_path = self._current_image_path
         if image_path and os.path.exists(image_path):
             pixmap = QPixmap(image_path)
             if not pixmap.isNull():
@@ -126,3 +141,59 @@ class InteractionPanel(QWidget):
             pixmap.scaled(420, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         )
         self.image_label.setText("")
+
+    def eventFilter(self, watched, event):
+        if watched in self._buttons and event.type() == QEvent.Type.FocusIn:
+            index = self._buttons.index(watched)
+            self._set_selected_button(index)
+        elif watched in self._buttons and event.type() == QEvent.Type.KeyPress:
+            if self._handle_navigation_key(event.key()):
+                return True
+        return super().eventFilter(watched, event)
+
+    def keyPressEvent(self, event):
+        if self._handle_navigation_key(event.key()):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _handle_navigation_key(self, key: int) -> bool:
+        if not self._buttons:
+            return False
+
+        if key in (Qt.Key.Key_Right, Qt.Key.Key_Down):
+            self._move_selection(1)
+            return True
+        if key in (Qt.Key.Key_Left, Qt.Key.Key_Up):
+            self._move_selection(-1)
+            return True
+        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            selected = self.selected_button()
+            if selected is not None:
+                selected.click()
+                return True
+        return False
+
+    def _move_selection(self, offset: int):
+        if not self._buttons:
+            return
+        next_index = 0 if self._selected_button_index < 0 else (self._selected_button_index + offset) % len(self._buttons)
+        self._set_selected_button(next_index)
+        self._buttons[next_index].setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _set_selected_button(self, index: int):
+        if index < 0 or index >= len(self._buttons):
+            return
+        self._selected_button_index = index
+        for button_index, button in enumerate(self._buttons):
+            is_selected = button_index == index
+            if button.property("promptSelected") != is_selected:
+                button.setProperty("promptSelected", is_selected)
+                button.style().unpolish(button)
+                button.style().polish(button)
+                button.update()
+
+    def selected_button(self) -> QPushButton | None:
+        if 0 <= self._selected_button_index < len(self._buttons):
+            return self._buttons[self._selected_button_index]
+        return None

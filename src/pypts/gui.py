@@ -372,8 +372,8 @@ class MainWindow(QMainWindow):
     def on_start_clicked(self):
         if not self.running:
             self.reset_gui()
-            self.load_recipe()
             self.running = True
+            self.load_recipe()
         if self.q_in is not None:
             self.q_in.put(("START",))
         self.action_abort_recipe_execution.setEnabled(True)
@@ -514,8 +514,14 @@ class MainWindow(QMainWindow):
             if not isinstance(step, recipe.SequenceStep)
         ]
         self.step_list.load_steps(steps)
-        self.recipe_label.setText(f"Loaded {sequence.name}" if sequence.name else "Loaded recipe")
+        if self.running:
+            self.recipe_label.setText(f"Loaded {sequence.name}" if sequence.name else "Loaded recipe")
+        else:
+            ready_label = f"Loaded {sequence.name}\nReady to start" if sequence.name else "Loaded recipe\nReady to start"
+            self.recipe_label.setText(ready_label)
         self._switch_screen(SCREEN_RUNNING if self.running else SCREEN_IDLE)
+        if not self.running:
+            self.statusBar().showMessage("Recipe loaded and ready to start")
 
     def update_step_result(self, step_status_vm: dict):
         updated = self.step_list.update_step_status(

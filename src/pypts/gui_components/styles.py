@@ -151,6 +151,16 @@ QPushButton#primaryBtn {{
 QPushButton#primaryBtn:hover {{
     background-color: {MTA_BLUE};
 }}
+QPushButton#primaryBtn[promptSelected="false"] {{
+    background-color: #E3ECF9;
+    color: {CERN_BLUE};
+    border: 1px solid #B3CFF0;
+}}
+QPushButton[promptSelected="true"] {{
+    background-color: {CERN_BLUE};
+    color: #ffffff;
+    border: 1px solid {CERN_DARK};
+}}
 QPushButton#stopBtn {{
     background-color: #FFEBEE;
     color: {ACCENT_RED};
@@ -341,6 +351,16 @@ QPushButton#primaryBtn {{
 }}
 QPushButton#primaryBtn:hover {{
     background-color: {MTA_BLUE};
+}}
+QPushButton#primaryBtn[promptSelected="false"] {{
+    background-color: #3c3f41;
+    color: #f0f0f0;
+    border: 1px solid #5a5a5a;
+}}
+QPushButton[promptSelected="true"] {{
+    background-color: {CERN_BLUE};
+    color: #ffffff;
+    border: 1px solid {MTA_BLUE};
 }}
 QPushButton#stopBtn {{
     background-color: #3a1a1a;
