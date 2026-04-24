@@ -6,10 +6,12 @@
 from PySide6.QtWidgets import (QDialog,
                                 QVBoxLayout,
                                 QLabel, QHBoxLayout, QMessageBox,QWidget,
-                                QAbstractItemView, QFrame, QToolBar, QApplication, QStyle, QListWidgetItem, QListWidget)
+                                QAbstractItemView, QFrame, QToolBar, QApplication, QStyle, QListWidgetItem, QListWidget,
+                                QSizePolicy)
 from PySide6.QtCore import QSize, Qt, QPoint, Signal
 from PySide6.QtGui import QAction,QDrag
 from pypts.YamVIEW.recipe_step_setup import Step_setup, Skip_setup, Sequence_setup
+from pypts.YamVIEW.styles import get_editor_theme_colors
 import re
 
 class StepBlock(QFrame):
@@ -17,13 +19,46 @@ class StepBlock(QFrame):
         super().__init__(parent)
         self.step_name = step_name
         self.step_data = step_data
-        self.setMaximumWidth(200)
         self.setFrameShape(QFrame.StyledPanel)
+        self.setObjectName("sequencerCard")
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         label = QLabel(step_name)
+        label.setObjectName("sequencerStepTitle")
+        label.setWordWrap(False)
+        label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         layout.addWidget(label)
         layout.addStretch()
+        self._label = label
+        self.setMinimumHeight(max(34, label.sizeHint().height() + 10))
+
+
+def _build_header_widget(text: str, indent: int) -> QFrame:
+    container = QFrame()
+    container.setObjectName("sequencerHeaderContainer")
+    container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    layout = QHBoxLayout(container)
+    layout.setContentsMargins(indent + 8, 2, 8, 2)
+    layout.setSpacing(0)
+
+    label = QLabel(text)
+    label.setObjectName("sequencerHeader")
+    label.setWordWrap(False)
+    label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+    layout.addWidget(label)
+    layout.addStretch()
+
+    container.setMinimumHeight(max(32, label.sizeHint().height() + 12))
+    return container
+
+
+def _item_size_for(widget: QWidget) -> QSize:
+    hint = widget.sizeHint()
+    return QSize(hint.width(), max(hint.height(), widget.minimumHeight()))
 
 
 class SequencerWidget(QWidget):
@@ -34,6 +69,7 @@ class SequencerWidget(QWidget):
         self.yaml_update_callback = None
         self.expanded = False
         self.new_sequence_request = None
+        self._dark = False
 
         self.preamble_globals = {}
         self.sequence_locals = {}
@@ -46,23 +82,8 @@ class SequencerWidget(QWidget):
         self.layout.setSpacing(0)
         # ---- Toolbar ----
         self.Yamlbar = QToolBar()
+        self.Yamlbar.setObjectName("yamSequencerToolbar")
         self.Yamlbar.setIconSize(QSize(22, 22))
-        self.Yamlbar.setStyleSheet("""
-            QToolBar {
-                border: 1px;
-                padding: 0px;
-                spacing: 0px;
-                background: #E6E6E6;
-            }
-            QToolButton {
-                width: 30px;
-                height: 28px;
-                border: none;
-            }
-            QToolButton:hover {
-                background: #D8D8D8;
-            }
-        """)
 
         style = QApplication.style()
 
@@ -85,6 +106,7 @@ class SequencerWidget(QWidget):
 
         # ---- List ----
         self.list_widget = StepListWidget()
+        self.list_widget.setObjectName("sequencerList")
         self.list_widget.setContentsMargins(0, 0, 0, 0)
         self.list_widget.model().rowsMoved.connect(self.on_steps_reordered)
         self.list_widget.itemClicked.connect(self.on_item_clicked)
@@ -96,6 +118,19 @@ class SequencerWidget(QWidget):
         self.layout.addWidget(self.list_widget)
 
         self.skip_warning = False
+        self.set_dark(False)
+
+    def set_dark(self, dark: bool):
+        self._dark = dark
+        colors = get_editor_theme_colors(dark)
+        self.list_widget.setStyleSheet(
+            "QListWidget#sequencerList {"
+            f"background-color: {colors['surface_alt']};"
+            f"border: 1px solid {colors['border']};"
+            "border-radius: 8px;"
+            "padding: 6px;"
+            "}"
+        )
 
     def set_yaml_data(self, steps_list):
         self.steps = steps_list
@@ -123,8 +158,8 @@ class SequencerWidget(QWidget):
 
                 # Indent header
                 header_item.setData(Qt.UserRole + 2, indent)
-                header_widget = QLabel(f"{prefix} {step_name}")
-                header_widget.setStyleSheet(f"margin-left: {indent}px; font-weight: bold;")
+                header_widget = _build_header_widget(f"{prefix} {step_name}", indent)
+                header_item.setSizeHint(_item_size_for(header_widget))
                 self.list_widget.setItemWidget(header_item, header_widget)
 
                 # Add all children recursively
@@ -151,11 +186,14 @@ class SequencerWidget(QWidget):
                 block = StepBlock(step_name, step)
                 container = QFrame()
                 container_layout = QHBoxLayout(container)
-                container_layout.setContentsMargins(indent, 0, 0, 0)
+                container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                container_layout.setContentsMargins(indent + 4, 2, 4, 2)
+                container_layout.setSpacing(0)
                 container_layout.setAlignment(Qt.AlignLeft)
                 container_layout.addWidget(block)
+                container.setMinimumHeight(block.minimumHeight() + 4)
                 item = QListWidgetItem()
-                item.setSizeHint(container.sizeHint())
+                item.setSizeHint(_item_size_for(container))
                 self.list_widget.addItem(item)
                 self.list_widget.setItemWidget(item, container)
                 item.setData(Qt.UserRole, step)

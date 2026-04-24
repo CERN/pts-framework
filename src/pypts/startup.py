@@ -21,7 +21,8 @@ def create_and_start_gui(api,  recipe_file: str = None):
     app = QApplication(sys.argv)
     window = MainWindow()
     window.q_in = api.input_queue
-    logging.getLogger().addHandler(window.log_handler)
+    if window.log_handler not in logging.getLogger().handlers:
+        logging.getLogger().addHandler(window.log_handler)
 
     RuntimeContext.set(window, api, app)
 
@@ -37,6 +38,8 @@ def create_and_start_gui(api,  recipe_file: str = None):
     time.sleep(1)  # Prevents a race condition. To be properly fixed!!
     # If we don't put the sleep, recipe_event_processing_thread.start() may not
     # be finished before the app.exec() call.
+
+    window.show()
 
     return window, app
 

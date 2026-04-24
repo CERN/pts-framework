@@ -36,13 +36,18 @@ bridge between the recipe execution thread and the main GUI thread.
 GUI Result Displays
 ===================
 
-The `MainWindow` features two distinct widgets on the left side for displaying 
+The runtime ``MainWindow`` is now a panelized window composed from reusable Qt
+widgets. Event handling described below applies primarily to the left-side
+execution/result panels and the right-side interaction panel. For the structural
+layout of the window, see :doc:`gui_architecture`.
+
+The `MainWindow` features two distinct widgets on the left side for displaying
 recipe progress and results:
 
 1. Live Step Status (`self.step_list`)
 --------------------------------------
 
-*   **Widget Type:** `QTableWidget`
+*   **Widget Type:** ``StepTable`` (internally based on ``QTableWidget``)
 *   **Purpose:** Provides immediate, live feedback on the status of each step 
     as the recipe progresses.
 *   **Initialization:** When a sequence starts (`pre_run_sequence` event, emitting a
@@ -94,7 +99,7 @@ recipe progress and results:
 2. Final Hierarchical Results (`self.result_list`)
 --------------------------------------------------
 
-*   **Widget Type:** `QTreeView`
+*   **Widget Type:** ``ResultsPanel`` containing a ``QTreeView``
 *   **Purpose:** Displays the complete, detailed, and potentially nested results 
     of the entire recipe *after* it has finished execution.
 *   **Initialization:** This view is populated only once when the recipe finishes.
@@ -122,6 +127,6 @@ Summary
     emitting **ViewModel dictionaries**.
 *   This approach ensures a **consistent interface** and **decouples** the GUI
     slots from the specific data structures used in the recipe execution logic.
-*   **`step_list` (Top Table):** Live updates are fully decoupled.
-*   **`result_list` (Bottom Tree):** Populated via a dictionary signal, but the
+*   **`step_list` (live step table):** Live updates are fully decoupled.
+*   **`result_list` (results tree):** Populated via a dictionary signal, but the
     underlying `StepResultModel` remains coupled to `recipe.StepResult`. 

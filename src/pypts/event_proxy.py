@@ -92,7 +92,7 @@ class RecipeEventProxy(QObject):
                     if self._test_package:
                         pkg_path = resolve_package_resource(raw_image_path, self._test_package)
                         if pkg_path is not None:
-                            resolved_image_path = str(pkg_path)
+                            resolved_image_path = pkg_path.as_posix()
 
                     # Strategy 2: Fall back to CWD-based resolution
                     if not resolved_image_path:
