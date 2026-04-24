@@ -28,7 +28,7 @@ class StatusBadgeDelegate(QStyledItemDelegate):
         text_color = index.data(Qt.ItemDataRole.UserRole + 1) or "#FFFFFF"
         is_running = bool(index.data(Qt.ItemDataRole.UserRole + 2))
 
-        badge = QColor(badge_color or STATUS_COLORS["PENDING"]["text"])
+        badge = QColor(badge_color or STATUS_COLORS["PENDING"]["bg"])
         badge_rect = option.rect.adjusted(12, 7, -12, -7)
         radius = max(10, min(badge_rect.height() // 2, 14))
 
@@ -147,9 +147,9 @@ class StepTable(QTableWidget):
         label = "Running..." if is_running else status
         status_item.setText(label)
         status_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        status_item.setBackground(QBrush(Qt.GlobalColor.transparent))
+        status_item.setBackground(QBrush(QColor(colors["bg"])))
         status_item.setForeground(QBrush(QColor("#FFFFFF")))
-        status_item.setData(Qt.ItemDataRole.UserRole, colors["text"])
+        status_item.setData(Qt.ItemDataRole.UserRole, colors["bg"])
         status_item.setData(Qt.ItemDataRole.UserRole + 1, "#FFFFFF")
         status_item.setData(Qt.ItemDataRole.UserRole + 2, is_running)
 
