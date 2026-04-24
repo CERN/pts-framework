@@ -32,39 +32,39 @@ class YamlHighlighter(QSyntaxHighlighter):
     def __init__(self, document):
         super().__init__(document)
         self.highlighting_rules = []
+        self.set_dark_mode(False)
 
-        # Key: "key:"
+    def set_dark_mode(self, dark: bool):
+        colors = get_editor_theme_colors(dark)
+        self.highlighting_rules = []
+
         key_format = QTextCharFormat()
-        key_format.setForeground(QColor("#d17b49"))  # orange-brown
+        key_format.setForeground(QColor("#7AABDF" if dark else "#005BAC"))
         key_format.setFontWeight(QFont.Weight.Bold)
         self.highlighting_rules.append((QRegularExpression(r"^\s*[^:\n]+(?=:)"), key_format))
 
-        # String: "value" or 'value'
         string_format = QTextCharFormat()
-        string_format.setForeground(QColor("#6abf69"))  # green
+        string_format.setForeground(QColor("#6abf69" if dark else colors["success_text"]))
         self.highlighting_rules.append((QRegularExpression(r'(?<=:\s)["\'].*["\']'), string_format))
 
-        # Number
         number_format = QTextCharFormat()
-        number_format.setForeground(QColor("#6897bb"))  # blue
+        number_format.setForeground(QColor("#6897bb" if dark else "#1E73BE"))
         self.highlighting_rules.append((QRegularExpression(r'\b\d+(\.\d+)?\b'), number_format))
 
-        # Boolean
         bool_format = QTextCharFormat()
-        bool_format.setForeground(QColor("#ff7c9c"))  # pink
-        bool_pattern = QRegularExpression(r'\b(true|false)\b')
-        self.highlighting_rules.append((bool_pattern, bool_format))
+        bool_format.setForeground(QColor("#ff7c9c" if dark else "#B42318"))
+        self.highlighting_rules.append((QRegularExpression(r'\b(true|false)\b'), bool_format))
 
-        # Null values
         null_format = QTextCharFormat()
-        null_format.setForeground(QColor("#b0b0b0"))  # gray
+        null_format.setForeground(QColor("#b0b0b0" if dark else colors["muted_text"]))
         self.highlighting_rules.append((QRegularExpression(r'\b(null|Null|NULL|~)\b'), null_format))
 
-        # Comment
         comment_format = QTextCharFormat()
-        comment_format.setForeground(QColor("#888888"))  # gray
+        comment_format.setForeground(QColor("#888888" if dark else "#718096"))
         comment_format.setFontItalic(True)
         self.highlighting_rules.append((QRegularExpression(r'#.*'), comment_format))
+
+        self.rehighlight()
 
     def highlightBlock(self, text):
         for pattern, fmt in self.highlighting_rules:
@@ -92,6 +92,7 @@ class ScintillaYamlEditor(QPlainTextEdit):
         self.dark_mode = False
         font = QFont("Courier New", 10)
         self.setFont(font)
+        self.setObjectName("yamlEditor")
         self.highlighter = YamlHighlighter(self.document())
 
         self.highlight_current_line = True
@@ -108,6 +109,17 @@ class ScintillaYamlEditor(QPlainTextEdit):
 
     def set_dark_mode(self, enabled: bool):
         self.dark_mode = enabled
+        colors = get_editor_theme_colors(enabled)
+        self.setStyleSheet(
+            "QPlainTextEdit#yamlEditor {"
+            f"background-color: {colors['log_bg']};"
+            f"color: {colors['body_text']};"
+            f"border: 1px solid {colors['border']};"
+            "border-radius: 8px;"
+            "padding: 6px 8px;"
+            "}"
+        )
+        self.highlighter.set_dark_mode(enabled)
         self.line_number_area.update()
         self.update_current_line_highlight()
 
@@ -134,7 +146,8 @@ class ScintillaYamlEditor(QPlainTextEdit):
 
     def line_number_area_paint_event(self, event):
         painter = QPainter(self.line_number_area)
-        background_color = QColor("#2b2b2b") if self.dark_mode else QColor("#f0f0f0")
+        colors = get_editor_theme_colors(self.dark_mode)
+        background_color = QColor(colors["line_number_bg"])
         painter.fillRect(event.rect(), background_color)
 
         block = self.firstVisibleBlock()
@@ -145,7 +158,7 @@ class ScintillaYamlEditor(QPlainTextEdit):
         while block.isValid() and top <= event.rect().bottom():
             if block.isVisible() and bottom >= event.rect().top():
                 number = str(blockNumber + 1)
-                painter.setPen(Qt.GlobalColor.darkGray)
+                painter.setPen(QColor(colors["line_number_text"]))
                 painter.drawText(0, top, self.line_number_area.width() - 5, self.fontMetrics().height(),
                                  Qt.AlignmentFlag.AlignRight, number)
             block = block.next()
@@ -158,7 +171,8 @@ class ScintillaYamlEditor(QPlainTextEdit):
 
         if self.highlight_current_line:
             selection = QTextEdit.ExtraSelection()
-            lineColor = QColor("#000000") if self.dark_mode else QColor("#e6f7ff")
+            colors = get_editor_theme_colors(self.dark_mode)
+            lineColor = QColor(colors["current_line"])
             selection.format.setBackground(lineColor)
             selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
             selection.cursor = self.textCursor()
@@ -265,11 +279,7 @@ class RecipeCreatorDialog(QDialog):
 
     def set_dark_mode(self, enabled: bool):
         self.dark_mode = enabled
-        if enabled:
-            self.setStyleSheet(dark_style)
-            ###################################################
-        else:
-            self.setStyleSheet("")
+        self.setStyleSheet(dark_style if enabled else light_style)
 
     def get_data(self):
         return {

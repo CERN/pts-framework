@@ -88,6 +88,8 @@ This initializes the standard GUI. From the GUI, you can perform the following a
 
 If the recipe includes a ``UserInteractionStep``, interactive buttons will appear on the right side of the GUI below any displayed images.
 
+For the current panelized GUI structure, see :doc:`gui_architecture`.
+
 2. Package-based pypts-framework
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -155,6 +157,8 @@ This initializes the standard GUI. From the GUI, you can perform the following a
 * **Stop**: Click to halt the currently running test. The framework will cleanly shut down and finalize results before displaying a summary in the GUI.
 
 If the recipe includes a ``UserInteractionStep``, interactive buttons will appear on the right side of the GUI below any displayed images.
+
+For the current panelized GUI structure, see :doc:`gui_architecture`.
 
 
 
@@ -488,7 +492,14 @@ Launch the application using one of these commands:
   # For package-based setup
   python -m package
 
-The GUI window will open, displaying the PTS (Python Test Suite) interface with a left panel showing available steps and a right panel for messages and interaction.
+The GUI window will open, displaying the PTS runtime interface as a panelized
+window. At a high level:
+
+* the top area contains the menu bar, toolbar, and screen-state tabs
+* the left side contains either the idle placeholder, the live step table, or the final results panel
+* the right side contains the operator interaction panel and the runtime log
+
+See :doc:`gui_architecture` for the structural details and component breakdown.
 
 **Loading a Recipe**
 
@@ -525,8 +536,9 @@ To halt recipe execution at any time, click the **"Stop"** button (stop icon) in
 
 As the recipe executes:
 
-* **Left Panel - Step List**: Shows all steps with their execution status
+* **Left Panel - Step List**: Shows all steps with their execution status while the recipe is running
 * **Left Panel - Results Tree**: Displays a hierarchical view of step results after execution completes
+* **Right Panel - Interaction Panel**: Shows operator prompts, images, and action buttons
 * **Right Panel - Log Console**: Contains detailed logging information and debug messages
 * **Reports Directory**: After execution, check ``./pts_reports/`` for CSV and HTML reports
 
@@ -534,7 +546,9 @@ As the recipe executes:
 6. Creating and Editing Recipes with Recipe Creator tool
 ---------------------------------------------
 
-For users who prefer a visual approach to recipe creation and editing, the Recipe Creator tool provides an interactive recipe editor.
+For users who prefer a visual approach to recipe creation and editing, the Recipe
+Creator tool provides an interactive recipe editor. In the codebase this editor
+is implemented by the ``YamVIEW`` package.
 
 **Launching Recipe Creator**
 
@@ -543,6 +557,10 @@ You can access Recipe Creator through the main PTS GUI:
 1. Open the PTS application as described above
 2. In the menu bar, navigate to **Edit → Edit Recipe**
 3. A new window will open with the Recipe Creator recipe editor
+
+The runtime GUI and ``YamVIEW`` are separate applications. The runtime GUI
+launches the editor as a separate process, but both now share the same theme
+layer and dark-mode behavior. See :doc:`gui_architecture`.
 Alternatively, if you have Recipe Creator installed separately, you can launch it directly:
 
 .. code-block:: bash
@@ -560,10 +578,11 @@ In the Recipe Creator editor:
 
 **Editing Recipes**
 
-The Recipe Creator editor provides three ways to edit recipes:
-* **Sequencer Panel (Left)**: Hierarchical tree view of sequences and steps with add/remove buttons
-* **YAML Editor (Right)**: Direct YAML text editing with syntax highlighting
-* **Interactive Dialogs**: Double-click any step to open a configuration dialog
+The Recipe Creator editor provides three main editing surfaces:
+
+* **Sequencer Panel (Left)**: hierarchical sequence/step editor with toolbar actions
+* **YAML Editor (Right)**: direct YAML text editing with syntax highlighting
+* **Interactive Dialogs**: double-click any step to open a configuration dialog
 
 **Adding Sequences and Steps**
 
@@ -602,7 +621,7 @@ The YamVIEW editor includes safety features:
 * **Recipe Status Bar**: Shows validation status at the top (green for valid, red for errors)
 * **Recipe Verification**: Recipes are automatically verified on save; if invalid, you'll be prompted to fix errors
 * **Recovery**: Click **"Restore last working recipe state"** (reload icon) to revert to the last successfully validated version
-* **Dark Mode**: Toggle **View → Toggle Dark Mode** for comfortable editing in low-light environments
+* **Dark Mode**: follows the operating system theme automatically and can still be toggled manually from **View → Toggle Dark Mode**
 
 **YAML Synchronization**
 

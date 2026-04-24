@@ -209,6 +209,57 @@ Robustness Enhancements
 * **Conflict Detection**: Prevents module import conflicts
 * **Comprehensive Logging**: Better debugging and troubleshooting capabilities
 
+GUI Architecture
+----------------
+
+The GUI layer now has a clearer separation than the older monolithic window
+approach.
+
+Runtime GUI
+~~~~~~~~~~~
+
+The runtime application is built around ``pypts.gui.MainWindow`` and a set of
+reusable widgets in ``pypts.gui_components``. ``MainWindow`` acts primarily as
+the orchestrator:
+
+* builds the menu, toolbar, central splitter, and status bar
+* switches between idle/running/prompt/results screens
+* delegates rendering to dedicated widgets such as the step table, results
+  panel, interaction panel, and log panel
+* receives ViewModel dictionaries from the event-proxy layer and forwards them
+  to the appropriate panel/widget
+
+This makes the runtime GUI panelized: the window is composed from smaller
+functional panels instead of one large central widget with all rendering logic
+inline.
+
+Shared theme layer
+~~~~~~~~~~~~~~~~~~
+
+The module ``pypts.gui_theme`` now provides the shared GUI theme layer for both
+the runtime GUI and ``YamVIEW``.
+
+Responsibilities include:
+
+* operating-system dark-mode detection
+* Qt color-scheme synchronization where available
+* shared palette values and top-level stylesheet generation
+
+YamVIEW relationship
+~~~~~~~~~~~~~~~~~~~~
+
+``YamVIEW`` remains a separate recipe-editor application under
+``pypts.YamVIEW``. It is still launched as a separate process by the runtime
+GUI, but it now consumes the same theme layer so both applications use the same
+visual palette and dark-mode behavior.
+
+At present:
+
+* shared: palette, theme logic, dark-mode behavior
+* separate: most concrete widgets and layouts
+
+See :doc:`gui_architecture` for the full GUI-oriented view of this split.
+
 Future Considerations
 ---------------------
 
