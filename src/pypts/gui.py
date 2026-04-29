@@ -50,7 +50,7 @@ from pypts.gui_components.step_table import StepTable
 from pypts.gui_components.styles import CERN_BLUE, MTA_BLUE, get_stylesheet
 from pypts.gui_components.toolbar import PtsToolBar
 from pypts.gui_theme import detect_system_dark_mode, install_system_theme_sync
-from pypts.utils import WAIT_FOR_TERMINATION, find_resource_path, get_project_root, get_step_result_colors
+from pypts.utils import WAIT_FOR_TERMINATION, find_resource_path, get_project_root, get_step_result_colors, resolve_package_resource
 
 
 logger = logging.getLogger(__name__)
@@ -337,9 +337,11 @@ class MainWindow(QMainWindow):
 
     def on_edit_clicked(self):
         logger.info("Opening recipe editor")
-        root = get_project_root()
-        recipe_editor_path = find_resource_path("recipe_creator.py", root=root)
-        args = [sys.executable, str(root / recipe_editor_path)]
+        recipe_editor_path = resolve_package_resource("YamVIEW/recipe_creator.py", "pypts")
+        if recipe_editor_path is None:
+            logger.error("recipe_creator.py not found in pypts package")
+            return
+        args = [sys.executable, str(recipe_editor_path)]
         if self.recipe_file:
             args.append(self.recipe_file)
         subprocess.Popen(args)
