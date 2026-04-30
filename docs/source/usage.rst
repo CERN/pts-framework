@@ -383,7 +383,7 @@ It can also be initialized through the command:
 3. Check the Reports
 --------------------
 
-After execution (or during, for the CSV), check the ``./pts_reports/`` directory (relative to where you ran the Python script) for:
+After execution (or during, for the CSV), check the ``~/pts_reports/`` directory for:
 
 *   ``report.csv``: Incrementally updated CSV file with detailed step results.
 *   ``report.html``: HTML version of the report generated after the recipe finishes.
@@ -540,7 +540,7 @@ As the recipe executes:
 * **Left Panel - Results Tree**: Displays a hierarchical view of step results after execution completes
 * **Right Panel - Interaction Panel**: Shows operator prompts, images, and action buttons
 * **Right Panel - Log Console**: Contains detailed logging information and debug messages
-* **Reports Directory**: After execution, check ``./pts_reports/`` for CSV and HTML reports
+* **Reports Directory**: After execution, check ``~/pts_reports/`` for CSV and HTML reports
 
 
 6. Creating and Editing Recipes with Recipe Creator tool
@@ -630,5 +630,4 @@ The editor keeps the YAML view and the Sequencer in sync:
 * Edits in the YAML view are reflected in the Sequencer automatically
 * Changes in the Sequencer are immediately updated in the YAML view
 * Line highlighting shows which YAML section corresponds to the selected step
-
 

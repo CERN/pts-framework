@@ -37,6 +37,10 @@ EXCLUDE_DIRS = {
 
 WAIT_FOR_TERMINATION = threading.Event()
 
+def get_report_root() -> Path:
+    """Return the canonical directory for pypts report artifacts."""
+    return Path.home() / "pts_reports"
+
 def get_step_result_colors(result_value, result_type_enum) -> tuple[str, str]:
     """
     result_type_enum: the enum class (e.g., recipe.ResultType)
@@ -275,4 +279,3 @@ def exec_command(
 
 if __name__ == "__main__":
     print(get_project_root())
-

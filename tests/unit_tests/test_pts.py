@@ -34,6 +34,12 @@ def mock_logger():
         yield mock_logger
 
 
+@pytest.fixture(autouse=True)
+def mock_report_root(monkeypatch, tmp_path):
+    """Keep command_handler_loop tests from writing to the real home directory."""
+    monkeypatch.setattr("pypts.pts.get_report_root", lambda: tmp_path / "pts_reports")
+
+
 # ============================================================
 # DataChannel
 # ============================================================
@@ -159,6 +165,26 @@ class TestPtsApi:
 # ============================================================
 
 class TestCommandHandlerLoop:
+    @patch("pypts.pts.get_report_root")
+    def test_uses_home_report_root(self, mock_get_report_root, tmp_path):
+        """Verify command_handler_loop creates reports under the canonical report root."""
+        mock_get_report_root.return_value = tmp_path / "pts_reports"
+        cmd_q = Queue()
+        report_q = SimpleQueue()
+        event_q = SimpleQueue()
+        cmd_q.put(None)
+
+        t = threading.Thread(
+            target=command_handler_loop,
+            args=(cmd_q, report_q, event_q),
+            daemon=True,
+        )
+        t.start()
+        t.join(timeout=5)
+
+        mock_get_report_root.assert_called_once_with()
+        assert (tmp_path / "pts_reports").exists()
+
     def test_exits_on_none(self):
         """Verify that sending None cleanly exits the loop."""
         cmd_q = Queue()

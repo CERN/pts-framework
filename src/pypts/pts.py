@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 from pypts.report import report_listener, STOP_LISTENER, LISTENER_RUNNING
 from pypts.recipe import Runtime, runtime_bridge
-from pathlib import Path
+from pypts.utils import get_report_root
 import importlib.metadata
 
 logger = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ class PtsApi:
     """
     Starts a PTS recipe running in a separate thread and returns an API object to interact with it.
     Also starts a background thread (`report_listener`) to generate a CSV report (`report.csv`)
-    incrementally in the `./pts_reports/` directory relative to the execution path.
+    incrementally in the `~/pts_reports/` directory.
 
     Args:
         recipe_file (str): Path to the YAML recipe file to run
@@ -104,7 +104,7 @@ def get_channel(name):
 
 def command_handler_loop(queue, report_queue, event_queue):
     # Define output directory for reports
-    report_output_dir = Path("./pts_reports")
+    report_output_dir = get_report_root()
     report_output_dir.mkdir(parents=True, exist_ok=True)
 
     recipe_to_run = None
