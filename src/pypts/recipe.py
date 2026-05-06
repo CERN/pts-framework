@@ -826,8 +826,8 @@ class Step:
             case "userrunmethodstep": step_type = "UserRunMethodStep"
             case "userwritestep": step_type = "UserWriteStep"
             case "serialnumberstep": step_type = "SerialNumberStep"
-            case "SSHConnectStep": step_type = "SSHConnectStep"
-            case "SSHCloseStep": step_type = "SSHCloseStep"
+            case "sshconnectstep": step_type = "SSHConnectStep"
+            case "sshclosestep": step_type = "SSHCloseStep"
 
         # we remove this entry because it is used to determine which class to use for instantiation and
         # is not needed beyond that
