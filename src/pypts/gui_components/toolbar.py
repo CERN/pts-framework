@@ -36,6 +36,11 @@ _STOP_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"'
     ' fill="{color}"><rect x="3" y="3" width="10" height="10" rx="1.5"/></svg>'
 )
+_PAUSE_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"'
+    ' fill="{color}"><rect x="3" y="2" width="4" height="12" rx="1"/>'
+    '<rect x="9" y="2" width="4" height="12" rx="1"/></svg>'
+)
 
 
 class PtsToolBar(QToolBar):
@@ -50,14 +55,18 @@ class PtsToolBar(QToolBar):
         self._dark = False
         self._can_start = False
         self._can_stop = False
+        self._can_pause = False
 
         self.action_open = QAction("Open", self)
         self.action_start = QAction("Start", self)
         self.action_stop = QAction("Stop", self)
+        self.action_pause = QAction("Pause", self)
 
         self.addAction(self.action_open)
         self.addAction(self.action_start)
+        self.addAction(self.action_pause)
         self.addAction(self.action_stop)
+        
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -84,6 +93,10 @@ class PtsToolBar(QToolBar):
         self._can_stop = value
         self._refresh_states()
 
+    def set_can_pause(self, value: bool):
+        self._can_pause = value
+        self._refresh_states()
+
     def _refresh_states(self):
         self.action_open.setIcon(
             _svg_icon(_FOLDER_SVG.format(color="#7AABDF" if self._dark else "#424242"))
@@ -95,4 +108,8 @@ class PtsToolBar(QToolBar):
         self.action_stop.setEnabled(self._can_stop)
         self.action_stop.setIcon(
             _svg_icon(_STOP_SVG.format(color="#CC0000" if self._can_stop else "#BDBDBD"))
+        )
+        self.action_pause.setEnabled(self._can_pause)
+        self.action_pause.setIcon(
+            _svg_icon(_PAUSE_SVG.format(color="#E65100" if self._can_pause else "#BDBDBD"))
         )
