@@ -105,25 +105,17 @@ class TestMainReportGeneration:
 
     def test_report_content(self, tmp_path):
         """Verify the CSV content matches the simulated data in report.py's __main__ block."""
-        from datetime import timedelta
-
         report_py_path = PROJECT_ROOT / "src" / "pypts" / "report.py"
         output_dir = tmp_path / "temp_report_output"
 
         assert report_py_path.exists()
-        command = [sys.executable, str(report_py_path), "-o", str(output_dir)]
+        command = [sys.executable, str(report_py_path), "-o", str(output_dir), "-t", str(timestamp)]
         result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
         print("STDOUT:", result.stdout)
         print("STDERR:", result.stderr)
         assert result.returncode == 0, "Script execution failed"
 
-        # Find the report file (may be current or next minute due to subprocess timing)
-        ts_current = timestamp
-        ts_next = (datetime.now() + timedelta(minutes=1)).strftime('%Y-%m-%d_%Hh%M')
-        report_path = output_dir / f"report_{ts_current}.csv"
-        if not report_path.exists():
-            report_path = output_dir / f"report_{ts_next}.csv"
-
+        report_path = output_dir / f"report_{timestamp}.csv"
         assert report_path.exists(), "Report file was not created"
         assert report_path.stat().st_size > 0, "Report file is empty"
 
