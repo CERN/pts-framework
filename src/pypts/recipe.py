@@ -351,8 +351,15 @@ class RuntimeBridge(QObject):
         Runtime.stop_event.set()
         #Runtime.stop()
 
-# Global singleton instance
-runtime_bridge = RuntimeBridge()
+# Deferred singleton — must not be created before QApplication exists (Qt requirement).
+# Use get_runtime_bridge() to access it; the first call instantiates it.
+_runtime_bridge: "RuntimeBridge | None" = None
+
+def get_runtime_bridge() -> "RuntimeBridge":
+    global _runtime_bridge
+    if _runtime_bridge is None:
+        _runtime_bridge = RuntimeBridge()
+    return _runtime_bridge
 
 class Recipe:
     """

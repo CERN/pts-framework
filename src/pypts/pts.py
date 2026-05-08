@@ -8,7 +8,7 @@ from pypts import recipe
 import threading
 from dataclasses import dataclass
 from pypts.report import report_listener, STOP_LISTENER, LISTENER_RUNNING
-from pypts.recipe import Runtime, runtime_bridge
+from pypts.recipe import Runtime, get_runtime_bridge
 from pypts.utils import get_report_root
 import importlib.metadata
 
@@ -205,14 +205,14 @@ def command_handler_loop(queue, report_queue, event_queue):
                     else:
                         logger.debug("Report listener already running.")
 
-                runtime_bridge.start_signal.emit()
+                get_runtime_bridge().start_signal.emit()
             elif cmd == "STOP":
                 report_queue.put(STOP_LISTENER)
                 logger.info("STOP command received. Sent STOP_LISTENER to report queue.")
-                runtime_bridge.stop_signal.emit()
+                get_runtime_bridge().stop_signal.emit()
                 LISTENER_RUNNING = False
             elif cmd == "EXIT":
-                runtime_bridge.stop_signal.emit()
+                get_runtime_bridge().stop_signal.emit()
                 break
         except Exception as e:
             logger.error(f"Command handler failed: {e}", exc_info=True)

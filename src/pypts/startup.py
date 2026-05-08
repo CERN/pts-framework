@@ -32,8 +32,8 @@ def create_and_start_gui(api,  recipe_file: str = None):
             window.load_recipe()
             window.q_in.put(("LOAD",window.recipe_file))
             window.action_start_recipe_execution.setEnabled(True)
-        except:
-           pass
+        except Exception:
+            logger.exception("Failed to load recipe at startup: %s", recipe_file)
 
     time.sleep(1)  # Prevents a race condition. To be properly fixed!!
     # If we don't put the sleep, recipe_event_processing_thread.start() may not
