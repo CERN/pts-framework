@@ -3,12 +3,11 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 from queue import Queue, SimpleQueue
-import logging, time
+import logging
 from pypts import recipe
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pypts.report import report_listener, STOP_LISTENER, LISTENER_RUNNING
-from pypts.recipe import Runtime, runtime_bridge
 from pypts.utils import get_report_root
 import importlib.metadata
 
@@ -28,7 +27,9 @@ class PtsApi:
     input_queue: Queue
     event_queue: SimpleQueue
     recipe_queue: SimpleQueue
-    
+    on_start: object = field(default=None)
+    on_stop: object = field(default=None)
+
     """
     Starts a PTS recipe running in a separate thread and returns an API object to interact with it.
     Also starts a background thread (`report_listener`) to generate a CSV report (`report.csv`)
@@ -43,6 +44,8 @@ class PtsApi:
             - input_queue: Queue for sending commands to the recipe
             - event_queue: Queue for receiving events from the recipe
             - recipe_queue: Queue for receiving recipe execution reports
+            - on_start: callable set by the GUI layer; invoked when a START command arrives
+            - on_stop: callable set by the GUI layer; invoked when a STOP/EXIT command arrives
     """
 
 def run_pts(sequence_name: str = "Main") -> PtsApi:
@@ -53,7 +56,7 @@ def run_pts(sequence_name: str = "Main") -> PtsApi:
     _pts_context = True
     api = PtsApi(input_queue, event_queue, report_queue)
 
-    command_thread = threading.Thread(target=command_handler_loop, args=(api.input_queue, report_queue,event_queue), daemon=True)
+    command_thread = threading.Thread(target=command_handler_loop, args=(api,), daemon=True)
     command_thread.start()
 
     return api
@@ -102,7 +105,11 @@ def get_channel(name):
     return _channel_manager.get_channel(name)
 
 
-def command_handler_loop(queue, report_queue, event_queue):
+def command_handler_loop(api: PtsApi):
+    queue = api.input_queue
+    report_queue = api.recipe_queue
+    event_queue = api.event_queue
+
     # Define output directory for reports
     report_output_dir = get_report_root()
     report_output_dir.mkdir(parents=True, exist_ok=True)
@@ -128,7 +135,7 @@ def command_handler_loop(queue, report_queue, event_queue):
             if cmd == "LOAD":
                 global current_run_thread, current_runtime
                 recipe_file = command[1]
-                
+
                 try:
                     logger.info(f"Loading recipe from: {recipe_file}")
 
@@ -146,7 +153,7 @@ def command_handler_loop(queue, report_queue, event_queue):
                         recipe_to_run = recipe.Recipe(recipe_file)
                         logger.debug(f"Recipe created successfully. Name: {getattr(recipe_to_run, 'name', 'MISSING')}, Version: {getattr(recipe_to_run, 'version', 'MISSING')}")
                         logger.debug(f"Recipe object type: {type(recipe_to_run)}")
-                        
+
                         # Validate recipe object before sending event
                         if not hasattr(recipe_to_run, 'name'):
                             logger.error("Recipe object missing 'name' attribute")
@@ -154,11 +161,11 @@ def command_handler_loop(queue, report_queue, event_queue):
                         if not hasattr(recipe_to_run, 'version'):
                             logger.error("Recipe object missing 'version' attribute")
                             raise AttributeError("Recipe object missing 'version' attribute")
-                            
+
                     except Exception as e:
                         logger.error(f"Failed to create recipe from {recipe_file}: {e}", exc_info=True)
                         raise
-                    
+
                     # Send event using runtime's send_event method
                     logger.debug(f"Sending post_load_recipe event with recipe: {recipe_to_run}")
                     runtime.send_event("post_load_recipe", recipe_to_run)
@@ -205,14 +212,17 @@ def command_handler_loop(queue, report_queue, event_queue):
                     else:
                         logger.debug("Report listener already running.")
 
-                runtime_bridge.start_signal.emit()
+                if api.on_start:
+                    api.on_start()
             elif cmd == "STOP":
                 report_queue.put(STOP_LISTENER)
                 logger.info("STOP command received. Sent STOP_LISTENER to report queue.")
-                runtime_bridge.stop_signal.emit()
+                if api.on_stop:
+                    api.on_stop()
                 LISTENER_RUNNING = False
             elif cmd == "EXIT":
-                runtime_bridge.stop_signal.emit()
+                if api.on_stop:
+                    api.on_stop()
                 break
         except Exception as e:
             logger.error(f"Command handler failed: {e}", exc_info=True)
