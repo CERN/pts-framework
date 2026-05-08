@@ -124,6 +124,9 @@ class IndexedStep(Step):
             # Create a deep copy of the template step for this iteration
             # This ensures modifications (like changing input_mapping) don't affect other iterations.
             copied_step: Step = copy.deepcopy(self.template_step)
+            # Sub-steps must share the wrapper's UUID so the GUI (which only knows the
+            # wrapper row) can find and highlight/update them during execution.
+            copied_step.id = self.id
 
             # Set the specific inputs for this iteration by replacing its input_mapping
             copied_step.input_mapping = iteration_input_mapping

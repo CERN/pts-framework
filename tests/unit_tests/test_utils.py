@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from pypts.utils import (
     get_project_root,
+    get_report_root,
     get_step_result_colors,
     path_to_importable_module,
     AbortTestException,
@@ -37,6 +38,16 @@ class TestGetProjectRoot:
         """Verify that pyproject.toml exists in the detected project root."""
         root = get_project_root()
         assert (root / "pyproject.toml").exists()
+
+
+# ============================================================
+# get_report_root
+# ============================================================
+
+class TestGetReportRoot:
+    def test_returns_home_pts_reports(self):
+        """Verify reports are written to ~/pts_reports regardless of CWD."""
+        assert get_report_root() == Path.home() / "pts_reports"
 
 
 # ============================================================

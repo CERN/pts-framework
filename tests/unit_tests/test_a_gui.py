@@ -204,7 +204,7 @@ def test_create_and_start_gui_shows_window(qapp):
     api = Mock()
     api.input_queue = SimpleQueue()
 
-    with patch("pypts.startup.QApplication", return_value=qapp), patch("pypts.startup.time.sleep"):
+    with patch("pypts.startup.QApplication", return_value=qapp):
         window, app = create_and_start_gui(api)
 
     try:

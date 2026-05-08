@@ -34,6 +34,12 @@ def mock_logger():
         yield mock_logger
 
 
+@pytest.fixture(autouse=True)
+def mock_report_root(monkeypatch, tmp_path):
+    """Keep command_handler_loop tests from writing to the real home directory."""
+    monkeypatch.setattr("pypts.pts.get_report_root", lambda: tmp_path / "pts_reports")
+
+
 # ============================================================
 # DataChannel
 # ============================================================
@@ -159,35 +165,49 @@ class TestPtsApi:
 # ============================================================
 
 class TestCommandHandlerLoop:
+    @patch("pypts.pts.get_report_root")
+    def test_uses_home_report_root(self, mock_get_report_root, tmp_path):
+        """Verify command_handler_loop creates reports under the canonical report root."""
+        mock_get_report_root.return_value = tmp_path / "pts_reports"
+        api = PtsApi(
+            input_queue=Queue(),
+            event_queue=SimpleQueue(),
+            recipe_queue=SimpleQueue(),
+        )
+        api.input_queue.put(None)
+
+        t = threading.Thread(target=command_handler_loop, args=(api,), daemon=True)
+        t.start()
+        t.join(timeout=5)
+
+        mock_get_report_root.assert_called_once_with()
+        assert (tmp_path / "pts_reports").exists()
+
     def test_exits_on_none(self):
         """Verify that sending None cleanly exits the loop."""
-        cmd_q = Queue()
-        report_q = SimpleQueue()
-        event_q = SimpleQueue()
-        cmd_q.put(None)
-
-        t = threading.Thread(
-            target=command_handler_loop,
-            args=(cmd_q, report_q, event_q),
-            daemon=True,
+        api = PtsApi(
+            input_queue=Queue(),
+            event_queue=SimpleQueue(),
+            recipe_queue=SimpleQueue(),
         )
+        api.input_queue.put(None)
+
+        t = threading.Thread(target=command_handler_loop, args=(api,), daemon=True)
         t.start()
         t.join(timeout=5)
         assert not t.is_alive(), "command_handler_loop did not exit on None"
 
     def test_ignores_non_tuple_commands(self):
         """Verify that non-tuple commands are skipped without crashing."""
-        cmd_q = Queue()
-        report_q = SimpleQueue()
-        event_q = SimpleQueue()
-        cmd_q.put("not a tuple")
-        cmd_q.put(None)  # Exit signal
-
-        t = threading.Thread(
-            target=command_handler_loop,
-            args=(cmd_q, report_q, event_q),
-            daemon=True,
+        api = PtsApi(
+            input_queue=Queue(),
+            event_queue=SimpleQueue(),
+            recipe_queue=SimpleQueue(),
         )
+        api.input_queue.put("not a tuple")
+        api.input_queue.put(None)  # Exit signal
+
+        t = threading.Thread(target=command_handler_loop, args=(api,), daemon=True)
         t.start()
         t.join(timeout=5)
         assert not t.is_alive()
@@ -204,17 +224,15 @@ class TestCommandHandlerLoop:
         mock_runtime_instance = MagicMock()
         MockRuntime.return_value = mock_runtime_instance
 
-        cmd_q = Queue()
-        report_q = SimpleQueue()
-        event_q = SimpleQueue()
-        cmd_q.put(("LOAD", "fake_recipe.yaml"))
-        cmd_q.put(None)
-
-        t = threading.Thread(
-            target=command_handler_loop,
-            args=(cmd_q, report_q, event_q),
-            daemon=True,
+        api = PtsApi(
+            input_queue=Queue(),
+            event_queue=SimpleQueue(),
+            recipe_queue=SimpleQueue(),
         )
+        api.input_queue.put(("LOAD", "fake_recipe.yaml"))
+        api.input_queue.put(None)
+
+        t = threading.Thread(target=command_handler_loop, args=(api,), daemon=True)
         t.start()
         t.join(timeout=5)
 
@@ -223,16 +241,14 @@ class TestCommandHandlerLoop:
 
     def test_exit_command_breaks_loop(self):
         """Verify that the EXIT command terminates the handler loop."""
-        cmd_q = Queue()
-        report_q = SimpleQueue()
-        event_q = SimpleQueue()
-        cmd_q.put(("EXIT",))
-
-        t = threading.Thread(
-            target=command_handler_loop,
-            args=(cmd_q, report_q, event_q),
-            daemon=True,
+        api = PtsApi(
+            input_queue=Queue(),
+            event_queue=SimpleQueue(),
+            recipe_queue=SimpleQueue(),
         )
+        api.input_queue.put(("EXIT",))
+
+        t = threading.Thread(target=command_handler_loop, args=(api,), daemon=True)
         t.start()
         t.join(timeout=5)
         assert not t.is_alive()

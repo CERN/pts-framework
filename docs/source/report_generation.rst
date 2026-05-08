@@ -14,7 +14,7 @@ Initialization
 When a pypts recipe execution is initiated via the ``pts.run_pts`` function:
 
 1.  A ``SimpleQueue`` named ``report_queue`` is created. This queue serves as the communication channel between the main recipe execution thread and the reporting thread.
-2.  A report output directory is determined. Currently, this is hardcoded within ``pts.run_pts`` to be ``./pts_reports`` relative to the directory where the pypts application was launched. The directory is created if it doesn't exist.
+2.  A report output directory is determined. Reports are written to ``~/pts_reports`` regardless of the directory where the pypts application was launched. The directory is created if it doesn't exist.
 3.  A dedicated daemon thread is started, running the ``report.report_listener`` function. This function is passed the ``report_queue`` and the path to the output directory.
 4.  The ``report_queue`` is passed to the ``recipe.Runtime`` object, making it accessible during recipe execution.
 
