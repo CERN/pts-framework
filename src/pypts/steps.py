@@ -809,7 +809,6 @@ class UserRunMethodStep(Step):
                 except queue.Empty:
                     continue  # No response yet, keep checking stop_event
 
-            status = {}
             logger.info(f"Step '{self.name}': User responded.")
             logger.debug(f"Step '{self.name}': Received response: {response}")
             
@@ -834,25 +833,20 @@ class UserRunMethodStep(Step):
 
                     result = module_step._step(runtime, module_input, parent_step_result_uuid)
 
-
                     if isinstance(result, dict):
                         step_output = result
                     else:
                         step_output = {"output": bool(result), "value": result}
 
-                    status["status"] = "ok" if step_output.get("output", False) else "error"
-
                     logger.info(f"Module method returned: {step_output}")
                 except Exception as e:
                     logger.error(f"Module method failed: {e}")
-                    status["status"] = "error"
-                    response = "error"
-                    step_output = {"output": response}
+                    step_output = {"output": False}
             else:
                 logger.info(f"No trigger matched. Skipping module execution.")
-                status["status"] = ""
+                step_output = {"output": response}
 
-            return {"output": step_output, "status": status}
+            return step_output
 
         except Exception as e:
             # Catch potential errors during event sending or queue operations
