@@ -318,8 +318,8 @@ class TestReport:
             rows = list(csv.DictReader(f))
         assert len(rows) == 5
 
-    def test_add_step_result_uses_unique_image_path_per_result(self, tmp_path):
-        """Verify that repeated step IDs do not cause copied report images to collide."""
+    def test_add_step_result_reuses_image_path_for_same_source_name(self, tmp_path):
+        """Verify repeated writes of the same source image keep a stable report path."""
         ts = "2025-01-01_12h00"
         report = Report(output_dir=tmp_path, timestamp=ts)
         step = Step(step_name="IndexedChild", id="shared-step-id")
@@ -354,7 +354,7 @@ class TestReport:
         assert len(rows) == 2
         assert rows[0]["image_paths"]
         assert rows[1]["image_paths"]
-        assert rows[0]["image_paths"] != rows[1]["image_paths"]
+        assert rows[0]["image_paths"] == rows[1]["image_paths"]
         assert (tmp_path / rows[0]["image_paths"]).exists()
         assert (tmp_path / rows[1]["image_paths"]).exists()
 

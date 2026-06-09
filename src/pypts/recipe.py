@@ -328,6 +328,8 @@ class Recipe:
                 logger.error(f"'{report_mode}' is not a valid reporting mode. Use 'overwrite' or 'append'.")
                 raise
 
+            self.report_name_include_serial: bool = bool(recipe_main_data.get("report_name_include_serial", False))
+
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
             if self.test_package and "." in self.test_package:
@@ -642,9 +644,13 @@ class Step:
                 step_result.set_result(result_type, step_input, step_output)
                 for out_name, out_cfg in self.output_mapping.items():
                     if out_cfg.get("type") == "image":
-                        path = step_output.get(out_name)
-                        if path:
-                            step_result.image_paths.append(str(path))
+                        image_value = step_output.get(out_name)
+                        if isinstance(image_value, (list, tuple, set)):
+                            for path in image_value:
+                                if path:
+                                    step_result.image_paths.append(str(path))
+                        elif image_value:
+                            step_result.image_paths.append(str(image_value))
             except:
                 logger.error(f"Error occurred while running step {self.name}")
                 error_info = traceback.format_exc()

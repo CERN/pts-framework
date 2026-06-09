@@ -202,7 +202,12 @@ def command_handler_loop(api: PtsApi):
                         #Moved to here so it is not initialized only once during setup
                         current_report_thread = threading.Thread(
                             target=report_listener,
-                            args=(report_queue, str(report_output_dir), recipe_to_run.report_overwrite),
+                            args=(
+                                report_queue,
+                                str(report_output_dir),
+                                recipe_to_run.report_overwrite,
+                                recipe_to_run.report_name_include_serial,
+                            ),
                             daemon=False,
                         )
                         current_report_thread.start()
