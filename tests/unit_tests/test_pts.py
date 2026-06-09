@@ -253,6 +253,25 @@ class TestCommandHandlerLoop:
         t.join(timeout=5)
         assert not t.is_alive()
 
+    def test_stop_does_not_preemptively_stop_report_listener(self):
+        """Verify STOP does not directly enqueue STOP_LISTENER into the report queue."""
+        api = PtsApi(
+            input_queue=Queue(),
+            event_queue=SimpleQueue(),
+            recipe_queue=SimpleQueue(),
+        )
+        on_stop = MagicMock()
+        api.on_stop = on_stop
+        api.input_queue.put(("STOP",))
+        api.input_queue.put(None)
+
+        t = threading.Thread(target=command_handler_loop, args=(api,), daemon=True)
+        t.start()
+        t.join(timeout=5)
+
+        on_stop.assert_called_once()
+        assert api.recipe_queue.empty()
+
 
 # ============================================================
 # run_pts

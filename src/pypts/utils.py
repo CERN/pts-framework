@@ -5,6 +5,7 @@
 from pathlib import Path
 import hashlib
 import io
+import os
 import sys
 from importlib import util
 from importlib.resources import files, as_file
@@ -38,8 +39,16 @@ EXCLUDE_DIRS = {
 WAIT_FOR_TERMINATION = threading.Event()
 
 def get_report_root() -> Path:
-    """Return the canonical directory for pypts report artifacts."""
-    return Path.home() / "pts_reports"
+    """Return the canonical directory for pypts report artifacts.
+
+    Defaults to ``<project_root>/pts_reports`` (where project root is the
+    detected directory containing ``pyproject.toml`` when available).
+    Set ``PYPTS_REPORT_DIR`` to override.
+    """
+    override = os.environ.get("PYPTS_REPORT_DIR")
+    if override:
+        return Path(override).expanduser()
+    return get_project_root() / "pts_reports"
 
 def get_step_result_colors(result_value, result_type_enum) -> tuple[str, str]:
     """

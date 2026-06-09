@@ -357,6 +357,7 @@ class Recipe:
         Returns:
             List[StepResult]: A list of the top-level StepResult objects generated during the run.
         """
+        sent_stop_listener = False
         try:
             runtime.set_globals(self.globals)
             runtime.set_sequences(self.sequences)
@@ -398,10 +399,18 @@ class Recipe:
             # Signal the report listener to stop
             from pypts.report import STOP_LISTENER
             runtime.report_queue.put(STOP_LISTENER)
+            sent_stop_listener = True
             logger.debug("Sent STOP_LISTENER to report queue.")
 
             return results
         finally:
+            if not sent_stop_listener:
+                try:
+                    from pypts.report import STOP_LISTENER
+                    runtime.report_queue.put(STOP_LISTENER)
+                    logger.debug("Sent STOP_LISTENER to report queue from finally.")
+                except Exception:
+                    logger.exception("Failed to send STOP_LISTENER from finally.")
             #results: List[StepResult] = runtime.get_results()
             runtime.send_event("post_run_recipe", results)
             Runtime.stop_event.set()

@@ -45,9 +45,10 @@ class TestGetProjectRoot:
 # ============================================================
 
 class TestGetReportRoot:
-    def test_returns_home_pts_reports(self):
-        """Verify reports are written to ~/pts_reports regardless of CWD."""
-        assert get_report_root() == Path.home() / "pts_reports"
+    def test_returns_project_pts_reports_by_default(self):
+        """Verify reports are written to <project_root>/pts_reports by default."""
+        expected_root = Path(__file__).resolve().parents[2] / "pts_reports"
+        assert get_report_root().resolve() == expected_root
 
 
 # ============================================================

@@ -65,6 +65,27 @@ steps:
     wait_time:
       value: '3'
 
+
+- steptype: PythonModuleStep
+  step_name: Indexed Sinewave report image test
+  description: Runs sinewave generation twice with indexed inputs and attaches both plots to the report
+  action_type: method
+  module: example_tests.py
+  method_name: generate_sinewave
+  input_mapping:
+    frequency:
+      type: direct
+      value: [60, 60]
+      indexed: true
+    tolerance:
+      type: direct
+      value: 1.0
+  output_mapping:
+    passed:
+      type: passfail
+    chart:
+      type: image
+
   # === INPUT: global | OUTPUT: passfail ===
   #Runs a method that sends commands to ssh.
 - steptype: PythonModuleStep
@@ -464,6 +485,8 @@ steps:
     output:
       type: local
       local_name: final_result
+
+
 - steptype: WaitStep
   step_name: Wait for 3s
   description: Waiting 3 seconds to let user check confirm

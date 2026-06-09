@@ -174,6 +174,8 @@ def _copy_step_images(result: StepResult, output_dir: Path) -> List[str]:
     img_dir.mkdir(exist_ok=True)
 
     step_id = str(result.step.id) if result.step else "unknown"
+    result_id = str(result.uuid) if result.uuid else "unknown"
+
 
     for src_path_str in result.image_paths:
         src = Path(src_path_str)
@@ -183,7 +185,8 @@ def _copy_step_images(result: StepResult, output_dir: Path) -> List[str]:
         if src.suffix.lower() not in IMAGE_EXTENSIONS:
             logger.warning(f"File does not look like an image, skipping: {src}")
             continue
-        dest_name = f"{step_id}_{src.name}"
+        #dest_name = f"{step_id}_{src.name}"
+        dest_name = f"{result_id}_{src.name}"
         dest = img_dir / dest_name
         try:
             shutil.copy2(src, dest)
