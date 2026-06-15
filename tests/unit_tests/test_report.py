@@ -442,3 +442,28 @@ class TestReportListener:
         with open(csv_files[0], 'r') as f:
             rows = list(csv.DictReader(f))
         assert len(rows) == 1  # Only the valid result
+
+    def test_uses_real_serial_for_report_name(self, tmp_path):
+        """Verify filename uses a later real serial instead of placeholder default_serial."""
+        rq = SimpleQueue()
+
+        first = _make_step_result("BeforeSerial")
+        first.serial_number = "default_serial"
+        rq.put(first)
+
+        second = _make_step_result("AfterSerial")
+        second.serial_number = "SN-REAL-42"
+        rq.put(second)
+        rq.put(STOP_LISTENER)
+
+        t = threading.Thread(
+            target=report_listener,
+            args=(rq, str(tmp_path), True, True),
+            daemon=True,
+        )
+        t.start()
+        t.join(timeout=10)
+        assert not t.is_alive()
+
+        csv_files = list(tmp_path.glob("report_ID_SN-REAL-42_*.csv"))
+        assert len(csv_files) == 1

@@ -28,7 +28,7 @@ sequence_name: Comprehensive_IO_Types
 description: Sequence covering all input and output types
 parameters: {}
 locals:
-  serial_ID: None
+  serial_ID: 5
   serialport: None
   baudrate: None
   local_val: 10
@@ -46,6 +46,12 @@ locals:
 outputs:
   final_result: None
 setup_steps: 
+
+- steptype: SerialNumberStep
+  step_name: Enter DUT Serial Number
+  description: Ask for serial number before running tests
+  input_mapping: {}
+  output_mapping: {}
 
 #Creates a threading holding the opened SSH connection so it can be called and used elsewhere. 
 - steptype: SSHConnectStep

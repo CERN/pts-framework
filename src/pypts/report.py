@@ -206,6 +206,15 @@ from queue import SimpleQueue
 STOP_LISTENER = object()
 LISTENER_RUNNING = False
 
+
+def _is_real_serial(value: str | None) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    return text.lower() not in {"default_serial", "none", "null", "n/a", "na"}
+
 def report_listener(
     result_queue: SimpleQueue,
     output_dir: str,
@@ -239,8 +248,9 @@ def report_listener(
                 active = False
             elif isinstance(item, StepResult):
                 logger.debug(f"Listener received StepResult: {item.step.name if item.step else 'N/A'}")
-                if not serial_number and getattr(item, "serial_number", None):
-                    serial_number = str(item.serial_number)
+                candidate_serial = getattr(item, "serial_number", None)
+                if _is_real_serial(candidate_serial) and not _is_real_serial(serial_number):
+                    serial_number = str(candidate_serial).strip()
                     if include_serial_in_name:
                         safe_serial = re.sub(r'[^A-Za-z0-9._-]+', '_', serial_number).strip('_')
                         if safe_serial:
@@ -254,7 +264,7 @@ def report_listener(
 
     try:
         report_manager.finish_reports()
-        if include_serial_in_name and serial_number:
+        if include_serial_in_name and _is_real_serial(serial_number):
             safe_serial = re.sub(r'[^A-Za-z0-9._-]+', '_', serial_number).strip('_')
             if safe_serial:
                 report_name = f"report_ID_{safe_serial}_{timestamp}"
