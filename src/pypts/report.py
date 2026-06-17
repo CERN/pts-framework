@@ -16,10 +16,14 @@ import html
 from datetime import datetime
 from itertools import groupby
 from operator import itemgetter
+from queue import SimpleQueue
 
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.tiff', '.webp'}
+
+STOP_LISTENER = object()
+LISTENER_RUNNING = False
 
 
 def _serialize_step(step: Step) -> Dict[str, Any]:
@@ -200,11 +204,7 @@ def _copy_step_images(result: StepResult, output_dir: Path, image_dir_name: str 
     return relative_paths
 
 
-# --- Listener Function ---
-from queue import SimpleQueue
 
-STOP_LISTENER = object()
-LISTENER_RUNNING = False
 
 
 def _is_real_serial(value: str | None) -> bool:
