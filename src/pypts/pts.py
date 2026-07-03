@@ -7,7 +7,7 @@ import logging
 from pypts import recipe
 import threading
 from dataclasses import dataclass, field
-from pypts.report import report_listener, STOP_LISTENER, LISTENER_RUNNING
+from pypts.report import report_listener, STOP_LISTENER
 from pypts.utils import get_report_root
 import importlib.metadata
 
@@ -20,6 +20,7 @@ _pts_context = False
 
 current_run_thread = None
 current_runtime = None
+current_report_thread = None
 
 
 @dataclass
@@ -133,7 +134,7 @@ def command_handler_loop(api: PtsApi):
 
             cmd = command[0]
             if cmd == "LOAD":
-                global current_run_thread, current_runtime
+                global current_run_thread, current_runtime, current_report_thread
                 recipe_file = command[1]
 
                 try:
@@ -174,7 +175,6 @@ def command_handler_loop(api: PtsApi):
                     logger.error(f"Failed to load recipe: {e}", exc_info=True)
 
             if cmd == "START":
-                global LISTENER_RUNNING
                 while not report_queue.empty():
                     try:
                         report_queue.get_nowait()
@@ -184,8 +184,6 @@ def command_handler_loop(api: PtsApi):
                 if current_run_thread and current_run_thread.is_alive():
                     logger.warning("Recipe thread already running. Start command ignored.")
                 else:
-                    #added here so every time a new runtime thread is made, so is a new report thread.
-                    LISTENER_RUNNING = False
                     # Start the recipe in a new thread
                     current_run_thread = threading.Thread(
                         target=recipe_to_run.run,
@@ -199,30 +197,53 @@ def command_handler_loop(api: PtsApi):
                     current_runtime = runtime  # save reference to stop later
                     logger.info("Recipe execution thread started.")
 
-                    if not LISTENER_RUNNING:
+                    if not (current_report_thread and current_report_thread.is_alive()):
                         # Start the report listener thread
                         #Moved to here so it is not initialized only once during setup
-                        threading.Thread(
-                                target=report_listener,
-                                args=(report_queue, str(report_output_dir), recipe_to_run.report_overwrite),
-                                daemon=True
-                            ).start()
+                        current_report_thread = threading.Thread(
+                            target=report_listener,
+                            args=(
+                                report_queue,
+                                str(report_output_dir),
+                                recipe_to_run.report_overwrite,
+                                recipe_to_run.report_name_include_serial,
+                            ),
+                            daemon=False,
+                        )
+                        current_report_thread.start()
                         logger.info(f"Report listener started. Output directory: {report_output_dir.resolve()}")
-                        LISTENER_RUNNING = True
                     else:
                         logger.debug("Report listener already running.")
 
                 if api.on_start:
                     api.on_start()
             elif cmd == "STOP":
-                report_queue.put(STOP_LISTENER)
-                logger.info("STOP command received. Sent STOP_LISTENER to report queue.")
+                logger.info("STOP command received. Requesting recipe stop.")
                 if api.on_stop:
                     api.on_stop()
-                LISTENER_RUNNING = False
+
+                # Wait briefly for recipe thread to enqueue any final results and stop signal.
+                if current_run_thread and current_run_thread.is_alive():
+                    current_run_thread.join(timeout=10)
+
+                # Ensure report listener gets a stop signal and finishes writing artifacts.
+                if current_report_thread and current_report_thread.is_alive():
+                    report_queue.put(STOP_LISTENER)
+                    current_report_thread.join(timeout=10)
+                    if current_report_thread.is_alive():
+                        logger.warning("Report listener did not finish within timeout after STOP.")
             elif cmd == "EXIT":
                 if api.on_stop:
                     api.on_stop()
+
+                if current_run_thread and current_run_thread.is_alive():
+                    current_run_thread.join(timeout=10)
+
+                if current_report_thread and current_report_thread.is_alive():
+                    report_queue.put(STOP_LISTENER)
+                    current_report_thread.join(timeout=10)
+                    if current_report_thread.is_alive():
+                        logger.warning("Report listener did not finish within timeout after EXIT.")
                 break
         except Exception as e:
             logger.error(f"Command handler failed: {e}", exc_info=True)

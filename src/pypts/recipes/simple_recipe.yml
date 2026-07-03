@@ -7,10 +7,12 @@ recipe_version: 1.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
 continue_on_error: true
+report_name_include_serial: True
 globals: {}
 ---
 sequence_name: Main
 description: The main sequence of steps for the example recipe.
+serial_number: 12
 parameters:
   target_value: '0'
 locals:

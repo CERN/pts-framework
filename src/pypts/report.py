@@ -8,6 +8,7 @@ import csv
 import shutil
 from typing import List, Dict, Any
 from pathlib import Path
+import re
 import logging
 from pypts.recipe import StepResult, ResultType, Step
 import argparse
@@ -15,10 +16,14 @@ import html
 from datetime import datetime
 from itertools import groupby
 from operator import itemgetter
+from queue import SimpleQueue
 
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.tiff', '.webp'}
+
+STOP_LISTENER = object()
+LISTENER_RUNNING = False
 
 
 def _serialize_step(step: Step) -> Dict[str, Any]:
@@ -96,10 +101,11 @@ class Report:
         "result", "inputs", "outputs", "error_info", "image_paths",
     ]
 
-    def __init__(self, output_dir: str | Path, timestamp, overwrite=True):
+    def __init__(self, output_dir: str | Path, timestamp, overwrite=True, image_dir_name: str = "img"):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.timestamp = timestamp
+        self.image_dir_name = image_dir_name
         self._csv_file_handle = None
         self._csv_writer: csv.DictWriter | None = None
         self._init_csv(overwrite)
@@ -133,7 +139,7 @@ class Report:
             return
 
         # Copy any image files returned by the step into the report img/ dir
-        relative_image_paths = _copy_step_images(result, self.output_dir)
+        relative_image_paths = _copy_step_images(result, self.output_dir, self.image_dir_name)
 
         if self._csv_writer and self._csv_file_handle:
             flat_item = _flatten_single_result(result_dict)
@@ -161,7 +167,7 @@ class Report:
         logger.info("Report finishing complete.")
 
 
-def _copy_step_images(result: StepResult, output_dir: Path) -> List[str]:
+def _copy_step_images(result: StepResult, output_dir: Path, image_dir_name: str = "img") -> List[str]:
     """Copies image files from result.image_paths into output_dir/img/.
 
     Returns a list of relative paths (e.g. 'img/abc123_plot.png') for CSV storage.
@@ -170,10 +176,12 @@ def _copy_step_images(result: StepResult, output_dir: Path) -> List[str]:
     if not result.image_paths:
         return relative_paths
 
-    img_dir = output_dir / "img"
+    img_dir = output_dir / image_dir_name
     img_dir.mkdir(exist_ok=True)
 
     step_id = str(result.step.id) if result.step else "unknown"
+    result_id = str(result.uuid) if result.uuid else "unknown"
+
 
     for src_path_str in result.image_paths:
         src = Path(src_path_str)
@@ -183,11 +191,12 @@ def _copy_step_images(result: StepResult, output_dir: Path) -> List[str]:
         if src.suffix.lower() not in IMAGE_EXTENSIONS:
             logger.warning(f"File does not look like an image, skipping: {src}")
             continue
-        dest_name = f"{step_id}_{src.name}"
+        #dest_name = f"{step_id}_{src.name}"
+        dest_name = f"{src.name}"
         dest = img_dir / dest_name
         try:
             shutil.copy2(src, dest)
-            relative_paths.append(f"img/{dest_name}")
+            relative_paths.append(f"{image_dir_name}/{dest_name}")
             logger.debug(f"Copied image {src} -> {dest}")
         except Exception as e:
             logger.error(f"Failed to copy image {src}: {e}")
@@ -195,20 +204,38 @@ def _copy_step_images(result: StepResult, output_dir: Path) -> List[str]:
     return relative_paths
 
 
-# --- Listener Function ---
-from queue import SimpleQueue
 
-STOP_LISTENER = object()
-LISTENER_RUNNING = False
 
-def report_listener(result_queue: SimpleQueue, output_dir: str, overwrite: bool):
+
+def _is_real_serial(value: str | None) -> bool:
+    if value is None:
+        return False
+    text = str(value).strip()
+    if not text:
+        return False
+    return text.lower() not in {"default_serial", "none", "null", "n/a", "na"}
+
+def report_listener(
+    result_queue: SimpleQueue,
+    output_dir: str,
+    overwrite: bool,
+    include_serial_in_name: bool = False,
+):
     """
     Listens to a queue for StepResult objects and generates reports incrementally.
 
     Exits gracefully when the STOP_LISTENER sentinel object is received on the queue.
     """
     timestamp = datetime.now().strftime('%Y-%m-%d_%Hh%M')
-    report_manager = Report(output_dir=output_dir, timestamp=timestamp, overwrite=overwrite)
+    report_name = f"report_{timestamp}"
+    image_dir_name = f"{report_name}_img"
+    report_manager = Report(
+        output_dir=output_dir,
+        timestamp=timestamp,
+        overwrite=overwrite,
+        image_dir_name=image_dir_name,
+    )
+    serial_number = None
     logger.info(f"Report listener started. Output dir: {output_dir}. Waiting for results...")
     active = True
     while active:
@@ -221,6 +248,14 @@ def report_listener(result_queue: SimpleQueue, output_dir: str, overwrite: bool)
                 active = False
             elif isinstance(item, StepResult):
                 logger.debug(f"Listener received StepResult: {item.step.name if item.step else 'N/A'}")
+                candidate_serial = getattr(item, "serial_number", None)
+                if _is_real_serial(candidate_serial) and not _is_real_serial(serial_number):
+                    serial_number = str(candidate_serial).strip()
+                    if include_serial_in_name:
+                        safe_serial = re.sub(r'[^A-Za-z0-9._-]+', '_', serial_number).strip('_')
+                        if safe_serial:
+                            report_name = f"report_ID_{safe_serial}_{timestamp}"
+                            report_manager.image_dir_name = f"{report_name}_img"
                 report_manager.add_step_result(item)
             else:
                 logger.warning(f"Listener received unexpected item: {type(item)} - {item!r}")
@@ -229,8 +264,19 @@ def report_listener(result_queue: SimpleQueue, output_dir: str, overwrite: bool)
 
     try:
         report_manager.finish_reports()
-        csv_report_path = report_manager.output_dir / f'report_{timestamp}.csv'
-        html_report_path = report_manager.output_dir / f'report_{timestamp}.html'
+        if include_serial_in_name and _is_real_serial(serial_number):
+            safe_serial = re.sub(r'[^A-Za-z0-9._-]+', '_', serial_number).strip('_')
+            if safe_serial:
+                report_name = f"report_ID_{safe_serial}_{timestamp}"
+                report_manager.image_dir_name = f"{report_name}_img"
+
+        default_csv_path = report_manager.output_dir / f'report_{timestamp}.csv'
+        csv_report_path = report_manager.output_dir / f'{report_name}.csv'
+        html_report_path = report_manager.output_dir / f'{report_name}.html'
+
+        if default_csv_path.exists() and default_csv_path != csv_report_path:
+            default_csv_path.rename(csv_report_path)
+
         if csv_report_path.exists():
             logger.info(f"Generating HTML report from {csv_report_path}...")
             generate_html_report(csv_path=csv_report_path, html_path=html_report_path, output_dir=report_manager.output_dir)

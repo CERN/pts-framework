@@ -106,6 +106,8 @@ class MainWindow(QMainWindow):
         self.recipe_file = None
         self.recipe_to_run = None
         self._screen_idx = SCREEN_IDLE
+        self._paused = False
+        self._partial_results: list = []
         self._current_recipe_name = None
         self._current_recipe_description = None
         self._dark_mode = detect_system_dark_mode()
@@ -170,9 +172,11 @@ class MainWindow(QMainWindow):
         self.action_open_recipe = self.toolbar.action_open
         self.action_start_recipe_execution = self.toolbar.action_start
         self.action_abort_recipe_execution = self.toolbar.action_stop
+        self.action_pause_recipe_execution = self.toolbar.action_pause
 
         self.action_open_recipe.triggered.connect(self.on_open_clicked)
         self.action_start_recipe_execution.triggered.connect(self.on_start_clicked)
+        self.action_pause_recipe_execution.triggered.connect(self.on_pause_clicked)
         self.action_abort_recipe_execution.triggered.connect(self.on_abort_clicked)
 
     def _build_central(self):
@@ -186,9 +190,10 @@ class MainWindow(QMainWindow):
         self.screen_tab_bar = QTabBar()
         self.screen_tab_bar.setObjectName("screenTabBar")
         self.screen_tab_bar.setExpanding(False)
+        self.screen_tab_bar.setSelectionBehaviorOnRemove(QTabBar.SelectLeftTab)
         for label in ("Idle", "Running", "Prompt", "Results"):
             self.screen_tab_bar.addTab(label)
-        self.screen_tab_bar.currentChanged.connect(self._switch_screen)
+        self.screen_tab_bar.tabBarClicked.connect(self._on_tab_clicked)
         root.addWidget(self.screen_tab_bar)
 
         body = QWidget()
@@ -258,12 +263,7 @@ class MainWindow(QMainWindow):
         self._interaction_panel.set_dark(self._dark_mode)
         self.log_text_box.set_dark(self._dark_mode)
 
-        bg = "#2b2b2b" if self._dark_mode else CERN_BLUE
-        self.screen_tab_bar.setStyleSheet(
-            f"QTabBar {{ background:{bg}; }}"
-            f"QTabBar::tab {{ background:transparent; color:#B3CFF0; padding:6px 16px; border:none; border-radius:4px 4px 0 0; margin-right:2px; font-size:11px; }}"
-            f"QTabBar::tab:selected {{ background:{MTA_BLUE}; color:#ffffff; font-weight:600; }}"
-        )
+        self._update_tab_style()
 
     def _toggle_dark(self):
         self._dark_mode = not self._dark_mode
@@ -273,7 +273,60 @@ class MainWindow(QMainWindow):
         self._dark_mode = dark
         self._apply_theme()
 
+    def _update_tab_style(self):
+        bg = "#2b2b2b" if self._dark_mode else CERN_BLUE
+        if self._paused:
+            hover = f"QTabBar::tab:hover:!selected {{ background:rgba(255,255,255,0.10); }}"
+        else:
+            hover = f"QTabBar::tab:hover:!selected {{ background:transparent; }}"
+        self.screen_tab_bar.setStyleSheet(
+            f"QTabBar {{ background:{bg}; }}"
+            f"QTabBar::tab {{ background:transparent; color:#B3CFF0; padding:6px 16px; border:none;"
+            f" border-radius:4px 4px 0 0; margin-right:2px; font-size:11px; cursor:default; }}"
+            f"QTabBar::tab:selected {{ background:{MTA_BLUE}; color:#ffffff; font-weight:600; }}"
+            + hover
+        )
+
+    def _update_left_stack_for_index(self, index: int):
+        if index == SCREEN_IDLE:
+            self._left_stack.setCurrentIndex(0)
+        elif index in (SCREEN_RUNNING, SCREEN_PROMPT):
+            self._left_stack.setCurrentIndex(1)
+        elif index == SCREEN_RESULTS:
+            self._left_stack.setCurrentIndex(2)
+
+    def _on_tab_clicked(self, index: int):
+        if self._paused:
+            # Browse mode: allow free navigation of the left stack.
+            self.screen_tab_bar.blockSignals(True)
+            self.screen_tab_bar.setCurrentIndex(index)
+            self.screen_tab_bar.blockSignals(False)
+            self._update_left_stack_for_index(index)
+        else:
+            # Tabs are state indicators only — snap back.
+            self.screen_tab_bar.blockSignals(True)
+            self.screen_tab_bar.setCurrentIndex(self._screen_idx)
+            self.screen_tab_bar.blockSignals(False)
+
+    def on_pause_clicked(self):
+        if self._paused:
+            return
+        self._paused = True
+        self.toolbar.set_can_start(True)
+        self.toolbar.set_can_pause(False)
+        self._interaction_panel.set_interaction_blocked(True)
+        self._results_panel.set_results(self._partial_results)
+        self._update_tab_style()
+        self.statusBar().showMessage("Paused \u2014 click tabs to browse, Start to resume")
+
     def _switch_screen(self, index: int):
+        # Any real state transition exits browse mode.
+        if self._paused:
+            self._paused = False
+            self.toolbar.set_can_start(False)
+            self._interaction_panel.set_interaction_blocked(False)
+            self._update_tab_style()
+
         self._screen_idx = index
 
         self.screen_tab_bar.blockSignals(True)
@@ -285,22 +338,26 @@ class MainWindow(QMainWindow):
             self._interaction_panel.set_idle()
             self.toolbar.set_can_start(bool(self.recipe_file))
             self.toolbar.set_can_stop(False)
+            self.toolbar.set_can_pause(False)
             self.statusBar().showMessage("Ready")
         elif index == SCREEN_RUNNING:
             self._left_stack.setCurrentIndex(1)
             self._interaction_panel.set_idle()
             self.toolbar.set_can_start(False)
             self.toolbar.set_can_stop(True)
+            self.toolbar.set_can_pause(True)
             self.statusBar().showMessage("Recipe running")
         elif index == SCREEN_PROMPT:
             self._left_stack.setCurrentIndex(1)
             self.toolbar.set_can_start(False)
             self.toolbar.set_can_stop(True)
+            self.toolbar.set_can_pause(True)
             self.statusBar().showMessage("Waiting for user input")
         elif index == SCREEN_RESULTS:
             self._left_stack.setCurrentIndex(2)
             self.toolbar.set_can_start(True)
             self.toolbar.set_can_stop(False)
+            self.toolbar.set_can_pause(False)
             self.statusBar().showMessage("Recipe completed")
 
     def _make_idle_placeholder_left(self) -> QWidget:
@@ -372,6 +429,21 @@ class MainWindow(QMainWindow):
             raise
 
     def on_start_clicked(self):
+        if self._paused:
+            self._paused = False
+            self._interaction_panel.set_interaction_blocked(False)
+            self.toolbar.set_can_start(False)
+            self.toolbar.set_can_pause(True)
+            self._update_left_stack_for_index(self._screen_idx)
+            self.screen_tab_bar.blockSignals(True)
+            self.screen_tab_bar.setCurrentIndex(self._screen_idx)
+            self.screen_tab_bar.blockSignals(False)
+            self._update_tab_style()
+            if self._screen_idx == SCREEN_RUNNING:
+                self.statusBar().showMessage("Recipe running")
+            elif self._screen_idx == SCREEN_PROMPT:
+                self.statusBar().showMessage("Waiting for user input")
+            return
         if not self.running:
             self.reset_gui()
             self.running = True
@@ -416,6 +488,7 @@ class MainWindow(QMainWindow):
     def reset_gui(self):
         self.step_list.load_steps([])
         self._results_panel.set_results([])
+        self._partial_results.clear()
         self.log_text_box.clear()
         self.recipe_label.setText("No recipe loaded")
         self.message_box.clear()
@@ -526,6 +599,9 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Recipe loaded and ready to start")
 
     def update_step_result(self, step_status_vm: dict):
+        step_result = step_status_vm.get("step_result")
+        if step_result is not None:
+            self._partial_results.append(step_result)
         updated = self.step_list.update_step_status(
             str(step_status_vm["step_uuid"]),
             step_status_vm["status_text"],
@@ -540,6 +616,7 @@ class MainWindow(QMainWindow):
 
     def show_results(self, event_dict):
         results: List[recipe.StepResult] = event_dict["results"]
+        self._partial_results.clear()
         self._results_panel.set_results(results)
         self.running = False
         self.action_abort_recipe_execution.setEnabled(False)

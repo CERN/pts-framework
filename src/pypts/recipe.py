@@ -328,6 +328,8 @@ class Recipe:
                 logger.error(f"'{report_mode}' is not a valid reporting mode. Use 'overwrite' or 'append'.")
                 raise
 
+            self.report_name_include_serial: bool = bool(recipe_main_data.get("report_name_include_serial", False))
+
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
             if self.test_package and "." in self.test_package:
@@ -357,6 +359,7 @@ class Recipe:
         Returns:
             List[StepResult]: A list of the top-level StepResult objects generated during the run.
         """
+        sent_stop_listener = False
         try:
             runtime.set_globals(self.globals)
             runtime.set_sequences(self.sequences)
@@ -398,10 +401,18 @@ class Recipe:
             # Signal the report listener to stop
             from pypts.report import STOP_LISTENER
             runtime.report_queue.put(STOP_LISTENER)
+            sent_stop_listener = True
             logger.debug("Sent STOP_LISTENER to report queue.")
 
             return results
         finally:
+            if not sent_stop_listener:
+                try:
+                    from pypts.report import STOP_LISTENER
+                    runtime.report_queue.put(STOP_LISTENER)
+                    logger.debug("Sent STOP_LISTENER to report queue from finally.")
+                except Exception:
+                    logger.exception("Failed to send STOP_LISTENER from finally.")
             #results: List[StepResult] = runtime.get_results()
             runtime.send_event("post_run_recipe", results)
             Runtime.stop_event.set()
@@ -633,9 +644,13 @@ class Step:
                 step_result.set_result(result_type, step_input, step_output)
                 for out_name, out_cfg in self.output_mapping.items():
                     if out_cfg.get("type") == "image":
-                        path = step_output.get(out_name)
-                        if path:
-                            step_result.image_paths.append(str(path))
+                        image_value = step_output.get(out_name)
+                        if isinstance(image_value, (list, tuple, set)):
+                            for path in image_value:
+                                if path:
+                                    step_result.image_paths.append(str(path))
+                        elif image_value:
+                            step_result.image_paths.append(str(image_value))
             except:
                 logger.error(f"Error occurred while running step {self.name}")
                 error_info = traceback.format_exc()

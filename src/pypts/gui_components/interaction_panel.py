@@ -22,6 +22,7 @@ class InteractionPanel(QWidget):
         self._logo_pixmap = load_cern_logo_pixmap()
         self._selected_button_index = -1
         self._current_image_path: str | None = None
+        self._interaction_blocked = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -71,6 +72,7 @@ class InteractionPanel(QWidget):
         self._refresh_visual()
 
     def set_idle(self):
+        self._interaction_blocked = False
         self.clear_buttons()
         self.message_label.clear()
         self.message_label.setVisible(False)
@@ -94,6 +96,11 @@ class InteractionPanel(QWidget):
 
     def set_image(self, image_path: str | None):
         self._set_image_from_path(image_path)
+
+    def set_interaction_blocked(self, blocked: bool):
+        """Block all button interaction (mouse + keyboard) without visual change."""
+        self._interaction_blocked = blocked
+        self._button_row.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
 
     def add_button(self, label: str, value: str, primary: bool = False):
         button = QPushButton(label)
@@ -158,7 +165,7 @@ class InteractionPanel(QWidget):
         super().keyPressEvent(event)
 
     def _handle_navigation_key(self, key: int) -> bool:
-        if not self._buttons:
+        if not self._buttons or self._interaction_blocked:
             return False
 
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down):

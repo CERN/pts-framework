@@ -11,6 +11,7 @@ import uuid
 import subprocess
 import sys
 import threading
+import base64
 import pytest
 from pathlib import Path
 from queue import SimpleQueue
@@ -317,6 +318,46 @@ class TestReport:
             rows = list(csv.DictReader(f))
         assert len(rows) == 5
 
+    def test_add_step_result_reuses_image_path_for_same_source_name(self, tmp_path):
+        """Verify repeated writes of the same source image keep a stable report path."""
+        ts = "2025-01-01_12h00"
+        report = Report(output_dir=tmp_path, timestamp=ts)
+        step = Step(step_name="IndexedChild", id="shared-step-id")
+        image_path = tmp_path / "plot.png"
+        image_path.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aK1cAAAAASUVORK5CYII="))
+
+        first = StepResult(step=step)
+        first.recipe_name = "TestRecipe"
+        first.recipe_file_name = "recipe.yaml"
+        first.serial_number = "SN001"
+        first.sequence_name = "Main"
+        first.pypts_version = "1.0.0"
+        first.set_result(ResultType.PASS, inputs={}, outputs={})
+        first.image_paths = [str(image_path)]
+
+        second = StepResult(step=step)
+        second.recipe_name = "TestRecipe"
+        second.recipe_file_name = "recipe.yaml"
+        second.serial_number = "SN001"
+        second.sequence_name = "Main"
+        second.pypts_version = "1.0.0"
+        second.set_result(ResultType.PASS, inputs={}, outputs={})
+        second.image_paths = [str(image_path)]
+
+        report.add_step_result(first)
+        report.add_step_result(second)
+        report.finish_reports()
+
+        with open(tmp_path / f"report_{ts}.csv", 'r', encoding='utf-8') as f:
+            rows = list(csv.DictReader(f))
+
+        assert len(rows) == 2
+        assert rows[0]["image_paths"]
+        assert rows[1]["image_paths"]
+        assert rows[0]["image_paths"] == rows[1]["image_paths"]
+        assert (tmp_path / rows[0]["image_paths"]).exists()
+        assert (tmp_path / rows[1]["image_paths"]).exists()
+
     def test_non_step_result_ignored(self, tmp_path):
         """Verify that non-StepResult objects are silently ignored."""
         ts = "2025-01-01_12h00"
@@ -401,3 +442,28 @@ class TestReportListener:
         with open(csv_files[0], 'r') as f:
             rows = list(csv.DictReader(f))
         assert len(rows) == 1  # Only the valid result
+
+    def test_uses_real_serial_for_report_name(self, tmp_path):
+        """Verify filename uses a later real serial instead of placeholder default_serial."""
+        rq = SimpleQueue()
+
+        first = _make_step_result("BeforeSerial")
+        first.serial_number = "default_serial"
+        rq.put(first)
+
+        second = _make_step_result("AfterSerial")
+        second.serial_number = "SN-REAL-42"
+        rq.put(second)
+        rq.put(STOP_LISTENER)
+
+        t = threading.Thread(
+            target=report_listener,
+            args=(rq, str(tmp_path), True, True),
+            daemon=True,
+        )
+        t.start()
+        t.join(timeout=10)
+        assert not t.is_alive()
+
+        csv_files = list(tmp_path.glob("report_ID_SN-REAL-42_*.csv"))
+        assert len(csv_files) == 1

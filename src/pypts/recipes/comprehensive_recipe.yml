@@ -7,6 +7,8 @@ recipe_version: 1.0.0
 description: A sample recipe demonstrating many different combinations of input/outputs.
 main_sequence: Comprehensive_IO_Types
 test_package: pypts
+report_name_include_serial: True #Setting this to true will add the serial number to the report name. This is useful when running multiple tests on the same day to easily differentiate them.
+
 globals:
   #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
@@ -21,11 +23,12 @@ globals:
   private_key: #private key for ssh
   port: None
 ---
+
 sequence_name: Comprehensive_IO_Types
 description: Sequence covering all input and output types
 parameters: {}
 locals:
-  serial_ID: None
+  serial_ID: 5
   serialport: None
   baudrate: None
   local_val: 10
@@ -43,6 +46,12 @@ locals:
 outputs:
   final_result: None
 setup_steps: 
+
+- steptype: SerialNumberStep
+  step_name: Enter DUT Serial Number
+  description: Ask for serial number before running tests
+  input_mapping: {}
+  output_mapping: {}
 
 #Creates a threading holding the opened SSH connection so it can be called and used elsewhere. 
 - steptype: SSHConnectStep
@@ -63,6 +72,27 @@ steps:
   input_mapping:
     wait_time:
       value: '3'
+
+
+- steptype: PythonModuleStep
+  step_name: Indexed Sinewave report image test
+  description: Runs sinewave generation twice with indexed inputs and attaches both plots to the report
+  action_type: method
+  module: example_tests.py
+  method_name: generate_sinewave
+  input_mapping:
+    frequency:
+      type: direct
+      value: [60, 60]
+      indexed: true
+    tolerance:
+      type: direct
+      value: 1.0
+  output_mapping:
+    passed:
+      type: passfail
+    chart:
+      type: image
 
   # === INPUT: global | OUTPUT: passfail ===
   #Runs a method that sends commands to ssh.
@@ -463,6 +493,8 @@ steps:
     output:
       type: local
       local_name: final_result
+
+
 - steptype: WaitStep
   step_name: Wait for 3s
   description: Waiting 3 seconds to let user check confirm

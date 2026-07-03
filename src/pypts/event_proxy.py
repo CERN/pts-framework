@@ -72,7 +72,8 @@ class RecipeEventProxy(QObject):
                         "step_uuid": step_result.step.id,
                         "status_text": str(result_type),
                         "status_color": background_color,
-                        "text_color": text_color
+                        "text_color": text_color,
+                        "step_result": step_result,
                     }
             elif event_name == "pre_run_recipe":
                 event_dict = {

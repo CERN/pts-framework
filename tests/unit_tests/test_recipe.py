@@ -206,6 +206,12 @@ class TestRecipeLoading:
         r = Recipe("fake.yaml", file_loader=_loader_for(data))
         assert r.report_overwrite is False
 
+    def test_report_name_include_serial_flag(self):
+        """Verify report_name_include_serial is parsed from recipe main section."""
+        data = _make_recipe_data(overrides={"report_name_include_serial": True})
+        r = Recipe("fake.yaml", file_loader=_loader_for(data))
+        assert r.report_name_include_serial is True
+
     def test_invalid_report_mode_raises(self):
         """Verify that an unsupported report mode raises an exception."""
         data = _make_recipe_data(overrides={"report": "invalid_mode"})
@@ -437,6 +443,30 @@ class TestStep:
         """Verify check_indexing returns True when an input has indexed=True."""
         step = Step("TestStep", input_mapping={"a": {"type": "direct", "value": 5, "indexed": True}})
         assert step.check_indexing() is True
+
+    def test_image_output_accepts_multiple_paths(self):
+        """Verify one image output key can provide multiple figure paths."""
+        step = Step(
+            step_name="ImageStep",
+            input_mapping={},
+            output_mapping={"chart": {"type": "image"}},
+        )
+
+        runtime = MagicMock()
+        runtime.recipe_name = "R"
+        runtime.recipe_file_name = "r.yml"
+        runtime.serial_number = "SN"
+        runtime.current_sequence_name = "Main"
+        runtime.pypts_version = "test"
+        runtime.stop_event = Event()
+        runtime.report_queue = queue.SimpleQueue()
+
+        step._step = lambda runtime, step_input, parent_uuid: {
+            "chart": ["plot_a.png", "plot_b.png"],
+        }
+
+        result = step.run(runtime, {})
+        assert result.image_paths == ["plot_a.png", "plot_b.png"]
 
 
 # ============================================================
