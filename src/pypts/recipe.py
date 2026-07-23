@@ -353,7 +353,7 @@ class Recipe:
             logger.error(f"Failed to load recipe from {recipe_file_path}: {e}", exc_info=True)
             raise
 
-    def run(self, runtime: Runtime, sequence_name: str="Main"):
+    def run(self, runtime: Runtime, sequence_name: str | None = None):
         """Executes the main sequence of the recipe.
 
         Sets up the runtime, determines the serial number, runs the specified sequence,
@@ -370,13 +370,19 @@ class Recipe:
             List[StepResult]: A list of the top-level StepResult objects generated during the run.
         """
         sent_stop_listener = False
+        results = []
         try:
             runtime.set_globals(self.globals)
             runtime.set_sequences(self.sequences)
             runtime.recipe_name = self.name             # Set recipe name in runtime
             runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
             runtime.test_package = self.test_package    # Set test package in runtime
-            sequence_name = self.main_sequence
+            sequence_name = self.main_sequence if sequence_name is None else sequence_name
+            if sequence_name not in self.sequences:
+                raise ValueError(
+                    f"Sequence '{sequence_name}' does not exist; "
+                    f"available sequences: {', '.join(self.sequences)}"
+                )
 
             # Use the event sender instead of direct calls
             self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
@@ -426,8 +432,6 @@ class Recipe:
             #results: List[StepResult] = runtime.get_results()
             runtime.send_event("post_run_recipe", results)
             Runtime.stop_event.set()
-
-            return results
 
     
     # def parse_q_input(self, q_in):

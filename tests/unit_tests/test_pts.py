@@ -286,3 +286,11 @@ class TestRunPts:
         assert isinstance(api.input_queue, Queue)
         assert isinstance(api.event_queue, SimpleQueue)
         assert isinstance(api.recipe_queue, SimpleQueue)
+
+    @patch("pypts.pts.command_handler_loop")
+    def test_stores_explicit_sequence_selection(self, mock_handler):
+        assert run_pts("Diagnostics").sequence_name == "Diagnostics"
+
+    @patch("pypts.pts.command_handler_loop")
+    def test_omitted_sequence_selection_is_none(self, mock_handler):
+        assert run_pts().sequence_name is None

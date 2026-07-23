@@ -28,6 +28,7 @@ class PtsApi:
     input_queue: Queue
     event_queue: SimpleQueue
     recipe_queue: SimpleQueue
+    sequence_name: str | None = None
     on_start: object = field(default=None)
     on_stop: object = field(default=None)
 
@@ -49,13 +50,13 @@ class PtsApi:
             - on_stop: callable set by the GUI layer; invoked when a STOP/EXIT command arrives
     """
 
-def run_pts(sequence_name: str = "Main") -> PtsApi:
+def run_pts(sequence_name: str | None = None) -> PtsApi:
     input_queue = Queue()
     event_queue = SimpleQueue()
     report_queue = SimpleQueue()
     global _pts_context
     _pts_context = True
-    api = PtsApi(input_queue, event_queue, report_queue)
+    api = PtsApi(input_queue, event_queue, report_queue, sequence_name=sequence_name)
 
     command_thread = threading.Thread(target=command_handler_loop, args=(api,), daemon=True)
     command_thread.start()
@@ -189,7 +190,7 @@ def command_handler_loop(api: PtsApi):
                         target=recipe_to_run.run,
                         kwargs={
                             "runtime": runtime,
-                            "sequence_name": "Main"
+                            "sequence_name": api.sequence_name
                         },
                         daemon=True
                     )

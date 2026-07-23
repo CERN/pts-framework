@@ -36,3 +36,10 @@ Reporting (`report`)
    :members: Report, report_listener, generate_html_report
    :undoc-members:
    :show-inheritance:
+Sequence selection
+------------------
+
+``Recipe.run(runtime, sequence_name=None)`` and ``run_pts(sequence_name=None)``
+use the recipe's configured ``main_sequence`` when no name is supplied. Passing
+an explicit sequence name overrides that default and unknown names raise a
+descriptive error.

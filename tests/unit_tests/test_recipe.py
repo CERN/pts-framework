@@ -281,6 +281,28 @@ class TestRecipeLoading:
         r = Recipe("fake.yaml", file_loader=_loader_for(data))
         assert r.globals == {"host": "10.0.0.1", "port": 22}
 
+    @pytest.mark.parametrize(
+        ("selection", "expected"), [(None, "Main"), ("Alternate", "Alternate")]
+    )
+    def test_run_uses_default_or_explicit_sequence(self, runtime, selection, expected):
+        sequences = _make_recipe_data()[1:] + [{
+            "sequence_name": "Alternate", "locals": {}, "parameters": {}, "outputs": {},
+            "setup_steps": [], "steps": [], "teardown_steps": [],
+        }]
+        recipe = Recipe("fake.yaml", file_loader=_loader_for(_make_recipe_data(sequences=sequences)))
+        built_step = MagicMock()
+        built_step.run.return_value = MagicMock()
+        with patch("pypts.recipe.Step.build_step", return_value=built_step) as builder, \
+             patch("pypts.recipe.time.sleep"):
+            recipe.run(runtime, sequence_name=selection)
+        assert builder.call_args.args[0]["sequence"]["name"] == expected
+
+    def test_run_rejects_unknown_explicit_sequence(self, runtime):
+        recipe = Recipe("fake.yaml", file_loader=_loader_for(_make_recipe_data()))
+        with pytest.raises(ValueError, match="Sequence 'Missing' does not exist"), \
+             patch("pypts.recipe.time.sleep"):
+            recipe.run(runtime, sequence_name="Missing")
+
 
 # ============================================================
 # Recipe from YAML file
