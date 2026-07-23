@@ -233,10 +233,9 @@ def validate_recipe_file(filepath):
 
         if first_key == "name":
             context = f"{filepath} Header"
-            if "continue_on_error" in doc:
+            if "continue_on_error" in doc and not isinstance(doc["continue_on_error"], bool):
                 faults.append(
-                    f"[{context}] Top-level 'continue_on_error' is unsupported; "
-                    "move it under 'globals'"
+                    f"[{context}] Top-level 'continue_on_error' should be a boolean"
                 )
             for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
                 validate_field(doc, field, expected_type, faults, warnings, context, line_map)
@@ -270,11 +269,6 @@ def validate_recipe_file(filepath):
             faults.append(
                 f"[{filepath} Header] Main sequence '{main_sequence}' does not exist"
             )
-
-        globals_data = header.get("globals", {})
-        if isinstance(globals_data, dict) and "continue_on_error" in globals_data \
-                and not isinstance(globals_data["continue_on_error"], bool):
-            faults.append(f"[{filepath} Header] globals.continue_on_error should be a boolean")
 
     for doc in docs:
         if not isinstance(doc, dict) or "sequence_name" not in doc:
@@ -364,10 +358,9 @@ def validate_recipe_string_variable(content):
 
         if first_key == "name":
             context = f"Header"
-            if "continue_on_error" in doc:
+            if "continue_on_error" in doc and not isinstance(doc["continue_on_error"], bool):
                 faults.append(
-                    "[Header] Top-level 'continue_on_error' is unsupported; "
-                    "move it under 'globals'"
+                    "[Header] Top-level 'continue_on_error' should be a boolean"
                 )
             for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
                 validate_field(doc, field, expected_type, faults, warnings, context, line_map)

@@ -179,6 +179,7 @@ class Runtime:
         self.test_package: str = None
         self.pypts_version: str = "unknown" # Added pypts version
         self.continue_on_error: bool = False # Added continue_on_error setting
+        self.recipe_continue_on_error: bool | None = None
     
     def push_locals(self, locals):
         self.local_stack.append(locals)
@@ -292,11 +293,9 @@ class Recipe:
             for field in required_fields:
                 if field not in recipe_main_data:
                     raise KeyError(f"Missing required field '{field}' in recipe main data")
-            if "continue_on_error" in recipe_main_data:
-                raise ValueError(
-                    "Top-level continue_on_error is no longer supported; move it to "
-                    "globals:\n  continue_on_error: <true|false>"
-                )
+            self.continue_on_error: bool | None = recipe_main_data.get("continue_on_error")
+            if self.continue_on_error is not None and not isinstance(self.continue_on_error, bool):
+                raise ValueError("Top-level continue_on_error must be a boolean")
 
             #add verification here
 
@@ -379,6 +378,7 @@ class Recipe:
         try:
             runtime.set_globals(self.globals)
             runtime.set_sequences(self.sequences)
+            runtime.recipe_continue_on_error = self.continue_on_error
             runtime.recipe_name = self.name             # Set recipe name in runtime
             runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
             runtime.test_package = self.test_package    # Set test package in runtime
@@ -710,10 +710,12 @@ class Step:
         while next_step < len(step_list):
 
             step: Step = step_list[next_step]
-            if "continue_on_error" in runtime.get_globals():
-                continue_on_error = runtime.get_global("continue_on_error")
-            else:
-                continue_on_error = step.continue_on_error
+            recipe_continue_on_error = getattr(runtime, "recipe_continue_on_error", None)
+            continue_on_error = (
+                step.continue_on_error
+                if recipe_continue_on_error is None
+                else recipe_continue_on_error
+            )
             runtime.continue_on_error = continue_on_error
 
             step_result = step.run(runtime, input, parent_step, stop_event=stop_event)

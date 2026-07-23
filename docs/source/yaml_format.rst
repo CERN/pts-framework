@@ -25,10 +25,10 @@ Document 1: Main Recipe Configuration
   description: A more complete description of this recipe
   main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
   test_package: my_package.tests # Optional: Python package containing test modules for PythonModuleStep
+  continue_on_error: false # Optional policy overriding every step's continue_on_error value.
   globals: # Globals can be referenced and used from any step in the whole file
     global_name: value
     other_global: other_value
-    continue_on_error: false # Optional policy overriding every step's continue_on_error value.
     # ...
   # tags:  # Optional tags (Currently commented out in code)
   #   key1: value1
@@ -43,11 +43,11 @@ Main Recipe Configuration Fields
 *   **main_sequence** (str, optional): Name of an existing sequence to run by default. If omitted, ``Main`` is selected and a sequence with that name must exist.
 *   **report** (str, optional): Selects whether new test results should overwrite the previous report (``overwrite``) or should be added to the report file (``append``). Defaults to ``overwrite``.
 *   **test_package** (str, optional): Importable Python package containing test modules for ``PythonModuleStep``. Dotted names such as ``my_project.tests`` are supported. When specified, modules are imported by package name without filesystem discovery. See :ref:`resource_based_loading`.
+*   **continue_on_error** (bool, optional): Recipe-wide policy that overrides every step-level value. It is not a global variable.
 *   **globals** (dict): Global variables that can be referenced from any step in the recipe.
 
-``continue_on_error`` is valid as a step field or under ``globals``. It is not
-valid at the top level. When present under ``globals``, its boolean value
-overrides every step-level value.
+``continue_on_error`` is valid as a recipe-level field or a step field. When
+present in the recipe header, its boolean value overrides every step-level value.
 
 .. _resource_based_loading:
 
@@ -954,15 +954,14 @@ behavior applies regardless of whether ``recipe_version`` is present.
 Global Setting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Set ``continue_on_error`` on an individual step, or under ``globals`` to
+Set ``continue_on_error`` on an individual step, or in the recipe header to
 override the value for every step:
 
 .. code-block:: yaml
 
    ---
    name: My Recipe
-   globals:
-     continue_on_error: true
+   continue_on_error: true
    # ... other fields
 
 When ``continue_on_error`` is ``true``:
@@ -1030,8 +1029,7 @@ Example
 
    ---
    name: Hardware Test Suite
-   globals:
-     continue_on_error: true
+   continue_on_error: true
 
    ---
    sequence_name: Main
@@ -1069,14 +1067,13 @@ In this example:
 - If "Performance Metrics" fails, execution continues to teardown
 - If "Hardware Cleanup" fails, it's reported as a critical failure
 
-Migration from the old top-level placement:
+Recipe-level policy takes precedence over step-level settings:
 
 .. code-block:: yaml
 
-   # Invalid
+   # Recipe-wide policy
    continue_on_error: true
    globals: {}
 
-   # Valid
-   globals:
-     continue_on_error: true
+   # Step-level policy, used only when the recipe field is absent
+   # continue_on_error: true

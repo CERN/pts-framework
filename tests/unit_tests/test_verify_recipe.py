@@ -94,12 +94,12 @@ def test_rejects_unknown_sequence_index_lengths_and_mixed_passthrough(tmp_path):
     assert "unknown sequence 'Missing'" in faults
 
 
-def test_rejects_invalid_mapping_fields_and_top_level_policy(tmp_path):
+def test_rejects_invalid_mapping_fields_and_invalid_top_level_policy(tmp_path):
     path = write_recipe(tmp_path, """
         name: Invalid
         version: "1"
         description: invalid
-        continue_on_error: true
+        continue_on_error: invalid
         globals: {}
         ---
         sequence_name: Main
@@ -120,7 +120,7 @@ def test_rejects_invalid_mapping_fields_and_top_level_policy(tmp_path):
     with pytest.raises(RecipeValidationError) as error:
         validate_recipe_file(path)
     faults = "\n".join(error.value.faults)
-    assert "move it under 'globals'" in faults
+    assert "Top-level 'continue_on_error' should be a boolean" in faults
     assert "'parameters' should be a dictionary" in faults
     assert "requires 'max'" in faults
 

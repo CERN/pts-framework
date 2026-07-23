@@ -63,6 +63,7 @@ def mock_runtime():
     rt.pypts_version = "0.1.0"
     rt.report_queue = MagicMock()
     rt.continue_on_error = False
+    rt.recipe_continue_on_error = None
     rt.results = []
     return rt
 
@@ -354,32 +355,26 @@ class TestRunSteps:
         assert results[1].result == ResultType.ERROR
 
     def test_continues_on_error_when_enabled(self, mock_runtime):
-        mock_runtime.continue_on_error = True
-        mock_runtime.get_globals.return_value = {"continue_on_error": True}
-        mock_runtime.get_global.return_value = True
+        mock_runtime.recipe_continue_on_error = True
         steps = [DummyStep(step_name="OK"), FailingStep(step_name="FAIL"), DummyStep(step_name="AFTER")]
         results = Step.run_steps(mock_runtime, steps, parent_step=None)
         assert len(results) == 3
 
-    def test_step_continue_on_error_used_without_global(self, mock_runtime):
-        mock_runtime.get_globals.return_value = {}
+    def test_step_continue_on_error_used_without_recipe_policy(self, mock_runtime):
         steps = [FailingStep(step_name="FAIL", continue_on_error=True), DummyStep(step_name="AFTER")]
         assert len(Step.run_steps(mock_runtime, steps, parent_step=None)) == 2
 
-    @pytest.mark.parametrize(("global_value", "expected_count"), [(True, 2), (False, 1)])
-    def test_global_policy_overrides_step_value(self, mock_runtime, global_value, expected_count):
-        mock_runtime.get_globals.return_value = {"continue_on_error": global_value}
-        mock_runtime.get_global.return_value = global_value
+    @pytest.mark.parametrize(("recipe_value", "expected_count"), [(True, 2), (False, 1)])
+    def test_recipe_policy_overrides_step_value(self, mock_runtime, recipe_value, expected_count):
+        mock_runtime.recipe_continue_on_error = recipe_value
         steps = [
-            FailingStep(step_name="FAIL", continue_on_error=not global_value),
+            FailingStep(step_name="FAIL", continue_on_error=not recipe_value),
             DummyStep(step_name="AFTER"),
         ]
         assert len(Step.run_steps(mock_runtime, steps, parent_step=None)) == expected_count
 
     def test_critical_step_stops_even_with_continue_on_error(self, mock_runtime):
-        mock_runtime.continue_on_error = True
-        mock_runtime.get_globals.return_value = {"continue_on_error": True}
-        mock_runtime.get_global.return_value = True
+        mock_runtime.recipe_continue_on_error = True
         steps = [
             DummyStep(step_name="OK"),
             FailingStep(step_name="CRIT", critical=True),

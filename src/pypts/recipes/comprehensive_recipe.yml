@@ -8,9 +8,8 @@ description: A sample recipe demonstrating many different combinations of input/
 main_sequence: Comprehensive_IO_Types
 test_package: pypts
 report_name_include_serial: True #Setting this to true will add the serial number to the report name. This is useful when running multiple tests on the same day to easily differentiate them.
-
+# continue_on_error: False # Overall policy. When present, it overrides step-level settings.
 globals:
-  #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
   loadFile_key: 'file'
   cancel_key: 'cancel' #key used for buttons that wishes to stop steps.
