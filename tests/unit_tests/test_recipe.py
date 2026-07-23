@@ -153,6 +153,16 @@ class TestRecipeLoading:
         assert r.version == "1.0"
         assert "Main" in r.sequences
 
+    def test_missing_main_sequence_defaults_to_main(self):
+        data = _make_recipe_data()
+        del data[0]["main_sequence"]
+        assert Recipe("fake.yaml", file_loader=_loader_for(data)).main_sequence == "Main"
+
+    def test_unknown_main_sequence_raises_descriptive_error(self):
+        data = _make_recipe_data(overrides={"main_sequence": "Missing"})
+        with pytest.raises(ValueError, match="Main sequence 'Missing' does not exist"):
+            Recipe("fake.yaml", file_loader=_loader_for(data))
+
     def test_loading_with_event_sender(self):
         """Verify that running a loaded recipe emits pre_run_recipe via the event sender."""
         recipe_data = [

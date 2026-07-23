@@ -158,6 +158,11 @@ def validate_recipe_file(filepath):
         raise RecipeValidationError([f"YAML parsing error in '{filepath}': {e}"], [])
 
     docs = list(yaml.safe_load_all(content))
+    header = next((doc for doc in docs if isinstance(doc, dict) and "name" in doc), None)
+    sequence_names = {
+        doc.get("sequence_name") for doc in docs
+        if isinstance(doc, dict) and isinstance(doc.get("sequence_name"), str)
+    }
 
     for i, (doc, node) in enumerate(zip(docs, docs_nodes)):
         if not isinstance(doc, dict):
@@ -192,6 +197,15 @@ def validate_recipe_file(filepath):
         else:
             line = node.start_mark.line + 1
             faults.append(f"[{filepath}, Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
+
+    if header is not None:
+        main_sequence = header.get("main_sequence", "Main")
+        if not isinstance(main_sequence, str):
+            faults.append(f"[{filepath} Header] Field 'main_sequence' should be of type str")
+        elif main_sequence not in sequence_names:
+            faults.append(
+                f"[{filepath} Header] Main sequence '{main_sequence}' does not exist"
+            )
 
     if faults or warnings:
         if faults:

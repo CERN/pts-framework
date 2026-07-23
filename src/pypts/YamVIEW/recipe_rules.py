@@ -6,7 +6,6 @@
 RECIPE_HEADER_REQUIRED_FIELDS = {
     "version": str,
     "description": str,
-    "main_sequence": str,
     "globals": dict,
 }
 

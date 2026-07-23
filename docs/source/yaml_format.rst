@@ -40,7 +40,7 @@ Main Recipe Configuration Fields
 *   **version** (str): Version string for tracking different versions of the recipe.
 *   **recipe_version** (str): Version of the recipe format specification. Use "1.1.0" or higher to enable continue_on_error functionality.
 *   **description** (str): A detailed description of the recipe's purpose.
-*   **main_sequence** (str, optional): Name of the sequence to run by default. Defaults to "Main".
+*   **main_sequence** (str, optional): Name of an existing sequence to run by default. If omitted, ``Main`` is selected and a sequence with that name must exist.
 *   **report** (str, optional): Selects whether new test results should overwrite the previous report (``overwrite``) or should be added to the report file (``append``). Defaults to ``overwrite``.
 *   **test_package** (str, optional): Importable Python package containing test modules for ``PythonModuleStep``. Dotted names such as ``my_project.tests`` are supported. When specified, modules are imported by package name without filesystem discovery. See :ref:`resource_based_loading`.
 *   **continue_on_error** (bool, optional): Global setting that controls whether execution continues after errors in non-critical steps. Defaults to ``false``. When ``true``, only errors in steps marked as ``critical: true`` will stop execution. Requires ``recipe_version`` 1.1.0 or higher.

@@ -316,7 +316,12 @@ class Recipe:
                     raise
 
             self.name: str = recipe_main_data["name"]
-            self.main_sequence: str = recipe_main_data["main_sequence"]
+            self.main_sequence: str = recipe_main_data.get("main_sequence", "Main")
+            if self.main_sequence not in self.sequences:
+                raise ValueError(
+                    f"Main sequence '{self.main_sequence}' does not exist; "
+                    f"available sequences: {', '.join(self.sequences) or '(none)'}"
+                )
             self.description: str = recipe_main_data["description"]
             self.version: str = recipe_main_data["version"]
 
