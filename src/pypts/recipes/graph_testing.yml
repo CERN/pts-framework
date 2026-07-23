@@ -7,8 +7,8 @@ version: 0.0.1
 recipe_version: 1.0.0
 description: satart acquisition and load the graph into the gui
 main_sequence: main
-continue_on_error: true
-globals: {}
+globals:
+  continue_on_error: true
 ---
 sequence_name: main
 description: well, description

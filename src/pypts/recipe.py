@@ -292,6 +292,11 @@ class Recipe:
             for field in required_fields:
                 if field not in recipe_main_data:
                     raise KeyError(f"Missing required field '{field}' in recipe main data")
+            if "continue_on_error" in recipe_main_data:
+                raise ValueError(
+                    "Top-level continue_on_error is no longer supported; move it to "
+                    "globals:\n  continue_on_error: <true|false>"
+                )
 
             #add verification here
 
@@ -705,18 +710,17 @@ class Step:
         while next_step < len(step_list):
 
             step: Step = step_list[next_step]
-            
+            if "continue_on_error" in runtime.get_globals():
+                continue_on_error = runtime.get_global("continue_on_error")
+            else:
+                continue_on_error = step.continue_on_error
+            runtime.continue_on_error = continue_on_error
+
             step_result = step.run(runtime, input, parent_step, stop_event=stop_event)
             step_results.append(step_result)
-
-
-            try:
-                runtime.continue_on_error = runtime.get_global('continue_on_error')
-            except:
-                pass
             # Check if we should stop execution due to an error
             # Stop if: ERROR occurred AND (continue_on_error is disabled OR step is critical)
-            if step_result.is_type(ResultType.ERROR) and (not runtime.continue_on_error or step.is_critical()):
+            if step_result.is_type(ResultType.ERROR) and (not continue_on_error or step.is_critical()):
                 logger.warning(f"Stopping execution due to error in {'critical' if step.is_critical() else 'non-critical'} step '{step.name}' (continue_on_error={'enabled' if runtime.continue_on_error else 'disabled'})")
                 break
             elif step_result.is_type(ResultType.ERROR):

@@ -281,6 +281,11 @@ class TestRecipeLoading:
         r = Recipe("fake.yaml", file_loader=_loader_for(data))
         assert r.globals == {"host": "10.0.0.1", "port": 22}
 
+    def test_top_level_continue_on_error_has_migration_message(self):
+        data = _make_recipe_data(overrides={"continue_on_error": True})
+        with pytest.raises(ValueError, match="move it to globals"):
+            Recipe("fake.yaml", file_loader=_loader_for(data))
+
     @pytest.mark.parametrize(
         ("selection", "expected"), [(None, "Main"), ("Alternate", "Alternate")]
     )

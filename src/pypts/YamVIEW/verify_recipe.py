@@ -174,6 +174,11 @@ def validate_recipe_file(filepath):
 
         if first_key == "name":
             context = f"{filepath} Header"
+            if "continue_on_error" in doc:
+                faults.append(
+                    f"[{context}] Top-level 'continue_on_error' is unsupported; "
+                    "move it under 'globals'"
+                )
             for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
                 validate_field(doc, field, expected_type, faults, warnings, context, line_map)
 
