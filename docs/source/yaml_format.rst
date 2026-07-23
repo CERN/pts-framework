@@ -42,7 +42,7 @@ Main Recipe Configuration Fields
 *   **description** (str): A detailed description of the recipe's purpose.
 *   **main_sequence** (str, optional): Name of the sequence to run by default. Defaults to "Main".
 *   **report** (str, optional): Selects whether new test results should overwrite the previous report (``overwrite``) or should be added to the report file (``append``). Defaults to ``overwrite``.
-*   **test_package** (str, optional): Python package containing test modules for ``PythonModuleStep``. When specified, ``PythonModuleStep`` uses resource-based module loading instead of file-based loading. See :ref:`resource_based_loading`.
+*   **test_package** (str, optional): Importable Python package containing test modules for ``PythonModuleStep``. Dotted names such as ``my_project.tests`` are supported. When specified, modules are imported by package name without filesystem discovery. See :ref:`resource_based_loading`.
 *   **continue_on_error** (bool, optional): Global setting that controls whether execution continues after errors in non-critical steps. Defaults to ``false``. When ``true``, only errors in steps marked as ``critical: true`` will stop execution. Requires ``recipe_version`` 1.1.0 or higher.
 *   **globals** (dict): Global variables that can be referenced from any step in the recipe.
 
@@ -51,7 +51,7 @@ Main Recipe Configuration Fields
 Resource-Based Module Loading
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-When ``test_package`` is specified, ``PythonModuleStep`` loads test modules as Python package resources instead of files:
+When ``test_package`` is specified, ``PythonModuleStep`` imports test modules from that package instead of discovering them from filesystem paths:
 
 **Benefits:**
   * Modules are bundled with your package during distribution

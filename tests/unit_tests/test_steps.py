@@ -618,6 +618,40 @@ class TestIndexedStep:
 # ============================================================
 
 class TestPythonModuleStep:
+    def test_dotted_package_import_is_cwd_independent(self, mock_runtime):
+        step = PythonModuleStep(
+            action_type="method", module="helpers/test_status.py", method_name="run",
+            step_name="S", input_mapping={}, output_mapping={},
+        )
+        mock_runtime.test_package = "fsi_pts.tests"
+        expected = MagicMock()
+        with patch("pypts.steps.import_module", return_value=expected) as importer, \
+             patch("pypts.steps.find_resource_path") as finder:
+            loaded = step._PythonModuleStep__load_module(mock_runtime)
+        assert loaded is expected
+        importer.assert_called_once_with("fsi_pts.tests.helpers.test_status")
+        finder.assert_not_called()
+
+    def test_undotted_package_import(self, mock_runtime):
+        step = PythonModuleStep(
+            action_type="method", module="test_status.py", method_name="run",
+            step_name="S", input_mapping={}, output_mapping={},
+        )
+        mock_runtime.test_package = "tests"
+        with patch("pypts.steps.import_module", return_value=MagicMock()) as importer:
+            step._PythonModuleStep__load_module(mock_runtime)
+        importer.assert_called_once_with("tests.test_status")
+
+    def test_missing_packaged_module_has_context(self, mock_runtime):
+        step = PythonModuleStep(
+            action_type="method", module="missing.py", method_name="run",
+            step_name="S", input_mapping={}, output_mapping={},
+        )
+        mock_runtime.test_package = "fsi_pts.tests"
+        with patch("pypts.steps.import_module", side_effect=ModuleNotFoundError("missing")):
+            with pytest.raises(ImportError, match="fsi_pts.tests.missing"):
+                step._PythonModuleStep__load_module(mock_runtime)
+
     def test_init_requires_method_name_for_method_action(self):
         with pytest.raises(ValueError, match="method_name is required"):
             PythonModuleStep(

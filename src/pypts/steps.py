@@ -332,7 +332,28 @@ class PythonModuleStep(Step):
             Exception: If the test module cannot be imported.
         """
 
-        # --- 1. Figure out root ---
+        if runtime.test_package:
+            module_path = Path(self.module_path_str)
+            if module_path.is_absolute():
+                raise ImportError(
+                    "PythonModuleStep module must be relative when test_package is set"
+                )
+            module_parts = list(module_path.with_suffix("").parts)
+            if any(part in ("", ".", "..") for part in module_parts):
+                raise ImportError(f"Invalid module path {self.module_path_str!r}")
+            package_parts = runtime.test_package.split(".")
+            if module_parts[:len(package_parts)] == package_parts:
+                module_parts = module_parts[len(package_parts):]
+            full_module_name = ".".join(package_parts + module_parts)
+            try:
+                return import_module(full_module_name)
+            except ModuleNotFoundError as e:
+                raise ImportError(
+                    f"Failed to load module '{full_module_name}' from test_package "
+                    f"'{runtime.test_package}': {e}"
+                ) from e
+
+        # File-based discovery remains available when no package is configured.
         if runtime.test_package:
             root = get_package_root(runtime.test_package)
         else:

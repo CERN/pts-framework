@@ -218,10 +218,14 @@ class TestRecipeLoading:
         with pytest.raises(Exception):
             Recipe("fake.yaml", file_loader=_loader_for(data))
 
-    def test_test_package_with_dot_raises(self):
-        """Verify that a test_package containing a dot raises an exception."""
+    def test_dotted_test_package_is_supported(self):
         data = _make_recipe_data(overrides={"test_package": "my.package"})
-        with pytest.raises(Exception):
+        assert Recipe("fake.yaml", file_loader=_loader_for(data)).test_package == "my.package"
+
+    @pytest.mark.parametrize("package", ["bad-name", ".leading", "trailing.", "two..dots", "1package"])
+    def test_invalid_test_package_raises_descriptive_error(self, package):
+        data = _make_recipe_data(overrides={"test_package": package})
+        with pytest.raises(ValueError, match="valid dotted Python package name"):
             Recipe("fake.yaml", file_loader=_loader_for(data))
 
     def test_test_package_none_ok(self):

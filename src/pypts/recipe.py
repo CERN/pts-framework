@@ -17,6 +17,7 @@ from enum import Enum, IntEnum
 import json
 import uuid
 import os
+import re
 from threading import Event
 from pypts.utils import WAIT_FOR_TERMINATION
 # from pts import Runtime
@@ -332,9 +333,13 @@ class Recipe:
 
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
-            if self.test_package and "." in self.test_package:
-                logger.error("test_package must not contain '.' in its name. Dont include subdirectories")
-                raise
+            if self.test_package and not re.fullmatch(
+                r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", self.test_package
+            ):
+                raise ValueError(
+                    "test_package must be a valid dotted Python package name "
+                    f"(got {self.test_package!r})"
+                )
             # self.tags: dict[str, str] = recipe_main_data["tags"]
             logger.info(f"Loaded recipe {self.name} version {self.version}.")
             logger.debug(f"Recipe has {len(self.sequences)} sequences: {list(self.sequences.keys())}")
