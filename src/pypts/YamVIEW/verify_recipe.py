@@ -6,6 +6,13 @@ import os
 import yaml
 from pypts.YamVIEW.recipe_rules import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS
 
+SUPPORTED_STEP_TYPES = {
+    "indexedstep", "pythonmodulestep", "sequencestep", "userinteractionstep",
+    "waitstep", "userloadingstep", "userrunmethodstep", "userwritestep",
+    "serialnumberstep", "sshconnectstep", "sshclosestep", "sshuploadstep",
+}
+VERDICT_TYPES = {"passthrough", "passfail", "equals", "range"}
+
 class RecipeValidationError(Exception):
     def __init__(self, faults, warnings):
         self.faults = faults
@@ -54,6 +61,9 @@ def validate_field(doc, field_name, expected_type, faults, warnings, context, li
         warnings.append(f"[{context}] Field '{field_name}' is an empty string {line_info}")
 
 def validate_step_fields(steps, faults, line_map, base_path=()):
+    if not isinstance(steps, list):
+        faults.append(f"[{'.'.join(map(str, base_path))}] should be a list")
+        return
     for idx, step in enumerate(steps):
         if not isinstance(step, dict):
             faults.append(f"[Step {idx}] Step is not a dictionary")
@@ -66,6 +76,8 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
 
         steptype = step.get("steptype")
         steptype_key = steptype.lower() if isinstance(steptype, str) else ""
+        if steptype_key not in SUPPORTED_STEP_TYPES:
+            faults.append(f"[{context}] Unknown step type '{steptype}'")
         required_fields = STEP_REQUIRED_FIELDS.get(steptype_key, STEP_REQUIRED_FIELDS["default"])
 
         for field in required_fields:
@@ -84,12 +96,59 @@ def validate_step_fields(steps, faults, line_map, base_path=()):
                 elif not isinstance(value, dict):
                     faults.append(f"[{context}] Field '{field}' should be a dictionary but got {type(value).__name__} (line {line})")
 
+        input_mapping = step.get("input_mapping", {})
+        if isinstance(input_mapping, dict):
+            indexed_lengths = []
+            for input_name, config in input_mapping.items():
+                if not isinstance(config, dict):
+                    faults.append(f"[{context}] Input '{input_name}' mapping should be a dictionary")
+                    continue
+                if config.get("indexed"):
+                    if not isinstance(config.get("value"), list):
+                        faults.append(f"[{context}] Indexed input '{input_name}' value should be a list")
+                    else:
+                        indexed_lengths.append(len(config["value"]))
+            if indexed_lengths and len(set(indexed_lengths)) > 1:
+                faults.append(f"[{context}] Indexed input lists must have equal lengths")
+
+        output_mapping = step.get("output_mapping", {})
+        if isinstance(output_mapping, dict):
+            verdicts = []
+            for output_name, config in output_mapping.items():
+                if not isinstance(config, dict):
+                    faults.append(f"[{context}] Output '{output_name}' mapping should be a dictionary")
+                    continue
+                mapping_type = config.get("type")
+                if not isinstance(mapping_type, str):
+                    faults.append(f"[{context}] Output '{output_name}' is missing string field 'type'")
+                    continue
+                if mapping_type in VERDICT_TYPES:
+                    verdicts.append(mapping_type)
+                required = {"equals": ("value",), "range": ("min", "max"),
+                            "local": ("local_name",), "global": ("global_name",)}
+                for required_field in required.get(mapping_type, ()):
+                    if required_field not in config:
+                        faults.append(
+                            f"[{context}] Output '{output_name}' type '{mapping_type}' "
+                            f"requires '{required_field}'"
+                        )
+            if "passthrough" in verdicts and len(verdicts) != 1:
+                faults.append(f"[{context}] passthrough must be the sole verdict mapping")
+
         # Check if 'skip' is a boolean
         if "skip" in step:
             skip_value = step["skip"]
             skip_line = line_map.get(step_path + ("skip",), step_line)
             if not isinstance(skip_value, bool):
                 faults.append(f"[{context}] Field 'skip' should be a boolean but got {type(skip_value).__name__} (line {skip_line})")
+        for boolean_field in ("critical", "continue_on_error"):
+            if boolean_field in step and not isinstance(step[boolean_field], bool):
+                faults.append(f"[{context}] Field '{boolean_field}' should be a boolean")
+
+        if steptype_key == "sequencestep":
+            sequence = step.get("sequence")
+            if not isinstance(sequence, dict) or not isinstance(sequence.get("name"), str):
+                faults.append(f"[{context}] SequenceStep requires sequence.name")
 
 def validate_all_recipes_in_folders(folder_paths):
     if isinstance(folder_paths, str):
@@ -158,6 +217,11 @@ def validate_recipe_file(filepath):
         raise RecipeValidationError([f"YAML parsing error in '{filepath}': {e}"], [])
 
     docs = list(yaml.safe_load_all(content))
+    header = next((doc for doc in docs if isinstance(doc, dict) and "name" in doc), None)
+    sequence_names = {
+        doc.get("sequence_name") for doc in docs
+        if isinstance(doc, dict) and isinstance(doc.get("sequence_name"), str)
+    }
 
     for i, (doc, node) in enumerate(zip(docs, docs_nodes)):
         if not isinstance(doc, dict):
@@ -169,6 +233,10 @@ def validate_recipe_file(filepath):
 
         if first_key == "name":
             context = f"{filepath} Header"
+            if "continue_on_error" in doc and not isinstance(doc["continue_on_error"], bool):
+                faults.append(
+                    f"[{context}] Top-level 'continue_on_error' should be a boolean"
+                )
             for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
                 validate_field(doc, field, expected_type, faults, warnings, context, line_map)
 
@@ -192,6 +260,60 @@ def validate_recipe_file(filepath):
         else:
             line = node.start_mark.line + 1
             faults.append(f"[{filepath}, Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
+
+    if header is not None:
+        main_sequence = header.get("main_sequence", "Main")
+        if not isinstance(main_sequence, str):
+            faults.append(f"[{filepath} Header] Field 'main_sequence' should be of type str")
+        elif main_sequence not in sequence_names:
+            faults.append(
+                f"[{filepath} Header] Main sequence '{main_sequence}' does not exist"
+            )
+
+    for doc in docs:
+        if not isinstance(doc, dict) or "sequence_name" not in doc:
+            continue
+        for mapping_field in ("parameters", "outputs", "locals"):
+            if not isinstance(doc.get(mapping_field), dict):
+                faults.append(
+                    f"[{filepath} Sequence {doc.get('sequence_name')}] "
+                    f"'{mapping_field}' should be a dictionary"
+                )
+        for section in ("setup_steps", "steps", "teardown_steps"):
+            validate_step_fields(doc.get(section, []), faults, {}, base_path=(section,))
+        sections = {
+            name: value if isinstance(value := doc.get(name, []), list) else []
+            for name in ("setup_steps", "steps", "teardown_steps")
+        }
+        all_steps = sections["setup_steps"] + sections["steps"] + sections["teardown_steps"]
+        for step in all_steps:
+            step_type = step.get("steptype") if isinstance(step, dict) else None
+            if isinstance(step_type, str) and step_type.casefold() == "sequencestep":
+                target = step.get("sequence", {}).get("name") if isinstance(step.get("sequence"), dict) else None
+                if target and target not in sequence_names:
+                    faults.append(f"[Sequence {doc['sequence_name']}] references unknown sequence '{target}'")
+
+        def step_types(section):
+            return [
+                value.casefold() for step in section
+                if isinstance(step, dict)
+                and isinstance((value := step.get("steptype")), str)
+            ]
+        setup_types = step_types(sections["setup_steps"])
+        main_types = step_types(sections["steps"])
+        teardown_types = step_types(sections["teardown_steps"])
+        uses_ssh = any(t.startswith("ssh") for t in setup_types + main_types + teardown_types)
+        if uses_ssh and header is not None:
+            globals_data = header.get("globals", {})
+            for name in ("ssh_client", "host", "user", "port"):
+                if name not in globals_data:
+                    faults.append(f"[{filepath} Header] SSH recipes require global '{name}'")
+            if "password" not in globals_data and "private_key" not in globals_data:
+                faults.append(f"[{filepath} Header] SSH recipes require 'password' or 'private_key'")
+        if "sshuploadstep" in main_types and "sshconnectstep" not in setup_types:
+            faults.append(f"[Sequence {doc['sequence_name']}] SSHUploadStep requires SSHConnectStep in setup_steps")
+        if "sshconnectstep" in setup_types and "sshclosestep" not in teardown_types:
+            faults.append(f"[Sequence {doc['sequence_name']}] SSHConnectStep requires SSHCloseStep in teardown_steps")
 
     if faults or warnings:
         if faults:
@@ -220,6 +342,11 @@ def validate_recipe_string_variable(content):
         # raise RecipeValidationError([f"❌ YAML parsing error: {e}"], [])
 
     docs = list(yaml.safe_load_all(content))
+    header = next((doc for doc in docs if isinstance(doc, dict) and "name" in doc), None)
+    sequence_names = {
+        doc.get("sequence_name") for doc in docs
+        if isinstance(doc, dict) and isinstance(doc.get("sequence_name"), str)
+    }
 
     for i, (doc, node) in enumerate(zip(docs, docs_nodes)):
         if not isinstance(doc, dict):
@@ -231,19 +358,22 @@ def validate_recipe_string_variable(content):
 
         if first_key == "name":
             context = f"Header"
+            if "continue_on_error" in doc and not isinstance(doc["continue_on_error"], bool):
+                faults.append(
+                    "[Header] Top-level 'continue_on_error' should be a boolean"
+                )
             for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
                 validate_field(doc, field, expected_type, faults, warnings, context, line_map)
 
         elif first_key == "sequence_name":
             context = f"Sequence"
             for field, expected_type in RECIPE_SEQUENCE_REQUIRED_FIELDS.items():
-                # For "steps" subsection, validate presence and content separately
-                if field == "steps":
+                if field in ("setup_steps", "steps", "teardown_steps"):
                     if field not in doc:
-                        line_info = f"(line {line_map.get(('steps',), '?')})"
-                        faults.append(f"[{context}] Missing required subsection: 'steps' {line_info}")
+                        line_info = f"(line {line_map.get((field,), '?')})"
+                        faults.append(f"[{context}] Missing required subsection: '{field}' {line_info}")
                     else:
-                        validate_step_fields(doc["steps"], faults, line_map, base_path=("steps",))
+                        validate_step_fields(doc[field], faults, line_map, base_path=(field,))
                 else:
                     validate_field(doc, field, expected_type, faults, warnings, context, line_map)
 
@@ -255,6 +385,25 @@ def validate_recipe_string_variable(content):
             line = node.start_mark.line + 1
             faults.append(
                 f"[Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
+
+    if header is not None:
+        main_sequence = header.get("main_sequence", "Main")
+        if not isinstance(main_sequence, str) or main_sequence not in sequence_names:
+            faults.append(f"[Header] Main sequence '{main_sequence}' does not exist")
+
+    for doc in docs:
+        if not isinstance(doc, dict) or "sequence_name" not in doc:
+            continue
+        for section in ("setup_steps", "steps", "teardown_steps"):
+            for step in doc.get(section, []) if isinstance(doc.get(section, []), list) else []:
+                step_type = step.get("steptype") if isinstance(step, dict) else None
+                if isinstance(step_type, str) and step_type.casefold() == "sequencestep":
+                    sequence = step.get("sequence")
+                    target = sequence.get("name") if isinstance(sequence, dict) else None
+                    if target and target not in sequence_names:
+                        faults.append(
+                            f"[Sequence {doc['sequence_name']}] references unknown sequence '{target}'"
+                        )
 
     output_lines = []
 

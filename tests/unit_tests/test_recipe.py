@@ -153,6 +153,16 @@ class TestRecipeLoading:
         assert r.version == "1.0"
         assert "Main" in r.sequences
 
+    def test_missing_main_sequence_defaults_to_main(self):
+        data = _make_recipe_data()
+        del data[0]["main_sequence"]
+        assert Recipe("fake.yaml", file_loader=_loader_for(data)).main_sequence == "Main"
+
+    def test_unknown_main_sequence_raises_descriptive_error(self):
+        data = _make_recipe_data(overrides={"main_sequence": "Missing"})
+        with pytest.raises(ValueError, match="Main sequence 'Missing' does not exist"):
+            Recipe("fake.yaml", file_loader=_loader_for(data))
+
     def test_loading_with_event_sender(self):
         """Verify that running a loaded recipe emits pre_run_recipe via the event sender."""
         recipe_data = [
@@ -218,10 +228,14 @@ class TestRecipeLoading:
         with pytest.raises(Exception):
             Recipe("fake.yaml", file_loader=_loader_for(data))
 
-    def test_test_package_with_dot_raises(self):
-        """Verify that a test_package containing a dot raises an exception."""
+    def test_dotted_test_package_is_supported(self):
         data = _make_recipe_data(overrides={"test_package": "my.package"})
-        with pytest.raises(Exception):
+        assert Recipe("fake.yaml", file_loader=_loader_for(data)).test_package == "my.package"
+
+    @pytest.mark.parametrize("package", ["bad-name", ".leading", "trailing.", "two..dots", "1package"])
+    def test_invalid_test_package_raises_descriptive_error(self, package):
+        data = _make_recipe_data(overrides={"test_package": package})
+        with pytest.raises(ValueError, match="valid dotted Python package name"):
             Recipe("fake.yaml", file_loader=_loader_for(data))
 
     def test_test_package_none_ok(self):
@@ -266,6 +280,38 @@ class TestRecipeLoading:
         data = _make_recipe_data(overrides={"globals": {"host": "10.0.0.1", "port": 22}})
         r = Recipe("fake.yaml", file_loader=_loader_for(data))
         assert r.globals == {"host": "10.0.0.1", "port": 22}
+
+    def test_top_level_continue_on_error_is_stored_as_recipe_policy(self):
+        data = _make_recipe_data(overrides={"continue_on_error": True})
+        recipe = Recipe("fake.yaml", file_loader=_loader_for(data))
+        assert recipe.continue_on_error is True
+
+    def test_top_level_continue_on_error_must_be_boolean(self):
+        data = _make_recipe_data(overrides={"continue_on_error": "true"})
+        with pytest.raises(ValueError, match="must be a boolean"):
+            Recipe("fake.yaml", file_loader=_loader_for(data))
+
+    @pytest.mark.parametrize(
+        ("selection", "expected"), [(None, "Main"), ("Alternate", "Alternate")]
+    )
+    def test_run_uses_default_or_explicit_sequence(self, runtime, selection, expected):
+        sequences = _make_recipe_data()[1:] + [{
+            "sequence_name": "Alternate", "locals": {}, "parameters": {}, "outputs": {},
+            "setup_steps": [], "steps": [], "teardown_steps": [],
+        }]
+        recipe = Recipe("fake.yaml", file_loader=_loader_for(_make_recipe_data(sequences=sequences)))
+        built_step = MagicMock()
+        built_step.run.return_value = MagicMock()
+        with patch("pypts.recipe.Step.build_step", return_value=built_step) as builder, \
+             patch("pypts.recipe.time.sleep"):
+            recipe.run(runtime, sequence_name=selection)
+        assert builder.call_args.args[0]["sequence"]["name"] == expected
+
+    def test_run_rejects_unknown_explicit_sequence(self, runtime):
+        recipe = Recipe("fake.yaml", file_loader=_loader_for(_make_recipe_data()))
+        with pytest.raises(ValueError, match="Sequence 'Missing' does not exist"), \
+             patch("pypts.recipe.time.sleep"):
+            recipe.run(runtime, sequence_name="Missing")
 
 
 # ============================================================
@@ -318,8 +364,8 @@ class TestSequence:
         seq_data = {
             "sequence_name": "TestSeq",
             "locals": {"x": 1},
-            "parameters": ["p1"],
-            "outputs": ["o1"],
+            "parameters": {"p1": {}},
+            "outputs": {"o1": {}},
             "setup_steps": [],
             "steps": [{"steptype": "WaitStep", "step_name": "W", "input_mapping": {}, "output_mapping": {}}],
             "teardown_steps": [],
@@ -337,8 +383,8 @@ class TestSequence:
         sequence_data = {
             "sequence_name": "TestSeq",
             "locals": {"var1": None},
-            "parameters": [],
-            "outputs": [],
+            "parameters": {},
+            "outputs": {},
             "setup_steps": [],
             "steps": [{"steptype": "DummyStep"}],
             "teardown_steps": []
@@ -368,8 +414,8 @@ class TestSequence:
             sequence_data = {
                 "sequence_name": "TestRun",
                 "locals": {},
-                "parameters": [],
-                "outputs": [],
+                "parameters": {},
+                "outputs": {},
                 "setup_steps": [],
                 "steps": [{"steptype": "DummyStep"}],
                 "teardown_steps": [{"steptype": "TeardownStep"}]
@@ -410,8 +456,8 @@ class TestSequence:
             seq_data = {
                 "sequence_name": "S",
                 "locals": {},
-                "parameters": [],
-                "outputs": [],
+                "parameters": {},
+                "outputs": {},
                 "setup_steps": [],
                 "steps": [{"steptype": "DummyStep"}],
                 "teardown_steps": [{"steptype": "DummyStep"}],

@@ -17,6 +17,7 @@ from enum import Enum, IntEnum
 import json
 import uuid
 import os
+import re
 from threading import Event
 from pypts.utils import WAIT_FOR_TERMINATION
 # from pts import Runtime
@@ -178,6 +179,7 @@ class Runtime:
         self.test_package: str = None
         self.pypts_version: str = "unknown" # Added pypts version
         self.continue_on_error: bool = False # Added continue_on_error setting
+        self.recipe_continue_on_error: bool | None = None
     
     def push_locals(self, locals):
         self.local_stack.append(locals)
@@ -291,6 +293,9 @@ class Recipe:
             for field in required_fields:
                 if field not in recipe_main_data:
                     raise KeyError(f"Missing required field '{field}' in recipe main data")
+            self.continue_on_error: bool | None = recipe_main_data.get("continue_on_error")
+            if self.continue_on_error is not None and not isinstance(self.continue_on_error, bool):
+                raise ValueError("Top-level continue_on_error must be a boolean")
 
             #add verification here
 
@@ -315,7 +320,12 @@ class Recipe:
                     raise
 
             self.name: str = recipe_main_data["name"]
-            self.main_sequence: str = recipe_main_data["main_sequence"]
+            self.main_sequence: str = recipe_main_data.get("main_sequence", "Main")
+            if self.main_sequence not in self.sequences:
+                raise ValueError(
+                    f"Main sequence '{self.main_sequence}' does not exist; "
+                    f"available sequences: {', '.join(self.sequences) or '(none)'}"
+                )
             self.description: str = recipe_main_data["description"]
             self.version: str = recipe_main_data["version"]
 
@@ -332,9 +342,13 @@ class Recipe:
 
             self.globals: dict[str, any] = recipe_main_data["globals"]
             self.test_package: str = recipe_main_data.get("test_package", None)
-            if self.test_package and "." in self.test_package:
-                logger.error("test_package must not contain '.' in its name. Dont include subdirectories")
-                raise
+            if self.test_package and not re.fullmatch(
+                r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", self.test_package
+            ):
+                raise ValueError(
+                    "test_package must be a valid dotted Python package name "
+                    f"(got {self.test_package!r})"
+                )
             # self.tags: dict[str, str] = recipe_main_data["tags"]
             logger.info(f"Loaded recipe {self.name} version {self.version}.")
             logger.debug(f"Recipe has {len(self.sequences)} sequences: {list(self.sequences.keys())}")
@@ -343,7 +357,7 @@ class Recipe:
             logger.error(f"Failed to load recipe from {recipe_file_path}: {e}", exc_info=True)
             raise
 
-    def run(self, runtime: Runtime, sequence_name: str="Main"):
+    def run(self, runtime: Runtime, sequence_name: str | None = None):
         """Executes the main sequence of the recipe.
 
         Sets up the runtime, determines the serial number, runs the specified sequence,
@@ -360,13 +374,20 @@ class Recipe:
             List[StepResult]: A list of the top-level StepResult objects generated during the run.
         """
         sent_stop_listener = False
+        results = []
         try:
             runtime.set_globals(self.globals)
             runtime.set_sequences(self.sequences)
+            runtime.recipe_continue_on_error = self.continue_on_error
             runtime.recipe_name = self.name             # Set recipe name in runtime
             runtime.recipe_file_name = self.recipe_file_name # Set recipe file name in runtime
             runtime.test_package = self.test_package    # Set test package in runtime
-            sequence_name = self.main_sequence
+            sequence_name = self.main_sequence if sequence_name is None else sequence_name
+            if sequence_name not in self.sequences:
+                raise ValueError(
+                    f"Sequence '{sequence_name}' does not exist; "
+                    f"available sequences: {', '.join(self.sequences)}"
+                )
 
             # Use the event sender instead of direct calls
             self.event_sender(runtime, "pre_run_recipe", self.name, self.description)
@@ -416,8 +437,6 @@ class Recipe:
             #results: List[StepResult] = runtime.get_results()
             runtime.send_event("post_run_recipe", results)
             Runtime.stop_event.set()
-
-            return results
 
     
     # def parse_q_input(self, q_in):
@@ -497,7 +516,9 @@ class Sequence():
 
 
 class Step:
-    def __init__(self, step_name, id="", description="", input_mapping={}, output_mapping={}, skip=False, critical=False):
+    def __init__(self, step_name, id="", description="", input_mapping=None,
+                 output_mapping=None, skip=False, critical=False,
+                 continue_on_error=False):
         self.name = step_name
         self.description = description
         if id:
@@ -506,8 +527,9 @@ class Step:
             self.id = uuid.uuid4()
         self.skip = skip
         self.critical = critical
-        self.input_mapping: dict = input_mapping
-        self.output_mapping: dict = output_mapping
+        self.continue_on_error = continue_on_error
+        self.input_mapping: dict = input_mapping or {}
+        self.output_mapping: dict = output_mapping or {}
 
     def __str__(self):
         return f"Step: {self.__class__.__name__}: {self.name}"
@@ -560,26 +582,33 @@ class Step:
         return direct_inputs
     
     def process_outputs(self, runtime: Runtime, step_output: dict):
-        step_result = ResultType.DONE
+        verdict_types = {"passthrough", "passfail", "equals", "range"}
+        configured_verdicts = [
+            config["type"] for config in self.output_mapping.values()
+            if config.get("type") in verdict_types
+        ]
+        if "passthrough" in configured_verdicts and len(configured_verdicts) != 1:
+            raise ValueError(
+                f"Step '{self.name}' uses passthrough with another verdict mapping; "
+                "passthrough must be the sole verdict mapping"
+            )
+
+        verdicts = []
 
         for output_name, output_config in self.output_mapping.items():
 
             match output_config["type"]:
                 case "passthrough": # The output is already a ResultType
-                    step_result = step_output[output_name]
+                    verdicts.append(step_output[output_name])
                 case "passfail":    # Output is boolean. Passes on True
-                    step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
+                    verdicts.append(bool(step_output[output_name]))
                 case "equals":      # Output is a value. Passes if equal to the target value
-                        step_result = (
-                        ResultType.PASS
-                        if step_output[output_name] == output_config["value"]
-                        else ResultType.FAIL
-                    )
+                    verdicts.append(step_output[output_name] == output_config["value"])
                 case "range":       # Output is a numeric value. Passes if within given range
-                    step_result = (
-                        ResultType.PASS
-                        if (float(output_config["min"]) <= float(step_output[output_name]) <= float(output_config["max"]))
-                        else ResultType.FAIL
+                    verdicts.append(
+                        float(output_config["min"])
+                        <= float(step_output[output_name])
+                        <= float(output_config["max"])
                     )
                 case "global":      # Output to be written to global variable
                     runtime.set_global(output_config["global_name"], step_output[output_name])
@@ -592,7 +621,11 @@ class Step:
                 case "image":       # Image path — handled after set_result in run(); no effect on ResultType
                     pass
 
-        return step_result
+        if not verdicts:
+            return ResultType.DONE
+        if configured_verdicts == ["passthrough"]:
+            return verdicts[0]
+        return ResultType.PASS if all(verdicts) else ResultType.FAIL
 
     def run(self, runtime: Runtime, input, parent_step: uuid.UUID=None, stop_event = None ):
         """Executes the step, handling setup, execution, error handling, and output processing.
@@ -677,18 +710,19 @@ class Step:
         while next_step < len(step_list):
 
             step: Step = step_list[next_step]
-            
+            recipe_continue_on_error = getattr(runtime, "recipe_continue_on_error", None)
+            continue_on_error = (
+                step.continue_on_error
+                if recipe_continue_on_error is None
+                else recipe_continue_on_error
+            )
+            runtime.continue_on_error = continue_on_error
+
             step_result = step.run(runtime, input, parent_step, stop_event=stop_event)
             step_results.append(step_result)
-
-
-            try:
-                runtime.continue_on_error = runtime.get_global('continue_on_error')
-            except:
-                pass
             # Check if we should stop execution due to an error
             # Stop if: ERROR occurred AND (continue_on_error is disabled OR step is critical)
-            if step_result.is_type(ResultType.ERROR) and (not runtime.continue_on_error or step.is_critical()):
+            if step_result.is_type(ResultType.ERROR) and (not continue_on_error or step.is_critical()):
                 logger.warning(f"Stopping execution due to error in {'critical' if step.is_critical() else 'non-critical'} step '{step.name}' (continue_on_error={'enabled' if runtime.continue_on_error else 'disabled'})")
                 break
             elif step_result.is_type(ResultType.ERROR):
@@ -711,38 +745,31 @@ class Step:
         Returns:
             Step: This is a fully configured step object
         """
-        step_type = step_data["steptype"]
-        # we need to map the steptype names into the class strings.
-        # it can happen that user defines waitstep instead of WaitStep and the application have to handle
+        if not isinstance(step_data, dict):
+            raise TypeError("Step definition must be a dictionary")
+        step_type = step_data.get("steptype")
+        if not isinstance(step_type, str):
+            raise ValueError("Step definition requires a string 'steptype'")
+        step_class = STEP_TYPE_REGISTRY.get(step_type.casefold())
+        if step_class is None:
+            supported = ", ".join(sorted(cls.__name__ for cls in set(STEP_TYPE_REGISTRY.values())))
+            raise ValueError(f"Unknown step type '{step_type}'. Supported step types: {supported}")
 
-        match step_type.lower():
-            case "indexedstep": step_type = "IndexedStep"
-            case "pythonmodulestep": step_type = "PythonModuleStep"
-            case "sequencestep": step_type = "SequenceStep"
-            case "userinteractionstep": step_type = "UserInteractionStep"
-            case "waitstep": step_type = "WaitStep"
-            case "userloadingstep": step_type = "UserLoadingStep"
-            case "userrunmethodstep": step_type = "UserRunMethodStep"
-            case "userwritestep": step_type = "UserWriteStep"
-            case "serialnumberstep": step_type = "SerialNumberStep"
-            case "SSHConnectStep": step_type = "SSHConnectStep"
-            case "SSHCloseStep": step_type = "SSHCloseStep"
-
-        # we remove this entry because it is used to determine which class to use for instantiation and
-        # is not needed beyond that
-        del step_data["steptype"]
-
-        # creates the step according to the subclass type and passes all parameters   
-        new_step: Step = eval(step_type + "(**step_data)")
+        constructor_data = dict(step_data)
+        del constructor_data["steptype"]
+        new_step: Step = step_class(**constructor_data)
 
         # Check if indexing is to be used, and if so, create IndexingStep to encapsulate the original step
         if new_step.check_indexing():
 
             # List of keys to keep
-            keys_to_keep = ["id", "step_name", "input_mapping", "output_mapping", "skip", "description"]
+            keys_to_keep = [
+                "id", "step_name", "input_mapping", "output_mapping", "skip",
+                "description", "critical", "continue_on_error",
+            ]
 
             # Create a new dictionary excluding the keys not in keys_to_keep
-            filtered_step_data = {key: value for key, value in step_data.items() if key in keys_to_keep}
+            filtered_step_data = {key: value for key, value in constructor_data.items() if key in keys_to_keep}
 
             new_step = IndexedStep(new_step, **filtered_step_data)
         return new_step
@@ -750,6 +777,14 @@ class Step:
 
 # Import step implementations from steps module
 from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SerialNumberStep, SSHConnectStep, SSHCloseStep, SSHUploadStep
+
+STEP_TYPE_REGISTRY = {
+    cls.__name__.casefold(): cls for cls in (
+        IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep,
+        WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep,
+        SerialNumberStep, SSHConnectStep, SSHCloseStep, SSHUploadStep,
+    )
+}
 
 
 

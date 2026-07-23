@@ -24,7 +24,7 @@ logging.basicConfig(level=logging.DEBUG, format=log_format)
 logging.getLogger("paramiko.transport").setLevel("WARN")
 
 
-def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
+def run_recipe_app(recipe_path: str, sequence_name: str | None = None):
     """Runs the PTS application with the given recipe file.
     
     Sets up the QApplication, MainWindow, logging, RecipeEventProxy, 
@@ -34,8 +34,8 @@ def run_recipe_app(recipe_path: str, sequence_name: str = "Main"):
     from pypts.startup import create_and_start_gui
     from pypts.pts import run_pts
 
-    api = run_pts()
+    api = run_pts(sequence_name=sequence_name)
 
-    window, app = create_and_start_gui(api)
+    window, app = create_and_start_gui(api, recipe_file=recipe_path)
 
     return window, app

@@ -63,6 +63,7 @@ def mock_runtime():
     rt.pypts_version = "0.1.0"
     rt.report_queue = MagicMock()
     rt.continue_on_error = False
+    rt.recipe_continue_on_error = None
     rt.results = []
     return rt
 
@@ -101,6 +102,15 @@ class TestStepInit:
     def test_critical_flag(self):
         step = Step(step_name="S1", critical=True)
         assert step.is_critical() is True
+
+    @pytest.mark.parametrize("step_class,extra", [
+        (WaitStep, {}),
+        (SequenceStep, {"sequence": {"type": "internal", "name": "Sub"}}),
+        (PythonModuleStep, {"action_type": "method", "module": "m.py", "method_name": "run"}),
+    ])
+    def test_continue_on_error_is_common_to_all_steps(self, step_class, extra):
+        step = step_class(step_name="S", continue_on_error=True, **extra)
+        assert step.continue_on_error is True
 
     def test_str(self):
         step = DummyStep(step_name="MyStep")
@@ -239,6 +249,40 @@ class TestProcessOutputs:
         result = step.process_outputs(mock_runtime, {"anything": 1})
         assert result == ResultType.DONE
 
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_multiple_verdicts_are_combined_with_and(self, mock_runtime, reverse):
+        mappings = [
+            ("boolean", {"type": "passfail"}),
+            ("exact", {"type": "equals", "value": 4}),
+            ("bounded", {"type": "range", "min": 1, "max": 10}),
+        ]
+        if reverse:
+            mappings.reverse()
+        step = Step(step_name="S", output_mapping=dict(mappings))
+        assert step.process_outputs(
+            mock_runtime, {"boolean": True, "exact": 4, "bounded": 10}
+        ) == ResultType.PASS
+        assert step.process_outputs(
+            mock_runtime, {"boolean": True, "exact": 5, "bounded": 10}
+        ) == ResultType.FAIL
+
+    def test_passthrough_must_be_only_verdict(self, mock_runtime):
+        step = Step(step_name="S", output_mapping={
+            "result": {"type": "passthrough"},
+            "ok": {"type": "passfail"},
+        })
+        with pytest.raises(ValueError, match="passthrough must be the sole verdict"):
+            step.process_outputs(mock_runtime, {"result": ResultType.PASS, "ok": True})
+
+    def test_passthrough_can_coexist_with_metadata_output(self, mock_runtime):
+        step = Step(step_name="S", output_mapping={
+            "result": {"type": "passthrough"},
+            "value": {"type": "global", "global_name": "saved"},
+        })
+        assert step.process_outputs(
+            mock_runtime, {"result": ResultType.FAIL, "value": 2}
+        ) == ResultType.FAIL
+
 
 # ============================================================
 # Step.run (full lifecycle)
@@ -311,15 +355,26 @@ class TestRunSteps:
         assert results[1].result == ResultType.ERROR
 
     def test_continues_on_error_when_enabled(self, mock_runtime):
-        mock_runtime.continue_on_error = True
-        mock_runtime.get_global.return_value = True
+        mock_runtime.recipe_continue_on_error = True
         steps = [DummyStep(step_name="OK"), FailingStep(step_name="FAIL"), DummyStep(step_name="AFTER")]
         results = Step.run_steps(mock_runtime, steps, parent_step=None)
         assert len(results) == 3
 
+    def test_step_continue_on_error_used_without_recipe_policy(self, mock_runtime):
+        steps = [FailingStep(step_name="FAIL", continue_on_error=True), DummyStep(step_name="AFTER")]
+        assert len(Step.run_steps(mock_runtime, steps, parent_step=None)) == 2
+
+    @pytest.mark.parametrize(("recipe_value", "expected_count"), [(True, 2), (False, 1)])
+    def test_recipe_policy_overrides_step_value(self, mock_runtime, recipe_value, expected_count):
+        mock_runtime.recipe_continue_on_error = recipe_value
+        steps = [
+            FailingStep(step_name="FAIL", continue_on_error=not recipe_value),
+            DummyStep(step_name="AFTER"),
+        ]
+        assert len(Step.run_steps(mock_runtime, steps, parent_step=None)) == expected_count
+
     def test_critical_step_stops_even_with_continue_on_error(self, mock_runtime):
-        mock_runtime.continue_on_error = True
-        mock_runtime.get_global.return_value = True
+        mock_runtime.recipe_continue_on_error = True
         steps = [
             DummyStep(step_name="OK"),
             FailingStep(step_name="CRIT", critical=True),
@@ -348,6 +403,32 @@ class TestBuildStep:
         data = {"steptype": "waitstep", "step_name": "Wait", "input_mapping": {}, "output_mapping": {}}
         step = Step.build_step(data)
         assert isinstance(step, WaitStep)
+
+    @pytest.mark.parametrize(("name", "expected", "extra"), [
+        ("pythonMODULEstep", PythonModuleStep, {"action_type": "method", "module": "m.py", "method_name": "run"}),
+        ("SEQUENCEstep", SequenceStep, {"sequence": {"type": "internal", "name": "Sub"}}),
+        ("userinteractionSTEP", UserInteractionStep, {}),
+        ("WAITstep", WaitStep, {}),
+        ("userloadingstep", UserLoadingStep, {}),
+        ("userrunmethodstep", UserRunMethodStep, {}),
+        ("userwritestep", UserWriteStep, {}),
+        ("serialnumberstep", SerialNumberStep, {}),
+        ("sshCONNECTstep", SSHConnectStep, {}),
+        ("sshCLOSEstep", SSHCloseStep, {}),
+        ("sshUPLOADstep", SSHUploadStep, {"files": []}),
+    ])
+    def test_registry_supports_every_concrete_step_case_insensitively(self, name, expected, extra):
+        data = {"steptype": name, "step_name": "S", "input_mapping": {}, "output_mapping": {}, **extra}
+        assert isinstance(Step.build_step(data), expected)
+
+    def test_unknown_step_type_is_descriptive(self):
+        with pytest.raises(ValueError, match="Unknown step type 'MagicStep'"):
+            Step.build_step({"steptype": "MagicStep", "step_name": "S"})
+
+    def test_build_does_not_mutate_definition(self):
+        data = {"steptype": "WaitStep", "step_name": "S"}
+        Step.build_step(data)
+        assert data["steptype"] == "WaitStep"
 
     def test_build_sequence_step(self):
         data = {"steptype": "SequenceStep", "step_name": "SubSeq", "sequence": {"type": "internal", "name": "Sub"}, "input_mapping": {}, "output_mapping": {}}
@@ -618,6 +699,40 @@ class TestIndexedStep:
 # ============================================================
 
 class TestPythonModuleStep:
+    def test_dotted_package_import_is_cwd_independent(self, mock_runtime):
+        step = PythonModuleStep(
+            action_type="method", module="helpers/test_status.py", method_name="run",
+            step_name="S", input_mapping={}, output_mapping={},
+        )
+        mock_runtime.test_package = "fsi_pts.tests"
+        expected = MagicMock()
+        with patch("pypts.steps.import_module", return_value=expected) as importer, \
+             patch("pypts.steps.find_resource_path") as finder:
+            loaded = step._PythonModuleStep__load_module(mock_runtime)
+        assert loaded is expected
+        importer.assert_called_once_with("fsi_pts.tests.helpers.test_status")
+        finder.assert_not_called()
+
+    def test_undotted_package_import(self, mock_runtime):
+        step = PythonModuleStep(
+            action_type="method", module="test_status.py", method_name="run",
+            step_name="S", input_mapping={}, output_mapping={},
+        )
+        mock_runtime.test_package = "tests"
+        with patch("pypts.steps.import_module", return_value=MagicMock()) as importer:
+            step._PythonModuleStep__load_module(mock_runtime)
+        importer.assert_called_once_with("tests.test_status")
+
+    def test_missing_packaged_module_has_context(self, mock_runtime):
+        step = PythonModuleStep(
+            action_type="method", module="missing.py", method_name="run",
+            step_name="S", input_mapping={}, output_mapping={},
+        )
+        mock_runtime.test_package = "fsi_pts.tests"
+        with patch("pypts.steps.import_module", side_effect=ModuleNotFoundError("missing")):
+            with pytest.raises(ImportError, match="fsi_pts.tests.missing"):
+                step._PythonModuleStep__load_module(mock_runtime)
+
     def test_init_requires_method_name_for_method_action(self):
         with pytest.raises(ValueError, match="method_name is required"):
             PythonModuleStep(
