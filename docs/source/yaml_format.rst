@@ -103,6 +103,12 @@ When ``test_package`` is specified, ``PythonModuleStep`` imports test modules fr
 Document 2...N: Sequence Definition
 ===================================
 
+When an output mapping contains multiple ``passfail``, ``equals``, or ``range``
+checks, all checks must pass for the step to be ``PASS``. A failed check makes
+the step ``FAIL`` regardless of mapping order. ``passthrough`` represents an
+already-computed result and must be the only verdict-producing mapping (it may
+still be accompanied by metadata outputs such as ``local`` or ``global``).
+
 Each subsequent document defines a sequence.
 
 .. code-block:: yaml

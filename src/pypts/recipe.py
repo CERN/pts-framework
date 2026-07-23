@@ -565,26 +565,33 @@ class Step:
         return direct_inputs
     
     def process_outputs(self, runtime: Runtime, step_output: dict):
-        step_result = ResultType.DONE
+        verdict_types = {"passthrough", "passfail", "equals", "range"}
+        configured_verdicts = [
+            config["type"] for config in self.output_mapping.values()
+            if config.get("type") in verdict_types
+        ]
+        if "passthrough" in configured_verdicts and len(configured_verdicts) != 1:
+            raise ValueError(
+                f"Step '{self.name}' uses passthrough with another verdict mapping; "
+                "passthrough must be the sole verdict mapping"
+            )
+
+        verdicts = []
 
         for output_name, output_config in self.output_mapping.items():
 
             match output_config["type"]:
                 case "passthrough": # The output is already a ResultType
-                    step_result = step_output[output_name]
+                    verdicts.append(step_output[output_name])
                 case "passfail":    # Output is boolean. Passes on True
-                    step_result = ResultType.PASS if step_output[output_name] else ResultType.FAIL
+                    verdicts.append(bool(step_output[output_name]))
                 case "equals":      # Output is a value. Passes if equal to the target value
-                        step_result = (
-                        ResultType.PASS
-                        if step_output[output_name] == output_config["value"]
-                        else ResultType.FAIL
-                    )
+                    verdicts.append(step_output[output_name] == output_config["value"])
                 case "range":       # Output is a numeric value. Passes if within given range
-                    step_result = (
-                        ResultType.PASS
-                        if (float(output_config["min"]) <= float(step_output[output_name]) <= float(output_config["max"]))
-                        else ResultType.FAIL
+                    verdicts.append(
+                        float(output_config["min"])
+                        <= float(step_output[output_name])
+                        <= float(output_config["max"])
                     )
                 case "global":      # Output to be written to global variable
                     runtime.set_global(output_config["global_name"], step_output[output_name])
@@ -597,7 +604,11 @@ class Step:
                 case "image":       # Image path — handled after set_result in run(); no effect on ResultType
                     pass
 
-        return step_result
+        if not verdicts:
+            return ResultType.DONE
+        if configured_verdicts == ["passthrough"]:
+            return verdicts[0]
+        return ResultType.PASS if all(verdicts) else ResultType.FAIL
 
     def run(self, runtime: Runtime, input, parent_step: uuid.UUID=None, stop_event = None ):
         """Executes the step, handling setup, execution, error handling, and output processing.

@@ -239,6 +239,40 @@ class TestProcessOutputs:
         result = step.process_outputs(mock_runtime, {"anything": 1})
         assert result == ResultType.DONE
 
+    @pytest.mark.parametrize("reverse", [False, True])
+    def test_multiple_verdicts_are_combined_with_and(self, mock_runtime, reverse):
+        mappings = [
+            ("boolean", {"type": "passfail"}),
+            ("exact", {"type": "equals", "value": 4}),
+            ("bounded", {"type": "range", "min": 1, "max": 10}),
+        ]
+        if reverse:
+            mappings.reverse()
+        step = Step(step_name="S", output_mapping=dict(mappings))
+        assert step.process_outputs(
+            mock_runtime, {"boolean": True, "exact": 4, "bounded": 10}
+        ) == ResultType.PASS
+        assert step.process_outputs(
+            mock_runtime, {"boolean": True, "exact": 5, "bounded": 10}
+        ) == ResultType.FAIL
+
+    def test_passthrough_must_be_only_verdict(self, mock_runtime):
+        step = Step(step_name="S", output_mapping={
+            "result": {"type": "passthrough"},
+            "ok": {"type": "passfail"},
+        })
+        with pytest.raises(ValueError, match="passthrough must be the sole verdict"):
+            step.process_outputs(mock_runtime, {"result": ResultType.PASS, "ok": True})
+
+    def test_passthrough_can_coexist_with_metadata_output(self, mock_runtime):
+        step = Step(step_name="S", output_mapping={
+            "result": {"type": "passthrough"},
+            "value": {"type": "global", "global_name": "saved"},
+        })
+        assert step.process_outputs(
+            mock_runtime, {"result": ResultType.FAIL, "value": 2}
+        ) == ResultType.FAIL
+
 
 # ============================================================
 # Step.run (full lifecycle)
