@@ -216,11 +216,10 @@ class PythonModuleStep(Step):
             method_name (str, optional): The name of the method to call (required if action_type is 'method').
             **kwargs: Common Step arguments.
         """
-        super().__init__(**kwargs)
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.action_type = action_type
         self.module_path_str = module # Store path as string
         self.method_name = method_name
-        self.continue_on_error = continue_on_error
 
         # Basic validation during init
         if self.action_type == "method" and not self.method_name:
@@ -241,7 +240,6 @@ class PythonModuleStep(Step):
             parent_step_result_uuid: UUID of the parent StepResult.
         """
         step_output = {}
-        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
         
 
         try:
@@ -559,11 +557,10 @@ class UserInteractionStep(Step):
                       - 'options' (list, optional): List of response options (e.g., button labels).
                       Output mapping should define how to store the 'user_response'.
         """
-        super().__init__(**kwargs)
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.module = module
         self.action_type = action_type
         self.method_name = method_name
-        self.continue_on_error = continue_on_error
         self.timeout_seconds = 0.1  # Check every 1 second
         # Example: Ensure output mapping expects the response.
         # This should be defined in the YAML, but we can add a default/check.
@@ -583,7 +580,6 @@ class UserInteractionStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
-        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
 
         # Create a temporary queue for this specific interaction to receive the response.
@@ -705,8 +701,7 @@ class UserLoadingStep(Step):
                       - 'options' (list, optional): List of response options (e.g., button labels).
                       Output mapping should define how to store the 'user_response'.
         """
-        super().__init__(**kwargs)
-        self.continue_on_error = continue_on_error
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.file_save_location = file_save_location
         self.timeout_seconds = 1 
         if "output" not in self.output_mapping:
@@ -725,7 +720,6 @@ class UserLoadingStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
-        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
         response_q = queue.SimpleQueue()
 
@@ -786,12 +780,11 @@ class UserRunMethodStep(Step):
                       - 'options' (list, optional): List of response options (e.g., button labels).
                       Output mapping should define how to store the 'user_response'.
         """
-        super().__init__(**kwargs)
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.trigger_response = trigger_response
         self.module = module
         self.action_type = action_type
         self.method_name = method_name
-        self.continue_on_error = continue_on_error
         self.timeout_seconds = 1
         if "output" not in self.output_mapping:
             logger.warning(f"UserRunMethodStep '{self.name}' might need an output mapping for 'output' to store the result.")
@@ -811,7 +804,6 @@ class UserRunMethodStep(Step):
         options = input.get("options") # Can be None or list/dict
 
         other_keys = [key for key in input.keys() if key not in {"message", "image_path", "options"}]
-        runtime.continue_on_error = self.continue_on_error
 
         response_q = queue.SimpleQueue()
 
@@ -894,8 +886,7 @@ class UserWriteStep(Step):
                       - 'options' (list, optional): List of response options (e.g., button labels).
                       Output mapping should define how to store the 'user_response'.
         """
-        super().__init__(**kwargs)
-        self.continue_on_error = continue_on_error
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.timeout_seconds = 1
         if "output" not in self.output_mapping:
             logger.warning(f"UserLoadingStep '{self.name}' might need an output mapping for 'output' to store the result.")
@@ -913,7 +904,6 @@ class UserWriteStep(Step):
         message = input.get("message", "User interaction required.") # Default message
         image_path = input.get("image_path") # Can be None
         options = input.get("options") # Can be None or list/dict
-        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
 
         response_q = queue.SimpleQueue()
 
@@ -983,12 +973,10 @@ class SerialNumberStep(Step):
     """
 
     def __init__(self, continue_on_error: bool = False, **kwargs):
-        super().__init__(**kwargs)
-        self.continue_on_error = continue_on_error
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.timeout_seconds = 1
 
     def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
-        runtime.continue_on_error = self.continue_on_error
         response_q = queue.SimpleQueue()
         try:
             runtime.send_event("get_serial_number", response_q)
@@ -1068,8 +1056,7 @@ class SSHConnectStep(Step):
                           - 'status' (str): "connected" or "error".
                           - 'message' (str): Optional message or error reason.
         """
-        super().__init__(**kwargs)
-        self.continue_on_error = continue_on_error
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.timeout_seconds = 1
 
     def _normalize(self, v):
@@ -1093,7 +1080,6 @@ class SSHConnectStep(Step):
         if password is None and private_key is None:
             raise ValueError("Either password or private_key must be provided")
         
-        runtime.continue_on_error = self.continue_on_error # Sets runtime continue on error on step
         try:
             if not ((user and host and password) or (user and host and private_key)):
                     raise ValueError("Missing required SSH connection parameters.")
@@ -1141,13 +1127,11 @@ class SSHCloseStep(Step):
             continue_on_error (bool): If True, step won't raise on error.
             **kwargs: Common Step arguments.
         """
-        super().__init__(**kwargs)
-        self.continue_on_error = continue_on_error
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.timeout_seconds = 1
 
     def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
         host = runtime.get_global("host") or "<unknown>"
-        runtime.continue_on_error = self.continue_on_error #Sets runtime continue on error on step
         
         try:
             client = runtime.get_global("ssh_client")
@@ -1227,7 +1211,7 @@ class SSHUploadStep(Step):
         continue_on_error: bool = False,
         **kwargs,
     ):
-        super().__init__(**kwargs)
+        super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.files = files
         if isinstance(permissions, str):
             self.permissions = int(permissions, 8) if permissions.startswith("0") else int(permissions)
@@ -1235,7 +1219,6 @@ class SSHUploadStep(Step):
             self.permissions = int(permissions)
         self.skip_if_sha256_match = skip_if_sha256_match
         self.local_package = local_package
-        self.continue_on_error = continue_on_error
 
     def _resolve_local(self, local_str: str) -> Path:
         if self.local_package:
@@ -1245,7 +1228,6 @@ class SSHUploadStep(Step):
         return get_project_root() / local_str
 
     def _step(self, runtime: Runtime, input: dict, parent_step_result_uuid: uuid.UUID):
-        runtime.continue_on_error = self.continue_on_error
         client = runtime.get_global("ssh_client")
         if client is None:
             raise ValueError("ssh_client global is None — SSHConnectStep must run first")

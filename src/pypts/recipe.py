@@ -511,7 +511,9 @@ class Sequence():
 
 
 class Step:
-    def __init__(self, step_name, id="", description="", input_mapping={}, output_mapping={}, skip=False, critical=False):
+    def __init__(self, step_name, id="", description="", input_mapping=None,
+                 output_mapping=None, skip=False, critical=False,
+                 continue_on_error=False):
         self.name = step_name
         self.description = description
         if id:
@@ -520,8 +522,9 @@ class Step:
             self.id = uuid.uuid4()
         self.skip = skip
         self.critical = critical
-        self.input_mapping: dict = input_mapping
-        self.output_mapping: dict = output_mapping
+        self.continue_on_error = continue_on_error
+        self.input_mapping: dict = input_mapping or {}
+        self.output_mapping: dict = output_mapping or {}
 
     def __str__(self):
         return f"Step: {self.__class__.__name__}: {self.name}"

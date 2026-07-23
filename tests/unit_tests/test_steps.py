@@ -102,6 +102,15 @@ class TestStepInit:
         step = Step(step_name="S1", critical=True)
         assert step.is_critical() is True
 
+    @pytest.mark.parametrize("step_class,extra", [
+        (WaitStep, {}),
+        (SequenceStep, {"sequence": {"type": "internal", "name": "Sub"}}),
+        (PythonModuleStep, {"action_type": "method", "module": "m.py", "method_name": "run"}),
+    ])
+    def test_continue_on_error_is_common_to_all_steps(self, step_class, extra):
+        step = step_class(step_name="S", continue_on_error=True, **extra)
+        assert step.continue_on_error is True
+
     def test_str(self):
         step = DummyStep(step_name="MyStep")
         assert "DummyStep" in str(step)
