@@ -743,38 +743,31 @@ class Step:
         Returns:
             Step: This is a fully configured step object
         """
-        step_type = step_data["steptype"]
-        # we need to map the steptype names into the class strings.
-        # it can happen that user defines waitstep instead of WaitStep and the application have to handle
+        if not isinstance(step_data, dict):
+            raise TypeError("Step definition must be a dictionary")
+        step_type = step_data.get("steptype")
+        if not isinstance(step_type, str):
+            raise ValueError("Step definition requires a string 'steptype'")
+        step_class = STEP_TYPE_REGISTRY.get(step_type.casefold())
+        if step_class is None:
+            supported = ", ".join(sorted(cls.__name__ for cls in set(STEP_TYPE_REGISTRY.values())))
+            raise ValueError(f"Unknown step type '{step_type}'. Supported step types: {supported}")
 
-        match step_type.lower():
-            case "indexedstep": step_type = "IndexedStep"
-            case "pythonmodulestep": step_type = "PythonModuleStep"
-            case "sequencestep": step_type = "SequenceStep"
-            case "userinteractionstep": step_type = "UserInteractionStep"
-            case "waitstep": step_type = "WaitStep"
-            case "userloadingstep": step_type = "UserLoadingStep"
-            case "userrunmethodstep": step_type = "UserRunMethodStep"
-            case "userwritestep": step_type = "UserWriteStep"
-            case "serialnumberstep": step_type = "SerialNumberStep"
-            case "SSHConnectStep": step_type = "SSHConnectStep"
-            case "SSHCloseStep": step_type = "SSHCloseStep"
-
-        # we remove this entry because it is used to determine which class to use for instantiation and
-        # is not needed beyond that
-        del step_data["steptype"]
-
-        # creates the step according to the subclass type and passes all parameters   
-        new_step: Step = eval(step_type + "(**step_data)")
+        constructor_data = dict(step_data)
+        del constructor_data["steptype"]
+        new_step: Step = step_class(**constructor_data)
 
         # Check if indexing is to be used, and if so, create IndexingStep to encapsulate the original step
         if new_step.check_indexing():
 
             # List of keys to keep
-            keys_to_keep = ["id", "step_name", "input_mapping", "output_mapping", "skip", "description"]
+            keys_to_keep = [
+                "id", "step_name", "input_mapping", "output_mapping", "skip",
+                "description", "critical", "continue_on_error",
+            ]
 
             # Create a new dictionary excluding the keys not in keys_to_keep
-            filtered_step_data = {key: value for key, value in step_data.items() if key in keys_to_keep}
+            filtered_step_data = {key: value for key, value in constructor_data.items() if key in keys_to_keep}
 
             new_step = IndexedStep(new_step, **filtered_step_data)
         return new_step
@@ -782,6 +775,14 @@ class Step:
 
 # Import step implementations from steps module
 from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SerialNumberStep, SSHConnectStep, SSHCloseStep, SSHUploadStep
+
+STEP_TYPE_REGISTRY = {
+    cls.__name__.casefold(): cls for cls in (
+        IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep,
+        WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep,
+        SerialNumberStep, SSHConnectStep, SSHCloseStep, SSHUploadStep,
+    )
+}
 
 
 

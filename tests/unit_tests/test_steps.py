@@ -409,6 +409,32 @@ class TestBuildStep:
         step = Step.build_step(data)
         assert isinstance(step, WaitStep)
 
+    @pytest.mark.parametrize(("name", "expected", "extra"), [
+        ("pythonMODULEstep", PythonModuleStep, {"action_type": "method", "module": "m.py", "method_name": "run"}),
+        ("SEQUENCEstep", SequenceStep, {"sequence": {"type": "internal", "name": "Sub"}}),
+        ("userinteractionSTEP", UserInteractionStep, {}),
+        ("WAITstep", WaitStep, {}),
+        ("userloadingstep", UserLoadingStep, {}),
+        ("userrunmethodstep", UserRunMethodStep, {}),
+        ("userwritestep", UserWriteStep, {}),
+        ("serialnumberstep", SerialNumberStep, {}),
+        ("sshCONNECTstep", SSHConnectStep, {}),
+        ("sshCLOSEstep", SSHCloseStep, {}),
+        ("sshUPLOADstep", SSHUploadStep, {"files": []}),
+    ])
+    def test_registry_supports_every_concrete_step_case_insensitively(self, name, expected, extra):
+        data = {"steptype": name, "step_name": "S", "input_mapping": {}, "output_mapping": {}, **extra}
+        assert isinstance(Step.build_step(data), expected)
+
+    def test_unknown_step_type_is_descriptive(self):
+        with pytest.raises(ValueError, match="Unknown step type 'MagicStep'"):
+            Step.build_step({"steptype": "MagicStep", "step_name": "S"})
+
+    def test_build_does_not_mutate_definition(self):
+        data = {"steptype": "WaitStep", "step_name": "S"}
+        Step.build_step(data)
+        assert data["steptype"] == "WaitStep"
+
     def test_build_sequence_step(self):
         data = {"steptype": "SequenceStep", "step_name": "SubSeq", "sequence": {"type": "internal", "name": "Sub"}, "input_mapping": {}, "output_mapping": {}}
         step = Step.build_step(data)
