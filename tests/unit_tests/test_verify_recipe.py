@@ -2,7 +2,11 @@ import textwrap
 
 import pytest
 
-from pypts.YamVIEW.verify_recipe import RecipeValidationError, validate_recipe_file
+from pypts.YamVIEW.verify_recipe import (
+    RecipeValidationError,
+    validate_recipe_file,
+    validate_recipe_string_variable,
+)
 
 
 def write_recipe(tmp_path, body):
@@ -148,3 +152,27 @@ def test_rejects_invalid_ssh_lifecycle(tmp_path):
     faults = "\n".join(error.value.faults)
     assert "SSHUploadStep requires SSHConnectStep" in faults
     assert "require global 'host'" in faults
+
+
+def test_string_validator_checks_teardown_and_main_sequence():
+    valid, message = validate_recipe_string_variable(textwrap.dedent("""
+        name: Invalid
+        version: "1"
+        description: invalid
+        main_sequence: Missing
+        globals: {}
+        ---
+        sequence_name: Main
+        description: main
+        parameters: {}
+        outputs: {}
+        locals: {}
+        setup_steps: []
+        steps: []
+        teardown_steps:
+          - steptype: UnknownStep
+            step_name: bad
+    """))
+    assert valid is False
+    assert "Main sequence 'Missing' does not exist" in message
+    assert "Unknown step type 'UnknownStep'" in message

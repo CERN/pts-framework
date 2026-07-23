@@ -348,6 +348,11 @@ def validate_recipe_string_variable(content):
         # raise RecipeValidationError([f"❌ YAML parsing error: {e}"], [])
 
     docs = list(yaml.safe_load_all(content))
+    header = next((doc for doc in docs if isinstance(doc, dict) and "name" in doc), None)
+    sequence_names = {
+        doc.get("sequence_name") for doc in docs
+        if isinstance(doc, dict) and isinstance(doc.get("sequence_name"), str)
+    }
 
     for i, (doc, node) in enumerate(zip(docs, docs_nodes)):
         if not isinstance(doc, dict):
@@ -359,19 +364,23 @@ def validate_recipe_string_variable(content):
 
         if first_key == "name":
             context = f"Header"
+            if "continue_on_error" in doc:
+                faults.append(
+                    "[Header] Top-level 'continue_on_error' is unsupported; "
+                    "move it under 'globals'"
+                )
             for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
                 validate_field(doc, field, expected_type, faults, warnings, context, line_map)
 
         elif first_key == "sequence_name":
             context = f"Sequence"
             for field, expected_type in RECIPE_SEQUENCE_REQUIRED_FIELDS.items():
-                # For "steps" subsection, validate presence and content separately
-                if field == "steps":
+                if field in ("setup_steps", "steps", "teardown_steps"):
                     if field not in doc:
-                        line_info = f"(line {line_map.get(('steps',), '?')})"
-                        faults.append(f"[{context}] Missing required subsection: 'steps' {line_info}")
+                        line_info = f"(line {line_map.get((field,), '?')})"
+                        faults.append(f"[{context}] Missing required subsection: '{field}' {line_info}")
                     else:
-                        validate_step_fields(doc["steps"], faults, line_map, base_path=("steps",))
+                        validate_step_fields(doc[field], faults, line_map, base_path=(field,))
                 else:
                     validate_field(doc, field, expected_type, faults, warnings, context, line_map)
 
@@ -383,6 +392,25 @@ def validate_recipe_string_variable(content):
             line = node.start_mark.line + 1
             faults.append(
                 f"[Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
+
+    if header is not None:
+        main_sequence = header.get("main_sequence", "Main")
+        if not isinstance(main_sequence, str) or main_sequence not in sequence_names:
+            faults.append(f"[Header] Main sequence '{main_sequence}' does not exist")
+
+    for doc in docs:
+        if not isinstance(doc, dict) or "sequence_name" not in doc:
+            continue
+        for section in ("setup_steps", "steps", "teardown_steps"):
+            for step in doc.get(section, []) if isinstance(doc.get(section, []), list) else []:
+                step_type = step.get("steptype") if isinstance(step, dict) else None
+                if isinstance(step_type, str) and step_type.casefold() == "sequencestep":
+                    sequence = step.get("sequence")
+                    target = sequence.get("name") if isinstance(sequence, dict) else None
+                    if target and target not in sequence_names:
+                        faults.append(
+                            f"[Sequence {doc['sequence_name']}] references unknown sequence '{target}'"
+                        )
 
     output_lines = []
 
