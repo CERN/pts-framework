@@ -417,7 +417,7 @@ Convert your test file structure to a proper Python package:
 
 **Step 2: Update Recipe Configuration**
 
-Add the ``test_package`` field and simplify module paths:
+Add the dotted ``test_package`` field and make module paths relative to it:
 
 .. code-block:: yaml
 
@@ -439,7 +439,7 @@ Add the ``test_package`` field and simplify module paths:
    
    steps:
    - steptype: PythonModuleStep
-     module: test_module1.py           # Just the filename
+     module: test_module1.py           # Relative to my_project.tests
      method_name: my_test
 
 **Step 3: Install and Test**
@@ -470,7 +470,8 @@ Common Migration Issues
 
 **Module Not Found**: Verify the ``test_package`` field matches your actual package structure
 
-**Path Issues**: Remove directory prefixes from module paths in the recipe - just use the filename
+**Path Issues**: Use paths relative to ``test_package``. For example,
+``helpers/test_module.py`` imports ``my_project.tests.helpers.test_module``.
 
 **Package Installation**: Ensure your package is installed in the Python environment where you're running pypts
 

@@ -21,14 +21,14 @@ Document 1: Main Recipe Configuration
   ---
   name: Name of the recipe. Typically the project name.
   version: Allows for tracking different versions of the file
-  recipe_version: Version of the recipe format specification. Use "1.1.0" or higher to enable continue_on_error functionality.
+  recipe_version: Optional version of the recipe format specification.
   description: A more complete description of this recipe
   main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
   test_package: my_package.tests # Optional: Python package containing test modules for PythonModuleStep
   globals: # Globals can be referenced and used from any step in the whole file
     global_name: value
     other_global: other_value
-    continue_on_error: false # Optional Global variable that controls whether execution continues after errors in non-critical steps if it exists. Overrides individual step "continue_on_error": true will stop execution. Requires recipe_version 1.1.0 or higher.
+    continue_on_error: false # Optional policy overriding every step's continue_on_error value.
     # ...
   # tags:  # Optional tags (Currently commented out in code)
   #   key1: value1
@@ -38,13 +38,16 @@ Main Recipe Configuration Fields
 
 *   **name** (str): Name of the recipe, typically the project name.
 *   **version** (str): Version string for tracking different versions of the recipe.
-*   **recipe_version** (str): Version of the recipe format specification. Use "1.1.0" or higher to enable continue_on_error functionality.
+*   **recipe_version** (str, optional): Version of the recipe format specification. Error-policy behavior is not gated by this field.
 *   **description** (str): A detailed description of the recipe's purpose.
 *   **main_sequence** (str, optional): Name of an existing sequence to run by default. If omitted, ``Main`` is selected and a sequence with that name must exist.
 *   **report** (str, optional): Selects whether new test results should overwrite the previous report (``overwrite``) or should be added to the report file (``append``). Defaults to ``overwrite``.
 *   **test_package** (str, optional): Importable Python package containing test modules for ``PythonModuleStep``. Dotted names such as ``my_project.tests`` are supported. When specified, modules are imported by package name without filesystem discovery. See :ref:`resource_based_loading`.
-*   **continue_on_error** (bool, optional): Global setting that controls whether execution continues after errors in non-critical steps. Defaults to ``false``. When ``true``, only errors in steps marked as ``critical: true`` will stop execution. Requires ``recipe_version`` 1.1.0 or higher.
 *   **globals** (dict): Global variables that can be referenced from any step in the recipe.
+
+``continue_on_error`` is valid as a step field or under ``globals``. It is not
+valid at the top level. When present under ``globals``, its boolean value
+overrides every step-level value.
 
 .. _resource_based_loading:
 
@@ -95,7 +98,7 @@ When ``test_package`` is specified, ``PythonModuleStep`` imports test modules fr
 **Migration from File-Based:**
   * Add ``__init__.py`` files to make directories into packages
   * Add ``test_package`` field to recipe
-  * Remove directory prefixes from module paths (use just the filename)
+  * Use module paths relative to ``test_package``; nested paths are supported
   * Install your package with ``pip install -e .``
 
 --- # Separator for the next document
@@ -108,6 +111,15 @@ checks, all checks must pass for the step to be ``PASS``. A failed check makes
 the step ``FAIL`` regardless of mapping order. ``passthrough`` represents an
 already-computed result and must be the only verdict-producing mapping (it may
 still be accompanied by metadata outputs such as ``local`` or ``global``).
+
+For example, this step passes only when both checks pass; reversing their YAML
+order does not change the result:
+
+.. code-block:: yaml
+
+   output_mapping:
+     powered: {type: passfail}
+     voltage: {type: range, min: 4.8, max: 5.2}
 
 Each subsequent document defines a sequence.
 
@@ -144,7 +156,7 @@ Each item in `setup_steps`, `steps`, and `teardown_steps` is a dictionary repres
    id: unique_id # Optional: A unique identifier. Defaults to a generated UUID.
    description: More details about the step # Optional: More details about the step's purpose.
    skip: false # Optional: If true, the step execution is skipped. Defaults to false.
-   critical: false # Optional: If true, errors in this step will always stop execution, even when continue_on_error is enabled globally. Defaults to false. Requires recipe_version 1.1.0 or higher.
+   critical: false # Optional: If true, errors in this step always stop execution. Defaults to false.
    # --- Fields specific to certain steptypes ---
    action_type: method # e.g., For PythonModuleStep: 'method', 'read_attribute', 'write_attribute'
    module: path/to/my_module.py # e.g., For PythonModuleStep: Path to the Python file
@@ -163,10 +175,10 @@ Key fields common to most steps:
 *   ``id`` (str, optional): A unique identifier. Defaults to a generated UUID.
 *   ``description`` (str, optional): More details about the step's purpose.
 *   ``skip`` (bool, optional): If ``true``, the step execution is skipped. Defaults to ``false``.
-*   ``critical`` (bool, optional): If ``true``, errors in this step will always stop execution, even when ``continue_on_error`` is enabled globally. Defaults to ``false``. Requires ``recipe_version`` 1.1.0 or higher.
+*   ``critical`` (bool, optional): If ``true``, errors in this step always stop execution, even when ``continue_on_error`` is enabled. Defaults to ``false``.
 *   ``input_mapping`` (dict): Defines how the step gets its input data. See :ref:`input_mapping_details`.
 *   ``output_mapping`` (dict): Defines how the step's output is processed and stored. See :ref:`output_mapping_details`.
-*   ``continue_on_error`` (bool,optional): Defines wheter this specific step will stop the test if failed. Default to ``false``.
+*   ``continue_on_error`` (bool, optional): Continue after this step produces ``ERROR``. Defaults to ``false`` and is overridden by ``globals.continue_on_error`` when that global exists. It does not alter ``FAIL`` behavior.
 
 
 .. _input_mapping_details:
@@ -500,7 +512,7 @@ Executes Python method or code.
      result: { type: local, local_name: output_data }
      passed: { type: passfail } # Treats boolean output as pass/fail
 
-*   ``module`` (str):Name of the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``).
+*   ``module`` (str): Python module path. With ``test_package``, it is relative to that package (for example ``test_module.py`` or ``helpers/test_module.py``).
 *   ``action_type`` (str): ``method``, ``read_attribute``, or ``write_attribute``.
 *   ``method_name`` (str): Name of the method to call. 
 *   ``input_mapping`` (dictionary): Inputs to the method. Each input(``arg``) is required to have a ``type``. 
@@ -735,7 +747,7 @@ Executes a method after interacting with next button. Step type is expected to b
 
 *   ``steptype`` (str): Determines the type of action.
 *  ``action_type`` (str): ``method``, ``read_attribute``, or ``write_attribute``.
-*   ``module`` (str):Name of the Python module. If ``test_package`` is specified in the recipe, this should be just the filename (e.g., ``test_module.py``).
+*   ``module`` (str): Python module path. With ``test_package``, it is relative to that package and may include nested directories.
 *  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
 *  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
 *  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
@@ -936,23 +948,21 @@ If you want to reference the serial number in subsequent steps, declare it in gl
 Continue On Error Mechanism
 ============================
 
-Starting with ``recipe_version`` 1.1.0, the pypts framework supports a "Continue On Error" mechanism that allows test execution to continue even after encountering errors in non-critical steps.
+The framework can continue after ``ERROR`` results in non-critical steps. This
+behavior applies regardless of whether ``recipe_version`` is present.
 
 Global Setting
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-As of release version v0.1.8 The ``continue_on_error`` is not a global setting. It is a step specific setting, however by adding ``continue_on_error`` to globals, it will overwrite and return to similar functionality as pre-v0.1.8.
-
-The ``continue_on_error`` field in the main recipe configuration enables this functionality:
+Set ``continue_on_error`` on an individual step, or under ``globals`` to
+override the value for every step:
 
 .. code-block:: yaml
 
    ---
    name: My Recipe
-   recipe_version: 1.1.0
-   continue_on_error: true  # Enable continue on error globally on version v0.1.7 and below
    globals:
-    continue_on_error: true # As of v0.1.8 the continue_on_error is a global value. If it is existing it will overwrite the step specific continue_on_error.
+     continue_on_error: true
    # ... other fields
 
 When ``continue_on_error`` is ``true``:
@@ -960,7 +970,7 @@ When ``continue_on_error`` is ``true``:
 - Errors in steps marked as ``critical: true`` will still stop sequence execution
 - All errors are still logged and reported
 
-When ``continue_on_error`` is ``false`` (default):
+When the effective ``continue_on_error`` value is ``false`` (default):
 - Any error in any step stops sequence execution (legacy behavior)
 - The ``critical`` field has no effect
 
@@ -1020,9 +1030,8 @@ Example
 
    ---
    name: Hardware Test Suite
-   recipe_version: 1.1.0
-   continue_on_error: true
-   globals: {}
+   globals:
+     continue_on_error: true
 
    ---
    sequence_name: Main
@@ -1059,3 +1068,15 @@ In this example:
 - If "Core Functionality Test" fails, execution stops before "Performance Metrics"
 - If "Performance Metrics" fails, execution continues to teardown
 - If "Hardware Cleanup" fails, it's reported as a critical failure
+
+Migration from the old top-level placement:
+
+.. code-block:: yaml
+
+   # Invalid
+   continue_on_error: true
+   globals: {}
+
+   # Valid
+   globals:
+     continue_on_error: true

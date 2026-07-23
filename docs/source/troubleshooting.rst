@@ -43,6 +43,11 @@ Activate the environment and install the package within the environment.
 
 Before using pypts, you may need to install the following system dependencies for PySide6 (Qt GUI framework):
 
+.. note::
+   Python 3.14 requires PySide6 6.10 or newer. The project's historical
+   ``PySide6==6.9.1`` pin has no Python 3.14 distribution, so environments using
+   Python 3.14 must bump that dependency to at least the 6.10 release line.
+
 .. code-block:: bash
 
    sudo dnf install libxcb libxcb-devel
@@ -131,9 +136,8 @@ Ensure test_package is properly named in the recipe and that the method_name pro
 
 **Import Errors**: Make sure all directories have ``__init__.py`` files
 
-**Path Issues**: Remove directory prefixes from module paths in the recipe - just use the filename. Requires the test_package.
+**Path Issues**: With ``test_package``, use a module path relative to the package. Nested paths are supported.
 
 **Package Installation**: Ensure your package is installed in the Python environment where you're running pypts
 
 **Failing test despite reading a passing value**: Ensure the datatype that is compared against is equal to the read value, i.e. string cannot be compared to integer.
-
