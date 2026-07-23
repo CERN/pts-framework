@@ -1105,15 +1105,7 @@ class SSHConnectStep(Step):
 
         except (paramiko.ssh_exception.AuthenticationException, paramiko.ssh_exception.SSHException, Exception) as e:
             logger.error(f"[{self.name}] SSH connection failed: {e}", exc_info=True)
-
-            # Raise or return based on error policy
-            if not self.continue_on_error:
-                raise
-
-            return {
-                "status": "error",
-                "message": str(e)
-            }
+            raise
         
 
 class SSHCloseStep(Step):
@@ -1148,13 +1140,7 @@ class SSHCloseStep(Step):
             }
         except Exception as e:
             logger.error(f"[{self.name}] Failed to close SSH connection: {e}", exc_info=True)
-
-            if not self.continue_on_error:
-                raise
-            return {
-                "status": "error",
-                "message": str(e)
-            }
+            raise
 
 
 class SSHUploadStep(Step):
@@ -1263,9 +1249,7 @@ class SSHUploadStep(Step):
         except Exception as e:
             logger.error("[%s] Upload failed: %s", self.name, e, exc_info=True)
             sftp.close()
-            if not self.continue_on_error:
-                raise
-            return {"passed": False, "deployed": deployed, "skipped": skipped, "error": str(e)}
+            raise
 
         sftp.close()
         return {"passed": True, "deployed": deployed, "skipped": skipped}

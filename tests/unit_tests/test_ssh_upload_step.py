@@ -298,7 +298,7 @@ class TestSSHUploadStepDeploy:
         with pytest.raises(FileNotFoundError):
             step._step(runtime, {}, uuid.uuid4())
 
-    def test_continue_on_error_returns_failed_dict(self, tmp_path):
+    def test_continue_on_error_does_not_convert_error_to_fail(self, tmp_path):
         step = SSHUploadStep(
             step_name="upload",
             files=[{"local": str(tmp_path / "nonexistent"), "remote": "/tmp/x"}],
@@ -308,6 +308,5 @@ class TestSSHUploadStepDeploy:
         client.open_sftp.return_value = MagicMock()
         runtime = MockRuntime(ssh_client=client)
 
-        result = step._step(runtime, {}, uuid.uuid4())
-        assert result["passed"] is False
-        assert "error" in result
+        with pytest.raises(FileNotFoundError):
+            step._step(runtime, {}, uuid.uuid4())
