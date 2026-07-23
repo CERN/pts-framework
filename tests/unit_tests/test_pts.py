@@ -21,6 +21,7 @@ from pypts.pts import (
     get_channel,
     command_handler_loop,
 )
+from pypts import run_recipe_app
 
 
 # ============================================================
@@ -294,3 +295,14 @@ class TestRunPts:
     @patch("pypts.pts.command_handler_loop")
     def test_omitted_sequence_selection_is_none(self, mock_handler):
         assert run_pts().sequence_name is None
+
+
+class TestRunRecipeApp:
+    def test_preloads_recipe_and_forwards_sequence(self):
+        window, app = MagicMock(), MagicMock()
+        api = MagicMock()
+        with patch("pypts.pts.run_pts", return_value=api) as run, \
+             patch("pypts.startup.create_and_start_gui", return_value=(window, app)) as gui:
+            assert run_recipe_app("recipe.yml", "Diagnostics") == (window, app)
+        run.assert_called_once_with(sequence_name="Diagnostics")
+        gui.assert_called_once_with(api, recipe_file="recipe.yml")
