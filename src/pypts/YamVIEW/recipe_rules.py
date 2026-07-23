@@ -29,5 +29,7 @@ STEP_REQUIRED_FIELDS = {
     "userwritestep": ["steptype", "step_name", "description"],
     "sshconnectstep": ["steptype", "step_name", "description"],
     "sshclosestep": ["steptype", "step_name", "description"],
+    "sshuploadstep": ["steptype", "step_name", "files", "description"],
+    "serialnumberstep": ["steptype", "step_name", "description"],
     "default": ["steptype", "step_name", "action_type", "module", "method_name", "description"],
 }

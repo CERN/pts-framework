@@ -508,3 +508,4 @@ teardown_steps:
 
 - steptype: SSHCloseStep
   step_name: Closes the SSH client
+  description: Close the SSH connection opened during setup
