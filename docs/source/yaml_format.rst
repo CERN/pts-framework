@@ -122,8 +122,11 @@ Each subsequent document defines a sequence.
    locals: # List of variables local to the sequence in scope (contrasted with global variables defined in recipe document)
      local_name: local_value
      # ...
-   parameters: [] # List of which locals can be set by the execution environment if this sequence is run as a subsequence
-   outputs: [] # List of which locals are to be used as outputs of the sequence when run as a subsequence
+   parameters: {} # Parameter metadata, keyed by parameter name
+   outputs: {} # Output metadata, keyed by output name
+
+``parameters`` and ``outputs`` are dictionaries. They are currently descriptive
+metadata; the runtime does not yet bind subsequence outputs automatically.
 
 
 .. _step_definition_details:
@@ -877,8 +880,8 @@ in the main sequence, but it can equally be placed inside a setup or sub-sequenc
        output_mapping: {}
    teardown_steps: []
    locals: {}
-   parameters: []
-   outputs: []
+   parameters: {}
+   outputs: {}
 
 
 Required globals and locals for certain steps.

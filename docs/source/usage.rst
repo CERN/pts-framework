@@ -275,11 +275,11 @@ For better distribution and deployment, you can use resource-based module loadin
    ---
    # Main sequence definition
    sequence_name: Main
-   parameters: []
+   parameters: {}
    locals:
      measurement: null
    outputs:
-     - measurement
+     measurement: {}
    setup_steps: []
    steps:
      - steptype: PythonModuleStep
@@ -630,4 +630,3 @@ The editor keeps the YAML view and the Sequencer in sync:
 * Edits in the YAML view are reflected in the Sequencer automatically
 * Changes in the Sequencer are immediately updated in the YAML view
 * Line highlighting shows which YAML section corresponds to the selected step
-

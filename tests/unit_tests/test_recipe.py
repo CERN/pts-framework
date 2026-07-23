@@ -354,8 +354,8 @@ class TestSequence:
         seq_data = {
             "sequence_name": "TestSeq",
             "locals": {"x": 1},
-            "parameters": ["p1"],
-            "outputs": ["o1"],
+            "parameters": {"p1": {}},
+            "outputs": {"o1": {}},
             "setup_steps": [],
             "steps": [{"steptype": "WaitStep", "step_name": "W", "input_mapping": {}, "output_mapping": {}}],
             "teardown_steps": [],
@@ -373,8 +373,8 @@ class TestSequence:
         sequence_data = {
             "sequence_name": "TestSeq",
             "locals": {"var1": None},
-            "parameters": [],
-            "outputs": [],
+            "parameters": {},
+            "outputs": {},
             "setup_steps": [],
             "steps": [{"steptype": "DummyStep"}],
             "teardown_steps": []
@@ -404,8 +404,8 @@ class TestSequence:
             sequence_data = {
                 "sequence_name": "TestRun",
                 "locals": {},
-                "parameters": [],
-                "outputs": [],
+                "parameters": {},
+                "outputs": {},
                 "setup_steps": [],
                 "steps": [{"steptype": "DummyStep"}],
                 "teardown_steps": [{"steptype": "TeardownStep"}]
@@ -446,8 +446,8 @@ class TestSequence:
             seq_data = {
                 "sequence_name": "S",
                 "locals": {},
-                "parameters": [],
-                "outputs": [],
+                "parameters": {},
+                "outputs": {},
                 "setup_steps": [],
                 "steps": [{"steptype": "DummyStep"}],
                 "teardown_steps": [{"steptype": "DummyStep"}],

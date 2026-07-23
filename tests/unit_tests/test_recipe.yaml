@@ -80,9 +80,9 @@ steps:
   #   output_mapping: {} # No specific output check needed, framework handles the error
 
 teardown_steps: []
-parameters: []
+parameters: {}
 locals:
   test_value: null # Initialize local variable
   calculated_output: null
   some_string: ""
-outputs: []
+outputs: {}
