@@ -26,6 +26,28 @@ For full documentation, please visit [PTS Framework Documentation](https://acc-p
 
 =======
 
+## Continuous integration and releases
+
+The project is tested in a disposable Python 3.13 Docker image. To reproduce the
+GitHub CI build locally, run:
+
+```sh
+docker build --build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTS_FRAMEWORK=0+local -t pts-framework-ci .
+docker run --rm pts-framework-ci
+```
+
+Creating a protected `vX.Y.Z` tag runs the same tests, builds the wheel and source
+distribution, and publishes them to TestPyPI. Verify the TestPyPI package in a clean
+environment before approving the `pypi` GitHub Environment:
+
+```sh
+python -m pip install --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ pts-framework==X.Y.Z
+```
+
+Approval publishes the same distributions to PyPI. GitHub retains the release
+artifact for 30 days; PyPI is the permanent package source. See
+[release configuration](.github/RELEASE.md) for the one-time setup.
+
 ## Licences
 
 pypts is distributed under the **LGPL-2.1-or-later** licence.

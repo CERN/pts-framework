@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build distributions
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Validate and expose the release version
+        id: version
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tags must use the vX.Y.Z format." >&2
+            exit 1
+          fi
+          echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build the disposable CI image
+        run: >-
+          docker build
+          --build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTS_FRAMEWORK=${{ steps.version.outputs.value }}
+          --tag pts-framework-release:${{ github.sha }}
+          .
+
+      - name: Run tests in the CI image
+        run: docker run --rm pts-framework-release:${{ github.sha }}
+
+      - name: Build wheel and source distribution
+        run: >-
+          docker run --rm
+          --volume "${{ github.workspace }}/dist:/dist"
+          pts-framework-release:${{ github.sha }}
+          python -m build --outdir /dist
+
+      - name: Store release distributions temporarily
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download release distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: publish-testpypi
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - name: Download release distributions
+        uses: actions/download-artifact@v5
+        with:
+          name: release-dists
+          path: dist/
+
+      - name: Publish distributions
+        uses: pypa/gh-action-pypi-publish@release/v1

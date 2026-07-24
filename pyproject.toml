@@ -25,7 +25,7 @@ authors = [
 ]
 # Specify the minimum Python version required. It is not safe to use
 # this to control the *upper* version of Python.
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 
 # The core dependencies of the project.
 dependencies = [

@@ -1,0 +1,20 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+.git
+.github
+.gitlab-ci.yml
+.venv
+.pytest_cache
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+coverage-html/
+coverage-report.xml
+junit-report.xml
+pts_reports/
+.idea/
+.vscode/
