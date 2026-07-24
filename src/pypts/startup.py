@@ -50,15 +50,21 @@ def create_and_start_gui(api: PtsApi, recipe_file: str | None = None):
     def _on_stop():
         Runtime.stop_event.set()
 
+    cleaned_up = False
+
     def _cleanup():
+        nonlocal cleaned_up
+        if cleaned_up:
+            return
+        cleaned_up = True
         proxy.stop()
-        if recipe_thread.isRunning():
-            recipe_thread.quit()
-            recipe_thread.wait(5000)
+        recipe_thread.quit()
+        recipe_thread.wait(5000)
 
     api.on_start = _on_start
     api.on_stop = _on_stop
 
+    window.closing.connect(_cleanup)
     app.aboutToQuit.connect(_cleanup)
     atexit.register(_cleanup)
 

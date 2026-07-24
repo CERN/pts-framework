@@ -48,6 +48,7 @@ test = [
   "pytest",
   "pytest-qt",
   "pytest-cov",
+  "pytest-timeout",
 ]
 doc = [
   "Sphinx",
@@ -96,6 +97,8 @@ features = [
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "--strict-markers"
+timeout = 90
+faulthandler_timeout = 60
 testpaths = ["tests"]
 markers = [
     "unit: unit tests",

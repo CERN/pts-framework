@@ -71,13 +71,17 @@ class RecipeEditorMainMenu(QMainWindow):
         self.setup_status_and_layouts()
         self.toggle_dark_mode_action.setChecked(self.dark_mode)
         self.toggle_dark_mode(self.dark_mode, log_change=False)
-        install_system_theme_sync(QApplication.instance(), self._set_dark_mode)
+        self._disconnect_system_theme_sync = install_system_theme_sync(QApplication.instance(), self._set_dark_mode)
 
         # Define the shortcut activation action
         save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         save_shortcut.activated.connect(self.on_save_clicked)
 
         self.log("✅ Application started.")
+
+    def closeEvent(self, event):
+        self._disconnect_system_theme_sync()
+        super().closeEvent(event)
 
     def setup_menu(self):
         menubar = self.menuBar()

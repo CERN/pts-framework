@@ -48,12 +48,23 @@ class RecipeEventProxy(QObject):
         self._test_package: str | None = None
 
     def RecipeEventProxyRunner(self):
+        """Fetch and process one event, stopping if the queue itself fails."""
         try:
             event = self.event_q.get()
-            if event is None:  # Sentinel to stop
-                self._running = False
-                return
-                
+        except Exception as e:
+            logger.error("Error retrieving RecipeEventProxy event: %s", e, exc_info=True)
+            self._running = False
+            return
+
+        if event is None:  # Sentinel to stop
+            self._running = False
+            return
+
+        self._process_event(event)
+
+    def _process_event(self, event):
+        """Transform one already-retrieved event and emit its Qt signal."""
+        try:
             event_name, event_data = event
             logger.debug(f"Event Proxy received: {event_name}")
             logger.debug(f"Event data type: {type(event_data)}, length: {len(event_data) if hasattr(event_data, '__len__') else 'N/A'}")
@@ -183,9 +194,9 @@ class RecipeEventProxy(QObject):
                 logger.warning(f"No dictionary created for event: {event_name}")
 
         except Exception as e:
-            logger.error(f"Error in RecipeEventProxy loop: {e}", exc_info=True)
-            # Depending on desired behavior, you might want to break or continue
-            # For robustness, we'll continue here
+            # A malformed event must not kill the proxy: the next queue read
+            # blocks normally and can still deliver valid recipe events.
+            logger.error(f"Error processing RecipeEventProxy event: {e}", exc_info=True)
 
     @Slot()
     def run(self):

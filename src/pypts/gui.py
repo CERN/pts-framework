@@ -97,6 +97,8 @@ class ConfigFileLoader(QWidget):
 class MainWindow(QMainWindow):
     """The main application window, displaying recipe progress and results."""
 
+    closing = Signal()
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -123,12 +125,21 @@ class MainWindow(QMainWindow):
         self._build_central()
         self._build_statusbar()
         self._apply_theme()
-        install_system_theme_sync(QApplication.instance(), self._set_dark_mode)
+        self._disconnect_system_theme_sync = install_system_theme_sync(QApplication.instance(), self._set_dark_mode)
+        self._close_notified = False
         self._switch_screen(SCREEN_IDLE)
 
         self.log_handler = TextEditLoggerHandler(self)
         self.log_handler.setFormatter(logging.Formatter("%(levelname)s : %(name)s : %(message)s"))
         self.log_handler.new_message.connect(self.log_text_box.append_line)
+
+    def closeEvent(self, event):
+        """Release application-wide signal connections before Qt closes us."""
+        if not self._close_notified:
+            self._close_notified = True
+            self._disconnect_system_theme_sync()
+            self.closing.emit()
+        super().closeEvent(event)
 
     def _build_menu(self):
         menu_bar = QMenuBar(self)

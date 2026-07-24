@@ -22,6 +22,9 @@ class _FakeSignal:
     def connect(self, callback):
         self.callbacks.append(callback)
 
+    def disconnect(self, callback):
+        self.callbacks.remove(callback)
+
 
 class _FakeStyleHints:
     def __init__(self, scheme):
@@ -56,12 +59,15 @@ def test_install_system_theme_sync_invokes_callback_for_changes():
     app = _FakeApp(Qt.ColorScheme.Light)
     callback = Mock()
 
-    install_system_theme_sync(app, callback)
+    disconnect = install_system_theme_sync(app, callback)
 
     assert len(app.styleHints().colorSchemeChanged.callbacks) == 1
 
     app.styleHints().colorSchemeChanged.callbacks[0](Qt.ColorScheme.Dark)
     callback.assert_called_once_with(True)
+
+    disconnect()
+    assert app.styleHints().colorSchemeChanged.callbacks == []
 
 
 def test_main_window_uses_detected_system_theme(qtbot):
