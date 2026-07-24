@@ -15,6 +15,7 @@ jobs:
   build:
     name: Test and build distributions
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Check out source
         uses: actions/checkout@v6
@@ -58,6 +59,7 @@ jobs:
     name: Publish to TestPyPI
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: testpypi
     permissions:
       id-token: write
@@ -77,6 +79,7 @@ jobs:
     name: Publish to PyPI
     needs: publish-testpypi
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment: pypi
     permissions:
       id-token: write
