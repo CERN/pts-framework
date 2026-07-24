@@ -1,0 +1,37 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Build the CI image
+        run: >-
+          docker build
+          --build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTS_FRAMEWORK=0.0+g${GITHUB_SHA::7}
+          --tag pts-framework-ci:${GITHUB_SHA}
+          .
+
+      - name: Run tests
+        run: >-
+          docker run --rm pts-framework-ci:${GITHUB_SHA}
+          python -m pytest tests -vv --durations=20

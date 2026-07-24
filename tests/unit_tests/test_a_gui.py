@@ -144,7 +144,7 @@ def test_show_message_arrow_keys_change_selected_button_and_enter_accepts(main_w
 
     qtbot.keyClick(panel.selected_button(), Qt.Key_Enter)
 
-    assert response_q.get() == "no"
+    assert response_q.get(timeout=5) == "no"
     assert panel.selected_button() is None
     assert main_window._screen_idx == gui.SCREEN_IDLE
 
@@ -203,15 +203,23 @@ def test_toggle_theme_keeps_prompt_image(main_window, qtbot, tmp_path):
 def test_create_and_start_gui_shows_window(qapp):
     api = Mock()
     api.input_queue = SimpleQueue()
+    api.event_queue = SimpleQueue()
+    proxy = Mock()
+    thread = Mock()
 
-    with patch("pypts.startup.QApplication", return_value=qapp):
+    with patch("pypts.startup.QApplication", return_value=qapp), \
+         patch("pypts.startup.RecipeEventProxy", return_value=proxy), \
+         patch("pypts.startup.QThread", return_value=thread):
         window, app = create_and_start_gui(api)
 
-    try:
-        assert app is qapp
-        assert window.isVisible()
-    finally:
-        window.close()
+    assert app is qapp
+    assert window.isVisible()
+
+    window.close()
+
+    proxy.stop.assert_called_once_with()
+    thread.quit.assert_called_once_with()
+    thread.wait.assert_called_once_with(5000)
 
 
 def test_on_start_clicked_switches_to_running_tab_before_queue_start(main_window, monkeypatch):
@@ -245,7 +253,7 @@ def test_on_start_clicked_switches_to_running_tab_before_queue_start(main_window
 
     assert load_states == [gui.SCREEN_IDLE]
     assert main_window._screen_idx == gui.SCREEN_RUNNING
-    assert start_queue.get() == ("START",)
+    assert start_queue.get(timeout=5) == ("START",)
 
 
 def test_update_sequence_shows_ready_to_start_when_loaded_not_running(main_window, sample_sequence):

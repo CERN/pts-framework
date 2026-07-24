@@ -26,12 +26,29 @@ def detect_system_dark_mode(app=None) -> bool:
     return style_hints.colorScheme() == Qt.ColorScheme.Dark
 
 
-def install_system_theme_sync(app, callback: Callable[[bool], None]) -> None:
+def install_system_theme_sync(app, callback: Callable[[bool], None]) -> Callable[[], None]:
+    """Install system-theme synchronisation and return a disconnect callback."""
     style_hints = _style_hints_for(app)
     if style_hints is None or not hasattr(style_hints, "colorSchemeChanged"):
-        return
+        return lambda: None
 
-    style_hints.colorSchemeChanged.connect(lambda scheme: callback(scheme == Qt.ColorScheme.Dark))
+    def on_color_scheme_changed(scheme):
+        callback(scheme == Qt.ColorScheme.Dark)
+
+    style_hints.colorSchemeChanged.connect(on_color_scheme_changed)
+    disconnected = False
+
+    def disconnect() -> None:
+        nonlocal disconnected
+        if disconnected:
+            return
+        disconnected = True
+        try:
+            style_hints.colorSchemeChanged.disconnect(on_color_scheme_changed)
+        except (RuntimeError, TypeError):
+            pass
+
+    return disconnect
 
 
 def get_theme_colors(dark: bool) -> dict[str, str]:

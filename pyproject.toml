@@ -25,7 +25,7 @@ authors = [
 ]
 # Specify the minimum Python version required. It is not safe to use
 # this to control the *upper* version of Python.
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 
 # The core dependencies of the project.
 dependencies = [
@@ -48,6 +48,7 @@ test = [
   "pytest",
   "pytest-qt",
   "pytest-cov",
+  "pytest-timeout",
 ]
 doc = [
   "Sphinx",
@@ -96,6 +97,8 @@ features = [
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "--strict-markers"
+timeout = 90
+faulthandler_timeout = 60
 testpaths = ["tests"]
 markers = [
     "unit: unit tests",

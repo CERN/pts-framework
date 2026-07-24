@@ -328,3 +328,17 @@ class TestStopBehavior:
         event_q.put(None)
         proxy.run_once()
         assert proxy._running is False
+
+
+def test_queue_get_error_stops_proxy_without_retrying(caplog):
+    """A failed queue read is terminal, avoiding a busy retry loop."""
+    event_q = MagicMock()
+    event_q.get.side_effect = RuntimeError("broken queue")
+    proxy = RecipeEventProxy(event_q)
+
+    with caplog.at_level("ERROR"):
+        proxy.run_once()
+
+    assert proxy._running is False
+    event_q.get.assert_called_once_with()
+    assert "Error retrieving RecipeEventProxy event" in caplog.text

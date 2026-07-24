@@ -95,7 +95,7 @@ class TestMainReportGeneration:
             "-t", str(timestamp)
         ]
 
-        result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
+        result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False, timeout=30)
         print("STDOUT:", result.stdout)
         print("STDERR:", result.stderr)
 
@@ -111,7 +111,7 @@ class TestMainReportGeneration:
 
         assert report_py_path.exists()
         command = [sys.executable, str(report_py_path), "-o", str(output_dir), "-t", str(timestamp)]
-        result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False)
+        result = subprocess.run(command, cwd=PROJECT_ROOT, capture_output=True, text=True, check=False, timeout=30)
         print("STDOUT:", result.stdout)
         print("STDERR:", result.stderr)
         assert result.returncode == 0, "Script execution failed"
