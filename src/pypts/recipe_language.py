@@ -18,6 +18,23 @@ CANONICAL_RECIPE_VERSION = "1.0.0"
 
 
 @dataclass(frozen=True)
+class SourcePosition:
+    """A one-based source position with a zero-based character offset."""
+
+    line: int
+    column: int
+    offset: int
+
+
+@dataclass(frozen=True)
+class SourceSpan:
+    """Half-open source range."""
+
+    start: SourcePosition
+    end: SourcePosition
+
+
+@dataclass(frozen=True)
 class Diagnostic:
     """A language-contract finding for an already-loaded recipe document."""
 
@@ -25,6 +42,8 @@ class Diagnostic:
     message: str
     path: tuple[str | int, ...] = ()
     severity: str = "error"
+    source_name: str | None = None
+    span: SourceSpan | None = None
 
 
 @dataclass(frozen=True)
@@ -221,6 +240,15 @@ def _validate_input_mappings(mapping: Mapping[str, Any], path: tuple[str | int, 
         if source not in {"direct", "local", "global", "method"}:
             diagnostics.append(Diagnostic("unknown-input-source", f"Unknown input source '{source}'.", item_path + ("type",)))
             continue
+        allowed = {
+            "direct": {"type", "value", "indexed"},
+            "local": {"type", "local_name", "indexed"},
+            "global": {"type", "global_name", "indexed"},
+            "method": {"type", "value", "indexed"},
+        }[source]
+        for field_name in config:
+            if field_name not in allowed:
+                diagnostics.append(Diagnostic("unknown-input-field", f"Unknown field '{field_name}' for input source '{source}'.", item_path + (field_name,)))
         required_key = {"direct": "value", "local": "local_name", "global": "global_name", "method": "value"}[source]
         if required_key not in config:
             diagnostics.append(Diagnostic("missing-input-source-value", f"Input source '{source}' requires '{required_key}'.", item_path))
@@ -247,6 +275,15 @@ def _validate_output_mappings(mapping: Mapping[str, Any], path: tuple[str | int,
         if kind not in {"passfail", "equals", "range", "passthrough", "local", "global", "image"}:
             diagnostics.append(Diagnostic("unknown-output-type", f"Unknown output type '{kind}'.", item_path + ("type",)))
             continue
+        allowed = {
+            "passfail": {"type"}, "equals": {"type", "value"},
+            "range": {"type", "min", "max"}, "passthrough": {"type"},
+            "local": {"type", "local_name"}, "global": {"type", "global_name"},
+            "image": {"type"},
+        }[kind]
+        for field_name in config:
+            if field_name not in allowed:
+                diagnostics.append(Diagnostic("unknown-output-field", f"Unknown field '{field_name}' for output type '{kind}'.", item_path + (field_name,)))
         if kind in {"passfail", "equals", "range", "passthrough"}:
             verdicts.append(kind)
         required = requirements.get(kind, ())
@@ -312,6 +349,10 @@ def validate_recipe_documents(documents: Iterable[Any]) -> ValidationResult:
     if not isinstance(header, Mapping):
         return ValidationResult((Diagnostic("invalid-header", "The first document must be the recipe header.", (0,)),))
     _check_fields(header, HEADER_FIELDS, (0,), diagnostics)
+    if header.get("recipe_version") != CANONICAL_RECIPE_VERSION:
+        diagnostics.append(Diagnostic("unsupported-recipe-version", f"recipe_version must be '{CANONICAL_RECIPE_VERSION}'.", (0, "recipe_version")))
+    if "report" in header and header.get("report") not in {"overwrite", "append"}:
+        diagnostics.append(Diagnostic("invalid-report-mode", "report must be 'overwrite' or 'append'.", (0, "report")))
     sequences: dict[str, Mapping[str, Any]] = {}
     sequence_step_types: dict[str, dict[str, list[str]]] = {}
     for doc_index, sequence in enumerate(docs[1:], start=1):
