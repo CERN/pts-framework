@@ -56,6 +56,7 @@ Documentation contents
 
     api
     architecture
+    recipe_language_architecture
     gui_architecture
     yaml_format
     instruments
