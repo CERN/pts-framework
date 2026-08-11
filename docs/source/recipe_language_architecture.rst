@@ -7,8 +7,9 @@ Recipe Language Architecture
 
 This page describes the recipe language model, the isolated parser, and the
 rules for evolving them.  The parser is currently independent of recipe
-execution, ``verify_recipe``, YamVIEW, and Sphinx reference generation.  Those
-consumers will move onto the shared model in later integration work.
+execution, ``verify_recipe``, YamVIEW, and Sphinx reference publication.  Those
+runtime and UI consumers will move onto the shared model in later integration
+work.
 
 Design goals
 ------------
@@ -31,6 +32,11 @@ The current architecture has two source modules:
    contract, and constructs immutable typed definitions.  It also serializes a
    typed recipe into canonical YAML.
 
+``pypts.recipe_reference``
+   Validates the registered examples and generates the deterministic standalone
+   RST language reference.  The generated artifact remains outside the Sphinx
+   source tree until framework integration is accepted.
+
 The intended flow is::
 
    recipe YAML
@@ -48,7 +54,7 @@ The intended flow is::
        |
        +---- dump_recipe() -> canonical recipe YAML
        |
-       +---- future runtime, GUI, and generated-reference consumers
+       +---- generated reference, and future runtime and GUI consumers
 
 Parser operation
 ----------------
@@ -134,9 +140,10 @@ Keep the dependency direction narrow:
   runtime, concrete steps, YamVIEW, or Sphinx.
 * Runtime and UI adapters may consume parser models after integration; parser
   models must not consume those adapters.
-* Syntax reference pages and examples should eventually be generated or
-  checked from the language specifications.  Architecture prose should explain
-  responsibilities and extension workflows, not duplicate field tables.
+* Syntax reference fields, constraints, and examples are generated and checked
+  from the language specifications.  Architecture prose explains
+  responsibilities and extension workflows rather than duplicating field
+  tables.
 
 These rules keep syntax inspection safe and make the parser usable by command
 line tools, editors, the GUI, tests, and documentation without constructing
@@ -158,8 +165,10 @@ Adding or changing a step
    specification order and parse/dump/reparse preserves the model.
 #. During framework integration, update only the adapter that constructs the
    runtime step from ``StepDefinition``.
-#. Regenerate the syntax reference and validate its example once reference
-   generation is available.
+#. Regenerate and check the standalone syntax reference::
+
+      python -m pypts.recipe_reference docs/generated/recipe_language_reference.rst
+      python -m pypts.recipe_reference --check docs/generated/recipe_language_reference.rst
 
 Changing input or output mappings
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -207,7 +216,7 @@ parse, dump, reparse, and compare equal as a model.  The comment-only draft is
 intentionally invalid.  Isolation tests also protect the parser from importing
 runtime, step, GUI, or Sphinx modules.
 
-After the integration and generated-reference phases, verification must also
-cover runtime construction equivalence, GUI-produced canonical YAML, registry
-and reference completeness, successful Sphinx builds with warnings treated as
-errors, and the absence of duplicated consumer-side field or type registries.
+After the integration phase, verification must also cover runtime construction
+equivalence, GUI-produced canonical YAML, successful Sphinx builds with
+warnings treated as errors, and the absence of duplicated consumer-side field
+or type registries.
