@@ -2,139 +2,145 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
+"""
+The interactive shell frontend.
+
+Everything about the protocol - which messages exist, how they are handled, how
+shutdown is negotiated - is in HmiClient. This module is the presentation half:
+reading a command line and printing what happens.
+"""
+
 import threading
 import time
-from pypts.core.HMI_to_core_interface import HMIToCoreInterface
-from pypts.core.CORE_MESSAGES import CoreToHMIEvent, CoreToHMICommand
+
+from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import log
-from pypts.utilities.error_handling import catch_and_report_errors
-from pypts.utilities.heartbeat_manager import HeartbeatManager
-from pypts.utilities.common import poll_queue
+from pypts.messages import Channel
+from pypts.messages.common import ModuleError, ResultType, StepOutcome
+from pypts.messages.hmi_link import CoreToHmi, HmiToCore
+
+#: Seconds between polls of the CORE inbox, in the background thread.
+POLL_INTERVAL_S = 0.05
+
+HELP_TEXT = "Available commands: start_sequence <name>, load_recipe <path>, status, exit, help"
 
 
-def cli_main(hmiToCoreInterface: HMIToCoreInterface, core_to_hmi_queue):
-    # Start the CLI interface (interactive shell)
-    cli = CLI(hmiToCoreInterface, core_to_hmi_queue)
-    cli.run()
-
-
-class CLI:
+def cli_main(to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi]) -> None:
     """
-    Command Line Interface module connecting to Core via the same interface as GUI.
-    Provides an interactive shell to send commands and view statuses.
+    Entry point. Unlike the GUI this runs in the launcher's own process, so
+    logging is already initialised by the time it is called.
+    """
+    CLI(to_core, from_core).run()
+
+
+class CLI(HmiClient):
+    """
+    An interactive shell on the main thread, with the CORE inbox polled from a
+    background thread. The split is what lets a status update print while the
+    operator is still deciding what to type.
     """
 
-    def __init__(self, hmiToCoreInterface: HMIToCoreInterface, core_to_hmi_queue):
-        # Initialize CLI with communication interfaces
-        self.core = hmiToCoreInterface
-        self.core_to_hmi_queue = core_to_hmi_queue
-        # Heartbeat manager for keep-alive signals
-        self.heartbeat_manager = HeartbeatManager(self.core.send_heartbeat)
-        self.running = True  # control framework for the main loop
-        self.status = "Idle"  # current status text
-        self._lock = threading.Lock()  # lock to synchronize status access
+    def __init__(self, to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi]) -> None:
+        super().__init__(to_core, from_core)
+        self.status = "Idle"
+        self._lock = threading.Lock()  # guards `status` across the two threads
+        log.info("Starting module...")
 
-        log.info("Starting module...")  # log startup
+    # --- Shell ----------------------------------------------------------------
 
-    @catch_and_report_errors()
-    def poll_core(self):
-        # Poll the core queue for new events
-        poll_queue(self.core_to_hmi_queue, self.handle_core_event)
-
-    @catch_and_report_errors()
-    def handle_core_event(self, event: CoreToHMIEvent):
-        # Handle incoming events from core
-        log.info(f"Received core event: {event}")
-        match event.cmd:
-            case CoreToHMICommand.UPDATE_STATUS:
-                self.update_status(event.payload.get("text", ""))
-            case CoreToHMICommand.STOP:
-                # Core sent stop command, so update running state
-                log.info("Received STOP command from Core")
-                self.running = False
-            case _:
-                # Log unknown events
-                log.error(f"Unknown event: {event}")
-
-    def update_status(self, text: str):
-        # Thread-safe update of status text
-        with self._lock:
-            self.status = text
-        log.info(f"status update: {text}")
-        print(f"Status updated: {text}")  # print to console
-
-    def do_periodic_tasks(self):
-        # Perform periodic background tasks
-        self.heartbeat_manager.tick()
-
-    def run(self):
-        """
-        Runs an interactive CLI loop in main thread and polls Core asynchronously.
-        """
+    def run(self) -> None:
         log.info("Starting CLI module...")
-
-        # Start polling thread for core queue
-        polling_thread = threading.Thread(target=self._poll_loop, daemon=True)
+        polling_thread = threading.Thread(target=self._poll_loop, name="cli-poll", daemon=True)
         polling_thread.start()
 
         try:
-            while self.running:
-                # Command input from user
-                cmd = input("pypts> ").strip().lower()
-                # Split command and args
-                parts = cmd.split(maxsplit=1)
-                # Use match-case on the command keyword
-                match parts[0] if parts else "":
-                    case "exit" | "quit" | "stop":
-                        print("STOP request received, exiting...")
-                        self.stop()
-                    case "start_sequence":
-                        # Command: start_sequence <name>
-                        if len(parts) == 2:
-                            self.core.start_sequence(parts[1])
-                        else:
-                            print("Usage: start_sequence <sequence_name>")
-                    case "load_recipe":
-                        # Command: load_recipe <name>
-                        if len(parts) == 2:
-                            self.core.load_recipe(parts[1])
-                        else:
-                            print("Usage: load_recipe <recipe_name>")
-                    case "status":
-                        # Print current status
-                        print(f"Current status: {self.status}")
-                    case "help":
-                        # Help menu
-                        print("Available commands: start_sequence <name>, load_recipe <name>, exit, help")
-                    case "":
-                        # Empty input, do nothing
-                        pass
-                    case other:
-                        # Unknown command
-                        print(f"Unknown command: {other}. Type 'help' for available commands.")
+            self._command_loop()
         except KeyboardInterrupt:
-            # Handle Ctrl+C gracefully
             print("\nExiting pypts...")
-            self.stop()
+            self.request_shutdown()
+        except EOFError:
+            # stdin closed - a pipe, a redirect, or Ctrl+D. Treat it as a
+            # request to leave rather than letting it escape the shell.
+            print("\nInput stream closed, exiting pypts...")
+            self.request_shutdown()
 
-        # Wait for polling thread to finish before exit
-        polling_thread.join()
+        # request_shutdown() only *asks*. CORE stops every module and answers
+        # StopHmi, which the polling thread turns into stop(); this waits for
+        # that handshake so CORE learns the frontend is gone before the process
+        # ends. Bounded, so a wedged CORE cannot hang the exit.
+        self.wait_until_stopped()
+        polling_thread.join(timeout=1.0)
         log.info("CLI module stopped.")
 
-    def _poll_loop(self):
+    def _command_loop(self) -> None:
         """
-        Periodically poll the core queue and perform periodic tasks.
-        Runs in a separate thread, while the main thread handles user input.
+        Read and dispatch commands until the operator leaves.
+
+        Note that input() blocks: if CORE sends StopHmi while the operator is at
+        the prompt, `running` goes False in the polling thread but this loop
+        only notices after the next Enter.
         """
+        while self.running:
+            parts = input("pypts> ").strip().split(maxsplit=1)
+            match parts[0].lower() if parts else "":
+                case "exit" | "quit" | "stop":
+                    print("Shutting down...")
+                    self.request_shutdown()
+                    return
+                case "start_sequence":
+                    if len(parts) == 2:
+                        self.start_sequence(parts[1])
+                    else:
+                        print("Usage: start_sequence <sequence_name>")
+                case "load_recipe":
+                    if len(parts) == 2:
+                        self.load_recipe(parts[1])
+                    else:
+                        print("Usage: load_recipe <recipe_path>")
+                case "status":
+                    with self._lock:
+                        print(f"Current status: {self.status}")
+                case "help":
+                    print(HELP_TEXT)
+                case "":
+                    pass
+                case other:
+                    print(f"Unknown command: {other}. Type 'help' for available commands.")
+
+    def _poll_loop(self) -> None:
+        """Drain the CORE inbox and send heartbeats, while the shell blocks on input."""
         while self.running:
             self.poll_core()
             self.do_periodic_tasks()
-            time.sleep(0.05)
+            time.sleep(POLL_INTERVAL_S)
 
-    @catch_and_report_errors()
-    def stop(self):
-        # Graceful shutdown of CLI
-        log.info("Stopping module")
-        self.running = False
-        self.core.stop()  # send stop command to core
+    # --- Presentation ---------------------------------------------------------
+
+    def show_status(self, text: str) -> None:
+        with self._lock:
+            self.status = text
+        log.info(f"status update: {text}")
+        print(f"Status updated: {text}")
+
+    def show_error(self, error: ModuleError) -> None:
+        log.error(f"{error.source}: {error.message}")
+        print(f"ERROR [{error.source}] {error.message}")
+
+    def show_recipe_loaded(self, recipe_name: str, recipe_version: str) -> None:
+        print(f"Recipe loaded: {recipe_name} (version {recipe_version})")
+
+    def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
+        print(f"Running {recipe_name}: {recipe_description}")
+
+    def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
+        print(f"Run finished: {result} ({len(outcomes)} steps)")
+
+    def show_sequence_finished(self, sequence_name: str, result: ResultType) -> None:
+        print(f"  {sequence_name}: {result}")
+
+    def show_step_finished(self, outcome: StepOutcome) -> None:
+        line = f"    {outcome.step_name}: {outcome.result}"
+        print(f"{line} - {outcome.error_info}" if outcome.error_info else line)
+
+    def on_stop(self) -> None:
         print("Goodbye!")

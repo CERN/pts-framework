@@ -14,8 +14,8 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 |---|---|
 | Package layout | Matches the system design: `core/`, `sequencer/`, `recipe/`, `step/`, `report/`, `hmi/{gui,cli}/`, `config_handler/`, `logger/`, `stream_handler/`, `hardware_layer/`, `helper_applications/{recipe_creator,recipe_verificator,example_finder}/`, `utilities/`, `launcher/`, plus `old_code/` holding the previous engine |
 | Process model | `launcher/startup.py`: argparse `--mode gui/cli/connect`, spawns Core as a process; Core spawns Sequencer and Report processes — exactly the spec's module diagram |
-| Typed messaging | `CORE_MESSAGES` / `HMI_MESSAGES` / `SEQUENCER_MESSAGES` / `REPORT_MESSAGES` / `COMMON_MESSAGES` with enums + dataclasses; interface ABCs + queue data-layer classes (`CoreToHMIQueue`, `HMIToCoreQueue`, …); the documented 4-step "add a message" workflow in `src/pypts/README.md` |
-| Health & errors | `HeartbeatManager` ticking from Sequencer/Report/HMI, Core-side timeout detection; `@catch_and_report_errors()` decorator sending `ModuleErrorEvent` to Core |
+| Typed messaging | **Reworked (see §1.1).** `pypts/messages/`: one frozen dataclass per message, one union per link, one generic `Channel` for all six links, every handler closed with `unhandled()`. The enums, the interface ABCs and the queue data-layer classes are gone, and with them the 4-step "add a message" workflow — it is two steps now. Protocol tests in `tests/unit_tests/test_messages.py` |
+| Health & errors | `HeartbeatManager` ticking from Sequencer/Report/HMI, Core-side timeout detection (armed only for modules still expected to run); `@catch_and_report_errors()` sending a typed `ModuleError` to Core, with the source resolved per function |
 | GUI toolkit | **PySide6 migration done** (GUI skeleton + `test_pyside6_conversion.py`) — the PyQt6/LGPL conflict is resolved |
 | Licensing | LGPL-2.1-or-later + CC-BY-SA-4.0, SPDX headers, `reuse.toml`, `licenses/`, `dependency_license_analysis.rst` — REUSE compliance largely in place |
 | Logger | Global root-logger override: timestamped format (file:function, ms), file + stdout handlers, `set_stdout_logging_enabled()` toggle |
@@ -31,17 +31,173 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 2. **Report module** — process shell with heartbeat exists; `generate_report()` / `export_report()` are `pass`. The CSV/HTML logic is in `old_code/report.py`.
 3. **HAL** — `hal.py` is a one-line comment.
 4. **Stream handler** — `StreamContainer` + an XYGraph widget spike; not integrated.
-5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet.
+5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet. The **debug console** (`--mode debug`, §1.2) is the exception: it draws a full run and every message on every link, but it is a development tool and not a product frontend.
 6. **Step construction still uses `eval(step_type + "(**step_data)")`** in `old_code/recipe.py` — the closed, unsafe step factory rides along into whatever gets ported.
 
 ### Defects worth fixing early (spotted while reading the branch)
 
 - **Broken import in the verificator:** `verify_recipe.py` does `from pypts import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS`, but `src/pypts/__init__.py` is now minimal and defines none of these — the verificator cannot import. The schema constants need a proper home (see §3.5: make them part of the step/recipe schema layer).
-- **`@catch_and_report_errors()` swallows results and errors:** the wrapper returns `None` on success-path exceptions *and* doesn't re-raise, so a failing function silently continues; it also assumes `self.core.report_error` exists on every decorated class, and the `nonlocal module_name` + `inspect.stack()[1]` combination captures the *first caller's* module and reuses it forever. Fine for a skeleton, dangerous once the sequencer executes real steps — errors must also propagate into StepResults, not only into Core events.
-- **Heartbeat monitoring is one-directional and always-armed:** Core warns on timeout even before/without submodules being expected to run, and HMI heartbeat is only sent by CLI/GUI loops that also block on `input()` (CLI's input thread blocks, but heartbeats tick in the polling thread — OK; still, warn-only with no recovery action).
+- **`@catch_and_report_errors()` swallows results and errors:** *partially fixed.* The `nonlocal module_name` + `inspect.stack()[1]` bug is gone — the source is resolved from the decorated function at decoration time (`tests/unit_tests/test_utilities.py`). **Still open:** the wrapper returns `None` on an exception and does not re-raise, so a failing function silently continues, and it still assumes `self.core` exists on every decorated class. Dangerous once the sequencer executes real steps — errors must also propagate into StepResults, not only into Core events.
+- **Heartbeat monitoring is one-directional and always-armed:** *partially fixed.* Core now only checks modules still expected to be running, so a module that has reported itself stopped no longer produces timeout warnings for the rest of the run. **Still open:** it is warn-only, with no recovery action, and Core sends no heartbeat of its own, so an HMI cannot detect a dead Core.
 - **Per-process side effects at import:** `logger/log.py` and the config handler run at import time in every spawned process — each process opens its own timestamped log file and rewrites `config.ini`. Decide per-run log directories (spec: "separate logs by test run") and a single config writer before this multiplies.
 - **Core deps got heavier, not lighter:** `pts-framework` now hard-depends on `matplotlib`, `numpy`, `nptdms`, `nidmm`, `hightime`, `pyserial`, `paramiko`, `PySide6`. For a framework whose spec demands "lightweight" and "tests executable stand-alone," this is the strongest argument for the plugin packaging model in §3.
 - Two `TODO.txt` items confirm known issues: globals stored as a list not dict; GUI refresh problems.
+
+### 1.1 Message layer rework — **done**
+
+> **Status: implemented.** The enum + `payload: dict` protocol was replaced by one frozen
+> dataclass per message. Rationale and the topology review that led to it are recorded
+> separately; what matters here is the resulting contract and what it left open.
+
+**What changed.** `pypts/messages/` now holds one module per link (`hmi_link`,
+`sequencer_link`, `report_link`, `logger_link`), plus `common.py` for vocabulary two links
+share and `run_events.py` for what the engine reports during a run. A single generic `Channel`
+replaced the six interface ABC / queue-class pairs — about 200 lines where there were 612 — and
+every handler is a `match` closed with `unhandled()` instead of `case _: pass`. Adding a message
+is two edits rather than four, and both ends of a link are now one file.
+
+**Defects this closed, each of which was invisible before:**
+
+- Core had no branch for the HMI's error message, so every failure a frontend reported through
+  `@catch_and_report_errors()` was silently discarded.
+- The Sequencer had no branch for `STOP_SEQUENCE`, a command Core had a method to send.
+- `sequence_result(text)` packed a result string under the key `"sequence_name"`.
+- `run_sequence()` took no arguments, so the sequence name the operator chose stopped at Core.
+- The CLI and the GUI answered `STOP` differently — the CLI never acknowledged, so Core could
+  not reach a clean shutdown in CLI mode and was only ever killed by the launcher. Both
+  frontends now share one implementation of the protocol (`hmi/hmi_client.py`).
+- The launcher killed Core with `terminate()` as the primary path, orphaning the Sequencer and
+  the Report. It now asks first and terminates only on timeout. Verified end to end: a CLI run
+  reaches "All modules stopped cleanly" and exits 0 without the fallback firing.
+- `poll_queue` handled one message per 10 ms tick, capping every link at ~100 messages/second.
+  `Channel.drain()` takes a bounded batch.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** The Sequencer must run a sequence on its own worker thread before user-prompt
+      steps are ported. `PendingRequests.wait()` blocks, and if it blocks the thread that drains
+      the inbox the answer can never arrive — the module deadlocks. See `messages/requests.py`.
+- [ ] **TODO:** Some old_code interaction steps read a *second* value off the same response
+      queue after the first answer (a file path, a measured value, a `(port, baudrate, IDN)`
+      triple). `UserPromptResponse` does not model this; each follow-up needs to become its own
+      request when those steps are ported.
+- [ ] **TODO:** Core does not yet trigger `GenerateReport` on `RunFinished`, or forward run
+      events to the Report at all. That wiring belongs with the Phase 1 engine port.
+- [ ] **TODO:** No type checker is configured, so `unhandled()` currently gives runtime
+      exhaustiveness only. Adding mypy or pyright over `pypts/messages/` and the handlers turns
+      a forgotten `case` into a build error — which is most of the value of the rework.
+- [ ] **TODO:** The CLI's main thread is parked in `input()`, so a `StopHmi` from Core is only
+      noticed after the next Enter. Pre-existing, and now the only remaining asymmetry between
+      the two frontends.
+- [ ] **TODO:** `--mode connect` is still unimplemented. When it lands it needs event fan-out
+      from Core to several HMI channels; commands stay point-to-point. A string-topic event bus
+      was considered and rejected — it would erase the explicit topology.
+- [ ] **TODO:** Add the `QT_QPA_PLATFORM=offscreen` CI job. `tests/unit_tests/test_hmi_gui.py`
+      and `tests/unit_tests/test_debug_console.py` have real tests now and they need it on the
+      runner.
+
+### 1.2 Debug console (`--mode debug`) — **done**
+
+> **Status: implemented.** A developer frontend that makes the message layer observable and
+> drivable. Built because the engine port (Phase 1) is about to generate traffic that no
+> existing frontend can show: the GUI has one status label, and Core ↔ Sequencer and
+> Core ↔ Report never leave the engine process at all.
+
+**What it is.** `python -m pypts --mode debug` starts a fourth frontend beside the GUI and the
+CLI, subclassing `HmiClient` like they do. Four tabs: **Trace** (live table of every message on
+every link, filterable by link/type/text, heartbeats hidden by default), **Inject** (curated
+buttons plus a form generated from any message dataclass), **Run** (the run as a frontend sees
+it, drawn from the progress events), **Modules** (heartbeat age and last error per module).
+Status glyphs (✅ / ⚠️ / ❌, plus ▶️ running, ⏹️ stopped, ⏳ pending, 💉 injected) come from one
+table in `hmi/debug/icons.py` so the vocabulary is identical across the four tabs; they are
+paired with colour rather than replacing it. Not used by the CLI, where `print()` on a Windows
+console in a non-UTF-8 code page would raise `UnicodeEncodeError`.
+
+**How it sees the engine's internal links.** `Channel.__init__` gained two keyword-only
+arguments, `link=""` and `observer=None`. The launcher builds one `ChannelTap`
+(`hmi/debug/tap.py`) under `--mode debug` and passes it to Core, which puts it on all four
+submodule channels. Each process gets its own unpickled copy writing `TapRecord`s into one
+queue the console drains. Outside `--mode debug` the observer is `None` and `send()` takes
+exactly the branch it took before — a normal run carries no debug path.
+
+**How injection works.** The console *is* the HMI, so it sends `hmi->core` messages itself. For
+the five links only Core can reach it sends `InjectMessage(target, message)` on a debug inbox;
+Core puts the message on the real queue, so it is drained, matched and forwarded by the same
+code a genuine message meets. Injecting a `StepFinished` on `sequencer->core` therefore
+exercises `handle_sequencer_message`, the forward to the HMI, and the console's own rendering —
+and appears twice in the trace, marked injected on the way in and unmarked when Core forwards
+it.
+
+**Why the tap is on `Channel` rather than in Core.** Core routes messages but does not see the
+ones it never receives — a Sequencer→Core send is only visible at the transport. Putting the
+observer on the single chokepoint every message already passes through is the only place that
+sees all six links, and it survives the roadmap's thread migration unchanged: the tap does not
+care which queue type the Channel wraps.
+
+**Verified:** 9 tests in `tests/unit_tests/test_debug_console.py`, including that a failing tap
+never stops the message it was observing, that an injected sequencer event really reaches the
+HMI through Core's routing, and that all 44 message types across all six unions are
+constructible from the generated form. Full suite: 129 passed, 78 skipped. `--mode debug` boots
+all five processes on Windows.
+
+**New TODOs this opened:**
+
+- [ ] **TODO — revert before v1.0:** `--mode` now defaults to **`debug`**, not `gui`. This is
+      deliberate for the duration of the refactor (a bare `python -m pypts` is more useful
+      showing the message layer than an idle status label, while the engine is a stub), but
+      shipping a developer console as the default frontend would be wrong. Flip the default back
+      to `gui` in `launcher/startup.py` as part of the Phase 3 frontend work.
+- [ ] **TODO:** The trace has no export. Copying a failing run's message sequence out of the
+      table for a bug report currently means a screenshot.
+- [ ] **TODO:** `tuple[StepOutcome, ...]` has no editor, so `RunFinished.outcomes` can only be
+      sent as `()` from the generic form. The curated "simulate run" buttons populate it
+      properly; a table-of-forms editor would be needed to do it by hand.
+- [ ] **TODO:** The console derives module liveness from tapped heartbeats, duplicating
+      `core.HEARTBEAT_TIMEOUT_S`. If Core ever gains a real supervision policy (the open
+      question in `do_periodic_tasks`), the console should show Core's verdict rather than
+      recomputing its own.
+- [ ] **TODO:** Injection has no guard against a message that does not belong to the target
+      link's union. That is deliberate — provoking `unhandled()` is a legitimate test — but the
+      panel does not warn that it is what you are about to do.
+
+---
+
+## TODO — Recipe format: findings and decisions
+
+> **Status: analysed, parked.** The recipe refactoring itself is deferred — this section records
+> what was found so it can be picked up later.
+>
+> - **`resources/roadmap/recipe_guide.md`** — full reference: what a recipe is, what the old
+>   engine actually does with it, where the three rule sets disagree, 28 findings with
+>   file:line evidence, and a proposed format for the new framework.
+> - **`resources/roadmap/recipe_rules.html`** — the same rules condensed to one readable page
+>   (open in a browser); good starting point for a review meeting.
+>
+> Read one of them before porting `recipe/`, `step/` or the verificator.
+
+Recipe-format work items surfaced by that study (IDs refer to `recipe_guide.md` §16):
+
+- [ ] **TODO:** Fix the behaviour bugs during the port, not after — F1 (header-level
+  `continue_on_error` is inert), F3 (`main_sequence` overrides the requested sequence), F6
+  (`output_mapping` is last-writer-wins, not all-must-pass), F8 (step-level `continue_on_error`
+  leaks to later steps), F12 (mutable default `output_mapping` shared across steps), F13
+  (`UserInteractionStep` swallows its own Cancel), F14 (`UserWriteStep` overwrites the typed
+  value with the button key), F15 (`file_save_location: local` writes a global), F18 (teardown
+  clears the abort flag), F25 (`IndexedStep` discards its output mapping).
+- [ ] **TODO:** Decide and document whether `FAIL` (not just `ERROR`) stops a sequence — F7.
+  Today only `ERROR` does, and it is documented nowhere.
+- [ ] **TODO:** Collapse the **three** disagreeing rule sets (`recipe_rules.py`,
+  `recipe_creator.py:795-800`, `yaml_format.rst`) into the one per-steptype schema described in
+  §3.2 — this is the concrete form of the Phase 0 "schema module" item and closes F9/F19/F21/F23.
+- [ ] **TODO:** Restore `resources/recipes/*.yml` to runnable state before the Phase 0
+  characterization tests — they all reference `example_tests.py`, which is not in the repo (F24).
+- [ ] **TODO (security):** `resources/recipes/comprehensive_recipe.yml:20` commits a plaintext
+  SSH password; rotate the credential if the host is live, and move credentials to the Config
+  Handler (F22).
+- [ ] **TODO:** Answer the format decisions in the guide's §18 (subsequence
+  parameters/outputs — currently parsed and never used; the magic `cancel_key`/`wrt_key`/`ID_key`
+  globals; `format_version` policy; dict-vs-list for `parameters`/`outputs`) before the step
+  port fixes the contract in place.
 
 ---
 
@@ -66,10 +222,10 @@ CLI mode: no HMI process at all — CLI runs in the launcher process, engine unc
 
 - [ ] **TODO:** Launcher stays the parent of *both* processes — the GUI is **not** spawned by Core. The supervisor must be the simplest, most stable component; the GUI must outlive an engine crash in order to report it. (`startup.py` already does this — keep it.)
 - [ ] **TODO:** Change Core to spawn Sequencer and Report as **threads**, not `multiprocessing.Process` (currently in `core.py: start_submodules()`); add StreamHandler as a third thread when it lands.
-- [ ] **TODO:** Interface/message classes stay exactly as they are; the **launcher injects the queue type** — `multiprocessing.Queue` for GUI↔Core, plain `queue.Queue` inside the engine. No module may ever know which one it holds.
+- [x] **DONE (mechanism):** the **queue type is injected**, never assumed. `Channel` wraps anything with `put()`/`get_nowait()`; the launcher builds the HMI↔Core pair and `Core.__init__` takes a `queue_factory` (default `multiprocessing.Queue`) for its submodule links. Passing `queue.Queue` there is the whole change when they become threads. No module knows which it holds. *Remaining:* actually flipping it, together with the `Process` → `Thread` change above.
 - [ ] **TODO:** HAL becomes a **plain library** imported by the Sequencer — no process, no event loop, no queue. Driver calls stay ordinary function calls; this also keeps the spec's "HAL usable standalone outside the framework" true by construction.
-- [ ] **TODO:** Add a CI unit test that round-trips **every** HMI↔Core message type through `pickle.dumps`/`loads` — mechanically enforces that only pickle-safe dataclasses ever cross the process boundary.
-- [ ] **TODO:** Rework user-interaction steps as a **request/response message pair** across the HMI boundary (today an event carries a live `SimpleQueue` — cannot cross a process).
+- [x] **DONE:** every HMI↔Core message type is round-tripped through `pickle.dumps`/`loads`, and a second test rejects any field that is not a plain value, a UUID, an Enum, a tuple or another message. Both are parametrised over the link unions, and a third test fails if a message exists without an example — so the coverage cannot rot. `tests/unit_tests/test_messages.py`.
+- [x] **DONE (contract):** user interaction is a **request/response pair** joined by a `request_id` — `UserPromptRequest`/`Response` and `SerialNumberRequest`/`Response` in `messages/run_events.py`, with `PendingRequests` as the waiting side. The live `SimpleQueue` is gone. *Remaining:* wiring it into the steps themselves during the Phase 1 port, and the worker-thread requirement noted in §1.1.
 - [ ] **TODO:** Define the heartbeat-timeout **policy** in Core (restart thread? abort run? notify HMI?) — currently it only logs a warning.
 - [ ] **TODO:** Write down the **promotion rule**: a module moves from thread to its own process only in response to a concrete incident (e.g. a crash-prone C driver → wrap *that one driver* in a sidecar process; never the whole HAL).
 - [ ] **TODO:** Bulk data (waveforms, acquisitions) never goes through message queues: in-engine it is passed by reference; if it must reach the GUI, use `multiprocessing.shared_memory` or a file-path handoff.
@@ -116,13 +272,13 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 Recommended porting order (each step is one reviewable MR):
 
 1. **Recipe (data layer):** move loading/parsing/validation from `old_code/recipe.py` into `recipe/recipe.py`, stripped of all execution logic. Keep the consolidated `steps.py` implementations and resource-based `test_package` loading (`architecture.rst`). Integrate the verificator: a recipe that fails validation is never handed to the Sequencer.
-2. **Step & Sequencer (execution):** move `Step`/`Sequence`/`Runtime`/`StepResult` execution into `sequencer/` + `step/`; implement `run_sequence()` behind the existing `RUN_SEQUENCE` command; results stream back via `SEQUENCE_RESULT` (define a per-step result event too — `STEP_RESULT` — so HMIs update live, replacing the old event-proxy strings).
+2. **Step & Sequencer (execution):** move `Step`/`Sequence`/`Runtime`/`StepResult` execution into `sequencer/` + `step/`; implement `run_sequence(sequence_name)` behind the existing `RunSequence` command. The events it has to emit already exist — `RunStarted`, `SequenceStarted`, `StepStarted`, `StepFinished`, `SequenceFinished`, `RunFinished` in `messages/run_events.py`, ported one-for-one from the nine signals in `old_code/event_proxy.py` — so this step is about producing them, not designing them.
 3. **Core orchestration:** implement `LOAD_RECIPE`/`START_SEQUENCE` handlers, runtime metadata (recipe info, DUT serials, timing, machine info), result aggregation, and forwarding to HMI + Report.
 4. **Report:** port incremental CSV writing + HTML generation behind `GENERATE`/`EXPORT`; intermediate result file (YAML/CSV) per spec; artifacts organized per run folder.
 5. **HMI:** CLI first — recipe load/validate/run, sequence selection, prompts (serial number, user interaction now crossing a process boundary — see pickling risk in §4), report/log locations, exit codes `0/1/2/3`, `--version`. Then grow the GUI beyond the status window (recipe preview, runtime log, results table).
 6. **Delete `old_code/`** once parity is proven by the Phase 0 characterization tests. v0.3.0 is tagged here.
 
-Design decision to make *during* this phase, not after: define step/user-interaction/result **payload contracts** (dataclasses in the message files) — inter-process queues mean everything must be picklable; the old in-thread trick of passing a `SimpleQueue` inside an event for user prompts will not survive process boundaries and needs a request/response message pair instead.
+The design decision this phase used to carry — defining the step / user-interaction / result **payload contracts** — was taken up front instead (§1.1). The dataclasses exist and are pickle-tested; what remains is producing and consuming them.
 
 ### Phase 2 — Plugin infrastructure
 
@@ -323,7 +479,7 @@ Steps 1–3 are naturally done *while porting steps into the sequencer* — doin
 
 ## 4. Risks & open questions
 
-- **Pickling across process boundaries.** *(→ largely resolved by the TODO topology: only the HMI↔Core boundary remains a process boundary.)* Remaining work: user prompts become a request/response *message pair* over that boundary (TODO above), and the CI pickle round-trip test guards it permanently. Step-to-step object passing and device handles stay in-engine and are unaffected.
+- **Pickling across process boundaries.** *(→ resolved.)* Only the HMI↔Core boundary remains a process boundary; user prompts are a request/response pair, and the pickle round-trip test guards every message on both unions permanently (§1.1). Step-to-step object passing and device handles stay in-engine and are unaffected.
 - **`old_code` divergence.** The branch's `old_code` is *newer* than master (consolidated steps, `test_package` resource loading). Freeze master, do the port from `old_code` only, and delete it at v0.3.0 — three coexisting engines (master, old_code, new modules) is the biggest confusion risk for the team.
 - **Error-handling policy.** `catch_and_report_errors` currently reports and *continues*. Define per-layer behavior: step errors → StepResult(ERROR) + report + continue/abort per recipe config; module errors → Core event + heartbeat-driven recovery; never both silent.
 - **Core busy-loop & heartbeats.** 100 Hz polling in every module is fine for now; when Core gains real work, consider `Queue.get(timeout=...)`-driven loops. Heartbeat timeout currently only logs a warning — define the recovery action (restart module? abort run? notify HMI?).

@@ -1,58 +1,56 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+"""
+Reporting a module's failures to CORE.
+"""
+
 import traceback
-import inspect
-from pypts.common.COMMON_MESSAGES import ModuleErrorEvent, ErrorSeverity
-from pypts.logger.log import log
 from functools import wraps
 
-def catch_and_report_errors(module_name=None):
-    """
-    Decorator to catch and report exceptions to Core module.
-    If no module_name is provided, automatically detect it from the caller's module.
+from pypts.messages.common import ErrorSeverity, ModuleError
 
-    This decorator wraps the decorated function, executing it inside a try-except block.
-    If an exception occurs, it captures and logs detailed traceback information,
-    then creates a ModuleErrorEvent reporting this exception and sends it to Core via 'self.core.report_error'.
+
+def catch_and_report_errors(module_name: str | None = None):
+    """
+    Catch exceptions raised by a method and report them to CORE as a ModuleError.
+
+    The decorated method must belong to a class with a `core` attribute holding
+    that module's outbox channel - every module except CORE itself, which is the
+    thing errors are reported *to*.
 
     Args:
-      module_name (str, optional): Name of the module using the decorator.
-                                   If not provided, it is detected from the caller's context.
+        module_name: value for ModuleError.source. Defaults to the module the
+                     decorated function was defined in.
+
+    Note the exception is swallowed: the method returns None and the caller
+    carries on. That is survivable for an event loop and wrong for a step, whose
+    failure has to reach a StepResult as well. Settling that policy per layer is
+    an open item in the roadmap.
     """
 
     def decorator(func):
+        # Resolved once, at decoration time, from the function itself. Detecting
+        # it from the call stack instead made the reported source depend on who
+        # happened to call the function first.
+        source = module_name or func.__module__
+
         @wraps(func)
         def wrapper(self, *args, **kwargs):
-            nonlocal module_name
-            # Infer module name automatically if not explicitly provided
-            if module_name is None:
-                # Inspect the call stack; index 1 gives caller of the wrapper
-                frame = inspect.stack()[1]
-                module = inspect.getmodule(frame[0])
-                if module and module.__name__:
-                    module_name = module.__name__
-                else:
-                    # Fallback to filename if module name unavailable
-                    module_name = frame.filename
-
             try:
-                # Call the original function with all arguments
                 return func(self, *args, **kwargs)
-            except Exception as e:
-                # Capture full traceback as a string
-                tb = traceback.format_exc()
-
-                # Log the error with traceback for diagnostics
-                # log.error(f"Exception in {module_name}: {e}\n{tb}")
-
-                # Create an error event encapsulating all relevant info
-                error_event = ModuleErrorEvent(
-                    source=module_name,
-                    severity=ErrorSeverity.ERROR,
-                    message=str(e),
-                    exception=repr(e),
-                    traceback=tb
+            except Exception as exc:  # noqa: BLE001 - catching everything is the point
+                self.core.send(
+                    ModuleError(
+                        source=source,
+                        severity=ErrorSeverity.ERROR,
+                        message=str(exc),
+                        exception=repr(exc),
+                        traceback=traceback.format_exc(),
+                    )
                 )
 
-                # Send the error event to Core for centralized handling
-                self.core.report_error(error_event)
         return wrapper
+
     return decorator

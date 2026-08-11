@@ -2,67 +2,121 @@
 
 ## Overview
 
-This framework orchestrates automation and monitoring tasks by running separate modules as independent processes. It is built for extensibility, reliability, and clear communication between modules using well-structured message patterns.
+This framework orchestrates automation and monitoring tasks by running separate modules as
+independent processes. It is built for extensibility, reliability, and clear communication
+between modules using well-structured message patterns.
 
 ## Architecture
 
 ### Launcher
 
-- Startup logic creates all required inter-process queues and launches top-level modules—CORE and either a GUI or CLI HMI, based on command-line options.
+- `launcher/startup.py`. Creates the HMI ↔ CORE channels and the log queue, and starts the
+  Logger, CORE and — in GUI mode — the frontend. It is the parent of all of them, and it must
+  stay the simplest component in the system.
 
 ### CORE
 
-- Serves as the coordinator, responsible for spawning and managing secondary modules (Sequencer and Report), and handling system-wide event processing.
+- The mediator. Spawns the Sequencer and the Report, routes every message between modules, and
+  supervises their heartbeats. It is the only module that talks to more than one other.
 
 ### HMI (GUI/CLI)
 
-- Provides a user interface and sends user commands to the CORE.
+- The operator's view. Both frontends share one implementation of the protocol
+  (`hmi/hmi_client.py`) and differ only in presentation.
 
 ### Sequencer
 
-- Runs operational sequences as instructed by the CORE, reporting progress and results.
+- Runs the sequences of a loaded recipe and reports progress. Execution is still to be ported
+  from `old_code/`.
 
 ### Report
 
-- Generates and exports process or experiment reports, reacting to commands from the CORE.
+- Builds and exports the artefacts of a run. Also still to be ported.
 
-All modules are run in separate processes to maximize resilience and parallelism.
+### Logger
 
-## Communication Model
+- The single writer of the run log file. Every process reaches it through one shared queue.
 
-All interaction between modules happens through Python’s multiprocessing.Queue, but never with direct queue access. Instead, each queue is wrapped in a typed interface class. This abstraction ensures:
+## Communication model
 
-- Communication is strictly structured and type-safe.
-- Module dependencies are minimized, making it easy to swap out or refactor parts of the system.
-- Messages sent between modules are always explicit objects, typically enums for commands and dataclasses for events, and are defined in dedicated message files for each module.
+Modules never touch a queue directly and never call each other. Every link is wrapped in a
+`Channel`, and everything that travels on it is a frozen dataclass declared in
+`pypts/messages/`.
 
-## Interface and Message Principles
+```
+launcher ──ShutdownRequested──► CORE
+   HMI  ◄────────────────────► CORE ◄───────────► Sequencer
+                                 ▲  ◄───────────► Report
+                                 │
+  every process ─ LogRecord + control messages ─► Logger   (not CORE-mediated)
+```
 
-- Interfaces define the exact actions a module presents to others, ensuring clear and stable contracts for interaction.
-- Data-layer classes implement these interfaces, performing the actual queue operations for sending and receiving messages.
-- Extending the protocol is straightforward: add new messages in the relevant message file, extend the interface, and process the new message type in the relevant event handler.
-- This pattern provides clarity about communication flow and enables future extensions without breaking compatibility.
+Three rules hold the model together:
 
-## Adding or Extending Modules
+- **One transport.** `Channel` wraps anything with `put()` and `get_nowait()`. The launcher
+  decides whether that is a `multiprocessing.Queue` or a `queue.Queue`; no module knows which
+  it holds, which is what keeps the planned move of the Sequencer and the Report to threads a
+  change to the launcher alone.
+- **The owner builds the handle.** Whoever owns a link constructs both of its channels and
+  passes them to the module that needs them. A module cannot invent a channel to somebody it
+  has no business talking to, so the topology is enforced by construction.
+- **No silent messages.** Every handler is a `match` closed with `unhandled()`, which a type
+  checker rejects unless every member of the link's union is matched, and which raises at run
+  time otherwise. There is no `case _: pass` anywhere.
 
-To add new messages or module interactions:
+Anything crossing the HMI ↔ CORE boundary is pickled, so it must stay a frozen dataclass of
+plain values. `tests/unit_tests/test_messages.py` round-trips every one of them and fails if
+that stops being true.
 
-1. Define a new command or event in the corresponding message file.
-2. Extend the relevant interface with a new method.
-3. Implement that method in the associated data-layer class.
-4. Handle the new message in the recipient module’s event loop.
+## Adding a message
 
-This workflow keeps all communication robust, clear, and well-documented within the codebase.
+Two edits:
 
-## Key Features
+1. **Declare it** in the link module under `pypts/messages/`, and add it to that link's union.
 
-- Each core element (HMI, CORE, Sequencer, Report) is a fully independent process.
-- All inter-process interactions are type-safe and explicitly modeled.
-- Flexible user interface: switch between CLI and GUI at runtime.
-- Clear patterns for extension and maintenance.
-- Explicit, easily auditable communication patterns.
+   ```python
+   @dataclass(frozen=True, slots=True)
+   class StartSequence:
+       sequence_name: str
+
+   HmiToCore = LoadRecipe | StartSequence | ...
+   ```
+
+2. **Handle it** in the recipient's handler.
+
+   ```python
+   case StartSequence(sequence_name=name):
+       self.start_sequence(name)
+   ```
+
+Everything else is found for you: the type checker flags every `match` that is now incomplete,
+and `test_messages.py` fails until the message has an example and a branch.
+
+A message shared by two links — anything CORE forwards rather than repacks — belongs in
+`messages/common.py` or `messages/run_events.py` so both ends refer to the same class.
+
+## Layout of `pypts/messages/`
+
+| File | Contents |
+|---|---|
+| `channel.py` | `Channel`, `unhandled()`, `UnhandledMessage` |
+| `common.py` | vocabulary shared by more than one link: `ModuleError`, `Heartbeat`, `ResultType`, `StepOutcome` |
+| `run_events.py` | what the engine reports during a run, and the two questions it asks the operator |
+| `hmi_link.py` | HMI ↔ CORE |
+| `sequencer_link.py` | CORE ↔ Sequencer |
+| `report_link.py` | CORE ↔ Report |
+| `logger_link.py` | any → Logger |
+| `requests.py` | `PendingRequests`, the waiting half of a request/response pair |
+
+## Key features
+
+- All inter-module traffic is typed and explicitly modelled; a missing handler is an error
+  rather than silence.
+- One process boundary, chosen deliberately: the operator's UI survives an engine crash.
+- Flexible frontend: CLI or GUI, sharing one implementation of the protocol.
+- The transport is swappable without touching a single module.
 
 ## License
 
-Copyright CERN, 2025  
+Copyright CERN, 2025
 Licensed under LGPL-2.1-or-later

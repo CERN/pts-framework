@@ -2,57 +2,64 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-from queue import Empty
-from pypts.core.report_to_core_interface import ReportToCoreInterface
-from pypts.core.CORE_MESSAGES import CoreToReportEvent, CoreToReportCommand
-from pypts.logger.log import log
+"""
+The Report module - builds and exports the artefacts of a run.
+
+The event loop and the link to CORE are real; generation is not. The CSV and
+HTML logic to be ported lives in old_code/report.py (roadmap Phase 1).
+"""
+
 import time
+
+from pypts.logger.log import init_logging, log
+from pypts.messages import Channel, unhandled
+from pypts.messages.report_link import (
+    CoreToReport,
+    ExportReport,
+    GenerateReport,
+    ReportStopped,
+    ReportToCore,
+    StopReport,
+)
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import HeartbeatManager
-from pypts.utilities.common import poll_queue
+
+#: The name CORE knows this module by, and the `source` on its heartbeats.
+MODULE_NAME = "report"
 
 
-def report_main(core: ReportToCoreInterface, core_to_report_queue):
+def report_main(to_core: Channel[ReportToCore], from_core: Channel[CoreToReport], log_queue) -> None:
     """
-    Entry point called by the Core process to start the report module.
-    Creates an instance of Report and launches its main loop.
+    Entry point called by CORE. Runs in the Report process.
+
+    Log records are routed to the Logger before anything is logged.
     """
-    report = Report(core, core_to_report_queue)
-    report.start()
+    init_logging(log_queue)
+    Report(to_core, from_core).start()
 
 
 class Report:
     """
-    Represents the report module, managing report generation, export, and shutdown.
-
     Attributes:
-      - core: Interface for sending messages back to Core.
-      - core_to_report_queue: Queue object for receiving commands from Core.
-      - running: Boolean flag controlling the main loop's execution.
+        core: outbox to CORE. Named `core` because @catch_and_report_errors()
+              reports failures through it.
+        inbox: commands from CORE.
     """
 
-    def __init__(self, core_interface: ReportToCoreInterface, core_to_report_queue):
-        self.core = core_interface
-        self.core_to_report_queue = core_to_report_queue
+    def __init__(self, to_core: Channel[ReportToCore], from_core: Channel[CoreToReport]) -> None:
+        self.core = to_core
+        self.inbox = from_core
         self.running = True
-        self.heartbeat_manager = HeartbeatManager(self.core.send_heartbeat)
+        self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
 
     @catch_and_report_errors()
-    def start(self):
-        """
-        Begins module operation, logs start and stop events.
-        Runs the main event loop until stop() is called.
-        """
+    def start(self) -> None:
         log.info("Starting module...")
         self.main_loop()
         log.info("Stopping module...")
 
     @catch_and_report_errors()
-    def main_loop(self):
-        """
-        Main processing loop: polls for commands, executes periodic tasks,
-        sleeps briefly to reduce CPU load. Exits when 'running' is False.
-        """
+    def main_loop(self) -> None:
         log.info("Starting main event loop.")
         while self.running:
             self.poll_core()
@@ -61,61 +68,52 @@ class Report:
         log.info("exited main event loop.")
 
     @catch_and_report_errors()
-    def poll_core(self):
-        poll_queue(self.core_to_report_queue, self.handle_core_event)
+    def poll_core(self) -> None:
+        for message in self.inbox.receive():
+            self.handle_core_message(message)
 
     @catch_and_report_errors()
-    def handle_core_event(self, event: CoreToReportEvent):
-        """
-        Routes incoming commands based on the event's command type.
-        """
-        log.info(f"Received core event: {event}")
-        match event.cmd:
-            case CoreToReportCommand.GENERATE:
+    def handle_core_message(self, message: CoreToReport) -> None:
+        log.info(f"Received core message: {message}")
+        match message:
+            case GenerateReport():
                 self.generate_report()
-            case CoreToReportCommand.EXPORT:
+            case ExportReport():
                 self.export_report()
-            case CoreToReportCommand.STOP:
+            case StopReport():
                 self.stop()
             case _:
-                log.error(f"Unknown event: {event}")
+                unhandled(message)
+
+    # --- Generation -----------------------------------------------------------
 
     @catch_and_report_errors()
-    def generate_report(self):
+    def generate_report(self) -> None:
         """
-        Placeholder to implement report generation logic.
+        Build the report for the run that just finished.
+
+        Not implemented. When the logic from old_code/report.py is ported it
+        answers with ReportGenerated carrying the absolute path of the artefact.
         """
-        pass
+        log.warning("Cannot generate: the report layer is not ported yet.")
 
     @catch_and_report_errors()
-    def export_report(self):
+    def export_report(self) -> None:
         """
-        Placeholder to implement report export logic.
+        Write the generated report out.
+
+        Not implemented. Answers with ReportExported carrying the path.
         """
-        pass
+        log.warning("Cannot export: the report layer is not ported yet.")
+
+    # --- Housekeeping ---------------------------------------------------------
 
     @catch_and_report_errors()
-    def do_periodic_tasks(self):
-        """
-        Executes any periodic status updates or maintenance tasks.
-        """
+    def do_periodic_tasks(self) -> None:
         self.heartbeat_manager.tick()
 
     @catch_and_report_errors()
-    def stop(self):
-        """
-        Signals main loop to exit, logs, and calls core to shut down.
-        """
+    def stop(self) -> None:
         self.running = False
         log.info("stopping module")
-        self.core.stop()
-
-    @catch_and_report_errors()
-    def _test_all_messages(self):
-        """
-        Sends all test messages for validating communication.
-        Useful during development and debugging.
-        """
-        self.core.report_generated()
-        self.core.report_exported()
-        self.core.stop()
+        self.core.send(ReportStopped())

@@ -80,6 +80,10 @@ include = ["pypts", "pypts.*"]
 # _version.py file must not be committed to the repository.
 version_file = "src/pypts/_version.py"
 
+[tool.pytest.ini_options]
+# Default selection when pytest is invoked without arguments.
+testpaths = ["tests/unit_tests", "tests/functional_tests"]
+
 [tool.acc_py_template]
 features = [
   {name = "core", version = 2},

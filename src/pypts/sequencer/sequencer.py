@@ -2,56 +2,68 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-from queue import Empty
-from pypts.core.sequencer_to_core_interface import SequencerToCoreInterface
-from pypts.core.CORE_MESSAGES import CoreToSequencerEvent, CoreToSequencerCommand
-from pypts.logger.log import log
-from pypts.utilities.error_handling import catch_and_report_errors
-from pypts.utilities.heartbeat_manager import HeartbeatManager
-from pypts.utilities.common import poll_queue
+"""
+The Sequencer - executes the sequences of a loaded recipe.
+
+The event loop and the link to CORE are real; execution is not. run_sequence()
+is where the engine in old_code/ is going to land (roadmap Phase 1).
+"""
+
 import time
 
-def sequencer_main(core: SequencerToCoreInterface, core_to_sequencer_queue):
+from pypts.logger.log import init_logging, log
+from pypts.messages import Channel, unhandled
+from pypts.messages.requests import PendingRequests
+from pypts.messages.run_events import SerialNumberResponse, UserPromptResponse
+from pypts.messages.sequencer_link import (
+    CoreToSequencer,
+    RunSequence,
+    SequencerStopped,
+    SequencerToCore,
+    StopSequence,
+    StopSequencer,
+)
+from pypts.utilities.error_handling import catch_and_report_errors
+from pypts.utilities.heartbeat_manager import HeartbeatManager
+
+#: The name CORE knows this module by, and the `source` on its heartbeats.
+MODULE_NAME = "sequencer"
+
+
+def sequencer_main(to_core: Channel[SequencerToCore], from_core: Channel[CoreToSequencer], log_queue) -> None:
     """
-    Entry point called by the Core process to launch the Sequencer module.
-    Creates a Sequencer instance with communication interfaces and starts its main loop.
+    Entry point called by CORE. Runs in the Sequencer process.
+
+    Log records are routed to the Logger before anything is logged.
     """
-    seq = Sequencer(core, core_to_sequencer_queue)
-    seq.start()
+    init_logging(log_queue)
+    Sequencer(to_core, from_core).start()
+
 
 class Sequencer:
     """
-    Main class encapsulating the sequencer module's functionality.
-
     Attributes:
-      - core: Interface for sending messages back to Core.
-      - core_to_sequencer_queue: Queue to receive commands from Core.
-      - running: Flag controlling the main loop execution.
+        core: outbox to CORE. Named `core` because @catch_and_report_errors()
+              reports failures through it.
+        inbox: commands from CORE.
+        pending: questions this module has asked the operator and is waiting on.
     """
 
-    def __init__(self, coreInterface: SequencerToCoreInterface, core_to_sequencer_queue):
-        self.core = coreInterface
-        self.core_to_sequencer_queue = core_to_sequencer_queue
+    def __init__(self, to_core: Channel[SequencerToCore], from_core: Channel[CoreToSequencer]) -> None:
+        self.core = to_core
+        self.inbox = from_core
         self.running = True
-        self.heartbeat_manager = HeartbeatManager(self.core.send_heartbeat)
+        self.stop_requested = False
+        self.pending = PendingRequests()
+        self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
 
-    def start(self):
-        """
-        Starts the sequencer module and runs the main event loop.
-        Logs entering and exiting states of the module.
-        """
+    def start(self) -> None:
         log.info("Starting module...")
         self.main_loop()
         log.info("Stopping module...")
 
     @catch_and_report_errors()
-    def main_loop(self):
-        """
-        Main event loop processes incoming commands and performs periodic tasks.
-        Polls the Core message queue non-blocking and processes commands if present.
-        Sleeps briefly within each iteration for CPU efficiency.
-        Exits when 'running' flag is set to False.
-        """
+    def main_loop(self) -> None:
         log.info("Starting main event loop.")
         while self.running:
             self.poll_core()
@@ -60,55 +72,78 @@ class Sequencer:
         log.info("exited main event loop.")
 
     @catch_and_report_errors()
-    def poll_core(self):
-        poll_queue(self.core_to_sequencer_queue, self.handle_core_event)
+    def poll_core(self) -> None:
+        for message in self.inbox.receive():
+            self.handle_core_message(message)
 
     @catch_and_report_errors()
-    def handle_core_event(self, event: CoreToSequencerEvent):
-        """
-        Handle commands received from Core.
-        Supports RUN_SEQUENCE to perform sequencing and STOP to end the module.
-        Logs any unknown commands as errors.
-        """
-        log.info(f"Received core event: {event}")
-        match event.cmd:
-            case CoreToSequencerCommand.RUN_SEQUENCE:
-                self.run_sequence()
-            case CoreToSequencerCommand.STOP:
+    def handle_core_message(self, message: CoreToSequencer) -> None:
+        log.info(f"Received core message: {message}")
+        match message:
+            case RunSequence(sequence_name=sequence_name):
+                self.run_sequence(sequence_name)
+            case StopSequence():
+                self.stop_sequence()
+            case StopSequencer():
                 self.stop()
+            case UserPromptResponse() | SerialNumberResponse():
+                self.deliver_response(message)
             case _:
-                log.error(f"Unknown event: {event}")
+                unhandled(message)
+
+    # --- Execution ------------------------------------------------------------
 
     @catch_and_report_errors()
-    def run_sequence(self):
+    def run_sequence(self, sequence_name: str) -> None:
         """
-        Placeholder method where sequencing operations should be implemented.
+        Run one named sequence.
+
+        Not implemented: this is where the Recipe/Step/Runtime engine from
+        old_code/ gets ported. When it does, it emits the progress events in
+        messages/run_events.py as it goes, and answers with RunFinished.
         """
-        pass
+        log.warning(f"Cannot run '{sequence_name}': the execution engine is not ported yet.")
 
     @catch_and_report_errors()
-    def do_periodic_tasks(self):
+    def stop_sequence(self) -> None:
         """
-        Placeholder for periodic checks, health monitoring, or housekeeping tasks.
+        Abort the running sequence, keeping the module alive.
+
+        CORE has always had a method to send this command; until now the
+        Sequencer had no branch for it and would have logged it as unknown while
+        the sequence carried on. The flag is what the ported engine will check
+        between steps.
         """
+        log.info("Sequence stop requested.")
+        self.stop_requested = True
+
+    def deliver_response(self, message: UserPromptResponse | SerialNumberResponse) -> None:
+        """
+        Hand an operator's answer to the step waiting for it.
+
+        A response nobody is waiting for means the two ends disagree about what
+        is in flight - usually a request that already timed out - so it is worth
+        a warning rather than a silent drop.
+        """
+        match message:
+            case UserPromptResponse():
+                value = message.choice
+            case SerialNumberResponse():
+                value = message.serial_number
+            case _:
+                unhandled(message)
+
+        if not self.pending.resolve(message.request_id, value):
+            log.warning(f"Nobody was waiting for response {message.request_id}")
+
+    # --- Housekeeping ---------------------------------------------------------
+
+    @catch_and_report_errors()
+    def do_periodic_tasks(self) -> None:
         self.heartbeat_manager.tick()
 
     @catch_and_report_errors()
-    def stop(self):
-        """
-        Stops the sequencer by disabling the running flag,
-        logs the stopping event, and calls Core's stop method.
-        Additional teardown or cleanup code can be added here.
-        """
+    def stop(self) -> None:
         self.running = False
         log.info("stopping module")
-        self.core.stop()
-
-    @catch_and_report_errors()
-    def _test_all_messages(self):
-        """
-        Internal test method to send a sequence result and stop signal to Core.
-        Useful for validating communication paths.
-        """
-        self.core.sequence_result(text="PASSED")
-        self.core.stop()
+        self.core.send(SequencerStopped())

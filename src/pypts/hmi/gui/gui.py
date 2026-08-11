@@ -2,87 +2,101 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-from PySide6.QtWidgets import (
-    QApplication, QWidget, QVBoxLayout, QPushButton, QLabel
-)
-from PySide6.QtCore import QTimer
-from queue import Empty
-import sys
-from pypts.core.HMI_to_core_interface import HMIToCoreInterface
-from pypts.core.CORE_MESSAGES import CoreToHMIEvent, CoreToHMICommand
-from pypts.logger.log import log, set_stdout_logging_enabled
-from pypts.utilities.error_handling import catch_and_report_errors
-from pypts.utilities.heartbeat_manager import HeartbeatManager
-from pypts.utilities.common import poll_queue
+"""
+The PySide6 frontend.
 
-def gui_main(hmiToCoreInterface: HMIToCoreInterface, core_to_hmi_queue):
+Everything about the protocol is in HmiClient; this module is the presentation
+half. It is still the minimal status window - the widget system, recipe preview
+and results table are roadmap Phase 3.
+"""
+
+import sys
+
+from PySide6.QtCore import QTimer
+from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
+
+from pypts.hmi.hmi_client import HmiClient
+from pypts.logger.log import init_logging, log
+from pypts.messages import Channel
+from pypts.messages.common import ModuleError, ResultType, StepOutcome
+from pypts.messages.hmi_link import CoreToHmi, HmiToCore
+
+#: Milliseconds between polls of the CORE inbox.
+POLL_INTERVAL_MS = 50
+
+
+def gui_main(to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi], log_queue) -> None:
+    """
+    Entry point. Runs in the GUI process, so log records have to be routed to
+    the Logger before anything is logged.
+    """
+    init_logging(log_queue)
     app = QApplication(sys.argv)
-    gui = GUI(hmiToCoreInterface, core_to_hmi_queue)
+    gui = GUI(to_core, from_core)
     gui.show()
     sys.exit(app.exec())
 
 
-class GUI(QWidget):
-    def __init__(self, hmiToCoreInterface: HMIToCoreInterface, core_to_hmi_queue):
-        super().__init__()
-        self.core = hmiToCoreInterface
-        self.core_to_hmi_queue = core_to_hmi_queue
-        self.heartbeat_manager = HeartbeatManager(self.core.send_heartbeat)
-        self.setWindowTitle("PTS GUI")
+class GUI(HmiClient):
+    """
+    The status window.
+
+    The window is *held* rather than inherited from. A `class GUI(QWidget,
+    HmiClient)` mixin looks tidier but does not work: PySide6's QWidget.__init__
+    cooperatively calls the next __init__ in the MRO, so HmiClient.__init__
+    would be invoked with no arguments. Holding the widget sidesteps that and
+    keeps protocol and presentation in separate objects anyway.
+    """
+
+    def __init__(self, to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi]) -> None:
+        super().__init__(to_core, from_core)
         log.info("Starting module...")
 
-        layout = QVBoxLayout()
+        self.window = QWidget()
+        self.window.setWindowTitle("PTS GUI")
+
         self.status_label = QLabel("Status: Idle")
+        stop_button = QPushButton("STOP CORE")
+        # Asks CORE to bring the application down in order. CORE answers StopHmi,
+        # which HmiClient turns into stop() and then on_stop() below.
+        stop_button.clicked.connect(self.request_shutdown)
+
+        layout = QVBoxLayout()
         layout.addWidget(self.status_label)
+        layout.addWidget(stop_button)
+        self.window.setLayout(layout)
 
-        btn_stop = QPushButton("STOP CORE")
-        btn_stop.clicked.connect(self.core.exit)
-        layout.addWidget(btn_stop)
-
-        self.setLayout(layout)
-        self.timer = QTimer()
+        # Qt's event loop drives the polling, so the GUI needs no thread of its own.
         log.info("Starting main event loop.")
+        self.timer = QTimer()
         self.timer.timeout.connect(self.poll_core)
         self.timer.timeout.connect(self.do_periodic_tasks)
-        self.timer.start(50)
+        self.timer.start(POLL_INTERVAL_MS)
 
-    @catch_and_report_errors()
-    def poll_core(self):
-        poll_queue(self.core_to_hmi_queue, self.handle_core_event)
+    def show(self) -> None:
+        self.window.show()
 
-    @catch_and_report_errors()
-    def handle_core_event(self, event: CoreToHMIEvent):
-        log.info(f"Received core event: {event}")
-        match event.cmd:
-            case CoreToHMICommand.UPDATE_STATUS:
-                self.update_status(event.payload.get("text", ""))
-            case CoreToHMICommand.STOP:
-                self.stop()
-            case _:
-                log.error(f"Unknown event: {event}")
+    # --- Presentation ---------------------------------------------------------
 
-    @catch_and_report_errors()
-    def update_status(self, text: str):
+    def show_status(self, text: str) -> None:
         log.info(f"status update: {text}")
         self.status_label.setText(f"Status: {text}")
 
-    @catch_and_report_errors()
-    def do_periodic_tasks(self):
-        """
-        Executes any periodic status updates or maintenance tasks.
-        """
-        self.heartbeat_manager.tick()
+    def show_error(self, error: ModuleError) -> None:
+        log.error(f"{error.source}: {error.message}")
+        self.status_label.setText(f"Error: {error.message}")
 
-    @catch_and_report_errors()
-    def stop(self):
-        log.info("Stopping module")
+    def show_recipe_loaded(self, recipe_name: str, recipe_version: str) -> None:
+        self.status_label.setText(f"Loaded {recipe_name} ({recipe_version})")
+
+    def show_sequence_finished(self, sequence_name: str, result: ResultType) -> None:
+        self.status_label.setText(f"{sequence_name}: {result}")
+
+    def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
+        self.status_label.setText(f"Finished: {result} ({len(outcomes)} steps)")
+
+    def on_stop(self) -> None:
+        """Tear the window down. Called from stop(), once CORE has sent StopHmi."""
         self.timer.stop()
-        self.close()
+        self.window.close()
         QTimer.singleShot(0, QApplication.quit)
-        self.core.stop()
-
-    @catch_and_report_errors()
-    def _test_all_messages(self):
-        self.core.start_sequence("SOME SEQUENCE")
-        self.core.load_recipe("SOME RECIPE")
-        self.core.stop()
