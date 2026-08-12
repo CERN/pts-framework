@@ -13,13 +13,13 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 | Area | State on the branch |
 |---|---|
 | Package layout | Matches the system design: `core/`, `sequencer/`, `recipe/`, `step/`, `report/`, `hmi/{gui,cli}/`, `config_handler/`, `logger/`, `stream_handler/`, `hardware_layer/`, `helper_applications/{recipe_creator,recipe_verificator,example_finder}/`, `utilities/`, `launcher/`, plus `old_code/` holding the previous engine |
-| Process model | `launcher/startup.py`: argparse `--mode gui/cli/connect`, spawns Core as a process; Core spawns Sequencer and Report processes — exactly the spec's module diagram |
+| Process model | `launcher/startup.py`: argparse `--mode gui/cli/connect` (gui is the default) and `--log-level`, spawns Core as a process; Core spawns Sequencer and Report processes — exactly the spec's module diagram |
 | Typed messaging | **Reworked (see §1.1).** `pypts/messages/`: one frozen dataclass per message, one union per link, one generic `Channel` for all six links, every handler closed with `unhandled()`. The enums, the interface ABCs and the queue data-layer classes are gone, and with them the 4-step "add a message" workflow — it is two steps now. Protocol tests in `tests/unit_tests/test_messages.py` |
 | Health & errors | `HeartbeatManager` ticking from Sequencer/Report/HMI, Core-side timeout detection (armed only for modules still expected to run); `@catch_and_report_errors()` sending a typed `ModuleError` to Core, with the source resolved per function |
 | GUI toolkit | **PySide6 migration done** (GUI skeleton + `test_pyside6_conversion.py`) — the PyQt6/LGPL conflict is resolved |
 | Licensing | LGPL-2.1-or-later + CC-BY-SA-4.0, SPDX headers, `reuse.toml`, `licenses/`, `dependency_license_analysis.rst` — REUSE compliance largely in place |
-| Logger | Global root-logger override: timestamped format (file:function, ms), file + stdout handlers, `set_stdout_logging_enabled()` toggle |
-| Config handler | INI template copied to a per-user temp dir, auto-filled OS section, `read_config_key()` |
+| Logger | Single-writer Logger process: timestamped format (file:function, ms), file + stdout handlers, `set_stdout_logging_enabled()` toggle, and a level resolved once by the launcher from `--log-level` / config (§1.2) |
+| Config handler | **Reworked (see §1.3).** `ConfigHandler` singleton in the per-user config directory (`platformdirs`), created from a commented template, versioned and migrated, typed access through a schema, single writer, comment-preserving writes. The launcher takes the log directory from it and Report the report directory |
 | Recipe verificator | Substantial real implementation: YAML line-map extraction, faults vs warnings, per-steptype required fields, bulk folder validation, string-variable validation for the creator |
 | Recipe creator | GUI application present (`recipe_creator.py`, custom GUI modules, styles) |
 | Tests | `unit_tests/unit_tests/` + `functional_tests/` + `run_tests.py` (event proxy, recipe, report, steps, GUI, version…) |
@@ -31,7 +31,7 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 2. **Report module** — process shell with heartbeat exists; `generate_report()` / `export_report()` are `pass`. The CSV/HTML logic is in `old_code/report.py`.
 3. **HAL** — `hal.py` is a one-line comment.
 4. **Stream handler** — `StreamContainer` + an XYGraph widget spike; not integrated.
-5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet. The **debug console** (`--mode debug`, §1.2) is the exception: it draws a full run and every message on every link, but it is a development tool and not a product frontend.
+5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet. Neither frontend shows the message layer, and neither needs to: `--log-level DEBUG` puts every message on every link into the run log (§1.2).
 6. **Step construction still uses `eval(step_type + "(**step_data)")`** in `old_code/recipe.py` — the closed, unsafe step factory rides along into whatever gets ported.
 
 ### Defects worth fixing early (spotted while reading the branch)
@@ -39,7 +39,7 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 - **Broken import in the verificator:** `verify_recipe.py` does `from pypts import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS`, but `src/pypts/__init__.py` is now minimal and defines none of these — the verificator cannot import. The schema constants need a proper home (see §3.5: make them part of the step/recipe schema layer).
 - **`@catch_and_report_errors()` swallows results and errors:** *partially fixed.* The `nonlocal module_name` + `inspect.stack()[1]` bug is gone — the source is resolved from the decorated function at decoration time (`tests/unit_tests/test_utilities.py`). **Still open:** the wrapper returns `None` on an exception and does not re-raise, so a failing function silently continues, and it still assumes `self.core` exists on every decorated class. Dangerous once the sequencer executes real steps — errors must also propagate into StepResults, not only into Core events.
 - **Heartbeat monitoring is one-directional and always-armed:** *partially fixed.* Core now only checks modules still expected to be running, so a module that has reported itself stopped no longer produces timeout warnings for the rest of the run. **Still open:** it is warn-only, with no recovery action, and Core sends no heartbeat of its own, so an HMI cannot detect a dead Core.
-- **Per-process side effects at import:** `logger/log.py` and the config handler run at import time in every spawned process — each process opens its own timestamped log file and rewrites `config.ini`. Decide per-run log directories (spec: "separate logs by test run") and a single config writer before this multiplies.
+- **Per-process side effects at import:** *config half fixed (§1.3).* Reading the configuration no longer writes it, and only the launcher's `bootstrap()` may create or repair the file, so the per-process `config.ini` rewrites are gone. **Still open:** per-run log directories (spec: "separate logs by test run") — the log *directory* now comes from the configuration, but it is still one timestamped file per run rather than a per-run folder with a file per process.
 - **Core deps got heavier, not lighter:** `pts-framework` now hard-depends on `matplotlib`, `numpy`, `nptdms`, `nidmm`, `hightime`, `pyserial`, `paramiko`, `PySide6`. For a framework whose spec demands "lightweight" and "tests executable stand-alone," this is the strongest argument for the plugin packaging model in §3.
 - Two `TODO.txt` items confirm known issues: globals stored as a list not dict; GUI refresh problems.
 
@@ -93,72 +93,168 @@ is two edits rather than four, and both ends of a link are now one file.
       from Core to several HMI channels; commands stay point-to-point. A string-topic event bus
       was considered and rejected — it would erase the explicit topology.
 - [ ] **TODO:** Add the `QT_QPA_PLATFORM=offscreen` CI job. `tests/unit_tests/test_hmi_gui.py`
-      and `tests/unit_tests/test_debug_console.py` have real tests now and they need it on the
-      runner.
+      has real tests now and they need it on the runner.
 
-### 1.2 Debug console (`--mode debug`) — **done**
+### 1.2 Message trace in the log (`--log-level`) — **done**
 
-> **Status: implemented.** A developer frontend that makes the message layer observable and
-> drivable. Built because the engine port (Phase 1) is about to generate traffic that no
-> existing frontend can show: the GUI has one status label, and Core ↔ Sequencer and
-> Core ↔ Report never leave the engine process at all.
+> **Status: implemented.** Replaces the `--mode debug` developer console, which was
+> implemented and then removed. The framework has **one build**, and everything that
+> happens in it is readable from the run log.
 
-**What it is.** `python -m pypts --mode debug` starts a fourth frontend beside the GUI and the
-CLI, subclassing `HmiClient` like they do. Four tabs: **Trace** (live table of every message on
-every link, filterable by link/type/text, heartbeats hidden by default), **Inject** (curated
-buttons plus a form generated from any message dataclass), **Run** (the run as a frontend sees
-it, drawn from the progress events), **Modules** (heartbeat age and last error per module).
-Status glyphs (✅ / ⚠️ / ❌, plus ▶️ running, ⏹️ stopped, ⏳ pending, 💉 injected) come from one
-table in `hmi/debug/icons.py` so the vocabulary is identical across the four tabs; they are
-paired with colour rather than replacing it. Not used by the CLI, where `print()` on a Windows
-console in a non-UTF-8 code page would raise `UnicodeEncodeError`.
+**Why the console went.** It worked, but it meant the software had two shapes: the product,
+and the product plus a tap. Anything only visible under `--mode debug` is invisible on the
+machine where it matters — a test bench, a colleague's laptop, a failure someone reports
+afterwards. The debug build was ~1,900 lines (`hmi/debug/` 1,401, `messages/debug_link.py`
+125, ~141 lines of branches in `channel.py` / `core.py` / `startup.py`, 247 of tests) and the
+one thing it did that the log did not was see the *send* side.
 
-**How it sees the engine's internal links.** `Channel.__init__` gained two keyword-only
-arguments, `link=""` and `observer=None`. The launcher builds one `ChannelTap`
-(`hmi/debug/tap.py`) under `--mode debug` and passes it to Core, which puts it on all four
-submodule channels. Each process gets its own unpickled copy writing `TapRecord`s into one
-queue the console drains. Outside `--mode debug` the observer is `None` and `send()` takes
-exactly the branch it took before — a normal run carries no debug path.
+**What replaced it.** `Channel.send()` and `Channel.receive()` each log one DEBUG line on a
+`pypts.trace` logger, naming the link and the message:
 
-**How injection works.** The console *is* the HMI, so it sends `hmi->core` messages itself. For
-the five links only Core can reach it sends `InjectMessage(target, message)` on a debug inbox;
-Core puts the message on the real queue, so it is drained, matched and forwarded by the same
-code a genuine message meets. Injecting a `StepFinished` on `sequencer->core` therefore
-exercises `handle_sequencer_message`, the forward to the HMI, and the console's own rendering —
-and appears twice in the trace, marked injected on the way in and unmarked when Core forwards
-it.
+```
+2026-08-12 09:32:58.056;DEBUG;Core;channel.py:send;send core->sequencer StopSequencer()
+2026-08-12 09:32:58.10?;DEBUG;Sequencer;channel.py:receive;recv core->sequencer StopSequencer()
+```
 
-**Why the tap is on `Channel` rather than in Core.** Core routes messages but does not see the
-ones it never receives — a Sequencer→Core send is only visible at the transport. Putting the
-observer on the single chokepoint every message already passes through is the only place that
-sees all six links, and it survives the roadmap's thread migration unchanged: the tap does not
-care which queue type the Channel wraps.
+Both directions, deliberately: a message that was sent and never received is the failure
+worth seeing, and it is invisible to anything that only logs on arrival. Because the trace
+sits on the one object every message already passes through, no module has to remember to log
+anything and no new message can escape it — the two-step "add a message" procedure in
+`src/pypts/README.md` is unchanged.
 
-**Verified:** 9 tests in `tests/unit_tests/test_debug_console.py`, including that a failing tap
-never stops the message it was observing, that an injected sequencer event really reaches the
-HMI through Core's routing, and that all 44 message types across all six unions are
-constructible from the generated form. Full suite: 129 passed, 78 skipped. `--mode debug` boots
-all five processes on Windows.
+**Why it is at the transport, not in the handlers.** Same reason the tap was: Core does not
+see the messages it never receives, so a Sequencer→Core send is only visible at the
+`Channel`. It also survives the thread migration unchanged — the trace does not care which
+queue type the Channel wraps. The handlers' old `log.info(f"Received … message: {message}")`
+lines were removed, since `receive()` now covers all four of them and adds the link name;
+INFO is left carrying only the narrative (lifecycle, recipe loaded, run started, errors).
+
+**One dial.** `--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}` overrides `[Application]
+log_level` in `config.ini`, which now ships as `INFO`; `logger.parse_log_level()` falls back
+to INFO rather than raising on a name it does not know, because the config value is read
+before there is anywhere to report a traceback. The launcher resolves the level **once** and
+passes it to every process as an argument — children must not read the config themselves,
+because `read_config_key()` writes the file, and five processes rewriting it per run is the
+defect at the top of this document, not a feature. Filtering therefore happens at the sender,
+which is what makes the trace free when it is off: `%`-style arguments mean the `repr()` is
+only paid when a handler is actually going to emit.
+
+**What was given up.** The live filterable trace table, the injection UI, the generated
+message form, and the Modules tab. Injection needed no product code to survive: `Core`
+already takes `queue_factory`, so a test builds a Core that spawns nothing and calls
+`core.from_sequencer.send(...)` directly — `test_core.py::test_a_sequencer_event_is_routed_to_the_hmi`
+is the old injection test, rewritten that way.
+
+**Verified:** 9 tests in `tests/unit_tests/test_channel_trace.py`, including that nothing is
+traced above DEBUG, that a message is not even formatted when the trace is off, that a
+message left on the queue is not traced as received, and that a broken log queue does not
+stop the message it was tracing. Full suite: **136 passed, 77 skipped** (was 129/78).
+Confirmed on Windows by running `--mode cli --log-level DEBUG` and reading the log: all six
+links appear with matching send/recv pairs from four processes in one file, including
+`core->sequencer` and `core->report`, which no frontend could ever see. At INFO the same run
+produces zero trace lines.
+
+- [x] **DONE — the "revert before v1.0" TODO is closed.** `--mode` defaulted to `debug` for
+      the duration of the refactor; with the console gone the default is **`gui`** again, as
+      Phase 3 intended. The four other console TODOs (trace export, `tuple[StepOutcome, ...]`
+      editor, duplicated `HEARTBEAT_TIMEOUT_S`, injection union guard) died with it. Trace
+      export in particular is now moot: the trace is a file.
 
 **New TODOs this opened:**
 
-- [ ] **TODO — revert before v1.0:** `--mode` now defaults to **`debug`**, not `gui`. This is
-      deliberate for the duration of the refactor (a bare `python -m pypts` is more useful
-      showing the message layer than an idle status label, while the engine is a stub), but
-      shipping a developer console as the default frontend would be wrong. Flip the default back
-      to `gui` in `launcher/startup.py` as part of the Phase 3 frontend work.
-- [ ] **TODO:** The trace has no export. Copying a failing run's message sequence out of the
-      table for a bug report currently means a screenshot.
-- [ ] **TODO:** `tuple[StepOutcome, ...]` has no editor, so `RunFinished.outcomes` can only be
-      sent as `()` from the generic form. The curated "simulate run" buttons populate it
-      properly; a table-of-forms editor would be needed to do it by hand.
-- [ ] **TODO:** The console derives module liveness from tapped heartbeats, duplicating
-      `core.HEARTBEAT_TIMEOUT_S`. If Core ever gains a real supervision policy (the open
-      question in `do_periodic_tasks`), the console should show Core's verdict rather than
-      recomputing its own.
-- [ ] **TODO:** Injection has no guard against a message that does not belong to the target
-      link's union. That is deliberate — provoking `unhandled()` is a legitimate test — but the
-      panel does not warn that it is what you are about to do.
+- [ ] **TODO:** Heartbeat noise. Three modules × 1 Hz × two directions ≈ **6 trace lines a
+      second** at DEBUG — about 170k lines in an 8-hour run. The fix is a `pypts.trace.heartbeat`
+      child logger that can be silenced on its own. Deliberately not done yet: it would make
+      `channel.py` import `Heartbeat` and type-test the payload, and the transport not knowing
+      what a message *is* is the property that keeps it generic. Decide before Phase 1
+      generates real traffic.
+- [ ] **TODO:** `LOG_FORMAT` has no `%(name)s`, so a trace line is identified by the word
+      `send`/`recv` and the `channel.py:send` location field rather than by `pypts.trace`.
+      Adding the logger name touches every line of every log and the `LOG_LINE` regex in
+      `test_logger.py` — worth doing, but on its own.
+- [ ] **TODO:** Trace payloads are not truncated (the tap capped them at 2,000 chars). A file
+      does not care and a large `RunFinished` is exactly what you want whole, but revisit if a
+      real Phase 1 run shows the log queue backing up.
+- [x] **DONE (§1.3):** An existing `%TEMP%/pypts/config/config.ini` saying `log_level = DEBUG`
+      no longer affects anything: the config moved to the per-user config directory, so the
+      old file is not read at all, and the handler now migrates rather than only creating.
+      The stale file under `%TEMP%` is harmless and may be deleted by hand.
+- [ ] **TODO:** `--mode cli` still imports PySide6, through `startup.py → hmi/gui/gui.py`.
+      Removing the debug console did not fix this — deferring the GUI import into the `gui`
+      branch is a one-line change nobody has made.
+- [ ] **TODO:** Message-type introspection is no longer asserted anywhere. The deleted
+      `test_every_message_type_can_be_built_from_the_form` was the only test proving every
+      message has plain, introspectable fields. `test_messages.py` still pickles every message
+      and fails on one with no example, so union coverage does not rot — but the weaker claim
+      is now untested. Do not rebuild the form to get it back; a direct test would do.
+- [ ] **TODO:** If a live developer tool is ever wanted again, it should be a separate
+      distribution reading the log or subscribing through `pypts.api`, not a `--mode` inside
+      the product.
+
+---
+
+### 1.3 Config handler rework — **done**
+
+> **Status: implemented.** The four module-level functions writing an INI file into
+> `%TEMP%` were replaced by a `ConfigHandler` singleton in the platform's per-user
+> config directory, with a versioned structure, typed access and one writer.
+
+**What was wrong.** Three things, all of them the same thing. `read_config_key()` called
+`create_config_from_template()` first, so *every read rewrote the file*, comments and all —
+five processes rewriting one file per run. The `[Paths]` section hardcoded `/tmp/pypts`,
+wrong on Windows, and nothing read it: the log path was invented independently in
+`utilities/local_storage.py`, and `[Application] log_level` was read for the launcher only.
+And `%TEMP%` is cleaned up, so a bench's settings were one reboot from gone.
+
+**The shape now.** Four small modules with one job each:
+
+| File | Owns |
+|---|---|
+| `file_locations.py` | where the file is — `platformdirs`, and the seam tests monkeypatch |
+| `configuration_schema.py` | what the file contains: section → key → type, default, allowed values; the deprecation map; `CONFIG_VERSION` |
+| `template_writer.py` | writing without losing the comments |
+| `config_handler.py` | the singleton: load, migrate, validate, get/set, dump |
+
+**The decisions worth recording.**
+
+- **INI stays.** The structure the spec asks for is carried by dotted section names —
+  `[hardware.dmm1]` — and a schema that gives every key a type. `get_parameter()` returns a
+  `Path`, an `int` or a `bool`, not a string.
+- **One instance per *process*, not per application.** Spawn gives a child no memory of its
+  parent, so each process builds its own handler and reads the same file. Nothing is passed
+  through `Process(args=...)`, which is what keeps the child entry points unchanged.
+- **Reading is pure.** Only `bootstrap()`, called once by the launcher before anything else
+  exists, may create or repair the file. CORE is the only runtime writer.
+- **Migration keeps user values.** A file from an older version has its renamed keys moved,
+  its dead keys dropped and its new keys added; the previous file is kept as
+  `config.ini.v<n>.bak`. A file from a *newer* pypts is refused rather than guessed at.
+- **Derived paths, not shipped paths.** The template ships the path values blank; they are
+  filled at creation from the platform's data directory. That is why no path in the template
+  can be wrong on either platform — asserted by a test.
+- **`configuration_schema.py` and `config_template.ini` are checked against each other** by
+  `test_schema_and_template_agree`, which is the "config structure verification tool
+  integrated into the pytest pipeline" the spec asks for. CI runs it already.
+
+**Wired in.** `startup.py` takes the log directory from `paths.logs_dir` and the log level
+from `logging.level`; `report.py` takes its output directory from `paths.reports_dir`;
+`local_storage.get_log_file_path()` no longer decides a location, it is given one.
+
+- [ ] **TODO:** `SetConfigParameter` (HMI→CORE) is **declared and not implemented** —
+      CORE logs and ignores it, and nothing sends it. Two questions are open: whether CORE
+      answers with a confirmation or an error, and how a process already running learns that
+      a value it read at startup has changed. Until that is answered, a configuration change
+      takes effect on the next start.
+- [ ] **TODO:** Phase 5 should read `[hardware.<name>]` into a `DeviceConfig` and hand it to
+      drivers by logical name. The section family and its validation exist; nothing consumes
+      them.
+- [ ] **TODO:** `report.type` / `report.theme` and the `[gui]` keys are read but not yet
+      *used* — Phases 4 and 3 respectively.
+- [ ] **TODO:** Move the plaintext SSH password out of
+      `resources/recipes/comprehensive_recipe.yml:20` and into the configuration now that
+      there is somewhere to put it. Rotate the credential if the host is live.
+- [ ] **TODO:** `stdout_logging_enabled` is still derived from `--mode` rather than from the
+      configuration. Probably correct — it follows from having a console, not from a
+      preference — but it is the one logging decision the config does not own.
 
 ---
 
@@ -255,7 +351,7 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 
 - Fix the verificator's broken schema-constants import; give `RECIPE_*_REQUIRED_FIELDS` / `STEP_REQUIRED_FIELDS` a dedicated schema module (this becomes the programmatic recipe schema the spec asks for).
 - Harden `catch_and_report_errors`: re-raise or return sentinel by policy, per-function module detection, and don't require `self.core` implicitly.
-- Decide logging/config process policy: one log directory per *test run*, per-process log files inside it; config written once by the launcher, read-only elsewhere.
+- Decide logging/config process policy. **Decided (§1.2, §1.3):** one `--log-level` for the whole run, overriding `[logging] level`, resolved once by the launcher and passed to every process as an argument, so filtering happens at the sender rather than in the Logger; and the config is created/migrated once by the launcher's `bootstrap()` and read-only everywhere else, with every process reading the file for itself. **Still open:** one log directory per *test run* with per-process log files inside it — the log directory now comes from `paths.logs_dir`, but the per-run folder does not exist yet.
 - Get `run_tests.py` + unit tests green in CI on the branch; add an X-server (or `QT_QPA_PLATFORM=offscreen`) job for GUI tests (already a TODO).
 - Characterization tests around `old_code`: run an example recipe end-to-end and assert on the CSV rows — this is the safety net for the port in Phase 1.
 - Resolve `requirements.txt` → pyproject-only (existing TODO), REUSE check in CI (existing TODO).
@@ -483,7 +579,7 @@ Steps 1–3 are naturally done *while porting steps into the sequencer* — doin
 - **`old_code` divergence.** The branch's `old_code` is *newer* than master (consolidated steps, `test_package` resource loading). Freeze master, do the port from `old_code` only, and delete it at v0.3.0 — three coexisting engines (master, old_code, new modules) is the biggest confusion risk for the team.
 - **Error-handling policy.** `catch_and_report_errors` currently reports and *continues*. Define per-layer behavior: step errors → StepResult(ERROR) + report + continue/abort per recipe config; module errors → Core event + heartbeat-driven recovery; never both silent.
 - **Core busy-loop & heartbeats.** 100 Hz polling in every module is fine for now; when Core gains real work, consider `Queue.get(timeout=...)`-driven loops. Heartbeat timeout currently only logs a warning — define the recovery action (restart module? abort run? notify HMI?).
-- **Config in the temp directory.** `%TEMP%/pypts/config/config.ini` is easy to lose on cleanup and awkward for benches with fixed configs — consider `platformdirs` user-config location, and a single writer (launcher) with readers elsewhere. Also still INI; spec mentions structured data and versioned config schema.
+- ~~**Config in the temp directory.**~~ **Closed (§1.3):** moved to the `platformdirs` per-user config directory, single writer, versioned structure with migration, and structured data through dotted section families. It is still INI — deliberately, because the type information lives in `configuration_schema.py` and the file stays hand-editable on a bench. What remains open is *changing* configuration at runtime: `SetConfigParameter` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
 - **PyPI name.** The pyproject rename to `pts-framework` needs an early availability check on PyPI (v1.0.0 requirement), and alignment with the import name `pypts`.
 - **Recipe format versioning.** Before the Creator and third-party step plugins ship, add `format_version` to the recipe header and a compatibility policy — cheap now, expensive later.
 - **`pypts.api` stability.** Freezing the step/driver contract is the highest-leverage design decision left; review it with the module owners (per the Milestones page, each module has an assigned owner) before Phase 2 ends.

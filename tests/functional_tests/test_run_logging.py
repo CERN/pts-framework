@@ -53,6 +53,18 @@ def test_log_file_name_is_decided_once_not_derived_from_the_clock_per_process():
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
+def test_the_log_names_itself_and_the_configuration_it_used():
+    """
+    The first records of a run identify the run log's own path and the
+    config.ini it was read from. A log is routinely copied off the machine that
+    wrote it, and both paths are unrecoverable once it has been - the Logger
+    announces the file name on the console only, because it is the one component
+    that cannot log about logging.
+    """
+    ...
+
+
+@pytest.mark.skip(reason=PLACEHOLDER)
 def test_cli_mode_keeps_stdout_clean():
     """Child processes must not print over the interactive prompt."""
     ...

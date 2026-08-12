@@ -53,6 +53,29 @@ class StartSequence:
 
 
 @dataclass(frozen=True, slots=True)
+class SetConfigParameter:
+    """
+    Change one configuration value.
+
+    Declared, not implemented: nothing sends this yet, and CORE's handler only
+    says so. It exists because the write policy has to be decided before anyone
+    writes rather than after - CORE is the single writer of config.ini, so a
+    frontend that wants a setting changed asks for it here instead of opening
+    the file itself.
+
+    `value` is text because that is what an INI file holds; CORE validates it
+    against the schema, which is where the key's real type lives.
+
+    Two things are still open, and are why this is a placeholder: whether CORE
+    answers with a confirmation or an error, and how a process already running
+    learns that a value it read at startup has changed.
+    """
+
+    key: str
+    value: str
+
+
+@dataclass(frozen=True, slots=True)
 class ShutdownRequested:
     """
     Shut the whole application down. Was HMIToCoreCommand.EXIT.
@@ -123,6 +146,7 @@ class ModuleErrorReported:
 HmiToCore = (
     LoadRecipe
     | StartSequence
+    | SetConfigParameter
     | ShutdownRequested
     | HmiStopped
     | UserPromptResponse

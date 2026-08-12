@@ -16,18 +16,18 @@ change to this file alone.
 """
 
 import argparse
+import logging
+import sys
 from multiprocessing import Process, Queue
 
-from pypts.config_handler.config_handler import read_config_key
+from pypts.config_handler import ConfigError, ConfigHandler
 from pypts.core.core import core_main
 from pypts.hmi.cli.cli import cli_main
-from pypts.hmi.debug.console import debug_main
-from pypts.hmi.debug.tap import ChannelTap
 from pypts.hmi.gui.gui import gui_main
-from pypts.logger.log import init_logging, log, logger_main
+from pypts.logger.log import init_logging, log, logger_main, parse_log_level
 from pypts.messages import Channel
-from pypts.messages.debug_link import CORE_TO_HMI, HMI_TO_CORE
 from pypts.messages.hmi_link import CoreToHmi, HmiStopped, HmiToCore, ShutdownRequested
+from pypts.messages.links import ANY_TO_LOGGER, CORE_TO_HMI, HMI_TO_CORE
 from pypts.messages.logger_link import LoggerControl, StopLogger
 from pypts.utilities.local_storage import get_log_file_path
 
@@ -37,44 +37,70 @@ CORE_SHUTDOWN_TIMEOUT_S = 5.0
 #: How long the Logger gets to drain whatever is still queued.
 LOGGER_SHUTDOWN_TIMEOUT_S = 5.0
 
+#: Exit code for a configuration pypts cannot work with. Distinct from 1, so a
+#: script can tell "your config.ini is wrong" from "the run failed".
+CONFIG_EXIT_CODE = 2
+
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
-        choices=["gui", "cli", "connect", "debug"],
-        default="debug",
-        # The default is the developer console for the duration of the refactor:
-        # the execution engine is a stub, so a bare `python -m pypts` is far more
-        # useful showing the message layer than showing an idle status label.
-        # This must go back to "gui" before v1.0 - it is a TODO in the roadmap.
-        help="Choose the app mode: GUI, CLI, connect, or debug (developer console, default)",
+        choices=["gui", "cli", "connect"],
+        default="gui",
+        help="Choose the app mode: GUI (default), CLI, or connect",
+    )
+    parser.add_argument(
+        "--log-level",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        default=None,
+        help=(
+            "Minimum level written to the run log. DEBUG adds the message trace: "
+            "every message on every link, as it is sent and as it is received. "
+            "Overrides [logging] level in config.ini."
+        ),
     )
     args = parser.parse_args()
-    debugging = args.mode == "debug"
+
+    # Before anything else, including logging: the configuration is what says
+    # where the log file goes. This is the one call that may create or migrate
+    # config.ini - every other process only reads it. Nothing here can be
+    # logged yet, so the handler buffers its own messages and they are replayed
+    # below, once there is somewhere to put them.
+    try:
+        config = ConfigHandler.bootstrap()
+    except ConfigError as error:
+        # The file is meant to be edited by hand, so the likeliest cause is a
+        # typo in it. There is no log yet and never will be on this path, so the
+        # message goes to stderr and the traceback is suppressed: it would only
+        # bury the one line that says what to fix.
+        print(f"pypts cannot start: {error}", file=sys.stderr)
+        raise SystemExit(CONFIG_EXIT_CODE) from None
 
     # Logging is set up before anything else, so that no module has to fall back
     # to an uninitialised logger. The log file path is decided here exactly once
     # and owned by a single writer - the Logger process - which every other
     # process reaches through log_queue. See logger/log.py for the reasoning.
     log_queue = Queue()
-    log_file_path = get_log_file_path()
+    log_file_path = get_log_file_path(config.get_parameter("paths.logs_dir"))
+
+    # Resolved once, here, and passed to every process, so that one run is
+    # captured at one level throughout - a child reading the config for itself
+    # would not know about --log-level, and half the run would be at the other
+    # level.
+    #
+    # parse_log_level() falls back rather than raising, so an unusable name
+    # cannot stop the application from starting; the warning comes below.
+    configured_level = args.log_level or config.get_parameter("logging.level")
+    log_level = parse_log_level(configured_level)
+    # -1 is not a level, so it survives only when the name meant nothing.
+    level_was_understood = not configured_level or parse_log_level(configured_level, -1) != -1
 
     # The Logger owns the console handler, so this choice applies to every
-    # process. Both windowed modes want it: with no terminal of their own, the
-    # launcher's console is where their log is read.
-    stdout_logging_enabled = args.mode in ("gui", "debug")
-
-    # The debug path exists only under --mode debug. In every other mode `tap`
-    # stays None, so Channel.send() takes the same branch it always did and no
-    # message pays for tooling nobody asked for.
-    tap = None
-    tap_records = None
-    debug_commands = None
-    if debugging:
-        tap_records = Queue()
-        debug_commands = Queue()
-        tap = ChannelTap(tap_records)
+    # process. The GUI wants it: with no terminal of its own, the launcher's
+    # console is where its log is read. The CLI does not, because its own
+    # print()-based shell shares that console.
+    stdout_logging_enabled = args.mode == "gui"
 
     logger_process = Process(
         target=logger_main,
@@ -83,48 +109,54 @@ def main() -> None:
     )
     logger_process.start()
 
-    logger_control: Channel[LoggerControl] = Channel(log_queue)
-    init_logging(log_queue)
+    logger_control: Channel[LoggerControl] = Channel(log_queue, link=ANY_TO_LOGGER)
+    init_logging(log_queue, log_level)
 
     # The one process boundary in the framework. Swapping Queue() for
     # queue.Queue() here is all it takes to run CORE's submodules as threads;
     # no module below ever learns which one it holds.
-    to_core: Channel[HmiToCore] = Channel(Queue(), link=HMI_TO_CORE, observer=tap)
-    to_hmi: Channel[CoreToHmi] = Channel(Queue(), link=CORE_TO_HMI, observer=tap)
+    to_core: Channel[HmiToCore] = Channel(Queue(), link=HMI_TO_CORE)
+    to_hmi: Channel[CoreToHmi] = Channel(Queue(), link=CORE_TO_HMI)
 
     core_process = None
     try:
-        # OS details come from the config, which fills them in when it is created.
-        log.info("os_name: " + read_config_key("OperatingSystem", "name"))
-        log.info("os_version: " + read_config_key("OperatingSystem", "version"))
+        # Everything the configuration did before there was a logger: which file
+        # it used, whether it had to create or migrate it, and any section it
+        # did not recognise. Replayed first, because it explains the paths the
+        # rest of this run is about to use.
+        config.replay_bootstrap_log()
 
-        # `tap` and the debug inbox are None outside --mode debug, and CORE then
-        # builds exactly the channels it built before.
+        # The log file names itself. The Logger announces this on the console
+        # too, but it has to: it is the one component that cannot log about
+        # logging. That leaves the file itself silent about where it lives,
+        # which matters as soon as a log is copied off the machine that wrote
+        # it - and it is the proof that paths.logs_dir was actually honoured.
+        log.info("Run log: %s", log_file_path)
+
+        # Recorded next, so the log always says what it was configured to
+        # capture - the answer to "why is the trace missing from this file".
+        log.info("Log level: %s", logging.getLevelName(log_level))
+        if not level_was_understood:
+            log.warning("Unknown log level: %r. Using the default.", configured_level)
+
+        # Recorded once per run, so a report can say which machine produced it.
+        log.info(
+            "Operating system: %s %s (%s)",
+            config.get_parameter("operating_system.name"),
+            config.get_parameter("operating_system.version"),
+            config.get_parameter("operating_system.architecture"),
+        )
+
         core_process = Process(
             target=core_main,
             name="Core",
-            args=(to_hmi, to_core, log_queue, tap, _channel_or_none(debug_commands)),
+            args=(to_hmi, to_core, log_queue, log_level),
         )
         core_process.start()
 
         if args.mode == "gui":
-            ui_process = Process(target=gui_main, name="GUI", args=(to_core, to_hmi, log_queue))
-            ui_process.start()
-            ui_process.join()
-        elif debugging:
-            # The console reads the tap and writes injections. Neither queue is
-            # wrapped in an observed Channel: a tap that recorded its own traffic
-            # would feed itself.
             ui_process = Process(
-                target=debug_main,
-                name="DebugConsole",
-                args=(
-                    to_core,
-                    to_hmi,
-                    log_queue,
-                    Channel(tap_records),
-                    Channel(debug_commands),
-                ),
+                target=gui_main, name="GUI", args=(to_core, to_hmi, log_queue, log_level)
             )
             ui_process.start()
             ui_process.join()
@@ -145,12 +177,6 @@ def main() -> None:
         logger_process.join(timeout=LOGGER_SHUTDOWN_TIMEOUT_S)
         if logger_process.is_alive():
             logger_process.terminate()
-
-
-def _channel_or_none(queue) -> Channel | None:
-    """Wrap a queue that may not exist. Saves the caller an if/else that would
-    only be about --mode debug."""
-    return None if queue is None else Channel(queue)
 
 
 def stop_core(core_process: Process | None, to_core: Channel[HmiToCore]) -> None:

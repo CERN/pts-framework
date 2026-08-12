@@ -111,6 +111,31 @@ def test_a_stopped_module_does_not_produce_timeout_warnings(caplog):
     assert not [r for r in caplog.records if "Heartbeat timeout" in r.message]
 
 
+def test_a_sequencer_event_is_routed_to_the_hmi():
+    """
+    Progress from the Sequencer reaches the frontend, through the real routing.
+
+    Driven by putting the message on the real inbox and turning the loop once,
+    rather than by calling the handler - so the drain, the `match` and the
+    forward are all exercised. This is the seam that used to need the debug
+    console's injection machinery; queue_factory is all it actually takes.
+    """
+    from uuid import uuid4
+
+    from pypts.messages.common import ResultType, StepOutcome
+    from pypts.messages.run_events import StepFinished
+
+    core = build_core_that_spawns_nothing()
+    outcome = StepOutcome(
+        step_id=uuid4(), step_name="measure", result=ResultType.PASS, error_info=""
+    )
+
+    core.from_sequencer.send(StepFinished(outcome=outcome))
+    core.poll_all_sources()
+
+    assert list(core.to_hmi.receive()) == [StepFinished(outcome=outcome)]
+
+
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_load_recipe_command_is_handled():
     """Currently a `pass` in handle_hmi_event - Phase 1."""

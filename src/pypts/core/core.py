@@ -16,27 +16,26 @@ unhandled(), so a message nobody thought about raises instead of being dropped.
 import time
 from multiprocessing import Process, Queue
 
-from pypts.logger.log import init_logging, log
+from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import Channel, UnhandledMessage, unhandled
 from pypts.messages.common import ErrorSeverity, Heartbeat, ModuleError
-from pypts.messages.debug_link import (
-    CORE_TO_REPORT,
-    CORE_TO_SEQUENCER,
-    REPORT_TO_CORE,
-    SEQUENCER_TO_CORE,
-    InjectMessage,
-    InjectTarget,
-)
 from pypts.messages.hmi_link import (
     CoreToHmi,
     HmiStopped,
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
+    SetConfigParameter,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
     StopHmi,
+)
+from pypts.messages.links import (
+    CORE_TO_REPORT,
+    CORE_TO_SEQUENCER,
+    REPORT_TO_CORE,
+    SEQUENCER_TO_CORE,
 )
 from pypts.messages.report_link import (
     CoreToReport,
@@ -82,8 +81,7 @@ def core_main(
     to_hmi: Channel[CoreToHmi],
     from_hmi: Channel[HmiToCore],
     log_queue,
-    tap=None,
-    debug_inbox=None,
+    log_level: int = DEFAULT_LOG_LEVEL,
 ) -> None:
     """
     Entry point for the launcher. Runs in the Core process.
@@ -92,12 +90,13 @@ def core_main(
     and before the submodules are spawned, so it is the first thing done here.
 
     Args:
-        tap: a ChannelTap under `--mode debug`, None in every normal run. See
-            Core.__init__.
-        debug_inbox: a Channel[DebugToCore] under `--mode debug`, None otherwise.
+        log_level: the level the launcher resolved for the whole run. Passed
+            rather than read from the config here, because --log-level overrides
+            the config for one run and a child process has no way to know that.
+            Everything else CORE needs it reads from the config itself.
     """
-    init_logging(log_queue)
-    Core(to_hmi, from_hmi, log_queue, tap=tap, debug_inbox=debug_inbox).start()
+    init_logging(log_queue, log_level)
+    Core(to_hmi, from_hmi, log_queue, log_level=log_level).start()
 
 
 class Core:
@@ -116,8 +115,7 @@ class Core:
         from_hmi: Channel[HmiToCore],
         log_queue,
         queue_factory=Queue,
-        tap=None,
-        debug_inbox=None,
+        log_level: int = DEFAULT_LOG_LEVEL,
     ) -> None:
         """
         Args:
@@ -125,37 +123,27 @@ class Core:
                 the seam the roadmap's thread migration turns: pass queue.Queue
                 and the Sequencer and the Report become threads without any
                 other change. Tests use it to build a CORE that spawns nothing.
-            tap: optional observer put on all four submodule channels, so the
-                debug console can see traffic that never leaves this process.
-                None in a normal run, and then these channels are exactly what
-                they were before.
-            debug_inbox: optional Channel[DebugToCore]. Present only under
-                `--mode debug`; polled alongside the three real inboxes.
+            log_level: kept only to hand on to the two submodules CORE spawns.
         """
         self.to_hmi = to_hmi
         self.from_hmi = from_hmi
 
         # Shared with the submodules so every process writes through one Logger.
         self.log_queue = log_queue
-
-        self.tap = tap
-        self.debug_inbox = debug_inbox
+        self.log_level = log_level
 
         # One queue per direction. The Channel type parameter is the union that
         # queue is allowed to carry, and `link` is the name it goes by in the
-        # debug trace.
+        # trace - these four are the links that never leave this process, so the
+        # log is the only place they can be seen at all.
         self.to_sequencer: Channel[CoreToSequencer] = Channel(
-            queue_factory(), link=CORE_TO_SEQUENCER, observer=tap
+            queue_factory(), link=CORE_TO_SEQUENCER
         )
         self.from_sequencer: Channel[SequencerToCore] = Channel(
-            queue_factory(), link=SEQUENCER_TO_CORE, observer=tap
+            queue_factory(), link=SEQUENCER_TO_CORE
         )
-        self.to_report: Channel[CoreToReport] = Channel(
-            queue_factory(), link=CORE_TO_REPORT, observer=tap
-        )
-        self.from_report: Channel[ReportToCore] = Channel(
-            queue_factory(), link=REPORT_TO_CORE, observer=tap
-        )
+        self.to_report: Channel[CoreToReport] = Channel(queue_factory(), link=CORE_TO_REPORT)
+        self.from_report: Channel[ReportToCore] = Channel(queue_factory(), link=REPORT_TO_CORE)
 
         self.running = True
         self.shutting_down = False
@@ -185,14 +173,14 @@ class Core:
         self.sequencer_process = Process(
             target=sequencer_main,
             name="Sequencer",
-            args=(self.from_sequencer, self.to_sequencer, self.log_queue),
+            args=(self.from_sequencer, self.to_sequencer, self.log_queue, self.log_level),
         )
         self.sequencer_process.start()
 
         self.report_process = Process(
             target=report_main,
             name="Report",
-            args=(self.from_report, self.to_report, self.log_queue),
+            args=(self.from_report, self.to_report, self.log_queue, self.log_level),
         )
         self.report_process.start()
 
@@ -210,8 +198,6 @@ class Core:
         self.poll(self.from_hmi, self.handle_hmi_message)
         self.poll(self.from_sequencer, self.handle_sequencer_message)
         self.poll(self.from_report, self.handle_report_message)
-        if self.debug_inbox is not None:
-            self.poll(self.debug_inbox, self.handle_debug_message)
 
     def poll(self, channel, handler) -> None:
         """
@@ -239,7 +225,6 @@ class Core:
     # --- Routing --------------------------------------------------------------
 
     def handle_hmi_message(self, message: HmiToCore) -> None:
-        log.info(f"Received HMI message: {message}")
         match message:
             case ShutdownRequested():
                 self.stop_all_modules()
@@ -252,6 +237,17 @@ class Core:
             case UserPromptResponse() | SerialNumberResponse():
                 # The operator's answer belongs to whoever asked the question.
                 self.to_sequencer.send(message)
+            case SetConfigParameter(key=key, value=value):
+                # CORE is the only process allowed to write config.ini, which is
+                # why the message stops here. Carrying it out is not implemented:
+                # a change would have to reach the processes already running,
+                # each holding what it read at startup, and that is unsolved.
+                log.warning(
+                    "Ignoring a request to set %s to %r: changing the configuration "
+                    "while the application runs is not implemented.",
+                    key,
+                    value,
+                )
             case Heartbeat():
                 self.note_heartbeat(message)
             case ModuleError():
@@ -262,7 +258,6 @@ class Core:
                 unhandled(message)
 
     def handle_sequencer_message(self, message: SequencerToCore) -> None:
-        log.info(f"Received Sequencer message: {message}")
         match message:
             case SequencerStopped():
                 self.module_running[SEQUENCER] = False
@@ -287,7 +282,6 @@ class Core:
                 unhandled(message)
 
     def handle_report_message(self, message: ReportToCore) -> None:
-        log.info(f"Received Report message: {message}")
         match message:
             case ReportStopped():
                 self.module_running[REPORT] = False
@@ -301,48 +295,6 @@ class Core:
                 self.handle_module_error(message)
             case _:
                 unhandled(message)
-
-    def handle_debug_message(self, message: InjectMessage) -> None:
-        """
-        Do what the debug console asked. Reachable only under `--mode debug`.
-
-        Kept apart from the three real handlers on purpose: this one is not part
-        of the product, and grouping it with them would invite product logic to
-        start depending on it.
-        """
-        log.info(f"Received debug message: {message}")
-        match message:
-            case InjectMessage(target=target, message=payload):
-                self.inject(target, payload)
-            case _:
-                unhandled(message)
-
-    def inject(self, target: InjectTarget, message: object) -> None:
-        """
-        Put a console-supplied message on one of CORE's links.
-
-        It goes on the real queue, so it is drained, matched and forwarded by
-        the same code a genuine message meets - which is the whole reason for
-        injecting rather than just drawing the result. An injection into
-        SEQUENCER_TO_CORE therefore appears in the trace twice: inbound here,
-        and again when this routing table forwards it to the HMI.
-        """
-        channels = {
-            InjectTarget.TO_HMI: self.to_hmi,
-            InjectTarget.TO_SEQUENCER: self.to_sequencer,
-            InjectTarget.FROM_SEQUENCER: self.from_sequencer,
-            InjectTarget.TO_REPORT: self.to_report,
-            InjectTarget.FROM_REPORT: self.from_report,
-        }
-        log.info(f"Injecting {type(message).__name__} on {target.value}")
-
-        if self.tap is None:
-            channels[target].send(message)
-            return
-        # Mark the send, and only this send, as simulated. What CORE does in
-        # response is real traffic and is left unmarked.
-        with self.tap.marking_injected():
-            channels[target].send(message)
 
     # --- Orchestration --------------------------------------------------------
 

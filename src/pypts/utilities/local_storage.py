@@ -1,38 +1,47 @@
-import os
-import tempfile
-from datetime import datetime
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
 
-def ensure_folder_exists(folder_path: str):
-    """Create the folder if it does not exist."""
+"""
+Naming the files pypts writes.
+
+This module used to decide *where* they went as well, by building a path under
+`tempfile.gettempdir()`. It no longer does: the directory comes from the
+configuration, and the caller passes it in. What is left here is the naming
+convention and the mkdir, which is all this ever should have been.
+
+The log file name still carries a timestamp taken when the function is called,
+so it must be called exactly once per run - the launcher does that, and every
+process is then given the resulting path.
+"""
+
+import os
+from datetime import datetime
+from pathlib import Path
+
+#: Prefix of the run log file name. The rest is the timestamp.
+LOG_FILE_PREFIX = "pypts"
+
+
+def ensure_folder_exists(folder_path) -> None:
+    """Create the folder, and its parents, if they are not there already."""
     os.makedirs(folder_path, exist_ok=True)
 
-def create_folder_structure(app_name="pypts", subfolders=None):
-    """
-    Create specified subfolders under the app temp folder.
-    Default subfolders: ['logs', 'config']
-    """
-    if subfolders is None:
-        subfolders = ["logs", "config"]
-    base_temp = tempfile.gettempdir()
-    app_temp_dir = os.path.join(base_temp, app_name)
-    ensure_folder_exists(app_temp_dir)  # Ensure master folder exists
 
-    for subfolder in subfolders:
-        path = os.path.join(app_temp_dir, subfolder)
-        ensure_folder_exists(path)  # Ensure each subfolder exists
-
-def get_log_file_path(app_name="pypts", subfolder="logs") -> str:
+def get_log_file_path(logs_dir) -> str:
     """
-    Ensure folder structure exists and return a full path for a timestamped log file.
-    Creates folders if they don't exist.
+    Full path of the log file for this run, creating its directory.
+
+    Args:
+        logs_dir: where run logs go - `paths.logs_dir` from the configuration.
+            Passed in rather than looked up here, so that this module stays
+            free of the configuration and remains usable by a standalone tool.
+
+    Returns:
+        The path, as a string, because that is what `logging.FileHandler` takes
+        and what the launcher hands to the Logger process.
     """
-    # Ensure main folder structure (master + subfolders)
-    create_folder_structure(app_name)
+    ensure_folder_exists(logs_dir)
 
-    base_temp = tempfile.gettempdir()
-    log_dir = os.path.join(base_temp, app_name, subfolder)
-    ensure_folder_exists(log_dir)
-
-    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_file_name = f"{app_name}_{timestamp_str}.log"
-    return os.path.join(log_dir, log_file_name)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return str(Path(logs_dir) / f"{LOG_FILE_PREFIX}_{timestamp}.log")

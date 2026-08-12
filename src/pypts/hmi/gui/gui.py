@@ -16,7 +16,7 @@ from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from pypts.hmi.hmi_client import HmiClient
-from pypts.logger.log import init_logging, log
+from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import Channel
 from pypts.messages.common import ModuleError, ResultType, StepOutcome
 from pypts.messages.hmi_link import CoreToHmi, HmiToCore
@@ -25,12 +25,17 @@ from pypts.messages.hmi_link import CoreToHmi, HmiToCore
 POLL_INTERVAL_MS = 50
 
 
-def gui_main(to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi], log_queue) -> None:
+def gui_main(
+    to_core: Channel[HmiToCore],
+    from_core: Channel[CoreToHmi],
+    log_queue,
+    log_level: int = DEFAULT_LOG_LEVEL,
+) -> None:
     """
     Entry point. Runs in the GUI process, so log records have to be routed to
     the Logger before anything is logged.
     """
-    init_logging(log_queue)
+    init_logging(log_queue, log_level)
     app = QApplication(sys.argv)
     gui = GUI(to_core, from_core)
     gui.show()

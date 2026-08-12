@@ -52,6 +52,7 @@ from pypts.messages.hmi_link import (
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
+    SetConfigParameter,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
@@ -136,6 +137,7 @@ EXAMPLES = {
     # hmi_link
     LoadRecipe: LoadRecipe(recipe_path="resources/recipes/example.yaml"),
     StartSequence: StartSequence(sequence_name="Main"),
+    SetConfigParameter: SetConfigParameter(key="report.theme", value="dark"),
     ShutdownRequested: ShutdownRequested(),
     HmiStopped: HmiStopped(),
     StopHmi: StopHmi(),
@@ -401,8 +403,18 @@ def sequencer():
 
 
 @pytest.fixture
-def report():
-    return Report(to_core=Channel(queue.Queue()), from_core=Channel(queue.Queue()))
+def report(tmp_path):
+    """
+    A Report told where to write, so that building one needs no config file.
+
+    Left to itself it would ask the Config Handler, and the handler refuses to
+    invent a config: outside a real run there is no launcher to have created one.
+    """
+    return Report(
+        to_core=Channel(queue.Queue()),
+        from_core=Channel(queue.Queue()),
+        output_dir=tmp_path,
+    )
 
 
 @pytest.fixture

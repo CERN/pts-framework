@@ -66,12 +66,26 @@ Supporting context in the same folder: `recipe_guide.md` (what a recipe is, what
 engine actually does with it, and the proposed format for the new one — the reference for
 the Phase 1 port) and `recipe_rules.html` (a rendered summary of the recipe rules).
 
+## Module context files
+
+A module may carry a `<module>.md` next to its code holding the whole context of that
+folder — what each file owns, the rules that shape it, the decisions behind them, how to
+extend it, and its known gaps. **Read it before doing anything with that module**; it is
+there so the source does not have to be re-read from scratch each time, and it knows more
+about its module than this file or the roadmap does.
+
+- Present so far: `src/pypts/config_handler/config_handler.md`.
+- It explains *how the module works*. The roadmap stays the authority on *status and plan*;
+  where they overlap, the roadmap wins and the module file should point at it.
+- Keeping it current is part of changing the module — update it in the same change, the way
+  the roadmap is updated.
+
 ## Layout
 
 ```
 src/pypts/
-  launcher/startup.py    entry point; --mode gui|cli|connect|debug; creates the queues,
-                         builds the HMI<->CORE channels, spawns Logger + CORE + frontend
+  launcher/startup.py    entry point; --mode gui|cli|connect and --log-level; creates the
+                         queues, builds the HMI<->CORE channels, spawns Logger + CORE + frontend
   messages/              the whole communication contract - one module per link (see below)
   core/core.py           mediator: routes every link, owns the submodules, heartbeat watch
   sequencer/             event loop is real; run_sequence() is still a stub
@@ -79,10 +93,11 @@ src/pypts/
   report/                event loop is real; CSV/HTML logic is a stub (see old_code/report.py)
   hmi/hmi_client.py      the protocol half every frontend shares
   hmi/cli/  hmi/gui/     CLI shell and PySide6 GUI
-  hmi/debug/             the --mode debug developer console: taps every link, injects messages
   hardware_layer/hal.py  HAL (empty stub)
   stream_handler/        StreamContainer.py, holding GlobalContainer + Stream (not integrated)
-  config_handler/        INI template -> config.ini under the temp dir
+  config_handler/        ConfigHandler singleton; INI template -> config.ini in the
+                         per-user config dir, versioned, migrated, typed via
+                         configuration_schema.py (context: config_handler.md)
   logger/log.py          the Logger process: single writer of the run log, plus init_logging()
   utilities/             error_handling, heartbeat_manager, local_storage, common
   helper_applications/   recipe_creator, recipe_verificator, example_finder (not yet refactored)
@@ -100,9 +115,16 @@ CORE — except log records, which go straight to the Logger.
 Every message is a **frozen slotted dataclass** of plain values. Each *link* gets its own
 module under `pypts/messages/` holding both directions and a union type per direction
 (`hmi_link.py`, `sequencer_link.py`, `report_link.py`, `logger_link.py`; `common.py` and
-`run_events.py` hold what more than one link shares). One generic `Channel` in
-`channel.py` is the transport for all of them — it wraps anything with `put()` and
-`get_nowait()`, which is what keeps the roadmap's thread migration cheap.
+`run_events.py` hold what more than one link shares, `links.py` the name of each
+direction). One generic `Channel` in `channel.py` is the transport for all of them — it
+wraps anything with `put()` and `get_nowait()`, which is what keeps the roadmap's thread
+migration cheap.
+
+Every `Channel` traces itself: `send()` and `receive()` each log one DEBUG line naming the
+link and the message, so `--log-level DEBUG` puts every message in the system into the run
+log twice — once from the sender, once from the receiver. That is why a channel carries a
+`link` name, and it is the only way to see Core↔Sequencer and Core↔Report, which never
+leave the engine process. There is no debug build; there is nothing else to turn on.
 
 Every handler is a `match` closed with `unhandled()`, so a message nobody thought about
 raises instead of being silently dropped.
@@ -121,21 +143,21 @@ objects, no device handles.
 ## Running
 
 ```bash
-python -m pypts                # --mode debug is the default for now (see below)
-python -m pypts --mode cli     # CLI mode
-python -m pypts --mode gui     # GUI mode (PySide6)
-python -m pypts --mode debug   # developer console: shows every link, injects messages
-python run_tests.py            # unit tests, then functional tests
-pytest tests                   # the same suite, directly
+python -m pypts                       # GUI mode (PySide6) - the default
+python -m pypts --mode cli            # CLI mode
+python -m pypts --log-level DEBUG     # adds the full message trace to the run log
+python run_tests.py                   # unit tests, then functional tests
+pytest tests                          # the same suite, directly
 ```
 
-Two things to know about `--mode`:
+`--log-level` overrides `[logging] level` in the generated `config.ini`, which ships as
+`INFO`. The file lives in the per-user config directory (`%LOCALAPPDATA%\pypts\config.ini`
+on Windows, `~/.config/pypts/config.ini` on Linux); the launcher creates it from the
+template on first run and migrates it when its structure version is older than the code's.
+A leftover `%TEMP%/pypts/config/config.ini` from an older build is no longer read at all.
 
-- The default is **`debug`**, not `gui`, for the duration of the refactor — the execution
-  engine is a stub, so the console is far more useful than an idle status label. Putting
-  it back to `gui` before v1.0 is a TODO in the roadmap.
-- `--mode connect` is accepted by argparse but **has no branch**, so it silently falls
-  through and starts the CLI. It is not implemented.
+`--mode connect` is accepted by argparse but **has no branch**, so it silently falls
+through and starts the CLI. It is not implemented.
 
 ## Working style
 

@@ -34,6 +34,9 @@ dependencies = [
   "nidmm==1.4.8",
   "nptdms==1.10.0",
   "numpy",
+  # Per-user config/data directories, so config.ini and the run output land
+  # where the platform expects rather than in the temp directory.
+  "platformdirs",
   "PySide6==6.9.1",
   "PyYAML==6.0.2",
   "ruamel.yaml",

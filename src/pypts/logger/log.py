@@ -45,7 +45,15 @@ from queue import Empty
 from typing import get_args
 
 from pypts.messages import Channel, unhandled
+from pypts.messages.links import ANY_TO_LOGGER
 from pypts.messages.logger_link import LoggerControl, SetStdoutEnabled, StopLogger
+
+#: The level every process runs at unless the launcher says otherwise.
+#:
+#: INFO, not DEBUG, because DEBUG now means the full message trace: every
+#: Channel logs each message twice (see messages/channel.py). That is the right
+#: thing to ask for deliberately and the wrong thing to get by default.
+DEFAULT_LOG_LEVEL = logging.INFO
 
 #: The control messages that share the log queue with ordinary log records.
 #: Derived from the union so that adding a control message cannot leave the
@@ -72,7 +80,27 @@ def build_formatter() -> logging.Formatter:
     return logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
 
 
-def init_logging(log_queue=None, level=logging.DEBUG):
+def parse_log_level(name, default: int = DEFAULT_LOG_LEVEL) -> int:
+    """
+    Turn a level name into a level number.
+
+    Deliberately total: an unknown name, an empty string or None all return
+    `default` rather than raising. The name comes from a command line or from a
+    config file in the temp directory, and neither is worth refusing to start
+    over - the caller logs a warning once logging is up, which is more useful
+    than a traceback before there is anywhere to write it.
+
+    Args:
+      name: a level name such as "DEBUG", in any case. None is accepted so that
+            the caller can pass an absent argument straight through.
+      default: what to return when `name` names no level.
+    """
+    if not name:
+        return default
+    return logging.getLevelNamesMapping().get(str(name).strip().upper(), default)
+
+
+def init_logging(log_queue=None, level=DEFAULT_LOG_LEVEL):
     """
     Configures logging for the *current* process. Call this once, first thing
     in every module entry point.
@@ -81,7 +109,10 @@ def init_logging(log_queue=None, level=logging.DEBUG):
       log_queue: the shared log queue created by the launcher. Records are sent
                  to the Logger process through it. If None, the process logs
                  straight to stdout instead - used by standalone tools and tests.
-      level: minimum level captured by the root logger.
+      level: minimum level captured by the root logger. The launcher resolves
+             it once from --log-level and the config, and passes the same value
+             to every process, so one run is captured at one level throughout.
+             DEBUG additionally turns on the message trace.
 
     Returns:
       The configured root logger.
@@ -102,7 +133,7 @@ def init_logging(log_queue=None, level=logging.DEBUG):
         # QueueHandler.prepare() formats the record and folds any traceback into
         # the message, so what crosses the process boundary is always picklable.
         root.addHandler(logging.handlers.QueueHandler(log_queue))
-        _logger_control = Channel(log_queue)
+        _logger_control = Channel(log_queue, link=ANY_TO_LOGGER)
     else:
         stdout_handler = logging.StreamHandler(sys.stdout)
         stdout_handler.setFormatter(build_formatter())

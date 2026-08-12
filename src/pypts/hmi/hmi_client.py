@@ -87,7 +87,6 @@ class HmiClient:
     @catch_and_report_errors()
     def handle_core_message(self, message: CoreToHmi) -> None:
         """The routing table both frontends share. Ends in unhandled() on purpose."""
-        log.info(f"Received core message: {message}")
         match message:
             case StopHmi():
                 self.stop()

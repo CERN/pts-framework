@@ -23,29 +23,32 @@ deliberate, and it is what keeps the roadmap's thread migration cheap:
   - a future `--mode connect` can hand out a socket-backed queue-alike.
 
 No module ever learns which one it holds, so none of them has to change.
+
+Every channel traces itself. send() and receive() each log one DEBUG line, so a
+run log at DEBUG contains every message in the system twice - once named by the
+process that sent it, once by the process that took it off the queue. That pair
+is the point: a message that was sent and never received is the failure worth
+seeing, and it is invisible to anything that only logs on arrival. Because the
+trace sits on the one object every message already passes through, no module has
+to remember to log anything, and no message can be added that escapes it.
 """
 
+import logging
 from collections.abc import Iterator
 from queue import Empty
-from typing import Generic, Never, NoReturn, Protocol, TypeVar
+from typing import Generic, Never, NoReturn, TypeVar
 
 # The union of messages this channel carries, e.g. Channel[HmiToCore].
 Msg = TypeVar("Msg")
 
-
-class Observer(Protocol):
-    """
-    Something that wants a copy of every message a Channel carries.
-
-    The only implementation is the debug console's tap (hmi/debug/tap.py). It is
-    a Protocol rather than an import so that the transport keeps knowing nothing
-    about the debug tooling: `messages` does not depend on `hmi`.
-
-    An observer must be picklable, because a Channel carrying one is passed to a
-    child process as a Process argument.
-    """
-
-    def __call__(self, link: str, message: object) -> None: ...
+#: The message trace. Its own logger name rather than the root, so that the
+#: trace can be turned down on its own later without a second dial today.
+#:
+#: Obtained with getLogger() rather than `from pypts.logger.log import log`
+#: because logger/log.py imports this module - importing it back would be a
+#: cycle. Nothing is configured here: getLogger() installs no handler and opens
+#: no file, and the level comes from the root, which init_logging() sets.
+_trace = logging.getLogger("pypts.trace")
 
 
 class UnhandledMessage(Exception):
@@ -93,22 +96,20 @@ class Channel(Generic[Msg]):
     #: cannot starve the other queues an event loop has to service.
     DEFAULT_BATCH = 64
 
-    def __init__(self, queue, *, link: str = "", observer: "Observer | None" = None) -> None:
+    def __init__(self, queue, *, link: str = "") -> None:
         """
         Args:
             queue: anything with `put()` and `get_nowait()` - see the module
                    docstring for why the type is not pinned down here.
-            link: the name of the direction this channel is, e.g. "core->hmi".
-                  Only ever used for display: it is what lets the debug console
-                  say which link a message was on, since a Channel is otherwise
-                  anonymous. Both arguments are keyword-only so that the ordinary
-                  `Channel(queue)` construction is untouched.
-            observer: optional tap, called with (link, message) on every send.
-                  None in every normal run - see observe() for why that matters.
+            link: the name of the direction this channel is, one of the
+                  constants in links.py. A Channel is otherwise anonymous, so
+                  this is the only thing that makes its trace lines
+                  interpretable - an unnamed channel traces as "?". Keyword-only
+                  so that the ordinary `Channel(queue)` construction, which
+                  tests use, stays as short as it was.
         """
         self._queue = queue
         self.link = link
-        self._observer = observer
 
         #: How many messages this channel has carried, since construction.
         #:
@@ -121,37 +122,37 @@ class Channel(Generic[Msg]):
         #: defect but the useful reading: a channel is one direction, so `sent`
         #: is meaningful in the process that sends on it and `received` in the
         #: process that reads it, and neither is a number the other could have
-        #: produced. For a whole-system view, use the debug console, whose tap
-        #: sees every link from one place.
+        #: produced. For a whole-system view, read the trace in the run log:
+        #: every channel logs both its sends and its receives, and the Logger
+        #: writes all of them to one file whichever process they came from.
         self.sent = 0
         self.received = 0
 
     def send(self, message: Msg) -> None:
-        """Hand one message to the other end. Never blocks, never inspects it."""
-        if self._observer is not None:
-            self.observe(message)
+        """
+        Hand one message to the other end. Never blocks, never inspects it.
+
+        The trace line comes before the put, so that a message which then fails
+        to pickle is still recorded - that failure is exactly what the line is
+        wanted for. It says "handed to the queue", not "delivered"; `sent` is
+        what claims delivery, and it is incremented afterwards.
+
+        `%r` and %-style arguments rather than an f-string: the repr is then
+        only computed when a handler is actually going to emit the record. Below
+        DEBUG this method costs one cached level check.
+
+        Tracing cannot break a run. QueueHandler - what init_logging() installs,
+        and so what every message meets - guards its own emit(), so a full or
+        broken log queue, or a message whose __repr__ raises, costs nothing more
+        than the trace line. That is the guarantee the old tap bought with a
+        try/except of its own around every send. Note it belongs to the handler,
+        not to logging in general: nothing here would survive a hand-written
+        handler that raises out of emit().
+        """
+        _trace.debug("send %s %r", self.link or "?", message)
         self._queue.put(message)
         # After the put, so a failed send is not counted as a delivery.
         self.sent += 1
-
-    def observe(self, message: Msg) -> None:
-        """
-        Give the tap its copy, and never let that hurt the caller.
-
-        The tap is a development tool sitting on the path every message in the
-        framework takes. A broken or full debug queue must therefore cost the
-        sender nothing more than a lost trace line, so everything here is
-        swallowed - including the pickling error a message that is not
-        pickle-safe would raise on the way to the console process.
-
-        The exception is deliberately not logged. Logging goes through a Channel
-        of its own, and a tap that logged its own failures on a bad day would
-        generate the traffic that keeps it failing.
-        """
-        try:
-            self._observer(self.link, message)  # type: ignore[misc]
-        except Exception:  # noqa: BLE001, S110 - a debug tap must never break a run
-            pass
 
     def receive(self, limit: int = DEFAULT_BATCH) -> Iterator[Msg]:
         """
@@ -188,4 +189,9 @@ class Channel(Generic[Msg]):
             # `if event:` and would have dropped any message whose dataclass
             # compared falsy.
             self.received += 1
+            # Traced here rather than at the get_nowait() above, for the same
+            # reason the counter is: this is the moment the caller has it. A
+            # caller that stops early therefore leaves the rest of the batch
+            # both unreceived and untraced, which is the honest reading.
+            _trace.debug("recv %s %r", self.link or "?", message)
             yield message

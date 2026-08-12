@@ -11,7 +11,7 @@ is where the engine in old_code/ is going to land (roadmap Phase 1).
 
 import time
 
-from pypts.logger.log import init_logging, log
+from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import Channel, unhandled
 from pypts.messages.requests import PendingRequests
 from pypts.messages.run_events import SerialNumberResponse, UserPromptResponse
@@ -30,13 +30,18 @@ from pypts.utilities.heartbeat_manager import HeartbeatManager
 MODULE_NAME = "sequencer"
 
 
-def sequencer_main(to_core: Channel[SequencerToCore], from_core: Channel[CoreToSequencer], log_queue) -> None:
+def sequencer_main(
+    to_core: Channel[SequencerToCore],
+    from_core: Channel[CoreToSequencer],
+    log_queue,
+    log_level: int = DEFAULT_LOG_LEVEL,
+) -> None:
     """
     Entry point called by CORE. Runs in the Sequencer process.
 
     Log records are routed to the Logger before anything is logged.
     """
-    init_logging(log_queue)
+    init_logging(log_queue, log_level)
     Sequencer(to_core, from_core).start()
 
 
@@ -78,7 +83,6 @@ class Sequencer:
 
     @catch_and_report_errors()
     def handle_core_message(self, message: CoreToSequencer) -> None:
-        log.info(f"Received core message: {message}")
         match message:
             case RunSequence(sequence_name=sequence_name):
                 self.run_sequence(sequence_name)

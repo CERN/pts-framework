@@ -24,6 +24,10 @@ SPDX-License-Identifier = "LGPL-2.1-or-later"
 path = [
     "src/pypts/recipes/*.yml",
     "src/pypts/recipes/*.yaml",
+    # The config template. Covered here rather than by an inline header,
+    # because it is copied verbatim into the user's own config.ini and a
+    # licence header on their settings file would be nonsense.
+    "src/pypts/**/*.ini",
     "pyproject.toml",
     "requirements.txt",
     ".gitlab-ci.yml",

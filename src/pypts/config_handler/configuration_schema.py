@@ -1,0 +1,154 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+"""
+What the configuration *is*: every section, every key, its type and its default.
+
+This module and `config_template.ini` are two views of one structure. The
+template owns the comments and is what the user reads; this module owns the
+types and is what the code reads. They are kept honest by
+`test_schema_and_template_agree` in tests/unit_tests/test_config_handler.py,
+which fails if a key exists in one and not the other, or if a template default
+cannot be parsed as its declared type. That test is the "config structure
+verification tool" the specification asks for, and CI already runs it - see the
+`dev_test` job in .gitlab-ci.yml.
+
+Two kinds of value need explaining.
+
+*Derived* values ship blank in the template and are filled in the first time the
+config is created: the paths (from the platform's data directory) and the
+operating system section (from `platform`). This is how the template stays free
+of `/tmp/pypts`, which was wrong on Windows, without hardcoding a Windows path
+that would be wrong on Linux. Once written they are ordinary values the user may
+edit, and nothing recomputes them.
+
+*Section families* are how a flat INI file carries structured data. A section
+named `hardware.<logical name>` is validated against the fields of
+`hardware.example_device`, so a user may add as many devices as the bench has
+without the schema knowing their names. This is the shape Phase 5's
+`DeviceConfig` lookup will read.
+"""
+
+from dataclasses import dataclass
+
+#: Bumped whenever a section or key is added, removed or renamed. An existing
+#: config.ini declaring a lower version is migrated on the next launch; one
+#: declaring a higher version is refused, because this code cannot know what a
+#: future pypts meant by it.
+CONFIG_VERSION = 1
+
+#: Values a boolean key accepts, borrowed from configparser's own vocabulary so
+#: that a file written by hand behaves the way an INI file is expected to.
+TRUE_VALUES = frozenset({"1", "yes", "true", "on"})
+FALSE_VALUES = frozenset({"0", "no", "false", "off"})
+
+
+@dataclass(frozen=True, slots=True)
+class Field:
+    """
+    One key. `default` is the literal that appears in the template, so the two
+    can be compared directly by the agreement test.
+
+    Args:
+        type: one of "str", "int", "float", "bool", "path".
+        default: the value as it is written in the file. Empty for derived keys.
+        choices: allowed values for a "str" key. Empty means anything goes.
+        derived: True if the value is computed when the config is created
+            rather than shipped. Such keys are blank in the template, and the
+            agreement test expects them to be.
+    """
+
+    type: str
+    default: str = ""
+    choices: tuple[str, ...] = ()
+    derived: bool = False
+
+
+#: The log levels `[logging] level` accepts. Same set as the launcher's
+#: --log-level argument, which overrides this value for one run.
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+#: section -> key -> Field. Section names are lower case with dots for
+#: hierarchy; configparser treats them as opaque strings, so the dots cost
+#: nothing and read as structure.
+SCHEMA: dict[str, dict[str, Field]] = {
+    "meta": {
+        "config_version": Field("int", str(CONFIG_VERSION)),
+    },
+    "operating_system": {
+        "name": Field("str", derived=True),
+        "version": Field("str", derived=True),
+        "architecture": Field("str", derived=True),
+        "kernel": Field("str", derived=True),
+    },
+    "paths": {
+        "base_dir": Field("path", derived=True),
+        "logs_dir": Field("path", derived=True),
+        "reports_dir": Field("path", derived=True),
+    },
+    "logging": {
+        "level": Field("str", "INFO", choices=LOG_LEVELS),
+    },
+    "report": {
+        "type": Field("str", "html", choices=("html", "csv")),
+        "theme": Field("str", "default"),
+    },
+    "gui": {
+        "theme": Field("str", "default", choices=("default", "light", "dark")),
+        "window_width": Field("int", "1280"),
+        "window_height": Field("int", "720"),
+    },
+    # The worked example of the section-family convention. It is a placeholder:
+    # no driver reads it yet, and the HAL that will is Phase 5.
+    "hardware.example_device": {
+        "driver": Field("str", "none"),
+        "resource": Field("str", "none"),
+        "timeout_s": Field("float", "5.0"),
+    },
+}
+
+#: Section name prefix -> the schema section its members are validated against.
+#: `hardware.dmm1` is checked against the fields of `hardware.example_device`.
+SECTION_FAMILIES: dict[str, str] = {
+    "hardware.": "hardware.example_device",
+}
+
+#: Old dotted key -> its replacement, or None if the key was simply dropped.
+#: Consulted only during migration. Everything here comes from the pre-versioned
+#: layout that shipped before this module existed, which had no [meta] section
+#: at all and is therefore treated as version 0.
+DEPRECATED: dict[str, str | None] = {
+    "OperatingSystem.name": "operating_system.name",
+    "OperatingSystem.version": "operating_system.version",
+    "OperatingSystem.architecture": "operating_system.architecture",
+    "OperatingSystem.kernel": "operating_system.kernel",
+    "Paths.base_temp_dir": "paths.base_dir",
+    "Paths.logs_dir": "paths.logs_dir",
+    # The config no longer lives where the config says it lives; the location is
+    # computed (see file_locations.py), so a stored copy could only ever be a lie.
+    "Paths.config_dir": None,
+    "Application.log_level": "logging.level",
+    # Was a hand-maintained duplicate of the package version, which setuptools-scm
+    # already owns. Read pypts.__version__ instead.
+    "Application.app_version": None,
+    "Misc.example_flag": None,
+}
+
+
+def schema_for_section(section: str) -> dict[str, Field] | None:
+    """
+    The fields a section is validated against, or None if it is not part of the
+    schema at all.
+
+    Handles both the named sections and the families, so callers do not have to
+    know which kind they are holding.
+    """
+    if section in SCHEMA:
+        return SCHEMA[section]
+
+    for prefix, template_section in SECTION_FAMILIES.items():
+        if section.startswith(prefix) and section != template_section:
+            return SCHEMA[template_section]
+
+    return None

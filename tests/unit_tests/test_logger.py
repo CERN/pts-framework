@@ -42,10 +42,12 @@ import pytest
 
 from pypts.logger import log as log_module
 from pypts.logger.log import (
+    DEFAULT_LOG_LEVEL,
     Logger,
     init_logging,
     log,
     logger_main,
+    parse_log_level,
     set_stdout_logging_enabled,
 )
 from pypts.messages import Channel
@@ -217,7 +219,26 @@ def test_init_logging_installs_exactly_one_queue_handler(pristine_root_logger):
     handler = root.handlers[0]
     assert isinstance(handler, logging.handlers.QueueHandler)
     assert handler.queue is log_queue
-    assert root.level == logging.DEBUG
+    # INFO, not DEBUG: DEBUG now means the full message trace, which is a thing
+    # to ask for rather than a thing to get from a caller that said nothing.
+    assert root.level == DEFAULT_LOG_LEVEL == logging.INFO
+
+
+def test_parse_log_level_reads_a_name_in_any_case():
+    assert parse_log_level("debug") == logging.DEBUG
+    assert parse_log_level(" WARNING ") == logging.WARNING
+
+
+def test_parse_log_level_falls_back_instead_of_raising():
+    """
+    A level name arrives from a command line or from a config file in the temp
+    directory. Neither is worth refusing to start over, and the caller has
+    nowhere to report a traceback yet - logging is what is being set up.
+    """
+    assert parse_log_level("NONSENSE") == DEFAULT_LOG_LEVEL
+    assert parse_log_level(None) == DEFAULT_LOG_LEVEL
+    assert parse_log_level("") == DEFAULT_LOG_LEVEL
+    assert parse_log_level("NONSENSE", logging.ERROR) == logging.ERROR
 
 
 def test_init_logging_is_idempotent(pristine_root_logger):
