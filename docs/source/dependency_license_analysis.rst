@@ -28,7 +28,6 @@ Key Findings
 * ✅ **100% Compatible**: All core dependencies use LGPL-compatible licenses
 * ✅ **No Conflicts**: No GPL-only or restrictive copyleft licenses detected
 * ✅ **Qt Alignment**: PySide6 usage aligns perfectly with LGPL choice
-* ⚠️ **One Unknown**: acc-py-sphinx license needs verification (docs-only dependency)
 
 Core Dependencies Analysis
 ==========================
@@ -174,10 +173,10 @@ Documentation Dependencies (``doc`` extra)
      - BSD-2-Clause
      - ✅ Yes
      - Documentation generator
-   * - acc-py-sphinx
-     - Unknown
-     - ⚠️ Verify
-     - CERN-specific Sphinx extension
+   * - Pydantic
+     - MIT
+     - ✅ Yes
+     - Generates the recipe schema during documentation builds
 
 Development Dependencies (``dev`` extra)
 -----------------------------------------
@@ -246,7 +245,6 @@ All identified dependencies fall into these categories:
 :Permissive Licenses (MIT, BSD): Compatible without restrictions
 :LGPL Libraries: Direct compatibility 
 :GPL Libraries: Compatible (PySide6 offers LGPL option)
-:Unknown Licenses: Only acc-py-sphinx (documentation only)
 
 Risk Assessment
 ===============
@@ -260,13 +258,13 @@ Risk Assessment
      - Percentage
      - Description
    * - **No Risk**
-     - 7/8
-     - 87.5%
-     - Core dependencies with confirmed compatible licenses
+     - 8/8
+     - 100%
+     - Dependencies with confirmed compatible licenses
    * - **Low Risk**
-     - 1/8
-     - 12.5%
-     - acc-py-sphinx (docs-only, likely permissive)
+     - 0/8
+     - 0%
+     - No dependencies in this category
    * - **Medium Risk**
      - 0/8
      - 0%
@@ -283,8 +281,7 @@ Immediate Actions
 -----------------
 
 1. ✅ **Continue with LGPL-2.1-or-later** - All dependencies are compatible
-2. ⚠️ **Verify acc-py-sphinx license** - Check CERN's repository for license information
-3. 📋 **Add license attribution** - Include dependency licenses in distribution
+2. 📋 **Add license attribution** - Include dependency licenses in distribution
 
 Future Monitoring
 ------------------
@@ -305,7 +302,7 @@ Compliance Checklist
      - Notes
    * - All dependencies LGPL-compatible
      - ✅ Met
-     - Confirmed for 7/8 dependencies
+     - Confirmed for 8/8 dependencies
    * - No GPL-only dependencies
      - ✅ Met
      - PySide6 offers LGPL option

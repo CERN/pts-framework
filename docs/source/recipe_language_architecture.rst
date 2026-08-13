@@ -15,9 +15,9 @@ Recipe Language 2 Architecture
    guidance.
 
 Exact version 2 fields, types, defaults, and examples are in the generated
-:doc:`recipe_language_reference`.  The aggregate schema is also available as
+:doc:`_generated/recipe_language_reference`.  The aggregate schema is also available as
 :download:`recipe_language.schema.json
-<_static/recipe_language.schema.json>`.
+<_generated/recipe_language.schema.json>`.
 
 Design and dependency direction
 -------------------------------
@@ -44,16 +44,17 @@ The modules and artifacts have deliberately one-way dependencies::
       |                 JSON-only RST renderer
       |                          |
       v                          v
-   typed Recipe             recipe_language_reference.rst
+   typed Recipe             generated reference RST
       |                          |
       v                          v
-   future runtime adapter       Sphinx
+   recipe.py runtime            Sphinx
+   construction
 
 ``models.py`` never imports YAML, runtime classes, concrete steps, YamVIEW, or
 Sphinx.  ``parser.py`` depends on the models and PyYAML, but still does not
 import runtime or UI code.  Documentation generation reads the model only to
-create JSON Schema; the RST renderer reads the committed JSON file and has no
-Pydantic or Sphinx dependency.
+create JSON Schema; the RST renderer reads the JSON generated for the current
+build and has no Pydantic or Sphinx dependency.
 
 Parsing and information flow
 ----------------------------
@@ -65,33 +66,43 @@ semantics therefore remain separate stages::
    recipe YAML text/file
            |
            v
-   SafeLoader composition --------> YAML node/path/source-span index
-           |                                  |
-           +--> duplicate key / alias checks  |
-           |                                  |
-           v                                  |
-   safe Python documents                      |
-           |                                  |
-           v                                  |
-   strict Pydantic models                     |
-           |                                  |
-           v                                  |
-   cross-document semantic pass               |
-           |                                  |
-           +--> diagnostics <-----------------+
-           |      code, path, severity, source, span
-           v
+   PyYAML YAML front end
+           |                              source information
+           +--> compose_all(SafeLoader) --> node/path/span index -----+
+           |        |                                               |
+           |        +--> duplicate/recursive-alias diagnostics ------+
+           |
+           +--> safe_load_all() --> safe Python documents            |
+                                           |                         |
+                                           v                         |
+                                  strict Pydantic models              |
+                                           |                         |
+                                           v                         |
+                               cross-document semantic pass           |
+                                           |                         |
+                                           +--> diagnostics <---------+
+                                           |    code, path, severity,
+                                           |    source, nearest span
+                                           v
    frozen aggregate Recipe
            |
            +--> canonical multi-document YAML
            |
-           +--> future sequencer/runtime adapter
+           +--> future recipe.py runtime construction
 
 ``parse_recipe_text`` and ``parse_recipe_file`` return ``ParseResult``.  A
 valid result owns an aggregate :ref:`recipe-v2-header` plus one or more
 :ref:`recipe-v2-sequence` models.  ``require_recipe()`` raises with the complete
 diagnostic tuple when errors exist.  ``dump_recipe`` writes canonical version 2
 YAML; comments and original formatting are not a round-trip guarantee.
+
+Here, "composition" is PyYAML terminology, not a PyPTS adapter or an additional
+recipe representation.  ``yaml.compose_all(..., Loader=yaml.SafeLoader)``
+returns PyYAML node objects with source marks, which the parser uses to detect
+duplicate keys and recursive aliases and to index diagnostic spans.
+``yaml.safe_load_all()`` separately constructs ordinary safe Python values for
+Pydantic.  Both operations use PyYAML's safe loader; neither constructs runtime
+``Recipe`` or ``Step`` objects.
 
 Structural and custom semantic rules
 ------------------------------------
@@ -178,7 +189,7 @@ values.
 
 The intended editor flow is::
 
-   committed JSON Schema
+   generated/published JSON Schema
            |
            +--> discriminator choices --> step/mapping selectors
            |
@@ -211,20 +222,50 @@ aggregate typed model, not raw YAML or loosely typed dictionaries::
        frozen Recipe model
               |
               v
-      runtime adapter
-         |    |    |
-         |    |    +--> typed input/output mapping adapters
-         |    +-------> concrete runtime step construction
-         +------------> sequence table and nested reference binding
-              |
-              v
+      recipe.py: Recipe
+         |    |
+         |    +-------> sequence table and nested reference binding
+         v
+      recipe.py: Sequence
+         |
+         v
+      Step.build_step() for each typed definition
+         |
+         v
+      STEP_TYPE_REGISTRY --> concrete classes in steps.py
+         |
+         v
       setup_steps -> steps -> teardown_steps
 
-The adapter will translate language models to runtime objects exactly once.
-It must not reparse YAML, repeat structural validation, or keep another
-supported-type registry.  Invalid recipes never instantiate concrete runtime
-steps.  Runtime-only behavior—execution events, error policy, reports, hardware
-access, and GUI interaction—stays downstream of the language model.
+This is an evolution of the runtime construction that already exists in
+``recipe.py``; it is not a separate adapter module.  Today ``Recipe`` loads raw
+YAML documents, ``Sequence`` iterates step dictionaries, and
+``Step.build_step()`` validates each dictionary before selecting an executable
+class from ``steps.py``.  The integration changes the input to that path:
+``Recipe`` receives the validated aggregate model, ``Sequence`` iterates typed
+definitions, and ``Step.build_step()`` becomes a small typed factory.
+
+The runtime registry remains because a canonical discriminator such as
+``PythonModuleStep`` must be associated with the Python class that implements
+its behavior.  It is a behavior registry, not a second language schema: field
+names, types, defaults, and structural rules remain exclusively in the
+Pydantic models.  A completeness test will require every authorable model
+discriminator to have exactly one executable implementation.
+
+Concrete ``_step()`` methods in ``steps.py`` continue to own execution.  For
+example, the executable ``PythonModuleStep`` still imports and invokes Python
+code; it no longer needs to validate an untrusted recipe dictionary.  Common
+definition fields can be passed through one base ``Step.from_definition()``
+implementation, with concrete overrides only when runtime state differs from
+authored data.  ``IndexedStep`` remains a runtime-generated wrapper and is
+never added to the authorable model union.
+
+Synthetic runtime operations are also constructed directly.  For example,
+``Recipe.run()`` must not fabricate a recipe dictionary merely to execute the
+main sequence.  No runtime construction reparses YAML or repeats Pydantic
+structural validation, and invalid recipes never instantiate executable steps.
+Execution events, error policy, reports, hardware access, and GUI interaction
+remain downstream of the frozen language model.
 
 Canonical documentation recipe
 ------------------------------
@@ -242,25 +283,40 @@ spike.  It is not a production bundled recipe.
 Maintaining the documentation
 -----------------------------
 
-The tracked artifacts have final paths under ``docs/source``.  A normal Sphinx
-build reads them directly and performs no generation or copying::
+Every Sphinx build generates both artifacts before reading documentation
+sources::
 
-   python -m spikes.recipe_pydantic.artifacts
+   Pydantic models
+         |
+         v
+   _generated/recipe_language.schema.json
+         |
+         v
+   JSON-only RST renderer
+         |
+         v
+   _generated/recipe_language_reference.rst
 
-The command writes ``_static/recipe_language.schema.json`` from Pydantic and
-then writes ``recipe_language_reference.rst`` by parsing that JSON.  Check that
-both committed files are current without modifying them::
+The Sphinx ``builder-inited`` hook writes these files to an ignored staging
+directory under ``docs/source``.  The schema is copied into the HTML output as a
+download, and the generated RST is included in the toctree.  Neither generated
+file is maintained manually or treated as a committed source artifact.
 
-   python -m spikes.recipe_pydantic.artifacts --check
+The documentation environment therefore installs Pydantic.  CI and any
+documentation build image must install the ``doc`` extra and include the model,
+schema generator, and JSON-only renderer sources.  This is a build-time
+dependency for Phase 5; it does not make Pydantic a production runtime
+dependency by itself.
 
 When adding a step or mapping, update its Pydantic model and discriminated
-union, add an independent round-trip fixture, regenerate both artifacts, and
-review the schema and RST diffs.  Add custom semantic code only when a rule
-requires document, sibling, or ordering context.  Handwritten architecture
-prose explains those relationships; it must link to generated fields rather
-than restating field tables.
+union, add an independent round-trip fixture, and run the documentation build.
+Review the generated schema and reference in the build output when relevant.
+Add custom semantic code only when a rule requires document, sibling, or
+ordering context.  Handwritten architecture prose explains those relationships;
+it must link to generated fields rather than restating field tables.
 
-The documentation contract is protected by tests that compare the model to the
-committed JSON, compare the JSON-only renderer to the committed RST, count all
-discriminator variants, validate the example, check literal-include markers,
-and build Sphinx with warnings treated as errors.
+The documentation contract is protected by tests that generate into temporary
+directories, verify deterministic model-to-JSON and JSON-to-RST output, count
+all discriminator variants, validate the example, check literal-include
+markers, and build Sphinx with warnings treated as errors.  Generation failure
+therefore fails the same build that would publish the documentation.

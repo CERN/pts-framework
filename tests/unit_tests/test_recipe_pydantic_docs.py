@@ -9,11 +9,9 @@ import json
 from pathlib import Path
 
 from spikes.recipe_pydantic.artifacts import (
-    DEFAULT_REFERENCE_PATH,
-    DEFAULT_SCHEMA_PATH,
-    check_artifacts,
     main,
     render_json_schema,
+    rendered_artifacts,
     write_artifacts,
 )
 from spikes.recipe_pydantic.parser import (
@@ -33,13 +31,12 @@ def _mapping(schema, name):
     return schema["$defs"][name]["discriminator"]["mapping"]
 
 
-def test_committed_schema_and_reference_are_current():
-    schema_text = render_json_schema()
+def test_schema_and_reference_generation_is_deterministic():
+    schema_text, reference = rendered_artifacts()
     schema = json.loads(schema_text)
-    assert schema_text == DEFAULT_SCHEMA_PATH.read_text(encoding="utf-8")
-    assert render_reference(schema) == DEFAULT_REFERENCE_PATH.read_text(encoding="utf-8")
-    assert check_artifacts()
-    assert main(["--check"]) == 0
+    assert schema_text == render_json_schema()
+    assert reference == render_reference(schema)
+    assert (schema_text, reference) == rendered_artifacts()
 
 
 def test_check_mode_detects_stale_artifacts_without_writing(tmp_path):
@@ -58,8 +55,8 @@ def test_check_mode_detects_stale_artifacts_without_writing(tmp_path):
 
 
 def test_every_discriminator_is_rendered_once():
-    schema = json.loads(DEFAULT_SCHEMA_PATH.read_text(encoding="utf-8"))
-    reference = DEFAULT_REFERENCE_PATH.read_text(encoding="utf-8")
+    schema_text, reference = rendered_artifacts()
+    schema = json.loads(schema_text)
     for group, definition in (
         ("step", "Step"),
         ("input", "InputMapping"),
@@ -71,8 +68,8 @@ def test_every_discriminator_is_rendered_once():
 
 
 def test_reference_metadata_comes_from_json_schema():
-    schema = json.loads(DEFAULT_SCHEMA_PATH.read_text(encoding="utf-8"))
-    reference = DEFAULT_REFERENCE_PATH.read_text(encoding="utf-8")
+    schema_text, reference = rendered_artifacts()
+    schema = json.loads(schema_text)
     direct = schema["$defs"]["DirectInput"]["properties"]["indexed"]
     assert direct["description"] in reference
     assert f"default ``{json.dumps(direct['default'])}``" in reference
@@ -146,6 +143,6 @@ def test_literalinclude_markers_are_unique_and_paired():
 def test_sphinx_sources_link_reference_schema_and_example():
     index = (ROOT / "docs" / "source" / "index.rst").read_text(encoding="utf-8")
     architecture = ARCHITECTURE.read_text(encoding="utf-8")
-    assert "recipe_language_reference" in index
-    assert "_static/recipe_language.schema.json" in architecture
+    assert "_generated/recipe_language_reference" in index
+    assert "_generated/recipe_language.schema.json" in architecture
     assert "_examples/recipe_v2.yml" in architecture

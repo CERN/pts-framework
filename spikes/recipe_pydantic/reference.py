@@ -1,4 +1,4 @@
-"""Render the Sphinx recipe reference from committed JSON Schema only."""
+"""Render the Sphinx recipe reference from generated JSON Schema only."""
 
 from __future__ import annotations
 
@@ -161,13 +161,14 @@ def render_reference(schema: dict[str, Any]) -> str:
         "Recipe Language 2.0 Reference",
         "=============================",
         "",
-        "This page is generated from the tracked aggregate JSON Schema. It describes",
+        "This page is generated from the current build's aggregate JSON Schema. It",
+        "describes",
         "the accepted future recipe language model; production execution still uses",
         "the version 1 language until Phase 6 integration is complete.",
         "",
-        ":download:`Download the JSON Schema <_static/recipe_language.schema.json>`.",
+        ":download:`Download the JSON Schema <recipe_language.schema.json>`.",
         "",
-        "See :doc:`recipe_language_architecture` for parsing, semantic rules,",
+        "See :doc:`/recipe_language_architecture` for parsing, semantic rules,",
         "documentation maintenance, and the planned YamVIEW and sequencer flows.",
         "",
         "Documents",

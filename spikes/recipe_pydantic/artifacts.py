@@ -12,8 +12,9 @@ from .models import Recipe
 from .reference import render_reference
 
 ROOT = Path(__file__).parents[2]
-DEFAULT_SCHEMA_PATH = ROOT / "docs" / "source" / "_static" / "recipe_language.schema.json"
-DEFAULT_REFERENCE_PATH = ROOT / "docs" / "source" / "recipe_language_reference.rst"
+DEFAULT_GENERATED_DIR = ROOT / "docs" / "source" / "_generated"
+DEFAULT_SCHEMA_PATH = DEFAULT_GENERATED_DIR / "recipe_language.schema.json"
+DEFAULT_REFERENCE_PATH = DEFAULT_GENERATED_DIR / "recipe_language_reference.rst"
 
 
 def render_json_schema() -> str:
@@ -36,13 +37,14 @@ def write_artifacts(
     schema_path: str | Path = DEFAULT_SCHEMA_PATH,
     reference_path: str | Path = DEFAULT_REFERENCE_PATH,
 ) -> None:
-    schema_text, reference_text = rendered_artifacts()
-    for path, content in (
-        (Path(schema_path), schema_text),
-        (Path(reference_path), reference_text),
-    ):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8")
+    schema_path = Path(schema_path)
+    reference_path = Path(reference_path)
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    reference_path.parent.mkdir(parents=True, exist_ok=True)
+
+    schema_path.write_text(render_json_schema(), encoding="utf-8")
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+    reference_path.write_text(render_reference(schema), encoding="utf-8")
 
 
 def check_artifacts(

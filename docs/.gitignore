@@ -6,5 +6,6 @@
 
 build
 source/api/*
+source/_generated/
 
 # End of .gitignore content managed by acc-py

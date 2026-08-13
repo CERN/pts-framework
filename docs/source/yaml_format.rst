@@ -7,9 +7,9 @@
    This page documents the recipe syntax currently accepted by the production
    runtime (recipe language version 1).  The accepted future Pydantic design is
    recipe language ``2.0.0``; see :doc:`recipe_language_architecture` for its
-   architecture and :doc:`recipe_language_reference` for its generated syntax
-   reference.  Do not use the version 2 example with production execution until
-   the integration phase is complete.
+   architecture and :doc:`_generated/recipe_language_reference` for its
+   generated syntax reference.  Do not use the version 2 example with
+   production execution until the integration phase is complete.
 
 .. _yaml_format:
 

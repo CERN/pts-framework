@@ -52,8 +52,7 @@ test = [
 ]
 doc = [
   "Sphinx",
-  "sphinx",
-  "acc-py-sphinx",
+  "pydantic>=2.13,<3",
 ]
 dev = [
   # Dependencies for development of the project, such as type checkers,
@@ -62,7 +61,6 @@ dev = [
 
   # Include the "test" and "doc" dependencies in the dev dependencies.
   "pts-framework[doc,test]",
-  "pydantic>=2.13,<3",
   "ruff",
 ]
 
