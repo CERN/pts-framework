@@ -417,7 +417,7 @@ processes in GUI mode and two in CLI mode.
 | `messages/report_link.py` | `messages/core_report_link.py` | ditto |
 | `messages/logger_link.py` | `messages/to_logger_link.py` | The exception, named for its single direction: nothing is ever sent back |
 
-The message catalogue moved out of `resources/messaging_overview.html` §4 into
+The message catalogue moved out of `resources/internal_reports/messaging_overview.html` §4 into
 `src/pypts/messages/messages.md`, as that module's context file. Reworking the message set is
 its own task and is deliberately not part of this one.
 
@@ -501,7 +501,7 @@ passed, 71 skipped**.
 > - **`resources/roadmap/recipe_guide.md`** — full reference: what a recipe is, what the old
 >   engine actually does with it, where the three rule sets disagree, 28 findings with
 >   file:line evidence, and a proposed format for the new framework.
-> - **`resources/roadmap/recipe_rules.html`** — the same rules condensed to one readable page
+> - **`resources/internal_reports/recipe_rules.html`** — the same rules condensed to one readable page
 >   (open in a browser); good starting point for a review meeting.
 >
 > Read one of them before porting `recipe/`, `step/` or the verificator.

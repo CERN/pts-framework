@@ -2,7 +2,7 @@
 
 Context file for this module, in the sense of `CLAUDE.md` → *Module context files*.
 It is the catalogue of **what each link carries**, lifted out of
-`resources/messaging_overview.html` (which keeps the structural picture: links,
+`resources/internal_reports/messaging_overview.html` (which keeps the structural picture: links,
 queues, transport, handlers, shutdown).
 
 **Status: reference, not yet a contract to build on.** The structure — links, transport,
