@@ -6,9 +6,9 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-import sys
 from typing import Any
 
 import yaml
@@ -17,17 +17,16 @@ from pypts.recipe_language import (
     CANONICAL_RECIPE_VERSION,
     COMMON_STEP_FIELDS,
     CONSTRAINT_SPECS,
-    FieldSpec,
     HEADER_SPEC,
     INPUT_MAPPING_SPECS,
-    MappingSpec,
     OUTPUT_MAPPING_SPECS,
     SEQUENCE_SPEC,
     STEP_SPECS,
+    FieldSpec,
+    MappingSpec,
     StepSpec,
 )
 from pypts.recipe_parser import dump_recipe, parse_recipe_text
-
 
 DEFAULT_REFERENCE_PATH = Path("docs/generated/recipe_language_reference.rst")
 
@@ -154,6 +153,7 @@ def _requirement(field: FieldSpec) -> str:
 
 
 def _field_table(fields: Sequence[FieldSpec]) -> list[str]:
+    # REUSE-IgnoreStart
     lines = [
         ".. list-table::",
         "   :header-rows: 1",
@@ -233,6 +233,7 @@ def render_recipe_reference() -> str:
         HEADER_SPEC.description,
         "",
     ]
+    # REUSE-IgnoreEnd
     lines.extend(_field_table(HEADER_SPEC.fields))
     lines.extend(("", "Sequence", "--------", "", SEQUENCE_SPEC.description, ""))
     lines.extend(_field_table(SEQUENCE_SPEC.fields))

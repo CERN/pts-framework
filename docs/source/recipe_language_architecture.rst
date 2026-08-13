@@ -2,221 +2,265 @@
 ..
 .. SPDX-License-Identifier: CC-BY-SA-4.0
 
-Recipe Language Architecture
-============================
+Recipe Language 2 Architecture
+==============================
 
-This page describes the recipe language model, the isolated parser, and the
-rules for evolving them.  The parser is currently independent of recipe
-execution, ``verify_recipe``, YamVIEW, and Sphinx reference publication.  Those
-runtime and UI consumers will move onto the shared model in later integration
-work.
+.. important::
 
-Design goals
-------------
+   This page describes the accepted architecture for recipe language
+   ``2.0.0``.  The Pydantic implementation is currently an isolated reference
+   under ``spikes/recipe_pydantic``.  Production parsing, execution, YamVIEW,
+   and bundled recipes continue to use the version 1 implementation until the
+   integration phase is complete.  See :doc:`yaml_format` for current runtime
+   guidance.
 
-The recipe language has one contract and one parsing path.  YAML loading,
-language validation, normalized data, and runtime construction are separate
-responsibilities.  In particular, parsing a recipe must never import or invoke
-the runtime, steps, GUI, or documentation machinery.
+Exact version 2 fields, types, defaults, and examples are in the generated
+:doc:`recipe_language_reference`.  The aggregate schema is also available as
+:download:`recipe_language.schema.json
+<_static/recipe_language.schema.json>`.
 
-The current architecture has two source modules:
+Design and dependency direction
+-------------------------------
 
-``pypts.recipe_language``
-   Defines the framework-independent contract.  Its field and step
-   specifications describe accepted recipe documents, while
-   ``validate_recipe_documents`` validates already-loaded Python values.  It
-   has no YAML or runtime dependency.
+The version 2 design has one structural definition.  Strict, frozen Pydantic
+models own field names, types, required status, defaults, descriptions,
+examples, aliases, discriminators, serialization metadata, and JSON Schema.
+Consumers inspect either the typed model or its generated schema; they do not
+maintain another field registry.
 
-``pypts.recipe_parser``
-   Safely loads YAML, records source locations, delegates language rules to the
-   contract, and constructs immutable typed definitions.  It also serializes a
-   typed recipe into canonical YAML.
+The modules and artifacts have deliberately one-way dependencies::
 
-``pypts.recipe_reference``
-   Validates the registered examples and generates the deterministic standalone
-   RST language reference.  The generated artifact remains outside the Sphinx
-   source tree until framework integration is accepted.
+   models.py
+      |  Pydantic fields and discriminated unions
+      +--------------------------+
+      |                          |
+      v                          v
+   parser.py                JSON Schema generator
+      |                          |
+      |                          v
+      |               recipe_language.schema.json
+      |                          |
+      |                          v
+      |                 JSON-only RST renderer
+      |                          |
+      v                          v
+   typed Recipe             recipe_language_reference.rst
+      |                          |
+      v                          v
+   future runtime adapter       Sphinx
 
-The intended flow is::
+``models.py`` never imports YAML, runtime classes, concrete steps, YamVIEW, or
+Sphinx.  ``parser.py`` depends on the models and PyYAML, but still does not
+import runtime or UI code.  Documentation generation reads the model only to
+create JSON Schema; the RST renderer reads the committed JSON file and has no
+Pydantic or Sphinx dependency.
 
-   recipe YAML
-       |
-       v
-   safe YAML loading and source indexing
-       |
-       v
-   recipe_language contract validation
-       |
-       +---- errors and warnings with source spans
-       |
-       v
-   immutable RecipeDefinition
-       |
-       +---- dump_recipe() -> canonical recipe YAML
-       |
-       +---- generated reference, and future runtime and GUI consumers
+Parsing and information flow
+----------------------------
 
-Parser operation
-----------------
+Pydantic validates already-constructed Python values; it is not a YAML parser.
+Safe loading, source positions, structural validation, and application
+semantics therefore remain separate stages::
 
-``parse_recipe_text`` and ``parse_recipe_file`` return a ``ParseResult``.  The
-parser performs these stages in order:
+   recipe YAML text/file
+           |
+           v
+   SafeLoader composition --------> YAML node/path/source-span index
+           |                                  |
+           +--> duplicate key / alias checks  |
+           |                                  |
+           v                                  |
+   safe Python documents                      |
+           |                                  |
+           v                                  |
+   strict Pydantic models                     |
+           |                                  |
+           v                                  |
+   cross-document semantic pass               |
+           |                                  |
+           +--> diagnostics <-----------------+
+           |      code, path, severity, source, span
+           v
+   frozen aggregate Recipe
+           |
+           +--> canonical multi-document YAML
+           |
+           +--> future sequencer/runtime adapter
 
-#. Reject non-text, empty, or unreadable input.
-#. Compose the YAML with ``SafeLoader`` to index nodes and their one-based line
-   and column positions.  Duplicate mapping keys and recursive aliases are
-   diagnosed here.
-#. Safely construct the YAML documents.  Malformed YAML, unsafe tags, and
-   construction failures become diagnostics rather than runtime objects.
-#. Pass the loaded documents to ``validate_recipe_documents``.  This is where
-   header, sequence, step, mapping, reference, and lifecycle rules are applied.
-#. Attach the closest available source span to each contract diagnostic and
-   emit warnings for accepted legacy spellings or implicit forms.
-#. If any error exists, return no recipe.  Otherwise, normalize the documents
-   into an immutable ``RecipeDefinition``.
+``parse_recipe_text`` and ``parse_recipe_file`` return ``ParseResult``.  A
+valid result owns an aggregate :ref:`recipe-v2-header` plus one or more
+:ref:`recipe-v2-sequence` models.  ``require_recipe()`` raises with the complete
+diagnostic tuple when errors exist.  ``dump_recipe`` writes canonical version 2
+YAML; comments and original formatting are not a round-trip guarantee.
 
-``ParseResult.errors`` and ``ParseResult.warnings`` split diagnostics by
-severity.  ``ParseResult.require_recipe()`` returns the model on success and
-raises ``RecipeParseError`` with all diagnostics on failure.  Callers that need
-to present every issue should inspect the result before requiring the model.
+Structural and custom semantic rules
+------------------------------------
 
-Diagnostics contain a stable code, message, semantic path, severity, source
-name, and optional ``SourceSpan``.  Consumers should branch on the code rather
-than matching message text.  A source span is half-open; its line and column
-values are one-based and its character offset is zero-based.
+Rules local to one model stay beside that model.  Pydantic reports them with a
+precise nested location, which the parser translates to the PyPTS diagnostic
+envelope and nearest YAML span.
 
-Typed and normalized model
---------------------------
+For example, an indexed :ref:`recipe-v2-input-direct` must hold a list:
 
-The model is made of frozen definitions for the recipe header, sequences,
-steps, and each input and output mapping variant.  Arbitrary mappings that are
-part of recipe data use the immutable, insertion-ordered ``FrozenMap``.  Source
-spans and source names do not participate in semantic equality, which makes a
-parse/dump/reparse comparison independent of file location.
+.. literalinclude:: ../../spikes/recipe_pydantic/models.py
+   :language: python
+   :start-after: # docs:indexed-direct-start
+   :end-before: # docs:indexed-direct-end
+   :dedent: 4
 
-Normalization currently includes:
+A Python method action requires ``method_name``:
 
-* canonical step type casing;
-* explicit typed input and output definitions;
-* false defaults for step flags;
-* empty mappings for optional mapping fields;
-* recipe report defaults; and
-* removal of runtime-ignored legacy sequence metadata from the typed model.
+.. literalinclude:: ../../spikes/recipe_pydantic/models.py
+   :language: python
+   :start-after: # docs:method-name-start
+   :end-before: # docs:method-name-end
+   :dedent: 4
 
-``dump_recipe`` emits stable, explicit-start, multi-document YAML.  It writes
-canonical step names, explicit input types, explicit defaults, and stable field
-ordering.  It does not preserve comments or the source's original formatting.
-The semantic guarantee is therefore model round-trip equality, not textual
-round-trip equality.
+Likewise, :ref:`recipe-v2-step-waitstep` requires a named ``wait_time`` input:
 
-Using the parser
-----------------
+.. literalinclude:: ../../spikes/recipe_pydantic/models.py
+   :language: python
+   :start-after: # docs:wait-time-start
+   :end-before: # docs:wait-time-end
+   :dedent: 4
 
-Parse in-memory YAML when the caller already owns the text:
+Other rules require context that no individual JSON object or JSON Schema can
+see.  They remain in one explicit semantic pass.  Sequence names must be
+unique and ``main_sequence`` must resolve:
 
-.. code-block:: python
+.. literalinclude:: ../../spikes/recipe_pydantic/parser.py
+   :language: python
+   :start-after: # docs:sequence-semantics-start
+   :end-before: # docs:sequence-semantics-end
+   :dedent: 4
 
-   from pypts.recipe_parser import parse_recipe_text
+Every :ref:`recipe-v2-step-sequencestep` target is then resolved across all
+loaded documents:
 
-   result = parse_recipe_text(source, source_name="recipe.yml")
-   if result.errors:
-       for diagnostic in result.errors:
-           print(diagnostic.code, diagnostic.path, diagnostic.span)
-   else:
-       recipe = result.require_recipe()
+.. literalinclude:: ../../spikes/recipe_pydantic/parser.py
+   :language: python
+   :start-after: # docs:nested-reference-start
+   :end-before: # docs:nested-reference-end
+   :dedent: 12
 
-Use ``parse_recipe_file`` when the parser should read the file and report I/O
-or decoding failures as diagnostics.  Use ``dump_recipe`` only with a valid
-``RecipeDefinition``.
+Indexed lists on one step must have equal lengths, while
+:ref:`recipe-v2-output-passthrough` must be the only verdict-producing output:
 
-Architecture boundaries
------------------------
+.. literalinclude:: ../../spikes/recipe_pydantic/parser.py
+   :language: python
+   :start-after: # docs:mapping-semantics-start
+   :end-before: # docs:mapping-semantics-end
+   :dedent: 12
 
-Keep the dependency direction narrow:
+SSH rules need both recipe globals and execution order.  The semantic pass
+checks required connection globals and credentials, rejects an upload before a
+connection, and requires an opened connection to be closed:
 
-* ``recipe_language`` must not depend on YAML, runtime classes, concrete steps,
-  YamVIEW, or Sphinx.
-* ``recipe_parser`` may depend on PyYAML and ``recipe_language`` but not on
-  runtime, concrete steps, YamVIEW, or Sphinx.
-* Runtime and UI adapters may consume parser models after integration; parser
-  models must not consume those adapters.
-* Syntax reference fields, constraints, and examples are generated and checked
-  from the language specifications.  Architecture prose explains
-  responsibilities and extension workflows rather than duplicating field
-  tables.
+.. literalinclude:: ../../spikes/recipe_pydantic/parser.py
+   :language: python
+   :start-after: # docs:ssh-semantics-start
+   :end-before: # docs:ssh-semantics-end
+   :dedent: 8
 
-These rules keep syntax inspection safe and make the parser usable by command
-line tools, editors, the GUI, tests, and documentation without constructing
-hardware-facing runtime objects.
+These rules are documented manually because JSON Schema describes the
+aggregate structure, not multi-document YAML safety, source spans, equality
+between sibling list lengths, reference resolution, or ordered lifecycle
+state.
 
-Maintaining the language
-------------------------
+How YamVIEW will consume the language
+--------------------------------------
 
-Adding or changing a step
-~~~~~~~~~~~~~~~~~~~~~~~~
+YamVIEW will treat the aggregate JSON Schema as its form description.  The
+``Step``, ``InputMapping``, and ``OutputMapping`` discriminator maps enumerate
+available variants; referenced definitions provide properties, required
+fields, strict types, defaults, descriptions, examples, and allowed literal
+values.
 
-#. Update its ``StepSpec`` and ``FieldSpec`` entries in
-   ``pypts.recipe_language``.  Do not create a second field list in a consumer.
-#. Add semantic checks beside the shared contract validation when a constraint
-   cannot be represented by required fields and value types.
-#. Add a valid executable parser fixture and focused invalid cases for every
-   new constraint.
-#. Confirm canonical serialization contains the step-specific configuration in
-   specification order and parse/dump/reparse preserves the model.
-#. During framework integration, update only the adapter that constructs the
-   runtime step from ``StepDefinition``.
-#. Regenerate and check the standalone syntax reference::
+The intended editor flow is::
 
-      python -m pypts.recipe_reference docs/generated/recipe_language_reference.rst
-      python -m pypts.recipe_reference --check docs/generated/recipe_language_reference.rst
+   committed JSON Schema
+           |
+           +--> discriminator choices --> step/mapping selectors
+           |
+           +--> referenced properties --> labels, controls, help, defaults
+                                         |
+                                         v
+   edited aggregate document --> canonical YAML text
+                                         |
+                                         v
+                              parse_recipe_text()
+                                  |           |
+                                  |           +--> diagnostics and source spans
+                                  v
+                             typed Recipe
 
-Changing input or output mappings
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Local widget code may choose a suitable control for a JSON type, but it must
+not own supported step names or field rules.  Whole-recipe validation always
+goes through the parser so semantic rules and YAML diagnostics are identical
+between YamVIEW, command-line tools, and runtime loading.
 
-#. Update the allowed and required fields in the contract validator.
-#. Add or adjust the corresponding frozen mapping definition, model builder,
-   and serializer branch in ``recipe_parser``.
-#. Test accepted values, every relevant failure, source spans, normalization,
-   and canonical round trips.
-#. Check runtime and GUI adapters after integration.  They should dispatch on
-   typed mapping definitions instead of maintaining supported-type lists.
+How the sequencer will consume the model
+----------------------------------------
 
-Evolving ``recipe_version``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The sequencer integration begins only after parsing succeeds.  It receives the
+aggregate typed model, not raw YAML or loosely typed dictionaries::
 
-Recipe format changes must be explicit.  Do not silently reinterpret an
-existing version.  First describe compatibility and migration behavior, then
-add version-specific contract handling and fixtures.  Preserve parsing for a
-supported old version or emit a precise unsupported-version diagnostic.  A
-canonical dump must state the version whose semantics it writes.
+   ParseResult.require_recipe()
+              |
+              v
+       frozen Recipe model
+              |
+              v
+      runtime adapter
+         |    |    |
+         |    |    +--> typed input/output mapping adapters
+         |    +-------> concrete runtime step construction
+         +------------> sequence table and nested reference binding
+              |
+              v
+      setup_steps -> steps -> teardown_steps
 
-Retiring legacy syntax
-~~~~~~~~~~~~~~~~~~~~~~
+The adapter will translate language models to runtime objects exactly once.
+It must not reparse YAML, repeat structural validation, or keep another
+supported-type registry.  Invalid recipes never instantiate concrete runtime
+steps.  Runtime-only behavior—execution events, error policy, reports, hardware
+access, and GUI interaction—stays downstream of the language model.
 
-Legacy syntax should move through an observable sequence: accept and normalize
-with a stable warning, document the canonical replacement, measure and migrate
-the bundled examples and consumers, and only then reject it in a declared
-recipe version.  Never remove an accepted form merely by changing a runtime
-constructor.
+Canonical documentation recipe
+------------------------------
 
-Verification
-------------
+This documentation-owned fixture demonstrates the version 2 header, two
+sequences, nested execution, canonical step names, explicit discriminators,
+indexed input, every input variant, and representative verdict, storage,
+image, and passthrough outputs.  Tests validate and round-trip it with the
+spike.  It is not a production bundled recipe.
 
-The parser and language tests are in ``tests/unit_tests/test_recipe_parser.py``
-and ``tests/unit_tests/test_recipe_language.py``.  Run them directly while
-editing the contract, then run the complete suite:
+.. literalinclude:: _examples/recipe_v2.yml
+   :language: yaml
+   :caption: Canonical recipe language 2 example
 
-.. code-block:: console
+Maintaining the documentation
+-----------------------------
 
-   python -m pytest tests/unit_tests/test_recipe_language.py tests/unit_tests/test_recipe_parser.py
-   python -m pytest
+The tracked artifacts have final paths under ``docs/source``.  A normal Sphinx
+build reads them directly and performs no generation or copying::
 
-The acceptance corpus consists of every non-empty bundled recipe.  Each must
-parse, dump, reparse, and compare equal as a model.  The comment-only draft is
-intentionally invalid.  Isolation tests also protect the parser from importing
-runtime, step, GUI, or Sphinx modules.
+   python -m spikes.recipe_pydantic.artifacts
 
-After the integration phase, verification must also cover runtime construction
-equivalence, GUI-produced canonical YAML, successful Sphinx builds with
-warnings treated as errors, and the absence of duplicated consumer-side field
-or type registries.
+The command writes ``_static/recipe_language.schema.json`` from Pydantic and
+then writes ``recipe_language_reference.rst`` by parsing that JSON.  Check that
+both committed files are current without modifying them::
+
+   python -m spikes.recipe_pydantic.artifacts --check
+
+When adding a step or mapping, update its Pydantic model and discriminated
+union, add an independent round-trip fixture, regenerate both artifacts, and
+review the schema and RST diffs.  Add custom semantic code only when a rule
+requires document, sibling, or ordering context.  Handwritten architecture
+prose explains those relationships; it must link to generated fields rather
+than restating field tables.
+
+The documentation contract is protected by tests that compare the model to the
+committed JSON, compare the JSON-only renderer to the committed RST, count all
+discriminator variants, validate the example, check literal-include markers,
+and build Sphinx with warnings treated as errors.

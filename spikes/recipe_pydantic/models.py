@@ -40,6 +40,7 @@ class DirectInput(RecipeModel):
         exclude_if=lambda value: not value,
     )
 
+    # docs:indexed-direct-start
     @model_validator(mode="after")
     def indexed_values_are_lists(self) -> DirectInput:
         if self.indexed and not isinstance(self.value, list):
@@ -47,6 +48,7 @@ class DirectInput(RecipeModel):
                 "invalid_indexed_input", "Indexed direct input value must be a list."
             )
         return self
+    # docs:indexed-direct-end
 
 
 class LocalInput(RecipeModel):
@@ -187,6 +189,7 @@ class PythonModuleStep(CommonStep):
     module: str = described("Python module path.", example="tests.py")
     method_name: str | None = described("Method name for method actions.", example="run", default=None)
 
+    # docs:method-name-start
     @model_validator(mode="after")
     def method_actions_have_names(self) -> PythonModuleStep:
         if self.action_type == "method" and not self.method_name:
@@ -194,6 +197,7 @@ class PythonModuleStep(CommonStep):
                 "missing_method_name", "Method actions require method_name."
             )
         return self
+    # docs:method-name-end
 
 
 class SequenceStep(CommonStep):
@@ -220,11 +224,13 @@ class WaitStep(CommonStep):
 
     steptype: Literal["WaitStep"] = described("Canonical registered step type.", example="WaitStep")
 
+    # docs:wait-time-start
     @model_validator(mode="after")
     def has_wait_time(self) -> WaitStep:
         if "wait_time" not in self.input_mapping:
             raise PydanticCustomError("missing_required_input", "WaitStep requires input 'wait_time'.")
         return self
+    # docs:wait-time-end
 
 
 class UserLoadingStep(CommonStep):

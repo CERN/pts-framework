@@ -2,6 +2,15 @@
 ..
 .. SPDX-License-Identifier: CC-BY-SA-4.0
 
+.. important::
+
+   This page documents the recipe syntax currently accepted by the production
+   runtime (recipe language version 1).  The accepted future Pydantic design is
+   recipe language ``2.0.0``; see :doc:`recipe_language_architecture` for its
+   architecture and :doc:`recipe_language_reference` for its generated syntax
+   reference.  Do not use the version 2 example with production execution until
+   the integration phase is complete.
+
 .. _yaml_format:
 
 ####################
@@ -18,20 +27,20 @@ Document 1: Main Recipe Configuration
 .. code-block:: yaml
    :caption: Example Main Recipe Document
 
-  ---
-  name: Name of the recipe. Typically the project name.
-  version: Allows for tracking different versions of the file
-  recipe_version: Optional version of the recipe format specification.
-  description: A more complete description of this recipe
-  main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
-  test_package: my_package.tests # Optional: Python package containing test modules for PythonModuleStep
-  continue_on_error: false # Optional policy overriding every step's continue_on_error value.
-  globals: # Globals can be referenced and used from any step in the whole file
-    global_name: value
-    other_global: other_value
-    # ...
-  # tags:  # Optional tags (Currently commented out in code)
-  #   key1: value1
+   ---
+   name: Name of the recipe. Typically the project name.
+   version: Allows for tracking different versions of the file
+   recipe_version: Optional version of the recipe format specification.
+   description: A more complete description of this recipe
+   main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
+   test_package: my_package.tests # Optional: Python package containing test modules for PythonModuleStep
+   continue_on_error: false # Optional policy overriding every step's continue_on_error value.
+   globals: # Globals can be referenced and used from any step in the whole file
+     global_name: value
+     other_global: other_value
+     # ...
+   # tags:  # Optional tags (Currently commented out in code)
+   #   key1: value1
 
 Main Recipe Configuration Fields
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -392,23 +401,33 @@ available for later steps or reporting:
 
 **Summary of assertion vs. storage types:**
 
-+---------------+---------------------------+----------------------------+
-| Type          | Behaviour                 | Determines Pass/Fail?      |
-+===============+===========================+============================+
-| ``passfail``  | Boolean → PASS / FAIL     | Yes                        |
-+---------------+---------------------------+----------------------------+
-| ``equals``    | Compare to target value   | Yes                        |
-+---------------+---------------------------+----------------------------+
-| ``range``     | Check within [min, max]   | Yes                        |
-+---------------+---------------------------+----------------------------+
-| ``passthrough``| Propagate a ResultType   | Yes                        |
-+---------------+---------------------------+----------------------------+
-| ``global``    | Store in global variable  | No — step returns DONE     |
-+---------------+---------------------------+----------------------------+
-| ``local``     | Store in local variable   | No — step returns DONE     |
-+---------------+---------------------------+----------------------------+
-| ``image``     | Copy image file into report and embed in HTML | No — step returns DONE |
-+---------------+---------------------------+----------------------------+
+.. list-table::
+   :header-rows: 1
+
+   * - Type
+     - Behaviour
+     - Determines pass/fail?
+   * - ``passfail``
+     - Boolean → PASS / FAIL
+     - Yes
+   * - ``equals``
+     - Compare to target value
+     - Yes
+   * - ``range``
+     - Check within [min, max]
+     - Yes
+   * - ``passthrough``
+     - Propagate a ResultType
+     - Yes
+   * - ``global``
+     - Store in global variable
+     - No — step returns DONE
+   * - ``local``
+     - Store in local variable
+     - No — step returns DONE
+   * - ``image``
+     - Copy image file into report and embed in HTML
+     - No — step returns DONE
 
 .. note::
    If a step's output mapping contains **only** ``global`` and/or ``local``
@@ -483,7 +502,7 @@ Each has its own template of required elements but with overlapping types of ele
 The elements ``step_name`` and ``description`` are not explained further in this section as they're descriptive elements for reporting and GUI with no change between steps. 
 
 .. note::
-  The optional arguments ``critical``, ``skip`` and ``continue_on_error`` all apply to the following step types. Check :ref:`_step_definition_details` for information on ``skip`` and ``critical`` and :ref:`_continue_on_error_details` for information on ``continue_on_error``.
+  The optional arguments ``critical``, ``skip`` and ``continue_on_error`` all apply to the following step types. Check :ref:`step_definition_details` for information on ``skip`` and ``critical`` and :ref:`continue_on_error_details` for information on ``continue_on_error``.
 
 
 
@@ -558,9 +577,10 @@ Allows for user to interact with gui through action on buttons. It allows for ad
 *   ``steptype`` (str): Determines the type of action.
 *  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
 *  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
-*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
+*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to ``True``.
+
 These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
-The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
+The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to ``True`` and ``False``.
 
 *   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
 *   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
@@ -581,13 +601,14 @@ Allows to setup a SSH connection to be used globally during the test.
 
 *   ``steptype`` (str): Determines the type of action.
 
-This steptype has certain **requirements** to which globals exist. The following required are
+This steptype has certain **requirements** for which globals exist. The required globals are:
+
 *  ``ssh_client: None`` : The variable holding the opened paramiko client to be called in functions.
 *  ``host: 129`` :The SSH hostname or IP address.
 *  ``user: username``:The SSH username
 *  ``password: None`` :Password for SSH auth. 
 *  ``private_key: 'path/to/your/key_file'`` :The path to key file. important if no password is given.
-*  ``port: None``(int) : SSH port (default: 22).
+*  ``port: None`` (int): SSH port (default: 22).
 
 If password is not supplied, the function will automatically use ``private_key`` as verification.
 
@@ -610,6 +631,7 @@ To use the SSH client, add ``ssh_client`` to input_mapping.
 An Example of using it for a function can be seen below.
 
 .. code-block:: python
+
   def write_a_simple_filessh(target):
     target.exec_command("echo 'Hello World' > myfile.txt")
 
@@ -695,9 +717,10 @@ Used to load a file to be used somewhere else. Could fx be a calibration file or
 *   ``steptype`` (str): Determines the type of action.
 *  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
 *  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
-*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
+*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to ``True``.
+
 These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
-The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
+The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to ``True`` and ``False``.
 
 *   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
 *   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
@@ -750,9 +773,10 @@ Executes a method after interacting with next button. Step type is expected to b
 *   ``module`` (str): Python module path. With ``test_package``, it is relative to that package and may include nested directories.
 *  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
 *  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
-*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
+*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to ``True``.
+
 These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
-The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
+The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to ``True`` and ``False``.
 *   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
 *   ``method_name`` (dict): specifies the method to run.
 *   ``argument1-3`` (dict): Any dict that is not message, option or image path in input mapping will be considered input to method. multiple inputs are possible with them being ordered from top to bottom as inputs to the method.
@@ -762,6 +786,7 @@ The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop 
 Example function of input would be for the step above.
 
 .. code-block:: python
+
   def simpleMethod(argument1, argument2, argument3)
     #the input sequence seen from the above step. It shows the order of the 
     return 
@@ -798,8 +823,9 @@ Executes step to write values to variables or setting up the settings required f
 *  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
 *  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
 *  ``options`` (dict): options to add buttons. For the main functionality of this function, two keys are defined: ``'ID'`` for setting up a comport through gui and ``'wrt'`` for writing a string to a variable.
+
 These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
-The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
+The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to ``True`` and ``False``.
 
 *   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
 *   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
@@ -807,14 +833,16 @@ The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop 
 
 This step requires some local variables depending on which **key** is specified under ``options``.
 If the **key** chosen is ``'ID'``, it requires the following local variables.
+
 * serial_ID
 *  serialport
 *  baudrate
+
 When the key is applied and button is pushed, a GUI pops up letting you choose baudrate and what comport that is available you want to connect to. you can send an IDN? command through button and when found to work it will save the values to the local variables.
 The output mapping should just be pass/faill for this key.
 
 If the **key** chosen is ``'wrt'``, it requires an output mapping of either global or local scale to a variable. 
-The input written into the GUI window is sent to the output mapping to be saved as a ``str``. The following is the required ``output_mapping`` if the **key** is ``'wrt'` on a button.
+The input written into the GUI window is sent to the output mapping to be saved as a ``str``. The following is the required ``output_mapping`` if the **key** is ``'wrt'`` on a button.
 
 .. code-block:: yaml
 
@@ -897,38 +925,29 @@ in the main sequence, but it can equally be placed inside a setup or sub-sequenc
 
 
 Required globals and locals for certain steps.
-============================
+=================================================
 
 To ensure the functionality of some of the step types, certain global and locals are required for different datatypes. This section explains which step requires what specific variables in the recipe.
 The following steps that require global or local variables are found below. 
 
- - **SSHConnectStep**
+* **SSHConnectStep**
 
- Requires the following global variables:
-  - cancel_key: 'cancel'
-  - ssh_client: None
-  - host: Ip of the host
-  - user: root or user
-  - password: None
-  - private_key: 'path/to/private_key'
-  - port: SSH port. standard is 22
- - **UserLoadingStep**
- Requires the following global variables:
-  - cancel_key: 'cancel'
-  - loadFile_key: 'file'
-  - **UserRunMethodStep**
-Requires the following global variables:
-  - cancel_key: 'cancel'
-- **UserWriteStep**
-Requires the following global variables:
-  - cancel_key: 'cancel'
-  - ID_key: 'ID'
-  - wrt_key: 'wrt'
+  Requires the ``cancel_key``, ``ssh_client``, ``host``, ``user``, ``port``,
+  and either ``password`` or ``private_key`` globals.
 
-Requires the following local variables **only** if ID_key is specified under options:
-  - serial_ID: None
-  - serialport: None
-  - baudrate: None
+* **UserLoadingStep**
+
+  Requires the ``cancel_key`` and ``loadFile_key`` globals.
+
+* **UserRunMethodStep**
+
+  Requires the ``cancel_key`` global.
+
+* **UserWriteStep**
+
+  Requires the ``cancel_key``, ``ID_key``, and ``wrt_key`` globals. If
+  ``ID_key`` is specified in the options, it also requires the ``serial_ID``,
+  ``serialport``, and ``baudrate`` local variables.
 
 - **SerialNumberStep**
 

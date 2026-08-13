@@ -1,0 +1,2085 @@
+{
+  "$comment": "SPDX-FileCopyrightText: 2026 CERN <home.cern>; SPDX-License-Identifier: CC-BY-SA-4.0",
+  "$defs": {
+    "DirectInput": {
+      "additionalProperties": false,
+      "description": "Provides a literal value.",
+      "properties": {
+        "indexed": {
+          "default": false,
+          "description": "Expand a list into indexed steps.",
+          "examples": [
+            false
+          ],
+          "title": "Indexed",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "direct",
+          "description": "Input source type.",
+          "examples": [
+            "direct"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "description": "Literal input value.",
+          "examples": [
+            1
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "DirectInput",
+      "type": "object"
+    },
+    "EqualsOutput": {
+      "additionalProperties": false,
+      "description": "Passes when the output equals the configured value.",
+      "properties": {
+        "type": {
+          "const": "equals",
+          "description": "Output mapping type.",
+          "examples": [
+            "equals"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "description": "Expected value.",
+          "examples": [
+            3
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "EqualsOutput",
+      "type": "object"
+    },
+    "FileDestination": {
+      "additionalProperties": false,
+      "description": "Destination used by a file-loading step.",
+      "properties": {
+        "type": {
+          "description": "Variable scope.",
+          "enum": [
+            "local",
+            "global"
+          ],
+          "examples": [
+            "local"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "variable": {
+          "description": "Destination variable name.",
+          "examples": [
+            "selected_file"
+          ],
+          "title": "Variable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "variable"
+      ],
+      "title": "FileDestination",
+      "type": "object"
+    },
+    "GlobalInput": {
+      "additionalProperties": false,
+      "description": "Reads a recipe-global variable.",
+      "properties": {
+        "global_name": {
+          "description": "Global variable name.",
+          "examples": [
+            "global_value"
+          ],
+          "title": "Global Name",
+          "type": "string"
+        },
+        "type": {
+          "const": "global",
+          "description": "Input source type.",
+          "examples": [
+            "global"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "global_name"
+      ],
+      "title": "GlobalInput",
+      "type": "object"
+    },
+    "GlobalOutput": {
+      "additionalProperties": false,
+      "description": "Stores the output in a recipe-global variable.",
+      "properties": {
+        "global_name": {
+          "description": "Global destination variable.",
+          "examples": [
+            "saved"
+          ],
+          "title": "Global Name",
+          "type": "string"
+        },
+        "type": {
+          "const": "global",
+          "description": "Output mapping type.",
+          "examples": [
+            "global"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "global_name"
+      ],
+      "title": "GlobalOutput",
+      "type": "object"
+    },
+    "ImageOutput": {
+      "additionalProperties": false,
+      "description": "Publishes an image output for presentation.",
+      "properties": {
+        "type": {
+          "const": "image",
+          "description": "Output mapping type.",
+          "examples": [
+            "image"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "ImageOutput",
+      "type": "object"
+    },
+    "InputMapping": {
+      "discriminator": {
+        "mapping": {
+          "direct": "#/$defs/DirectInput",
+          "global": "#/$defs/GlobalInput",
+          "local": "#/$defs/LocalInput",
+          "method": "#/$defs/MethodInput"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/DirectInput"
+        },
+        {
+          "$ref": "#/$defs/LocalInput"
+        },
+        {
+          "$ref": "#/$defs/GlobalInput"
+        },
+        {
+          "$ref": "#/$defs/MethodInput"
+        }
+      ]
+    },
+    "InternalSequenceReference": {
+      "additionalProperties": false,
+      "description": "Reference to another sequence in this recipe.",
+      "properties": {
+        "name": {
+          "description": "Target sequence name.",
+          "examples": [
+            "Calibration"
+          ],
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "const": "internal",
+          "description": "Reference kind.",
+          "examples": [
+            "internal"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "name"
+      ],
+      "title": "InternalSequenceReference",
+      "type": "object"
+    },
+    "LocalInput": {
+      "additionalProperties": false,
+      "description": "Reads a sequence-local variable.",
+      "properties": {
+        "local_name": {
+          "description": "Local variable name.",
+          "examples": [
+            "local_value"
+          ],
+          "title": "Local Name",
+          "type": "string"
+        },
+        "type": {
+          "const": "local",
+          "description": "Input source type.",
+          "examples": [
+            "local"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "local_name"
+      ],
+      "title": "LocalInput",
+      "type": "object"
+    },
+    "LocalOutput": {
+      "additionalProperties": false,
+      "description": "Stores the output in a sequence-local variable.",
+      "properties": {
+        "local_name": {
+          "description": "Local destination variable.",
+          "examples": [
+            "saved"
+          ],
+          "title": "Local Name",
+          "type": "string"
+        },
+        "type": {
+          "const": "local",
+          "description": "Output mapping type.",
+          "examples": [
+            "local"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "local_name"
+      ],
+      "title": "LocalOutput",
+      "type": "object"
+    },
+    "MethodInput": {
+      "additionalProperties": false,
+      "description": "Resolves a method reference for the step.",
+      "properties": {
+        "type": {
+          "const": "method",
+          "description": "Input source type.",
+          "examples": [
+            "method"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "value": {
+          "description": "Method reference.",
+          "examples": [
+            "helper"
+          ],
+          "title": "Value"
+        }
+      },
+      "required": [
+        "type",
+        "value"
+      ],
+      "title": "MethodInput",
+      "type": "object"
+    },
+    "OutputMapping": {
+      "discriminator": {
+        "mapping": {
+          "equals": "#/$defs/EqualsOutput",
+          "global": "#/$defs/GlobalOutput",
+          "image": "#/$defs/ImageOutput",
+          "local": "#/$defs/LocalOutput",
+          "passfail": "#/$defs/PassFailOutput",
+          "passthrough": "#/$defs/PassthroughOutput",
+          "range": "#/$defs/RangeOutput"
+        },
+        "propertyName": "type"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PassFailOutput"
+        },
+        {
+          "$ref": "#/$defs/EqualsOutput"
+        },
+        {
+          "$ref": "#/$defs/RangeOutput"
+        },
+        {
+          "$ref": "#/$defs/PassthroughOutput"
+        },
+        {
+          "$ref": "#/$defs/LocalOutput"
+        },
+        {
+          "$ref": "#/$defs/GlobalOutput"
+        },
+        {
+          "$ref": "#/$defs/ImageOutput"
+        }
+      ]
+    },
+    "PassFailOutput": {
+      "additionalProperties": false,
+      "description": "Interprets the output as a pass/fail verdict.",
+      "properties": {
+        "type": {
+          "const": "passfail",
+          "description": "Output mapping type.",
+          "examples": [
+            "passfail"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PassFailOutput",
+      "type": "object"
+    },
+    "PassthroughOutput": {
+      "additionalProperties": false,
+      "description": "Uses the nested result without adding a verdict.",
+      "properties": {
+        "type": {
+          "const": "passthrough",
+          "description": "Output mapping type.",
+          "examples": [
+            "passthrough"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "PassthroughOutput",
+      "type": "object"
+    },
+    "PythonModuleStep": {
+      "additionalProperties": false,
+      "description": "Calls a method or reads/writes an attribute in a Python module.",
+      "properties": {
+        "action_type": {
+          "description": "Operation performed on the Python module.",
+          "enum": [
+            "method",
+            "read_attribute",
+            "write_attribute"
+          ],
+          "examples": [
+            "method"
+          ],
+          "title": "Action Type",
+          "type": "string"
+        },
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "method_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Method name for method actions.",
+          "examples": [
+            "run"
+          ],
+          "title": "Method Name"
+        },
+        "module": {
+          "description": "Python module path.",
+          "examples": [
+            "tests.py"
+          ],
+          "title": "Module",
+          "type": "string"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "PythonModuleStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "PythonModuleStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype",
+        "action_type",
+        "module"
+      ],
+      "title": "PythonModuleStep",
+      "type": "object"
+    },
+    "RangeOutput": {
+      "additionalProperties": false,
+      "description": "Passes when the output is within an inclusive range.",
+      "properties": {
+        "max": {
+          "description": "Maximum accepted value.",
+          "examples": [
+            4
+          ],
+          "title": "Max"
+        },
+        "min": {
+          "description": "Minimum accepted value.",
+          "examples": [
+            1
+          ],
+          "title": "Min"
+        },
+        "type": {
+          "const": "range",
+          "description": "Output mapping type.",
+          "examples": [
+            "range"
+          ],
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "min",
+        "max"
+      ],
+      "title": "RangeOutput",
+      "type": "object"
+    },
+    "RecipeHeader": {
+      "additionalProperties": false,
+      "description": "The first YAML document, identifying a recipe and its entry sequence.",
+      "properties": {
+        "continue_on_error": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Recipe-wide error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error"
+        },
+        "description": {
+          "description": "Purpose of the recipe.",
+          "examples": [
+            "Acceptance tests."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "globals": {
+          "additionalProperties": true,
+          "description": "Recipe-wide variables.",
+          "examples": [
+            {}
+          ],
+          "title": "Globals",
+          "type": "object"
+        },
+        "main_sequence": {
+          "description": "Sequence where execution begins.",
+          "examples": [
+            "Main"
+          ],
+          "title": "Main Sequence",
+          "type": "string"
+        },
+        "name": {
+          "description": "Human-readable recipe name.",
+          "examples": [
+            "Hardware acceptance"
+          ],
+          "title": "Name",
+          "type": "string"
+        },
+        "recipe_version": {
+          "const": "2.0.0",
+          "description": "Version of the recipe language contract.",
+          "examples": [
+            "2.0.0"
+          ],
+          "title": "Recipe Version",
+          "type": "string"
+        },
+        "report": {
+          "default": "overwrite",
+          "description": "Report file mode.",
+          "enum": [
+            "overwrite",
+            "append"
+          ],
+          "examples": [
+            "overwrite"
+          ],
+          "title": "Report",
+          "type": "string"
+        },
+        "report_name_include_serial": {
+          "default": false,
+          "description": "Include the serial number in the report name.",
+          "examples": [
+            false
+          ],
+          "title": "Report Name Include Serial",
+          "type": "boolean"
+        },
+        "test_package": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Package containing recipe test modules.",
+          "examples": [
+            "acceptance"
+          ],
+          "title": "Test Package"
+        },
+        "version": {
+          "description": "Version of this recipe.",
+          "examples": [
+            "1.0"
+          ],
+          "title": "Version",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "recipe_version",
+        "description",
+        "main_sequence",
+        "globals"
+      ],
+      "title": "RecipeHeader",
+      "type": "object"
+    },
+    "SSHCloseStep": {
+      "additionalProperties": false,
+      "description": "Closes the SSH client stored in recipe globals.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "SSHCloseStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "SSHCloseStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype"
+      ],
+      "title": "SSHCloseStep",
+      "type": "object"
+    },
+    "SSHConnectStep": {
+      "additionalProperties": false,
+      "description": "Opens the SSH client stored in recipe globals.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "SSHConnectStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "SSHConnectStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype"
+      ],
+      "title": "SSHConnectStep",
+      "type": "object"
+    },
+    "SSHUploadStep": {
+      "additionalProperties": false,
+      "description": "Uploads files through an SSH connection.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "files": {
+          "description": "Local and remote file pairs to upload.",
+          "examples": [
+            [
+              {
+                "local": "bin/tool",
+                "remote": "/tmp/tool"
+              }
+            ]
+          ],
+          "items": {
+            "$ref": "#/$defs/UploadFile"
+          },
+          "title": "Files",
+          "type": "array"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "local_package": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional package containing local resources.",
+          "examples": [
+            "my_package"
+          ],
+          "title": "Local Package"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "permissions": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional remote permissions.",
+          "examples": [
+            "0755"
+          ],
+          "title": "Permissions"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "skip_if_sha256_match": {
+          "default": false,
+          "description": "Skip files whose remote checksum matches.",
+          "examples": [
+            false
+          ],
+          "title": "Skip If Sha256 Match",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "SSHUploadStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "SSHUploadStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype",
+        "files"
+      ],
+      "title": "SSHUploadStep",
+      "type": "object"
+    },
+    "Sequence": {
+      "additionalProperties": false,
+      "description": "One named executable sequence document.",
+      "properties": {
+        "description": {
+          "description": "Purpose of the sequence.",
+          "examples": [
+            "Main sequence."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "locals": {
+          "additionalProperties": true,
+          "description": "Variables local to the sequence.",
+          "examples": [
+            {}
+          ],
+          "title": "Locals",
+          "type": "object"
+        },
+        "outputs": {
+          "additionalProperties": true,
+          "description": "Reserved sequence output metadata.",
+          "examples": [
+            {}
+          ],
+          "title": "Outputs",
+          "type": "object"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "description": "Reserved sequence input metadata.",
+          "examples": [
+            {}
+          ],
+          "title": "Parameters",
+          "type": "object"
+        },
+        "sequence_name": {
+          "description": "Unique sequence name.",
+          "examples": [
+            "Main"
+          ],
+          "title": "Sequence Name",
+          "type": "string"
+        },
+        "setup_steps": {
+          "description": "Steps run before the main steps.",
+          "examples": [
+            []
+          ],
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "title": "Setup Steps",
+          "type": "array"
+        },
+        "steps": {
+          "description": "Ordered main steps.",
+          "examples": [
+            []
+          ],
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "teardown_steps": {
+          "description": "Steps run during teardown.",
+          "examples": [
+            []
+          ],
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "title": "Teardown Steps",
+          "type": "array"
+        }
+      },
+      "required": [
+        "sequence_name",
+        "description",
+        "parameters",
+        "outputs",
+        "locals",
+        "setup_steps",
+        "steps",
+        "teardown_steps"
+      ],
+      "title": "Sequence",
+      "type": "object"
+    },
+    "SequenceStep": {
+      "additionalProperties": false,
+      "description": "Runs another sequence as a step.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "sequence": {
+          "$ref": "#/$defs/InternalSequenceReference",
+          "description": "Internal sequence reference.",
+          "examples": [
+            {
+              "name": "Calibration",
+              "type": "internal"
+            }
+          ]
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "SequenceStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "SequenceStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype",
+        "sequence"
+      ],
+      "title": "SequenceStep",
+      "type": "object"
+    },
+    "SerialNumberStep": {
+      "additionalProperties": false,
+      "description": "Captures the device serial number.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "SerialNumberStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "SerialNumberStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype"
+      ],
+      "title": "SerialNumberStep",
+      "type": "object"
+    },
+    "Step": {
+      "discriminator": {
+        "mapping": {
+          "PythonModuleStep": "#/$defs/PythonModuleStep",
+          "SSHCloseStep": "#/$defs/SSHCloseStep",
+          "SSHConnectStep": "#/$defs/SSHConnectStep",
+          "SSHUploadStep": "#/$defs/SSHUploadStep",
+          "SequenceStep": "#/$defs/SequenceStep",
+          "SerialNumberStep": "#/$defs/SerialNumberStep",
+          "UserInteractionStep": "#/$defs/UserInteractionStep",
+          "UserLoadingStep": "#/$defs/UserLoadingStep",
+          "UserRunMethodStep": "#/$defs/UserRunMethodStep",
+          "UserWriteStep": "#/$defs/UserWriteStep",
+          "WaitStep": "#/$defs/WaitStep"
+        },
+        "propertyName": "steptype"
+      },
+      "oneOf": [
+        {
+          "$ref": "#/$defs/PythonModuleStep"
+        },
+        {
+          "$ref": "#/$defs/SequenceStep"
+        },
+        {
+          "$ref": "#/$defs/UserInteractionStep"
+        },
+        {
+          "$ref": "#/$defs/WaitStep"
+        },
+        {
+          "$ref": "#/$defs/UserLoadingStep"
+        },
+        {
+          "$ref": "#/$defs/UserRunMethodStep"
+        },
+        {
+          "$ref": "#/$defs/UserWriteStep"
+        },
+        {
+          "$ref": "#/$defs/SerialNumberStep"
+        },
+        {
+          "$ref": "#/$defs/SSHConnectStep"
+        },
+        {
+          "$ref": "#/$defs/SSHCloseStep"
+        },
+        {
+          "$ref": "#/$defs/SSHUploadStep"
+        }
+      ]
+    },
+    "UploadFile": {
+      "additionalProperties": false,
+      "description": "One local-to-remote SSH upload pair.",
+      "properties": {
+        "local": {
+          "description": "Local file or package resource.",
+          "examples": [
+            "bin/tool"
+          ],
+          "title": "Local",
+          "type": "string"
+        },
+        "remote": {
+          "description": "Remote destination path.",
+          "examples": [
+            "/tmp/tool"
+          ],
+          "title": "Remote",
+          "type": "string"
+        }
+      },
+      "required": [
+        "local",
+        "remote"
+      ],
+      "title": "UploadFile",
+      "type": "object"
+    },
+    "UserInteractionStep": {
+      "additionalProperties": false,
+      "description": "Displays an operator interaction prompt.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "UserInteractionStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "UserInteractionStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype"
+      ],
+      "title": "UserInteractionStep",
+      "type": "object"
+    },
+    "UserLoadingStep": {
+      "additionalProperties": false,
+      "description": "Prompts the operator to select a file.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "file_save_location": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileDestination"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Local or global destination for the selected file.",
+          "examples": [
+            {
+              "type": "local",
+              "variable": "selected_file"
+            }
+          ]
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "UserLoadingStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "UserLoadingStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype"
+      ],
+      "title": "UserLoadingStep",
+      "type": "object"
+    },
+    "UserRunMethodStep": {
+      "additionalProperties": false,
+      "description": "Optionally runs a Python method after an operator response.",
+      "properties": {
+        "action_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional Python action type.",
+          "examples": [
+            "method"
+          ],
+          "title": "Action Type"
+        },
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "method_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional Python method name.",
+          "examples": [
+            "run"
+          ],
+          "title": "Method Name"
+        },
+        "module": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional Python module path.",
+          "examples": [
+            "tests.py"
+          ],
+          "title": "Module"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "UserRunMethodStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "UserRunMethodStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        },
+        "trigger_response": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Operator response that triggers execution.",
+          "examples": [
+            "run"
+          ],
+          "title": "Trigger Response"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype"
+      ],
+      "title": "UserRunMethodStep",
+      "type": "object"
+    },
+    "UserWriteStep": {
+      "additionalProperties": false,
+      "description": "Writes an operator-provided value to a configured destination.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "UserWriteStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "UserWriteStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype"
+      ],
+      "title": "UserWriteStep",
+      "type": "object"
+    },
+    "WaitStep": {
+      "additionalProperties": false,
+      "description": "Waits for a non-negative duration in seconds.",
+      "properties": {
+        "continue_on_error": {
+          "default": false,
+          "description": "Per-step error policy.",
+          "examples": [
+            false
+          ],
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "critical": {
+          "default": false,
+          "description": "Stop on error when policy permits continuation.",
+          "examples": [
+            false
+          ],
+          "title": "Critical",
+          "type": "boolean"
+        },
+        "description": {
+          "description": "Purpose of the step.",
+          "examples": [
+            "Run a test operation."
+          ],
+          "title": "Description",
+          "type": "string"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional stable step identifier.",
+          "examples": [
+            "test-1"
+          ],
+          "title": "Id"
+        },
+        "input_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/InputMapping"
+          },
+          "description": "Named input sources.",
+          "examples": [
+            {}
+          ],
+          "title": "Input Mapping",
+          "type": "object"
+        },
+        "output_mapping": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OutputMapping"
+          },
+          "description": "Named verdicts and destinations.",
+          "examples": [
+            {}
+          ],
+          "title": "Output Mapping",
+          "type": "object"
+        },
+        "skip": {
+          "default": false,
+          "description": "Skip execution.",
+          "examples": [
+            false
+          ],
+          "title": "Skip",
+          "type": "boolean"
+        },
+        "step_name": {
+          "description": "Human-readable step name.",
+          "examples": [
+            "Run test"
+          ],
+          "title": "Step Name",
+          "type": "string"
+        },
+        "steptype": {
+          "const": "WaitStep",
+          "description": "Canonical registered step type.",
+          "examples": [
+            "WaitStep"
+          ],
+          "title": "Steptype",
+          "type": "string"
+        }
+      },
+      "required": [
+        "step_name",
+        "description",
+        "steptype"
+      ],
+      "title": "WaitStep",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Aggregate typed recipe used by tooling and JSON Schema consumers.",
+  "properties": {
+    "header": {
+      "$ref": "#/$defs/RecipeHeader",
+      "description": "Recipe header document."
+    },
+    "sequences": {
+      "description": "Sequence documents.",
+      "items": {
+        "$ref": "#/$defs/Sequence"
+      },
+      "minItems": 1,
+      "title": "Sequences",
+      "type": "array"
+    }
+  },
+  "required": [
+    "header",
+    "sequences"
+  ],
+  "title": "Recipe",
+  "type": "object"
+}

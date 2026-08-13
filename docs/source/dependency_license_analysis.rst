@@ -102,8 +102,6 @@ nidmm (1.4.8)
 :Source: nimi-python GitHub repository
 :Compatibility: ✅ **Full compatibility** - MIT licensed National Instruments drivers
 
-<<<<<<< Updated upstream
-=======
 pymeasure (0.15.0)
 ~~~~~~~~~~~~~~~~~~
 :License: MIT
@@ -113,7 +111,6 @@ pymeasure (0.15.0)
    libraries without restriction.  The pymeasure package itself is not affected by pypts'
    LGPL licence; end users may use pymeasure under its own MIT terms independently.
 
->>>>>>> Stashed changes
 nptdms
 ~~~~~~
 :License: LGPL (GNU Library or Lesser General Public License)
@@ -361,4 +358,4 @@ This analysis was conducted using:
 - Web searches for license verification
 
 **Last Updated:** June 2025
-**Next Review:** Recommended annually or when adding new dependencies 
+**Next Review:** Recommended annually or when adding new dependencies

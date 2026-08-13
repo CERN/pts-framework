@@ -193,7 +193,7 @@ The pyproject file operates similarily to a makefile and is the construction of 
 1. Define your Recipe (`my_recipe.yaml`)
 -----------------------------------------
 
-Create a YAML file defining your test sequence. The recipe consists of a main document defining metadata and global variables, followed by documents defining named sequences. See :ref:`_yaml_format` for full explaination of all steps available for recipe.
+Create a YAML file defining your test sequence. The recipe consists of a main document defining metadata and global variables, followed by documents defining named sequences. See :ref:`yaml_format` for full explaination of all steps available for recipe.
 
 .. code-block:: yaml
    :caption: my_recipe.yaml
@@ -257,7 +257,7 @@ Create a YAML file defining your test sequence. The recipe consists of a main do
 
 
 Alternative: Resource-Based Module Loading
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 For better distribution and deployment, you can use resource-based module loading by organizing your test modules as Python packages:
 
@@ -464,7 +464,7 @@ Test that your modules can be imported:
    import my_project.tests.test_module1
 
 Common Migration Issues
-~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^
 
 **Import Errors**: Make sure all directories have ``__init__.py`` files
 
@@ -545,7 +545,7 @@ As the recipe executes:
 
 
 6. Creating and Editing Recipes with Recipe Creator tool
----------------------------------------------
+---------------------------------------------------------
 
 For users who prefer a visual approach to recipe creation and editing, the Recipe
 Creator tool provides an interactive recipe editor. In the codebase this editor

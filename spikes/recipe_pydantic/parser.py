@@ -305,6 +305,7 @@ def _semantic_diagnostics(
 ) -> list[Diagnostic]:
     """Rules that cannot be expressed by one structural Pydantic model."""
     diagnostics: list[Diagnostic] = []
+    # docs:sequence-semantics-start
     by_name: dict[str, tuple[int, Sequence]] = {}
     for document_index, sequence in sequences:
         path = (document_index, "sequence_name")
@@ -327,12 +328,14 @@ def _semantic_diagnostics(
             source_name,
             spans,
         ))
+    # docs:sequence-semantics-end
 
     verdict_types = (PassFailOutput, EqualsOutput, RangeOutput, PassthroughOutput)
     for document_index, sequence in sequences:
         flattened = list(_all_steps(sequence))
         for section, index, step in flattened:
             step_path = (document_index, section, index)
+            # docs:nested-reference-start
             if isinstance(step, SequenceStep) and step.sequence.name not in by_name:
                 diagnostics.append(_diagnostic(
                     "unknown-sequence-reference",
@@ -342,7 +345,9 @@ def _semantic_diagnostics(
                     source_name,
                     spans,
                 ))
+            # docs:nested-reference-end
 
+            # docs:mapping-semantics-start
             indexed_lengths = [
                 len(value.value)
                 for value in step.input_mapping.values()
@@ -368,7 +373,9 @@ def _semantic_diagnostics(
                     source_name,
                     spans,
                 ))
+            # docs:mapping-semantics-end
 
+        # docs:ssh-semantics-start
         ssh_steps = [item for item in flattened if item[2].steptype.startswith("SSH")]
         if ssh_steps and header is not None:
             for required in ("ssh_client", "host", "user", "port"):
@@ -414,6 +421,7 @@ def _semantic_diagnostics(
                 source_name,
                 spans,
             ))
+        # docs:ssh-semantics-end
     return diagnostics
 
 

@@ -15,9 +15,14 @@ from pydantic import ValidationError
 from pypts.recipe_parser import dump_recipe as dump_v1
 from pypts.recipe_parser import parse_recipe_file as parse_v1
 
+from .artifacts import (
+    DEFAULT_REFERENCE_PATH,
+    DEFAULT_SCHEMA_PATH,
+    render_json_schema,
+)
 from .models import INPUT_MODELS, OUTPUT_MODELS, STEP_MODELS
 from .parser import RecipeParseError, dump_recipe, parse_recipe_file, parse_recipe_text
-from .reference import REFERENCE_PATH, SCHEMA_PATH, render_json_schema, render_reference
+from .reference import render_reference
 
 ROOT = Path(__file__).parents[2]
 RECIPES = ROOT / "src" / "pypts" / "recipes"
@@ -368,21 +373,22 @@ def test_raw_legacy_corpus_exposes_migration_diagnostics():
 
 def test_generated_schema_and_reference_are_complete_and_current():
     schema_text = render_json_schema()
-    reference = render_reference()
-    assert schema_text == SCHEMA_PATH.read_text(encoding="utf-8")
-    assert reference == REFERENCE_PATH.read_text(encoding="utf-8")
-    definitions = json.loads(schema_text)["$defs"]
+    schema = json.loads(schema_text)
+    reference = render_reference(schema)
+    assert schema_text == DEFAULT_SCHEMA_PATH.read_text(encoding="utf-8")
+    assert reference == DEFAULT_REFERENCE_PATH.read_text(encoding="utf-8")
+    definitions = schema["$defs"]
     for model in STEP_MODELS + INPUT_MODELS + OUTPUT_MODELS:
         assert model.__name__ in definitions
         kind = model.model_fields.get("steptype") or model.model_fields["type"]
         anchor_kind = kind.examples[0].lower()
         group = "step" if model in STEP_MODELS else "input" if model in INPUT_MODELS else "output"
-        assert reference.count(f".. _recipe-{group}-{anchor_kind}:") == 1
+        assert reference.count(f".. _recipe-v2-{group}-{anchor_kind}:") == 1
 
     report = STEP_MODELS[0].model_fields["skip"]
     assert report.description in reference
-    assert f"default ``{report.default!r}``" in reference
-    assert f"Example: ``{report.examples[0]!r}``." in reference
+    assert 'default ``false``' in reference
+    assert 'Example: ``false``.' in reference
 
 
 def test_spike_has_no_runtime_gui_yamview_or_sphinx_imports():
