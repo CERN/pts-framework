@@ -21,7 +21,7 @@ code wakes up in wait().
         pending.resolve(rid, choice)
 
 IMPORTANT: the thread that calls wait() must not be the thread that drains the
-channel, or the answer can never arrive and the module deadlocks. The Sequencer
+inbox, or the answer can never arrive and the module deadlocks. The Sequencer
 is single-threaded today, so porting user-interaction steps in Phase 1 means
 running the sequence on its own worker thread while the event loop keeps
 turning. This is noted as a TODO in the roadmap.

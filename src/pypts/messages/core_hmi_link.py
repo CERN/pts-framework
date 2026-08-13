@@ -80,7 +80,7 @@ class ShutdownRequested:
     """
     Shut the whole application down. Was HMIToCoreCommand.EXIT.
 
-    The launcher sends this too, on the same channel, when the UI it was waiting
+    The launcher sends this too, on the same link, when the UI it was waiting
     on has gone: it is the supervisor of last resort, and CORE having exactly
     one shutdown path is worth more than the launcher having its own link.
     """

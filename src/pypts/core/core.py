@@ -3,23 +3,33 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-CORE - the mediator.
+CORE - the mediator, and the engine process.
 
 Every message in the framework except log records passes through here. CORE owns
 the links to the Sequencer and the Report, holds the link to the HMI that the
 launcher built, and is the only module that talks to more than one other.
 
+The Sequencer and the Report are **threads of this process**, not processes of
+their own. Only the HMI is still across a process boundary, so that the
+operator's window survives an engine crash. What that buys: the four engine
+links are plain `queue.Queue`, nothing on them is pickled, and the engine can
+hand the Sequencer a live object - a recipe, a device handle - the day the
+execution engine lands. What it costs is recorded in the roadmap: a fault in
+either thread now takes CORE down with it, and the run log identifies both of
+them as "Core", because the format names the process.
+
 The three handlers below are the whole routing table. Each one ends in
 unhandled(), so a message nobody thought about raises instead of being dropped.
 """
 
+import threading
 import time
-from multiprocessing import Process, Queue
+from queue import Queue
 
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
-from pypts.messages import Channel, UnhandledMessage, unhandled
+from pypts.messages import QueueWrapper, UnhandledMessage, unhandled
 from pypts.messages.common import ErrorSeverity, Heartbeat, ModuleError
-from pypts.messages.hmi_link import (
+from pypts.messages.core_hmi_link import (
     CoreToHmi,
     HmiStopped,
     HmiToCore,
@@ -37,7 +47,7 @@ from pypts.messages.links import (
     REPORT_TO_CORE,
     SEQUENCER_TO_CORE,
 )
-from pypts.messages.report_link import (
+from pypts.messages.core_report_link import (
     CoreToReport,
     ReportExported,
     ReportGenerated,
@@ -57,7 +67,7 @@ from pypts.messages.run_events import (
     UserPromptRequest,
     UserPromptResponse,
 )
-from pypts.messages.sequencer_link import (
+from pypts.messages.core_sequencer_link import (
     CoreToSequencer,
     RunSequence,
     SequencerStopped,
@@ -78,8 +88,8 @@ HEARTBEAT_TIMEOUT_S = 5.0
 
 
 def core_main(
-    to_hmi: Channel[CoreToHmi],
-    from_hmi: Channel[HmiToCore],
+    to_hmi: QueueWrapper[CoreToHmi],
+    from_hmi: QueueWrapper[HmiToCore],
     log_queue,
     log_level: int = DEFAULT_LOG_LEVEL,
 ) -> None:
@@ -87,7 +97,10 @@ def core_main(
     Entry point for the launcher. Runs in the Core process.
 
     Routing log records to the Logger has to happen before anything is logged
-    and before the submodules are spawned, so it is the first thing done here.
+    and before the submodule threads start, so it is the first thing done here.
+    It is also the *only* place it happens in this process: the Sequencer and
+    the Report inherit the root logger configured here rather than each
+    configuring one of their own.
 
     Args:
         log_level: the level the launcher resolved for the whole run. Passed
@@ -101,52 +114,82 @@ def core_main(
 
 class Core:
     """
-    Mediator and supervisor of the Sequencer and the Report.
+    Mediator, and the thread that owns the Sequencer and the Report.
 
-    Naming convention for the six channels: `to_x` is what CORE sends to module
-    x, `from_x` is what x sends to CORE. CORE builds both halves of its own
-    links and hands them to the child, so a module cannot construct a channel to
-    anyone it has no business talking to.
+    Naming convention for the six links: `to_x` is what CORE sends to module x,
+    `from_x` is what x sends to CORE. CORE builds both halves of its own links
+    and hands them to the thread that runs the module, so a module cannot
+    construct a link to anyone it has no business talking to.
     """
+
+    #: How long a submodule thread gets to leave its event loop once it has
+    #: reported itself stopped. It has already said it is done, so this only
+    #: covers the return from the loop; it is not a shutdown budget.
+    THREAD_JOIN_TIMEOUT_S = 5.0
+
+    #: How long every module together gets to answer a stop request. This one
+    #: *is* the shutdown budget: it starts when stop_all_modules() asks, and it
+    #: covers a module noticing the request, finishing what it is doing and
+    #: reporting itself stopped.
+    #:
+    #: Without it CORE waits forever for a module that will never answer, and
+    #: the only thing that ends the run is the launcher's own join timeout
+    #: terminating the process - which loses the log line saying who was to
+    #: blame. Five seconds because it matches the launcher's budget and the
+    #: heartbeat timeout; a module quiet for that long is already presumed dead.
+    SHUTDOWN_TIMEOUT_S = 5.0
 
     def __init__(
         self,
-        to_hmi: Channel[CoreToHmi],
-        from_hmi: Channel[HmiToCore],
+        to_hmi: QueueWrapper[CoreToHmi],
+        from_hmi: QueueWrapper[HmiToCore],
         log_queue,
         queue_factory=Queue,
         log_level: int = DEFAULT_LOG_LEVEL,
     ) -> None:
         """
         Args:
-            queue_factory: what to build the submodule queues out of. This is
-                the seam the roadmap's thread migration turns: pass queue.Queue
-                and the Sequencer and the Report become threads without any
-                other change. Tests use it to build a CORE that spawns nothing.
-            log_level: kept only to hand on to the two submodules CORE spawns.
+            queue_factory: what to build the submodule queues out of. Defaults
+                to `queue.Queue`, because the Sequencer and the Report are
+                threads of this process. It stays an argument because it is the
+                seam a future `--mode connect` turns, and because tests use it
+                to build a CORE that starts nothing.
+            log_queue: kept so CORE can hand it on if a submodule ever needs to
+                configure logging of its own. The threads do not: they share
+                this process's root logger, which core_main() has already
+                pointed at the Logger.
+            log_level: kept for the same reason.
         """
         self.to_hmi = to_hmi
         self.from_hmi = from_hmi
 
-        # Shared with the submodules so every process writes through one Logger.
         self.log_queue = log_queue
         self.log_level = log_level
 
-        # One queue per direction. The Channel type parameter is the union that
+        # One queue per direction. The QueueWrapper type parameter is the union that
         # queue is allowed to carry, and `link` is the name it goes by in the
-        # trace - these four are the links that never leave this process, so the
-        # log is the only place they can be seen at all.
-        self.to_sequencer: Channel[CoreToSequencer] = Channel(
+        # trace - these four never leave this process, so the log is the only
+        # place they can be seen at all.
+        self.to_sequencer: QueueWrapper[CoreToSequencer] = QueueWrapper(
             queue_factory(), link=CORE_TO_SEQUENCER
         )
-        self.from_sequencer: Channel[SequencerToCore] = Channel(
+        self.from_sequencer: QueueWrapper[SequencerToCore] = QueueWrapper(
             queue_factory(), link=SEQUENCER_TO_CORE
         )
-        self.to_report: Channel[CoreToReport] = Channel(queue_factory(), link=CORE_TO_REPORT)
-        self.from_report: Channel[ReportToCore] = Channel(queue_factory(), link=REPORT_TO_CORE)
+        self.to_report: QueueWrapper[CoreToReport] = QueueWrapper(queue_factory(), link=CORE_TO_REPORT)
+        self.from_report: QueueWrapper[ReportToCore] = QueueWrapper(queue_factory(), link=REPORT_TO_CORE)
 
         self.running = True
         self.shutting_down = False
+
+        #: When CORE stops waiting for the modules it asked to stop. None until
+        #: it has asked, because there is nothing to time out before that.
+        self.shutdown_deadline: float | None = None
+
+        # Set by start_submodules(). A CORE built by a test may never start
+        # them, so join_submodules() has to cope with them being absent.
+        self.sequencer_thread: threading.Thread | None = None
+        self.report_thread: threading.Thread | None = None
 
         # Which modules CORE is still waiting for before it may exit.
         self.module_running = {HMI: True, SEQUENCER: True, REPORT: True}
@@ -163,26 +206,56 @@ class Core:
         log.info("Starting module...")
         self.start_submodules()
         self.main_loop()
+        self.join_submodules()
         log.info("Stopping module...")
 
     def start_submodules(self) -> None:
         """
-        Spawn the Sequencer and the Report, handing each the two channels it
-        needs: its outbox to CORE and its inbox from CORE.
+        Start the Sequencer and the Report, handing each the two links it needs:
+        its outbox to CORE and its inbox from CORE.
+
+        Threads, not processes. They are named, so that anything reading a
+        thread dump can tell them apart even though the run log cannot.
+
+        Daemon threads deliberately: a submodule that wedges must not be able to
+        keep the process alive after CORE has decided to leave. The clean path
+        does not rely on it - join_submodules() waits for both - but the clean
+        path is not the one worth designing for here.
         """
-        self.sequencer_process = Process(
+        self.sequencer_thread = threading.Thread(
             target=sequencer_main,
             name="Sequencer",
-            args=(self.from_sequencer, self.to_sequencer, self.log_queue, self.log_level),
+            args=(self.from_sequencer, self.to_sequencer),
+            daemon=True,
         )
-        self.sequencer_process.start()
+        self.sequencer_thread.start()
 
-        self.report_process = Process(
+        self.report_thread = threading.Thread(
             target=report_main,
             name="Report",
-            args=(self.from_report, self.to_report, self.log_queue, self.log_level),
+            args=(self.from_report, self.to_report),
+            daemon=True,
         )
-        self.report_process.start()
+        self.report_thread.start()
+
+    def join_submodules(self) -> None:
+        """
+        Wait for both submodule threads to return, once the loop has ended.
+
+        By the time CORE leaves its loop both have reported themselves stopped,
+        so this normally returns at once. A thread still alive here is stuck
+        somewhere after its loop and is worth a line in the log: the process
+        will exit anyway, because they are daemons.
+        """
+        for name, thread in (
+            (SEQUENCER, self.sequencer_thread),
+            (REPORT, self.report_thread),
+        ):
+            if thread is None:
+                continue
+            thread.join(timeout=self.THREAD_JOIN_TIMEOUT_S)
+            if thread.is_alive():
+                log.warning(f"Module thread did not finish in time: {name}")
 
     # --- Main event loop ------------------------------------------------------
 
@@ -384,6 +457,10 @@ class Core:
             return
         self.shutting_down = True
 
+        # The clock starts here rather than at the first unanswered check, so
+        # the budget covers the whole shutdown and not just the tail of it.
+        self.shutdown_deadline = time.time() + self.SHUTDOWN_TIMEOUT_S
+
         log.info("Shutdown requested, stopping all modules.")
         self.to_report.send(StopReport())
         self.to_sequencer.send(StopSequencer())
@@ -391,12 +468,36 @@ class Core:
 
     def check_stop_status(self) -> None:
         """
-        CORE exits once every module has reported itself stopped.
+        CORE exits once every module has reported itself stopped, or once it has
+        waited SHUTDOWN_TIMEOUT_S for the ones that have not.
 
-        A module that dies without reporting leaves CORE waiting; the launcher's
-        join timeout is the backstop. Turning that into a heartbeat-driven
-        decision is the open policy question noted in do_periodic_tasks().
+        The clean path is the first branch and is what almost always happens.
+        The second exists because a module that dies without reporting used to
+        leave CORE waiting forever, and the only thing that ended the run was the
+        launcher terminating the process - which killed the log along with it, so
+        the one fact worth keeping, *which* module never answered, was the one
+        fact lost. Naming them is most of the point of having a timeout at all.
+
+        There is no killing to do. The Sequencer and the Report are daemon
+        threads, so abandoning them is exactly what letting CORE leave means:
+        they cannot hold the process open, and join_submodules() logs any that
+        are still running when it goes. The HMI is a process the launcher owns,
+        so CORE could not kill it even if threads were killable - which is the
+        other reason this reports rather than acts.
         """
         if not any(self.module_running.values()):
             log.info("All modules stopped cleanly")
             self.running = False
+            return
+
+        if self.shutdown_deadline is None or time.time() < self.shutdown_deadline:
+            return
+
+        # Reached once: self.running is cleared below, so the loop that calls
+        # this does not come back round to log the same sentence again.
+        late = sorted(name for name, running in self.module_running.items() if running)
+        log.error(
+            f"Modules did not stop within {self.SHUTDOWN_TIMEOUT_S:.0f}s and are being "
+            f"abandoned: {', '.join(late)}"
+        )
+        self.running = False

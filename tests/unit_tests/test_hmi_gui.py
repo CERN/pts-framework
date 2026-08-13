@@ -24,9 +24,9 @@ import queue
 
 import pytest
 
-from pypts.messages import Channel
+from pypts.messages import QueueWrapper
 from pypts.messages.common import ErrorSeverity, ModuleError
-from pypts.messages.hmi_link import (
+from pypts.messages.core_hmi_link import (
     HmiStopped,
     ModuleErrorReported,
     ShutdownRequested,
@@ -50,8 +50,8 @@ def gui(qapp):
 
     outbox: queue.Queue = queue.Queue()
     inbox: queue.Queue = queue.Queue()
-    instance = GUI(Channel(outbox), Channel(inbox))
-    yield instance, outbox, Channel(inbox)
+    instance = GUI(QueueWrapper(outbox), QueueWrapper(inbox))
+    yield instance, outbox, QueueWrapper(inbox)
     instance.timer.stop()
     instance.window.close()
 

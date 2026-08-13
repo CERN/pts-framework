@@ -5,17 +5,18 @@
 """
 The Sequencer - executes the sequences of a loaded recipe.
 
-The event loop and the link to CORE are real; execution is not. run_sequence()
-is where the engine in old_code/ is going to land (roadmap Phase 1).
+Runs as a thread of the Core process. The event loop and the link to CORE are
+real; execution is not. run_sequence() is where the engine in old_code/ is going
+to land (roadmap Phase 1).
 """
 
 import time
 
-from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
-from pypts.messages import Channel, unhandled
+from pypts.logger.log import log
+from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.requests import PendingRequests
 from pypts.messages.run_events import SerialNumberResponse, UserPromptResponse
-from pypts.messages.sequencer_link import (
+from pypts.messages.core_sequencer_link import (
     CoreToSequencer,
     RunSequence,
     SequencerStopped,
@@ -31,17 +32,17 @@ MODULE_NAME = "sequencer"
 
 
 def sequencer_main(
-    to_core: Channel[SequencerToCore],
-    from_core: Channel[CoreToSequencer],
-    log_queue,
-    log_level: int = DEFAULT_LOG_LEVEL,
+    to_core: QueueWrapper[SequencerToCore],
+    from_core: QueueWrapper[CoreToSequencer],
 ) -> None:
     """
-    Entry point called by CORE. Runs in the Sequencer process.
+    Entry point called by CORE. Runs on the Sequencer thread.
 
-    Log records are routed to the Logger before anything is logged.
+    Deliberately does not call init_logging(): the root logger belongs to the
+    Core process and core_main() has already pointed it at the Logger.
+    Configuring it again from here would tear the handler off a logger the other
+    threads are using at that moment.
     """
-    init_logging(log_queue, log_level)
     Sequencer(to_core, from_core).start()
 
 
@@ -54,7 +55,7 @@ class Sequencer:
         pending: questions this module has asked the operator and is waiting on.
     """
 
-    def __init__(self, to_core: Channel[SequencerToCore], from_core: Channel[CoreToSequencer]) -> None:
+    def __init__(self, to_core: QueueWrapper[SequencerToCore], from_core: QueueWrapper[CoreToSequencer]) -> None:
         self.core = to_core
         self.inbox = from_core
         self.running = True

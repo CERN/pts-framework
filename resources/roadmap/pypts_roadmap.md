@@ -13,8 +13,8 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 | Area | State on the branch |
 |---|---|
 | Package layout | Matches the system design: `core/`, `sequencer/`, `recipe/`, `step/`, `report/`, `hmi/{gui,cli}/`, `config_handler/`, `logger/`, `stream_handler/`, `hardware_layer/`, `helper_applications/{recipe_creator,recipe_verificator,example_finder}/`, `utilities/`, `launcher/`, plus `old_code/` holding the previous engine |
-| Process model | `launcher/startup.py`: argparse `--mode gui/cli/connect` (gui is the default) and `--log-level`, spawns Core as a process; Core spawns Sequencer and Report processes — exactly the spec's module diagram |
-| Typed messaging | **Reworked (see §1.1).** `pypts/messages/`: one frozen dataclass per message, one union per link, one generic `Channel` for all six links, every handler closed with `unhandled()`. The enums, the interface ABCs and the queue data-layer classes are gone, and with them the 4-step "add a message" workflow — it is two steps now. Protocol tests in `tests/unit_tests/test_messages.py` |
+| Process model | **Reworked (see §1.5).** `launcher/startup.py`: argparse `--mode gui/cli/connect` (gui is the default) and `--log-level`, spawns the Logger and Core as processes and the GUI as a third; Core runs the Sequencer and the Report as **threads of its own process**. Two processes plus the Logger, exactly as agreed below |
+| Typed messaging | **Reworked (see §1.1).** `pypts/messages/`: one frozen dataclass per message, one union per link, one generic `QueueWrapper` for all six links, every handler closed with `unhandled()`. The enums, the interface ABCs and the queue data-layer classes are gone, and with them the 4-step "add a message" workflow — it is two steps now. Protocol tests in `tests/unit_tests/test_messages.py` |
 | Health & errors | `HeartbeatManager` ticking from Sequencer/Report/HMI, Core-side timeout detection (armed only for modules still expected to run); `@catch_and_report_errors()` sending a typed `ModuleError` to Core, with the source resolved per function |
 | GUI toolkit | **PySide6 migration done** (GUI skeleton + `test_pyside6_conversion.py`) — the PyQt6/LGPL conflict is resolved |
 | Licensing | LGPL-2.1-or-later + CC-BY-SA-4.0, SPDX headers, `reuse.toml`, `licenses/`, `dependency_license_analysis.rst` — REUSE compliance largely in place |
@@ -31,7 +31,7 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 2. **Report module** — process shell with heartbeat exists; `generate_report()` / `export_report()` are `pass`. The CSV/HTML logic is in `old_code/report.py`.
 3. **HAL** — `hal.py` is a one-line comment.
 4. **Stream handler** — `StreamContainer` + an XYGraph widget spike; not integrated.
-5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet. Neither frontend shows the message layer, and neither needs to: `--log-level DEBUG` puts every message on every link into the run log (§1.2).
+5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet. Neither frontend shows the message layer, and neither needs to: `--log-level DEBUG` puts every message on every link into the run log (§1.2), and the Debug Monitor renders that log live (§1.4).
 6. **Step construction still uses `eval(step_type + "(**step_data)")`** in `old_code/recipe.py` — the closed, unsafe step factory rides along into whatever gets ported.
 
 ### Defects worth fixing early (spotted while reading the branch)
@@ -49,9 +49,9 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 > dataclass per message. Rationale and the topology review that led to it are recorded
 > separately; what matters here is the resulting contract and what it left open.
 
-**What changed.** `pypts/messages/` now holds one module per link (`hmi_link`,
-`sequencer_link`, `report_link`, `logger_link`), plus `common.py` for vocabulary two links
-share and `run_events.py` for what the engine reports during a run. A single generic `Channel`
+**What changed.** `pypts/messages/` now holds one module per link (`core_hmi_link`,
+`core_sequencer_link`, `core_report_link`, `to_logger_link`), plus `common.py` for vocabulary two links
+share and `run_events.py` for what the engine reports during a run. A single generic `QueueWrapper`
 replaced the six interface ABC / queue-class pairs — about 200 lines where there were 612 — and
 every handler is a `match` closed with `unhandled()` instead of `case _: pass`. Adding a message
 is two edits rather than four, and both ends of a link are now one file.
@@ -70,7 +70,7 @@ is two edits rather than four, and both ends of a link are now one file.
   the Report. It now asks first and terminates only on timeout. Verified end to end: a CLI run
   reaches "All modules stopped cleanly" and exits 0 without the fallback firing.
 - `poll_queue` handled one message per 10 ms tick, capping every link at ~100 messages/second.
-  `Channel.drain()` takes a bounded batch.
+  `QueueWrapper.drain()` takes a bounded batch.
 
 **New TODOs this opened:**
 
@@ -105,15 +105,15 @@ is two edits rather than four, and both ends of a link are now one file.
 and the product plus a tap. Anything only visible under `--mode debug` is invisible on the
 machine where it matters — a test bench, a colleague's laptop, a failure someone reports
 afterwards. The debug build was ~1,900 lines (`hmi/debug/` 1,401, `messages/debug_link.py`
-125, ~141 lines of branches in `channel.py` / `core.py` / `startup.py`, 247 of tests) and the
+125, ~141 lines of branches in `queuewrapper.py` / `core.py` / `startup.py`, 247 of tests) and the
 one thing it did that the log did not was see the *send* side.
 
-**What replaced it.** `Channel.send()` and `Channel.receive()` each log one DEBUG line on a
+**What replaced it.** `QueueWrapper.send()` and `QueueWrapper.receive()` each log one DEBUG line on a
 `pypts.trace` logger, naming the link and the message:
 
 ```
-2026-08-12 09:32:58.056;DEBUG;Core;channel.py:send;send core->sequencer StopSequencer()
-2026-08-12 09:32:58.10?;DEBUG;Sequencer;channel.py:receive;recv core->sequencer StopSequencer()
+2026-08-12 09:32:58.056;DEBUG;Core;queuewrapper.py:send;send core->sequencer StopSequencer()
+2026-08-12 09:32:58.10?;DEBUG;Sequencer;queuewrapper.py:receive;recv core->sequencer StopSequencer()
 ```
 
 Both directions, deliberately: a message that was sent and never received is the failure
@@ -124,13 +124,14 @@ anything and no new message can escape it — the two-step "add a message" proce
 
 **Why it is at the transport, not in the handlers.** Same reason the tap was: Core does not
 see the messages it never receives, so a Sequencer→Core send is only visible at the
-`Channel`. It also survives the thread migration unchanged — the trace does not care which
-queue type the Channel wraps. The handlers' old `log.info(f"Received … message: {message}")`
+`QueueWrapper`. It also survives the thread migration unchanged — the trace does not care which
+queue type the QueueWrapper wraps. The handlers' old `log.info(f"Received … message: {message}")`
 lines were removed, since `receive()` now covers all four of them and adds the link name;
 INFO is left carrying only the narrative (lifecycle, recipe loaded, run started, errors).
 
-**One dial.** `--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}` overrides `[Application]
-log_level` in `config.ini`, which now ships as `INFO`; `logger.parse_log_level()` falls back
+**One dial.** `--log-level {DEBUG,INFO,WARNING,ERROR,CRITICAL}` overrides `[logging] level`
+in `config.ini`, which **ships as `DEBUG` for the duration of the refactor** (§1.6, and the
+revert TODO there); `logger.parse_log_level()` falls back
 to INFO rather than raising on a name it does not know, because the config value is read
 before there is anywhere to report a traceback. The launcher resolves the level **once** and
 passes it to every process as an argument — children must not read the config themselves,
@@ -145,7 +146,7 @@ already takes `queue_factory`, so a test builds a Core that spawns nothing and c
 `core.from_sequencer.send(...)` directly — `test_core.py::test_a_sequencer_event_is_routed_to_the_hmi`
 is the old injection test, rewritten that way.
 
-**Verified:** 9 tests in `tests/unit_tests/test_channel_trace.py`, including that nothing is
+**Verified:** 9 tests in `tests/unit_tests/test_queuewrapper_trace.py`, including that nothing is
 traced above DEBUG, that a message is not even formatted when the trace is off, that a
 message left on the queue is not traced as received, and that a broken log queue does not
 stop the message it was tracing. Full suite: **136 passed, 77 skipped** (was 129/78).
@@ -165,11 +166,11 @@ produces zero trace lines.
 - [ ] **TODO:** Heartbeat noise. Three modules × 1 Hz × two directions ≈ **6 trace lines a
       second** at DEBUG — about 170k lines in an 8-hour run. The fix is a `pypts.trace.heartbeat`
       child logger that can be silenced on its own. Deliberately not done yet: it would make
-      `channel.py` import `Heartbeat` and type-test the payload, and the transport not knowing
+      `queuewrapper.py` import `Heartbeat` and type-test the payload, and the transport not knowing
       what a message *is* is the property that keeps it generic. Decide before Phase 1
       generates real traffic.
 - [ ] **TODO:** `LOG_FORMAT` has no `%(name)s`, so a trace line is identified by the word
-      `send`/`recv` and the `channel.py:send` location field rather than by `pypts.trace`.
+      `send`/`recv` and the `queuewrapper.py:send` location field rather than by `pypts.trace`.
       Adding the logger name touches every line of every log and the `LOG_LINE` regex in
       `test_logger.py` — worth doing, but on its own.
 - [ ] **TODO:** Trace payloads are not truncated (the tap capped them at 2,000 chars). A file
@@ -187,9 +188,12 @@ produces zero trace lines.
       message has plain, introspectable fields. `test_messages.py` still pickles every message
       and fails on one with no example, so union coverage does not rot — but the weaker claim
       is now untested. Do not rebuild the form to get it back; a direct test would do.
-- [ ] **TODO:** If a live developer tool is ever wanted again, it should be a separate
-      distribution reading the log or subscribing through `pypts.api`, not a `--mode` inside
-      the product.
+- [x] **DONE (§1.4):** *"If a live developer tool is ever wanted again, it should be a
+      separate distribution reading the log or subscribing through `pypts.api`, not a
+      `--mode` inside the product."* One was wanted again, and it reads the log. It is a
+      helper application rather than its own distribution — see §1.4 for why that is the
+      same promise kept. The framework is unchanged: not one line of `src/pypts/` outside
+      `helper_applications/debug_monitor/` was touched to make it work.
 
 ---
 
@@ -258,6 +262,237 @@ from `logging.level`; `report.py` takes its output directory from `paths.reports
 
 ---
 
+### 1.4 Debug Monitor — **done (viewer); injection not built**
+
+> **Status: the read-only half is implemented.** A helper application that renders the
+> message trace, the heartbeats and module liveness of a run by reading its log file.
+> The framework has no idea it exists.
+
+```bash
+python -m pypts --mode cli --log-level DEBUG          # any normal run
+python -m pypts.helper_applications.debug_monitor     # in another shell
+```
+
+**Why this is not the console coming back.** §1.2 removed `--mode debug` because it gave the
+software two shapes: the product, and the product plus a tap. This has one shape. It is a
+separate program that opens a file read-only; there is no debug build, no `--mode`, no
+branch in `queuewrapper.py`, `core.py` or `startup.py`, and no flag that changes how a run
+behaves. Starting it, or not starting it, is invisible to the framework — which is the
+property the removal was protecting, stated as a testable claim: `git status` after this
+change shows nothing modified under `src/pypts/` outside `helper_applications/debug_monitor/`.
+
+It lives in `helper_applications/` rather than in its own distribution, beside
+`recipe_creator` and `recipe_verificator`, because that is where this repo already keeps
+standalone tools that import the framework and are imported by nothing. Promoting it to its
+own package is a packaging decision that can be taken later, in Phase 2 with the rest of
+§3.4; nothing in its design depends on where it is installed. What matters — that it is
+*outside* the product's execution path — is already true.
+
+**What the trace being a file bought.** Two things a side channel would have had to rebuild:
+
+- **Ordering is free.** Every process funnels its records through the single-writer Logger,
+  so the order of the file *is* the order of the system. A relay taking events from four
+  processes would have had to reconstruct that from four clocks.
+- **Replay is free.** The same parser reads a run that finished last week, so a failure
+  somebody reports afterwards is openable. This is the case §1.2 said a debug build could
+  never serve, and it is now the same code path as a live tail: "now" is the last line in
+  the file, not the wall clock.
+
+**What it shows.** A filterable trace table (link checkboxes, free text, heartbeats hidden by
+default, follow-tail), and a Modules tab with each module's state, last heartbeat, age, last
+error, and CORE's own verdict. That last column is deliberate: the derived state and CORE's
+opinion are computed from the same evidence by different code, so a disagreement between them
+is a defect rather than a display glitch.
+
+**Liveness needed no new message.** `Heartbeat` crosses a `QueueWrapper`, so it is already in the
+trace; the state CORE keeps privately in `module_running` / `last_heartbeat` /
+`heartbeat_lost` is reconstructible from the log without CORE sending any of it. The tool
+imports `HEARTBEAT_TIMEOUT_S` from `core.py` rather than declaring its own — the deleted
+console duplicated that constant, and §1.2 lists the duplication among the defects that died
+with it.
+
+**What it costs, written down rather than discovered.** Nothing is visible unless the run was
+started at DEBUG, so the window says so in words instead of showing an empty table. The
+payload is `repr()` text, so the message type and the link survive and per-field structure
+does not — recovering the object would mean evaluating a repr, which is the trick the §1.1
+rework existed to remove.
+
+**Verified:** 32 tests in `tests/unit_tests/test_debug_monitor.py`, most of them needing
+neither Qt nor a running framework because the parser and the liveness fold are pure
+functions over text. Full suite: **220 passed, 72 skipped**. Confirmed against a real
+`--mode cli --log-level DEBUG` run on Windows: 93 lines, 25 messages, all seven links
+present including `core->sequencer` and `core->report` which no frontend can see, zero
+unparsed lines, and all three modules correctly reading *stopped* rather than *dead* after a
+clean shutdown. The window itself was rendered against that log and both tabs check out.
+
+**Not yet confirmed:** following a run that is still in progress, from a *separate* process.
+The incremental read is covered by unit tests (a growing file, and a half-written trailing
+line held back until it completes), but the cross-process case could not be demonstrated in
+the sandboxed shell it was developed in, where a child's writes only become visible once the
+child exits. It is one command to check on a normal machine: start a run at DEBUG, then start
+the Monitor beside it.
+
+One real finding from that first run, which is the sort of thing this is for: sends and
+receives balanced 13/12, and the unmatched one is `StopLogger` on `any->logger`. That is
+correct rather than a bug — the Logger drains its queue with a blocking `get()` and never
+through `QueueWrapper.receive()`, so it is the one link that can never trace a receive. Worth
+knowing before someone reads it as a lost message.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** Message injection is designed and **not built**. The agreed shape: a
+      `[debug]` config section shipping `allow_injection = false`, a loopback
+      `multiprocessing.connection.Listener` feeding a plain `queue.Queue` wrapped in a
+      `QueueWrapper(link="debug->core")`, and `Core.debug_inbox` / `inject()` restored from the
+      deleted console. This is the one part that puts a hole in the product, hence the gate
+      and hence its being a separate change. Note it needs no `injected` flag: an injection
+      arrives on a real QueueWrapper, so it traces itself as `recv debug->core InjectMessage(…)`
+      immediately before the message it injects — the trace *is* the marker.
+- [ ] **TODO:** The heartbeat-noise TODO above is now load-bearing for a second reason: the
+      Monitor is only useful on a run at DEBUG, and such a run is ~6 heartbeat lines a
+      second. It filters them client-side and is fine, but the log itself is still 170k lines
+      in an 8 hour run. Unchanged deliberately — the fix would make `queuewrapper.py` type-test
+      its payload.
+- [ ] **TODO:** The Monitor identifies a trace line by the `queuewrapper.py:send` location field,
+      because `LOG_FORMAT` has no `%(name)s` (the TODO above). It is a second consumer of
+      that omission now, so fixing it means fixing the Monitor's parser in the same change.
+- [ ] **TODO:** Attaching to a long run parses the whole file on the first tick. Acceptable
+      today; revisit if a Phase 1 run makes the first paint slow.
+- [ ] **TODO:** The Monitor reads `paths.logs_dir` through `ConfigHandler`, so it inherits
+      §1.3's rule that reading is pure. If that ever stops being true, a debug tool would
+      start writing the config of the run it is watching.
+- [x] **DONE (half of the TODO below):** **CORE now bounds its shutdown.** `check_stop_status()`
+      waited forever for a module that never reported itself stopped, and the only thing that
+      ended such a run was the launcher terminating the process — which took the log with it,
+      losing the one fact worth keeping: *which* module never answered. `Core.SHUTDOWN_TIMEOUT_S
+      = 5.0` now starts when `stop_all_modules()` asks, and on expiry CORE logs an ERROR naming
+      the modules it is abandoning and leaves. There is no killing to do: the Sequencer and the
+      Report are daemon threads, so letting CORE leave *is* abandoning them, and the HMI is a
+      process the launcher owns and CORE could not kill in any case. Five tests in
+      `test_core.py`, including the previously-skipped `test_core_stops_when_all_modules_have_exited`.
+- [ ] **TODO (found by the Monitor, on its first real run):** **startup races shutdown.** In
+      a run where the operator asked to exit within the first few seconds, the trace shows
+      CORE reaching `main_loop` at `15:20:23.174`, sending `StopSequencer` at `.176`, and the
+      Sequencer process only finishing its own startup at `.284` — it starts its loop,
+      immediately receives the stop it was sent before it existed, and emits exactly one
+      heartbeat on its way out. Nothing is lost, because the message was queued rather than
+      signalled, but a module can be told to stop before it has started and the Report
+      behaves the same way. **Half answered:** the shutdown side is bounded now (the DONE item
+      above). **Still open:** why reaching `main_loop` takes seconds at all. That measurement
+      predates the thread migration, which removes the spawn cost for the Sequencer and the
+      Report entirely — they are threads inside CORE now — so what is left to explain is
+      CORE's own process start, for which the `--mode cli` still imports PySide6 TODO in §1.2
+      is the obvious candidate. Re-measure before acting: the original number came from a
+      sandboxed shell and from a build where both submodules were still processes. **Re-measure since §1.5:** the process-spawn half of
+      that delay is gone — both modules are now threads and start in the same millisecond — but
+      the race itself is unchanged, because it is about ordering, not about how long a start
+      takes.
+
+### 1.5 Topology change: Sequencer and Report as threads — **done**
+
+> **Status: implemented.** The change agreed in *"Agreed architecture change: two processes,
+> threads inside the engine"* below is carried out for the two modules that exist. What that
+> section describes is now what the code does; it stays as the reasoning and the remaining
+> TODOs (StreamHandler, HAL as a library, the promotion rule).
+
+**What changed.** `Core.start_submodules()` builds `threading.Thread` instead of
+`multiprocessing.Process`, and `Core.__init__`'s `queue_factory` defaults to `queue.Queue`.
+`sequencer_main()` and `report_main()` lost their `log_queue` / `log_level` parameters and no
+longer call `init_logging()` — the root logger belongs to the Core process, and a thread
+reconfiguring it would tear the handler off a logger the other threads are using. `Core.start()`
+gained `join_submodules()`, which waits for both threads after the loop ends. The threads are
+daemons, so one that wedges cannot keep the process alive.
+
+The process tree is now: **launcher → Logger, CORE (+ Sequencer and Report threads), and the
+GUI**; in CLI mode the frontend runs in the launcher's own process, so there are three
+processes in GUI mode and two in CLI mode.
+
+**Renames in the same change** (structure only — the messages themselves are untouched):
+
+| Was | Is | Why |
+|---|---|---|
+| `messages/channel.py` · `Channel` | `messages/queuewrapper.py` · `QueueWrapper` | Says what it is: a wrapper over anything queue-shaped, now spanning a process boundary *and* a thread boundary |
+| `messages/hmi_link.py` | `messages/core_hmi_link.py` | A link module is named after **both** ends it joins, and holds both directions |
+| `messages/sequencer_link.py` | `messages/core_sequencer_link.py` | ditto |
+| `messages/report_link.py` | `messages/core_report_link.py` | ditto |
+| `messages/logger_link.py` | `messages/to_logger_link.py` | The exception, named for its single direction: nothing is ever sent back |
+
+The message catalogue moved out of `resources/messaging_overview.html` §4 into
+`src/pypts/messages/messages.md`, as that module's context file. Reworking the message set is
+its own task and is deliberately not part of this one.
+
+**What it bought.** The four engine links are in-process: nothing on them is pickled, and the
+engine will be able to hand the Sequencer a live object — a `Recipe`, a device handle — when
+the execution engine lands. Only `core_hmi_link` still needs to be pickle-safe, and the test
+that enforces that is unchanged.
+
+**What it cost, and what is now open:**
+
+- [ ] **TODO:** **The run log can no longer tell the two apart.** `LOG_FORMAT` uses
+      `%(processName)s`, so Sequencer and Report records both read `Core`. Decided
+      deliberately for now — the `filename:funcName` column and the link name in a trace line
+      still identify them — but adding `%(threadName)s`, or replacing the process column with
+      it, is the fix if that stops being enough. It would also change the Monitor's parser and
+      every sample line in the tests.
+- [ ] **TODO:** **A fault in either thread now takes CORE with it.** The mitigation the
+      architecture section assumes — the GUI survives and reports it — holds, but the
+      heartbeat-timeout policy TODO below is now the *only* place a stuck module gets noticed.
+- [ ] **TODO:** `Core.__init__` still accepts `log_queue` and `log_level` and no longer needs
+      to hand them anywhere. Keep them only until it is settled whether a future in-engine
+      module needs them; drop them otherwise.
+
+---
+
+### 1.6 The message trace is on by default, for now — **done, and temporary**
+
+> **Status: implemented, deliberately temporary.** `config.ini` ships `[logging] level =
+> DEBUG` instead of `INFO`, so every run carries the full message trace without anyone having
+> to ask for it, and the Debug Monitor (§1.4) always has something to read.
+
+**This reverses a decision §1.2 took on purpose**, and the reasoning there still stands: a
+trace is "the right thing to ask for deliberately and the wrong thing to get by default", and
+an idle run writes about six heartbeat lines a second — roughly 170k lines in an eight-hour
+run. What changed is not the argument but the phase. During the refactor nearly every run is
+a developer's, the engine does not exist yet so the volume is heartbeats rather than real
+traffic, and the cost of a failure that happened to be recorded at INFO is a whole run
+repeated. After v1.0 the balance goes back the other way, which is why the revert is a TODO
+below rather than an intention.
+
+**Where the default lives, which is not where you would guess.** The launcher resolves
+`args.log_level or config.get_parameter("logging.level")`, so the effective default is the
+*config file*, not a constant in the code. Two places therefore had to change —
+`configuration_schema.py` (the `Field` default) and `config_template.ini` (the shipped
+literal) — and a third had to be done by hand: migration deliberately **keeps every user
+value**, so a `config.ini` that already exists goes on saying `INFO` until someone edits that
+line. That is correct behaviour for a file that belongs to the user, and it is worth knowing
+before wondering why a particular machine did not pick the change up.
+
+`logger.DEFAULT_LOG_LEVEL` was left at `INFO` on purpose. It is the fallback for a process
+with no configuration — a standalone helper application calling `init_logging()` with no
+arguments — and there is no reason for the Recipe Creator to start tracing.
+
+**Verified:** `python -m pypts --mode cli` with no flags at all produces a log the Debug
+Monitor reads as a trace (`trace seen: True`), across all seven links. Full suite: **227
+passed, 71 skipped**.
+
+- [ ] **TODO — revert before v1.0.** Put `[logging] level` back to `INFO` in
+      `configuration_schema.py` and `config_template.ini`. This is the same shape of debt as
+      the `--mode` default that pointed at the debug console for the duration of the previous
+      refactor, and it is written down for the same reason: that one was only caught because
+      somebody had written it down. Nothing else has to move — `--log-level` overrides the
+      config in both directions, so `--log-level INFO` already quietens a single run without
+      editing the file.
+- [ ] **TODO:** The heartbeat-noise TODO in §1.2 is now the difference between a readable log
+      and an unreadable one on *every* run, rather than only on a run where a trace was asked
+      for. Still deliberately not done — the fix would make the transport type-test its
+      payload — but it is no longer hypothetical.
+- [ ] **TODO:** Tests that patched the shipped literal `level = INFO` broke on this change.
+      `test_config_handler.py` now rewrites that line by key (`with_log_level()`), so the
+      revert above will not break them a second time. A new test that needs a particular
+      level should use the helper rather than a string replace.
+
+---
+
 ## TODO — Recipe format: findings and decisions
 
 > **Status: analysed, parked.** The recipe refactoring itself is deferred — this section records
@@ -317,8 +552,8 @@ CLI mode: no HMI process at all — CLI runs in the launcher process, engine unc
 ### TODO checklist
 
 - [ ] **TODO:** Launcher stays the parent of *both* processes — the GUI is **not** spawned by Core. The supervisor must be the simplest, most stable component; the GUI must outlive an engine crash in order to report it. (`startup.py` already does this — keep it.)
-- [ ] **TODO:** Change Core to spawn Sequencer and Report as **threads**, not `multiprocessing.Process` (currently in `core.py: start_submodules()`); add StreamHandler as a third thread when it lands.
-- [x] **DONE (mechanism):** the **queue type is injected**, never assumed. `Channel` wraps anything with `put()`/`get_nowait()`; the launcher builds the HMI↔Core pair and `Core.__init__` takes a `queue_factory` (default `multiprocessing.Queue`) for its submodule links. Passing `queue.Queue` there is the whole change when they become threads. No module knows which it holds. *Remaining:* actually flipping it, together with the `Process` → `Thread` change above.
+- [x] **DONE (see §1.5):** Core runs Sequencer and Report as **threads**, not `multiprocessing.Process` (`core.py: start_submodules()`). StreamHandler joins them as a third thread when it lands.
+- [x] **DONE (mechanism):** the **queue type is injected**, never assumed. `QueueWrapper` wraps anything with `put()`/`get_nowait()`; the launcher builds the HMI↔Core pair out of `multiprocessing.Queue` and `Core.__init__` takes a `queue_factory` (now defaulting to `queue.Queue`) for its submodule links. No module knows which it holds, and the argument survives as the seam a future `--mode connect` turns.
 - [ ] **TODO:** HAL becomes a **plain library** imported by the Sequencer — no process, no event loop, no queue. Driver calls stay ordinary function calls; this also keeps the spec's "HAL usable standalone outside the framework" true by construction.
 - [x] **DONE:** every HMI↔Core message type is round-tripped through `pickle.dumps`/`loads`, and a second test rejects any field that is not a plain value, a UUID, an Enum, a tuple or another message. Both are parametrised over the link unions, and a third test fails if a message exists without an example — so the coverage cannot rot. `tests/unit_tests/test_messages.py`.
 - [x] **DONE (contract):** user interaction is a **request/response pair** joined by a `request_id` — `UserPromptRequest`/`Response` and `SerialNumberRequest`/`Response` in `messages/run_events.py`, with `PendingRequests` as the waiting side. The live `SimpleQueue` is gone. *Remaining:* wiring it into the steps themselves during the Phase 1 port, and the worker-thread requirement noted in §1.1.

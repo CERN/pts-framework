@@ -44,14 +44,15 @@ import sys
 from queue import Empty
 from typing import get_args
 
-from pypts.messages import Channel, unhandled
+from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.links import ANY_TO_LOGGER
-from pypts.messages.logger_link import LoggerControl, SetStdoutEnabled, StopLogger
+from pypts.messages.to_logger_link import LoggerControl, SetStdoutEnabled, StopLogger
 
 #: The level every process runs at unless the launcher says otherwise.
 #:
 #: INFO, not DEBUG, because DEBUG now means the full message trace: every
-#: Channel logs each message twice (see messages/channel.py). That is the right
+#: every QueueWrapper logs each message twice (see messages/queuewrapper.py).
+#: That is the right
 #: thing to ask for deliberately and the wrong thing to get by default.
 DEFAULT_LOG_LEVEL = logging.INFO
 
@@ -70,7 +71,7 @@ log = logging.getLogger()
 
 # Control channel towards the Logger process; set by init_logging().
 # Stays None in standalone mode, where there is no Logger process to talk to.
-_logger_control: Channel[LoggerControl] | None = None
+_logger_control: QueueWrapper[LoggerControl] | None = None
 
 
 def build_formatter() -> logging.Formatter:
@@ -133,7 +134,7 @@ def init_logging(log_queue=None, level=DEFAULT_LOG_LEVEL):
         # QueueHandler.prepare() formats the record and folds any traceback into
         # the message, so what crosses the process boundary is always picklable.
         root.addHandler(logging.handlers.QueueHandler(log_queue))
-        _logger_control = Channel(log_queue, link=ANY_TO_LOGGER)
+        _logger_control = QueueWrapper(log_queue, link=ANY_TO_LOGGER)
     else:
         stdout_handler = logging.StreamHandler(sys.stdout)
         stdout_handler.setFormatter(build_formatter())

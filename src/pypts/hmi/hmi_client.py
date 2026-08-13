@@ -20,9 +20,9 @@ frontend that has not caught up with it yet.
 import time
 
 from pypts.logger.log import log
-from pypts.messages import Channel, unhandled
+from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.common import ModuleError, ResultType, StepOutcome
-from pypts.messages.hmi_link import (
+from pypts.messages.core_hmi_link import (
     CoreToHmi,
     HmiStopped,
     HmiToCore,
@@ -67,7 +67,7 @@ class HmiClient:
         running: False once CORE has told this frontend to stop.
     """
 
-    def __init__(self, to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi]) -> None:
+    def __init__(self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]) -> None:
         self.core = to_core
         self.inbox = from_core
         self.running = True

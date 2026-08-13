@@ -38,7 +38,7 @@ import pytest
 from pypts.core.core import Core
 from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import Logger
-from pypts.messages import Channel, UnhandledMessage
+from pypts.messages import QueueWrapper, UnhandledMessage
 from pypts.messages.common import (
     ErrorSeverity,
     Heartbeat,
@@ -46,7 +46,7 @@ from pypts.messages.common import (
     ResultType,
     StepOutcome,
 )
-from pypts.messages.hmi_link import (
+from pypts.messages.core_hmi_link import (
     CoreToHmi,
     HmiStopped,
     HmiToCore,
@@ -58,8 +58,8 @@ from pypts.messages.hmi_link import (
     StatusChanged,
     StopHmi,
 )
-from pypts.messages.logger_link import LoggerControl, SetStdoutEnabled, StopLogger
-from pypts.messages.report_link import (
+from pypts.messages.to_logger_link import LoggerControl, SetStdoutEnabled, StopLogger
+from pypts.messages.core_report_link import (
     CoreToReport,
     ExportReport,
     GenerateReport,
@@ -82,7 +82,7 @@ from pypts.messages.run_events import (
     UserPromptRequest,
     UserPromptResponse,
 )
-from pypts.messages.sequencer_link import (
+from pypts.messages.core_sequencer_link import (
     CoreToSequencer,
     RunSequence,
     SequencerStopped,
@@ -134,7 +134,7 @@ EXAMPLES = {
     UserPromptResponse: UserPromptResponse(request_id=REQUEST_ID, choice="OK"),
     SerialNumberRequest: SerialNumberRequest(request_id=REQUEST_ID),
     SerialNumberResponse: SerialNumberResponse(request_id=REQUEST_ID, serial_number="SN-42"),
-    # hmi_link
+    # core_hmi_link
     LoadRecipe: LoadRecipe(recipe_path="resources/recipes/example.yaml"),
     StartSequence: StartSequence(sequence_name="Main"),
     SetConfigParameter: SetConfigParameter(key="report.theme", value="dark"),
@@ -143,19 +143,19 @@ EXAMPLES = {
     StopHmi: StopHmi(),
     StatusChanged: StatusChanged(text="Idle"),
     ModuleErrorReported: ModuleErrorReported(error=AN_ERROR),
-    # sequencer_link
+    # core_sequencer_link
     RunSequence: RunSequence(sequence_name="Main"),
     StopSequence: StopSequence(),
     StopSequencer: StopSequencer(),
     SequencerStopped: SequencerStopped(),
-    # report_link
+    # core_report_link
     GenerateReport: GenerateReport(),
     ExportReport: ExportReport(),
     StopReport: StopReport(),
     ReportStopped: ReportStopped(),
     ReportGenerated: ReportGenerated(report_path="/tmp/run/report.html"),
     ReportExported: ReportExported(report_path="/tmp/run/report.html"),
-    # logger_link
+    # to_logger_link
     SetStdoutEnabled: SetStdoutEnabled(enabled=False),
     StopLogger: StopLogger(),
 }
@@ -289,11 +289,11 @@ def test_no_message_payload_carries_a_live_queue_or_handle(message_type):
 
 
 # --------------------------------------------------------------------------
-# Channel
+# QueueWrapper
 # --------------------------------------------------------------------------
 
 def test_channel_receive_on_an_empty_queue_yields_nothing():
-    channel = Channel(queue.Queue())
+    channel = QueueWrapper(queue.Queue())
 
     assert list(channel.receive()) == []
     assert channel.received == 0
@@ -305,7 +305,7 @@ def test_channel_receive_yields_a_burst_in_one_call():
     That capped every link at about 100 messages a second, so a run streaming
     step results would build latency it could never work off.
     """
-    channel = Channel(queue.Queue())
+    channel = QueueWrapper(queue.Queue())
     for index in range(10):
         channel.send(StatusChanged(text=str(index)))
 
@@ -316,7 +316,7 @@ def test_channel_receive_yields_a_burst_in_one_call():
 
 def test_channel_receive_stops_at_its_limit():
     """Bounded, so one busy link cannot starve the other queues in an event loop."""
-    channel = Channel(queue.Queue())
+    channel = QueueWrapper(queue.Queue())
     for index in range(10):
         channel.send(StatusChanged(text=str(index)))
 
@@ -327,7 +327,7 @@ def test_channel_receive_stops_at_its_limit():
 
 def test_channel_receive_leaves_the_rest_queued_when_the_caller_stops_early():
     """A generator, so stopping early does not pay to dequeue the remainder."""
-    channel = Channel(queue.Queue())
+    channel = QueueWrapper(queue.Queue())
     for index in range(10):
         channel.send(StatusChanged(text=str(index)))
 
@@ -345,7 +345,7 @@ def test_channel_receive_does_not_drop_a_falsy_message():
         def __bool__(self):
             return False
 
-    channel = Channel(queue.Queue())
+    channel = QueueWrapper(queue.Queue())
     message = FalsyMessage()
     channel.send(message)
 
@@ -354,11 +354,11 @@ def test_channel_receive_does_not_drop_a_falsy_message():
 
 def test_channel_counts_what_it_carries():
     """
-    The counters are the channel's own, so anything holding it can read them -
+    The counters are the QueueWrapper's own, so anything holding it can read them -
     which a return value from receive() could only have given to the caller
     driving the loop.
     """
-    channel = Channel(queue.Queue())
+    channel = QueueWrapper(queue.Queue())
     for index in range(7):
         channel.send(StatusChanged(text=str(index)))
 
@@ -390,8 +390,8 @@ def unwrapped(instance, method_name):
 def core():
     """A Core wired to plain queues, so it spawns nothing."""
     return Core(
-        to_hmi=Channel(queue.Queue()),
-        from_hmi=Channel(queue.Queue()),
+        to_hmi=QueueWrapper(queue.Queue()),
+        from_hmi=QueueWrapper(queue.Queue()),
         log_queue=queue.Queue(),
         queue_factory=queue.Queue,
     )
@@ -399,7 +399,7 @@ def core():
 
 @pytest.fixture
 def sequencer():
-    return Sequencer(to_core=Channel(queue.Queue()), from_core=Channel(queue.Queue()))
+    return Sequencer(to_core=QueueWrapper(queue.Queue()), from_core=QueueWrapper(queue.Queue()))
 
 
 @pytest.fixture
@@ -411,15 +411,15 @@ def report(tmp_path):
     invent a config: outside a real run there is no launcher to have created one.
     """
     return Report(
-        to_core=Channel(queue.Queue()),
-        from_core=Channel(queue.Queue()),
+        to_core=QueueWrapper(queue.Queue()),
+        from_core=QueueWrapper(queue.Queue()),
         output_dir=tmp_path,
     )
 
 
 @pytest.fixture
 def hmi_client():
-    return HmiClient(to_core=Channel(queue.Queue()), from_core=Channel(queue.Queue()))
+    return HmiClient(to_core=QueueWrapper(queue.Queue()), from_core=QueueWrapper(queue.Queue()))
 
 
 @pytest.fixture
@@ -529,7 +529,7 @@ def test_stop_from_core_is_acknowledged(hmi_client):
     for a module that has already gone and is killed by the launcher instead.
     """
     outbox = queue.Queue()
-    hmi_client.core = Channel(outbox)
+    hmi_client.core = QueueWrapper(outbox)
 
     hmi_client.handle_core_message(StopHmi())
 
@@ -542,7 +542,7 @@ def test_requesting_shutdown_asks_core_rather_than_leaving(hmi_client):
     in order. Leaving on its own is what orphaned the Sequencer and the Report.
     """
     outbox = queue.Queue()
-    hmi_client.core = Channel(outbox)
+    hmi_client.core = QueueWrapper(outbox)
 
     hmi_client.request_shutdown()
 

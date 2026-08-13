@@ -50,8 +50,8 @@ from pypts.logger.log import (
     parse_log_level,
     set_stdout_logging_enabled,
 )
-from pypts.messages import Channel
-from pypts.messages.logger_link import SetStdoutEnabled, StopLogger
+from pypts.messages import QueueWrapper
+from pypts.messages.to_logger_link import SetStdoutEnabled, StopLogger
 
 # Matches one line written by the Logger, i.e. the LOG_FORMAT in log.py:
 #   2026-08-11 09:37:00.958;INFO;Core;core.py:start;Starting module...
@@ -132,7 +132,7 @@ def running_logger(tmp_path):
     yield log_queue, log_file, process
 
     if process.is_alive():
-        Channel(log_queue).send(StopLogger())
+        QueueWrapper(log_queue).send(StopLogger())
         process.join(timeout=10)
     if process.is_alive():
         process.terminate()
@@ -145,7 +145,7 @@ def running_logger(tmp_path):
 
 def stop_logger(log_queue, process, timeout=20):
     """Ask the Logger to stop and wait until it has drained and closed the file."""
-    Channel(log_queue).send(StopLogger())
+    QueueWrapper(log_queue).send(StopLogger())
     process.join(timeout=timeout)
     assert not process.is_alive(), "Logger did not stop within the timeout"
 

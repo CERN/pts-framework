@@ -13,7 +13,7 @@ What it no longer does is cache the *first caller's* module name: the source it
 reports is now resolved from the decorated function at decoration time, which
 is what test_catch_and_report_errors_detects_the_module_per_function pins down.
 
-poll_queue is gone. Reading a queue is Channel.receive now, and it is covered in
+poll_queue is gone. Reading a queue is channel.receive now, and it is covered in
 test_messages.py alongside the rest of the transport.
 """
 
@@ -21,7 +21,7 @@ import queue
 
 import pytest
 
-from pypts.messages import Channel
+from pypts.messages import QueueWrapper
 from pypts.messages.common import ErrorSeverity, Heartbeat, ModuleError
 from pypts.utilities.common import convert_string_to_int
 from pypts.utilities.error_handling import catch_and_report_errors
@@ -34,7 +34,7 @@ class FakeModule:
     """The minimum a decorated class has to look like: something with `core`."""
 
     def __init__(self, outbox):
-        self.core = Channel(outbox)
+        self.core = QueueWrapper(outbox)
 
     @catch_and_report_errors()
     def explode(self):
@@ -75,7 +75,7 @@ def test_catch_and_report_errors_lets_an_explicit_module_name_win():
 
     class Named:
         def __init__(self):
-            self.core = Channel(outbox)
+            self.core = QueueWrapper(outbox)
 
         @catch_and_report_errors(module_name="pypts.hardware_layer.hal")
         def explode(self):
@@ -93,7 +93,7 @@ def test_heartbeat_manager_respects_its_interval():
     so the interval is the only thing keeping the link quiet.
     """
     outbox: queue.Queue = queue.Queue()
-    manager = HeartbeatManager(Channel(outbox), "sequencer", interval_s=60.0)
+    manager = HeartbeatManager(QueueWrapper(outbox), "sequencer", interval_s=60.0)
 
     for _ in range(10):
         manager.tick()
@@ -112,7 +112,7 @@ def test_heartbeat_manager_sends_again_once_the_interval_has_passed():
     twice would be asserting the resolution of the clock, not the behaviour.
     """
     outbox: queue.Queue = queue.Queue()
-    manager = HeartbeatManager(Channel(outbox), "report", interval_s=60.0)
+    manager = HeartbeatManager(QueueWrapper(outbox), "report", interval_s=60.0)
 
     manager.tick()
     manager.last_sent -= 120.0  # pretend two minutes went by

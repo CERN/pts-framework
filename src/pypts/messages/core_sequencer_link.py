@@ -7,7 +7,7 @@ The CORE <-> Sequencer link.
 
 Two processes today, two threads in one process after the roadmap's topology
 change. Neither end knows the difference: the launcher decides which queue type
-the Channel wraps.
+the QueueWrapper wraps.
 
 Most of the traffic is the run-progress events in run_events.py. The Sequencer
 emits them, CORE forwards them to the HMI unchanged, and CORE reacts to the ones

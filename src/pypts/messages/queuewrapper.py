@@ -5,32 +5,37 @@
 """
 The one transport in the framework.
 
-A Channel is a typed, one-way pipe with two operations: send() puts one message
-in, receive() yields the ones waiting. Whoever holds it can only send messages
-belonging to the link it was created for, and the recipient handles what it
-receives with a `match` that the type checker verifies is complete.
+A QueueWrapper is a typed, one-way pipe with two operations: send() puts one
+message in, receive() yields the ones waiting. Whoever holds it can only send
+messages belonging to the link it was created for, and the recipient handles
+what it receives with a `match` that the type checker verifies is complete.
 
 Nothing ever blocks on a queue. Each module runs an event loop that polls its
 inboxes, so receive() takes what is there at that moment and returns; a message
 sent between two ticks simply arrives on the next one.
 
-The Channel wraps *any* object offering `put()` and `get_nowait()`. That is
-deliberate, and it is what keeps the roadmap's thread migration cheap:
+The wrapper takes *any* object offering `put()` and `get_nowait()`, which is the
+whole reason the same class serves a process boundary and a thread boundary:
 
-  - today the launcher and CORE hand out `multiprocessing.Queue`;
-  - once Sequencer and Report become threads inside the engine process, the
-    launcher hands out `queue.Queue` instead;
+  - the launcher hands out `multiprocessing.Queue` for HMI <-> CORE, the one
+    boundary that is still a process boundary;
+  - CORE hands out `queue.Queue` to the Sequencer and the Report, which are
+    threads inside its own process;
   - a future `--mode connect` can hand out a socket-backed queue-alike.
 
 No module ever learns which one it holds, so none of them has to change.
 
-Every channel traces itself. send() and receive() each log one DEBUG line, so a
-run log at DEBUG contains every message in the system twice - once named by the
-process that sent it, once by the process that took it off the queue. That pair
-is the point: a message that was sent and never received is the failure worth
-seeing, and it is invisible to anything that only logs on arrival. Because the
-trace sits on the one object every message already passes through, no module has
-to remember to log anything, and no message can be added that escapes it.
+Every wrapper traces itself. send() and receive() each log one DEBUG line, so a
+run log at DEBUG contains every message in the system twice - once where it was
+sent, once where it was taken off the queue. That pair is the point: a message
+that was sent and never received is the failure worth seeing, and it is
+invisible to anything that only logs on arrival. Because the trace sits on the
+one object every message already passes through, no module has to remember to
+log anything, and no message can be added that escapes it.
+
+The trace line names the *link*, not the sender. That is now the only thing
+identifying the Sequencer and the Report in the run log at all: they are threads
+of the Core process, so `%(processName)s` says "Core" for their records too.
 """
 
 import logging
@@ -38,7 +43,7 @@ from collections.abc import Iterator
 from queue import Empty
 from typing import Generic, Never, NoReturn, TypeVar
 
-# The union of messages this channel carries, e.g. Channel[HmiToCore].
+# The union of messages this wrapper carries, e.g. QueueWrapper[HmiToCore].
 Msg = TypeVar("Msg")
 
 #: The message trace. Its own logger name rather than the root, so that the
@@ -81,13 +86,13 @@ def unhandled(message: Never) -> NoReturn:
     raise UnhandledMessage(f"No handler for message: {message!r}")
 
 
-class Channel(Generic[Msg]):
+class QueueWrapper(Generic[Msg]):
     """
     A typed handle on one direction of one link.
 
     Built by whoever owns the link and passed to the module that uses it - the
     launcher builds the HMI <-> CORE pair, CORE builds its links to the
-    Sequencer and the Report. A module therefore cannot invent a channel to
+    Sequencer and the Report. A module therefore cannot invent a link to
     somebody it has no business talking to: the topology is enforced by
     construction rather than by convention.
     """
@@ -101,30 +106,31 @@ class Channel(Generic[Msg]):
         Args:
             queue: anything with `put()` and `get_nowait()` - see the module
                    docstring for why the type is not pinned down here.
-            link: the name of the direction this channel is, one of the
-                  constants in links.py. A Channel is otherwise anonymous, so
-                  this is the only thing that makes its trace lines
-                  interpretable - an unnamed channel traces as "?". Keyword-only
-                  so that the ordinary `Channel(queue)` construction, which
+            link: the name of the direction this wrapper is, one of the
+                  constants in links.py. A QueueWrapper is otherwise anonymous,
+                  so this is the only thing that makes its trace lines
+                  interpretable - an unnamed one traces as "?". Keyword-only so
+                  that the ordinary `QueueWrapper(queue)` construction, which
                   tests use, stays as short as it was.
         """
         self._queue = queue
         self.link = link
 
-        #: How many messages this channel has carried, since construction.
+        #: How many messages this wrapper has carried, since construction.
         #:
         #: Counted here rather than returned from receive(), so that the number
-        #: is available to anything holding the channel instead of only to the
-        #: caller that happened to drive the loop.
+        #: is available to anything holding it instead of only to the caller
+        #: that happened to drive the loop.
         #:
-        #: IMPORTANT: these are per-process. A Channel handed to a child process
-        #: is pickled, and the child increments its own copy. That is not a
-        #: defect but the useful reading: a channel is one direction, so `sent`
-        #: is meaningful in the process that sends on it and `received` in the
-        #: process that reads it, and neither is a number the other could have
-        #: produced. For a whole-system view, read the trace in the run log:
-        #: every channel logs both its sends and its receives, and the Logger
-        #: writes all of them to one file whichever process they came from.
+        #: IMPORTANT: these belong to the holder, not to the link. A wrapper
+        #: handed to a child *process* is pickled and the child increments its
+        #: own copy; the Sequencer and the Report are threads, so they share
+        #: CORE's object and both counters are meaningful in one place. Either
+        #: way a wrapper is one direction, so `sent` is the number for whoever
+        #: sends on it and `received` for whoever reads it. For a whole-system
+        #: view, read the trace in the run log: every wrapper logs both its
+        #: sends and its receives, and the Logger writes all of them to one file
+        #: wherever they came from.
         self.sent = 0
         self.received = 0
 

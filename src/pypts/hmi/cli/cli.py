@@ -15,9 +15,9 @@ import time
 
 from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import log
-from pypts.messages import Channel
+from pypts.messages import QueueWrapper
 from pypts.messages.common import ModuleError, ResultType, StepOutcome
-from pypts.messages.hmi_link import CoreToHmi, HmiToCore
+from pypts.messages.core_hmi_link import CoreToHmi, HmiToCore
 
 #: Seconds between polls of the CORE inbox, in the background thread.
 POLL_INTERVAL_S = 0.05
@@ -25,7 +25,7 @@ POLL_INTERVAL_S = 0.05
 HELP_TEXT = "Available commands: start_sequence <name>, load_recipe <path>, status, exit, help"
 
 
-def cli_main(to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi]) -> None:
+def cli_main(to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]) -> None:
     """
     Entry point. Unlike the GUI this runs in the launcher's own process, so
     logging is already initialised by the time it is called.
@@ -40,7 +40,7 @@ class CLI(HmiClient):
     operator is still deciding what to type.
     """
 
-    def __init__(self, to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi]) -> None:
+    def __init__(self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]) -> None:
         super().__init__(to_core, from_core)
         self.status = "Idle"
         self._lock = threading.Lock()  # guards `status` across the two threads

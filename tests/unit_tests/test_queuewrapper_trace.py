@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-Unit tests for the message trace (src/pypts/messages/channel.py).
+Unit tests for the message trace (src/pypts/messages/queuewrapper.py).
 
 The trace is the whole-system view of the framework. Core <-> Sequencer and
 Core <-> Report never leave the engine process, so a run log at DEBUG is the
@@ -26,16 +26,16 @@ import queue
 
 import pytest
 
-from pypts.messages import Channel
-from pypts.messages.hmi_link import StatusChanged
+from pypts.messages import QueueWrapper
+from pypts.messages.core_hmi_link import StatusChanged
 from pypts.messages.links import CORE_TO_HMI
 
 TRACE_LOGGER = "pypts.trace"
 
 
-def build_channel(link: str = CORE_TO_HMI) -> Channel:
-    """A channel over a plain in-process queue - no processes, no launcher."""
-    return Channel(queue.Queue(), link=link)
+def build_channel(link: str = CORE_TO_HMI) -> QueueWrapper:
+    """A QueueWrapper over a plain in-process queue - no processes, no launcher."""
+    return QueueWrapper(queue.Queue(), link=link)
 
 
 def trace_lines(caplog) -> list[str]:
@@ -202,8 +202,8 @@ def test_a_failing_log_queue_does_not_stop_the_message(broken_log_queue_handler)
 
 
 def test_an_unnamed_channel_still_delivers(caplog):
-    """`Channel(queue)` with no link is legal, and traces as "?" rather than raising."""
-    channel = Channel(queue.Queue())
+    """`QueueWrapper(queue)` with no link is legal, and traces as "?" rather than raising."""
+    channel = QueueWrapper(queue.Queue())
 
     with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
         channel.send(StatusChanged("ready"))

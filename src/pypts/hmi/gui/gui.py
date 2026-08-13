@@ -17,17 +17,17 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QW
 
 from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
-from pypts.messages import Channel
+from pypts.messages import QueueWrapper
 from pypts.messages.common import ModuleError, ResultType, StepOutcome
-from pypts.messages.hmi_link import CoreToHmi, HmiToCore
+from pypts.messages.core_hmi_link import CoreToHmi, HmiToCore
 
 #: Milliseconds between polls of the CORE inbox.
 POLL_INTERVAL_MS = 50
 
 
 def gui_main(
-    to_core: Channel[HmiToCore],
-    from_core: Channel[CoreToHmi],
+    to_core: QueueWrapper[HmiToCore],
+    from_core: QueueWrapper[CoreToHmi],
     log_queue,
     log_level: int = DEFAULT_LOG_LEVEL,
 ) -> None:
@@ -53,7 +53,7 @@ class GUI(HmiClient):
     keeps protocol and presentation in separate objects anyway.
     """
 
-    def __init__(self, to_core: Channel[HmiToCore], from_core: Channel[CoreToHmi]) -> None:
+    def __init__(self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]) -> None:
         super().__init__(to_core, from_core)
         log.info("Starting module...")
 

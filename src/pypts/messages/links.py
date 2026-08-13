@@ -6,10 +6,10 @@
 The name of every direction in the framework.
 
 One string per link, defined once so that the launcher, CORE and anyone reading
-a log cannot drift apart on spelling. They are given to `Channel(link=...)` by
-whoever builds the channel, and they are what a trace line is identified by:
+a log cannot drift apart on spelling. They are given to `QueueWrapper(link=...)` by
+whoever builds the QueueWrapper, and they are what a trace line is identified by:
 
-    ...;DEBUG;Core;channel.py:send;send core->sequencer RunSequence(...)
+    ...;DEBUG;Core;queuewrapper.py:send;send core->sequencer RunSequence(...)
 
 so `grep 'sequencer->core' pypts_*.log` is the whole-system view of one link.
 
@@ -25,5 +25,5 @@ CORE_TO_REPORT = "core->report"
 REPORT_TO_CORE = "report->core"
 
 #: Not a link between two modules but the one path out of every process, so it
-#: is named here with the rest rather than being the one anonymous channel.
+#: is named here with the rest rather than being the one anonymous QueueWrapper.
 ANY_TO_LOGGER = "any->logger"

@@ -5,17 +5,18 @@
 """
 The Report module - builds and exports the artefacts of a run.
 
-The event loop and the link to CORE are real; generation is not. The CSV and
-HTML logic to be ported lives in old_code/report.py (roadmap Phase 1).
+Runs as a thread of the Core process. The event loop and the link to CORE are
+real; generation is not. The CSV and HTML logic to be ported lives in
+old_code/report.py (roadmap Phase 1).
 """
 
 import time
 from pathlib import Path
 
 from pypts.config_handler import ConfigHandler
-from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
-from pypts.messages import Channel, unhandled
-from pypts.messages.report_link import (
+from pypts.logger.log import log
+from pypts.messages import QueueWrapper, unhandled
+from pypts.messages.core_report_link import (
     CoreToReport,
     ExportReport,
     GenerateReport,
@@ -31,17 +32,17 @@ MODULE_NAME = "report"
 
 
 def report_main(
-    to_core: Channel[ReportToCore],
-    from_core: Channel[CoreToReport],
-    log_queue,
-    log_level: int = DEFAULT_LOG_LEVEL,
+    to_core: QueueWrapper[ReportToCore],
+    from_core: QueueWrapper[CoreToReport],
 ) -> None:
     """
-    Entry point called by CORE. Runs in the Report process.
+    Entry point called by CORE. Runs on the Report thread.
 
-    Log records are routed to the Logger before anything is logged.
+    Deliberately does not call init_logging(), for the reason given in
+    sequencer.py: the root logger belongs to the Core process, and this thread
+    shares it. It also means `ConfigHandler()` below returns CORE's instance
+    rather than building a second one.
     """
-    init_logging(log_queue, log_level)
     Report(to_core, from_core).start()
 
 
@@ -56,8 +57,8 @@ class Report:
 
     def __init__(
         self,
-        to_core: Channel[ReportToCore],
-        from_core: Channel[CoreToReport],
+        to_core: QueueWrapper[ReportToCore],
+        from_core: QueueWrapper[CoreToReport],
         output_dir: Path | None = None,
     ) -> None:
         """

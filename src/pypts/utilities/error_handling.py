@@ -17,7 +17,7 @@ def catch_and_report_errors(module_name: str | None = None):
     Catch exceptions raised by a method and report them to CORE as a ModuleError.
 
     The decorated method must belong to a class with a `core` attribute holding
-    that module's outbox channel - every module except CORE itself, which is the
+    that module's outbox to CORE - every module except CORE itself, which is the
     thing errors are reported *to*.
 
     Args:

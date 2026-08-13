@@ -60,7 +60,7 @@ class Heartbeat:
     """
     Proof that a module's event loop is still turning.
 
-    `source` looks redundant - CORE already knows which channel it drained the
+    `source` looks redundant - CORE already knows which link it drained the
     message from - but it lets one handler serve all three links instead of
     three handlers that differ only in a dict key, and it survives being
     forwarded or logged out of context.

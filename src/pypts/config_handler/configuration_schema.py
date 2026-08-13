@@ -88,7 +88,10 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "reports_dir": Field("path", derived=True),
     },
     "logging": {
-        "level": Field("str", "INFO", choices=LOG_LEVELS),
+        # DEBUG for the duration of the refactor, so every run carries the
+        # message trace and the Debug Monitor always has something to read.
+        # This reverts to INFO before v1.0 - see the TODO in the roadmap.
+        "level": Field("str", "DEBUG", choices=LOG_LEVELS),
     },
     "report": {
         "type": Field("str", "html", choices=("html", "csv")),

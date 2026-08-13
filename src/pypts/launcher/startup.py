@@ -10,9 +10,12 @@ frontend, and it is the parent of all of them. It must stay the simplest
 component in the system, because it is the one that has to survive anything the
 others do.
 
-It also builds the HMI <-> CORE channels. Which queue type they wrap is decided
-here and nowhere else, which is what makes the roadmap's thread migration a
-change to this file alone.
+The tree is three processes in GUI mode - launcher, Logger, CORE, plus the GUI -
+and two in CLI mode, where the CLI runs here in the launcher's own process. The
+Sequencer and the Report are not among them: they are threads inside CORE.
+
+It also builds the HMI <-> CORE links, the only pair that still crosses a
+process boundary and therefore the only pair whose messages are pickled.
 """
 
 import argparse
@@ -25,10 +28,10 @@ from pypts.core.core import core_main
 from pypts.hmi.cli.cli import cli_main
 from pypts.hmi.gui.gui import gui_main
 from pypts.logger.log import init_logging, log, logger_main, parse_log_level
-from pypts.messages import Channel
-from pypts.messages.hmi_link import CoreToHmi, HmiStopped, HmiToCore, ShutdownRequested
+from pypts.messages import QueueWrapper
+from pypts.messages.core_hmi_link import CoreToHmi, HmiStopped, HmiToCore, ShutdownRequested
 from pypts.messages.links import ANY_TO_LOGGER, CORE_TO_HMI, HMI_TO_CORE
-from pypts.messages.logger_link import LoggerControl, StopLogger
+from pypts.messages.to_logger_link import LoggerControl, StopLogger
 from pypts.utilities.local_storage import get_log_file_path
 
 #: How long CORE gets to shut itself down cleanly before it is killed.
@@ -109,14 +112,14 @@ def main() -> None:
     )
     logger_process.start()
 
-    logger_control: Channel[LoggerControl] = Channel(log_queue, link=ANY_TO_LOGGER)
+    logger_control: QueueWrapper[LoggerControl] = QueueWrapper(log_queue, link=ANY_TO_LOGGER)
     init_logging(log_queue, log_level)
 
-    # The one process boundary in the framework. Swapping Queue() for
-    # queue.Queue() here is all it takes to run CORE's submodules as threads;
-    # no module below ever learns which one it holds.
-    to_core: Channel[HmiToCore] = Channel(Queue(), link=HMI_TO_CORE)
-    to_hmi: Channel[CoreToHmi] = Channel(Queue(), link=CORE_TO_HMI)
+    # The one process boundary in the framework, and so the only place a
+    # multiprocessing queue is still needed. CORE builds its own links out of
+    # queue.Queue, because the modules on the other end are its own threads.
+    to_core: QueueWrapper[HmiToCore] = QueueWrapper(Queue(), link=HMI_TO_CORE)
+    to_hmi: QueueWrapper[CoreToHmi] = QueueWrapper(Queue(), link=CORE_TO_HMI)
 
     core_process = None
     try:
@@ -179,14 +182,14 @@ def main() -> None:
             logger_process.terminate()
 
 
-def stop_core(core_process: Process | None, to_core: Channel[HmiToCore]) -> None:
+def stop_core(core_process: Process | None, to_core: QueueWrapper[HmiToCore]) -> None:
     """
     Bring CORE down, asking before killing.
 
     The launcher has just joined the frontend, so it can state as fact that the
     HMI has stopped - CORE would otherwise wait for an acknowledgement from a
     process that no longer exists. It then asks for shutdown on the same
-    channel, because CORE having exactly one shutdown path is worth more than
+    link, because CORE having exactly one shutdown path is worth more than
     the launcher having a link of its own.
 
     terminate() stays, but only as the timeout fallback it should always have

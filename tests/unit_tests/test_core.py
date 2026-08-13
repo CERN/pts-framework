@@ -44,11 +44,11 @@ def build_core_that_spawns_nothing():
     This is what the queue_factory seam is for - see Core.__init__.
     """
     from pypts.core.core import Core
-    from pypts.messages import Channel
+    from pypts.messages import QueueWrapper
 
     return Core(
-        to_hmi=Channel(queue.Queue()),
-        from_hmi=Channel(queue.Queue()),
+        to_hmi=QueueWrapper(queue.Queue()),
+        from_hmi=QueueWrapper(queue.Queue()),
         log_queue=queue.Queue(),
         queue_factory=queue.Queue,
     )
@@ -153,6 +153,95 @@ def test_module_error_events_are_aggregated_not_swallowed():
     ...
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_core_stops_when_all_modules_have_exited():
-    ...
+def test_core_stops_when_all_modules_have_exited(caplog):
+    """The clean path: everyone answered, so CORE leaves and says so."""
+    core = build_core_that_spawns_nothing()
+
+    with caplog.at_level(logging.INFO):
+        core.stop_all_modules()
+        for name in core.module_running:
+            core.module_running[name] = False
+        core.check_stop_status()
+
+    assert core.running is False
+    assert any("All modules stopped cleanly" in r.message for r in caplog.records)
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_core_keeps_waiting_while_a_module_is_still_running():
+    """Inside the budget, a module that has not answered yet is not late."""
+    from pypts.core.core import SEQUENCER
+
+    core = build_core_that_spawns_nothing()
+
+    core.stop_all_modules()
+    for name in core.module_running:
+        core.module_running[name] = False
+    core.module_running[SEQUENCER] = True
+
+    core.check_stop_status()
+
+    assert core.running is True
+
+
+def test_a_module_that_never_answers_does_not_hold_core_forever(caplog):
+    """
+    The whole point of the deadline. Before it, a module that died without
+    reporting left CORE in its loop until the launcher terminated the process -
+    which took the log with it, losing the one fact worth keeping.
+    """
+    from pypts.core.core import REPORT, SEQUENCER
+
+    core = build_core_that_spawns_nothing()
+
+    core.stop_all_modules()
+    for name in core.module_running:
+        core.module_running[name] = False
+    core.module_running[SEQUENCER] = True
+    core.module_running[REPORT] = True
+
+    # Pretend the budget has already run out, rather than sleeping through it.
+    core.shutdown_deadline = time.time() - 1
+
+    with caplog.at_level(logging.ERROR):
+        core.check_stop_status()
+
+    assert core.running is False
+
+    abandoned = [r for r in caplog.records if "abandoned" in r.message]
+    assert len(abandoned) == 1, f"expected one error, got {len(abandoned)}"
+    # Naming them is most of the value: "something hung" is not actionable.
+    assert SEQUENCER in abandoned[0].message
+    assert REPORT in abandoned[0].message
+
+
+def test_the_shutdown_budget_starts_when_the_stop_is_requested():
+    """
+    Not at the first unanswered check, or the budget would cover only the tail
+    of a shutdown rather than the whole of it.
+    """
+    from pypts.core.core import Core
+
+    core = build_core_that_spawns_nothing()
+
+    assert core.shutdown_deadline is None
+
+    before = time.time()
+    core.stop_all_modules()
+
+    assert core.shutdown_deadline is not None
+    assert before + Core.SHUTDOWN_TIMEOUT_S <= core.shutdown_deadline <= time.time() + Core.SHUTDOWN_TIMEOUT_S
+
+
+def test_a_module_still_running_before_any_stop_request_is_not_abandoned():
+    """
+    No stop asked for means no deadline. A CORE sitting idle in a long run must
+    never decide on its own that the modules are late to a shutdown nobody
+    requested.
+    """
+    core = build_core_that_spawns_nothing()
+
+    core.check_stop_status()
+
+    assert core.running is True
+    assert core.shutdown_deadline is None

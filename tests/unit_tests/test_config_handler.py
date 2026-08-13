@@ -23,6 +23,7 @@ process rewrote it once per run.
 
 import configparser
 import logging
+import re
 import threading
 
 import pytest
@@ -39,6 +40,20 @@ from pypts.config_handler.config_handler import (
     _read_template,
 )
 from pypts.config_handler.configuration_schema import CONFIG_VERSION, SCHEMA, Field
+
+
+def with_log_level(text: str, level: str) -> str:
+    """
+    Rewrite the `[logging] level` line, whatever it currently says.
+
+    Matched on the key rather than on the shipped value, because that value is
+    deliberately not stable: it is DEBUG while the framework is being refactored
+    and goes back to INFO before v1.0. Tests that patched the literal
+    `level = INFO` broke the day it changed, which told us nothing about the
+    config handler and everything about the test.
+    """
+    return re.sub(r"^level = .*$", f"level = {level}", text, count=1, flags=re.MULTILINE)
+
 
 #: A pre-versioned config.ini, as the previous implementation wrote it. The
 #: logs_dir is deliberately not the default: migration has to keep it.
@@ -142,7 +157,8 @@ def test_a_reader_will_not_create_the_file(config_path):
 def test_values_come_back_as_their_declared_type(config):
     assert config.get_parameter("gui.window_width") == 1280
     assert config.get_parameter("hardware.example_device.timeout_s") == 5.0
-    assert config.get_parameter("logging.level") == "INFO"
+    # DEBUG while the refactor is on - see the note in config_template.ini.
+    assert config.get_parameter("logging.level") == "DEBUG"
     assert config.get_parameter("paths.logs_dir").is_absolute()
 
 
@@ -251,7 +267,7 @@ def test_the_writer_writes_and_the_value_survives_a_restart(config, config_path)
 def test_user_edits_survive_a_restart(config, config_path):
     """The file is the user's. Editing it by hand is the supported way in."""
     config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace("level = INFO", "level = ERROR"),
+        with_log_level(config_path.read_text(encoding="utf-8"), "ERROR"),
         encoding="utf-8",
     )
 
@@ -307,7 +323,7 @@ def test_a_value_of_the_wrong_type_is_refused_by_name(config, config_path):
 
 def test_a_value_outside_the_allowed_set_is_refused(config, config_path):
     config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace("level = INFO", "level = CHATTY"),
+        with_log_level(config_path.read_text(encoding="utf-8"), "CHATTY"),
         encoding="utf-8",
     )
     ConfigHandler.reset_for_testing()
