@@ -16,8 +16,8 @@ import time
 from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper
-from pypts.messages.common import ModuleError, ResultType, StepOutcome
-from pypts.messages.core_hmi_link import CoreToHmi, HmiToCore
+from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
+from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore
 
 #: Seconds between polls of the CORE inbox, in the background thread.
 POLL_INTERVAL_S = 0.05
@@ -40,16 +40,17 @@ class CLI(HmiClient):
     operator is still deciding what to type.
     """
 
-    def __init__(self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]) -> None:
+    def __init__(
+        self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]
+    ) -> None:
         super().__init__(to_core, from_core)
         self.status = "Idle"
         self._lock = threading.Lock()  # guards `status` across the two threads
-        log.info("Starting module...")
 
     # --- Shell ----------------------------------------------------------------
 
     def run(self) -> None:
-        log.info("Starting CLI module...")
+        log.info("Starting module.")
         polling_thread = threading.Thread(target=self._poll_loop, name="cli-poll", daemon=True)
         polling_thread.start()
 
@@ -70,7 +71,7 @@ class CLI(HmiClient):
         # ends. Bounded, so a wedged CORE cannot hang the exit.
         self.wait_until_stopped()
         polling_thread.join(timeout=1.0)
-        log.info("CLI module stopped.")
+        log.info("Module stopped.")
 
     def _command_loop(self) -> None:
         """
@@ -81,8 +82,15 @@ class CLI(HmiClient):
         only notices after the next Enter.
         """
         while self.running:
+            # One split, so `parts` is either empty, [command] or
+            # [command, argument] - the commands below take at most one argument.
             parts = input("pypts> ").strip().split(maxsplit=1)
-            match parts[0].lower() if parts else "":
+            if parts:
+                command = parts[0].lower()
+            else:
+                command = ""
+
+            match command:
                 case "exit" | "quit" | "stop":
                     print("Shutting down...")
                     self.request_shutdown()
@@ -119,11 +127,11 @@ class CLI(HmiClient):
     def show_status(self, text: str) -> None:
         with self._lock:
             self.status = text
-        log.info(f"status update: {text}")
+        log.info("status update: %s", text)
         print(f"Status updated: {text}")
 
     def show_error(self, error: ModuleError) -> None:
-        log.error(f"{error.source}: {error.message}")
+        log.error("%s: %s", error.source, error.message)
         print(f"ERROR [{error.source}] {error.message}")
 
     def show_recipe_loaded(self, recipe_name: str, recipe_version: str) -> None:
@@ -140,7 +148,9 @@ class CLI(HmiClient):
 
     def show_step_finished(self, outcome: StepOutcome) -> None:
         line = f"    {outcome.step_name}: {outcome.result}"
-        print(f"{line} - {outcome.error_info}" if outcome.error_info else line)
+        if outcome.error_info:
+            line = f"{line} - {outcome.error_info}"
+        print(line)
 
     def on_stop(self) -> None:
         print("Goodbye!")

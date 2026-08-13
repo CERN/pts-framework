@@ -16,7 +16,7 @@ from pathlib import Path
 from pypts.config_handler import ConfigHandler
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
-from pypts.messages.core_report_link import (
+from pypts.messages.core_report_communication import (
     CoreToReport,
     ExportReport,
     GenerateReport,
@@ -25,10 +25,12 @@ from pypts.messages.core_report_link import (
     StopReport,
 )
 from pypts.utilities.error_handling import catch_and_report_errors
-from pypts.utilities.heartbeat_manager import HeartbeatManager
+from pypts.utilities.heartbeat_manager import REPORT, HeartbeatManager
 
 #: The name CORE knows this module by, and the `source` on its heartbeats.
-MODULE_NAME = "report"
+#: Imported rather than spelled again: CORE keys its liveness tables on the
+#: same string, and nothing would catch the two drifting apart.
+MODULE_NAME = REPORT
 
 
 def report_main(
@@ -70,20 +72,19 @@ class Report:
         self.inbox = from_core
         self.running = True
         self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
-        self.output_dir = (
-            Path(output_dir)
-            if output_dir is not None
-            else ConfigHandler().get_parameter("paths.reports_dir")
-        )
+        if output_dir is not None:
+            self.output_dir = Path(output_dir)
+        else:
+            self.output_dir = ConfigHandler().get_parameter("paths.reports_dir")
 
     @catch_and_report_errors()
     def start(self) -> None:
-        log.info("Starting module...")
+        log.info("Starting module.")
         # Stated once, at startup, because "where did my report go" is asked
         # after the run, when the answer is no longer on screen.
         log.info("Reports will be written to: %s", self.output_dir)
         self.main_loop()
-        log.info("Stopping module...")
+        log.info("Module stopped.")
 
     @catch_and_report_errors()
     def main_loop(self) -> None:
@@ -92,7 +93,7 @@ class Report:
             self.poll_core()
             self.do_periodic_tasks()
             time.sleep(0.01)
-        log.info("exited main event loop.")
+        log.info("Left main event loop.")
 
     @catch_and_report_errors()
     def poll_core(self) -> None:
@@ -141,5 +142,5 @@ class Report:
     @catch_and_report_errors()
     def stop(self) -> None:
         self.running = False
-        log.info("stopping module")
+        log.info("Stopping module.")
         self.core.send(ReportStopped())

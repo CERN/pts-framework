@@ -43,5 +43,8 @@ def get_log_file_path(logs_dir) -> str:
     """
     ensure_folder_exists(logs_dir)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Naive local time, deliberately: the Logger writes local time with no offset
+    # and the Debug Monitor parses it back the same way, so a UTC file name would
+    # be the one timestamp in the system that did not match the others.
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
     return str(Path(logs_dir) / f"{LOG_FILE_PREFIX}_{timestamp}.log")

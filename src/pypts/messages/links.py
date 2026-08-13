@@ -9,7 +9,7 @@ One string per link, defined once so that the launcher, CORE and anyone reading
 a log cannot drift apart on spelling. They are given to `QueueWrapper(link=...)` by
 whoever builds the QueueWrapper, and they are what a trace line is identified by:
 
-    ...;DEBUG;Core;queuewrapper.py:send;send core->sequencer RunSequence(...)
+    ...;DEBUG;Core;queue_wrapper.py:send;send core->sequencer RunSequence(...)
 
 so `grep 'sequencer->core' pypts_*.log` is the whole-system view of one link.
 

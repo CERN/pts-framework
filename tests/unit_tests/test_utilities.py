@@ -5,26 +5,31 @@
 """
 Unit tests for src/pypts/utilities/.
 
-catch_and_report_errors still swallows the exception and returns None, and it
-still assumes `self.core` exists. Both remain Phase 0 items and must be covered
-before the sequencer executes real steps, otherwise step failures go silent.
+There are two error decorators now, and which one a piece of code uses is the
+whole point. `catch_and_report_errors` reports and continues, for event loops,
+where a module that dies on one bad message takes the run with it.
+`report_and_reraise` reports and lets the exception through, for the execution
+layer, where a step whose failure is only a log line is a step the report will
+call PASS. That split closes the Phase 0 item; the tests below pin both halves
+and the case neither used to survive - a decorated object with no outbox.
 
-What it no longer does is cache the *first caller's* module name: the source it
-reports is now resolved from the decorated function at decoration time, which
-is what test_catch_and_report_errors_detects_the_module_per_function pins down.
+What the decorator no longer does is cache the *first caller's* module name: the
+source it reports is resolved from the decorated function at decoration time,
+which is what test_catch_and_report_errors_detects_the_module_per_function pins.
 
-poll_queue is gone. Reading a queue is channel.receive now, and it is covered in
+poll_queue is gone. Reading a queue is wrapper.receive now, and it is covered in
 test_messages.py alongside the rest of the transport.
 """
 
 import queue
+import traceback
 
 import pytest
 
 from pypts.messages import QueueWrapper
-from pypts.messages.common import ErrorSeverity, Heartbeat, ModuleError
+from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
 from pypts.utilities.common import convert_string_to_int
-from pypts.utilities.error_handling import catch_and_report_errors
+from pypts.utilities.error_handling import catch_and_report_errors, report_and_reraise
 from pypts.utilities.heartbeat_manager import HeartbeatManager
 
 PLACEHOLDER = "placeholder - test not implemented yet"
@@ -84,6 +89,88 @@ def test_catch_and_report_errors_lets_an_explicit_module_name_win():
     Named().explode()
 
     assert outbox.get_nowait().source == "pypts.hardware_layer.hal"
+
+
+def test_catch_and_report_errors_swallows_so_an_event_loop_survives():
+    """The loop has to come round again. That is the whole reason it swallows."""
+    outbox: queue.Queue = queue.Queue()
+
+    assert FakeModule(outbox).explode() is None
+
+
+def test_report_and_reraise_reports_and_then_lets_the_exception_through():
+    """
+    The execution layer's half. A step failure has to reach a StepResult, so the
+    caller must see the exception - after CORE has been told about it.
+    """
+    outbox: queue.Queue = queue.Queue()
+
+    class Step:
+        def __init__(self):
+            self.core = QueueWrapper(outbox)
+
+        @report_and_reraise()
+        def run(self):
+            raise ValueError("the DUT did not answer")
+
+    with pytest.raises(ValueError, match="the DUT did not answer"):
+        Step().run()
+
+    error = outbox.get_nowait()
+    assert isinstance(error, ModuleError)
+    assert error.message == "the DUT did not answer"
+    assert error.severity is ErrorSeverity.ERROR
+
+
+def test_report_and_reraise_keeps_the_original_traceback():
+    """
+    `raise` rather than `raise exc`, so the frame the failure happened in is
+    still in the traceback the step turns into a result.
+    """
+    outbox: queue.Queue = queue.Queue()
+
+    class Step:
+        def __init__(self):
+            self.core = QueueWrapper(outbox)
+
+        @report_and_reraise()
+        def run(self):
+            raise ValueError("boom")
+
+    with pytest.raises(ValueError) as caught:
+        Step().run()
+
+    frames = [frame.name for frame in traceback.extract_tb(caught.value.__traceback__)]
+    assert "run" in frames
+
+
+@pytest.mark.parametrize(
+    "decorator", [catch_and_report_errors, report_and_reraise], ids=["catch", "reraise"]
+)
+def test_an_object_with_no_outbox_is_logged_rather_than_masked(decorator, caplog):
+    """
+    A driver or a half-built object can be decorated without CORE existing.
+
+    Raising AttributeError from inside the error handler would replace the real
+    failure with a much less interesting one, which is exactly what used to
+    happen: the decorator reached for `self.core` unconditionally.
+    """
+    class NoOutbox:
+        """Deliberately has no `core` attribute."""
+
+        @decorator()
+        def run(self):
+            raise ValueError("boom")
+
+    with caplog.at_level("ERROR"):
+        if decorator is report_and_reraise:
+            with pytest.raises(ValueError, match="boom"):
+                NoOutbox().run()
+        else:
+            NoOutbox().run()
+
+    assert any("boom" in record.getMessage() for record in caplog.records)
+    assert any("has no outbox" in record.getMessage() for record in caplog.records)
 
 
 def test_heartbeat_manager_respects_its_interval():

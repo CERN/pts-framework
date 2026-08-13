@@ -20,7 +20,7 @@ apart, and both were spelled as if they were commands.
 
 from dataclasses import dataclass
 
-from pypts.messages.common import Heartbeat, ModuleError
+from pypts.messages.common_messages import Heartbeat, ModuleError
 from pypts.messages.run_events import (
     RecipeLoaded,
     RunFinished,

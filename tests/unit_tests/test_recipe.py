@@ -26,7 +26,6 @@ def test_recipe_is_parsed_from_yaml():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_recipe_is_data_only_and_carries_no_execution_logic():
     """The old Recipe mixed data, engine and events - the split is the point of the port."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -37,7 +36,6 @@ def test_required_header_fields_are_enforced():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_invalid_recipe_never_reaches_the_sequencer():
     """The verificator gates execution."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -48,4 +46,3 @@ def test_every_example_recipe_in_resources_parses():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_recipe_format_version_is_checked():
     """Open roadmap item: add format_version to the header before third party plugins ship."""
-    ...

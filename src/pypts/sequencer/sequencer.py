@@ -6,17 +6,36 @@
 The Sequencer - executes the sequences of a loaded recipe.
 
 Runs as a thread of the Core process. The event loop and the link to CORE are
-real; execution is not. run_sequence() is where the engine in old_code/ is going
-to land (roadmap Phase 1).
+real; execution is not. execute_sequence() is where the engine in old_code/ is
+going to land (roadmap Phase 1).
+
+**A sequence runs on a thread of its own, not on the event loop.** That shape is
+here before the engine is, because the engine cannot be dropped into the other
+one. If a sequence ran on the loop thread, then for as long as it lasted:
+
+  - do_periodic_tasks() would not run, so heartbeats would stop and CORE would
+    declare the Sequencer dead after HEARTBEAT_TIMEOUT_S - on every real run;
+  - StopSequence would sit unread in the inbox, so the abort path would be dead
+    exactly when it is wanted;
+  - UserPromptResponse would sit there too, and a step blocked in
+    PendingRequests.wait() would never be answered. That is the deadlock
+    blocking_messages.py warns about: the thread that calls wait() must not be
+    the thread that drains the inbox.
+
+So the loop thread only ever *starts* a sequence, and keeps turning while it
+runs. The two threads share the outbox to CORE; `QueueWrapper.send()` puts onto
+a `queue.Queue`, which is thread-safe, and its `sent` counter is a diagnostic
+that may under-count by a message under contention. The run log is the accurate
+whole-system view, as its docstring says.
 """
 
+import threading
 import time
 
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
-from pypts.messages.requests import PendingRequests
-from pypts.messages.run_events import SerialNumberResponse, UserPromptResponse
-from pypts.messages.core_sequencer_link import (
+from pypts.messages.blocking_messages import PendingRequests
+from pypts.messages.core_sequencer_communication import (
     CoreToSequencer,
     RunSequence,
     SequencerStopped,
@@ -24,11 +43,23 @@ from pypts.messages.core_sequencer_link import (
     StopSequence,
     StopSequencer,
 )
+from pypts.messages.run_events import SerialNumberResponse, UserPromptResponse
 from pypts.utilities.error_handling import catch_and_report_errors
-from pypts.utilities.heartbeat_manager import HeartbeatManager
+from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
 
 #: The name CORE knows this module by, and the `source` on its heartbeats.
-MODULE_NAME = "sequencer"
+#: Imported rather than spelled again: CORE keys its liveness tables on the
+#: same string, and nothing would catch the two drifting apart.
+MODULE_NAME = SEQUENCER
+
+#: How long stop() waits for a sequence that is still running.
+#:
+#: Deliberately below CORE's SHUTDOWN_TIMEOUT_S (5 s): the join happens on the
+#: event loop thread, so while it waits this module sends no heartbeats and
+#: answers nothing. Leaving CORE some of its budget means a Sequencer whose
+#: sequence will not stop still gets its SequencerStopped out, instead of being
+#: named in CORE's "did not stop in time" line for a reason nobody can see.
+SEQUENCE_JOIN_TIMEOUT_S = 2.0
 
 
 def sequencer_main(
@@ -53,20 +84,29 @@ class Sequencer:
               reports failures through it.
         inbox: commands from CORE.
         pending: questions this module has asked the operator and is waiting on.
+        stop_requested: set by StopSequence, read by the sequence thread between
+              steps. One writer, one reader, one bool - no lock needed.
+        sequence_thread: the thread a sequence is running on, or None if none
+              has been started yet.
     """
 
-    def __init__(self, to_core: QueueWrapper[SequencerToCore], from_core: QueueWrapper[CoreToSequencer]) -> None:
+    def __init__(
+        self,
+        to_core: QueueWrapper[SequencerToCore],
+        from_core: QueueWrapper[CoreToSequencer],
+    ) -> None:
         self.core = to_core
         self.inbox = from_core
         self.running = True
         self.stop_requested = False
         self.pending = PendingRequests()
         self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
+        self.sequence_thread: threading.Thread | None = None
 
     def start(self) -> None:
-        log.info("Starting module...")
+        log.info("Starting module.")
         self.main_loop()
-        log.info("Stopping module...")
+        log.info("Module stopped.")
 
     @catch_and_report_errors()
     def main_loop(self) -> None:
@@ -75,7 +115,7 @@ class Sequencer:
             self.poll_core()
             self.do_periodic_tasks()
             time.sleep(0.01)
-        log.info("exited main event loop.")
+        log.info("Left main event loop.")
 
     @catch_and_report_errors()
     def poll_core(self) -> None:
@@ -101,23 +141,73 @@ class Sequencer:
     @catch_and_report_errors()
     def run_sequence(self, sequence_name: str) -> None:
         """
-        Run one named sequence.
+        Start one named sequence, on a thread of its own, and return at once.
+
+        Runs on the event loop thread and must stay short: everything this
+        module does while a sequence runs - heartbeats, StopSequence, handing an
+        operator's answer to a waiting step - happens on the loop this returns
+        to. See the module docstring.
+
+        Raises:
+            RuntimeError: a sequence is already running. Refused rather than
+                queued: two sequences at once would interleave their progress
+                events, and the operator asked for something the module cannot
+                do. @catch_and_report_errors() turns this into a ModuleError, so
+                CORE hears about it and shows it.
+        """
+        if self.sequence_is_running():
+            raise RuntimeError(
+                f"Cannot start '{sequence_name}': a sequence is already running. "
+                f"Send StopSequence first."
+            )
+
+        # Cleared here rather than at the end of a run, so that a stop arriving
+        # after the previous sequence finished cannot abort the next one.
+        self.stop_requested = False
+
+        self.sequence_thread = threading.Thread(
+            target=self.execute_sequence,
+            name="Sequence",
+            args=(sequence_name,),
+            daemon=True,
+        )
+        self.sequence_thread.start()
+
+    def sequence_is_running(self) -> bool:
+        """Whether a sequence thread exists and has not finished."""
+        return self.sequence_thread is not None and self.sequence_thread.is_alive()
+
+    @catch_and_report_errors()
+    def execute_sequence(self, sequence_name: str) -> None:
+        """
+        Run one named sequence. **On the sequence thread, not the event loop.**
 
         Not implemented: this is where the Recipe/Step/Runtime engine from
         old_code/ gets ported. When it does, it emits the progress events in
-        messages/run_events.py as it goes, and answers with RunFinished.
+        messages/run_events.py as it goes, answers with RunFinished, and checks
+        `stop_requested` between steps.
+
+        It may block for as long as a run takes, and it may block *inside* a
+        step waiting for the operator through PendingRequests.wait() - both are
+        only safe because this is not the thread draining the inbox.
         """
-        log.warning(f"Cannot run '{sequence_name}': the execution engine is not ported yet.")
+        log.warning(
+            "Cannot run '%s': the execution engine is not ported yet.", sequence_name
+        )
 
     @catch_and_report_errors()
     def stop_sequence(self) -> None:
         """
         Abort the running sequence, keeping the module alive.
 
+        Sets the flag and returns; it does not wait. The sequence thread checks
+        `stop_requested` between steps, so the abort takes effect at the next
+        step boundary rather than in the middle of one - which is what lets a
+        step leave its hardware in a known state.
+
         CORE has always had a method to send this command; until now the
         Sequencer had no branch for it and would have logged it as unknown while
-        the sequence carried on. The flag is what the ported engine will check
-        between steps.
+        the sequence carried on.
         """
         log.info("Sequence stop requested.")
         self.stop_requested = True
@@ -125,6 +215,10 @@ class Sequencer:
     def deliver_response(self, message: UserPromptResponse | SerialNumberResponse) -> None:
         """
         Hand an operator's answer to the step waiting for it.
+
+        Runs on the event loop thread while the step is blocked in
+        PendingRequests.wait() on the sequence thread - which is the whole
+        reason the two are separate.
 
         A response nobody is waiting for means the two ends disagree about what
         is in flight - usually a request that already timed out - so it is worth
@@ -138,8 +232,8 @@ class Sequencer:
             case _:
                 unhandled(message)
 
-        if not self.pending.resolve(message.request_id, value):
-            log.warning(f"Nobody was waiting for response {message.request_id}")
+        if not self.pending.return_caller(message.request_id, value):
+            log.warning("Nobody was waiting for response %s", message.request_id)
 
     # --- Housekeeping ---------------------------------------------------------
 
@@ -149,6 +243,45 @@ class Sequencer:
 
     @catch_and_report_errors()
     def stop(self) -> None:
+        """
+        Shut the module down, bringing a running sequence with it.
+
+        SequencerStopped is sent last, after the sequence thread has ended:
+        CORE treats that message as "this module is finished", and sending it
+        while a sequence was still touching hardware would be a lie CORE acts
+        on - it exits as soon as all three modules have reported.
+        """
         self.running = False
-        log.info("stopping module")
+        log.info("Stopping module.")
+        self.stop_running_sequence()
         self.core.send(SequencerStopped())
+
+    def stop_running_sequence(self) -> None:
+        """
+        Ask a running sequence to stop, and wait for its thread to end.
+
+        The wait happens on the event loop thread, so nothing else this module
+        does happens during it - see SEQUENCE_JOIN_TIMEOUT_S for why that budget
+        is smaller than CORE's.
+
+        A thread still alive at the end is abandoned rather than killed: Python
+        threads cannot be killed, and the alternative - refusing to report
+        SequencerStopped - would only mean CORE waits out its own timeout and
+        learns less. It is a daemon thread, so it cannot hold the process open.
+        """
+        # Bound to a local rather than re-read: `sequence_is_running()` cannot
+        # tell a type checker that the attribute is not None, and one read is
+        # what makes it plain that this waits on the thread it checked.
+        thread = self.sequence_thread
+        if thread is None or not thread.is_alive():
+            return
+
+        log.info("Waiting for the running sequence to stop.")
+        self.stop_requested = True
+        thread.join(timeout=SEQUENCE_JOIN_TIMEOUT_S)
+
+        if thread.is_alive():
+            log.error(
+                "The running sequence did not stop within %.0fs; abandoning it.",
+                SEQUENCE_JOIN_TIMEOUT_S,
+            )

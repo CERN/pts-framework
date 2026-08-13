@@ -37,7 +37,7 @@ what happened, never how to draw it.
 from dataclasses import dataclass
 from uuid import UUID
 
-from pypts.messages.common import ResultType, StepOutcome
+from pypts.messages.common_messages import ResultType, StepOutcome
 
 # --- Progress -----------------------------------------------------------------
 
@@ -116,7 +116,7 @@ class StepFinished:
 # and had the GUI answer straight into it, which only ever worked because both
 # ends were threads in one process.
 #
-# The waiting side is in requests.py.
+# The waiting side is in blocking_messages.py.
 
 
 @dataclass(frozen=True, slots=True)

@@ -109,15 +109,19 @@ def _render_extras(values: dict[str, dict[str, str]], seen: dict[str, set[str]])
     their section, which is not pretty but is honest: it makes an unexpected key
     visible instead of hiding it among the documented ones.
     """
-    extra_sections = {
-        section: keys for section, keys in values.items() if section not in seen
-    }
-    extra_keys = {
-        section: {key: value for key, value in keys.items() if key not in seen[section]}
-        for section, keys in values.items()
-        if section in seen
-    }
-    extra_keys = {section: keys for section, keys in extra_keys.items() if keys}
+    # One pass, two buckets: a section the template never mentioned goes in
+    # whole, a known section contributes only the keys the template lacks.
+    extra_sections: dict[str, dict[str, str]] = {}
+    extra_keys: dict[str, dict[str, str]] = {}
+
+    for section, keys in values.items():
+        if section not in seen:
+            extra_sections[section] = keys
+            continue
+
+        unknown = {key: value for key, value in keys.items() if key not in seen[section]}
+        if unknown:
+            extra_keys[section] = unknown
 
     if not extra_sections and not extra_keys:
         return []

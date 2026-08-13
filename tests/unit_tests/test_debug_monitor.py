@@ -28,7 +28,6 @@ from datetime import datetime
 
 import pytest
 
-from pypts.core.core import HEARTBEAT_TIMEOUT_S
 from pypts.helper_applications.debug_monitor.liveness import (
     ALIVE,
     DEAD,
@@ -45,23 +44,24 @@ from pypts.helper_applications.debug_monitor.trace_parser import (
     as_trace_event,
     parse_line,
 )
+from pypts.utilities.heartbeat_manager import HEARTBEAT_TIMEOUT_S
 
 # --------------------------------------------------------------------------
 # Sample log text
 # --------------------------------------------------------------------------
 
-SEND_LINE = "2026-08-12 09:32:58.056;DEBUG;Core;queuewrapper.py:send;send core->sequencer StopSequencer()"
+SEND_LINE = "2026-08-12 09:32:58.056;DEBUG;Core;queue_wrapper.py:send;send core->sequencer StopSequencer()"
 RECV_LINE = (
-    "2026-08-12 09:32:58.101;DEBUG;Sequencer;queuewrapper.py:receive;recv core->sequencer StopSequencer()"
+    "2026-08-12 09:32:58.101;DEBUG;Sequencer;queue_wrapper.py:receive;recv core->sequencer StopSequencer()"
 )
-INFO_LINE = "2026-08-12 09:32:58.120;INFO;Core;core.py:start;Starting module..."
-UNNAMED_LINE = "2026-08-12 09:32:58.140;DEBUG;Core;queuewrapper.py:send;send ? StatusChanged(text='ready')"
+INFO_LINE = "2026-08-12 09:32:58.120;INFO;Core;core.py:start;Starting module."
+UNNAMED_LINE = "2026-08-12 09:32:58.140;DEBUG;Core;queue_wrapper.py:send;send ? StatusChanged(text='ready')"
 SEPARATOR_LINE = (
-    "2026-08-12 09:32:58.150;DEBUG;Core;queuewrapper.py:send;send core->hmi "
+    "2026-08-12 09:32:58.150;DEBUG;Core;queue_wrapper.py:send;send core->hmi "
     "StatusChanged(text='ready; steady; go')"
 )
 NESTED_LINE = (
-    "2026-08-12 09:32:58.160;DEBUG;Core;queuewrapper.py:receive;recv sequencer->core "
+    "2026-08-12 09:32:58.160;DEBUG;Core;queue_wrapper.py:receive;recv sequencer->core "
     "StepFinished(outcome=StepOutcome(step_name='Power on', result=PASS))"
 )
 OTHER_DEBUG_LINE = "2026-08-12 09:32:58.170;DEBUG;Core;core.py:poll;Something else entirely"
@@ -73,7 +73,7 @@ TRACEBACK_LINE_2 = '  File "core.py", line 210, in poll'
 def heartbeat_line(timestamp: str, source: str) -> str:
     """One heartbeat trace line, as CORE's inbox records it."""
     return (
-        f"2026-08-12 {timestamp};DEBUG;Core;queuewrapper.py:receive;"
+        f"2026-08-12 {timestamp};DEBUG;Core;queue_wrapper.py:receive;"
         f"recv {source}->core Heartbeat(source='{source}', timestamp=1786000000.0)"
     )
 
@@ -94,7 +94,7 @@ def test_a_record_is_split_into_its_five_fields():
     assert line.timestamp == datetime(2026, 8, 12, 9, 32, 58, 56000)  # noqa: DTZ001
     assert line.level == "DEBUG"
     assert line.process == "Core"
-    assert line.location == "queuewrapper.py:send"
+    assert line.location == "queue_wrapper.py:send"
     assert line.message == "send core->sequencer StopSequencer()"
     assert line.continuation is False
 
@@ -154,8 +154,8 @@ def test_a_receive_becomes_a_trace_event():
     assert event.message_type == "StopSequencer"
 
 
-def test_an_unnamed_channel_traces_as_a_question_mark():
-    """A QueueWrapper built without link= is anonymous; queuewrapper.py traces it as '?'."""
+def test_an_unnamed_wrapper_traces_as_a_question_mark():
+    """A QueueWrapper built without link= is anonymous; queue_wrapper.py traces it as '?'."""
     event = as_trace_event(parse_line(UNNAMED_LINE))
 
     assert event.link == "?"
@@ -175,10 +175,10 @@ def test_the_message_type_stops_at_the_first_bracket():
     [INFO_LINE, OTHER_DEBUG_LINE, EXCEPTION_LINE, TRACEBACK_LINE],
     ids=["info", "debug-elsewhere", "error", "continuation"],
 )
-def test_only_channel_lines_are_trace_events(line):
+def test_only_wrapper_lines_are_trace_events(line):
     """
     Everything the framework logs is in the same file. A DEBUG line from
-    somewhere other than queuewrapper.py is not a message and must not be shown as
+    somewhere other than queue_wrapper.py is not a message and must not be shown as
     one.
     """
     assert as_trace_event(parse_line(line)) is None
@@ -189,7 +189,7 @@ def test_only_channel_lines_are_trace_events(line):
 #
 # Every other test in this file compares the parser against sample text, which
 # is a copy of a format the Monitor does not own. A copy cannot notice that the
-# original moved: when messages/channel.py became messages/queuewrapper.py, the
+# original moved: when messages/channel.py became messages/queue_wrapper.py, the
 # location field in every real log line changed, and sample-text tests would
 # have stayed green while the Monitor matched nothing at all.
 #
@@ -211,7 +211,7 @@ def test_the_parser_knows_which_module_writes_the_trace():
 
     module = Path(inspect.getfile(QueueWrapper)).name
 
-    assert TRACE_LOCATIONS == {f"{module}:send", f"{module}:receive"}
+    assert {f"{module}:send", f"{module}:receive"} == TRACE_LOCATIONS
     assert callable(QueueWrapper.send)
     assert callable(QueueWrapper.receive)
 
@@ -231,7 +231,7 @@ def test_a_real_trace_line_round_trips_through_the_parser(caplog):
 
     from pypts.logger.log import build_formatter
     from pypts.messages import QueueWrapper
-    from pypts.messages.core_hmi_link import StatusChanged
+    from pypts.messages.core_hmi_communication import StatusChanged
     from pypts.messages.links import CORE_TO_HMI
 
     wrapper = QueueWrapper(queue_module.Queue(), link=CORE_TO_HMI)
@@ -309,7 +309,7 @@ def test_a_clean_stop_is_not_death():
         tracker,
         [
             heartbeat_line("09:32:58.000", "sequencer"),
-            "2026-08-12 09:32:59.000;DEBUG;Core;queuewrapper.py:receive;recv sequencer->core SequencerStopped()",
+            "2026-08-12 09:32:59.000;DEBUG;Core;queue_wrapper.py:receive;recv sequencer->core SequencerStopped()",
             heartbeat_line("09:33:20.000", "report"),
         ],
     )
@@ -356,7 +356,7 @@ def test_the_last_error_is_kept_per_module():
         tracker,
         [
             (
-                "2026-08-12 09:33:01.000;DEBUG;Core;queuewrapper.py:receive;recv report->core "
+                "2026-08-12 09:33:01.000;DEBUG;Core;queue_wrapper.py:receive;recv report->core "
                 "ModuleError(source='report', severity=ERROR, message='disk full')"
             )
         ],

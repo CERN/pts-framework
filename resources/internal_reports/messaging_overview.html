@@ -149,13 +149,13 @@ nothing is ever sent back.</p>
 <div class="tablewrap">
 <table>
 <tr><th>Link name</th><th>Direction</th><th>Queue built by</th><th>Contract module</th></tr>
-<tr><td><code>hmi-&gt;core</code></td><td>HMI → CORE</td><td rowspan="2">launcher, <code>multiprocessing.Queue</code></td><td rowspan="2"><code>core_hmi_link.py</code></td></tr>
+<tr><td><code>hmi-&gt;core</code></td><td>HMI → CORE</td><td rowspan="2">launcher, <code>multiprocessing.Queue</code></td><td rowspan="2"><code>core_hmi_communication.py</code></td></tr>
 <tr><td><code>core-&gt;hmi</code></td><td>CORE → HMI</td></tr>
-<tr><td><code>core-&gt;sequencer</code></td><td>CORE → Sequencer</td><td rowspan="2"><code>Core.__init__</code>, <code>queue.Queue</code></td><td rowspan="2"><code>core_sequencer_link.py</code></td></tr>
+<tr><td><code>core-&gt;sequencer</code></td><td>CORE → Sequencer</td><td rowspan="2"><code>Core.__init__</code>, <code>queue.Queue</code></td><td rowspan="2"><code>core_sequencer_communication.py</code></td></tr>
 <tr><td><code>sequencer-&gt;core</code></td><td>Sequencer → CORE</td></tr>
-<tr><td><code>core-&gt;report</code></td><td>CORE → Report</td><td rowspan="2"><code>Core.__init__</code>, <code>queue.Queue</code></td><td rowspan="2"><code>core_report_link.py</code></td></tr>
+<tr><td><code>core-&gt;report</code></td><td>CORE → Report</td><td rowspan="2"><code>Core.__init__</code>, <code>queue.Queue</code></td><td rowspan="2"><code>core_report_communication.py</code></td></tr>
 <tr><td><code>report-&gt;core</code></td><td>Report → CORE</td></tr>
-<tr><td><code>any-&gt;logger</code></td><td>every process and thread → Logger</td><td>launcher, <code>multiprocessing.Queue</code></td><td><code>to_logger_link.py</code></td></tr>
+<tr><td><code>any-&gt;logger</code></td><td>every process and thread → Logger</td><td>launcher, <code>multiprocessing.Queue</code></td><td><code>to_logger_communication.py</code></td></tr>
 </table>
 </div>
 
@@ -181,7 +181,7 @@ and the <code>LoggerControl</code> dataclasses. The Logger tells them apart with
 
 <h2 id="transport">3. The transport: <code>QueueWrapper</code></h2>
 
-<p>One generic class, <code>messages/queuewrapper.py</code>. A typed, one-way pipe with two
+<p>One generic class, <code>messages/queue_wrapper.py</code>. A typed, one-way pipe with two
 operations.</p>
 
 <pre><code>self.core.send(StartSequence("power_on"))      # never blocks, never inspects
@@ -211,8 +211,8 @@ ticks simply arrives on the next one. The only exception is the Logger, which bl
 into the run log <em>twice</em>: once from the sender, once from the receiver. A send with no
 matching receive is a lost message, and seeing that is the whole point.</p>
 
-<pre><code>...;DEBUG;Core;queuewrapper.py:send;send core-&gt;sequencer RunSequence(sequence_name='power_on')
-...;DEBUG;Core;queuewrapper.py:receive;recv core-&gt;sequencer RunSequence(sequence_name='power_on')
+<pre><code>...;DEBUG;Core;queue_wrapper.py:send;send core-&gt;sequencer RunSequence(sequence_name='power_on')
+...;DEBUG;Core;queue_wrapper.py:receive;recv core-&gt;sequencer RunSequence(sequence_name='power_on')
 
 grep 'sequencer-&gt;core' pypts_*.log     # the whole-system view of one link</code></pre>
 
@@ -233,7 +233,7 @@ concern beats one page that goes stale in halves.</div>
 
 <p>What holds for all of them, and belongs here rather than there: every message is a
 <strong>frozen slotted dataclass of plain values</strong>, each direction has a union type that
-<em>is</em> the contract, and a type shared by two links lives in <code>common.py</code> or
+<em>is</em> the contract, and a type shared by two links lives in <code>common_messages.py</code> or
 <code>run_events.py</code> so both ends refer to the same class. Only the HMI link is pickled;
 the four engine links are in-process and no longer have to be.</p>
 
@@ -306,16 +306,16 @@ covered automatically. It also asserts the message is a frozen dataclass, surviv
 trip, and carries no live queue or handle.</div>
 
 <p>A message shared by two links — anything CORE forwards rather than repacks — belongs in
-<code>common.py</code> or <code>run_events.py</code>, so both ends refer to the same class.</p>
+<code>common_messages.py</code> or <code>run_events.py</code>, so both ends refer to the same class.</p>
 
 <h2 id="functions">7. Functions you actually call</h2>
 
 <div class="tablewrap">
 <table>
 <tr><th>Where</th><th>Call</th><th>For</th></tr>
-<tr><td rowspan="2"><code>messages/queuewrapper.py</code></td><td><code>channel.send(msg)</code> · <code>channel.receive(limit=64)</code></td><td>The only two verbs on the transport.</td></tr>
+<tr><td rowspan="2"><code>messages/queue_wrapper.py</code></td><td><code>channel.send(msg)</code> · <code>channel.receive(limit=64)</code></td><td>The only two verbs on the transport.</td></tr>
 <tr><td><code>unhandled(msg)</code></td><td>Last case of every match. Raises <code>UnhandledMessage</code>.</td></tr>
-<tr><td><code>messages/requests.py</code></td><td><code>PendingRequests.start(id)</code> · <code>.wait(id)</code> · <code>.resolve(id, value)</code> · <code>.cancel(id)</code></td><td>The waiting half of a request/response pair. <code>wait()</code> returns <code>None</code> after 300 s.</td></tr>
+<tr><td><code>messages/blocking_messages.py</code></td><td><code>PendingRequests.start(id)</code> · <code>.wait(id)</code> · <code>.return_caller(id, value)</code> · <code>.cancel(id)</code></td><td>The waiting half of a request/response pair. <code>wait()</code> returns <code>None</code> after 300 s.</td></tr>
 <tr><td><code>utilities/heartbeat_manager.py</code></td><td><code>HeartbeatManager(channel, source).tick()</code></td><td>Call from <code>do_periodic_tasks()</code>; it decides for itself when a beat is due (1 s).</td></tr>
 <tr><td><code>utilities/error_handling.py</code></td><td><code>@catch_and_report_errors()</code></td><td>Decorate a method of a class with a <code>core</code> attribute. Catches, reports a <code>ModuleError</code>, returns None.</td></tr>
 <tr><td><code>logger/log.py</code></td><td><code>init_logging(log_queue, level)</code> · <code>log</code> · <code>set_stdout_logging_enabled(bool)</code></td><td>First call in every <em>process</em> entry point — never from a thread, which shares the process's root logger. Then just <code>log.info(...)</code>.</td></tr>
@@ -353,7 +353,7 @@ answer = pending.wait(request_id)               # None if it timed out
 
 # event loop, draining the inbox
 case UserPromptResponse(request_id=rid, choice=choice):
-    pending.resolve(rid, choice)</code></pre>
+    pending.return_caller(rid, choice)</code></pre>
 
 <div class="warn"><strong>The thread that calls <code>wait()</code> must not be the thread draining
 the inbox</strong>, or the answer can never arrive and the module deadlocks. The Sequencer runs its

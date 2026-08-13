@@ -30,14 +30,14 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 1. **The execution engine.** `sequencer.run_sequence()` is `pass`; `recipe/recipe.py` is a one-line comment; `step/` is empty; Core's `LOAD_RECIPE` / `START_SEQUENCE` handlers are `pass`. The working engine (Recipe/Sequence/Step/Runtime/StepResult, the five step types, resource-based `test_package` module loading described in `architecture.rst`) lives in **`old_code/`** and is not reachable from the new launcher.
 2. **Report module** — process shell with heartbeat exists; `generate_report()` / `export_report()` are `pass`. The CSV/HTML logic is in `old_code/report.py`.
 3. **HAL** — `hal.py` is a one-line comment.
-4. **Stream handler** — `StreamContainer` + an XYGraph widget spike; not integrated.
+4. **Stream handler** — `src/pypts/stream_handler/` is an empty placeholder package. The `StreamContainer` singleton and the XYGraph widget spike were moved out of the shipping package to `spikes/stream_handler/` and `spikes/GUI/XYGraph/`: neither was imported by anything, `StreamContainer` executed and printed at import, and XYGraph has undefined names that raise if reached. Phase 3 promotes them from there.
 5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet. Neither frontend shows the message layer, and neither needs to: `--log-level DEBUG` puts every message on every link into the run log (§1.2), and the Debug Monitor renders that log live (§1.4).
 6. **Step construction still uses `eval(step_type + "(**step_data)")`** in `old_code/recipe.py` — the closed, unsafe step factory rides along into whatever gets ported.
 
 ### Defects worth fixing early (spotted while reading the branch)
 
 - **Broken import in the verificator:** `verify_recipe.py` does `from pypts import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS`, but `src/pypts/__init__.py` is now minimal and defines none of these — the verificator cannot import. The schema constants need a proper home (see §3.5: make them part of the step/recipe schema layer).
-- **`@catch_and_report_errors()` swallows results and errors:** *partially fixed.* The `nonlocal module_name` + `inspect.stack()[1]` bug is gone — the source is resolved from the decorated function at decoration time (`tests/unit_tests/test_utilities.py`). **Still open:** the wrapper returns `None` on an exception and does not re-raise, so a failing function silently continues, and it still assumes `self.core` exists on every decorated class. Dangerous once the sequencer executes real steps — errors must also propagate into StepResults, not only into Core events.
+- **`@catch_and_report_errors()` swallows results and errors:** *fixed (§1.10).* The `nonlocal module_name` + `inspect.stack()[1]` bug went first — the source is resolved from the decorated function at decoration time. The rest is now done too: there are **two** decorators, `catch_and_report_errors` (report and continue, for event loops) and `report_and_reraise` (report and let it through, for the execution layer), and neither assumes `self.core` exists — an object without an outbox is logged rather than having its real failure replaced by an `AttributeError` from inside the error handler.
 - **Heartbeat monitoring is one-directional and always-armed:** *partially fixed.* Core now only checks modules still expected to be running, so a module that has reported itself stopped no longer produces timeout warnings for the rest of the run. **Still open:** it is warn-only, with no recovery action, and Core sends no heartbeat of its own, so an HMI cannot detect a dead Core.
 - **Per-process side effects at import:** *config half fixed (§1.3).* Reading the configuration no longer writes it, and only the launcher's `bootstrap()` may create or repair the file, so the per-process `config.ini` rewrites are gone. **Still open:** per-run log directories (spec: "separate logs by test run") — the log *directory* now comes from the configuration, but it is still one timestamped file per run rather than a per-run folder with a file per process.
 - **Core deps got heavier, not lighter:** `pts-framework` now hard-depends on `matplotlib`, `numpy`, `nptdms`, `nidmm`, `hightime`, `pyserial`, `paramiko`, `PySide6`. For a framework whose spec demands "lightweight" and "tests executable stand-alone," this is the strongest argument for the plugin packaging model in §3.
@@ -49,8 +49,8 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 > dataclass per message. Rationale and the topology review that led to it are recorded
 > separately; what matters here is the resulting contract and what it left open.
 
-**What changed.** `pypts/messages/` now holds one module per link (`core_hmi_link`,
-`core_sequencer_link`, `core_report_link`, `to_logger_link`), plus `common.py` for vocabulary two links
+**What changed.** `pypts/messages/` now holds one module per link (`core_hmi_communication`,
+`core_sequencer_communication`, `core_report_communication`, `to_logger_communication`), plus `common_messages.py` for vocabulary two links
 share and `run_events.py` for what the engine reports during a run. A single generic `QueueWrapper`
 replaced the six interface ABC / queue-class pairs — about 200 lines where there were 612 — and
 every handler is a `match` closed with `unhandled()` instead of `case _: pass`. Adding a message
@@ -74,18 +74,22 @@ is two edits rather than four, and both ends of a link are now one file.
 
 **New TODOs this opened:**
 
-- [ ] **TODO:** The Sequencer must run a sequence on its own worker thread before user-prompt
-      steps are ported. `PendingRequests.wait()` blocks, and if it blocks the thread that drains
-      the inbox the answer can never arrive — the module deadlocks. See `messages/requests.py`.
+- [x] **DONE (§1.8):** The Sequencer runs a sequence on its own worker thread. `RunSequence`
+      starts the thread and returns; the event loop keeps turning, so heartbeats continue,
+      `StopSequence` is readable mid-run, and `PendingRequests.wait()` on the sequence thread is
+      answered by `deliver_response()` on the loop thread. Done while `execute_sequence()` was
+      still a stub, so the Phase 1 port lands in a shape that already works.
 - [ ] **TODO:** Some old_code interaction steps read a *second* value off the same response
       queue after the first answer (a file path, a measured value, a `(port, baudrate, IDN)`
       triple). `UserPromptResponse` does not model this; each follow-up needs to become its own
       request when those steps are ported.
 - [ ] **TODO:** Core does not yet trigger `GenerateReport` on `RunFinished`, or forward run
       events to the Report at all. That wiring belongs with the Phase 1 engine port.
-- [ ] **TODO:** No type checker is configured, so `unhandled()` currently gives runtime
-      exhaustiveness only. Adding mypy or pyright over `pypts/messages/` and the handlers turns
-      a forgotten `case` into a build error — which is most of the value of the rework.
+- [x] **DONE (§1.9):** mypy is configured over `pypts/messages/` and the handler modules, and
+      runs in CI. Note the framing in that TODO was too strong: exhaustiveness was never
+      *only* a runtime check — `test_messages.py` drives every member of every union through
+      the real handler and fails if one reaches `unhandled()`. mypy moves that from test time
+      to edit time and adds what nothing checked before, the `QueueWrapper[X]` link types.
 - [ ] **TODO:** The CLI's main thread is parked in `input()`, so a `StopHmi` from Core is only
       noticed after the next Enter. Pre-existing, and now the only remaining asymmetry between
       the two frontends.
@@ -105,15 +109,15 @@ is two edits rather than four, and both ends of a link are now one file.
 and the product plus a tap. Anything only visible under `--mode debug` is invisible on the
 machine where it matters — a test bench, a colleague's laptop, a failure someone reports
 afterwards. The debug build was ~1,900 lines (`hmi/debug/` 1,401, `messages/debug_link.py`
-125, ~141 lines of branches in `queuewrapper.py` / `core.py` / `startup.py`, 247 of tests) and the
+125, ~141 lines of branches in `queue_wrapper.py` / `core.py` / `startup.py`, 247 of tests) and the
 one thing it did that the log did not was see the *send* side.
 
 **What replaced it.** `QueueWrapper.send()` and `QueueWrapper.receive()` each log one DEBUG line on a
 `pypts.trace` logger, naming the link and the message:
 
 ```
-2026-08-12 09:32:58.056;DEBUG;Core;queuewrapper.py:send;send core->sequencer StopSequencer()
-2026-08-12 09:32:58.10?;DEBUG;Sequencer;queuewrapper.py:receive;recv core->sequencer StopSequencer()
+2026-08-12 09:32:58.056;DEBUG;Core;queue_wrapper.py:send;send core->sequencer StopSequencer()
+2026-08-12 09:32:58.10?;DEBUG;Sequencer;queue_wrapper.py:receive;recv core->sequencer StopSequencer()
 ```
 
 Both directions, deliberately: a message that was sent and never received is the failure
@@ -146,7 +150,7 @@ already takes `queue_factory`, so a test builds a Core that spawns nothing and c
 `core.from_sequencer.send(...)` directly — `test_core.py::test_a_sequencer_event_is_routed_to_the_hmi`
 is the old injection test, rewritten that way.
 
-**Verified:** 9 tests in `tests/unit_tests/test_queuewrapper_trace.py`, including that nothing is
+**Verified:** 9 tests in `tests/unit_tests/test_queue_wrapper_trace.py`, including that nothing is
 traced above DEBUG, that a message is not even formatted when the trace is off, that a
 message left on the queue is not traced as received, and that a broken log queue does not
 stop the message it was tracing. Full suite: **136 passed, 77 skipped** (was 129/78).
@@ -166,11 +170,11 @@ produces zero trace lines.
 - [ ] **TODO:** Heartbeat noise. Three modules × 1 Hz × two directions ≈ **6 trace lines a
       second** at DEBUG — about 170k lines in an 8-hour run. The fix is a `pypts.trace.heartbeat`
       child logger that can be silenced on its own. Deliberately not done yet: it would make
-      `queuewrapper.py` import `Heartbeat` and type-test the payload, and the transport not knowing
+      `queue_wrapper.py` import `Heartbeat` and type-test the payload, and the transport not knowing
       what a message *is* is the property that keeps it generic. Decide before Phase 1
       generates real traffic.
 - [ ] **TODO:** `LOG_FORMAT` has no `%(name)s`, so a trace line is identified by the word
-      `send`/`recv` and the `queuewrapper.py:send` location field rather than by `pypts.trace`.
+      `send`/`recv` and the `queue_wrapper.py:send` location field rather than by `pypts.trace`.
       Adding the logger name touches every line of every log and the `LOG_LINE` regex in
       `test_logger.py` — worth doing, but on its own.
 - [ ] **TODO:** Trace payloads are not truncated (the tap capped them at 2,000 chars). A file
@@ -271,15 +275,23 @@ from `logging.level`; `report.py` takes its output directory from `paths.reports
 ```bash
 python -m pypts --mode cli --log-level DEBUG          # any normal run
 python -m pypts.helper_applications.debug_monitor     # in another shell
+
+python -m pypts --log-level DEBUG --debug-monitor     # or both at once (see below)
 ```
 
 **Why this is not the console coming back.** §1.2 removed `--mode debug` because it gave the
 software two shapes: the product, and the product plus a tap. This has one shape. It is a
 separate program that opens a file read-only; there is no debug build, no `--mode`, no
-branch in `queuewrapper.py`, `core.py` or `startup.py`, and no flag that changes how a run
-behaves. Starting it, or not starting it, is invisible to the framework — which is the
-property the removal was protecting, stated as a testable claim: `git status` after this
-change shows nothing modified under `src/pypts/` outside `helper_applications/debug_monitor/`.
+branch in `queue_wrapper.py` or `core.py`, and no flag that changes how a run behaves.
+Starting it, or not starting it, is invisible to the framework — which is the property the
+removal was protecting.
+
+> **Amended by §1.4.1.** The launcher now has a `--debug-monitor` flag, so the original
+> form of that claim — *"no branch in `startup.py`"*, and *"`git status` shows nothing
+> modified under `src/pypts/` outside `helper_applications/debug_monitor/`"* — is no longer
+> true as written. What the claim was protecting is: the flag starts a **program**, it does
+> not import one, and no code path in the framework differs because of it. See §1.4.1 for
+> the weaker property that replaced the testable one.
 
 It lives in `helper_applications/` rather than in its own distribution, beside
 `recipe_creator` and `recipe_verificator`, because that is where this repo already keeps
@@ -351,9 +363,9 @@ knowing before someone reads it as a lost message.
 - [ ] **TODO:** The heartbeat-noise TODO above is now load-bearing for a second reason: the
       Monitor is only useful on a run at DEBUG, and such a run is ~6 heartbeat lines a
       second. It filters them client-side and is fine, but the log itself is still 170k lines
-      in an 8 hour run. Unchanged deliberately — the fix would make `queuewrapper.py` type-test
+      in an 8 hour run. Unchanged deliberately — the fix would make `queue_wrapper.py` type-test
       its payload.
-- [ ] **TODO:** The Monitor identifies a trace line by the `queuewrapper.py:send` location field,
+- [ ] **TODO:** The Monitor identifies a trace line by the `queue_wrapper.py:send` location field,
       because `LOG_FORMAT` has no `%(name)s` (the TODO above). It is a second consumer of
       that omission now, so fixing it means fixing the Monitor's parser in the same change.
 - [ ] **TODO:** Attaching to a long run parses the whole file on the first tick. Acceptable
@@ -388,6 +400,82 @@ knowing before someone reads it as a lost message.
       the race itself is unchanged, because it is about ordering, not about how long a start
       takes.
 
+### 1.4.1 Starting the Monitor with the run (`--debug-monitor`) — **done**
+
+> **Status: implemented.** `startup.py` can now open the Debug Monitor beside a run,
+> instead of the operator starting it by hand in a second shell.
+
+```bash
+python -m pypts --log-level DEBUG --debug-monitor      # GUI mode, plus the Monitor
+python -m pypts --mode cli --log-level DEBUG --debug-monitor
+```
+
+**Opt-in, not default.** The flag is `store_true` and off unless asked for, so a headless
+run, a test bench and CI are unaffected — none of them can open a Qt window, and none of
+them should try.
+
+**Started as a program, not imported.** `start_debug_monitor()` runs
+`subprocess.Popen([sys.executable, "-m", "pypts.helper_applications.debug_monitor", <log>])`.
+That spelling is the whole design: `startup.py` gains a string constant naming the module and
+no import of it, so the dependency still points one way only and the rule in
+`debug_monitor/__init__.py` — *nothing in the framework may import this package* — holds
+unchanged. A `multiprocessing.Process` would have been more consistent with the other three
+children and would have broken exactly that.
+
+**The log path is passed explicitly.** The Monitor's own default is "the newest
+`pypts_*.log`", which is this run right until someone starts a second one. Being pointed at
+the wrong run is the one confusion a debug tool must never create, so the launcher hands it
+the path it already decided.
+
+**It waits for the file.** The launcher only *computes* the log path; the file is created by
+`logging.FileHandler` inside the **Logger process**. The Monitor exits with code 1 on a path
+that is not a file, so `start_debug_monitor()` polls for up to `MONITOR_LOG_WAIT_S = 5.0` at
+50 ms before giving up with a warning. Measured on Windows: ~200 ms from deciding the path to
+the child being spawned.
+
+**It cannot stop a run.** Every failure — file never appeared, interpreter unusable, PySide6
+missing in the child — is a WARNING in the log and a `None` return. An `ImportError` in the
+child cannot reach the launcher at all; it is the child's traceback on the child's stderr.
+
+**It is left running.** Not stopped in the `finally` block with CORE and the Logger, because
+the trace of a run is what you want to read *after* the run. The launcher logs
+`Debug Monitor (pid N) left running` as one of the last lines of the file, so the log says
+where its own reader went.
+
+**Warns rather than overrides.** Asking for the Monitor on a run above DEBUG logs a WARNING
+naming the level and pointing at `--log-level DEBUG`; it does not silently raise the level,
+because what the operator asked to capture is not a debug tool's to change. (`config.ini`
+ships `DEBUG` for the duration of the refactor, so this only bites someone who passed
+`--log-level INFO` explicitly.)
+
+**Verified:** `--mode cli --log-level DEBUG --debug-monitor` on Windows. The log shows the
+Monitor started at `.053` reading this run's own file and left running at `.423`; the child
+was confirmed alive by `Win32_Process` with the expected argv. Full suite: **227 passed,
+71 skipped** (was 220/72 at §1.4). `ruff check` on `startup.py` reports only the `I001` that
+already fails on `HEAD`.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** The claim §1.4 made was *testable* (`git status` after the change shows
+      nothing outside `helper_applications/debug_monitor/`). What replaced it is a *reviewable*
+      property — "the launcher names the module in a string and never imports it". If that is
+      worth keeping honest, it wants a test: import `pypts.launcher.startup` and assert no
+      `pypts.helper_applications` module is in `sys.modules`.
+- [ ] **TODO:** The child inherits the launcher's stdout. In a terminal that is right; behind
+      a **pipe** it means the pipe stays open after pypts exits, because the Monitor is still
+      holding it — which is how it behaved when the verification run was piped into a reader.
+      Harmless interactively, surprising in a script. Fix, if wanted, is `stdout=DEVNULL` on
+      the Popen, at the cost of losing the child's own error output.
+- [ ] **TODO:** Ctrl+C in the launcher's console reaches the Monitor too, since no
+      `CREATE_NEW_PROCESS_GROUP` is set — so the "left running" promise holds for a normal
+      exit but not for an interrupted one. Deliberately not fixed: the flag would be
+      Windows-only, and the normal exit path is the GUI window closing or the CLI `exit`.
+- [ ] **TODO:** `pid` is the process the launcher spawned. Under a `uv`-created venv on
+      Windows, `.venv\Scripts\python.exe` is a trampoline that execs the real interpreter, so
+      the logged pid is the trampoline's and a *second* process shows the same argv. It costs
+      nothing today — the launcher never signals the child — but it would matter to anyone who
+      later decides to stop the Monitor by pid.
+
 ### 1.5 Topology change: Sequencer and Report as threads — **done**
 
 > **Status: implemented.** The change agreed in *"Agreed architecture change: two processes,
@@ -411,11 +499,11 @@ processes in GUI mode and two in CLI mode.
 
 | Was | Is | Why |
 |---|---|---|
-| `messages/channel.py` · `Channel` | `messages/queuewrapper.py` · `QueueWrapper` | Says what it is: a wrapper over anything queue-shaped, now spanning a process boundary *and* a thread boundary |
-| `messages/hmi_link.py` | `messages/core_hmi_link.py` | A link module is named after **both** ends it joins, and holds both directions |
-| `messages/sequencer_link.py` | `messages/core_sequencer_link.py` | ditto |
-| `messages/report_link.py` | `messages/core_report_link.py` | ditto |
-| `messages/logger_link.py` | `messages/to_logger_link.py` | The exception, named for its single direction: nothing is ever sent back |
+| `messages/channel.py` · `Channel` | `messages/queue_wrapper.py` · `QueueWrapper` | Says what it is: a wrapper over anything queue-shaped, now spanning a process boundary *and* a thread boundary |
+| `messages/hmi_link.py` | `messages/core_hmi_communication.py` | A link module is named after **both** ends it joins, and holds both directions |
+| `messages/sequencer_link.py` | `messages/core_sequencer_communication.py` | ditto |
+| `messages/report_link.py` | `messages/core_report_communication.py` | ditto |
+| `messages/logger_link.py` | `messages/to_logger_communication.py` | The exception, named for its single direction: nothing is ever sent back |
 
 The message catalogue moved out of `resources/internal_reports/messaging_overview.html` §4 into
 `src/pypts/messages/messages.md`, as that module's context file. Reworking the message set is
@@ -423,7 +511,7 @@ its own task and is deliberately not part of this one.
 
 **What it bought.** The four engine links are in-process: nothing on them is pickled, and the
 engine will be able to hand the Sequencer a live object — a `Recipe`, a device handle — when
-the execution engine lands. Only `core_hmi_link` still needs to be pickle-safe, and the test
+the execution engine lands. Only `core_hmi_communication` still needs to be pickle-safe, and the test
 that enforces that is unchanged.
 
 **What it cost, and what is now open:**
@@ -490,6 +578,166 @@ passed, 71 skipped**.
       `test_config_handler.py` now rewrites that line by key (`with_log_level()`), so the
       revert above will not break them a second time. A new test that needs a particular
       level should use the helper rather than a string replace.
+
+### 1.7 Groundwork tidy-up before the engine port — **done**
+
+> **Status: implemented.** Mechanical debt cleared while `run_sequence()` is still a stub, so
+> that the Phase 1 port lands on a branch with one style, one lint baseline and no dead code
+> in the shipping package. No behaviour changed; the suite stayed at 227 passing throughout.
+> Sourced from `resources/internal_reports/new_code_review.html`, a file-by-file read of the
+> whole new tree.
+
+**Dead code out of the shipping package.** `stream_handler/StreamContainer.py` and
+`hmi/gui/XYGraph/` were carried across the refactor and never touched: nothing imported
+either, `StreamContainer` ran code and printed to stdout at import, and `XY_graph.py` has
+seven undefined names that raise if reached. Both moved to `spikes/` (see §1 item 4), which
+`reuse.toml` already blanket-covers. `src/pypts/stream_handler/` stays as an empty placeholder
+package. This removed 22 of the tree's ruff findings without editing a line of code.
+
+**Ruff is configured, and enforced in CI.** There was no `[tool.ruff]` anywhere, yet the
+source already carried `# noqa: BLE001`, `# noqa: DTZ007` and `# noqa: B008` — suppressions
+naming rules that nothing enabled. `pyproject.toml` now selects
+`E,F,I,N,UP,B,BLE,DTZ,SIM,PIE,G,RUF` at `line-length = 100`, excludes `old_code/` and
+`spikes/`, and silences the un-refactored helper applications wholesale (they are Phase 6).
+A pinned `lint` job runs `ruff check src tests` in the `analyse` stage. The tree is clean.
+
+Two rules are deliberately off, both because they push toward *shorter* rather than *clearer*:
+
+- `N818` — would rename `UnhandledMessage` and the `ConfigError` family for an `Error` suffix.
+- `SIM108` — would rewrite every four-line `if`/`else` as a conditional expression.
+
+**One logging style.** `%`-style everywhere, replacing 25 f-string call sites. It is the
+stdlib convention, it keeps the laziness `queue_wrapper.py` documents at length, and ruff's
+`G004` now enforces it mechanically — with `logger-objects = ["pypts.logger.log.log"]` in the
+config, without which the G rules see an ordinary object and check nothing.
+
+**One lifecycle wording**, replacing five variants (`"Starting module..."` /
+`"stopping module"` / `"Stopping module"` / `"exited main event loop."`):
+
+| Event | Line |
+|---|---|
+| `start()` begins | `Starting module.` |
+| `main_loop()` begins | `Starting main event loop.` |
+| `main_loop()` ends | `Left main event loop.` |
+| `stop()` handler | `Stopping module.` |
+| `start()` ends | `Module stopped.` |
+
+The CLI also announced itself twice — once in `__init__` and again in `run()`; the duplicate
+is gone.
+
+**Finished the `channel` → `QueueWrapper` rename**, which had stopped at the code: the
+parameter and attribute in `HeartbeatManager` (now `outbox`), `Core.poll()`'s parameter (now
+`inbox`), and roughly thirty variables plus eight *test names* across three test modules. One
+comment in `logger/log.py` had been mangled by the rename into a sentence that no longer
+parsed; it is rewritten.
+
+**Three documents had drifted** and were corrected: `CLAUDE.md` said `config.ini` ships as
+`INFO` (it ships `DEBUG`, §1.6); `messages/messages.md` said `PendingRequests` has no user
+(the Sequencer owns one and calls `return_caller()` — the *asking* half is what is unused);
+`debug_monitor/__init__.py` claimed its parser and liveness fold import no running framework
+(true of the parser only — see the Phase 0 item below).
+
+**Module renames**, filename only, for readability — no class or union type changed:
+`queuewrapper.py` → `queue_wrapper.py`, `requests.py` → `blocking_messages.py`, `common.py` →
+`common_messages.py`, and the four `*_link.py` modules → `*_communication.py`. The first of
+those is load-bearing: the filename appears in every trace line through `%(filename)s`, so
+`trace_parser.TRACE_LOCATIONS` had to move with it, and a real send/receive round trip was
+checked rather than only the sample-text tests. Logs written before the rename no longer show
+a trace in the Monitor; that is accepted rather than papered over with a second spelling.
+
+### 1.8 The Sequencer runs a sequence on its own thread — **done**
+
+> **Status: implemented.** The threading shape only, not the engine:
+> `execute_sequence()` is still the stub it was. Done now precisely *because* it is a stub —
+> the change is small and testable while the body is one `log.warning`, and the Phase 1 port
+> then drops into a structure that already works instead of discovering the constraint half
+> way through.
+
+**What was wrong.** `main_loop → poll_core → handle_core_message → run_sequence` all ran on one
+thread. Harmless today; the moment the engine lands, three things break at once:
+
+| | Consequence |
+|---|---|
+| `do_periodic_tasks()` never runs | Heartbeats stop. CORE's timeout is 5 s, so **every real run** logs "Heartbeat timeout for module: sequencer" |
+| The inbox is never drained | `StopSequence` sits unread — the abort path is dead exactly when it is wanted |
+| The inbox is never drained | `UserPromptResponse` sits there too, so a step in `PendingRequests.wait()` waits out its five-minute timeout and gets `None` |
+
+The third is the deadlock `messages/blocking_messages.py` has warned about since it was written:
+*the thread that calls `wait()` must not be the thread that drains the inbox.*
+
+**The shape now.** `run_sequence()` runs on the loop thread, refuses a second sequence while one
+is running (a `RuntimeError`, which `@catch_and_report_errors()` turns into a `ModuleError` the
+operator sees), clears `stop_requested`, starts a named daemon thread on `execute_sequence()` and
+returns. `stop()` sets the flag, joins the thread with a budget deliberately below CORE's
+`SHUTDOWN_TIMEOUT_S`, and only then sends `SequencerStopped` — CORE exits as soon as all three
+modules have reported, so reporting while a sequence still ran would be a lie CORE acts on.
+
+**Verified against the old shape, not just the new one.** The eight tests in
+`test_sequencer.py` drive `poll_core()` by hand, so "the loop can still run" is an assertion
+rather than a hope. Reverting `run_sequence()` to the synchronous call fails four of them,
+including the prompt test, which takes 40 s to fail because it sits in `wait()` until timeout —
+the failure mode itself, reproduced.
+
+Left for Phase 1: `execute_sequence()` must check `stop_requested` *between* steps rather than
+inside one, so a step can leave its hardware in a known state. There is a skipped placeholder
+for it.
+
+### 1.9 mypy over the message layer — **done**
+
+> **Status: implemented.** `[tool.mypy]` in `pyproject.toml`, a `typecheck` job in the
+> `analyse` stage, and `mypy` in the `dev` extra. Clean: 24 files, no issues.
+
+**Scoped, not `strict`, and not the whole tree.** It covers `messages/`, `core/`,
+`sequencer/`, `report/`, `logger/`, `utilities/` and `hmi/hmi_client.py` — where the
+annotations are load-bearing. `old_code/` is frozen, `spikes/` is experiments, the helper
+applications are Phase 6, and demanding an annotation on every local would bury the message
+contract in noise. Widening it is cheap later.
+
+**What it adds over the protocol tests**, which already prove no message reaches
+`unhandled()`: the check happens while the code is being written rather than when the suite
+runs, and the `QueueWrapper[X]` parameterisation is checked *at all* — before this,
+`self.to_sequencer.send(StatusChanged("x"))` ran perfectly and put the wrong message on the
+wrong link.
+
+**What the first run actually found**, on the whole existing tree: two errors, both in the
+§1.8 code written the same day — `stop_running_sequence()` calling `.join()` on a
+`Thread | None` that only a helper method proved was not None. Narrowing a type checker
+cannot follow, which is the class of defect this exists to catch. Fixed by binding the thread
+to a local, which reads better anyway.
+
+**What it did *not* flag is the more interesting result.** `deliver_response()` assigns
+`value` inside `match` arms and reads it afterwards, which looks like a possibly-unbound
+variable — and is not, because `unhandled()` is typed `NoReturn`, so the fallthrough provably
+cannot reach the read. The `Never`/`NoReturn` trick in `queue_wrapper.py` was doing its job
+before anything was checking it.
+
+### 1.10 Two error decorators — **done**
+
+> **Status: implemented.** Closes the Phase 0 item "harden `catch_and_report_errors`". The
+> mechanism is in place; what a caller *does* with a step failure is still Phase 1's to decide.
+
+`utilities/error_handling.py` now offers two decorators, and which one a piece of code uses is
+a property of where it sits:
+
+| | Behaviour | For |
+|---|---|---|
+| `@catch_and_report_errors()` | reports to CORE, **swallows**, returns `None` | event loops and housekeeping — a module that dies on one bad message stops answering CORE, stops heart-beating, and takes the run with it |
+| `@report_and_reraise()` | reports to CORE, **re-raises** | the execution layer — a step failure has to reach a `StepResult` with `ResultType.ERROR`, and a step whose failure is only a log line is a step the report will call PASS |
+
+Two names rather than one decorator with a `reraise=` flag: which behaviour applies should be
+readable at the call site without checking an argument, and a flag would leave the default as
+the dangerous one for steps.
+
+`raise`, not `raise exc`, so the frame the failure happened in survives into the traceback the
+step turns into a result. There is a test for exactly that.
+
+**Neither assumes `self.core` any more.** An object with no outbox — a driver, a helper, a
+half-built object under test — is logged instead. That was the other half of the Phase 0 item,
+and it mattered more than it looks: reaching for a missing `self.core` raised `AttributeError`
+*from inside the error handler*, replacing the real failure with a far less interesting one.
+
+Nothing uses `report_and_reraise()` yet; it lands with the steps in Phase 1. The decorator is
+tested on both paths in `test_utilities.py`.
 
 ---
 
@@ -585,7 +833,7 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 *Goal: the branch is trustworthy before the engine lands on it.*
 
 - Fix the verificator's broken schema-constants import; give `RECIPE_*_REQUIRED_FIELDS` / `STEP_REQUIRED_FIELDS` a dedicated schema module (this becomes the programmatic recipe schema the spec asks for).
-- Harden `catch_and_report_errors`: re-raise or return sentinel by policy, per-function module detection, and don't require `self.core` implicitly.
+- ~~Harden `catch_and_report_errors`: re-raise or return sentinel by policy, per-function module detection, and don't require `self.core` implicitly.~~ **Done — §1.10.**
 - Decide logging/config process policy. **Decided (§1.2, §1.3):** one `--log-level` for the whole run, overriding `[logging] level`, resolved once by the launcher and passed to every process as an argument, so filtering happens at the sender rather than in the Logger; and the config is created/migrated once by the launcher's `bootstrap()` and read-only everywhere else, with every process reading the file for itself. **Still open:** one log directory per *test run* with per-process log files inside it — the log directory now comes from `paths.logs_dir`, but the per-run folder does not exist yet.
 - Get `run_tests.py` + unit tests green in CI on the branch; add an X-server (or `QT_QPA_PLATFORM=offscreen`) job for GUI tests (already a TODO).
 - Characterization tests around `old_code`: run an example recipe end-to-end and assert on the CSV rows — this is the safety net for the port in Phase 1.
@@ -626,7 +874,7 @@ The design decision this phase used to carry — defining the step / user-intera
 
 - CLI feature-complete per the CLI module page (already started in Phase 1.5).
 - GUI: modular widget system (input prompt, image/buttons, XYGraph, result widget) as **widget plugins** keyed by step/stream type; 1280×720–1920×1200 scaling; session persistence; helper-app quick access; runtime notifications from the Logger's runtime handler. Fix the known GUI refresh bug (TODO.txt) while rebuilding.
-- Stream handler: promote `StreamContainer` + XYGraph into the spec'd singleton stream layer (CSV first), fed by an acquisition logger channel.
+- Stream handler: promote `StreamContainer` + XYGraph — now in `spikes/stream_handler/` and `spikes/GUI/XYGraph/` — into the spec'd singleton stream layer (CSV first), fed by an acquisition logger channel. Both need rewriting rather than moving back: see §1 item 4.
 
 ### Phase 4 — Reporting to spec
 
@@ -812,7 +1060,7 @@ Steps 1–3 are naturally done *while porting steps into the sequencer* — doin
 
 - **Pickling across process boundaries.** *(→ resolved.)* Only the HMI↔Core boundary remains a process boundary; user prompts are a request/response pair, and the pickle round-trip test guards every message on both unions permanently (§1.1). Step-to-step object passing and device handles stay in-engine and are unaffected.
 - **`old_code` divergence.** The branch's `old_code` is *newer* than master (consolidated steps, `test_package` resource loading). Freeze master, do the port from `old_code` only, and delete it at v0.3.0 — three coexisting engines (master, old_code, new modules) is the biggest confusion risk for the team.
-- **Error-handling policy.** `catch_and_report_errors` currently reports and *continues*. Define per-layer behavior: step errors → StepResult(ERROR) + report + continue/abort per recipe config; module errors → Core event + heartbeat-driven recovery; never both silent.
+- **Error-handling policy.** *Half settled (§1.10).* The mechanism exists: `report_and_reraise` for the execution layer, `catch_and_report_errors` for event loops, so a step failure reaches its caller instead of being swallowed. What Phase 1 still has to decide is what the caller *does* with it — StepResult(ERROR) is agreed, continue-or-abort per recipe config is not.
 - **Core busy-loop & heartbeats.** 100 Hz polling in every module is fine for now; when Core gains real work, consider `Queue.get(timeout=...)`-driven loops. Heartbeat timeout currently only logs a warning — define the recovery action (restart module? abort run? notify HMI?).
 - ~~**Config in the temp directory.**~~ **Closed (§1.3):** moved to the `platformdirs` per-user config directory, single writer, versioned structure with migration, and structured data through dotted section families. It is still INI — deliberately, because the type information lives in `configuration_schema.py` and the file stays hand-editable on a bench. What remains open is *changing* configuration at runtime: `SetConfigParameter` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
 - **PyPI name.** The pyproject rename to `pts-framework` needs an early availability check on PyPI (v1.0.0 requirement), and alignment with the import name `pypts`.

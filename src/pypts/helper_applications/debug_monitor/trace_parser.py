@@ -12,7 +12,7 @@ and neither needs a framework to be running - a string is the whole input.
 
 This module is the Monitor's single point of contact with a format it does not
 own. `LOG_FORMAT` lives in `pypts/logger/log.py` and the trace text in
-`pypts/messages/queuewrapper.py`; if either changes, this file is what has to follow,
+`pypts/messages/queue_wrapper.py`; if either changes, this file is what has to follow,
 and the tests in `tests/unit_tests/test_debug_monitor.py` are what will say so.
 
 The format being parsed
@@ -21,8 +21,8 @@ The format being parsed
     LOG_FORMAT = "%(asctime)s.%(msecs)03d;%(levelname)s;%(processName)s;
                   %(filename)s:%(funcName)s;%(message)s"
 
-    2026-08-12 09:32:58.056;DEBUG;Core;queuewrapper.py:send;send core->sequencer StopSequencer()
-    2026-08-12 09:32:58.101;DEBUG;Sequencer;queuewrapper.py:receive;recv core->sequencer StopSequencer()
+    2026-08-12 09:32:58.056;DEBUG;Core;queue_wrapper.py:send;send core->sequencer StopSequencer()
+    2026-08-12 09:32:58.101;DEBUG;Sequencer;queue_wrapper.py:receive;recv core->sequencer StopSequencer()
 
 A record is a trace line when all three of these hold: the level is DEBUG, the
 location is one of the two QueueWrapper methods, and the message starts with `send `
@@ -70,7 +70,7 @@ TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S.%f"
 
 #: The two QueueWrapper methods that trace. `filename:funcName`, as the Logger writes
 #: it. `receive` rather than `recv`: this is the function name, not the trace.
-TRACE_LOCATIONS = frozenset({"queuewrapper.py:send", "queuewrapper.py:receive"})
+TRACE_LOCATIONS = frozenset({"queue_wrapper.py:send", "queue_wrapper.py:receive"})
 
 #: The two words a trace message can start with. These *are* `recv`, not
 #: `receive` - see the module docstring.
@@ -78,7 +78,7 @@ SEND = "send"
 RECV = "recv"
 DIRECTIONS = (SEND, RECV)
 
-#: What an anonymous QueueWrapper traces as, from `self.link or "?"` in queuewrapper.py.
+#: What an anonymous QueueWrapper traces as, from `self.link or "?"` in queue_wrapper.py.
 UNNAMED_LINK = "?"
 
 

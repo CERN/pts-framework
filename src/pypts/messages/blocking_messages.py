@@ -7,8 +7,8 @@ The waiting half of a request/response pair.
 
 A module that asks a question sends a request carrying a fresh `request_id`,
 then blocks until the matching response arrives on its inbox. The event loop
-that drains that inbox hands the answer over by calling resolve(); the asking
-code wakes up in wait().
+that drains that inbox hands the answer over by calling return_caller(); the
+asking code wakes up in wait().
 
     # asking side (a step, on its own worker thread)
     request_id = uuid4()
@@ -18,7 +18,7 @@ code wakes up in wait().
 
     # event loop, draining the inbox
     case UserPromptResponse(request_id=rid, choice=choice):
-        pending.resolve(rid, choice)
+        pending.return_caller(rid, choice)
 
 IMPORTANT: the thread that calls wait() must not be the thread that drains the
 inbox, or the answer can never arrive and the module deadlocks. The Sequencer
@@ -65,7 +65,7 @@ class PendingRequests:
         Block until the answer arrives, then return it. Returns None on timeout.
 
         The entry is always removed, so a late answer to a timed-out request is
-        discarded by resolve() rather than being handed to nobody.
+        discarded by return_caller() rather than being handed to nobody.
         """
         with self._lock:
             slot = self._waiting.get(request_id)
@@ -79,9 +79,9 @@ class PendingRequests:
         finally:
             self.cancel(request_id)
 
-    def resolve(self, request_id: UUID, value) -> bool:
+    def return_caller(self, request_id: UUID, value) -> bool:
         """
-        Hand an answer to whoever is waiting for it.
+        Hand an answer to whoever is waiting for it, waking them out of wait().
 
         Returns False if nobody is - an answer to a request that already timed
         out, or one this module never sent. The caller should log that rather

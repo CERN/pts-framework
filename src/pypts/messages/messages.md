@@ -20,7 +20,7 @@ has already happened · **STUB** declared, nothing sends or carries it out yet.
 
 ---
 
-## Shared vocabulary — `common.py` and `run_events.py`
+## Shared vocabulary — `common_messages.py` and `run_events.py`
 
 A type lives here when more than one link uses it: either every module sends it, or CORE
 *forwards* it from one link to another. Forwarding matters — CORE relays the same object
@@ -35,7 +35,7 @@ every hop.
 | `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT · STUB | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Emitted by the Sequencer, forwarded unchanged by CORE to the HMI. (`RecipeLoaded` comes from CORE itself.) |
 | `UserPromptRequest/Response`, `SerialNumberRequest/Response` | EVT · STUB | The two questions the engine asks the operator, joined by a `request_id` the asker generates. |
 
-## CORE ↔ HMI — `core_hmi_link.py` (the only process boundary)
+## CORE ↔ HMI — `core_hmi_communication.py` (the only process boundary)
 
 | `HmiToCore` (9) | Kind | Meaning |
 |---|---|---|
@@ -59,21 +59,21 @@ boundary. No live queues, no Qt objects, no device handles.
 `tests/unit_tests/test_messages.py` round-trips every member of both unions and fails if
 that stops being true.
 
-## CORE ↔ Sequencer — `core_sequencer_link.py` (thread of the Core process)
+## CORE ↔ Sequencer — `core_sequencer_communication.py` (thread of the Core process)
 
 | Direction | Messages |
 |---|---|
 | `CoreToSequencer` (5) | **CMD** `RunSequence(sequence_name)` · `StopSequence()` (abort the run, keep the module alive) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `SerialNumberResponse` — answers relayed back from the HMI |
 | `SequencerToCore` (11) | **EVT** `SequencerStopped()` · the 6 run-progress events · the 2 operator requests · `Heartbeat` · `ModuleError` |
 
-## CORE ↔ Report — `core_report_link.py` (thread of the Core process)
+## CORE ↔ Report — `core_report_communication.py` (thread of the Core process)
 
 | Direction | Messages |
 |---|---|
 | `CoreToReport` (3) | **CMD** `GenerateReport()` · `ExportReport()` · `StopReport()` |
 | `ReportToCore` (5) | **EVT** `ReportStopped()` · `ReportGenerated(report_path)` · `ReportExported(report_path)` · `Heartbeat` · `ModuleError`<br>The paths are absolute, and they are new: the old notifications carried nothing, so CORE learned a report existed but not where. |
 
-## any → Logger — `to_logger_link.py`
+## any → Logger — `to_logger_communication.py`
 
 | `LoggerControl` (2) | Meaning |
 |---|---|
@@ -99,10 +99,12 @@ authority on when.
   *second* value off the same response queue — a file path, a measured value, a
   (port, baudrate, IDN) triple. Each follow-up needs to become its own request rather than
   an untyped extra read.
-- **`PendingRequests` has no user.** It lands with the execution engine, and it brings a
+- **`PendingRequests` is only half wired.** The Sequencer owns one and calls
+  `return_caller()` from `deliver_response()`, so answers coming back are handled. The
+  *asking* half — `start()` and `wait()` — lands with the execution engine, and it brings a
   threading constraint with it: the thread that calls `wait()` must not be the one draining
   the inbox.
 - **Now that the Sequencer is in-process**, the engine links no longer have to be
   pickle-safe. Whether to allow live objects (a `Recipe`, a device handle) on
-  `core_sequencer_link` is a real design choice, not an oversight — and it does not apply to
-  `core_hmi_link`, which still crosses a process boundary.
+  `core_sequencer_communication` is a real design choice, not an oversight — and it does not apply to
+  `core_hmi_communication`, which still crosses a process boundary.

@@ -103,25 +103,25 @@ Everything else is found for you: the type checker flags every `match` that is n
 and `test_messages.py` fails until the message has an example and a branch.
 
 A message shared by two links — anything CORE forwards rather than repacks — belongs in
-`messages/common.py` or `messages/run_events.py` so both ends refer to the same class.
+`messages/common_messages.py` or `messages/run_events.py` so both ends refer to the same class.
 
 ## Layout of `pypts/messages/`
 
 | File | Contents |
 |---|---|
-| `queuewrapper.py` | `QueueWrapper`, its DEBUG trace, `unhandled()`, `UnhandledMessage` |
+| `queue_wrapper.py` | `QueueWrapper`, its DEBUG trace, `unhandled()`, `UnhandledMessage` |
 | `links.py` | the name of each direction, as it appears in the trace |
-| `common.py` | vocabulary shared by more than one link: `ModuleError`, `Heartbeat`, `ResultType`, `StepOutcome` |
+| `common_messages.py` | vocabulary shared by more than one link: `ModuleError`, `Heartbeat`, `ResultType`, `StepOutcome` |
 | `run_events.py` | what the engine reports during a run, and the two questions it asks the operator |
-| `core_hmi_link.py` | CORE ↔ HMI |
-| `core_sequencer_link.py` | CORE ↔ Sequencer |
-| `core_report_link.py` | CORE ↔ Report |
-| `to_logger_link.py` | any → Logger |
-| `requests.py` | `PendingRequests`, the waiting half of a request/response pair |
+| `core_hmi_communication.py` | CORE ↔ HMI |
+| `core_sequencer_communication.py` | CORE ↔ Sequencer |
+| `core_report_communication.py` | CORE ↔ Report |
+| `to_logger_communication.py` | any → Logger |
+| `blocking_messages.py` | `PendingRequests`, the waiting half of a request/response pair |
 | `messages.md` | module context: the catalogue of what each link carries |
 
 A link module is named after the two ends it joins and holds *both* directions. The Logger is
-the exception — `to_logger_link.py` — because nothing is ever sent back.
+the exception — `to_logger_communication.py` — because nothing is ever sent back.
 
 ## Key features
 

@@ -1,1 +1,2 @@
-# Subset of functionality from the pts.py file, that would parse the recipe file and return it to the core
+# Placeholder for the recipe data layer: the subset of pts.py that parses a
+# recipe file and hands it back to CORE. Ported in roadmap Phase 1, step 1.

@@ -51,10 +51,10 @@ from pypts.logger.log import (
     set_stdout_logging_enabled,
 )
 from pypts.messages import QueueWrapper
-from pypts.messages.to_logger_link import SetStdoutEnabled, StopLogger
+from pypts.messages.to_logger_communication import SetStdoutEnabled, StopLogger
 
 # Matches one line written by the Logger, i.e. the LOG_FORMAT in log.py:
-#   2026-08-11 09:37:00.958;INFO;Core;core.py:start;Starting module...
+#   2026-08-11 09:37:00.958;INFO;Core;core.py:start;Starting module.
 LOG_LINE = re.compile(
     r"^(?P<timestamp>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3});"
     r"(?P<level>[A-Z]+);"
@@ -77,7 +77,7 @@ def _burst_worker(log_queue, count):
     init_logging(log_queue)
     name = mp.current_process().name
     for index in range(count):
-        log.info(f"{name}|{index}")
+        log.info("%s|%s", name, index)
 
 
 def _origin_worker(log_queue):

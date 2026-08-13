@@ -32,7 +32,6 @@ def test_gui_mode_boots_offscreen_and_exits_with_code_zero():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_every_expected_process_is_started():
     """launcher -> {Logger, Core, HMI}, Core -> {Sequencer, Report}."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -41,13 +40,11 @@ def test_no_process_is_left_behind_after_exit():
 
     They keep spinning their event loops with no parent.
     """
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_shutdown_is_ordered_core_before_logger():
     """Otherwise the records that explain the shutdown never reach the file."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -57,4 +54,3 @@ def test_core_starts_promptly_when_stdin_is_a_pipe():
     not reach core_main until the launcher's input() unblocks. Reproduces on
     unmodified HEAD, so it predates the logger work. Matters for CI.
     """
-    ...

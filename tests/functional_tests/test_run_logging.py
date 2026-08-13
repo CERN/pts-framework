@@ -31,25 +31,21 @@ def test_a_run_produces_exactly_one_log_file():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_every_module_appears_in_that_file():
     """MainProcess, Core, Sequencer, Report and the HMI."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_no_line_in_the_log_is_malformed():
     """Torn records are the symptom of more than one writer."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_no_record_is_lost_under_concurrent_load():
     """Emit a known number of records from every process and count them back."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_log_file_name_is_decided_once_not_derived_from_the_clock_per_process():
     """The old scheme raced: processes crossing a second boundary split the run."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -61,13 +57,11 @@ def test_the_log_names_itself_and_the_configuration_it_used():
     announces the file name on the console only, because it is the one component
     that cannot log about logging.
     """
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_cli_mode_keeps_stdout_clean():
     """Child processes must not print over the interactive prompt."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)

@@ -21,8 +21,8 @@ import time
 
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
-from pypts.messages.common import ModuleError, ResultType, StepOutcome
-from pypts.messages.core_hmi_link import (
+from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
+from pypts.messages.core_hmi_communication import (
     CoreToHmi,
     HmiStopped,
     HmiToCore,
@@ -47,11 +47,12 @@ from pypts.messages.run_events import (
     UserPromptResponse,
 )
 from pypts.utilities.error_handling import catch_and_report_errors
-from pypts.utilities.heartbeat_manager import HeartbeatManager
+from pypts.utilities.heartbeat_manager import HMI, HeartbeatManager
 
 #: The name CORE knows a frontend by, and the `source` on its heartbeats. Both
-#: frontends use it because only one of them ever runs.
-MODULE_NAME = "hmi"
+#: frontends use it because only one of them ever runs. Imported rather than
+#: spelled again: CORE keys its liveness tables on the same string.
+MODULE_NAME = HMI
 
 #: How long stop_and_wait() gives CORE to answer a shutdown request before the
 #: frontend stops on its own. Without a bound, a wedged CORE would hang the exit.
@@ -67,7 +68,9 @@ class HmiClient:
         running: False once CORE has told this frontend to stop.
     """
 
-    def __init__(self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]) -> None:
+    def __init__(
+        self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]
+    ) -> None:
         self.core = to_core
         self.inbox = from_core
         self.running = True
@@ -155,7 +158,7 @@ class HmiClient:
         to leave calls request_shutdown() and lets CORE bring everything down in
         order.
         """
-        log.info("Stopping module")
+        log.info("Stopping module.")
         self.running = False
         self.on_stop()
         self.core.send(HmiStopped())
@@ -180,31 +183,31 @@ class HmiClient:
     # Defaults log and nothing else. Override the ones a frontend can draw.
 
     def show_status(self, text: str) -> None:
-        log.info(f"status: {text}")
+        log.info("status: %s", text)
 
     def show_error(self, error: ModuleError) -> None:
-        log.error(f"{error.source}: {error.message}")
+        log.error("%s: %s", error.source, error.message)
 
     def show_recipe_loaded(self, recipe_name: str, recipe_version: str) -> None:
-        log.info(f"recipe loaded: {recipe_name} {recipe_version}")
+        log.info("recipe loaded: %s %s", recipe_name, recipe_version)
 
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
-        log.info(f"run started: {recipe_name}")
+        log.info("run started: %s", recipe_name)
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
-        log.info(f"run finished: {result} ({len(outcomes)} steps)")
+        log.info("run finished: %s (%d steps)", result, len(outcomes))
 
     def show_sequence_started(self, sequence_name: str) -> None:
-        log.info(f"sequence started: {sequence_name}")
+        log.info("sequence started: %s", sequence_name)
 
     def show_sequence_finished(self, sequence_name: str, result: ResultType) -> None:
-        log.info(f"sequence finished: {sequence_name} -> {result}")
+        log.info("sequence finished: %s -> %s", sequence_name, result)
 
     def show_step_started(self, event: StepStarted) -> None:
-        log.info(f"step started: {event.step_name}")
+        log.info("step started: %s", event.step_name)
 
     def show_step_finished(self, outcome: StepOutcome) -> None:
-        log.info(f"step finished: {outcome.step_name} -> {outcome.result}")
+        log.info("step finished: %s -> %s", outcome.step_name, outcome.result)
 
     def ask_user(self, request: UserPromptRequest) -> None:
         """
@@ -213,7 +216,7 @@ class HmiClient:
         The default declines, because a frontend that cannot ask must still
         answer: the step on the other side is blocked until it hears something.
         """
-        log.warning(f"Cannot prompt the operator: {request.message}")
+        log.warning("Cannot prompt the operator: %s", request.message)
         self.answer_user_prompt(request, None)
 
     def ask_serial_number(self, request: SerialNumberRequest) -> None:

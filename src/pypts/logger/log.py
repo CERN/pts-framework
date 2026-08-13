@@ -46,14 +46,14 @@ from typing import get_args
 
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.links import ANY_TO_LOGGER
-from pypts.messages.to_logger_link import LoggerControl, SetStdoutEnabled, StopLogger
+from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
 
 #: The level every process runs at unless the launcher says otherwise.
 #:
 #: INFO, not DEBUG, because DEBUG now means the full message trace: every
-#: every QueueWrapper logs each message twice (see messages/queuewrapper.py).
-#: That is the right
-#: thing to ask for deliberately and the wrong thing to get by default.
+#: QueueWrapper logs each message twice, once on the send and once on the
+#: receive (see messages/queue_wrapper.py). That is the right thing to ask for
+#: deliberately and the wrong thing to get by default.
 DEFAULT_LOG_LEVEL = logging.INFO
 
 #: The control messages that share the log queue with ordinary log records.
@@ -63,7 +63,11 @@ CONTROL_MESSAGES = get_args(LoggerControl)
 
 # Log message format including timestamp with milliseconds, log level, originating
 # process, source file, function and message.
-LOG_FORMAT = "%(asctime)s.%(msecs)03d;%(levelname)s;%(processName)s;%(filename)s:%(funcName)s;%(message)s"
+#
+# Left as one over-long literal on purpose: the Debug Monitor's trace_parser.py
+# mirrors this format field for field, and splitting it across lines would make
+# the two harder to compare than the long line is to read.
+LOG_FORMAT = "%(asctime)s.%(msecs)03d;%(levelname)s;%(processName)s;%(filename)s:%(funcName)s;%(message)s"  # noqa: E501
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # The root logger, exported so modules can keep doing `from ... import log`.
@@ -158,7 +162,10 @@ def set_stdout_logging_enabled(enabled: bool):
         return
 
     for handler in logging.getLogger().handlers:
-        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+        is_console = isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, logging.FileHandler
+        )
+        if is_console:
             # Raising the level above CRITICAL silences the handler without
             # removing it, so it can be switched back on later.
             handler.setLevel(logging.NOTSET if enabled else logging.CRITICAL + 1)

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-Unit tests for the message trace (src/pypts/messages/queuewrapper.py).
+Unit tests for the message trace (src/pypts/messages/queue_wrapper.py).
 
 The trace is the whole-system view of the framework. Core <-> Sequencer and
 Core <-> Report never leave the engine process, so a run log at DEBUG is the
@@ -27,13 +27,13 @@ import queue
 import pytest
 
 from pypts.messages import QueueWrapper
-from pypts.messages.core_hmi_link import StatusChanged
+from pypts.messages.core_hmi_communication import StatusChanged
 from pypts.messages.links import CORE_TO_HMI
 
 TRACE_LOGGER = "pypts.trace"
 
 
-def build_channel(link: str = CORE_TO_HMI) -> QueueWrapper:
+def build_wrapper(link: str = CORE_TO_HMI) -> QueueWrapper:
     """A QueueWrapper over a plain in-process queue - no processes, no launcher."""
     return QueueWrapper(queue.Queue(), link=link)
 
@@ -45,10 +45,10 @@ def trace_lines(caplog) -> list[str]:
 
 def test_send_is_traced_with_its_link_and_message(caplog):
     """One line per send, naming the direction and the message itself."""
-    channel = build_channel()
+    wrapper = build_wrapper()
 
     with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
-        channel.send(StatusChanged("ready"))
+        wrapper.send(StatusChanged("ready"))
 
     lines = trace_lines(caplog)
     assert len(lines) == 1, f"expected one trace line, got {lines}"
@@ -60,10 +60,10 @@ def test_send_is_traced_with_its_link_and_message(caplog):
 
 def test_send_is_traced_at_debug(caplog):
     """The trace is DEBUG, which is what makes one --log-level enough to gate it."""
-    channel = build_channel()
+    wrapper = build_wrapper()
 
     with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
-        channel.send(StatusChanged("ready"))
+        wrapper.send(StatusChanged("ready"))
 
     records = [r for r in caplog.records if r.name == TRACE_LOGGER]
     assert records[0].levelno == logging.DEBUG
@@ -71,12 +71,12 @@ def test_send_is_traced_at_debug(caplog):
 
 def test_receive_is_traced_once_per_message(caplog):
     """Both directions, so a send with no matching recv stands out."""
-    channel = build_channel()
-    channel.send(StatusChanged("one"))
-    channel.send(StatusChanged("two"))
+    wrapper = build_wrapper()
+    wrapper.send(StatusChanged("one"))
+    wrapper.send(StatusChanged("two"))
 
     with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
-        drained = list(channel.receive())
+        drained = list(wrapper.receive())
 
     assert len(drained) == 2
     received = [line for line in trace_lines(caplog) if line.startswith("recv ")]
@@ -93,12 +93,12 @@ def test_a_message_left_on_the_queue_is_not_traced_as_received(caplog):
     `received` counter about what "received" means, or a reader chasing a lost
     message is misled about where it stopped.
     """
-    channel = build_channel()
-    channel.send(StatusChanged("one"))
-    channel.send(StatusChanged("two"))
+    wrapper = build_wrapper()
+    wrapper.send(StatusChanged("one"))
+    wrapper.send(StatusChanged("two"))
 
     with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
-        first = next(iter(channel.receive()))
+        first = next(iter(wrapper.receive()))
 
     assert first == StatusChanged("one")
     received = [line for line in trace_lines(caplog) if line.startswith("recv ")]
@@ -108,11 +108,11 @@ def test_a_message_left_on_the_queue_is_not_traced_as_received(caplog):
 
 def test_nothing_is_traced_above_debug(caplog):
     """The one-dial guarantee: at the default level a run carries no trace."""
-    channel = build_channel()
+    wrapper = build_wrapper()
 
     with caplog.at_level(logging.INFO, logger=TRACE_LOGGER):
-        channel.send(StatusChanged("ready"))
-        list(channel.receive())
+        wrapper.send(StatusChanged("ready"))
+        list(wrapper.receive())
 
     assert trace_lines(caplog) == []
 
@@ -136,16 +136,16 @@ def test_the_message_is_not_formatted_when_the_trace_is_off(caplog):
             self.reprs += 1
             return "CountingMessage()"
 
-    channel = build_channel()
+    wrapper = build_wrapper()
 
     quiet = CountingMessage()
     with caplog.at_level(logging.INFO, logger=TRACE_LOGGER):
-        channel.send(quiet)
+        wrapper.send(quiet)
     assert quiet.reprs == 0, "the message was formatted even though the trace was off"
 
     loud = CountingMessage()
     with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
-        channel.send(loud)
+        wrapper.send(loud)
     # Not an exact count: every handler that renders the record calls repr, and
     # under pytest there are several. One or more is the whole claim - the
     # message is formatted when, and only when, something is going to emit it.
@@ -194,21 +194,21 @@ def test_a_failing_log_queue_does_not_stop_the_message(broken_log_queue_handler)
     because it is the reason it is acceptable to put the trace on the path of
     every message in the system.
     """
-    channel = build_channel()
+    wrapper = build_wrapper()
 
-    channel.send(StatusChanged("ready"))
+    wrapper.send(StatusChanged("ready"))
 
-    assert list(channel.receive()) == [StatusChanged("ready")]
+    assert list(wrapper.receive()) == [StatusChanged("ready")]
 
 
-def test_an_unnamed_channel_still_delivers(caplog):
+def test_an_unnamed_wrapper_still_delivers(caplog):
     """`QueueWrapper(queue)` with no link is legal, and traces as "?" rather than raising."""
-    channel = QueueWrapper(queue.Queue())
+    wrapper = QueueWrapper(queue.Queue())
 
     with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
-        channel.send(StatusChanged("ready"))
-        drained = list(channel.receive())
+        wrapper.send(StatusChanged("ready"))
+        drained = list(wrapper.receive())
 
     assert drained == [StatusChanged("ready")]
-    assert channel.link == ""
+    assert wrapper.link == ""
     assert all(line.split()[1] == "?" for line in trace_lines(caplog))

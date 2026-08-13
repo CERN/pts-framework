@@ -27,19 +27,16 @@ def test_unknown_command_is_reported_without_crashing():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_eof_on_stdin_is_treated_as_exit():
     """Non interactive stdin - a pipe or a CI run - must shut down cleanly."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_stop_from_core_ends_the_cli_without_waiting_for_input():
     """Today the main thread is parked in input() and only notices after Enter."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_exit_codes_follow_the_specification():
     """0/1/2/3 per the CLI module page."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)

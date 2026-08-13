@@ -173,8 +173,9 @@ class TraceModel(QAbstractTableModel):
             if event.timestamp is None:
                 return ""
             # Milliseconds matter here: the interesting question is usually how
-            # long a message spent between its send and its recv.
-            return event.timestamp.strftime("%H:%M:%S.") + f"{event.timestamp.microsecond // 1000:03d}"
+            # long a message spent between its send and its recv. %f gives
+            # microseconds, so the last three digits are dropped.
+            return event.timestamp.strftime("%H:%M:%S.%f")[:-3]
         if column == COL_PROCESS:
             return event.process
         if column == COL_DIRECTION:

@@ -26,7 +26,6 @@ def test_device_base_defines_connect_teardown_recover():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_family_bases_expose_the_standard_verbs():
     """PowerSupply, DAQ, Load and friends."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -42,4 +41,3 @@ def test_hal_is_importable_without_the_framework_running():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_a_driver_only_depends_on_the_stable_api():
     """Drivers import pypts.api, never pypts.core."""
-    ...

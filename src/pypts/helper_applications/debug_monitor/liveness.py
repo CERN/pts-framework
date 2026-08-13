@@ -28,10 +28,16 @@ worth seeing rather than a display glitch.
 
 Two rules this module exists to hold:
 
-  - **The timeout is imported, never copied.** `HEARTBEAT_TIMEOUT_S` belongs to
-    `core.py`. The debug console that was deleted from this repo declared its own
-    copy, and the roadmap lists that duplication among the defects that died with
-    it. One constant, one owner.
+  - **The timeout is imported, never copied.** `HEARTBEAT_TIMEOUT_S` and the
+    three module names belong to `utilities/heartbeat_manager.py`, beside the
+    interval they are the counterpart of. The debug console that was deleted
+    from this repo declared its own copy, and the roadmap lists that duplication
+    among the defects that died with it. One constant, one owner.
+
+    They used to be imported from `core.py`, which pulled the Sequencer, the
+    Report and the configuration into this tool's import graph - thirty modules
+    for four constants, and directly against what `log_source.py` goes out of
+    its way to avoid.
   - **"Now" is the last line in the file, not the wall clock.** Opening a log
     from last week must not paint every module dead. It also means a live tail
     and a replay are the same code path, because a live tail's last line is now.
@@ -40,8 +46,8 @@ Two rules this module exists to hold:
 from dataclasses import dataclass, field
 from datetime import datetime
 
-from pypts.core.core import HEARTBEAT_TIMEOUT_S, HMI, REPORT, SEQUENCER
 from pypts.helper_applications.debug_monitor.trace_parser import LogLine, as_trace_event
+from pypts.utilities.heartbeat_manager import HEARTBEAT_TIMEOUT_S, HMI, REPORT, SEQUENCER
 
 #: The modules CORE watches, in the order they are worth reading.
 MODULES = (HMI, SEQUENCER, REPORT)

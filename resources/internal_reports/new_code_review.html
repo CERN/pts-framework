@@ -1,0 +1,570 @@
+<!--
+SPDX-FileCopyrightText: 2025 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Code Review</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#22201d; --muted:#6b665f; --line:#e2ded7;
+    --card:#ffffff; --accent:#8a5a2b; --code-bg:#f3f0ea;
+    --warn-bg:#fdf3ea; --warn-line:#e0a76a;
+    --ok-bg:#eef5ee; --ok-line:#8fb08f;
+    --bad-bg:#fbecea; --bad-line:#c4776b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a18; --fg:#e8e4dd; --muted:#a09a91; --line:#332f2b;
+      --card:#232120; --accent:#d8a06a; --code-bg:#2a2724;
+      --warn-bg:#33261a; --warn-line:#8a6236;
+      --ok-bg:#1f2a20; --ok-line:#4d6b4d;
+      --bad-bg:#2e1e1c; --bad-line:#7d4a41;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:28px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:38px 0 10px;padding-top:10px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:24px 0 6px;color:var(--accent)}
+  h4{font-size:14.5px;margin:16px 0 4px}
+  p{margin:8px 0}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    font:13px/1.5 "SF Mono",Consolas,"Courier New",monospace}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;margin:10px 0}
+  pre code{background:none;padding:0;font-size:12.5px}
+  .tablewrap{overflow-x:auto;margin:10px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  td code{white-space:nowrap}
+  .note{background:var(--ok-bg);border-left:3px solid var(--ok-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn{background:var(--warn-bg);border-left:3px solid var(--warn-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .bad{background:var(--bad-bg);border-left:3px solid var(--bad-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn strong,.note strong,.bad strong{color:var(--accent)}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:14px 18px;margin:20px 0;font-size:14px}
+  .toc ol{columns:2;column-gap:30px;margin:6px 0}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px dotted var(--muted)}
+  .toc a:hover{color:var(--accent)}
+  .flow{font:13px/1.7 "SF Mono",Consolas,monospace;background:var(--code-bg);
+    border:1px solid var(--line);border-radius:8px;padding:14px;white-space:pre;overflow-x:auto}
+  .tag{display:inline-block;border-radius:3px;padding:0 6px;font-size:11.5px;
+    font-weight:700;letter-spacing:.02em;vertical-align:2px;white-space:nowrap}
+  .keep{background:#4a6b8a;color:#fff}
+  .fix{background:#8a5a2b;color:#fff}
+  .drop{background:#a03c33;color:#fff}
+  .ok{background:#4d7a4d;color:#fff}
+  .filecard{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:4px 18px 14px;margin:14px 0}
+  .metric{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0}
+  .metric div{flex:1 1 150px;background:var(--card);border:1px solid var(--line);
+    border-radius:8px;padding:10px 14px}
+  .metric b{display:block;font-size:22px;color:var(--accent)}
+  .metric span{font-size:12.5px;color:var(--muted)}
+  footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>New Code Review</h1>
+  <div class="sub">What is left over from the recent work, how the comments read, how things are
+  named, and where the code is cleverer than it needs to be.
+  Branch <code>architecture_refactor</code>, 2026-08-13 · read module by module, plus
+  <code>ruff</code> and an import-graph check ·
+  <strong>nothing has been changed — this is the "before" picture.</strong></div>
+</header>
+
+<div class="toc">
+  <ol>
+    <li><a href="#scope">Scope and method</a></li>
+    <li><a href="#verdict">Verdict at a glance</a></li>
+    <li><a href="#leftovers">Leftovers, and what is executable</a></li>
+    <li><a href="#comments">Comments</a></li>
+    <li><a href="#naming">Naming</a></li>
+    <li><a href="#modern">Modern syntax, and what it costs to undo</a></li>
+    <li><a href="#consistency">Consistency</a></li>
+    <li><a href="#order">What I would do, in order</a></li>
+  </ol>
+</div>
+
+<h2 id="scope">1. Scope and method</h2>
+
+<p>Read in full: <code>launcher/</code>, <code>messages/</code> (all ten modules),
+<code>core/</code>, <code>sequencer/</code>, <code>report/</code>, <code>hmi/</code>,
+<code>logger/</code>, <code>config_handler/</code> (all four), <code>utilities/</code> (all four),
+<code>helper_applications/debug_monitor/</code> (all six), plus the stubs
+<code>hardware_layer/hal.py</code>, <code>recipe/recipe.py</code> and
+<code>stream_handler/StreamContainer.py</code>. <code>old_code/</code> was not read for this and
+is out of scope by definition.</p>
+
+<p>Two mechanical checks back the prose up: <code>ruff check</code> over the whole tree except
+<code>old_code/</code>, and a census of comment and docstring lines against statement lines. Both
+are reported with their numbers so you can disagree with the conclusion and still trust the count.</p>
+
+<div class="metric">
+  <div><b>2&nbsp;096</b><span>lines of code in the refactored modules</span></div>
+  <div><b>2&nbsp;380</b><span>lines of docstring + comment over them</span></div>
+  <div><b>4</b><span>ruff findings in the refactored modules</span></div>
+  <div><b>108</b><span>ruff findings in the un-refactored islands</span></div>
+</div>
+
+<p class="sub">The census counts a module-level or leading string literal as docstring, a
+<code>#</code> line as comment, everything else non-blank as code. It is crude at the edges — a
+file that is nothing but a docstring counts as slightly negative code — but the totals are sound.</p>
+
+<h2 id="verdict">2. Verdict at a glance</h2>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Area</th><th>State</th><th>One line</th></tr>
+  <tr><td>Refactored modules — correctness hygiene</td><td><span class="tag ok">GOOD</span></td>
+    <td>4 ruff findings in 2 100 lines: three import-order, one <code>datetime.now()</code> without a timezone</td></tr>
+  <tr><td>Un-refactored islands inside the new tree</td><td><span class="tag drop">BAD</span></td>
+    <td>23 undefined names, code that prints at import, code that cannot run at all</td></tr>
+  <tr><td>Rename residue (<code>channel</code> → <code>QueueWrapper</code>)</td><td><span class="tag fix">LEFTOVER</span></td>
+    <td>Three places in <code>src/</code>, one of them a garbled comment; the tests are worse</td></tr>
+  <tr><td>Comments</td><td><span class="tag fix">TOO MUCH</span></td>
+    <td>Excellent in kind, 1.14 prose lines per code line in volume, and some of it has already rotted</td></tr>
+  <tr><td>Naming</td><td><span class="tag ok">GOOD</span></td>
+    <td>Conventions are real and mostly held; four specific drifts listed below</td></tr>
+  <tr><td>Simplicity</td><td><span class="tag keep">MIXED</span></td>
+    <td>The architecture's "modern" constructs are load-bearing; a smaller layer of cleverness is not</td></tr>
+  <tr><td>Docs vs reality</td><td><span class="tag fix">DRIFTED</span></td>
+    <td>Three statements in <code>CLAUDE.md</code> / <code>messages.md</code> / <code>debug_monitor</code> are now false</td></tr>
+</table>
+</div>
+
+<h2 id="leftovers">3. Leftovers, and what is executable</h2>
+
+<h3>3.1 The un-refactored islands — the real problem</h3>
+
+<p>Three directories inside the new tree are pre-refactor code that was carried across and never
+touched. They are not stubs waiting to be filled in; they are old working files, and two of them
+no longer work at all. Every ruff finding worth having is in here.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Location</th><th>Lines</th><th>Imported by anything?</th><th>State</th></tr>
+  <tr><td><code>stream_handler/StreamContainer.py</code></td><td>62</td><td>No</td>
+    <td>Runs code at import and prints to stdout</td></tr>
+  <tr><td><code>hmi/gui/XYGraph/</code> (2 files)</td><td>433</td><td>No</td>
+    <td>7 undefined names — crashes if executed</td></tr>
+  <tr><td><code>helper_applications/recipe_creator/</code></td><td>1 529</td><td>No</td>
+    <td>16 undefined names, 8 unused variables</td></tr>
+  <tr><td><code>helper_applications/recipe_verificator/</code></td><td>329</td><td>No</td><td>Old style, runs</td></tr>
+  <tr><td><code>helper_applications/example_finder/</code></td><td>263</td><td>No</td><td>Old style, PyQt5 (not PySide6)</td></tr>
+</table>
+</div>
+
+<div class="bad"><strong><code>stream_handler/StreamContainer.py</code> executes on import and
+prints.</strong> Line 31 is <code>container = GlobalContainer()</code> at module scope, and
+<code>GlobalContainer.__new__</code> opens with
+<code>print("Something is creating the container object")</code>. Importing this module — which is
+all it takes — writes to stdout from library code. It also carries a redundant
+<code>global container</code> at module level, an 18-line commented-out
+<code>if __name__ == "__main__"</code> block, parameters named <code>Stream</code> that shadow the
+class, and a <code>kill()</code> whose body is <code>del(self)</code>, which does nothing at all.
+Nothing imports it. This is the single worst file in the new tree and the clearest candidate for
+deletion or for a move next to <code>old_code/</code>.</div>
+
+<p><code>hmi/gui/XYGraph/XY_graph.py</code> and <code>simulated_signals.py</code> are the same
+story one level up: they reference <code>Stream</code>, <code>container</code>,
+<code>Simulated_sine_wave</code>, <code>csv</code> and <code>datetime</code> without importing
+any of them, so the module raises <code>NameError</code> the moment those lines are reached, and
+<code>XY_graph.py</code> still ends in an executable <code>if __name__ == '__main__':</code>. They
+sit inside <code>hmi/gui/</code>, which is otherwise new code — a reader looking at the GUI package
+has no way to tell the two apart except by opening them.</p>
+
+<p><code>tests/unit_tests/test_stream_handler.py</code> already describes both as
+"a StreamContainer plus an XYGraph spike exist but are not integrated; Phase 3 promotes them", so
+the intent is on record. The question is only whether they should sit in the shipping package
+until then.</p>
+
+<h3>3.2 Residue from the <code>channel</code> → <code>QueueWrapper</code> rename</h3>
+
+<p>The rename was thorough in the code and stopped short of the words around it.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Where</th><th>What is left</th></tr>
+  <tr><td><code>utilities/heartbeat_manager.py</code> :20, :26, :33, :34, :42</td>
+    <td>The constructor parameter and the attribute are still called <code>channel</code>, and the
+    docstring still says "Sends a Heartbeat on <code>channel</code>". Every other module calls this
+    same object <code>core</code> (outbox) or <code>inbox</code>.</td></tr>
+  <tr><td><code>core/core.py</code> :275, :291</td>
+    <td><code>def poll(self, channel, handler)</code> — the one parameter in CORE still named for
+    the old class.</td></tr>
+  <tr><td><code>logger/log.py</code> :51–57</td>
+    <td>A comment mangled by the rename, see below.</td></tr>
+  <tr><td><code>tests/unit_tests/test_messages.py</code>, <code>test_queue_wrapper_trace.py</code>,
+    <code>test_debug_monitor.py</code></td>
+    <td>~30 local variables and 8 test <em>names</em> still say <code>channel</code>
+    (<code>test_channel_receive_stops_at_its_limit</code>, <code>build_channel()</code>,
+    <code>test_an_unnamed_channel_traces_as_a_question_mark</code>). The file was renamed to
+    <code>test_queue_wrapper_trace.py</code>; its contents were not.</td></tr>
+</table>
+</div>
+
+<div class="bad"><strong>A comment was corrupted by the rename.</strong>
+<code>logger/log.py</code> lines 51–57, above <code>DEFAULT_LOG_LEVEL</code>:
+<pre><code>#: INFO, not DEBUG, because DEBUG now means the full message trace: every
+#: every QueueWrapper logs each message twice (see messages/queue_wrapper.py).
+#: That is the right
+#: thing to ask for deliberately and the wrong thing to get by default.</code></pre>
+"every / every" is a duplicated word where a clause was replaced, and the sentence no longer
+parses. The line wrapping was left mid-phrase too. This is the only outright broken piece of prose
+I found, and it is in the module that explains the logging policy.</div>
+
+<h3>3.3 Stubs that are honest, and stubs that are empty</h3>
+
+<p>These are expected — Phase 1 has not happened — and all of them say so in words rather than
+failing silently. Listed so the inventory is complete, not as defects:</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Stub</th><th>What it does today</th></tr>
+  <tr><td><code>Sequencer.run_sequence()</code></td><td>Logs "the execution engine is not ported yet"</td></tr>
+  <tr><td><code>Report.generate_report()</code> / <code>export_report()</code></td><td>Log "the report layer is not ported yet"</td></tr>
+  <tr><td><code>Core.load_recipe()</code></td><td>Logs a warning and answers <code>StatusChanged</code></td></tr>
+  <tr><td><code>Core</code> ← <code>SetConfigParameter</code></td><td>Logs that it is not implemented, and says why</td></tr>
+  <tr><td><code>hardware_layer/hal.py</code></td><td>One line: <code># hardware layer</code></td></tr>
+  <tr><td><code>recipe/recipe.py</code></td><td>One comment line, no code</td></tr>
+  <tr><td><code>step/__init__.py</code></td><td>Empty</td></tr>
+  <tr><td><code>--mode connect</code></td><td>Accepted by argparse, has no branch, silently starts the CLI</td></tr>
+</table>
+</div>
+
+<h3>3.4 Dead-ish odds and ends</h3>
+
+<ul>
+  <li><strong><code>utilities/common.py</code> — <code>convert_string_to_int()</code> has no
+  production caller.</strong> The only users are its own three assertions in
+  <code>test_utilities.py</code>. It also re-raises <code>ValueError</code> inside
+  <code>except ValueError</code> without <code>from</code>, so the original context is dropped, and
+  its <code>value: str</code> hint contradicts the <code>TypeError</code> branch that exists
+  precisely to handle a non-string.</li>
+  <li><strong><code>src/pypts/__main__.py</code> has no trailing newline</strong> — three lines,
+  the last one unterminated.</li>
+  <li><strong><code>utilities/local_storage.py</code>:46</strong> — <code>datetime.now()</code>
+  with no timezone (ruff DTZ005). Harmless for a filename, and the Monitor deliberately parses
+  naive timestamps, so this is a "decide and silence it" rather than a bug.</li>
+  <li><strong>No ruff configuration is committed.</strong> There is no <code>[tool.ruff]</code> in
+  <code>pyproject.toml</code> and no <code>ruff.toml</code>, yet the code carries
+  <code># noqa: BLE001</code>, <code># noqa: DTZ007</code> and <code># noqa: B008</code> — codes
+  from rule sets nothing enables. The suppressions read as documentation; nothing enforces the
+  rules they suppress, and <code>ruff check</code> on a fresh clone has no agreed baseline.</li>
+</ul>
+
+<h3>3.5 Documentation that has drifted from the code</h3>
+
+<div class="warn">
+<p>Three statements are now false. Flagged rather than fixed, per the rule about not silently
+working around a disagreement between the docs and reality.</p>
+<ol>
+  <li><strong><code>CLAUDE.md</code>: "config.ini … ships as <code>INFO</code>".</strong>
+  <code>configuration_schema.py</code>:94 ships <code>DEBUG</code>, deliberately and with a comment
+  saying it reverts before v1.0. The doc describes the pre-refactor default.</li>
+  <li><strong><code>messages/messages.md</code>: "<code>PendingRequests</code> has no user".</strong>
+  The Sequencer constructs one (<code>sequencer.py</code>:63) and calls it
+  (<code>:141</code>). What has no user is the <em>asking</em> half.</li>
+  <li><strong><code>debug_monitor/__init__.py</code>: "The first two import no Qt and no running
+  framework".</strong> True of <code>trace_parser.py</code>; false of <code>liveness.py</code> —
+  see below.</li>
+</ol>
+</div>
+
+<div class="bad"><strong>Importing the Monitor's liveness fold imports the whole engine.</strong>
+<code>liveness.py</code>:43 is
+<code>from pypts.core.core import HEARTBEAT_TIMEOUT_S, HMI, REPORT, SEQUENCER</code> — four
+constants. Measured: importing that module loads <strong>30 <code>pypts</code> modules</strong>,
+including <code>sequencer.sequencer</code>, <code>report.report</code>, all four
+<code>config_handler</code> modules and every link module. The intent is explicit and good ("the
+timeout is imported, never copied"), and <code>log_source.py</code> goes to the trouble of a
+function-level import specifically to keep the configuration out of the tool's import graph — which
+<code>liveness.py</code> then pulls in anyway, transitively. The four constants want a home that is
+not <code>core.py</code>.</div>
+
+<h2 id="comments">4. Comments</h2>
+
+<p>This is the most unusual thing about the codebase and the hardest to give a single verdict on.
+The comments are, in kind, better than almost anything I would expect to find: they explain
+<em>why</em>, they name the defect a decision was a reaction to, and they warn about the thing the
+next person would otherwise get wrong. <code>queue_wrapper.py</code>'s note that the trace uses
+<code>%</code>-args so the <code>repr()</code> is not computed below DEBUG is exactly the kind of
+comment that stops a well-meaning rewrite.</p>
+
+<p>In volume, they have gone past the point of helping.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>File</th><th>Code</th><th>Docstring</th><th>Comment</th><th>Prose : code</th></tr>
+  <tr><td><code>messages/queue_wrapper.py</code></td><td>9</td><td>120</td><td>39</td><td><strong>17.7 : 1</strong></td></tr>
+  <tr><td><code>utilities/local_storage.py</code></td><td>6</td><td>25</td><td>4</td><td>4.8 : 1</td></tr>
+  <tr><td><code>messages/common_messages.py</code></td><td>26</td><td>54</td><td>3</td><td>2.2 : 1</td></tr>
+  <tr><td><code>messages/blocking_messages.py</code></td><td>24</td><td>51</td><td>5</td><td>2.3 : 1</td></tr>
+  <tr><td><code>logger/log.py</code></td><td>88</td><td>127</td><td>38</td><td>1.9 : 1</td></tr>
+  <tr><td><code>core/core.py</code></td><td>235</td><td>149</td><td>53</td><td>0.9 : 1</td></tr>
+  <tr><td><code>config_handler/config_handler.py</code></td><td>352</td><td>236</td><td>24</td><td>0.7 : 1</td></tr>
+  <tr><td><strong>all refactored modules</strong></td><td><strong>2 096</strong></td><td><strong>1 857</strong></td><td><strong>523</strong></td><td><strong>1.14 : 1</strong></td></tr>
+</table>
+</div>
+
+<p>Four consequences, in the order they will bite:</p>
+
+<ol>
+  <li><strong>Prose rots, and some already has.</strong> The garbled <code>log.py</code> comment
+  (§3.2) and the three false statements (§3.5) are all prose failures, not code failures. At
+  1.14 : 1 there is more surface to maintain than there is code, and every rename has to be
+  performed twice.</li>
+  <li><strong>It is duplicated against the <code>.md</code> files.</strong>
+  <code>queue_wrapper.py</code>'s 159 lines of prose, <code>messages/messages.md</code>,
+  <code>messaging_overview.html</code> and <code>README.md</code> all explain the transport. Four
+  copies of one explanation is four things to update, and it is why the two documents disagreed
+  about <code>PendingRequests</code>.</li>
+  <li><strong>Some of it is history rather than description.</strong> "Previously the HMI link had
+  no branch for this at all", "which is how the old code lost the ErrorSeverity enum on every hop",
+  "the old helper had <code>if event:</code>". This is genuinely valuable <em>now</em>, during a
+  port where old_code is the reference. It stops being valuable the day the port is finished, and
+  it will not remove itself. The commit message is the conventional home for it.</li>
+  <li><strong>A few comments encode coupling instead of documenting it.</strong>
+  <code>liveness.py</code>'s <code>_note_core_opinion()</code> matches on two literal log
+  sentences from <code>core.py</code> and says so honestly ("fragile and known to be"). Saying it
+  out loud does not make it less fragile — a reworded log line silently blanks the verdict column.</li>
+</ol>
+
+<div class="note"><strong>What I would not do:</strong> a blanket cut. The rationale comments are
+the reason a reader can follow decisions like the daemon threads, the single-writer Logger and the
+batching in <code>receive()</code>. The target is not "fewer comments" — it is one home per fact:
+mechanism in the module docstring, status and plan in the roadmap, catalogue in
+<code>messages.md</code>, and history in the git log.</div>
+
+<h2 id="naming">5. Naming</h2>
+
+<p>Good overall, and it is good because the conventions are written down and mostly obeyed:
+<code>to_x</code> / <code>from_x</code> for the two halves of a link, <code>MODULE_NAME</code> in
+each module, <code>*_main()</code> for every entry point, <code>MODULE_ERROR</code>-style constants
+for anything a string comparison would otherwise hide. Four drifts:</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>#</th><th>Issue</th><th>Where</th></tr>
+  <tr><td>1</td><td><code>channel</code> for a <code>QueueWrapper</code> — the class is gone, the
+    word is not</td><td><code>heartbeat_manager.py</code>, <code>core.py</code>:275, most of two
+    test modules</td></tr>
+  <tr><td>2</td><td><strong>Leading-underscore privates are used in half the codebase and not the
+    other half.</strong> <code>cli.py</code> (<code>_command_loop</code>, <code>_poll_loop</code>,
+    <code>_lock</code>), <code>config_handler.py</code> and the whole Monitor use them;
+    <code>core.py</code>, <code>sequencer.py</code>, <code>report.py</code> and
+    <code>hmi_client.py</code> use none at all, for methods of exactly the same kind
+    (<code>poll_core</code>, <code>main_loop</code>, <code>handle_core_message</code>). Neither
+    choice is wrong; having both means the reader cannot infer anything from the prefix.</td>
+    <td>codebase-wide</td></tr>
+  <tr><td>3</td><td>Three unrelated meanings of <code>poll</code>: <code>Core.poll(channel,
+    handler)</code> drains <em>one</em> inbox, <code>HmiClient.poll_core()</code> drains
+    <em>its</em> inbox, <code>DebugMonitor.poll()</code> is a whole tick of read-parse-fold-render.
+    <code>Popen.poll()</code> in <code>startup.py</code>:223 is a fourth, from the stdlib.</td>
+    <td><code>core.py</code>, <code>hmi_client.py</code>, <code>main_window.py</code></td></tr>
+  <tr><td>4</td><td>CamelCase module names in a snake_case package:
+    <code>StreamContainer.py</code>, <code>XY_graph.py</code>, <code>customGUIModules.py</code>
+    (ruff N999 ×3). All three are in the un-refactored islands.</td><td>§3.1</td></tr>
+</table>
+</div>
+
+<p>Smaller things, worth one pass rather than a discussion: <code>parts</code> for a split command
+line (<code>cli.py</code>:84), and <code>at</code> / <code>clock</code> / <code>shown</code> /
+<code>total</code> as local names in <code>_refresh_status()</code> (<code>main_window.py</code>:313–317).
+<code>trace_model.py</code> uses the constant <code>SEND</code> and the string literal
+<code>"recv"</code> as the two keys of the same dict, although <code>trace_parser.RECV</code>
+exists and is exported.</p>
+
+<h2 id="modern">6. Modern syntax, and what it costs to undo</h2>
+
+<p>You asked for old-school, clear, understandable code. The honest answer is that the new code
+uses a lot of recent Python, and it splits sharply into two groups: constructs the architecture is
+<em>built out of</em>, where "modernising away" means redesigning, and constructs that are just
+cleverness and would read better plainly.</p>
+
+<h3>6.1 Load-bearing — cannot be removed without a redesign</h3>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Construct</th><th>Where</th><th>What it is buying</th></tr>
+  <tr><td><code>match</code> / <code>case</code> (3.10)</td>
+    <td>8 handlers: CORE ×3, HmiClient, Sequencer ×2, Report, Logger, CLI</td>
+    <td>Together with <code>unhandled()</code> it is <em>the</em> routing mechanism, documented in
+    <code>CLAUDE.md</code>, <code>README.md</code> and <code>messages.md</code>. The
+    <code>case Type(field=name)</code> form also destructures in the same line it dispatches on.</td></tr>
+  <tr><td><code>@dataclass(frozen=True, slots=True)</code></td><td>~30 message types</td>
+    <td>Immutability and typo-safety of the whole message contract</td></tr>
+  <tr><td><code>A | B | C</code> union types</td><td>7 link unions</td>
+    <td>The unions <em>are</em> the contract: the type checker's completeness check and
+    <code>test_messages.py</code>'s enumeration both read them</td></tr>
+  <tr><td><code>typing.Never</code> / <code>NoReturn</code></td><td><code>unhandled()</code></td>
+    <td>The compile-time half of exhaustiveness. Exotic, and the eight-line docstring explaining it
+    is warranted.</td></tr>
+  <tr><td><code>Generic[Msg]</code> + <code>TypeVar</code></td><td><code>QueueWrapper</code></td>
+    <td><code>QueueWrapper[HmiToCore]</code> is what stops a module sending on the wrong link</td></tr>
+  <tr><td><code>typing.get_args()</code></td><td><code>log.py</code>:62, <code>test_messages.py</code></td>
+    <td>Derives the control-message tuple from the union, so adding one cannot leave an
+    <code>isinstance</code> check stale</td></tr>
+</table>
+</div>
+
+<p>My recommendation on this group is to keep all of it. Rewriting the eight <code>match</code>
+blocks as <code>if isinstance(...)</code> chains would be more familiar line by line and would lose
+the one property the design is built on — that a forgotten message is an error rather than
+silence. If you want this group changed anyway, that is a design decision and deserves its own
+conversation, not a cleanup pass.</p>
+
+<h3>6.2 Incidental — cheap to simplify, no design consequence</h3>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Where</th><th>Now</th><th>Plainly</th></tr>
+  <tr><td><code>cli.py</code>:85</td><td><code>match parts[0].lower() if parts else "":</code> — a
+    conditional expression as the match subject</td><td>Compute <code>command</code> on its own
+    line, then match on it</td></tr>
+  <tr><td><code>cli.py</code>:143</td><td><code>print(f"{line} - {outcome.error_info}" if outcome.error_info else line)</code></td>
+    <td>Two lines with an <code>if</code></td></tr>
+  <tr><td><code>report.py</code>:73–77</td><td>A three-line conditional expression choosing
+    <code>output_dir</code></td><td><code>if output_dir is None:</code> … <code>else:</code></td></tr>
+  <tr><td><code>template_writer.py</code>:112–120</td><td>Three stacked dict comprehensions, one of
+    which immediately filters the previous one</td><td>One loop that appends; it is doing two
+    passes over the same data to avoid a <code>for</code></td></tr>
+  <tr><td><code>main_window.py</code>:149, :259</td><td>A lambda in a Qt connect, and a generator
+    expression passed as an argument</td><td>A named method; a list</td></tr>
+  <tr><td><code>trace_model.py</code>:177</td><td><code>strftime("%H:%M:%S.") + f"{...microsecond // 1000:03d}"</code>
+    — a format string concatenated to a strftime</td><td>One <code>strftime</code> with
+    <code>%f</code>, sliced</td></tr>
+  <tr><td><code>liveness.py</code>:214</td><td><code>line.message[len(TIMEOUT_PREFIX) :]</code> —
+    slice-with-space spacing, twice</td><td><code>removeprefix()</code>, or a named variable</td></tr>
+  <tr><td><code>config_handler.py</code>:115–126</td><td><code>__new__</code> returns a
+    fully-built instance and <code>__init__</code> is deliberately empty</td><td>Nothing simpler
+    exists for a singleton, but it is the one place where object construction does not do what a
+    reader expects, and it is worth knowing that before touching it</td></tr>
+</table>
+</div>
+
+<h3>6.3 Things that are already plain</h3>
+
+<p>Worth saying, because a cleanup pass should not disturb them: no walrus operator anywhere in the
+new code, no nested comprehensions beyond the two in <code>template_writer.py</code>, no
+metaclasses, no <code>functools</code> beyond <code>@wraps</code>, no async, no
+<code>__slots__</code> hand-rolling, and every event loop is a plain <code>while</code> with a
+<code>time.sleep(0.01)</code>. The control flow of the framework is genuinely simple to follow —
+the complexity is in the type layer, not in the logic.</p>
+
+<h2 id="consistency">7. Consistency</h2>
+
+<h3>7.1 Two different ways of calling the logger</h3>
+
+<p>Both styles are in use, sometimes in the same file:</p>
+
+<pre><code>log.info("Run log: %s", log_file_path)                  # lazy, %-args    startup.py
+log.info(f"Starting sequence '{sequence_name}'.")       # eager, f-string  core.py</code></pre>
+
+<p><code>startup.py</code>, <code>report.py</code>:84 and <code>config_handler.py</code>:381 use
+<code>%</code>-args; <code>core.py</code>, <code>sequencer.py</code>, <code>hmi_client.py</code>,
+<code>cli.py</code> and <code>gui.py</code> use f-strings. <code>queue_wrapper.py</code> documents at
+length <em>why</em> the lazy form matters there. It matters much less at INFO than at DEBUG, so
+this is a readability call rather than a performance one — but it should be one call, not two.</p>
+
+<h3>7.2 The module lifecycle is logged in five different wordings</h3>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Text</th><th>Emitted by</th></tr>
+  <tr><td><code>"Starting module..."</code></td><td>Core, Sequencer, Report, GUI, and CLI —
+    <em>and CLI also logs</em> <code>"Starting CLI module..."</code> nine lines later, so the CLI
+    announces itself twice</td></tr>
+  <tr><td><code>"Stopping module..."</code></td><td>Core, Sequencer, Report — from <code>start()</code></td></tr>
+  <tr><td><code>"stopping module"</code></td><td>Sequencer, Report — from <code>stop()</code>, lower case, no ellipsis</td></tr>
+  <tr><td><code>"Stopping module"</code></td><td>HmiClient — capital, no ellipsis</td></tr>
+  <tr><td><code>"exited main event loop."</code></td><td>Sequencer, Report — lower case, trailing full stop</td></tr>
+</table>
+</div>
+
+<p>Sequencer and Report emit "Starting module..." into a log whose process column says
+<code>Core</code> for both, because they are threads. They remain tellable apart by the
+<code>filename:funcName</code> field, so nothing is actually ambiguous — but the message itself
+carries no identity, and it is the message a human reads first.</p>
+
+<h3>7.3 Import order</h3>
+
+<p>Three files have unsorted import blocks (ruff I001): <code>core.py</code> (the
+<code>links</code> import sits between two link modules), <code>startup.py</code>,
+<code>sequencer.py</code> (<code>run_events</code> before <code>core_sequencer_communication</code>). All
+three are one <code>ruff check --fix</code> away, and nothing else in the refactored tree is.</p>
+
+<h3>7.4 Line length</h3>
+
+<p>No limit is configured, and 14 lines in the refactored modules exceed 100 characters —
+4 in <code>config_handler.py</code>, 2 each in <code>core.py</code> and <code>log.py</code>, 1
+each in six other files. Worth deciding a number and putting it in <code>pyproject.toml</code>
+alongside the ruff rules that the <code>noqa</code> comments already assume.</p>
+
+<h2 id="order">8. What I would do, in order</h2>
+
+<p>Nothing in this list has been done. Each item is independent, and I would want your call on
+items 1 and 5 before touching anything.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>#</th><th>Change</th><th>Size</th><th>Needs a decision from you</th></tr>
+  <tr><td>1</td><td>Decide what happens to <code>StreamContainer.py</code> and
+    <code>hmi/gui/XYGraph/</code>: delete, move beside <code>old_code/</code>, or leave and accept
+    that <code>hmi/gui/</code> contains code that cannot run</td><td>—</td>
+    <td><strong>Yes</strong> — they are yours to keep or drop, and the tests reference them as
+    Phase 3 material</td></tr>
+  <tr><td>2</td><td>Fix the garbled <code>log.py</code> comment</td><td>4 lines</td><td>No</td></tr>
+  <tr><td>3</td><td>Finish the rename: <code>channel</code> → <code>outbox</code> (or
+    <code>core</code>) in <code>heartbeat_manager.py</code> and <code>core.poll()</code>, and in
+    the test names</td><td>~40 lines, mostly tests</td><td>Only the word to use</td></tr>
+  <tr><td>4</td><td>Correct the three drifted statements in <code>CLAUDE.md</code>,
+    <code>messages.md</code> and <code>debug_monitor/__init__.py</code></td><td>3 lines</td><td>No</td></tr>
+  <tr><td>5</td><td>Give <code>HEARTBEAT_TIMEOUT_S</code>, <code>HMI</code>,
+    <code>SEQUENCER</code>, <code>REPORT</code> a home the Monitor can import without loading the
+    engine</td><td>New small module + 2 imports</td><td><strong>Yes</strong> — where they should
+    live is a design call</td></tr>
+  <tr><td>6</td><td>Settle one logging call style and one set of lifecycle log messages</td>
+    <td>~20 call sites</td><td>Which style</td></tr>
+  <tr><td>7</td><td>Add <code>[tool.ruff]</code> to <code>pyproject.toml</code> with the rules the
+    <code>noqa</code>s already assume, plus a line length, then
+    <code>ruff check --fix</code> the three import blocks</td><td>~15 lines of config</td><td>The line length</td></tr>
+  <tr><td>8</td><td>The §6.2 simplifications — one small commit, no behaviour change</td>
+    <td>~8 sites</td><td>No</td></tr>
+  <tr><td>9</td><td>Decide a policy on comment volume: what belongs in the module docstring versus
+    the roadmap, the <code>.md</code> files and the commit message</td><td>—</td>
+    <td><strong>Yes</strong> — this is a house-style decision, not a cleanup</td></tr>
+</table>
+</div>
+
+<footer>
+Read on branch <code>architecture_refactor</code>, 2026-08-13. Sources: every module under
+<code>src/pypts/</code> except <code>old_code/</code>; <code>ruff 0.16.2</code>; an import-graph
+measurement of <code>debug_monitor.liveness</code>. Status and plan remain authoritative in
+<code>resources/roadmap/pypts_roadmap.md</code>; nothing in the working tree was modified to
+produce this report.
+</footer>
+
+</div>
+</body>
+</html>

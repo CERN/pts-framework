@@ -28,8 +28,8 @@ from queue import Queue
 
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import QueueWrapper, UnhandledMessage, unhandled
-from pypts.messages.common import ErrorSeverity, Heartbeat, ModuleError
-from pypts.messages.core_hmi_link import (
+from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
+from pypts.messages.core_hmi_communication import (
     CoreToHmi,
     HmiStopped,
     HmiToCore,
@@ -41,19 +41,26 @@ from pypts.messages.core_hmi_link import (
     StatusChanged,
     StopHmi,
 )
-from pypts.messages.links import (
-    CORE_TO_REPORT,
-    CORE_TO_SEQUENCER,
-    REPORT_TO_CORE,
-    SEQUENCER_TO_CORE,
-)
-from pypts.messages.core_report_link import (
+from pypts.messages.core_report_communication import (
     CoreToReport,
     ReportExported,
     ReportGenerated,
     ReportStopped,
     ReportToCore,
     StopReport,
+)
+from pypts.messages.core_sequencer_communication import (
+    CoreToSequencer,
+    RunSequence,
+    SequencerStopped,
+    SequencerToCore,
+    StopSequencer,
+)
+from pypts.messages.links import (
+    CORE_TO_REPORT,
+    CORE_TO_SEQUENCER,
+    REPORT_TO_CORE,
+    SEQUENCER_TO_CORE,
 )
 from pypts.messages.run_events import (
     RunFinished,
@@ -67,24 +74,19 @@ from pypts.messages.run_events import (
     UserPromptRequest,
     UserPromptResponse,
 )
-from pypts.messages.core_sequencer_link import (
-    CoreToSequencer,
-    RunSequence,
-    SequencerStopped,
-    SequencerToCore,
-    StopSequencer,
-)
 from pypts.report.report import report_main
 from pypts.sequencer.sequencer import sequencer_main
 
-#: Names CORE knows modules by. They match the `source` field every module puts
-#: on its Heartbeat, which is how one handler can serve all three links.
-HMI = "hmi"
-SEQUENCER = "sequencer"
-REPORT = "report"
-
-#: A module is presumed dead if it has not been heard from for this long.
-HEARTBEAT_TIMEOUT_S = 5.0
+# The heartbeat protocol - the timeout CORE applies and the names it knows the
+# modules by - is declared with the sender's half in heartbeat_manager.py, so
+# that the two cannot drift and so that a tool needing only the names does not
+# have to import the engine to get them.
+from pypts.utilities.heartbeat_manager import (
+    HEARTBEAT_TIMEOUT_S,
+    HMI,
+    REPORT,
+    SEQUENCER,
+)
 
 
 def core_main(
@@ -176,8 +178,12 @@ class Core:
         self.from_sequencer: QueueWrapper[SequencerToCore] = QueueWrapper(
             queue_factory(), link=SEQUENCER_TO_CORE
         )
-        self.to_report: QueueWrapper[CoreToReport] = QueueWrapper(queue_factory(), link=CORE_TO_REPORT)
-        self.from_report: QueueWrapper[ReportToCore] = QueueWrapper(queue_factory(), link=REPORT_TO_CORE)
+        self.to_report: QueueWrapper[CoreToReport] = QueueWrapper(
+            queue_factory(), link=CORE_TO_REPORT
+        )
+        self.from_report: QueueWrapper[ReportToCore] = QueueWrapper(
+            queue_factory(), link=REPORT_TO_CORE
+        )
 
         self.running = True
         self.shutting_down = False
@@ -203,11 +209,11 @@ class Core:
     # --- Startup --------------------------------------------------------------
 
     def start(self) -> None:
-        log.info("Starting module...")
+        log.info("Starting module.")
         self.start_submodules()
         self.main_loop()
         self.join_submodules()
-        log.info("Stopping module...")
+        log.info("Module stopped.")
 
     def start_submodules(self) -> None:
         """
@@ -255,7 +261,7 @@ class Core:
                 continue
             thread.join(timeout=self.THREAD_JOIN_TIMEOUT_S)
             if thread.is_alive():
-                log.warning(f"Module thread did not finish in time: {name}")
+                log.warning("Module thread did not finish in time: %s", name)
 
     # --- Main event loop ------------------------------------------------------
 
@@ -272,7 +278,7 @@ class Core:
         self.poll(self.from_sequencer, self.handle_sequencer_message)
         self.poll(self.from_report, self.handle_report_message)
 
-    def poll(self, channel, handler) -> None:
+    def poll(self, inbox, handler) -> None:
         """
         Handle what is waiting on one inbox, surviving anything it contains.
 
@@ -288,11 +294,11 @@ class Core:
         rather than each message, which would be the alternative.
         """
         try:
-            for message in channel.receive():
+            for message in inbox.receive():
                 handler(message)
         except UnhandledMessage as exc:
             log.error(str(exc))
-        except Exception:  # noqa: BLE001 - the mediator must outlive a bad message
+        except Exception:
             log.exception("Failure while handling a message")
 
     # --- Routing --------------------------------------------------------------
@@ -379,7 +385,7 @@ class Core:
         say so. Once it lands, this answers with RecipeLoaded on success and a
         ModuleError on a validation failure.
         """
-        log.warning(f"Cannot load '{recipe_path}': the recipe layer is not ported yet.")
+        log.warning("Cannot load '%s': the recipe layer is not ported yet.", recipe_path)
         self.to_hmi.send(StatusChanged(f"Recipe loading is not implemented yet ({recipe_path})"))
 
     def start_sequence(self, sequence_name: str) -> None:
@@ -390,7 +396,7 @@ class Core:
         its run_sequence() took no arguments, so the operator's choice stopped at
         CORE. Execution itself is still a stub inside the Sequencer.
         """
-        log.info(f"Starting sequence '{sequence_name}'.")
+        log.info("Starting sequence '%s'.", sequence_name)
         self.to_sequencer.send(RunSequence(sequence_name))
 
     def handle_module_error(self, error: ModuleError) -> None:
@@ -399,19 +405,19 @@ class Core:
         operator. CORE deciding what reaches the frontend is what keeps the
         runtime log readable during a long run.
         """
-        log.error(f"{error.source}: {error.message}\n{error.traceback or ''}")
+        log.error("%s: %s\n%s", error.source, error.message, error.traceback or "")
         if error.severity is not ErrorSeverity.WARNING:
             self.to_hmi.send(ModuleErrorReported(error))
 
     def note_heartbeat(self, beat: Heartbeat) -> None:
         if beat.source not in self.last_heartbeat:
-            log.warning(f"Heartbeat from an unknown module: {beat.source}")
+            log.warning("Heartbeat from an unknown module: %s", beat.source)
             return
 
         # A module that was reported late and is now answering again is worth
         # one line, so the log says the outage ended instead of just going quiet.
         if self.heartbeat_lost[beat.source]:
-            log.info(f"Module is responding again: {beat.source}")
+            log.info("Module is responding again: %s", beat.source)
             self.heartbeat_lost[beat.source] = False
 
         self.last_heartbeat[beat.source] = beat.timestamp
@@ -439,7 +445,7 @@ class Core:
             if not self.module_running[name]:
                 continue
             if now - last_seen > HEARTBEAT_TIMEOUT_S and not self.heartbeat_lost[name]:
-                log.warning(f"Heartbeat timeout for module: {name}")
+                log.warning("Heartbeat timeout for module: %s", name)
                 self.heartbeat_lost[name] = True
 
     # --- Shutdown -------------------------------------------------------------
@@ -497,7 +503,8 @@ class Core:
         # this does not come back round to log the same sentence again.
         late = sorted(name for name, running in self.module_running.items() if running)
         log.error(
-            f"Modules did not stop within {self.SHUTDOWN_TIMEOUT_S:.0f}s and are being "
-            f"abandoned: {', '.join(late)}"
+            "Modules did not stop within %.0fs and are being abandoned: %s",
+            self.SHUTDOWN_TIMEOUT_S,
+            ", ".join(late),
         )
         self.running = False

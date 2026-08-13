@@ -26,6 +26,29 @@ variables:
   PY_VERSION: '3.11'
   ACC_PY_BASE_IMAGE_TAG: '2023.06'
 
+# Style and correctness lint. The rules live in [tool.ruff] in pyproject.toml,
+# so this job and a local `ruff check` always agree; the pinned version is what
+# stops a new ruff release turning a green branch red on its own.
+lint:
+  stage: analyse
+  image: python:3.11-slim
+  script:
+    - cd ${project_root}
+    - pip install ruff==0.16.2
+    - ruff check src tests
+
+# Type check, scoped by [tool.mypy] in pyproject.toml to the message layer and
+# the modules that handle messages. What it buys beyond the protocol tests: a
+# forgotten `case` is caught while the code is written rather than when the
+# suite runs, and the QueueWrapper[X] link types are checked at all.
+typecheck:
+  stage: analyse
+  image: python:3.11-slim
+  script:
+    - cd ${project_root}
+    - pip install mypy==2.3.0
+    - mypy
+
 # # REUSE license compliance check
 # reuse:
 #   stage: analyse

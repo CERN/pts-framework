@@ -24,12 +24,9 @@ Practical form of the rule:
 compliant.
 
 `reuse.toml` is the authority on licensing headers — do not apply a stricter rule than it
-does. It blanket-covers `src/pypts/**/*.py`, `tests/**/*.py`, `spikes/**/*.py` and a named
-list of config/doc/image paths, so **a new file in one of those paths needs no inline SPDX
-header**. A new file *outside* those globs does — `resources/**` is the common case, which
-is why the recipes and the roadmap docs carry their own headers. Most Python files here
-have an inline header anyway; that is harmless (the annotations are `precedence =
-"aggregate"`) but it is a habit, not a requirement.
+does. It blanket-covers `src/pypts/**/*.py`, `tests/**/*.py` and `spikes/**/*.py`, so a new
+file there needs **no inline SPDX header**. A file outside those globs does; `resources/**`
+is the common case. Most Python files carry one anyway — harmless, but a habit, not a rule.
 
 We are **refactoring an existing working framework into a new architecture**. Current
 branch: `architecture_refactor`.
@@ -48,39 +45,29 @@ branch: `architecture_refactor`.
 implemented, what is still a stub, and what comes next.** It is a *living* document — we
 track the refactor in it. **Read it before planning or starting any work.**
 
-It contains: the current state of the branch (done / placeholder / known defects), the
-architecture change (two processes; Sequencer/Report become **threads** inside the engine
-process — **done**, see §1.5 — with StreamHandler to follow as a third), the phased
-roadmap (Phase 0 stabilize → Phase 1 port the engine → Phase 2 plugins → … → v1.0.0),
-the plugin/`pypts.api` proposal, and the risks/open questions.
+It holds the state of the branch (done / placeholder / known defects), the numbered record of
+each completed rework (§1.1–§1.10), the phased plan (Phase 0 stabilize → Phase 1 port the
+engine → … → v1.0.0), the plugin/`pypts.api` proposal, and the open questions.
 
 Keeping it current is part of every task:
 
-- New work items and follow-ups go in as **TODOs in this file** — not scattered in code
-  comments, not in a separate plan file.
-- When something is implemented, update its status there (move it out of "placeholder",
-  tick the TODO) in the same change that implements it.
+- New work items and follow-ups go in as **TODOs there** — not scattered in code comments,
+  not in a separate plan file.
+- When something is implemented, update its status in the same change that implements it.
 - If reality and the roadmap disagree, say so and ask — do not silently work around it.
 
-Supporting context in the same folder: `recipe_guide.md` (what a recipe is, what the old
-engine actually does with it, and the proposed format for the new one — the reference for
-the Phase 1 port). The rendered summary of the recipe rules is
-`resources/internal_reports/recipe_rules.html`, with every other HTML document.
+Also in that folder: `recipe_guide.md` — what a recipe is and what the old engine does with
+it, the reference for the Phase 1 port.
 
 ## Module context files
 
-A module may carry a `<module>.md` next to its code holding the whole context of that
-folder — what each file owns, the rules that shape it, the decisions behind them, how to
-extend it, and its known gaps. **Read it before doing anything with that module**; it is
-there so the source does not have to be re-read from scratch each time, and it knows more
-about its module than this file or the roadmap does.
+A module may carry a `<module>.md` beside its code holding the whole context of that folder:
+what each file owns, the rules and decisions behind them, how to extend it, its known gaps.
+**Read it before touching that module** — it knows more about it than this file or the
+roadmap does. Present: `config_handler/config_handler.md`, `messages/messages.md`.
 
-- Present so far: `src/pypts/config_handler/config_handler.md`,
-  `src/pypts/messages/messages.md`.
-- It explains *how the module works*. The roadmap stays the authority on *status and plan*;
-  where they overlap, the roadmap wins and the module file should point at it.
-- Keeping it current is part of changing the module — update it in the same change, the way
-  the roadmap is updated.
+It explains *how the module works*; the roadmap stays the authority on *status and plan*, and
+wins where they overlap. Update it in the same change, the way the roadmap is updated.
 
 ## Where generated HTML documents go
 
@@ -93,28 +80,35 @@ every one of them in one folder. This holds for *all* HTML documents in the proj
   to open from disk with no network.
 - `resources/**` is **not** covered by `reuse.toml`, so such a file needs its own inline SPDX
   header — `CC-BY-SA-4.0` for documentation, matching the two below.
-- Say where you put it, and offer to open it.
-- Present so far: `messaging_overview.html` (the communication model) and
-  `recipe_rules.html` (a rendered summary of the recipe rules), both in
-  `resources/internal_reports/`.
+- **Always open it in the browser** as the last step of writing or updating it — do not offer,
+  do not ask, just open it: `Invoke-Item <path>` from PowerShell. The user reads these in a
+  browser, so a report that has been written but not opened is not finished. This applies to a
+  *re*-generated document as well as a new one. Say where you put it in the same breath.
+- List the folder to see what already exists rather than assuming; `messaging_overview.html`
+  (the communication model) and `recipe_rules.html` (the recipe rules) are the two worth
+  reading before writing about either subject.
 
 ## Layout
 
 ```
 src/pypts/
-  launcher/startup.py    entry point; --mode gui|cli|connect and --log-level; creates the
-                         queues, builds the HMI<->CORE links, spawns Logger + CORE + frontend
+  launcher/startup.py    entry point; --mode gui|cli|connect, --log-level and
+                         --debug-monitor; creates the queues, builds the HMI<->CORE links,
+                         spawns Logger + CORE + frontend
   messages/              the whole communication contract - one module per link (see below,
                          and messages.md for the catalogue)
   core/core.py           mediator: routes every link, runs Sequencer + Report as threads,
                          heartbeat watch
-  sequencer/             thread of CORE; event loop is real, run_sequence() is still a stub
+  sequencer/             thread of CORE; event loop is real and a sequence runs on a worker
+                         thread of its own, so the loop keeps turning; execute_sequence() is
+                         still a stub
   recipe/  step/         recipe data layer + step types (empty; to be ported from old_code)
   report/                event loop is real; CSV/HTML logic is a stub (see old_code/report.py)
   hmi/hmi_client.py      the protocol half every frontend shares
   hmi/cli/  hmi/gui/     CLI shell and PySide6 GUI
   hardware_layer/hal.py  HAL (empty stub)
-  stream_handler/        StreamContainer.py, holding GlobalContainer + Stream (not integrated)
+  stream_handler/        empty placeholder package; the StreamContainer spike now lives in
+                         spikes/stream_handler/ until Phase 3 promotes it
   config_handler/        ConfigHandler singleton; INI template -> config.ini in the
                          per-user config dir, versioned, migrated, typed via
                          configuration_schema.py (context: config_handler.md)
@@ -139,15 +133,13 @@ Sequencer and the Report are **threads of the Core process**, started by
 messages are pickled; the four engine links are plain `queue.Queue`. A thread entry point
 must never call `init_logging()` — the root logger belongs to the process.
 
-Every message is a **frozen slotted dataclass** of plain values. Each *link* gets its own
-module under `pypts/messages/`, named for the two ends it joins and holding both directions
-and a union type per direction (`core_hmi_link.py`, `core_sequencer_link.py`,
-`core_report_link.py`, and `to_logger_link.py`, which is named for its single direction
-because nothing is sent back; `common.py` and `run_events.py` hold what more than one link
-shares, `links.py` the name of each direction). One generic `QueueWrapper` in
-`queuewrapper.py` is the transport for all of them — it wraps anything with `put()` and
-`get_nowait()`, which is what lets the same class serve a process boundary and a thread
-boundary. The catalogue of what each link carries is `messages/messages.md`.
+Every message is a **frozen slotted dataclass** of plain values. Each *link* gets a module
+`<a>_<b>_communication.py` holding both directions and a union type per direction; the Logger's
+is `to_logger_communication.py`, named for its one direction because nothing is sent back.
+`common_messages.py` and `run_events.py` hold what more than one link shares, `links.py` the
+name of each direction. One generic `QueueWrapper` in `queue_wrapper.py` is the transport for
+all of them — it wraps anything with `put()` and `get_nowait()`, which is what lets one class
+serve a process boundary and a thread boundary. Catalogue: `messages/messages.md`.
 
 Every `QueueWrapper` traces itself: `send()` and `receive()` each log one DEBUG line naming
 the link and the message, so `--log-level DEBUG` puts every message in the system into the
@@ -164,12 +156,22 @@ To add a message, follow the 2 steps in `src/pypts/README.md`:
 1. declare the dataclass in the link module and add it to that link's union,
 2. handle it with a `case` in the recipient's handler.
 
-Everything else is found for you: a type checker flags every `match` that is now
-incomplete, and `tests/unit_tests/test_messages.py` fails until the message has an
-example and a branch.
+Everything else is found for you: `mypy` flags every `match` that is now incomplete, and
+`tests/unit_tests/test_messages.py` drives every member of every union through the real
+handler and fails until the message has an example and a branch.
 
 Anything crossing the HMI↔Core boundary must stay **pickle-safe** — no live queues, no Qt
 objects, no device handles.
+
+**A sequence runs on its own worker thread**, started by `run_sequence()` and left to
+`execute_sequence()`. The event loop must keep turning while it does, or heartbeats stop,
+`StopSequence` is never read and a step waiting in `PendingRequests.wait()` deadlocks. See
+roadmap §1.8 — the tests in `test_sequencer.py` exist to keep that shape.
+
+Two error decorators in `utilities/error_handling.py`, and picking the wrong one matters:
+`@catch_and_report_errors()` reports and **continues** (event loops — a module that dies on
+one bad message takes the run with it); `@report_and_reraise()` reports and **re-raises**
+(execution layer — a step failure has to reach a `StepResult`). See roadmap §1.10.
 
 ## Running
 
@@ -177,18 +179,58 @@ objects, no device handles.
 python -m pypts                       # GUI mode (PySide6) - the default
 python -m pypts --mode cli            # CLI mode
 python -m pypts --log-level DEBUG     # adds the full message trace to the run log
+python -m pypts --debug-monitor       # opens the Debug Monitor on this run's log too
 python run_tests.py                   # unit tests, then functional tests
 pytest tests                          # the same suite, directly
+
+python -m pypts.helper_applications.debug_monitor   # the Monitor alone, on the newest log
 ```
 
-`--log-level` overrides `[logging] level` in the generated `config.ini`, which ships as
-`INFO`. The file lives in the per-user config directory (`%LOCALAPPDATA%\pypts\config.ini`
+`--debug-monitor` is off unless asked for. The launcher starts the Monitor with
+`subprocess.Popen`, never as an import, so the framework does not depend on it and it cannot
+stop a run; it is handed this run's log path, and left open when the run ends. It only has
+something to show at DEBUG. **Nothing in the framework may import
+`helper_applications/debug_monitor/`** — the dependency runs one way only. See roadmap §1.4.1.
+
+`--log-level` overrides `[logging] level` in the generated `config.ini`, which **ships as
+`DEBUG` for the duration of the refactor** so every run carries the message trace and the
+Debug Monitor always has something to read. It reverts to `INFO` before v1.0 — see roadmap
+§1.6 and its revert TODO. The file lives in the per-user config directory (`%LOCALAPPDATA%\pypts\config.ini`
 on Windows, `~/.config/pypts/config.ini` on Linux); the launcher creates it from the
 template on first run and migrates it when its structure version is older than the code's.
 A leftover `%TEMP%/pypts/config/config.ini` from an older build is no longer read at all.
 
 `--mode connect` is accepted by argparse but **has no branch**, so it silently falls
 through and starts the CLI. It is not implemented.
+
+## Quality gates
+
+All three must pass before any change is called done, and all three run in CI
+(`.gitlab-ci.yml`, `analyse` and `test` stages):
+
+```bash
+pytest tests                 # 240 passed, 70 skipped as of the last green run
+ruff check src tests         # rules and line-length 100 in [tool.ruff] in pyproject.toml
+mypy                         # scope is [tool.mypy]: messages/ and the handler modules
+```
+
+The `# noqa:` codes in the source name rules that config actually enables — do not add a
+`noqa` for a rule that is off, and do not silence a rule without saying why in the same line.
+
+## Code style
+
+**Old-school, plain, readable Python. Shortest is not clearest.** Prefer an `if`/`else` over
+a conditional expression, a named local over a clever one-liner, a loop over stacked
+comprehensions. `SIM108` and `N818` are disabled in ruff for exactly this reason.
+
+- **Logging is `%`-style**, never f-strings: `log.info("Starting %s", name)`. Lazy formatting
+  is why the DEBUG trace costs nothing when the level is higher. `G004` enforces it.
+- **Lifecycle log wording is fixed**: `Starting module.` / `Starting main event loop.` /
+  `Left main event loop.` / `Stopping module.` / `Module stopped.`
+- **Some "modern" constructs are load-bearing and must not be simplified away**: the
+  `match`/`case` handlers closed with `unhandled()`, the frozen slotted dataclasses, the link
+  union types, `Never`/`NoReturn`, and `QueueWrapper[Msg]`. They are what makes a forgotten
+  message an error instead of silence. Changing them is a design conversation, not a cleanup.
 
 ## Working style
 
@@ -197,3 +239,5 @@ through and starts the CLI. It is not implemented.
 - Match existing conventions (frozen message dataclasses, link modules, `unhandled()`-closed
   handlers, module layout) rather than introducing new patterns unasked. For SPDX headers,
   follow `reuse.toml` — see above.
+- **Never `git checkout` a file to undo an experiment** — it reverts to HEAD and takes any
+  uncommitted work in that file with it. Restore what you changed, or commit first.

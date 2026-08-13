@@ -39,14 +39,14 @@ from pypts.core.core import Core
 from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import Logger
 from pypts.messages import QueueWrapper, UnhandledMessage
-from pypts.messages.common import (
+from pypts.messages.common_messages import (
     ErrorSeverity,
     Heartbeat,
     ModuleError,
     ResultType,
     StepOutcome,
 )
-from pypts.messages.core_hmi_link import (
+from pypts.messages.core_hmi_communication import (
     CoreToHmi,
     HmiStopped,
     HmiToCore,
@@ -58,8 +58,7 @@ from pypts.messages.core_hmi_link import (
     StatusChanged,
     StopHmi,
 )
-from pypts.messages.to_logger_link import LoggerControl, SetStdoutEnabled, StopLogger
-from pypts.messages.core_report_link import (
+from pypts.messages.core_report_communication import (
     CoreToReport,
     ExportReport,
     GenerateReport,
@@ -68,6 +67,14 @@ from pypts.messages.core_report_link import (
     ReportStopped,
     ReportToCore,
     StopReport,
+)
+from pypts.messages.core_sequencer_communication import (
+    CoreToSequencer,
+    RunSequence,
+    SequencerStopped,
+    SequencerToCore,
+    StopSequence,
+    StopSequencer,
 )
 from pypts.messages.run_events import (
     RecipeLoaded,
@@ -82,14 +89,7 @@ from pypts.messages.run_events import (
     UserPromptRequest,
     UserPromptResponse,
 )
-from pypts.messages.core_sequencer_link import (
-    CoreToSequencer,
-    RunSequence,
-    SequencerStopped,
-    SequencerToCore,
-    StopSequence,
-    StopSequencer,
-)
+from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
 from pypts.report.report import Report
 from pypts.sequencer.sequencer import Sequencer
 
@@ -134,7 +134,7 @@ EXAMPLES = {
     UserPromptResponse: UserPromptResponse(request_id=REQUEST_ID, choice="OK"),
     SerialNumberRequest: SerialNumberRequest(request_id=REQUEST_ID),
     SerialNumberResponse: SerialNumberResponse(request_id=REQUEST_ID, serial_number="SN-42"),
-    # core_hmi_link
+    # core_hmi_communication
     LoadRecipe: LoadRecipe(recipe_path="resources/recipes/example.yaml"),
     StartSequence: StartSequence(sequence_name="Main"),
     SetConfigParameter: SetConfigParameter(key="report.theme", value="dark"),
@@ -143,19 +143,19 @@ EXAMPLES = {
     StopHmi: StopHmi(),
     StatusChanged: StatusChanged(text="Idle"),
     ModuleErrorReported: ModuleErrorReported(error=AN_ERROR),
-    # core_sequencer_link
+    # core_sequencer_communication
     RunSequence: RunSequence(sequence_name="Main"),
     StopSequence: StopSequence(),
     StopSequencer: StopSequencer(),
     SequencerStopped: SequencerStopped(),
-    # core_report_link
+    # core_report_communication
     GenerateReport: GenerateReport(),
     ExportReport: ExportReport(),
     StopReport: StopReport(),
     ReportStopped: ReportStopped(),
     ReportGenerated: ReportGenerated(report_path="/tmp/run/report.html"),
     ReportExported: ReportExported(report_path="/tmp/run/report.html"),
-    # to_logger_link
+    # to_logger_communication
     SetStdoutEnabled: SetStdoutEnabled(enabled=False),
     StopLogger: StopLogger(),
 }
@@ -269,7 +269,9 @@ def assert_field_value_is_transferable(value, path):
         for field in fields(value):
             assert_field_value_is_transferable(getattr(value, field.name), f"{path}.{field.name}")
         return
-    raise AssertionError(f"{path} is a {type(value).__name__}, which cannot cross a process boundary")
+    raise AssertionError(
+        f"{path} is a {type(value).__name__}, which cannot cross a process boundary"
+    )
 
 
 @pytest.mark.parametrize("message_type", BOUNDARY_TYPES, ids=ids(BOUNDARY_TYPES))
@@ -292,81 +294,81 @@ def test_no_message_payload_carries_a_live_queue_or_handle(message_type):
 # QueueWrapper
 # --------------------------------------------------------------------------
 
-def test_channel_receive_on_an_empty_queue_yields_nothing():
-    channel = QueueWrapper(queue.Queue())
+def test_wrapper_receive_on_an_empty_queue_yields_nothing():
+    wrapper = QueueWrapper(queue.Queue())
 
-    assert list(channel.receive()) == []
-    assert channel.received == 0
+    assert list(wrapper.receive()) == []
+    assert wrapper.received == 0
 
 
-def test_channel_receive_yields_a_burst_in_one_call():
+def test_wrapper_receive_yields_a_burst_in_one_call():
     """The old helper took exactly one message per 10 ms tick.
 
     That capped every link at about 100 messages a second, so a run streaming
     step results would build latency it could never work off.
     """
-    channel = QueueWrapper(queue.Queue())
+    wrapper = QueueWrapper(queue.Queue())
     for index in range(10):
-        channel.send(StatusChanged(text=str(index)))
+        wrapper.send(StatusChanged(text=str(index)))
 
-    handled = list(channel.receive())
+    handled = list(wrapper.receive())
 
     assert [message.text for message in handled] == [str(index) for index in range(10)]
 
 
-def test_channel_receive_stops_at_its_limit():
+def test_wrapper_receive_stops_at_its_limit():
     """Bounded, so one busy link cannot starve the other queues in an event loop."""
-    channel = QueueWrapper(queue.Queue())
+    wrapper = QueueWrapper(queue.Queue())
     for index in range(10):
-        channel.send(StatusChanged(text=str(index)))
+        wrapper.send(StatusChanged(text=str(index)))
 
-    assert len(list(channel.receive(limit=4))) == 4
+    assert len(list(wrapper.receive(limit=4))) == 4
     # The rest stayed queued rather than being thrown away.
-    assert len(list(channel.receive())) == 6
+    assert len(list(wrapper.receive())) == 6
 
 
-def test_channel_receive_leaves_the_rest_queued_when_the_caller_stops_early():
+def test_wrapper_receive_leaves_the_rest_queued_when_the_caller_stops_early():
     """A generator, so stopping early does not pay to dequeue the remainder."""
-    channel = QueueWrapper(queue.Queue())
+    wrapper = QueueWrapper(queue.Queue())
     for index in range(10):
-        channel.send(StatusChanged(text=str(index)))
+        wrapper.send(StatusChanged(text=str(index)))
 
-    first = next(channel.receive())
+    first = next(wrapper.receive())
 
     assert first == StatusChanged(text="0")
-    assert channel.received == 1
-    assert len(list(channel.receive())) == 9
+    assert wrapper.received == 1
+    assert len(list(wrapper.receive())) == 9
 
 
-def test_channel_receive_does_not_drop_a_falsy_message():
+def test_wrapper_receive_does_not_drop_a_falsy_message():
     """The old helper guarded with `if event:` and would have dropped this one."""
 
     class FalsyMessage:
         def __bool__(self):
             return False
 
-    channel = QueueWrapper(queue.Queue())
+    wrapper = QueueWrapper(queue.Queue())
     message = FalsyMessage()
-    channel.send(message)
+    wrapper.send(message)
 
-    assert list(channel.receive()) == [message]
+    assert list(wrapper.receive()) == [message]
 
 
-def test_channel_counts_what_it_carries():
+def test_wrapper_counts_what_it_carries():
     """
     The counters are the QueueWrapper's own, so anything holding it can read them -
     which a return value from receive() could only have given to the caller
     driving the loop.
     """
-    channel = QueueWrapper(queue.Queue())
+    wrapper = QueueWrapper(queue.Queue())
     for index in range(7):
-        channel.send(StatusChanged(text=str(index)))
+        wrapper.send(StatusChanged(text=str(index)))
 
-    assert (channel.sent, channel.received) == (7, 0)
+    assert (wrapper.sent, wrapper.received) == (7, 0)
 
-    list(channel.receive())
+    list(wrapper.receive())
 
-    assert (channel.sent, channel.received) == (7, 7)
+    assert (wrapper.sent, wrapper.received) == (7, 7)
 
 
 # --------------------------------------------------------------------------

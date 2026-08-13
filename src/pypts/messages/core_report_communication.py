@@ -13,7 +13,7 @@ has to print that path to be useful.
 
 from dataclasses import dataclass
 
-from pypts.messages.common import Heartbeat, ModuleError
+from pypts.messages.common_messages import Heartbeat, ModuleError
 
 # --- CORE -> Report: commands -------------------------------------------------
 

@@ -26,13 +26,11 @@ def test_example_recipe_runs_from_load_to_report():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_results_match_the_old_code_baseline():
     """Characterization: same recipe, same CSV rows as the previous engine."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_a_failing_step_is_reported_and_the_run_ends_as_configured():
     """Continue or abort per recipe configuration - never silently."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -46,10 +44,8 @@ def test_user_interaction_step_works_across_the_hmi_process_boundary():
 
     Needs a request/response message pair.
     """
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_run_artifacts_are_collected_in_one_folder():
     """Report, logs and raw data together, traceable to the run."""
-    ...

@@ -5,8 +5,10 @@
 """
 Unit tests for the Stream Handler module (src/pypts/stream_handler/).
 
-SKELETON ONLY - placeholders declaring intended coverage. StreamContainer plus
-an XYGraph spike exist but are not integrated; Phase 3 promotes them.
+SKELETON ONLY - placeholders declaring intended coverage. The module is an empty
+placeholder package: the StreamContainer singleton and the XYGraph widget spike
+live in spikes/stream_handler/ and spikes/GUI/XYGraph/, unintegrated, until
+Phase 3 promotes them.
 
 Design constraint from the roadmap: bulk data (waveforms, acquisitions) never
 travels through a message queue. In engine it is passed by reference; if it has
@@ -36,7 +38,6 @@ def test_bulk_samples_never_cross_a_message_queue():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_samples_are_persisted_to_the_configured_backend():
     """CSV first; TDMS and HDF5 later, through the same interface."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)

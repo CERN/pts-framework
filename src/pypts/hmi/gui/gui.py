@@ -18,8 +18,8 @@ from PySide6.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QW
 from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import QueueWrapper
-from pypts.messages.common import ModuleError, ResultType, StepOutcome
-from pypts.messages.core_hmi_link import CoreToHmi, HmiToCore
+from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
+from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore
 
 #: Milliseconds between polls of the CORE inbox.
 POLL_INTERVAL_MS = 50
@@ -53,9 +53,11 @@ class GUI(HmiClient):
     keeps protocol and presentation in separate objects anyway.
     """
 
-    def __init__(self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]) -> None:
+    def __init__(
+        self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]
+    ) -> None:
         super().__init__(to_core, from_core)
-        log.info("Starting module...")
+        log.info("Starting module.")
 
         self.window = QWidget()
         self.window.setWindowTitle("PTS GUI")
@@ -84,11 +86,11 @@ class GUI(HmiClient):
     # --- Presentation ---------------------------------------------------------
 
     def show_status(self, text: str) -> None:
-        log.info(f"status update: {text}")
+        log.info("status update: %s", text)
         self.status_label.setText(f"Status: {text}")
 
     def show_error(self, error: ModuleError) -> None:
-        log.error(f"{error.source}: {error.message}")
+        log.error("%s: %s", error.source, error.message)
         self.status_label.setText(f"Error: {error.message}")
 
     def show_recipe_loaded(self, recipe_name: str, recipe_version: str) -> None:

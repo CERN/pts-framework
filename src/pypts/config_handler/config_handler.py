@@ -293,10 +293,14 @@ class ConfigHandler:
 
         if section not in self._values:
             known = ", ".join(sorted(self._values)) or "none"
-            raise ConfigKeyError(f"Unknown configuration section {section!r}. Known sections: {known}.")
+            raise ConfigKeyError(
+                f"Unknown configuration section {section!r}. Known sections: {known}."
+            )
 
         known = ", ".join(sorted(self._values[section])) or "none"
-        raise ConfigKeyError(f"Unknown configuration key {key!r}. Section {section!r} has: {known}.")
+        raise ConfigKeyError(
+            f"Unknown configuration key {key!r}. Section {section!r} has: {known}."
+        )
 
     def get_whole_config(self) -> Mapping[str, Mapping[str, Any]]:
         """
@@ -671,13 +675,17 @@ def _parse(section: str, key: str, text: str, field: Field) -> Any:
         try:
             return int(text)
         except ValueError:
-            raise ConfigSchemaError(f"Configuration key {where} is {text!r}; a whole number is required.") from None
+            raise ConfigSchemaError(
+                f"Configuration key {where} is {text!r}; a whole number is required."
+            ) from None
 
     if field.type == "float":
         try:
             return float(text)
         except ValueError:
-            raise ConfigSchemaError(f"Configuration key {where} is {text!r}; a number is required.") from None
+            raise ConfigSchemaError(
+                f"Configuration key {where} is {text!r}; a number is required."
+            ) from None
 
     if field.type == "bool":
         lowered = text.strip().lower()

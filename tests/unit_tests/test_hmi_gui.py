@@ -25,8 +25,8 @@ import queue
 import pytest
 
 from pypts.messages import QueueWrapper
-from pypts.messages.common import ErrorSeverity, ModuleError
-from pypts.messages.core_hmi_link import (
+from pypts.messages.common_messages import ErrorSeverity, ModuleError
+from pypts.messages.core_hmi_communication import (
     HmiStopped,
     ModuleErrorReported,
     ShutdownRequested,
@@ -41,7 +41,7 @@ pytest.importorskip("PySide6", reason="the GUI is an optional extra")
 
 @pytest.fixture
 def gui(qapp):
-    """A constructed GUI with both channels wired to plain queues.
+    """A constructed GUI with both wrappers wired to plain queues.
 
     `qapp` comes from pytest-qt and gives the widget the QApplication it needs.
     Yields (gui, outbox, inbox) where outbox holds what the GUI sent to CORE.
@@ -122,16 +122,13 @@ def test_stop_from_core_closes_the_window_and_acknowledges(gui):
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_gui_survives_an_engine_crash_and_reports_it():
     """The reason the GUI keeps its own process."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_widgets_are_resolved_by_step_or_stream_type():
     """"Widgets can be expanded, but the GUI implementation stays the same"."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_view_refreshes_on_every_event():
     """Known bug in TODO.txt: the GUI does not always refresh properly."""
-    ...

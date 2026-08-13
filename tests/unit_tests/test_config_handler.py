@@ -310,7 +310,9 @@ def test_a_second_bootstrap_does_not_touch_the_file(config, config_path):
 
 def test_a_value_of_the_wrong_type_is_refused_by_name(config, config_path):
     config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace("window_width = 1280", "window_width = wide"),
+        config_path.read_text(encoding="utf-8").replace(
+            "window_width = 1280", "window_width = wide"
+        ),
         encoding="utf-8",
     )
     ConfigHandler.reset_for_testing()
@@ -630,8 +632,10 @@ def test_writing_changes_only_the_line_it_was_asked_to_change(config, config_pat
     config.set_parameter("gui.theme", "dark")
 
     after = config_path.read_text(encoding="utf-8").splitlines()
-    differences = [(old, new) for old, new in zip(before, after) if old != new]
     assert len(before) == len(after)
+    differences = [
+        (old, new) for old, new in zip(before, after, strict=True) if old != new
+    ]
     assert differences == [("theme = default", "theme = dark")]
 
 

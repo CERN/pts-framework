@@ -23,7 +23,6 @@ def test_step_type_is_resolved_without_eval():
 
     That is arbitrary code execution driven by a recipe file.
     """
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -34,7 +33,6 @@ def test_unknown_steptype_raises_a_clear_error_listing_available_types():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_each_step_type_declares_its_required_fields():
     """Feeds the verificator, the docs and the Recipe Creator toolbar from one source."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -45,7 +43,6 @@ def test_step_result_captures_errors_with_traceback():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_steps_are_testable_standalone_with_a_fake_context():
     """"Tests executable stand-alone" is an explicit requirement in the spec."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)

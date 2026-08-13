@@ -53,6 +53,10 @@ Layout
   main_window.py   the window itself.
   __main__.py      the entry point.
 
-The first two import no Qt and no running framework, which is why the tests for
-them need neither.
+The first two import no Qt, which is why the tests for them need no display.
+`trace_parser.py` imports nothing from pypts at all; `liveness.py` imports the
+four constants of the heartbeat protocol from `utilities/heartbeat_manager.py`,
+which costs ten modules of plain data types and starts nothing. It used to take
+them from `core.py` instead, which pulled in the Sequencer, the Report and the
+configuration - thirty modules - and made that sentence untrue.
 """

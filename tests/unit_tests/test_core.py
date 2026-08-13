@@ -78,7 +78,7 @@ def test_heartbeat_timeout_warns_once_per_outage(caplog):
 def test_heartbeat_timeout_is_reported_again_after_the_module_recovers(caplog):
     """The latch must clear when the module answers, so a second outage is seen."""
     from pypts.core.core import HEARTBEAT_TIMEOUT_S, SEQUENCER
-    from pypts.messages.common import Heartbeat
+    from pypts.messages.common_messages import Heartbeat
 
     core = build_core_that_spawns_nothing()
     stale = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
@@ -122,7 +122,7 @@ def test_a_sequencer_event_is_routed_to_the_hmi():
     """
     from uuid import uuid4
 
-    from pypts.messages.common import ResultType, StepOutcome
+    from pypts.messages.common_messages import ResultType, StepOutcome
     from pypts.messages.run_events import StepFinished
 
     core = build_core_that_spawns_nothing()
@@ -139,13 +139,11 @@ def test_a_sequencer_event_is_routed_to_the_hmi():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_load_recipe_command_is_handled():
     """Currently a `pass` in handle_hmi_event - Phase 1."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_start_sequence_command_is_handled():
     """Currently a `pass` in handle_hmi_event - Phase 1."""
-    ...
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)
@@ -230,7 +228,8 @@ def test_the_shutdown_budget_starts_when_the_stop_is_requested():
     core.stop_all_modules()
 
     assert core.shutdown_deadline is not None
-    assert before + Core.SHUTDOWN_TIMEOUT_S <= core.shutdown_deadline <= time.time() + Core.SHUTDOWN_TIMEOUT_S
+    assert before + Core.SHUTDOWN_TIMEOUT_S <= core.shutdown_deadline
+    assert core.shutdown_deadline <= time.time() + Core.SHUTDOWN_TIMEOUT_S
 
 
 def test_a_module_still_running_before_any_stop_request_is_not_abandoned():
