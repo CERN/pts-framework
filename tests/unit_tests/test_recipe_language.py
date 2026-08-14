@@ -14,9 +14,8 @@ from pydantic import ValidationError
 
 from pypts import recipe_language, recipe_parser
 from pypts.recipe_artifacts import (
-    DEFAULT_REFERENCE_PATH,
-    DEFAULT_SCHEMA_PATH,
     render_json_schema,
+    write_artifacts,
 )
 from pypts.recipe_language import (
     INPUT_MODELS,
@@ -407,12 +406,15 @@ def test_every_maintained_recipe_is_semantically_stable_when_serialized(path):
     assert second.require_recipe() == first
 
 
-def test_generated_schema_and_reference_are_complete_and_current():
+def test_generated_schema_and_reference_are_complete_and_current(tmp_path):
     schema_text = render_json_schema()
     schema = json.loads(schema_text)
     reference = render_reference(schema)
-    assert schema_text == DEFAULT_SCHEMA_PATH.read_text(encoding="utf-8")
-    assert reference == DEFAULT_REFERENCE_PATH.read_text(encoding="utf-8")
+    schema_path = tmp_path / "recipe_language.schema.json"
+    reference_path = tmp_path / "recipe_language_reference.rst"
+    write_artifacts(schema_path, reference_path)
+    assert schema_text == schema_path.read_text(encoding="utf-8")
+    assert reference == reference_path.read_text(encoding="utf-8")
     definitions = schema["$defs"]
     for model in STEP_DEFINITION_MODELS + INPUT_MODELS + OUTPUT_MODELS:
         assert model.__name__ in definitions

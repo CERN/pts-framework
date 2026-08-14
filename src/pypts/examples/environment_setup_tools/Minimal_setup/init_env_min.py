@@ -4,35 +4,38 @@
 # Example test for initializing the minimal setup environment for a testing show of recipe and directory requirement.
 #It should initialize once called in a new directory, kept with a working directory. 
 
-from pypts.utils import get_project_root
 import shutil
+from importlib.resources import as_file, files
 from pathlib import Path
+
 
 def main():
     project_root = Path.cwd()
     tests_dir = project_root / "tests"
     tests_dir.mkdir(exist_ok=True)
 
-    open(tests_dir/"__init__.py", "a").close()
-    #locating path of this script. will be used to copy the examples out.
-    package_root = Path(__file__).resolve().parent
+    (tests_dir / "__init__.py").touch(exist_ok=True)
+    package_resources = files(__package__)
 
     # Copy example recipe for minimal setup
-    recipe_src = package_root / "Minimal_setup_recipe.yml"
     recipe_dest = project_root / "Minimal_setup_recipe.yml"
     if not recipe_dest.exists():
-        shutil.copy(recipe_src, recipe_dest)
-        print(f"Copied example recipe → {recipe_dest}")
+        with as_file(package_resources.joinpath("Minimal_setup_recipe.yml")) as recipe_src:
+            shutil.copy(recipe_src, recipe_dest)
+        print(f"Copied example recipe -> {recipe_dest}")
     else:
         print(f"Example recipe already exists at {recipe_dest}")
 
     # Copy Minimal setup tests
-    tests_src = package_root/ "tests"
-    for file in tests_src.glob("*.py"):
-        dest_file = tests_dir / file.name
+    tests_resources = package_resources.joinpath("tests")
+    for resource in tests_resources.iterdir():
+        if not resource.name.endswith(".py"):
+            continue
+        dest_file = tests_dir / resource.name
         if not dest_file.exists():
-            shutil.copy(file, dest_file)
-            print(f"Copied test file → {dest_file}")
+            with as_file(resource) as source:
+                shutil.copy(source, dest_file)
+            print(f"Copied test file -> {dest_file}")
         else:
             print(f"Test file already exists: {dest_file}")
 
