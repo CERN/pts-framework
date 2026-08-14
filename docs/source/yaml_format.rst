@@ -1,1079 +1,128 @@
-.. SPDX-FileCopyrightText: 2025 CERN <home.cern>
+.. SPDX-FileCopyrightText: 2026 CERN <home.cern>
 ..
 .. SPDX-License-Identifier: CC-BY-SA-4.0
 
 .. _yaml_format:
 
-####################
 Recipe YAML Format
-####################
+==================
 
-The recipe file is a multi-document YAML file. The first document defines
-the main recipe metadata and global variables, while subsequent documents
-define individual sequences that make up the test flow.
+PyPTS accepts recipe language ``2.0.0``. Exact fields, types, required status,
+defaults, aliases, and discriminator values are generated from the production
+models in the :doc:`_generated/recipe_language_reference`. The downloadable
+:download:`JSON Schema <_generated/recipe_language.schema.json>` describes the
+same contract.
 
-Document 1: Main Recipe Configuration
-======================================
+A complete maintained example is included below. This file is parsed by the
+test suite with the production parser.
 
-.. code-block:: yaml
-   :caption: Example Main Recipe Document
+.. literalinclude:: _examples/recipe_v2.yml
+   :language: yaml
+   :caption: Complete recipe-language 2 example
 
-  ---
-  name: Name of the recipe. Typically the project name.
-  version: Allows for tracking different versions of the file
-  recipe_version: Optional version of the recipe format specification.
-  description: A more complete description of this recipe
-  main_sequence: Main # Optional: Name of the sequence to run by default. Defaults typically to "Main".
-  test_package: my_package.tests # Optional: Python package containing test modules for PythonModuleStep
-  continue_on_error: false # Optional policy overriding every step's continue_on_error value.
-  globals: # Globals can be referenced and used from any step in the whole file
-    global_name: value
-    other_global: other_value
-    # ...
-  # tags:  # Optional tags (Currently commented out in code)
-  #   key1: value1
+Multi-document structure
+------------------------
 
-Main Recipe Configuration Fields
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+A recipe is one YAML stream containing multiple documents, separated by
+``---``:
 
-*   **name** (str): Name of the recipe, typically the project name.
-*   **version** (str): Version string for tracking different versions of the recipe.
-*   **recipe_version** (str, optional): Version of the recipe format specification. Error-policy behavior is not gated by this field.
-*   **description** (str): A detailed description of the recipe's purpose.
-*   **main_sequence** (str, optional): Name of an existing sequence to run by default. If omitted, ``Main`` is selected and a sequence with that name must exist.
-*   **report** (str, optional): Selects whether new test results should overwrite the previous report (``overwrite``) or should be added to the report file (``append``). Defaults to ``overwrite``.
-*   **test_package** (str, optional): Importable Python package containing test modules for ``PythonModuleStep``. Dotted names such as ``my_project.tests`` are supported. When specified, modules are imported by package name without filesystem discovery. See :ref:`resource_based_loading`.
-*   **continue_on_error** (bool, optional): Recipe-wide policy that overrides every step-level value. It is not a global variable.
-*   **globals** (dict): Global variables that can be referenced from any step in the recipe.
+* The first document is a :ref:`recipe-v2-header`. Its required
+  ``recipe_version`` is ``2.0.0`` and ``main_sequence`` names an existing
+  sequence.
+* Every later document is a :ref:`recipe-v2-sequence`. Sequence names must be
+  unique, and at least one sequence is required.
+* Each sequence owns ``setup_steps``, ``steps``, and ``teardown_steps`` lists.
+  Step definitions use one of the exact, case-sensitive canonical
+  discriminators listed in the generated reference.
 
-``continue_on_error`` is valid as a recipe-level field or a step field. When
-present in the recipe header, its boolean value overrides every step-level value.
+Validation is strict. Unknown fields, wrong scalar types, duplicate YAML keys,
+unsafe YAML tags, missing required fields, invalid sequence references, and
+unsupported versions produce diagnostics. PyPTS does not repair or silently
+normalize legacy syntax.
 
-.. _resource_based_loading:
+Variables and mappings
+----------------------
 
-Resource-Based Module Loading
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``globals`` belong to the recipe header and are available throughout the run.
+``locals`` belong to one active sequence. ``parameters`` and ``outputs`` are
+currently reserved metadata dictionaries; the runtime does not automatically
+bind nested-sequence inputs or outputs from them.
 
-When ``test_package`` is specified, ``PythonModuleStep`` imports test modules from that package instead of discovering them from filesystem paths:
-
-**Benefits:**
-  * Modules are bundled with your package during distribution
-  * No dependency on current working directory  
-  * Uses Python's standard import mechanism
-  * More reliable deployment
-
-**Example:**
+Every input mapping has an explicit ``type``:
 
 .. code-block:: yaml
-
-   ---
-   name: My Recipe
-   test_package: my_project.tests
-   globals: {}
-   
-   ---
-   sequence_name: Main
-   steps:
-   - steptype: PythonModuleStep
-     module: test_module.py  # Resolves to my_project.tests.test_module
-     action_type: method
-     method_name: my_test
-
-.. note::
-  Notice the indentation inside ``steps`` and the ``-`` in front of the step. Adding this - is crucial for the functionality of the recipe.
-
-
-**Package Structure Required:**
-
-.. code-block:: text
-
-   my_project/
-   ├── __init__.py
-   ├── tests/
-   │   ├── __init__.py          # Required for Python package
-   │   ├── test_module.py
-   │   └── other_tests.py
-   └── recipe.yaml
-
-**Migration from File-Based:**
-  * Add ``__init__.py`` files to make directories into packages
-  * Add ``test_package`` field to recipe
-  * Use module paths relative to ``test_package``; nested paths are supported
-  * Install your package with ``pip install -e .``
-
---- # Separator for the next document
-
-Document 2...N: Sequence Definition
-===================================
-
-When an output mapping contains multiple ``passfail``, ``equals``, or ``range``
-checks, all checks must pass for the step to be ``PASS``. A failed check makes
-the step ``FAIL`` regardless of mapping order. ``passthrough`` represents an
-already-computed result and must be the only verdict-producing mapping (it may
-still be accompanied by metadata outputs such as ``local`` or ``global``).
-
-For example, this step passes only when both checks pass; reversing their YAML
-order does not change the result:
-
-.. code-block:: yaml
-
-   output_mapping:
-     powered: {type: passfail}
-     voltage: {type: range, min: 4.8, max: 5.2}
-
-Each subsequent document defines a sequence.
-
-.. code-block:: yaml
-   :caption: Example Sequence Document
-
-   sequence_name: Name of the sequence. A sequence defines a list of steps
-   description: Description of the sequence
-   setup_steps: [] # Steps that run first and are used to setup environments. Typically utility steps necessary for the next ones to work properly.
-   steps: [] # Main steps of the sequence. These are run in order by the execution environment
-   teardown_steps: [] # Teardown steps are run even if there is an error during the run. This is to make sure we run some shutdown routines no matter what happens.
-   locals: # List of variables local to the sequence in scope (contrasted with global variables defined in recipe document)
-     local_name: local_value
-     # ...
-   parameters: {} # Parameter metadata, keyed by parameter name
-   outputs: {} # Output metadata, keyed by output name
-
-``parameters`` and ``outputs`` are dictionaries. They are currently descriptive
-metadata; the runtime does not yet bind subsequence outputs automatically.
-
-
-.. _step_definition_details:
-
-Step Definition
-===============
-
-Each item in `setup_steps`, `steps`, and `teardown_steps` is a dictionary representing a Step.
-
-.. code-block:: yaml
-   :caption: Example Step Structure
-
-   steptype: PythonModuleStep | UserInteractionStep | SequenceStep | WaitStep | ... # Determines the type of action
-   step_name: Name of the step # A descriptive name for the step
-   id: unique_id # Optional: A unique identifier. Defaults to a generated UUID.
-   description: More details about the step # Optional: More details about the step's purpose.
-   skip: false # Optional: If true, the step execution is skipped. Defaults to false.
-   critical: false # Optional: If true, errors in this step always stop execution. Defaults to false.
-   # --- Fields specific to certain steptypes ---
-   action_type: method # e.g., For PythonModuleStep: 'method', 'read_attribute', 'write_attribute'
-   module: path/to/my_module.py # e.g., For PythonModuleStep: Path to the Python file
-   method_name: my_function # e.g., For PythonModuleStep with action_type 'method': Name of the function to run
-   # ... other specific fields depending on steptype ...
-   # --- Input/Output Mapping ---
-   input_mapping: {} # Defines how the step gets its input data. See below.
-   output_mapping: {} # Defines how the step's output is processed. See below.
-   continue_on_error: False
-
-
-Key fields common to most steps:
-
-*   ``steptype`` (str): Determines the type of action (e.g., ``PythonModuleStep``, ``SequenceStep``, ``UserInteractionStep``, ``WaitStep``). Specific step types may have additional required or optional fields.
-*   ``step_name`` (str): A descriptive name for the step.
-*   ``id`` (str, optional): A unique identifier. Defaults to a generated UUID.
-*   ``description`` (str, optional): More details about the step's purpose.
-*   ``skip`` (bool, optional): If ``true``, the step execution is skipped. Defaults to ``false``.
-*   ``critical`` (bool, optional): If ``true``, errors in this step always stop execution, even when ``continue_on_error`` is enabled. Defaults to ``false``.
-*   ``input_mapping`` (dict): Defines how the step gets its input data. See :ref:`input_mapping_details`.
-*   ``output_mapping`` (dict): Defines how the step's output is processed and stored. See :ref:`output_mapping_details`.
-*   ``continue_on_error`` (bool, optional): Continue after this step produces ``ERROR``. Defaults to ``false`` and is overridden by ``globals.continue_on_error`` when that global exists. It does not alter ``FAIL`` behavior.
-
-
-.. _input_mapping_details:
-
-
-Input Mapping Details (``input_mapping``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The ``input_mapping`` dictionary maps internal step input names (e.g., argument names for a ``PythonModuleStep``) to data sources. The keys of ``input_mapping`` are the names the step internally uses for its inputs, and the values specify where that data comes from.
-
-Each value in the ``input_mapping`` dictionary is *another* dictionary with the following keys:
-
-*   ``type`` (str, optional): Source of the value. Must be one of ``direct``, ``local``, or ``global``. If omitted, defaults to ``direct``.
-*   ``value``: Required if ``type`` is ``direct`` (or omitted). Provides the literal value directly.
-*   ``local_name``: Required if ``type`` is ``local``. Specifies the name of the sequence's local variable to read from.
-*   ``global_name``: Required if ``type`` is ``global``. Specifies the name of the recipe's global variable to read from.
-*   ``indexed`` (bool, optional): Defaults to ``false``. If ``true`` for one or more inputs, the step becomes an ``IndexedStep`` internally. It runs multiple times, once for each item in the *shortest* input list marked as ``indexed: true``. Non-indexed inputs are repeated (their value is used as-is) for each run of the indexed step.
-
-.. code-block:: yaml
-   :caption: Example Input Mapping Options
 
    input_mapping:
-     # Input 'arg1' gets the literal integer value 3 (type defaults to direct)
-     arg1: {value: 3, indexed: false}
-
-     # Input 'arg2' gets its value from the sequence's local variable 'my_local_var'
-     arg2: {type: local, local_name: my_local_var, indexed: false}
-
-     # Input 'arg3' gets its value from the recipe's global variable 'my_global_var'
-     arg3: {type: global, global_name: my_global_var, indexed: false}
-
-     # Input 'items_to_process' comes from a direct list.
-     # Because indexed is true, the step will run 3 times.
-     # Run 1: items_to_process = 1
-     # Run 2: items_to_process = 2
-     # Run 3: items_to_process = 3
-     # Inputs arg1, arg2, arg3 will keep their mapped values for each of these runs.
-     items_to_process: {type: direct, value: [1, 2, 3], indexed: true}
-
-
-.. _indexed_step_naming:
-
-Indexed Step Naming
-""""""""""""""""""""
-
-By default, each iteration of an indexed step is named
-``"<step_name> [1/N]"``, ``"<step_name> [2/N]"``, etc.  To produce more
-informative report lines, use **Python format placeholders** in ``step_name``
-that reference the indexed input names.  The framework substitutes the actual
-value for each iteration automatically.
-
-.. code-block:: yaml
-
-   - steptype: PythonModuleStep
-     step_name: "ADC-03 axis {axis}"
-     module: tests/adc.py
-     action_type: method
-     method_name: test_adc_03_axis
-     input_mapping:
-       axis: {type: direct, value: [0, 1, 2, 3, 4, 5, 6, 7], indexed: true}
-     output_mapping:
-       passed: {type: passfail}
-
-This produces eight report lines: ``ADC-03 axis 0``, ``ADC-03 axis 1``, ...,
-``ADC-03 axis 7``.
-
-Standard Python format specifications are supported — for example
-``"AO-02 CH{channel:02d} FFT"`` produces ``AO-02 CH00 FFT``,
-``AO-02 CH01 FFT``, etc.
-
-If the ``step_name`` does not contain any ``{...}`` placeholders, the
-default ``[i/N]`` suffix is used.
-
-
-.. _output_mapping_details:
-
-Output Mapping Details (``output_mapping``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The ``output_mapping`` dictionary defines how the step's raw output is processed, evaluated for pass/fail status, and stored back into variables. The keys of the ``output_mapping`` dictionary correspond to the keys in the step's raw output data (typically a dictionary). If the step produces a non-dictionary output (e.g., a ``PythonModuleStep`` method returns a single value like a boolean or number), it's treated as a dictionary with a single key ``output`` (e.g., ``{"output": returned_value}``).
-
-Each value in the ``output_mapping`` dictionary is *another* dictionary specifying the action to take:
-
-*   ``type`` (str): How to handle the output value associated with this key. Must be one of ``local``, ``global``, ``passfail``, ``equals``, ``range``, ``passthrough``, or ``image``.
-*   ``local_name``: Required if ``type`` is ``local``. The name of the sequence's local variable where this output value should be stored.
-*   ``global_name``: Required if ``type`` is ``global``. The name of the recipe's global variable where this output value should be stored.
-*   ``value``: Required if ``type`` is ``equals``. The target value for comparison. If the step's output value for this key equals ``value``, the check passes.
-*   ``min``, ``max``: Required if ``type`` is ``range``. The inclusive lower (``min``) and upper (``max``) bounds for comparison. If the step's output value for this key falls within [min, max], the check passes.
-*   ``passthrough``: Used to propagate a `ResultType` directly. This is often used with the implicit ``__result`` output key from a `SequenceStep` to propagate the overall status of the subsequence, or internally by `IndexedStep` to represent the aggregate result.
-*   ``image``: The output value is treated as a file path to an image (PNG, JPG, SVG, etc.). The framework copies the file into ``<report_dir>/img/`` and embeds it in the HTML report at the bottom of the page, captioned with the step name and result. Does not affect pass/fail determination.
-
-**Pass/Fail Determination:**
-
-*   If any output key is mapped with ``type: passfail``, the boolean value of that output determines the step's Pass/Fail status.
-*   If any output key is mapped with ``type: equals`` or ``type: range``, the comparison result determines the step's Pass/Fail status. If multiple such mappings exist, *all* must pass for the step to pass.
-*   If *no* output keys are mapped to ``passfail``, ``equals``, or ``range``, the step automatically finishes with a status of ``DONE``, which is generally treated as equivalent to ``PASS``.
-
-.. code-block:: yaml
-   :caption: Example Output Mapping Options
-
-   output_mapping:
-     # Store the value associated with the output key 'result_data'
-     # into the local variable 'my_local_result'.
-     result_data: {type: local, local_name: my_local_result}
-
-     # Store the value associated with the output key 'shared_value'
-     # into the global variable 'my_global_result'.
-     shared_value: {type: global, global_name: my_global_result}
-
-     # Use the boolean value associated with the output key 'test_passed'
-     # to determine if the step passes or fails.
-     test_passed: {type: passfail}
-
-     # Check if the value associated with the output key 'status_code'
-     # is exactly equal to 200. If yes, pass; otherwise, fail.
-     status_code: {type: equals, value: 200}
-
-     # Check if the value associated with the output key 'measurement'
-     # is between 3.0 and 6.5 (inclusive). If yes, pass; otherwise, fail.
-     measurement: {type: range, min: 3.0, max: 6.5}
-
-     # For SequenceStep: Propagate the overall Pass/Fail/Done status
-     # of the subsequence using its implicit '__result' output.
-     __result: { type: passthrough }
-
-     # Copy the image file at the returned path into the report directory
-     # and embed it in the HTML report with the step name and result as caption.
-     chart_image: { type: image }
-
-
-.. _data_collection_vs_assertion:
-
-Separating Data Collection from Assertion
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The output mapping system supports a powerful pattern: **decoupling data
-collection from pass/fail assertion**. This is achieved by using ``global``
-or ``local`` output types, which store raw data without performing any
-assertion. When *only* storage types are used in a step's output mapping,
-the step finishes with ``ResultType.DONE`` (neutral) — it neither passes
-nor fails.
-
-**Why use this pattern?**
-
-*   Keep test methods focused on *acquiring* data, not *judging* it.
-*   Reuse the same acquisition step with different assertion criteria.
-*   Inspect or log raw data before deciding pass/fail in a later step.
-*   Run multiple validations on the same dataset without re-acquiring.
-
-**Example — collect first, assert later:**
-
-.. code-block:: yaml
-
-   # Step 1: Pure data collection — no assertion
-   - steptype: PythonModuleStep
-     step_name: Acquire ADC channels
-     module: tests/adc.py
-     action_type: method
-     method_name: read_all_channels
-     input_mapping:
-       ssh_client: {type: global, global_name: ssh_client}
-     output_mapping:
-       channels:
-         type: global
-         global_name: adc_raw_data       # Raw dict stored, step returns DONE
-
-   # Step 2: Assert on the stored data
-   - steptype: PythonModuleStep
-     step_name: Validate ADC channels
-     module: tests/adc.py
-     action_type: method
-     method_name: validate_channels
-     input_mapping:
-       data: {type: global, global_name: adc_raw_data}
-     output_mapping:
-       passed: {type: passfail}          # Boolean assertion
-
-The Python method in step 1 only needs to return the raw data:
-
-.. code-block:: python
-
-   def read_all_channels(ssh_client=None, **kwargs):
-       # ... acquire data ...
-       return {"channels": channel_dict}  # No pass/fail logic here
-
-And the validation method in step 2 receives the stored data and judges it:
-
-.. code-block:: python
-
-   def validate_channels(data=None, **kwargs):
-       all_ok = all(abs(v - expected) < tolerance for v, expected in ...)
-       return {"passed": all_ok}
-
-**Example — mixed: assert AND store in one step:**
-
-A single step can combine assertion types with storage types. This is useful
-when you want an immediate pass/fail verdict *and* want to keep the raw data
-available for later steps or reporting:
-
-.. code-block:: yaml
-
-   output_mapping:
-     passed:
-       type: passfail                    # Determines step PASS/FAIL
-     raw_readings:
-       type: global
-       global_name: saved_readings       # Also stored for later use
-     summary:
-       type: local
-       local_name: test_summary          # Stored in sequence-local scope
-
-**Summary of assertion vs. storage types:**
-
-+---------------+---------------------------+----------------------------+
-| Type          | Behaviour                 | Determines Pass/Fail?      |
-+===============+===========================+============================+
-| ``passfail``  | Boolean → PASS / FAIL     | Yes                        |
-+---------------+---------------------------+----------------------------+
-| ``equals``    | Compare to target value   | Yes                        |
-+---------------+---------------------------+----------------------------+
-| ``range``     | Check within [min, max]   | Yes                        |
-+---------------+---------------------------+----------------------------+
-| ``passthrough``| Propagate a ResultType   | Yes                        |
-+---------------+---------------------------+----------------------------+
-| ``global``    | Store in global variable  | No — step returns DONE     |
-+---------------+---------------------------+----------------------------+
-| ``local``     | Store in local variable   | No — step returns DONE     |
-+---------------+---------------------------+----------------------------+
-| ``image``     | Copy image file into report and embed in HTML | No — step returns DONE |
-+---------------+---------------------------+----------------------------+
-
-.. note::
-   If a step's output mapping contains **only** ``global`` and/or ``local``
-   entries (no assertion types), the step always finishes with
-   ``ResultType.DONE``. This is treated as a neutral/successful completion —
-   it will not trigger ``continue_on_error`` or ``critical`` stop behaviour.
-
-
-Step formatting
-===================
-
-There are multiple ways of formatting the recipe YAML file. 
-One way of doing it is compressing the arguments of ``input_mapping`` and ``output_mapping``. An example is visible below.
-
-.. code-block:: yaml
-
-   steptype: PythonModuleStep
-   step_name: Call Python Function
-   description: Describe the action of the step
-   module: my_module.py 
-   action_type: method
-   method_name: my_function
-   input_mapping:
-     arg1: { type: direct, value: "hello" }
-     arg2: { type: local, local_name: local_var1 }
-   output_mapping:
-     result: { type: local, local_name: output_data }
-     passed: { type: passfail } # Treats boolean output as pass/fail
-
-The other way of formatting each step is to expand the outputs so we get
-
-.. code-block:: yaml
-
-   steptype: PythonModuleStep
-   step_name: Call Python Function
-   description: Describe the action of the step
-   module: my_module.py 
-   action_type: method
-   method_name: my_function
-   input_mapping:
-     arg1:
-      type: direct
-      value: "hello"
-     arg2:
-      type: local
-      local_name: local_var1
-   output_mapping:
-     result:
-      type: local
-      local_name: output_data
-     passed:
-      type: passfail # Treats boolean output as pass/fail
-
-In this formatting, the indentation of input elements like ``type`` and ``value`` are important to achieve similar structure. The indentation scheme is of same structure as python programming.
-Both work as intendedn and either can be used, even mixed together. 
-
-Specific Step Types
-===================
-
-Given the required different functionalities required for testing, multiple step types were developed. This section descrives the types, functionality, format and what input/output. The following are the available steptypes:
- - PythonModuleStep
- - WaitStep
- - UserInteractionStep
- - SSHConnectStep
- - SSHUploadStep
- - UserLoadingStep
- - UserRunMethodStep
- - UserWriteStep
- - SerialNumberStep
-
-Each has its own template of required elements but with overlapping types of elements.
-The elements ``step_name`` and ``description`` are not explained further in this section as they're descriptive elements for reporting and GUI with no change between steps. 
-
-.. note::
-  The optional arguments ``critical``, ``skip`` and ``continue_on_error`` all apply to the following step types. Check :ref:`_step_definition_details` for information on ``skip`` and ``critical`` and :ref:`_continue_on_error_details` for information on ``continue_on_error``.
-
-
-
-PythonModuleStep
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Executes Python method or code. 
-
-.. code-block:: yaml
-
-   steptype: PythonModuleStep
-   step_name: Call Python Function #the name of the 
-   description: Describe the action of the step
-   module: my_module.py #the name of the file with the test initialization
-   action_type: method # Or 'read_attribute', 'write_attribute'
-   method_name: my_function # Required if action_type is 'method'
-   input_mapping:
-     arg1: { type: direct, value: "hello" }
-     arg2: { type: local, local_name: local_var1 }
-     # For read_attribute:
-     # attribute_name: { type: direct, value: "my_attr" }
-     # For write_attribute:
-     # attribute_name: { type: direct, value: "my_attr" }
-     # attribute_value: { type: direct, value: 10 }
-   output_mapping:
-     result: { type: local, local_name: output_data }
-     passed: { type: passfail } # Treats boolean output as pass/fail
-
-*   ``module`` (str): Python module path. With ``test_package``, it is relative to that package (for example ``test_module.py`` or ``helpers/test_module.py``).
-*   ``action_type`` (str): ``method``, ``read_attribute``, or ``write_attribute``.
-*   ``method_name`` (str): Name of the method to call. 
-*   ``input_mapping`` (dictionary): Inputs to the method. Each input(``arg``) is required to have a ``type``. 
-*   ``output_mapping`` (dictionary): outputs of the method. Each output(``arg``) is required to have a ``type``. If multiple outputs, ensure the returned output of method has same label, example ``passed`` as given in output_mapping.
-
-
-WaitStep
-~~~~~~~~~~~~~~~~~~~~
-
-Waits the specified period of time in seconds before next step starts.
-
-.. code-block:: yaml
-
-  steptype: WaitStep
-  step_name: Wait for 3s
-  description: Waiting 3 seconds on this step
-  skip: false
-  input_mapping:
-    wait_time:
-      value: '3'
-
-*   ``steptype`` (str): Determines the type of action.
-*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
-
-
-UserInteractionStep
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Allows for user to interact with gui through action on buttons. It allows for adding many buttons but it requires at least one button if test is to be successful. 
-
-.. code-block:: yaml
-
-
-  steptype: UserInteractionStep
-  step_name: Start test
-  input_mapping:
-    message: {type: direct, value: "Connect the WRS as shown and click Yes", indexed: false}
-    image_path: {type: direct, value: "test.png"}
-    options: {type: direct, value: [{'yes': 'yes'},{two: 'no'}], indexed: false}
-  output_mapping:
-    output: {type: equals, value: "yes"}
-
-*   ``steptype`` (str): Determines the type of action.
-*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
-*  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
-*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
-These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
-The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
-
-*   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
-*   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
-
-
-
-SSHConnectStep
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Allows to setup a SSH connection to be used globally during the test.
-
-.. code-block:: yaml
-
-  steptype: SSHConnectStep
-  step_name: Find the SSH client connection
-  description: Asking user to find the file needed
-  continue_on_error: false
-
-*   ``steptype`` (str): Determines the type of action.
-
-This steptype has certain **requirements** to which globals exist. The following required are
-*  ``ssh_client: None`` : The variable holding the opened paramiko client to be called in functions.
-*  ``host: 129`` :The SSH hostname or IP address.
-*  ``user: username``:The SSH username
-*  ``password: None`` :Password for SSH auth. 
-*  ``private_key: 'path/to/your/key_file'`` :The path to key file. important if no password is given.
-*  ``port: None``(int) : SSH port (default: 22).
-
-If password is not supplied, the function will automatically use ``private_key`` as verification.
-
-**Important**. When this steptype is used, **always** put steptype ``SSHCloseStep`` under ``teardownsteps``. It can be placed multiple times, but always one in ``teardownsteps``.
-
-.. code-block:: yaml
-
-  teardown_steps:
-  - steptype: SSHCloseStep
-    step_name: Closes the SSH client
-
-To use the SSH client, add ``ssh_client`` to input_mapping.
-
-.. code-block:: yaml
-
-     target:
-      type: global
-      global_name: ssh_client
-
-An Example of using it for a function can be seen below.
-
-.. code-block:: python
-  def write_a_simple_filessh(target):
-    target.exec_command("echo 'Hello World' > myfile.txt")
-
-    return (True)
-
-
-
-SSHUploadStep
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Uploads one or more local files to the remote host via SFTP. Uses the ``ssh_client`` global
-set by ``SSHConnectStep``. Compares local and remote SHA-256 digests before uploading, so
-repeated recipe runs skip files that are already up to date.
-
-.. code-block:: yaml
-
-  - steptype: SSHUploadStep
-    step_name: Deploy C tool binaries
-    description: Upload ARM ELF binaries to /tmp/ on the test target
-    local_package: my_pts_package
-    files:
-      - local: bin/tool-a
-        remote: /tmp/tool-a
-      - local: bin/tool-b
-        remote: /tmp/tool-b
-    permissions: "0o755"
-    skip_if_sha256_match: true
-    continue_on_error: false
-    output_mapping:
-      passed:
-        type: passfail
-
-*   ``files`` (list, required): List of ``{local: ..., remote: ...}`` pairs.
-    ``local`` is a path string resolved relative to the project root, or relative
-    to ``local_package`` when that field is set.
-*   ``local_package`` (str, optional): Name of an installed Python package.
-    When set, ``local`` paths are resolved via ``importlib.resources`` inside
-    that package (use this for packaged binaries or data files).
-*   ``permissions`` (int or str, optional): ``chmod`` value applied after each
-    upload. Accepts an integer (e.g. ``493``) or an octal string (e.g. ``"0o755"``).
-    Default: ``0o755`` (rwxr-xr-x).
-*   ``skip_if_sha256_match`` (bool, optional): Skip the upload when the local
-    and remote SHA-256 digests match. Default: ``true``.
-*   ``continue_on_error`` (bool, optional): If ``true``, an upload failure does
-    not abort the recipe. Default: ``false``.
-
-The step returns ``{"passed": bool, "deployed": [names], "skipped": [names]}``.
-Map ``passed`` to ``type: passfail`` in ``output_mapping`` for automatic
-PASS/FAIL verdict reporting.
-
-**Important**: ``SSHConnectStep`` must appear before ``SSHUploadStep`` in
-``setup_steps`` so that the ``ssh_client`` global is populated.
-
-UserLoadingStep
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Used to load a file to be used somewhere else. Could fx be a calibration file or configuration file for certain instruments. 
-
-.. code-block:: yaml
-
-  steptype: UserLoadingStep
-  step_name: Load config file
-  description: Asking user to find the file needed
-  input_mapping:
-    message:
-      type: direct
-      value: 'Find the specified file'
-    image_path: 
-      type: direct
-      value: lego2.jpg
-    options:
-      type: direct
-      value:
-      - cancel: 'cancel'
-      - file: 'next'
-  output_mapping:
-    output:
-      type: passfail
-  file_save_location: 
-    type: global
-    variable: file
-
-*   ``steptype`` (str): Determines the type of action.
-*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
-*  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
-*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
-These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
-The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
-
-*   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
-*   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
-*   ``file_save_location`` (dict, optional): Variable to save the loaded file. . If not existing, will default to ``type: local, variable: file``. 
-
-
-UserRunMethodStep
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Executes a method after interacting with next button. Step type is expected to be used in scenarios where an action by the operator is required before running a method.
-
-.. code-block:: yaml
-
-  steptype: UserRunMethodStep
-  step_name: Running the specified method
-  description: Runs the specified method
-  action_type: method
-  module: example_tests.py
-  input_mapping:
-    message:
-      type: direct
-      value: 'Find the specified file'
-    options:
-      type: direct
-      value:
-      - cancel: 'cancel'
-      - run: 'Run'
-    image_path: 
-      type: direct
-      value: test.jpg
-    method_name:
-      type: method
-      value: 'is_PSU_disconnected'
-    argument1:
-      type: global
-      global_name: test
-    argument2:
-      type: local
-      local_name: testing
-    argument3:
-      type: direct
-      value: 5
-  output_mapping:
-    output:
-      type: passfail
-  trigger_response: "run"
-
-*   ``steptype`` (str): Determines the type of action.
-*  ``action_type`` (str): ``method``, ``read_attribute``, or ``write_attribute``.
-*   ``module`` (str): Python module path. With ``test_package``, it is relative to that package and may include nested directories.
-*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
-*  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
-*  ``options`` (dict): options to add buttons. Multiple buttons can be added and cycled through by setting ``indexed`` to `True`. 
-These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
-The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
-*   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
-*   ``method_name`` (dict): specifies the method to run.
-*   ``argument1-3`` (dict): Any dict that is not message, option or image path in input mapping will be considered input to method. multiple inputs are possible with them being ordered from top to bottom as inputs to the method.
-*   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
-*   ``trigger_response`` (str): you can choose the key to consider what button to push for a futher action. In this example, the key is "run". Keep the key similar to the specified value key in options.
-
-Example function of input would be for the step above.
-
-.. code-block:: python
-  def simpleMethod(argument1, argument2, argument3)
-    #the input sequence seen from the above step. It shows the order of the 
-    return 
-
-
-UserWriteStep
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Executes step to write values to variables or setting up the settings required for a comport. 
-
-.. code-block:: yaml
-
-  steptype: UserWriteStep
-  step_name: Writing a command 
-  description: Write the ID or the port 
-  input_mapping:
-    message:
-      type: direct
-      value: 'Write the ID or serial port of device'
-    image_path: 
-      type: direct
-      value: test.jpg
-    options:
-      type: direct
-      value:
-      - 'cancel': 'cancel'
-      - 'ID': 'Write'
-  output_mapping:
-    output:
-      type: passfail
-
-
-*   ``steptype`` (str): Determines the type of action.
-*  ``input_mapping`` (dict): Inputs the desired period of time to wait before moving on to next step.
-*  ``message`` (dict): can write a message that is expected to be relevant for user to do before 
-*  ``options`` (dict): options to add buttons. For the main functionality of this function, two keys are defined: ``'ID'`` for setting up a comport through gui and ``'wrt'`` for writing a string to a variable.
-These buttons on options are relevant for describing the action the button should take. The name of buttons are determined through key-value pairs as seen in the ``options``. It contains the keys 'yes' and two with each of their values.
-The key ``cancel`` or ``'cancel'`` are both hardcoded to cancel a step and stop the entire test and can therefore not be used. keys do not need to be strings to operate unless the keys are ``yes`` or ``no`` as these are compiled to `True` and `False`.
-
-*   ``image_path`` (dict, optional): shows the specified image on gui during this step. Path is not required to find the image, as long as it is one layer deep inside the working directory. 
-*   ``output_mapping`` (dict): outputs of the method. Each output(``arg``) is required to have a ``type``.
-
-
-This step requires some local variables depending on which **key** is specified under ``options``.
-If the **key** chosen is ``'ID'``, it requires the following local variables.
-* serial_ID
-*  serialport
-*  baudrate
-When the key is applied and button is pushed, a GUI pops up letting you choose baudrate and what comport that is available you want to connect to. you can send an IDN? command through button and when found to work it will save the values to the local variables.
-The output mapping should just be pass/faill for this key.
-
-If the **key** chosen is ``'wrt'``, it requires an output mapping of either global or local scale to a variable. 
-The input written into the GUI window is sent to the output mapping to be saved as a ``str``. The following is the required ``output_mapping`` if the **key** is ``'wrt'` on a button.
-
-.. code-block:: yaml
-
-  output_mapping:
-    output:
-      type: local
-      local_name: example
-
-
-
-SerialNumberStep
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Prompts the operator for a device serial number via the GUI and stores it for the rest of the
-recipe run. The serial number is written to both ``runtime.serial_number`` (used automatically
-in all reports) and to the global variable ``serial_number`` so that subsequent steps can
-reference it.
-
-Add this step wherever serial-number capture fits your workflow — typically as the first step
-in the main sequence, but it can equally be placed inside a setup or sub-sequence.
-
-.. code-block:: yaml
-
-  steptype: SerialNumberStep
-  step_name: Scan Serial Number
-  description: Ask the operator to scan or type the device serial number
-  input_mapping: {}
-  output_mapping:
-    serial_number: {type: global, global_name: serial_number}
-
-*   ``steptype`` (str): Must be ``SerialNumberStep``.
-*   ``input_mapping`` (dict): No inputs required — leave as ``{}``.
-*   ``output_mapping`` (dict, optional): The step always stores the serial number in
-    ``runtime.serial_number`` and the ``serial_number`` global automatically.
-    Use the output mapping only when you additionally want to store the value
-    in a local variable or a differently-named global.
-
-    .. code-block:: yaml
-
-       # Store additionally in a local variable:
-       output_mapping:
-         serial_number: {type: local, local_name: device_sn}
-
-.. note::
-   The GUI must handle the ``get_serial_number`` event and respond with the serial
-   number string on the provided response queue.  See :doc:`gui_event_handling` for
-   details on wiring up the signal in your UI.
-
-**Minimal recipe example with serial number capture:**
-
-.. code-block:: yaml
-
-   ---
-   name: Example Recipe
-   version: 1.0.0
-   description: Recipe with serial number capture
-   main_sequence: Main
-   globals:
-     serial_number: null
-
-   ---
-   sequence_name: Main
-   setup_steps:
-     - steptype: SerialNumberStep
-       step_name: Scan Serial Number
-       input_mapping: {}
-       output_mapping: {}
-   steps:
-     - steptype: PythonModuleStep
-       step_name: Run Tests
-       module: my_tests.py
-       action_type: method
-       method_name: run_all
-       input_mapping: {}
-       output_mapping: {}
-   teardown_steps: []
-   locals: {}
-   parameters: {}
-   outputs: {}
-
-
-Required globals and locals for certain steps.
-============================
-
-To ensure the functionality of some of the step types, certain global and locals are required for different datatypes. This section explains which step requires what specific variables in the recipe.
-The following steps that require global or local variables are found below. 
-
- - **SSHConnectStep**
-
- Requires the following global variables:
-  - cancel_key: 'cancel'
-  - ssh_client: None
-  - host: Ip of the host
-  - user: root or user
-  - password: None
-  - private_key: 'path/to/private_key'
-  - port: SSH port. standard is 22
- - **UserLoadingStep**
- Requires the following global variables:
-  - cancel_key: 'cancel'
-  - loadFile_key: 'file'
-  - **UserRunMethodStep**
-Requires the following global variables:
-  - cancel_key: 'cancel'
-- **UserWriteStep**
-Requires the following global variables:
-  - cancel_key: 'cancel'
-  - ID_key: 'ID'
-  - wrt_key: 'wrt'
-
-Requires the following local variables **only** if ID_key is specified under options:
-  - serial_ID: None
-  - serialport: None
-  - baudrate: None
-
-- **SerialNumberStep**
-
-Requires no global or local variables to be pre-declared.  The step automatically
-creates or updates the ``serial_number`` global with the value entered by the operator.
-If you want to reference the serial number in subsequent steps, declare it in globals:
-
-.. code-block:: yaml
-
-   globals:
-     serial_number: null
-
-
-
-.. _continue_on_error_details:
-
-Continue On Error Mechanism
-============================
-
-The framework can continue after ``ERROR`` results in non-critical steps. This
-behavior applies regardless of whether ``recipe_version`` is present.
-
-Global Setting
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Set ``continue_on_error`` on an individual step, or in the recipe header to
-override the value for every step:
-
-.. code-block:: yaml
-
-   ---
-   name: My Recipe
-   continue_on_error: true
-   # ... other fields
-
-When ``continue_on_error`` is ``true``:
-- Errors in steps marked as ``critical: false`` (default) will not stop sequence execution
-- Errors in steps marked as ``critical: true`` will still stop sequence execution
-- All errors are still logged and reported
-
-When the effective ``continue_on_error`` value is ``false`` (default):
-- Any error in any step stops sequence execution (legacy behavior)
-- The ``critical`` field has no effect
-
-Step-Level Critical Flag
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Individual steps can be marked as critical using the ``critical`` field:
-
-.. code-block:: yaml
-
-   steps:
-   - steptype: PythonModuleStep
-     step_name: Optional Diagnostic Test
-     critical: false  # Default - errors won't stop execution if continue_on_error is true
-     # ... other fields
-
-   - steptype: PythonModuleStep
-     step_name: Essential Safety Check
-     critical: true   # Errors will always stop execution
-     # ... other fields
-
-.. note::
-  Notice the indentation inside ``steps`` and the ``-`` in front of the step. Adding this - is crucial for the functionality of the recipe.
-
-
-Behavior Matrix
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-The interaction between ``continue_on_error`` and ``critical`` settings:
-
-+-------------------+------------------+------------------------+
-| continue_on_error | step critical    | Error Behavior         |
-+===================+==================+========================+
-| false             | false (default)  | Stop execution         |
-+-------------------+------------------+------------------------+
-| false             | true             | Stop execution         |
-+-------------------+------------------+------------------------+
-| true              | false (default)  | Continue execution     |
-+-------------------+------------------+------------------------+
-| true              | true             | Stop execution         |
-+-------------------+------------------+------------------------+
-
-Use Cases
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-This mechanism is useful for:
-
-- **Diagnostic Tests**: Run optional diagnostic steps that shouldn't fail the entire test if they encounter issues
-- **Data Collection**: Continue gathering test data even if some measurements fail
-- **Graceful Degradation**: Allow test sequences to complete as much as possible before stopping
-- **Critical Safety Checks**: Ensure essential safety or validation steps always stop execution on failure
-
-Example
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-.. code-block:: yaml
-
-   ---
-   name: Hardware Test Suite
-   continue_on_error: true
-
-   ---
-   sequence_name: Main
-   steps:
-   - steptype: PythonModuleStep
-     step_name: Initialize Hardware
-     critical: true          # Setup failure should stop everything
-     # ... configuration
-
-   - steptype: PythonModuleStep
-     step_name: Optional Calibration
-     critical: false         # Calibration failure shouldn't stop the test
-     # ... configuration
-
-   - steptype: PythonModuleStep
-     step_name: Core Functionality Test
-     critical: true          # Main test failure should stop execution
-     # ... configuration
-
-   - steptype: PythonModuleStep
-     step_name: Performance Metrics
-     critical: false         # Metrics failure shouldn't stop cleanup
-     # ... configuration
-
-   teardown_steps:
-   - steptype: PythonModuleStep
-     step_name: Hardware Cleanup
-     critical: true          # Cleanup failure is critical for safety
-     # ... configuration
-
-In this example:
-- If "Initialize Hardware" fails, execution stops immediately
-- If "Optional Calibration" fails, execution continues to "Core Functionality Test"
-- If "Core Functionality Test" fails, execution stops before "Performance Metrics"
-- If "Performance Metrics" fails, execution continues to teardown
-- If "Hardware Cleanup" fails, it's reported as a critical failure
-
-Recipe-level policy takes precedence over step-level settings:
-
-.. code-block:: yaml
-
-   # Recipe-wide policy
-   continue_on_error: true
-   globals: {}
-
-   # Step-level policy, used only when the recipe field is absent
-   # continue_on_error: true
+     literal: {type: direct, value: 12}
+     repeated: {type: direct, value: [1, 2], indexed: true}
+     from_local: {type: local, local_name: expected}
+     from_global: {type: global, global_name: target}
+     callback: {type: method, value: normalize}
+
+The exact input structures are :ref:`recipe-v2-input-direct`,
+:ref:`recipe-v2-input-local`, :ref:`recipe-v2-input-global`, and
+:ref:`recipe-v2-input-method`. Indexed direct inputs must contain lists, and
+all indexed inputs on one step must have equal lengths.
+
+Output mappings also require an explicit ``type``. ``passfail``, ``equals``,
+and ``range`` contribute verdicts; all configured verdict checks must pass.
+``passthrough`` consumes an already-computed result and must be the only
+verdict mapping on a step. ``local`` and ``global`` store values, while
+``image`` publishes report images. See the generated
+:ref:`recipe-v2-output-passfail` through :ref:`recipe-v2-output-range`
+definitions for exact fields.
+
+Runtime-specific behavior
+-------------------------
+
+``PythonModuleStep`` resolves ``module`` relative to ``test_package`` when the
+header supplies that package. Without ``test_package``, the runtime uses its
+file-based module lookup. A method action requires ``method_name``.
+
+``SequenceStep`` references another sequence in the same YAML stream.
+``WaitStep`` requires a ``wait_time`` input. SSH steps require the connection
+globals documented by the parser and must follow connect, upload, close order.
+Exact step-specific fields are linked from the generated reference, beginning
+with :ref:`recipe-v2-step-pythonmodulestep`.
+
+Error handling applies to execution errors, not failed verdicts. A header-level
+``continue_on_error`` overrides step-level values when present; ``critical``
+errors still stop execution. Teardown steps run during sequence cleanup.
+
+Serialization and readable examples
+------------------------------------
+
+``recipe_to_yaml()`` accepts a validated aggregate recipe definition and
+returns deterministic multi-document YAML text without performing file I/O.
+It emits aliases and model defaults, omits ``None``, and always writes explicit
+document separators. Parsing that output recreates an equal aggregate
+definition.
+
+Serialization is formatting-destructive: comments, quoting choices, key
+layout, and other source formatting are not retained. Maintained examples are
+therefore kept readable by hand and may include comments. YamVIEW and
+programmatic serialization produce normalized YAML instead.
+
+Migrating version 1 recipes
+---------------------------
+
+Version 1 is rejected; there is no automatic migration command or runtime
+compatibility path. To migrate a file:
+
+1. Set the required header field to ``recipe_version: 2.0.0``.
+2. Use exact canonical step names such as ``PythonModuleStep``, ``WaitStep``,
+   and ``UserInteractionStep``. Lowercase spellings are invalid.
+3. Add ``type: direct`` to every literal input mapping that previously relied
+   on the implicit default. All input and output mappings are discriminated
+   explicitly.
+4. Remove sequence-level ``serial_number``. Use ``SerialNumberStep`` and a
+   mapped global or local value when the run needs a serial number.
+5. Add every now-required field, including header, sequence, and step
+   descriptions, and remove unknown fields.
+6. Validate the complete multi-document file. Strict validation reports all
+   detected migration issues with paths and source positions; PyPTS never
+   changes legacy spelling or meaning silently.
+
+After migration, parse the source, serialize with ``recipe_to_yaml()``, and
+parse again. Equal aggregate definitions establish semantic stability; byte
+equality and preservation of source comments are intentionally not required.

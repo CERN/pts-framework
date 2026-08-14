@@ -2,8 +2,9 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-from pypts.YamVIEW.verify_recipe import validate_all_recipes_in_folder
 from pypts.utils import get_project_root
+from pypts.YamVIEW.verify_recipe import validate_all_recipes_in_folder
+
 
 def test_recipes_format():
     recipe_path = get_project_root() / "src" / "pypts" / "recipes"

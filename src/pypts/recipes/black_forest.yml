@@ -4,7 +4,7 @@
 
 name: black forest cake testing
 version: 0.0.1
-recipe_version: 1.0.0
+recipe_version: 2.0.0
 description: preparing the cake and checking the flavours
 main_sequence: my beautiful sequence
 continue_on_error: true
@@ -17,7 +17,7 @@ locals: {}
 outputs: {}
 setup_steps: []
 steps:
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 1
   description: step 1 will be skipped
   skip: true
@@ -34,7 +34,7 @@ steps:
     output:
       type: equals
       value: 'yes'
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 2
   description: step 2 will be skipped
   skip: true
@@ -51,7 +51,7 @@ steps:
     output:
       type: equals
       value: 'yes'
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 3
   description: step 3 will show a message with yes/no decision to the user
   skip: false
@@ -68,7 +68,7 @@ steps:
     output:
       type: equals
       value: 'yes'
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 4
   description: step 4 will show a message and image to the user
   skip: false
@@ -85,7 +85,7 @@ steps:
     output:
       type: equals
       value: 'yes'
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 5
   description: step 5 will execute a pythonmodule script
   skip: false
@@ -102,7 +102,7 @@ steps:
     output:
       type: equals
       value: 'yes'
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 6
   description: step 6 will fail, because of unhandled excep[tion in the user code
   skip: false
@@ -119,7 +119,7 @@ steps:
     output:
       type: equals
       value: 'yes'
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 7
   description: step 7 will take the output from test5 and pass/fail accordingly 
   skip: false
@@ -136,7 +136,7 @@ steps:
     output:
       type: equals
       value: 'yes'
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 8
   description: step 8 will take output from (crashed) test 6 and pass/fail accordingly
   skip: false

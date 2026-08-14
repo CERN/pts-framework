@@ -117,6 +117,7 @@ Test methods executed by ``PythonModuleStep`` can return image file paths (PNG, 
 
    - steptype: PythonModuleStep
      step_name: Analyse Signal
+     description: Analyse the signal and publish its plot.
      module: my_tests.py
      action_type: method
      method_name: run_signal_analysis

@@ -39,6 +39,7 @@ dependencies = [
   "pymeasure==0.15.0",
   "pyserial",
   "paramiko",
+  "pydantic>=2.13,<3",
   "pyvisa"
 ]
 
@@ -52,8 +53,6 @@ test = [
 ]
 doc = [
   "Sphinx",
-  "sphinx",
-  "acc-py-sphinx",
 ]
 dev = [
   # Dependencies for development of the project, such as type checkers,
@@ -79,9 +78,17 @@ where = ["src"]
 include = ["pypts", "pypts.*"]
 
 [tool.setuptools.package-data]
-# All package data which is tracked by git is included automatically due to
-# include-package-data=true (the default) along with setuptools-scm. More details at:
-# https://setuptools.pypa.io/en/latest/userguide/datafiles.html#include-package-data
+"pypts.examples.environment_setup_tools.Minimal_setup" = [
+  "Minimal_setup_recipe.yml",
+  "README.md",
+  "tests/example_tests.py",
+]
+"pypts.examples.environment_setup_tools.Package_based_setup" = [
+  "Package_based_recipe.yml",
+  "README.md",
+  "pyproject.toml",
+  "tests/example_tests.py",
+]
 
 [tool.setuptools_scm]
 # Tell setuptools_scm to write a _version.py file in the package. The

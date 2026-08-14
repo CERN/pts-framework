@@ -1,0 +1,71 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+# SPDX-License-Identifier: CC-BY-SA-4.0
+---
+name: Recipe language 2 documentation example
+version: "1.0"
+recipe_version: 2.0.0
+description: Demonstrate canonical version 2 syntax and typed mappings.
+main_sequence: Main
+continue_on_error: false
+report: overwrite
+report_name_include_serial: true
+test_package: acceptance.tests
+globals:
+  target: 12
+  saved_result: null
+---
+sequence_name: Main
+description: Run a measurement and then the calibration sequence.
+parameters: {}
+outputs: {}
+locals:
+  expected: 12
+  measured: null
+setup_steps: []
+steps:
+  - steptype: PythonModuleStep
+    step_name: Measure channels
+    description: Exercise every input mapping and representative outputs.
+    id: measure-channels
+    skip: false
+    critical: true
+    continue_on_error: false
+    action_type: method
+    module: measurements.py
+    method_name: measure
+    input_mapping:
+      channels: {type: direct, value: [0, 1], indexed: true}
+      expected: {type: local, local_name: expected}
+      target: {type: global, global_name: target}
+      transform: {type: method, value: normalize}
+    output_mapping:
+      passed: {type: passfail}
+      exact: {type: equals, value: 12}
+      bounded: {type: range, min: 10, max: 14}
+      measured: {type: local, local_name: measured}
+      saved: {type: global, global_name: saved_result}
+      chart: {type: image}
+  - steptype: SequenceStep
+    step_name: Calibrate
+    description: Run a nested sequence and use its aggregate verdict.
+    sequence: {type: internal, name: Calibration}
+    input_mapping: {}
+    output_mapping:
+      result: {type: passthrough}
+      stored: {type: local, local_name: measured}
+teardown_steps: []
+---
+sequence_name: Calibration
+description: Wait for the equipment to stabilize.
+parameters: {}
+outputs: {}
+locals: {}
+setup_steps: []
+steps:
+  - steptype: WaitStep
+    step_name: Stabilize
+    description: Wait before returning to the caller.
+    input_mapping:
+      wait_time: {type: direct, value: 1}
+    output_mapping: {}
+teardown_steps: []

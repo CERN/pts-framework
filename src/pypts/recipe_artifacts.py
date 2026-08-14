@@ -1,0 +1,85 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+"""Generate or check production recipe-language documentation artifacts."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from collections.abc import Sequence
+from pathlib import Path
+
+from pypts.recipe_language import Recipe
+from pypts.recipe_reference import load_schema, render_reference
+
+ROOT = Path(__file__).parents[2]
+DEFAULT_GENERATED_DIR = ROOT / "docs" / "source" / "_generated"
+DEFAULT_SCHEMA_PATH = DEFAULT_GENERATED_DIR / "recipe_language.schema.json"
+DEFAULT_REFERENCE_PATH = DEFAULT_GENERATED_DIR / "recipe_language_reference.rst"
+
+
+def render_json_schema() -> str:
+    schema = Recipe.model_json_schema(by_alias=True, mode="validation")
+    schema["$comment"] = (
+        "SPDX-FileCopyrightText: 2026 CERN <home.cern>; "
+        "SPDX-License-Identifier: CC-BY-SA-4.0"
+    )
+    return json.dumps(schema, indent=2, sort_keys=True) + "\n"
+
+
+def rendered_artifacts() -> tuple[str, str]:
+    schema_text = render_json_schema()
+    return schema_text, render_reference(json.loads(schema_text))
+
+
+def write_artifacts(
+    schema_path: str | Path = DEFAULT_SCHEMA_PATH,
+    reference_path: str | Path = DEFAULT_REFERENCE_PATH,
+) -> None:
+    """Write schema first, then render RST from that exact staged file."""
+    schema_path = Path(schema_path)
+    reference_path = Path(reference_path)
+    schema_path.parent.mkdir(parents=True, exist_ok=True)
+    reference_path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path.write_text(render_json_schema(), encoding="utf-8")
+    reference_path.write_text(render_reference(load_schema(schema_path)), encoding="utf-8")
+
+
+def check_artifacts(
+    schema_path: str | Path = DEFAULT_SCHEMA_PATH,
+    reference_path: str | Path = DEFAULT_REFERENCE_PATH,
+) -> bool:
+    expected = rendered_artifacts()
+    try:
+        current = (
+            Path(schema_path).read_text(encoding="utf-8"),
+            Path(reference_path).read_text(encoding="utf-8"),
+        )
+    except (OSError, UnicodeError):
+        return False
+    return current == expected
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--check", action="store_true")
+    parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA_PATH)
+    parser.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE_PATH)
+    arguments = parser.parse_args(argv)
+    if arguments.check:
+        if check_artifacts(arguments.schema, arguments.reference):
+            return 0
+        print("Recipe documentation artifacts are missing or stale.", file=sys.stderr)
+        return 1
+    try:
+        write_artifacts(arguments.schema, arguments.reference)
+    except OSError as error:
+        print(f"Could not write recipe documentation artifacts: {error}", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

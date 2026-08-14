@@ -56,6 +56,9 @@ Documentation contents
 
     api
     architecture
+    recipe_language_architecture
+    recipe_language_maintenance
+    _generated/recipe_language_reference
     gui_architecture
     yaml_format
     instruments

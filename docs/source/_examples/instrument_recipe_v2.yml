@@ -1,0 +1,30 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+# SPDX-License-Identifier: CC-BY-SA-4.0
+---
+name: Frequency stability test
+version: "1.0"
+recipe_version: 2.0.0
+description: Read a CNT-91 through a packaged Python test method.
+main_sequence: Main
+test_package: my_project.tests
+globals:
+  device_name: USB0::0x14EB::0x0091::205575::INSTR
+---
+sequence_name: Main
+description: Run the frequency measurement.
+parameters: {}
+locals: {}
+outputs: {}
+setup_steps: []
+steps:
+  - steptype: PythonModuleStep
+    step_name: Read CNT-91
+    description: Connect to the counter and evaluate its measurement.
+    action_type: method
+    module: instrument_tests.py
+    method_name: run_cnt91
+    input_mapping:
+      device_name: {type: global, global_name: device_name}
+    output_mapping:
+      output: {type: passfail}
+teardown_steps: []

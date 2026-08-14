@@ -143,6 +143,25 @@ QPushButton {{
 QPushButton:hover {{
     background-color: #c8d8f4;
 }}
+QCheckBox {{
+    color: #1a1a2e;
+    spacing: 8px;
+}}
+QCheckBox::indicator {{
+    width: 14px;
+    height: 14px;
+    border: 2px solid #1a1a2e;
+    border-radius: 3px;
+    background-color: #ffffff;
+}}
+QCheckBox::indicator:checked {{
+    background-color: #1a1a2e;
+    border-color: #1a1a2e;
+}}
+QCheckBox::indicator:disabled {{
+    border-color: #94a3b8;
+    background-color: #e2e8f0;
+}}
 QPushButton#primaryBtn {{
     background-color: {CERN_BLUE};
     color: #ffffff;

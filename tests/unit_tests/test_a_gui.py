@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 from PySide6.QtCore import Qt
 
 from pypts import gui, recipe
+from pypts.recipe_language import Sequence as SequenceDefinition
 from pypts.startup import create_and_start_gui
 from pypts.gui_components import interaction_panel
 from pypts.gui_components.results_panel import StepResultModel
@@ -31,15 +32,16 @@ def sample_sequence():
     step1 = recipe.Step(step_name="Test Step 1", description="First step")
     step2 = recipe.Step(step_name="Test Step 2", description="Second step")
     sequence = recipe.Sequence(
-        sequence_data={
+        SequenceDefinition.model_validate({
             "sequence_name": "Test Sequence",
+            "description": "GUI fixture.",
             "locals": {},
             "parameters": {},
             "outputs": {},
             "setup_steps": [],
             "steps": [],
             "teardown_steps": [],
-        }
+        })
     )
     sequence.steps = [step1, step2]
     return sequence
@@ -233,15 +235,16 @@ def test_on_start_clicked_switches_to_running_tab_before_queue_start(main_window
     def fake_load_recipe():
         load_states.append(main_window._screen_idx)
         sequence = recipe.Sequence(
-            sequence_data={
+            SequenceDefinition.model_validate({
                 "sequence_name": "Test Sequence",
+                "description": "GUI fixture.",
                 "locals": {},
                 "parameters": {},
                 "outputs": {},
                 "setup_steps": [],
                 "steps": [],
                 "teardown_steps": [],
-            }
+            })
         )
         sequence.steps = [recipe.Step(step_name="Step 1", description="First")]
         main_window.recipe_to_run = Mock(sequences={"main": sequence}, main_sequence="main")

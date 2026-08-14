@@ -156,24 +156,15 @@ The ``PythonModuleStep`` now uses a completely rewritten ``__load_module`` metho
   * Removed module conflict detection (handled by Python's import system)
   * Streamlined error handling with proper exception chaining
 
-**Recipe Configuration Example**:
+**Recipe configuration fields**:
 
 .. code-block:: yaml
 
-   ---
-   name: FSI PTS
-   version: 0.0.1
-   description: Test recipe for FSI version check
-   test_package: fsi_pts.tests  # NEW: Specifies package containing test modules
-   globals: {}
+   # RecipeHeader fragment
+   test_package: fsi_pts.tests
 
-   ---
-   sequence_name: Main
-   steps:
-   - steptype: PythonModuleStep
-     step_name: Get FSI Status
-     module: test_status.py  # Resolved to fsi_pts.tests.test_status
-     method_name: test_status
+   # PythonModuleStep fragment
+   module: test_status.py  # Resolves to fsi_pts.tests.test_status
 
 **Benefits**:
 
@@ -310,21 +301,9 @@ For migrating to resource-based module loading:
 
 .. code-block:: yaml
 
-   # Old (file-based)
-   ---
-   name: My Recipe
-   globals: {}
-   
-   steps:
-   - steptype: PythonModuleStep
-     module: tests/my_test.py  # File path
-   
-   # New (resource-based)
-   ---
-   name: My Recipe
-   test_package: my_package.tests  # Package containing test modules
-   globals: {}
-   
-   steps:
-   - steptype: PythonModuleStep
-     module: my_test.py  # Resolved to my_package.tests.my_test 
+   # File-based module field
+   module: tests/my_test.py
+
+   # Resource-based header and module fields
+   test_package: my_package.tests
+   module: my_test.py  # Resolves to my_package.tests.my_test

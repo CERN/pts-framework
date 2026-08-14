@@ -1,0 +1,57 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+# SPDX-License-Identifier: CC-BY-SA-4.0
+---
+name: Device acceptance recipe
+version: "1.0"
+recipe_version: 2.0.0
+description: Configure a device, measure it, and disconnect safely.
+main_sequence: Main
+test_package: my_project.tests
+globals:
+  device_address: COM3
+  test_voltage: 5.0
+---
+sequence_name: Main
+description: Run the device acceptance flow.
+parameters: {}
+locals:
+  measurement: null
+outputs: {}
+setup_steps:
+  - steptype: PythonModuleStep
+    step_name: Configure device
+    description: Configure the device before measurement.
+    action_type: method
+    module: device_driver.py
+    method_name: setup_device
+    input_mapping:
+      port: {type: global, global_name: device_address}
+      voltage: {type: global, global_name: test_voltage}
+    output_mapping:
+      success: {type: passfail}
+steps:
+  - steptype: WaitStep
+    step_name: Initial delay
+    description: Allow the device to settle.
+    input_mapping:
+      wait_time: {type: direct, value: 2}
+    output_mapping: {}
+  - steptype: PythonModuleStep
+    step_name: Take measurement
+    description: Read and validate the configured voltage.
+    action_type: method
+    module: device_driver.py
+    method_name: read_measurement
+    input_mapping: {}
+    output_mapping:
+      measured_value: {type: local, local_name: measurement}
+      status: {type: range, min: 4.8, max: 5.2}
+teardown_steps:
+  - steptype: PythonModuleStep
+    step_name: Disconnect device
+    description: Close the device connection during teardown.
+    action_type: method
+    module: device_driver.py
+    method_name: disconnect
+    input_mapping: {}
+    output_mapping: {}

@@ -35,3 +35,8 @@ jobs:
         run: >-
           docker run --rm pts-framework-ci:${GITHUB_SHA}
           python -m pytest tests -vv --durations=20
+
+      - name: Build documentation
+        run: >-
+          docker run --rm pts-framework-ci:${GITHUB_SHA}
+          python -m sphinx -W --keep-going -b html docs/source docs/build/html

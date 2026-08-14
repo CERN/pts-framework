@@ -193,63 +193,11 @@ The pyproject file operates similarily to a makefile and is the construction of 
 1. Define your Recipe (`my_recipe.yaml`)
 -----------------------------------------
 
-Create a YAML file defining your test sequence. The recipe consists of a main document defining metadata and global variables, followed by documents defining named sequences. See :ref:`_yaml_format` for full explaination of all steps available for recipe.
+Create a YAML file defining your test sequence. The recipe consists of a main document defining metadata and global variables, followed by documents defining named sequences. See :ref:`yaml_format` for full explaination of all steps available for recipe.
 
-.. code-block:: yaml
+.. literalinclude:: _examples/device_recipe_v2.yml
+   :language: yaml
    :caption: my_recipe.yaml
-
-   # Main recipe definition
-   name: MyTestRecipe
-   description: Example recipe demonstrating basic steps.
-   version: "1.0"
-   globals:
-     device_address: "COM3"
-     test_voltage: 5.0
-   ---
-   # Main sequence definition
-   sequence_name: Main
-   parameters:
-     # Input parameters for this sequence (if any)
-   locals:
-     # Local variables initialized for this sequence
-     measurement: null
-   outputs:
-     # Values from locals to expose as sequence output
-     - measurement
-   setup_steps: []
-   steps:
-     - steptype: WaitStep
-       step_name: Initial Delay
-       input_mapping:
-         wait_time: { type: direct, value: 2 }
-     - steptype: PythonModuleStep
-       step_name: Configure Device
-       module: device_driver.py
-       action_type: method
-       method_name: setup_device
-       input_mapping:
-         port: { type: global, global_name: device_address }
-         voltage: { type: global, global_name: test_voltage }
-       output_mapping:
-         success: { type: passfail }
-     - steptype: PythonModuleStep
-       step_name: Take Measurement
-       module: device_driver.py
-       action_type: method
-       method_name: read_measurement
-       input_mapping: {}
-       output_mapping:
-         measured_value: { type: local, local_name: measurement }
-         # Example pass/fail check
-         status: { type: range, min: 4.8, max: 5.2 }
-   teardown_steps:
-     - steptype: PythonModuleStep
-       step_name: Disconnect Device
-       module: device_driver.py
-       action_type: method
-       method_name: disconnect
-       input_mapping: {}
-       output_mapping: {}
 
 .. note::
    Replace ``device_driver.py`` with the actual name of your Python module containing the methods called by ``PythonModuleStep``. Adding the path should not be done as the system automatically 
@@ -257,58 +205,20 @@ Create a YAML file defining your test sequence. The recipe consists of a main do
 
 
 Alternative: Resource-Based Module Loading
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 For better distribution and deployment, you can use resource-based module loading by organizing your test modules as Python packages:
 
-.. code-block:: yaml
-   :caption: my_recipe.yaml (resource-based)
+The complete example above already uses resource-based loading. The focused
+fields are:
 
-   # Main recipe definition with test_package
-   name: MyTestRecipe
-   description: Example recipe using resource-based loading.
-   version: "1.0"
-   test_package: my_project.tests  # NEW: Package containing test modules
-   globals:
-     device_address: "COM3"
-     test_voltage: 5.0
-   ---
-   # Main sequence definition
-   sequence_name: Main
-   parameters: {}
-   locals:
-     measurement: null
-   outputs:
-     measurement: {}
-   setup_steps: []
-   steps:
-     - steptype: PythonModuleStep
-       step_name: Configure Device
-       module: device_driver.py  # Resolved to my_project.tests.device_driver
-       action_type: method
-       method_name: setup_device
-       input_mapping:
-         port: { type: global, global_name: device_address }
-         voltage: { type: global, global_name: test_voltage }
-       output_mapping:
-         success: { type: passfail }
-     - steptype: PythonModuleStep
-       step_name: Take Measurement
-       module: device_driver.py  # Same module, different method
-       action_type: method
-       method_name: read_measurement
-       input_mapping: {}
-       output_mapping:
-         measured_value: { type: local, local_name: measurement }
-         status: { type: range, min: 4.8, max: 5.2 }
-   teardown_steps:
-     - steptype: PythonModuleStep
-       step_name: Disconnect Device
-       module: device_driver.py
-       action_type: method
-       method_name: disconnect
-       input_mapping: {}
-       output_mapping: {}
+.. code-block:: yaml
+
+   # Header fragment
+   test_package: my_project.tests
+
+   # PythonModuleStep fragment
+   module: device_driver.py  # Resolves to my_project.tests.device_driver
 
 **Package Structure Example**:
 
@@ -421,26 +331,12 @@ Add the dotted ``test_package`` field and make module paths relative to it:
 
 .. code-block:: yaml
 
-   # Before
-   ---
-   name: My Recipe
-   globals: {}
-   
-   steps:
-   - steptype: PythonModuleStep
-     module: tests/test_module1.py     # File path
-     method_name: my_test
-   
-   # After  
-   ---
-   name: My Recipe
-   test_package: my_project.tests     # NEW: Package specification
-   globals: {}
-   
-   steps:
-   - steptype: PythonModuleStep
-     module: test_module1.py           # Relative to my_project.tests
-     method_name: my_test
+   # File-based module field
+   module: tests/test_module1.py
+
+   # Resource-based header and module fields
+   test_package: my_project.tests
+   module: test_module1.py  # Relative to my_project.tests
 
 **Step 3: Install and Test**
 
@@ -464,7 +360,7 @@ Test that your modules can be imported:
    import my_project.tests.test_module1
 
 Common Migration Issues
-~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^
 
 **Import Errors**: Make sure all directories have ``__init__.py`` files
 
@@ -545,7 +441,7 @@ As the recipe executes:
 
 
 6. Creating and Editing Recipes with Recipe Creator tool
----------------------------------------------
+---------------------------------------------------------
 
 For users who prefer a visual approach to recipe creation and editing, the Recipe
 Creator tool provides an interactive recipe editor. In the codebase this editor

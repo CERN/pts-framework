@@ -277,29 +277,9 @@ Instrument functions are called from recipe YAML steps via the
 ``PythonModuleStep`` mechanism (see :ref:`yaml_format`).  The function
 receives its arguments from the recipe's variable scope.
 
-.. code-block:: yaml
-   :caption: Example recipe step calling the CNT-91
-
-   ---
-   name: Frequency Stability Test
-   version: "1.0"
-   recipe_version: "1.1.0"
-   test_package: pypts.Instrument_test_examples
-   globals:
-     device_name: "USB0::0x14EB::0x0091::205575::INSTR"
-     gate_time: 0.01
-     n_samples: 500
-
-   ---
-   name: Main
-   steps:
-     - type: python_module
-       function: run_cnt91
-       args:
-         device_name: ${device_name}
-         gate_times: ${gate_time}
-         samples: ${n_samples}
-         channels: 1
+.. literalinclude:: _examples/instrument_recipe_v2.yml
+   :language: yaml
+   :caption: Complete recipe calling the CNT-91
 
 The function must follow the pypts step contract: it must return a dict with
 at least the key ``"output"`` set to ``True`` on success.

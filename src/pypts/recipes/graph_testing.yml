@@ -4,7 +4,7 @@
 
 name: recipe designed for the graph testing
 version: 0.0.1
-recipe_version: 1.0.0
+recipe_version: 2.0.0
 description: satart acquisition and load the graph into the gui
 main_sequence: main
 continue_on_error: true
@@ -17,7 +17,7 @@ locals: {}
 outputs: {}
 setup_steps: []
 steps:
-- steptype: userinteractionstep
+- steptype: UserInteractionStep
   step_name: step 1
   description: step 1 will be skipped
   skip: true
@@ -34,7 +34,7 @@ steps:
     output:
       type: equals
       value: 'yes'
-- steptype: pythonmodulestep
+- steptype: PythonModuleStep
   step_name: load_existing_graph
   description: loading a file that already contains data
   action_type: method
@@ -48,7 +48,7 @@ steps:
       type: direct
       value: "/home/pts/dev/pypts/src/pypts/XYGraph/123.csv"
   output_mapping: {}
-- steptype: pythonmodulestep
+- steptype: PythonModuleStep
   step_name: simulate_sine_wave
   description: Simulates acquisition
   action_type: method

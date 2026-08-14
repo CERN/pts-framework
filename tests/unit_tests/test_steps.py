@@ -394,75 +394,38 @@ class TestRunSteps:
 
 class TestBuildStep:
     def test_build_wait_step(self):
-        data = {"steptype": "WaitStep", "step_name": "Wait", "input_mapping": {"wait_time": {"type": "direct", "value": 0.01}}, "output_mapping": {}}
-        step = Step.build_step(data)
+        from pypts.recipe_language import WaitStep as WaitDefinition
+
+        definition = WaitDefinition(
+            steptype="WaitStep",
+            step_name="Wait",
+            description="Wait.",
+            input_mapping={"wait_time": {"type": "direct", "value": 0.01}},
+        )
+        step = Step.build_step(definition)
         assert isinstance(step, WaitStep)
         assert step.name == "Wait"
 
-    def test_build_case_insensitive(self):
-        data = {"steptype": "waitstep", "step_name": "Wait", "input_mapping": {}, "output_mapping": {}}
-        step = Step.build_step(data)
-        assert isinstance(step, WaitStep)
-
-    @pytest.mark.parametrize(("name", "expected", "extra"), [
-        ("pythonMODULEstep", PythonModuleStep, {"action_type": "method", "module": "m.py", "method_name": "run"}),
-        ("SEQUENCEstep", SequenceStep, {"sequence": {"type": "internal", "name": "Sub"}}),
-        ("userinteractionSTEP", UserInteractionStep, {}),
-        ("WAITstep", WaitStep, {}),
-        ("userloadingstep", UserLoadingStep, {}),
-        ("userrunmethodstep", UserRunMethodStep, {}),
-        ("userwritestep", UserWriteStep, {}),
-        ("serialnumberstep", SerialNumberStep, {}),
-        ("sshCONNECTstep", SSHConnectStep, {}),
-        ("sshCLOSEstep", SSHCloseStep, {}),
-        ("sshUPLOADstep", SSHUploadStep, {"files": []}),
-    ])
-    def test_registry_supports_every_concrete_step_case_insensitively(self, name, expected, extra):
-        data = {"steptype": name, "step_name": "S", "input_mapping": {}, "output_mapping": {}, **extra}
-        assert isinstance(Step.build_step(data), expected)
-
-    def test_unknown_step_type_is_descriptive(self):
-        with pytest.raises(ValueError, match="Unknown step type 'MagicStep'"):
-            Step.build_step({"steptype": "MagicStep", "step_name": "S"})
-
-    def test_build_does_not_mutate_definition(self):
-        data = {"steptype": "WaitStep", "step_name": "S"}
-        Step.build_step(data)
-        assert data["steptype"] == "WaitStep"
-
-    def test_build_sequence_step(self):
-        data = {"steptype": "SequenceStep", "step_name": "SubSeq", "sequence": {"type": "internal", "name": "Sub"}, "input_mapping": {}, "output_mapping": {}}
-        step = Step.build_step(data)
-        assert isinstance(step, SequenceStep)
-
     def test_build_indexed_step_wraps_when_indexed(self):
-        data = {
-            "steptype": "WaitStep",
-            "step_name": "IndexedWait",
-            "input_mapping": {"wait_time": {"type": "direct", "value": [0.01, 0.02], "indexed": True}},
-            "output_mapping": {},
-        }
-        step = Step.build_step(data)
+        from pypts.recipe_language import WaitStep as WaitDefinition
+
+        definition = WaitDefinition(
+            steptype="WaitStep",
+            step_name="IndexedWait",
+            description="Wait twice.",
+            input_mapping={
+                "wait_time": {
+                    "type": "direct", "value": [0.01, 0.02], "indexed": True
+                }
+            },
+        )
+        step = Step.build_step(definition)
         assert isinstance(step, IndexedStep)
         assert isinstance(step.template_step, WaitStep)
 
-    def test_build_python_module_step(self):
-        data = {
-            "steptype": "PythonModuleStep",
-            "step_name": "Run",
-            "action_type": "method",
-            "module": "my_module.py",
-            "method_name": "my_func",
-            "input_mapping": {},
-            "output_mapping": {},
-        }
-        step = Step.build_step(data)
-        assert isinstance(step, PythonModuleStep)
-
-    def test_build_serial_number_step(self):
-        data = {"steptype": "SerialNumberStep", "step_name": "SN", "input_mapping": {}, "output_mapping": {}}
-        step = Step.build_step(data)
-        assert isinstance(step, SerialNumberStep)
+    def test_rejects_unvalidated_dictionary(self):
+        with pytest.raises(TypeError, match="validated step definition"):
+            Step.build_step({"steptype": "WaitStep"})
 
 
 # ============================================================

@@ -10,9 +10,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6.QtCore import Qt
 
 from pypts.gui import MainWindow
-from pypts.YamVIEW.recipe_creator import RecipeEditorMainMenu
-from pypts.gui_components.styles import CERN_BLUE
+from pypts.gui_components.styles import CERN_BLUE, get_stylesheet
 from pypts.gui_theme import detect_system_dark_mode, install_system_theme_sync
+from pypts.YamVIEW.recipe_creator import RecipeEditorMainMenu
 
 
 class _FakeSignal:
@@ -104,6 +104,17 @@ def test_recipe_editor_uses_shared_light_palette(qtbot):
         assert window.yaml_viewer.dark_mode is False
     finally:
         window.close()
+
+
+def test_light_theme_has_visible_checkbox_indicators_without_changing_dark_theme():
+    light = get_stylesheet(False)
+    dark = get_stylesheet(True)
+
+    assert "QCheckBox::indicator" in light
+    assert "border: 2px solid #1a1a2e" in light
+    assert "QCheckBox::indicator:checked" in light
+    assert "background-color: #1a1a2e" in light
+    assert "QCheckBox::indicator" not in dark
 
 
 def test_recipe_editor_toggle_dark_propagates_to_child_widgets(qtbot):

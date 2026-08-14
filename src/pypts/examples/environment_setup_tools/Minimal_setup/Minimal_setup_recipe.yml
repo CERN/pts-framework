@@ -3,15 +3,15 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 # This section is related to the whole recipe.
-# We could define the name, version and description herem as well as the
-# continue_on_error flag, which could abort tests on failure
+# It defines the name, versions, description, and execution policy.
 name: Minimal setup Recipe
 version: 0.1.0
-recipe_version: 1.0.0
+recipe_version: 2.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py in a minimal pypts setup
 main_sequence: Main
-globals: 
-  #continue_on_error: False #Overall continue_on_error. If it exists, then it will overwrite specific step specifications for continue_on_error
+# Optional; when omitted, each step uses its own continue_on_error setting.
+# continue_on_error: false
+globals:
   global_value: 45
   loadFile_key: 'file'
   cancel_key: 'cancel' #key used for buttons that wishes to stop steps.
@@ -156,6 +156,7 @@ steps:
   skip: true
   input_mapping:
     wait_time:
+      type: direct
       value: '3'
   output_mapping: {}
 - steptype: PythonModuleStep
@@ -208,3 +209,4 @@ steps:
 teardown_steps:
 - steptype: SSHCloseStep
   step_name: Closes the SSH client
+  description: Close the SSH connection opened during setup

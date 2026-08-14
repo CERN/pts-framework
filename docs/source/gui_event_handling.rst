@@ -56,6 +56,7 @@ recipe progress and results:
     Crucially, it also stores the unique `step.id` (UUID) associated with each
     step name using `Qt.ItemDataRole.UserRole`.
 *   **Update Mechanism (ViewModel Pattern):**
+
     1.  When a step is about to run, `recipe.Runtime` puts a `pre_run_step` event
         onto the `event_queue` containing the `recipe.Step` object.
     2.  `RecipeEventProxy` receives this, creates a ViewModel `{'step_uuid': ..., 'step_name': ...}`,
@@ -104,6 +105,7 @@ recipe progress and results:
     of the entire recipe *after* it has finished execution.
 *   **Initialization:** This view is populated only once when the recipe finishes.
 *   **Update Mechanism (ViewModel Dictionary + Coupled Model):**
+
     1.  When the recipe finishes, `recipe.Runtime` puts a `post_run_recipe` 
         event onto the `event_queue` containing the final `List[recipe.StepResult]`.
     2.  `RecipeEventProxy` receives this event.

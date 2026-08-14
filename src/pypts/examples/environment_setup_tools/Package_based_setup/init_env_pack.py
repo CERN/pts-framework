@@ -5,11 +5,12 @@
 #It should initialize once called in a new directory, kept with a working directory. 
 
 
-#Package-based architecture
-from pypts.utils import get_project_root
 import shutil
+import subprocess
+import sys
+from importlib.resources import as_file, files
 from pathlib import Path
-import subprocess, sys
+
 
 def main():
     package_example = "example_package"
@@ -25,39 +26,38 @@ def main():
     resource_dir.mkdir(exist_ok=True)
     tests_dir.mkdir(exist_ok=True)
 
-    open(package_dir/"__init__.py", "a").close()
-    open(bin_dir/"__init__.py", "a").close()
-    open(resource_dir/"__init__.py", "a").close()
-
-
-    #locating path of this script. will be used to copy the examples out.
-    package_root = Path(__file__).resolve().parent
+    (package_dir / "__init__.py").touch(exist_ok=True)
+    (bin_dir / "__init__.py").touch(exist_ok=True)
+    (resource_dir / "__init__.py").touch(exist_ok=True)
+    package_resources = files(__package__)
 
     # Copy example recipe for minimal setup
-    recipe_src = package_root / "Package_based_recipe.yml"
     recipe_dest = resource_dir /"Package_based_recipe.yml"
     if not recipe_dest.exists():
-        shutil.copy(recipe_src, recipe_dest)
-        print(f"Copied example recipe → {recipe_dest}")
+        with as_file(package_resources.joinpath("Package_based_recipe.yml")) as recipe_src:
+            shutil.copy(recipe_src, recipe_dest)
+        print(f"Copied example recipe -> {recipe_dest}")
     else:
         print(f"Example recipe already exists at {recipe_dest}")
 
     # Copy Minimal setup tests
-    tests_src = package_root/ "tests"
-    for file in tests_src.glob("*.py"):
-        dest_file = tests_dir / file.name
+    tests_resources = package_resources.joinpath("tests")
+    for resource in tests_resources.iterdir():
+        if not resource.name.endswith(".py"):
+            continue
+        dest_file = tests_dir / resource.name
         if not dest_file.exists():
-            shutil.copy(file, dest_file)
-            print(f"Copied test file → {dest_file}")
+            with as_file(resource) as source:
+                shutil.copy(source, dest_file)
+            print(f"Copied test file -> {dest_file}")
         else:
             print(f"Test file already exists: {dest_file}")
 
-    pyproject_toml = package_root / "pyproject.toml"
-    print(pyproject_toml)
     pyproject_dest = project_root/ "pyproject.toml"
     if not pyproject_dest.exists():
-        shutil.copy(pyproject_toml, pyproject_dest)
-        print(f"Copied example recipe → {pyproject_dest}")
+        with as_file(package_resources.joinpath("pyproject.toml")) as pyproject_toml:
+            shutil.copy(pyproject_toml, pyproject_dest)
+        print(f"Copied example recipe -> {pyproject_dest}")
     else:
         print(f"Example recipe already exists at {pyproject_dest}")
 

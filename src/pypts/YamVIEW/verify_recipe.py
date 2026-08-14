@@ -1,445 +1,105 @@
 # SPDX-FileCopyrightText: 2025 CERN <home.cern>
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
-from pathlib import Path
-import os
-import yaml
-from pypts.YamVIEW.recipe_rules import RECIPE_HEADER_REQUIRED_FIELDS, RECIPE_SEQUENCE_REQUIRED_FIELDS, STEP_REQUIRED_FIELDS
+"""YamVIEW compatibility wrappers around the production recipe parser."""
 
-SUPPORTED_STEP_TYPES = {
-    "indexedstep", "pythonmodulestep", "sequencestep", "userinteractionstep",
-    "waitstep", "userloadingstep", "userrunmethodstep", "userwritestep",
-    "serialnumberstep", "sshconnectstep", "sshclosestep", "sshuploadstep",
-}
-VERDICT_TYPES = {"passthrough", "passfail", "equals", "range"}
+from __future__ import annotations
+
+from collections.abc import Iterable
+from pathlib import Path
+
+from pypts.recipe_parser import Diagnostic, parse_recipe_file, parse_recipe_text
+
+
+def format_diagnostic(diagnostic: Diagnostic) -> str:
+    """Format one structured parser finding for display in YamVIEW."""
+    source = diagnostic.source_name or "<recipe>"
+    location = source
+    if diagnostic.span is not None:
+        start = diagnostic.span.start
+        end = diagnostic.span.end
+        location += f":{start.line}:{start.column}-{end.line}:{end.column}"
+    path = "".join(
+        f"[{part}]" if isinstance(part, int) else (f".{part}" if index else str(part))
+        for index, part in enumerate(diagnostic.path)
+    )
+    if path:
+        location += f" ({path})"
+    return f"[{diagnostic.code}] {location}: {diagnostic.message}"
+
 
 class RecipeValidationError(Exception):
-    def __init__(self, faults, warnings):
-        self.faults = faults
-        self.warnings = warnings
-        super().__init__(f"Validation failed with {len(faults)} faults and {len(warnings)} warnings")
+    """Compatibility exception containing formatted production diagnostics."""
 
-def extract_line_map(node, path=()):
-    result = {}
-    if isinstance(node, yaml.MappingNode):
-        for key_node, value_node in node.value:
-            key = key_node.value
-            new_path = path + (key,)
-            result[new_path] = key_node.start_mark.line + 1
-            result.update(extract_line_map(value_node, new_path))
-    elif isinstance(node, yaml.SequenceNode):
-        for idx, item_node in enumerate(node.value):
-            new_path = path + (idx,)
-            result.update(extract_line_map(item_node, new_path))
-    return result
+    def __init__(
+        self,
+        faults: Iterable[str],
+        warnings: Iterable[str] = (),
+        diagnostics: Iterable[Diagnostic] = (),
+    ):
+        self.faults = list(faults)
+        self.warnings = list(warnings)
+        self.diagnostics = tuple(diagnostics)
+        message = f"Validation failed with {len(self.faults)} faults and {len(self.warnings)} warnings"
+        if self.faults or self.warnings:
+            message += ":\n" + "\n".join((*self.faults, *self.warnings))
+        super().__init__(message)
 
-def validate_field(doc, field_name, expected_type, faults, warnings, context, line_map, path=()):
-    full_path = path + (field_name,)
-    line_info = f"(line {line_map.get(full_path, '?')})"
 
-    if field_name not in doc:
-        faults.append(f"[{context}] Missing required field: '{field_name}' {line_info}")
-        return
+def _raise_for_diagnostics(diagnostics: tuple[Diagnostic, ...]) -> None:
+    faults = [format_diagnostic(item) for item in diagnostics if item.severity == "error"]
+    warnings = [format_diagnostic(item) for item in diagnostics if item.severity == "warning"]
+    if faults or warnings:
+        raise RecipeValidationError(faults, warnings, diagnostics)
 
-    value = doc[field_name]
 
-    if value is None:
-        if expected_type == str:
-            warnings.append(f"[{context}] Field '{field_name}' is null {line_info}")
-        else:
-            faults.append(f"[{context}] Field '{field_name}' is null but expected type {expected_type.__name__} {line_info}")
-        return
+def validate_recipe_file(filepath) -> None:
+    """Raise :class:`RecipeValidationError` unless *filepath* is valid v2."""
+    result = parse_recipe_file(filepath)
+    _raise_for_diagnostics(result.diagnostics)
 
-    if not isinstance(value, expected_type):
-        faults.append(
-            f"[{context}] Field '{field_name}' should be of type {expected_type.__name__}, "
-            f"but got {type(value).__name__} {line_info}"
-        )
-        return
 
-    if expected_type == str and not value.strip():
-        warnings.append(f"[{context}] Field '{field_name}' is an empty string {line_info}")
+def validate_recipe_filepath(file_path) -> bool:
+    """Return whether *file_path* contains a valid recipe-language 2 recipe."""
+    try:
+        validate_recipe_file(file_path)
+    except RecipeValidationError:
+        return False
+    return True
 
-def validate_step_fields(steps, faults, line_map, base_path=()):
-    if not isinstance(steps, list):
-        faults.append(f"[{'.'.join(map(str, base_path))}] should be a list")
-        return
-    for idx, step in enumerate(steps):
-        if not isinstance(step, dict):
-            faults.append(f"[Step {idx}] Step is not a dictionary")
-            continue
 
-        step_path = base_path + (idx,)
-        step_line = line_map.get(step_path, '?')
-        step_name = step.get("step_name", f"at index {idx}")
-        context = f"Step {idx} ({step_name})"
+def validate_recipe_string_variable(content: str) -> tuple[bool, str]:
+    """Validate edited YAML text and return YamVIEW's historical tuple result."""
+    result = parse_recipe_text(content, "<editor>")
+    if result.diagnostics:
+        messages = "\n".join(format_diagnostic(item) for item in result.diagnostics)
+        return False, messages
+    return True, "Validation passed for the variable recipe."
 
-        steptype = step.get("steptype")
-        steptype_key = steptype.lower() if isinstance(steptype, str) else ""
-        if steptype_key not in SUPPORTED_STEP_TYPES:
-            faults.append(f"[{context}] Unknown step type '{steptype}'")
-        required_fields = STEP_REQUIRED_FIELDS.get(steptype_key, STEP_REQUIRED_FIELDS["default"])
 
-        for field in required_fields:
-            field_path = step_path + (field,)
-            line = line_map.get(field_path, step_line)
-            if field not in step:
-                faults.append(f"[{context}] Missing required field: '{field}' (line {line})")
+validate_recipe_string = validate_recipe_string_variable
 
-        # Validate that input_mapping and output_mapping are dictionaries
-        for field in ("input_mapping", "output_mapping"):
-            if field in step:
-                value = step[field]
-                line = line_map.get(step_path + (field,), step_line)
-                if value is None:
-                    faults.append(f"[{context}] Field '{field}' is null, expected dict (line {line})")
-                elif not isinstance(value, dict):
-                    faults.append(f"[{context}] Field '{field}' should be a dictionary but got {type(value).__name__} (line {line})")
-
-        input_mapping = step.get("input_mapping", {})
-        if isinstance(input_mapping, dict):
-            indexed_lengths = []
-            for input_name, config in input_mapping.items():
-                if not isinstance(config, dict):
-                    faults.append(f"[{context}] Input '{input_name}' mapping should be a dictionary")
-                    continue
-                if config.get("indexed"):
-                    if not isinstance(config.get("value"), list):
-                        faults.append(f"[{context}] Indexed input '{input_name}' value should be a list")
-                    else:
-                        indexed_lengths.append(len(config["value"]))
-            if indexed_lengths and len(set(indexed_lengths)) > 1:
-                faults.append(f"[{context}] Indexed input lists must have equal lengths")
-
-        output_mapping = step.get("output_mapping", {})
-        if isinstance(output_mapping, dict):
-            verdicts = []
-            for output_name, config in output_mapping.items():
-                if not isinstance(config, dict):
-                    faults.append(f"[{context}] Output '{output_name}' mapping should be a dictionary")
-                    continue
-                mapping_type = config.get("type")
-                if not isinstance(mapping_type, str):
-                    faults.append(f"[{context}] Output '{output_name}' is missing string field 'type'")
-                    continue
-                if mapping_type in VERDICT_TYPES:
-                    verdicts.append(mapping_type)
-                required = {"equals": ("value",), "range": ("min", "max"),
-                            "local": ("local_name",), "global": ("global_name",)}
-                for required_field in required.get(mapping_type, ()):
-                    if required_field not in config:
-                        faults.append(
-                            f"[{context}] Output '{output_name}' type '{mapping_type}' "
-                            f"requires '{required_field}'"
-                        )
-            if "passthrough" in verdicts and len(verdicts) != 1:
-                faults.append(f"[{context}] passthrough must be the sole verdict mapping")
-
-        # Check if 'skip' is a boolean
-        if "skip" in step:
-            skip_value = step["skip"]
-            skip_line = line_map.get(step_path + ("skip",), step_line)
-            if not isinstance(skip_value, bool):
-                faults.append(f"[{context}] Field 'skip' should be a boolean but got {type(skip_value).__name__} (line {skip_line})")
-        for boolean_field in ("critical", "continue_on_error"):
-            if boolean_field in step and not isinstance(step[boolean_field], bool):
-                faults.append(f"[{context}] Field '{boolean_field}' should be a boolean")
-
-        if steptype_key == "sequencestep":
-            sequence = step.get("sequence")
-            if not isinstance(sequence, dict) or not isinstance(sequence.get("name"), str):
-                faults.append(f"[{context}] SequenceStep requires sequence.name")
-
-def validate_all_recipes_in_folders(folder_paths):
-    if isinstance(folder_paths, str):
-        folder_paths = [folder_paths]  # allow single path input
-
-    errors = []
-    for folder_path in folder_paths:
-        for filename in os.listdir(folder_path):
-            if filename.endswith((".yaml", ".yml")):
-                full_path = os.path.join(folder_path, filename)
-                try:
-                    validate_recipe_file(full_path)
-                except RecipeValidationError as e:
-                    errors.append((filename, e, folder_path))
-    return errors
 
 def validate_all_recipes_in_folder(folder_path):
     errors = []
-    for filename in os.listdir(folder_path):
-        if filename.endswith(".yaml") or filename.endswith(".yml"):
-            full_path = os.path.join(folder_path, filename)
+    for path in Path(folder_path).iterdir():
+        if path.suffix.lower() in {".yaml", ".yml"}:
             try:
-                validate_recipe_file(full_path)
-            except RecipeValidationError as e:
-                errors.append((filename, e))
+                validate_recipe_file(path)
+            except RecipeValidationError as error:
+                errors.append((path.name, error))
+    return not errors
 
-    if errors:
-        print("\n❌ Summary: Some recipe files failed validation.")
-        for filename, e in errors:
-            print(f" - {filename}: {len(e.faults)} faults, {len(e.warnings)} warnings")
-            pass
-        return False
-    else:
-        print("\n✅ All recipe files validated successfully.")
-        return True
 
-def validate_recipe_filepath(file_path):
+def validate_all_recipes_in_folders(folder_paths):
+    if isinstance(folder_paths, (str, Path)):
+        folder_paths = [folder_paths]
     errors = []
-    p = Path(file_path)
-    filename = p.stem
-    try:
-        validate_recipe_file(file_path)
-    except RecipeValidationError as e:
-        errors.append((filename, e))
-
-    if errors:
-        # print("\n❌ Summary: Some recipe files failed validation.")
-        for filename, e in errors:
-            print(f" - {filename}: {len(e.faults)} faults, {len(e.warnings)} warnings")
-            pass
-        return False
-    else:
-        print("\n✅ All recipe files validated successfully.")
-        return True
-
-def validate_recipe_file(filepath):
-    faults = []
-    warnings = []
-
-    with open(filepath, 'r') as f:
-        content = f.read()
-
-    try:
-        docs_nodes = list(yaml.compose_all(content))
-    except yaml.YAMLError as e:
-        raise RecipeValidationError([f"YAML parsing error in '{filepath}': {e}"], [])
-
-    docs = list(yaml.safe_load_all(content))
-    header = next((doc for doc in docs if isinstance(doc, dict) and "name" in doc), None)
-    sequence_names = {
-        doc.get("sequence_name") for doc in docs
-        if isinstance(doc, dict) and isinstance(doc.get("sequence_name"), str)
-    }
-
-    for i, (doc, node) in enumerate(zip(docs, docs_nodes)):
-        if not isinstance(doc, dict):
-            faults.append(f"[{filepath}, Document {i}] is not a dictionary (line {node.start_mark.line + 1})")
-            continue
-
-        line_map = extract_line_map(node)
-        first_key = next(iter(doc), None)
-
-        if first_key == "name":
-            context = f"{filepath} Header"
-            if "continue_on_error" in doc and not isinstance(doc["continue_on_error"], bool):
-                faults.append(
-                    f"[{context}] Top-level 'continue_on_error' should be a boolean"
-                )
-            for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
-                validate_field(doc, field, expected_type, faults, warnings, context, line_map)
-
-        elif first_key == "sequence_name":
-            context = f"{filepath} Sequence"
-            for field, expected_type in RECIPE_SEQUENCE_REQUIRED_FIELDS.items():
-                # For "steps" subsection, validate presence and content separately
-                if field == "steps":
-                    if field not in doc:
-                        line_info = f"(line {line_map.get(('steps',), '?')})"
-                        faults.append(f"[{context}] Missing required subsection: 'steps' {line_info}")
-                    else:
-                        validate_step_fields(doc["steps"], faults, line_map, base_path=("steps",))
-                else:
-                    validate_field(doc, field, expected_type, faults, warnings, context, line_map)
-
-            if "locals" not in doc:
-                faults.append(f"[{context}] Missing 'locals' section")
-            elif not isinstance(doc["locals"], dict):
-                faults.append(f"[{context}] 'locals' should be a dictionary")
-        else:
-            line = node.start_mark.line + 1
-            faults.append(f"[{filepath}, Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
-
-    if header is not None:
-        main_sequence = header.get("main_sequence", "Main")
-        if not isinstance(main_sequence, str):
-            faults.append(f"[{filepath} Header] Field 'main_sequence' should be of type str")
-        elif main_sequence not in sequence_names:
-            faults.append(
-                f"[{filepath} Header] Main sequence '{main_sequence}' does not exist"
-            )
-
-    for doc in docs:
-        if not isinstance(doc, dict) or "sequence_name" not in doc:
-            continue
-        for mapping_field in ("parameters", "outputs", "locals"):
-            if not isinstance(doc.get(mapping_field), dict):
-                faults.append(
-                    f"[{filepath} Sequence {doc.get('sequence_name')}] "
-                    f"'{mapping_field}' should be a dictionary"
-                )
-        for section in ("setup_steps", "steps", "teardown_steps"):
-            validate_step_fields(doc.get(section, []), faults, {}, base_path=(section,))
-        sections = {
-            name: value if isinstance(value := doc.get(name, []), list) else []
-            for name in ("setup_steps", "steps", "teardown_steps")
-        }
-        all_steps = sections["setup_steps"] + sections["steps"] + sections["teardown_steps"]
-        for step in all_steps:
-            step_type = step.get("steptype") if isinstance(step, dict) else None
-            if isinstance(step_type, str) and step_type.casefold() == "sequencestep":
-                target = step.get("sequence", {}).get("name") if isinstance(step.get("sequence"), dict) else None
-                if target and target not in sequence_names:
-                    faults.append(f"[Sequence {doc['sequence_name']}] references unknown sequence '{target}'")
-
-        def step_types(section):
-            return [
-                value.casefold() for step in section
-                if isinstance(step, dict)
-                and isinstance((value := step.get("steptype")), str)
-            ]
-        setup_types = step_types(sections["setup_steps"])
-        main_types = step_types(sections["steps"])
-        teardown_types = step_types(sections["teardown_steps"])
-        uses_ssh = any(t.startswith("ssh") for t in setup_types + main_types + teardown_types)
-        if uses_ssh and header is not None:
-            globals_data = header.get("globals", {})
-            for name in ("ssh_client", "host", "user", "port"):
-                if name not in globals_data:
-                    faults.append(f"[{filepath} Header] SSH recipes require global '{name}'")
-            if "password" not in globals_data and "private_key" not in globals_data:
-                faults.append(f"[{filepath} Header] SSH recipes require 'password' or 'private_key'")
-        if "sshuploadstep" in main_types and "sshconnectstep" not in setup_types:
-            faults.append(f"[Sequence {doc['sequence_name']}] SSHUploadStep requires SSHConnectStep in setup_steps")
-        if "sshconnectstep" in setup_types and "sshclosestep" not in teardown_types:
-            faults.append(f"[Sequence {doc['sequence_name']}] SSHConnectStep requires SSHCloseStep in teardown_steps")
-
-    if faults or warnings:
-        if faults:
-            print("🛑 Faults:")
-            for f in faults:
-                print(" -", f)
-
-        if warnings:
-            print("⚠️ Warnings:")
-            for w in warnings:
-                print(" -", w)
-
-        raise RecipeValidationError(faults, warnings)
-
-    print(f"✅ Validation passed for '{filepath}'.")
-
-def validate_recipe_string_variable(content):
-    faults = []
-    warnings = []
-
-    try:
-        docs_nodes = list(yaml.compose_all(content))
-    except yaml.YAMLError as e:
-
-        return False, f"❌ YAML parsing error: {e}"
-        # raise RecipeValidationError([f"❌ YAML parsing error: {e}"], [])
-
-    docs = list(yaml.safe_load_all(content))
-    header = next((doc for doc in docs if isinstance(doc, dict) and "name" in doc), None)
-    sequence_names = {
-        doc.get("sequence_name") for doc in docs
-        if isinstance(doc, dict) and isinstance(doc.get("sequence_name"), str)
-    }
-
-    for i, (doc, node) in enumerate(zip(docs, docs_nodes)):
-        if not isinstance(doc, dict):
-            faults.append(f"[, Document {i}] is not a dictionary (line {node.start_mark.line + 1})")
-            continue
-
-        line_map = extract_line_map(node)
-        first_key = next(iter(doc), None)
-
-        if first_key == "name":
-            context = f"Header"
-            if "continue_on_error" in doc and not isinstance(doc["continue_on_error"], bool):
-                faults.append(
-                    "[Header] Top-level 'continue_on_error' should be a boolean"
-                )
-            for field, expected_type in RECIPE_HEADER_REQUIRED_FIELDS.items():
-                validate_field(doc, field, expected_type, faults, warnings, context, line_map)
-
-        elif first_key == "sequence_name":
-            context = f"Sequence"
-            for field, expected_type in RECIPE_SEQUENCE_REQUIRED_FIELDS.items():
-                if field in ("setup_steps", "steps", "teardown_steps"):
-                    if field not in doc:
-                        line_info = f"(line {line_map.get((field,), '?')})"
-                        faults.append(f"[{context}] Missing required subsection: '{field}' {line_info}")
-                    else:
-                        validate_step_fields(doc[field], faults, line_map, base_path=(field,))
-                else:
-                    validate_field(doc, field, expected_type, faults, warnings, context, line_map)
-
-            if "locals" not in doc:
-                faults.append(f"[{context}] Missing 'locals' section")
-            elif not isinstance(doc["locals"], dict):
-                faults.append(f"[{context}] 'locals' should be a dictionary")
-        else:
-            line = node.start_mark.line + 1
-            faults.append(
-                f"[Document {i}] Unrecognized document type, first key: '{first_key}' (line {line})")
-
-    if header is not None:
-        main_sequence = header.get("main_sequence", "Main")
-        if not isinstance(main_sequence, str) or main_sequence not in sequence_names:
-            faults.append(f"[Header] Main sequence '{main_sequence}' does not exist")
-
-    for doc in docs:
-        if not isinstance(doc, dict) or "sequence_name" not in doc:
-            continue
-        for section in ("setup_steps", "steps", "teardown_steps"):
-            for step in doc.get(section, []) if isinstance(doc.get(section, []), list) else []:
-                step_type = step.get("steptype") if isinstance(step, dict) else None
-                if isinstance(step_type, str) and step_type.casefold() == "sequencestep":
-                    sequence = step.get("sequence")
-                    target = sequence.get("name") if isinstance(sequence, dict) else None
-                    if target and target not in sequence_names:
-                        faults.append(
-                            f"[Sequence {doc['sequence_name']}] references unknown sequence '{target}'"
-                        )
-
-    output_lines = []
-
-    if faults or warnings:
-        output_lines.append("❌ Validation for recipe completed with issues:")
-        if faults:
-            output_lines.append("🛑 Faults:")
-            for f in faults:
-                output_lines.append(f" - {f}")
-        if warnings:
-            output_lines.append("⚠️ Warnings:")
-            for w in warnings:
-                output_lines.append(f" - {w}")
-            # pass here means continue to raise below
-
-        return False, "\n".join(output_lines)
-        # raise RecipeValidationError(faults, warnings)
-    else:
-        output_lines.append("✅ Validation passed for the variable recipe.")
-    return True, "\n".join(output_lines)
-
-if __name__ == "__main__":
-    current_dir = os.path.dirname(__file__)  # directory of current file
-    parent_dir = os.path.dirname(current_dir)  # one directory up
-
-    recipes_dir = os.path.join(parent_dir, "recipes")
-    extra_recipes_dir = os.path.join(parent_dir, "example_commented_recipes")
-    folders_to_validate = [recipes_dir, extra_recipes_dir]
-
-    try:
-        errors = validate_all_recipes_in_folders(folders_to_validate)
-        if errors:
-            print("❌ Summary: Some recipe files failed validation!")
-            for filename, err, folder in errors:
-                print(f"   - {os.path.join(folder, filename)}: {err}")
-        else:
-            print("✅ All recipe files validated successfully.")
-    except Exception as e:
-        print(f"❌ Unhandled exception while validating the recipes: {e}")
+    for folder_path in folder_paths:
+        for path in Path(folder_path).iterdir():
+            if path.suffix.lower() in {".yaml", ".yml"}:
+                try:
+                    validate_recipe_file(path)
+                except RecipeValidationError as error:
+                    errors.append((path.name, error, str(folder_path)))
+    return errors

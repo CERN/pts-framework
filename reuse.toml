@@ -41,6 +41,9 @@ path = [
     "docs/**/*.rst",
     "docs/**/*.md",
     "docs/**/*.txt",
+    "docs/**/*.json",
+    "docs/**/*.yml",
+    "docs/**/*.yaml",
     "docs/INSTALL"
 ]
 precedence = "aggregate"
