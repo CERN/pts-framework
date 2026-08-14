@@ -3,9 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 
-from pypts.YamVIEW.verify_recipe import validate_recipe_filepath
 import copy
-import yaml
 import logging
 from typing import List, Dict, Self
 from pathlib import Path
@@ -20,6 +18,13 @@ import os
 import re
 from threading import Event
 from pypts.utils import WAIT_FOR_TERMINATION
+from pypts.recipe_language import (
+    CommonStep as AuthorableStepDefinition,
+    DirectInput as DirectInputDefinition,
+    Recipe as RecipeDefinition,
+    Sequence as SequenceDefinition,
+)
+from pypts.recipe_parser import parse_recipe_file
 # from pts import Runtime
 
 logger = logging.getLogger(__name__)
@@ -249,113 +254,53 @@ class Recipe:
     execution flow. The detailed structure of the recipe YAML file is described
     in :doc:`yaml_format`.
 
-    Args:
-        recipe_file_path (str or Path): Path to the recipe YAML file.
-        file_loader (callable, optional): A function that takes a path and returns
-            an iterator over loaded YAML documents. Defaults to loading from a
-            local YAML file.
-        event_sender (callable, optional): A function to send events during recipe
-            execution. Takes `runtime`, `event_name`, and `*event_data` as arguments.
-            Defaults to using `runtime.send_event`.
+    Recipe files must validate as recipe language 2.0.0 before any executable
+    runtime state is constructed.
     """
-    def __init__(self, recipe_file_path, file_loader=None, event_sender=None):
-        self.file_loader = file_loader or self._default_file_loader
+    def __init__(self, recipe_file_path, event_sender=None):
         self.event_sender = event_sender or self._default_event_sender
-        self.__load_recipe(recipe_file_path)
-        self.recipe_file_name = Path(recipe_file_path).name # Store filename
+        definition = parse_recipe_file(recipe_file_path).require_recipe()
+        self._load_definition(definition, str(recipe_file_path))
 
-    def _default_file_loader(self, path):
-        """Default implementation that loads a YAML file"""
-        with open(path, 'r') as file:
-            # Read the file content into memory first
-            file_content = file.read()
-        # Then return an iterator over the YAML documents
-        return yaml.safe_load_all(file_content)
+    @classmethod
+    def from_definition(
+        cls,
+        definition: RecipeDefinition,
+        source_name: str = "<definition>",
+        event_sender=None,
+    ):
+        """Construct executable state from an already validated aggregate model."""
+        if not isinstance(definition, RecipeDefinition):
+            raise TypeError("definition must be a validated recipe_language.Recipe")
+        instance = cls.__new__(cls)
+        instance.event_sender = event_sender or instance._default_event_sender
+        instance._load_definition(definition, source_name)
+        return instance
     
     def _default_event_sender(self, runtime, event_name, *event_data):
         """Default implementation that uses runtime's send_event"""
         runtime.send_event(event_name, *event_data)
 
-    def __load_recipe(self, recipe_file_path):
-        """Loads recipe data using the file_loader"""
-        logger.info(f"Loading recipe file {recipe_file_path}.")
-        self.sequences = {}
-        
-        try:
-            recipe_data = self.file_loader(recipe_file_path)
-            logger.debug(f"File loader returned recipe_data type: {type(recipe_data)}")
-            
-            recipe_main_data = next(recipe_data)
-            logger.debug(f"Recipe main data keys: {recipe_main_data.keys() if isinstance(recipe_main_data, dict) else 'Not a dict'}")
-            
-            # Validate required fields in main data
-            required_fields = ["name", "description", "version", "globals"]
-            for field in required_fields:
-                if field not in recipe_main_data:
-                    raise KeyError(f"Missing required field '{field}' in recipe main data")
-            self.continue_on_error: bool | None = recipe_main_data.get("continue_on_error")
-            if self.continue_on_error is not None and not isinstance(self.continue_on_error, bool):
-                raise ValueError("Top-level continue_on_error must be a boolean")
-
-            #add verification here
-
-
-
-            
-            # The rest of the documents are all sequences
-            sequence_count = 0
-            for sequence in recipe_data:
-                sequence_count += 1
-
-                logger.debug(f"Processing sequence {sequence_count}: {sequence.get('sequence_name', 'UNNAMED')}")
-
-                if "sequence_name" not in sequence:
-                    logger.error(f"Sequence {sequence_count} missing 'sequence_name' field")
-                    continue
-                try:
-                    # todo this is failing
-                    self.sequences[sequence["sequence_name"]] = Sequence(sequence_data=sequence)
-                except Exception as e:
-                    logger.error(f"Failed to create sequence '{sequence.get('sequence_name', 'UNNAMED')}': {e}")
-                    raise
-
-            self.name: str = recipe_main_data["name"]
-            self.main_sequence: str = recipe_main_data.get("main_sequence", "Main")
-            if self.main_sequence not in self.sequences:
-                raise ValueError(
-                    f"Main sequence '{self.main_sequence}' does not exist; "
-                    f"available sequences: {', '.join(self.sequences) or '(none)'}"
-                )
-            self.description: str = recipe_main_data["description"]
-            self.version: str = recipe_main_data["version"]
-
-            report_mode = recipe_main_data.get("report", "overwrite").lower()
-            if report_mode == "overwrite":
-                self.report_overwrite = True
-            elif report_mode == "append":
-                self.report_overwrite = False
-            else:
-                logger.error(f"'{report_mode}' is not a valid reporting mode. Use 'overwrite' or 'append'.")
-                raise
-
-            self.report_name_include_serial: bool = bool(recipe_main_data.get("report_name_include_serial", False))
-
-            self.globals: dict[str, any] = recipe_main_data["globals"]
-            self.test_package: str = recipe_main_data.get("test_package", None)
-            if self.test_package and not re.fullmatch(
-                r"[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*", self.test_package
-            ):
-                raise ValueError(
-                    "test_package must be a valid dotted Python package name "
-                    f"(got {self.test_package!r})"
-                )
-            # self.tags: dict[str, str] = recipe_main_data["tags"]
-            logger.info(f"Loaded recipe {self.name} version {self.version}.")
-            logger.debug(f"Recipe has {len(self.sequences)} sequences: {list(self.sequences.keys())}")
-            
-        except Exception as e:
-            logger.error(f"Failed to load recipe from {recipe_file_path}: {e}", exc_info=True)
-            raise
+    def _load_definition(self, definition: RecipeDefinition, source_name: str) -> None:
+        """Build runtime objects only after aggregate validation has succeeded."""
+        header = definition.header
+        logger.info("Loading validated recipe %s.", source_name)
+        self.definition = definition
+        self.recipe_file_name = Path(source_name).name
+        self.sequences = {
+            sequence.sequence_name: Sequence(sequence)
+            for sequence in definition.sequences
+        }
+        self.name = header.name
+        self.main_sequence = header.main_sequence
+        self.description = header.description
+        self.version = header.version
+        self.continue_on_error = header.continue_on_error
+        self.report_overwrite = header.report == "overwrite"
+        self.report_name_include_serial = header.report_name_include_serial
+        self.globals = copy.deepcopy(header.globals)
+        self.test_package = header.test_package
+        logger.info("Loaded recipe %s version %s.", self.name, self.version)
 
     def run(self, runtime: Runtime, sequence_name: str | None = None):
         """Executes the main sequence of the recipe.
@@ -403,9 +348,13 @@ class Recipe:
                 # Emit signal so GUI still updates
                 return results
                 
-            main_step_data = {"steptype": "SequenceStep", "step_name": sequence_name, "sequence": {"type": "internal", "name": sequence_name}, "input_mapping": {}, "output_mapping": {}}
-            
-            main_step: Step = Step.build_step(main_step_data)
+            main_step = ExecutableSequenceStep(
+                sequence={"type": "internal", "name": sequence_name},
+                step_name=sequence_name,
+                description=f"Run top-level sequence {sequence_name}.",
+                input_mapping={},
+                output_mapping={},
+            )
             final_result = main_step.run(runtime, {}, stop_event=runtime.stop_event)
             
             results: List[StepResult] = runtime.get_results()
@@ -438,56 +387,28 @@ class Recipe:
             runtime.send_event("post_run_recipe", results)
             Runtime.stop_event.set()
 
-    
-    # def parse_q_input(self, q_in):
-    #     while True:
-    #         input_command = q_in.get()
-    #         print(f"RECEIVED SIGNAL FROM GUI: {input_command}")
-    #         event:threading.Event = self.runtime["events"][input_command]
-    #         event.set()
-                    
-
-
-
-    # @staticmethod
-    # def run_threaded(recipe_file, sequence_name="Main"):
-    #     q_in = queue.Queue()
-    #     event_queue = queue.SimpleQueue()
-    #     report_queue = queue.SimpleQueue()
-    #     runtime = Runtime(event_queue, report_queue)
-    #     recipe = Recipe(recipe_file)
-    #     runtime.send_event("post_load_recipe", recipe)
-    #     threading.Thread(target=recipe.run, kwargs={"runtime": runtime, "sequence_name": sequence_name}, daemon=True).start()
-    #     # threading.Thread(target=recipe.parse_q_input, args=[q_in], daemon=True).start()
-    #     return event_queue, report_queue, q_in
-            
-
 class Sequence():
-    def __init__(self, sequence_data=None, sequence_file=None):
-        if sequence_file is not None:
-            with open(sequence_file, 'r') as file:
-                sequence_data = yaml.safe_load(file)
-        elif sequence_data is not None:
-            sequence_data = sequence_data
-        else:
-            raise FileNotFoundError
-        
-        self.name = sequence_data["sequence_name"]
-        self.locals = sequence_data["locals"]
-        self.parameters = sequence_data["parameters"]
-        self.outputs = sequence_data["outputs"]
+    def __init__(self, definition: SequenceDefinition):
+        if not isinstance(definition, SequenceDefinition):
+            raise TypeError("Sequence requires a validated recipe_language.Sequence")
+        self.definition = definition
+        self.name = definition.sequence_name
+        self.description = definition.description
+        self.locals = copy.deepcopy(definition.locals)
+        self.parameters = copy.deepcopy(definition.parameters)
+        self.outputs = copy.deepcopy(definition.outputs)
         self.steps = []
         self.teardown_steps = []
 
         # build all contained steps here
-        for step_data in sequence_data["setup_steps"]:
-            self.steps.append(Step.build_step(step_data))
+        for step_definition in definition.setup_steps:
+            self.steps.append(Step.build_step(step_definition))
 
-        for step_data in sequence_data["steps"]:
-            self.steps.append(Step.build_step(step_data))
+        for step_definition in definition.steps:
+            self.steps.append(Step.build_step(step_definition))
 
-        for step_data in sequence_data["teardown_steps"]:
-            self.teardown_steps.append(Step.build_step(step_data))
+        for step_definition in definition.teardown_steps:
+            self.teardown_steps.append(Step.build_step(step_definition))
     def run(self, runtime: Runtime, input: dict, parent_step: uuid.UUID=None):
         logger.info(f"Starting sequence {self.name}")
         runtime.send_event("pre_run_sequence", self)
@@ -734,33 +655,35 @@ class Step:
         return step_results # aggregate_result # single pass or fail type
 
     @staticmethod
-    def build_step(step_data:dict):
+    def build_step(step_definition: AuthorableStepDefinition):
         """
-        This helper function analyzes the configuration of step_data and adapts what is needed before
-        creating the step.
+        This function translates from validated Pydantic step definitions
+        to the corresponding executable Step objects.
 
         Args:
-            step_data (dict): the dictionary containing the keys from the sequence file
+            step_definition (AuthorableStepDefinition): the validated step definition
 
         Returns:
             Step: This is a fully configured step object
         """
-        if not isinstance(step_data, dict):
-            raise TypeError("Step definition must be a dictionary")
-        step_type = step_data.get("steptype")
-        if not isinstance(step_type, str):
-            raise ValueError("Step definition requires a string 'steptype'")
-        step_class = STEP_TYPE_REGISTRY.get(step_type.casefold())
+        if not isinstance(step_definition, AuthorableStepDefinition):
+            raise TypeError("Step.build_step requires a validated step definition")
+        step_type = step_definition.steptype
+        step_class = STEP_TYPE_REGISTRY.get(step_type)
         if step_class is None:
-            supported = ", ".join(sorted(cls.__name__ for cls in set(STEP_TYPE_REGISTRY.values())))
+            supported = ", ".join(sorted(STEP_TYPE_REGISTRY))
             raise ValueError(f"Unknown step type '{step_type}'. Supported step types: {supported}")
 
-        constructor_data = dict(step_data)
-        del constructor_data["steptype"]
+        constructor_data = step_definition.model_dump(
+            mode="python", by_alias=True, exclude={"steptype"}
+        )
         new_step: Step = step_class(**constructor_data)
 
-        # Check if indexing is to be used, and if so, create IndexingStep to encapsulate the original step
-        if new_step.check_indexing():
+        has_indexed_input = any(
+            isinstance(value, DirectInputDefinition) and value.indexed
+            for value in step_definition.input_mapping.values()
+        )
+        if has_indexed_input:
 
             # List of keys to keep
             keys_to_keep = [
@@ -776,15 +699,48 @@ class Step:
 
 
 # Import step implementations from steps module
-from pypts.steps import IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep, WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep, SerialNumberStep, SSHConnectStep, SSHCloseStep, SSHUploadStep
+from pypts.steps import (
+    IndexedStep,
+    PythonModuleStep as ExecutablePythonModuleStep,
+    SequenceStep as ExecutableSequenceStep,
+    UserInteractionStep as ExecutableUserInteractionStep,
+    WaitStep as ExecutableWaitStep,
+    UserLoadingStep as ExecutableUserLoadingStep,
+    UserRunMethodStep as ExecutableUserRunMethodStep,
+    UserWriteStep as ExecutableUserWriteStep,
+    SerialNumberStep as ExecutableSerialNumberStep,
+    SSHConnectStep as ExecutableSSHConnectStep,
+    SSHCloseStep as ExecutableSSHCloseStep,
+    SSHUploadStep as ExecutableSSHUploadStep,
+)
 
+# This dictionary maps step type names to their corresponding executable classes, allowing dynamic instantiation based on the step type specified in the recipe.
 STEP_TYPE_REGISTRY = {
-    cls.__name__.casefold(): cls for cls in (
-        IndexedStep, PythonModuleStep, SequenceStep, UserInteractionStep,
-        WaitStep, UserLoadingStep, UserRunMethodStep, UserWriteStep,
-        SerialNumberStep, SSHConnectStep, SSHCloseStep, SSHUploadStep,
-    )
+    "PythonModuleStep": ExecutablePythonModuleStep,
+    "SequenceStep": ExecutableSequenceStep,
+    "UserInteractionStep": ExecutableUserInteractionStep,
+    "WaitStep": ExecutableWaitStep,
+    "UserLoadingStep": ExecutableUserLoadingStep,
+    "UserRunMethodStep": ExecutableUserRunMethodStep,
+    "UserWriteStep": ExecutableUserWriteStep,
+    "SerialNumberStep": ExecutableSerialNumberStep,
+    "SSHConnectStep": ExecutableSSHConnectStep,
+    "SSHCloseStep": ExecutableSSHCloseStep,
+    "SSHUploadStep": ExecutableSSHUploadStep,
 }
+
+# Preserve direct concrete runtime construction from this long-standing module.
+PythonModuleStep = ExecutablePythonModuleStep
+SequenceStep = ExecutableSequenceStep
+UserInteractionStep = ExecutableUserInteractionStep
+WaitStep = ExecutableWaitStep
+UserLoadingStep = ExecutableUserLoadingStep
+UserRunMethodStep = ExecutableUserRunMethodStep
+UserWriteStep = ExecutableUserWriteStep
+SerialNumberStep = ExecutableSerialNumberStep
+SSHConnectStep = ExecutableSSHConnectStep
+SSHCloseStep = ExecutableSSHCloseStep
+SSHUploadStep = ExecutableSSHUploadStep
 
 
 
@@ -794,9 +750,6 @@ if __name__ == "__main__":
 
     yaml_dir = os.path.join(os.path.dirname(__file__), 'recipes')
     yaml_path = os.path.join(yaml_dir, 'simple_recipe.yml')
-    validate_recipe_filepath(yaml_path)
-    # give time to print to stdout
-    time.sleep(0.1)
     recipe = Recipe(yaml_path)
     
     recipe.sequences["Main"].list_steps()

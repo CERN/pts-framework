@@ -1,212 +1,60 @@
 # SPDX-FileCopyrightText: 2026 CERN <home.cern>
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
-"""Safe, source-aware parsing for the pypts recipe language.
-
-The parser is intentionally isolated from recipe execution and GUI code.  It
-turns YAML into immutable definitions after validation by
-``pypts.recipe_language``.
-"""
+"""Safe YAML adapter and semantic validation for recipe language 2.0.0."""
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field, replace
+from collections.abc import Mapping
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from pypts.recipe_language import (
-    Diagnostic,
-    SourcePosition,
-    SourceSpan,
-    STEP_SPECS_BY_NAME,
-    canonical_step_type,
-    validate_recipe_documents,
+    DirectInput,
+    EqualsOutput,
+    PassFailOutput,
+    PassthroughOutput,
+    RangeOutput,
+    Recipe,
+    RecipeHeader,
+    Sequence,
+    SequenceStep,
 )
 
-
-RecipePath: TypeAlias = tuple[str | int, ...]
-
-
-def _freeze(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return FrozenMap((str(key), _freeze(item)) for key, item in value.items())
-    if isinstance(value, list | tuple):
-        return tuple(_freeze(item) for item in value)
-    if isinstance(value, set | frozenset):
-        return frozenset(_freeze(item) for item in value)
-    return value
-
-
-def _thaw(value: Any) -> Any:
-    if isinstance(value, FrozenMap):
-        return {key: _thaw(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw(item) for item in value]
-    if isinstance(value, frozenset):
-        return set(_thaw(item) for item in value)
-    return value
-
-
-@dataclass(frozen=True, eq=False)
-class FrozenMap(Mapping[str, Any]):
-    """Small insertion-ordered immutable mapping used by parsed models."""
-
-    entries: tuple[tuple[str, Any], ...] = ()
-
-    def __init__(self, entries=()):
-        object.__setattr__(self, "entries", tuple(entries))
-
-    @classmethod
-    def from_mapping(cls, value: Mapping[str, Any] | None) -> "FrozenMap":
-        return cls((str(key), _freeze(item)) for key, item in (value or {}).items())
-
-    def __getitem__(self, key: str) -> Any:
-        for candidate, value in self.entries:
-            if candidate == key:
-                return value
-        raise KeyError(key)
-
-    def __iter__(self) -> Iterator[str]:
-        return (key for key, _ in self.entries)
-
-    def __len__(self) -> int:
-        return len(self.entries)
-
-    def __eq__(self, other: object) -> bool:
-        if not isinstance(other, Mapping) or len(self) != len(other):
-            return False
-        return all(key in other and value == other[key] for key, value in self.items())
-
-    def __hash__(self) -> int:
-        return hash(frozenset(self.entries))
+type RecipePath = tuple[str | int, ...]
 
 
 @dataclass(frozen=True)
-class DirectInput:
-    value: Any
-    indexed: bool = False
-    span: SourceSpan | None = field(default=None, compare=False)
+class SourcePosition:
+    """A one-based source position with a zero-based character offset."""
+
+    line: int
+    column: int
+    offset: int
 
 
 @dataclass(frozen=True)
-class LocalInput:
-    local_name: str
-    span: SourceSpan | None = field(default=None, compare=False)
+class SourceSpan:
+    """Half-open source range."""
+
+    start: SourcePosition
+    end: SourcePosition
 
 
 @dataclass(frozen=True)
-class GlobalInput:
-    global_name: str
-    span: SourceSpan | None = field(default=None, compare=False)
+class Diagnostic:
+    """Source-aware recipe finding, compatible with the PyPTS envelope."""
 
-
-@dataclass(frozen=True)
-class MethodInput:
-    value: Any
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-InputDefinition: TypeAlias = DirectInput | LocalInput | GlobalInput | MethodInput
-
-
-@dataclass(frozen=True)
-class PassFailOutput:
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class EqualsOutput:
-    value: Any
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class RangeOutput:
-    minimum: Any
-    maximum: Any
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class PassthroughOutput:
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class LocalOutput:
-    local_name: str
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class GlobalOutput:
-    global_name: str
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class ImageOutput:
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-OutputDefinition: TypeAlias = (
-    PassFailOutput | EqualsOutput | RangeOutput | PassthroughOutput |
-    LocalOutput | GlobalOutput | ImageOutput
-)
-
-
-@dataclass(frozen=True)
-class StepDefinition:
-    steptype: str
-    step_name: str
-    description: str
-    id: str | None
-    skip: bool
-    critical: bool
-    continue_on_error: bool
-    input_mapping: FrozenMap
-    output_mapping: FrozenMap
-    configuration: FrozenMap
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class SequenceDefinition:
-    sequence_name: str
-    description: str
-    parameters: FrozenMap
-    outputs: FrozenMap
-    locals: FrozenMap
-    setup_steps: tuple[StepDefinition, ...]
-    steps: tuple[StepDefinition, ...]
-    teardown_steps: tuple[StepDefinition, ...]
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class RecipeHeader:
-    name: str
-    version: str
-    recipe_version: str
-    description: str
-    main_sequence: str
-    globals: FrozenMap
-    continue_on_error: bool | None
-    report: str
-    report_name_include_serial: bool
-    test_package: str | None
-    span: SourceSpan | None = field(default=None, compare=False)
-
-
-@dataclass(frozen=True)
-class RecipeDefinition:
-    header: RecipeHeader
-    sequences: tuple[SequenceDefinition, ...]
-    source_name: str = field(default="<memory>", compare=False)
-    span: SourceSpan | None = field(default=None, compare=False)
+    code: str
+    message: str
+    path: RecipePath = ()
+    severity: str = "error"
+    source_name: str | None = None
+    span: SourceSpan | None = None
 
 
 class RecipeParseError(ValueError):
@@ -220,7 +68,7 @@ class RecipeParseError(ValueError):
 
 @dataclass(frozen=True)
 class ParseResult:
-    recipe: RecipeDefinition | None
+    recipe: Recipe | None
     diagnostics: tuple[Diagnostic, ...] = ()
 
     @property
@@ -235,9 +83,10 @@ class ParseResult:
     def is_valid(self) -> bool:
         return self.recipe is not None and not self.errors
 
-    def require_recipe(self) -> RecipeDefinition:
-        if self.recipe is None or self.errors:
+    def require_recipe(self) -> Recipe:
+        if not self.is_valid:
             raise RecipeParseError(self.diagnostics)
+        assert self.recipe is not None
         return self.recipe
 
 
@@ -256,49 +105,6 @@ def _mark_span(mark: yaml.error.Mark | None) -> SourceSpan | None:
     return SourceSpan(position, position)
 
 
-def _index_nodes(
-    node: yaml.Node,
-    path: RecipePath,
-    spans: dict[RecipePath, SourceSpan],
-    diagnostics: list[Diagnostic],
-    source_name: str,
-    active: set[int],
-) -> None:
-    spans[path] = _span(node)
-    node_id = id(node)
-    if node_id in active:
-        diagnostics.append(Diagnostic(
-            "recursive-alias", "Recursive YAML aliases are not supported.", path,
-            source_name=source_name, span=_span(node),
-        ))
-        return
-    active.add(node_id)
-    try:
-        if isinstance(node, yaml.MappingNode):
-            seen: set[tuple[str, str]] = set()
-            for key_node, value_node in node.value:
-                if isinstance(key_node, yaml.ScalarNode):
-                    identity = (key_node.tag, key_node.value)
-                    key: str | int = key_node.value
-                else:
-                    identity = (key_node.tag, repr(key_node.value))
-                    key = repr(key_node.value)
-                child_path = path + (key,)
-                if identity in seen:
-                    diagnostics.append(Diagnostic(
-                        "duplicate-key", f"Duplicate YAML key '{key}'.", child_path,
-                        source_name=source_name, span=_span(key_node),
-                    ))
-                seen.add(identity)
-                spans[child_path] = _span(value_node)
-                _index_nodes(value_node, child_path, spans, diagnostics, source_name, active)
-        elif isinstance(node, yaml.SequenceNode):
-            for index, child in enumerate(node.value):
-                _index_nodes(child, path + (index,), spans, diagnostics, source_name, active)
-    finally:
-        active.remove(node_id)
-
-
 def _nearest_span(path: RecipePath, spans: Mapping[RecipePath, SourceSpan]) -> SourceSpan | None:
     candidate = path
     while candidate:
@@ -308,183 +114,339 @@ def _nearest_span(path: RecipePath, spans: Mapping[RecipePath, SourceSpan]) -> S
     return spans.get(())
 
 
-def _source_diagnostic(code: str, message: str, source_name: str, mark=None) -> Diagnostic:
-    return Diagnostic(code, message, source_name=source_name, span=_mark_span(mark))
-
-
-def _enrich_diagnostics(
-    diagnostics: tuple[Diagnostic, ...],
+def _diagnostic(
+    code: str,
+    message: str,
+    path: RecipePath,
     source_name: str,
     spans: Mapping[RecipePath, SourceSpan],
-    sequence_documents: Mapping[str, int],
-) -> list[Diagnostic]:
-    enriched: list[Diagnostic] = []
-    for item in diagnostics:
-        path = item.path
-        if path and isinstance(path[0], str) and path[0] in sequence_documents:
-            path = (sequence_documents[path[0]],) + path[1:]
-        enriched.append(replace(
-            item,
-            source_name=item.source_name or source_name,
-            span=item.span or _nearest_span(path, spans),
+) -> Diagnostic:
+    return Diagnostic(code, message, path, source_name=source_name, span=_nearest_span(path, spans))
+
+
+def _index_nodes(
+    node: yaml.Node,
+    path: RecipePath,
+    spans: dict[RecipePath, SourceSpan],
+    diagnostics: list[Diagnostic],
+    source_name: str,
+    active: set[int],
+) -> None:
+    spans[path] = _span(node)
+    identity = id(node)
+    if identity in active:
+        diagnostics.append(Diagnostic(
+            "recursive-alias",
+            "Recursive YAML aliases are not supported.",
+            path,
+            source_name=source_name,
+            span=_span(node),
         ))
-    return enriched
+        return
+    active.add(identity)
+    try:
+        if isinstance(node, yaml.MappingNode):
+            seen: set[tuple[str, str]] = set()
+            for key_node, value_node in node.value:
+                key_identity = (key_node.tag, repr(key_node.value))
+                key: str | int = key_node.value if isinstance(key_node, yaml.ScalarNode) else repr(key_node.value)
+                child = path + (key,)
+                if key_identity in seen:
+                    diagnostics.append(Diagnostic(
+                        "duplicate-key",
+                        f"Duplicate YAML key '{key}'.",
+                        child,
+                        source_name=source_name,
+                        span=_span(key_node),
+                    ))
+                seen.add(key_identity)
+                _index_nodes(value_node, child, spans, diagnostics, source_name, active)
+        elif isinstance(node, yaml.SequenceNode):
+            for index, child_node in enumerate(node.value):
+                _index_nodes(
+                    child_node, path + (index,), spans, diagnostics, source_name, active
+                )
+    finally:
+        active.remove(identity)
 
 
-def _normalization_warnings(
-    documents: list[Any],
+_MODEL_TAGS = {
+    "direct", "local", "global", "method", "passfail", "equals", "range",
+    "passthrough", "image", "PythonModuleStep", "SequenceStep",
+    "UserInteractionStep", "WaitStep", "UserLoadingStep", "UserRunMethodStep",
+    "UserWriteStep", "SerialNumberStep", "SSHConnectStep", "SSHCloseStep",
+    "SSHUploadStep",
+}
+_CANONICAL_STEPS = {tag for tag in _MODEL_TAGS if tag.endswith("Step")}
+
+
+def _clean_location(location: tuple[Any, ...]) -> RecipePath:
+    cleaned: list[str | int] = []
+    for index, item in enumerate(location):
+        is_step_tag = (
+            item in _CANONICAL_STEPS
+            and index >= 2
+            and location[index - 2] in {"setup_steps", "steps", "teardown_steps"}
+            and isinstance(location[index - 1], int)
+        )
+        is_mapping_tag = (
+            item in _MODEL_TAGS
+            and index >= 2
+            and location[index - 2] in {"input_mapping", "output_mapping"}
+        )
+        if not is_step_tag and not is_mapping_tag:
+            cleaned.append(item)
+    return tuple(cleaned)
+
+
+def _pydantic_diagnostic(
+    error: dict[str, Any],
+    prefix: RecipePath,
+    source_name: str,
+    spans: Mapping[RecipePath, SourceSpan],
+) -> Diagnostic:
+    location = prefix + _clean_location(tuple(error.get("loc", ())))
+    kind = error["type"]
+    context = error.get("ctx") or {}
+    input_value = error.get("input")
+    code = "invalid-field"
+    message = error["msg"]
+
+    if kind == "missing":
+        code = "missing-field"
+    elif kind == "extra_forbidden":
+        field = location[-1] if location else "field"
+        if field == "serial_number":
+            code = "removed-sequence-field"
+            message = "Sequence field 'serial_number' was removed in recipe language 2.0.0."
+        else:
+            code = "unknown-field"
+            message = f"Unknown field '{field}'."
+    elif kind == "union_tag_not_found":
+        discriminator = str(context.get("discriminator", ""))
+        if "steptype" in discriminator:
+            code = "missing-step-type"
+            location += ("steptype",)
+            message = "Step requires canonical 'steptype'."
+        elif "output_mapping" in location:
+            code = "missing-output-type"
+            location += ("type",)
+            message = "Output mapping requires an explicit 'type'."
+        else:
+            code = "missing-input-type"
+            location += ("type",)
+            message = "Mapping requires an explicit 'type' in recipe language 2.0.0."
+    elif kind == "union_tag_invalid":
+        discriminator = str(context.get("discriminator", ""))
+        tag = context.get("tag")
+        if "steptype" in discriminator:
+            location += ("steptype",)
+            canonical = next(
+                (candidate for candidate in _CANONICAL_STEPS if candidate.casefold() == str(tag).casefold()),
+                None,
+            )
+            if canonical:
+                code = "noncanonical-step-type"
+                message = f"Use canonical step type '{canonical}' instead of '{tag}'."
+            else:
+                code = "unknown-step-type"
+                message = f"Unknown step type '{tag}'."
+        else:
+            location += ("type",)
+            if "output_mapping" in location:
+                code = "unknown-output-type"
+                message = f"Unknown output mapping type '{tag}'."
+            else:
+                code = "unknown-input-type"
+                message = f"Unknown input mapping type '{tag}'."
+    elif kind == "literal_error" and location[-1:] == ("recipe_version",):
+        code = "unsupported-recipe-version"
+        message = f"Recipe language version {input_value!r} is unsupported; expected '2.0.0'."
+    elif kind == "literal_error":
+        code = "invalid-field-value"
+    elif kind in {"bool_type", "string_type", "int_type", "list_type", "dict_type", "model_type"}:
+        code = "invalid-field-type"
+    elif kind == "invalid_indexed_input":
+        code = "invalid-indexed-input"
+    elif kind == "missing_method_name":
+        code = "missing-method-name"
+        location += ("method_name",)
+    elif kind == "missing_required_input":
+        code = "missing-required-input"
+        location += ("input_mapping", "wait_time")
+    elif kind == "too_short" and prefix == () and location[-1:] == ("sequences",):
+        code = "missing-sequence"
+
+    return _diagnostic(code, message, location, source_name, spans)
+
+
+def _validation_diagnostics(
+    error: ValidationError,
+    prefix: RecipePath,
     source_name: str,
     spans: Mapping[RecipePath, SourceSpan],
 ) -> list[Diagnostic]:
-    warnings: list[Diagnostic] = []
-    for doc_index, document in enumerate(documents[1:], start=1):
-        if not isinstance(document, Mapping):
-            continue
-        for section in ("setup_steps", "steps", "teardown_steps"):
-            values = document.get(section, [])
-            if not isinstance(values, list):
-                continue
-            for step_index, step in enumerate(values):
-                if not isinstance(step, Mapping):
-                    continue
-                step_path = (doc_index, section, step_index)
-                raw_type = step.get("steptype")
-                canonical = canonical_step_type(raw_type)
-                if canonical and raw_type != canonical:
-                    path = step_path + ("steptype",)
-                    warnings.append(Diagnostic(
-                        "noncanonical-step-type",
-                        f"Use canonical step type '{canonical}' instead of '{raw_type}'.",
-                        path, "warning", source_name, _nearest_span(path, spans),
+    return [
+        _pydantic_diagnostic(item, prefix, source_name, spans)
+        for item in error.errors(include_url=False)
+    ]
+
+
+def _all_steps(sequence: Sequence):
+    for section_name in ("setup_steps", "steps", "teardown_steps"):
+        for index, step in enumerate(getattr(sequence, section_name)):
+            yield section_name, index, step
+
+
+def _semantic_diagnostics(
+    header: RecipeHeader | None,
+    sequences: list[tuple[int, Sequence]],
+    source_name: str,
+    spans: Mapping[RecipePath, SourceSpan],
+    *,
+    complete_sequences: bool = True,
+) -> list[Diagnostic]:
+    """Rules that cannot be expressed by one structural Pydantic model."""
+    diagnostics: list[Diagnostic] = []
+    # docs:sequence-semantics-start
+    by_name: dict[str, tuple[int, Sequence]] = {}
+    for document_index, sequence in sequences:
+        path = (document_index, "sequence_name")
+        if sequence.sequence_name in by_name:
+            diagnostics.append(_diagnostic(
+                "duplicate-sequence",
+                f"Duplicate sequence '{sequence.sequence_name}'.",
+                path,
+                source_name,
+                spans,
+            ))
+        else:
+            by_name[sequence.sequence_name] = (document_index, sequence)
+
+    if complete_sequences and header is not None and header.main_sequence not in by_name:
+        diagnostics.append(_diagnostic(
+            "unknown-main-sequence",
+            f"Main sequence '{header.main_sequence}' does not exist.",
+            (0, "main_sequence"),
+            source_name,
+            spans,
+        ))
+    # docs:sequence-semantics-end
+
+    verdict_types = (PassFailOutput, EqualsOutput, RangeOutput, PassthroughOutput)
+    for document_index, sequence in sequences:
+        flattened = list(_all_steps(sequence))
+        for section, index, step in flattened:
+            step_path = (document_index, section, index)
+            # docs:nested-reference-start
+            if isinstance(step, SequenceStep) and step.sequence.name not in by_name:
+                diagnostics.append(_diagnostic(
+                    "unknown-sequence-reference",
+                    f"Sequence '{sequence.sequence_name}' references unknown sequence "
+                    f"'{step.sequence.name}'.",
+                    step_path + ("sequence", "name"),
+                    source_name,
+                    spans,
+                ))
+            # docs:nested-reference-end
+
+            # docs:mapping-semantics-start
+            indexed_lengths = [
+                len(value.value)
+                for value in step.input_mapping.values()
+                if isinstance(value, DirectInput) and value.indexed
+            ]
+            if len(set(indexed_lengths)) > 1:
+                diagnostics.append(_diagnostic(
+                    "unequal-indexed-inputs",
+                    "Indexed input lists must have equal lengths.",
+                    step_path + ("input_mapping",),
+                    source_name,
+                    spans,
+                ))
+
+            verdicts = [
+                value for value in step.output_mapping.values() if isinstance(value, verdict_types)
+            ]
+            if any(isinstance(value, PassthroughOutput) for value in verdicts) and len(verdicts) != 1:
+                diagnostics.append(_diagnostic(
+                    "mixed-passthrough",
+                    "'passthrough' must be the sole verdict mapping.",
+                    step_path + ("output_mapping",),
+                    source_name,
+                    spans,
+                ))
+            # docs:mapping-semantics-end
+
+        # docs:ssh-semantics-start
+        ssh_steps = [item for item in flattened if item[2].steptype.startswith("SSH")]
+        if ssh_steps and header is not None:
+            for required in ("ssh_client", "host", "user", "port"):
+                if required not in header.globals:
+                    diagnostics.append(_diagnostic(
+                        "missing-ssh-global",
+                        f"SSH step requires global '{required}'.",
+                        (0, "globals", required),
+                        source_name,
+                        spans,
                     ))
-                mapping = step.get("input_mapping", {})
-                if isinstance(mapping, Mapping):
-                    for input_name, config in mapping.items():
-                        if isinstance(config, Mapping) and "type" not in config:
-                            path = step_path + ("input_mapping", input_name)
-                            warnings.append(Diagnostic(
-                                "implicit-direct-input",
-                                f"Input '{input_name}' omits type; it is normalized to 'direct'.",
-                                path, "warning", source_name, _nearest_span(path, spans),
-                            ))
-    return warnings
+            if "password" not in header.globals and "private_key" not in header.globals:
+                diagnostics.append(_diagnostic(
+                    "missing-ssh-credential",
+                    "SSH steps require password or private_key global.",
+                    (0, "globals"),
+                    source_name,
+                    spans,
+                ))
 
-
-def _mapping_span(path: RecipePath, spans: Mapping[RecipePath, SourceSpan]) -> SourceSpan | None:
-    return _nearest_span(path, spans)
-
-
-def _build_input(config: Mapping[str, Any], path: RecipePath, spans) -> InputDefinition:
-    kind = config.get("type", "direct")
-    item_span = _mapping_span(path, spans)
-    if kind == "direct":
-        return DirectInput(_freeze(config["value"]), bool(config.get("indexed", False)), item_span)
-    if kind == "local":
-        return LocalInput(config["local_name"], item_span)
-    if kind == "global":
-        return GlobalInput(config["global_name"], item_span)
-    return MethodInput(_freeze(config["value"]), item_span)
-
-
-def _build_output(config: Mapping[str, Any], path: RecipePath, spans) -> OutputDefinition:
-    kind = config["type"]
-    item_span = _mapping_span(path, spans)
-    if kind == "passfail":
-        return PassFailOutput(item_span)
-    if kind == "equals":
-        return EqualsOutput(_freeze(config["value"]), item_span)
-    if kind == "range":
-        return RangeOutput(_freeze(config["min"]), _freeze(config["max"]), item_span)
-    if kind == "passthrough":
-        return PassthroughOutput(item_span)
-    if kind == "local":
-        return LocalOutput(config["local_name"], item_span)
-    if kind == "global":
-        return GlobalOutput(config["global_name"], item_span)
-    return ImageOutput(item_span)
-
-
-_COMMON_STEP_KEYS = {
-    "steptype", "step_name", "description", "id", "skip", "critical",
-    "continue_on_error", "input_mapping", "output_mapping",
-}
-
-
-def _build_step(step: Mapping[str, Any], path: RecipePath, spans) -> StepDefinition:
-    canonical = canonical_step_type(step["steptype"])
-    assert canonical is not None
-    inputs = FrozenMap(
-        (str(name), _build_input(config, path + ("input_mapping", name), spans))
-        for name, config in step.get("input_mapping", {}).items()
-    )
-    outputs = FrozenMap(
-        (str(name), _build_output(config, path + ("output_mapping", name), spans))
-        for name, config in step.get("output_mapping", {}).items()
-    )
-    configuration = FrozenMap(
-        (name, _freeze(value)) for name, value in step.items()
-        if name not in _COMMON_STEP_KEYS
-    )
-    return StepDefinition(
-        canonical, step["step_name"], step["description"], step.get("id"),
-        bool(step.get("skip", False)), bool(step.get("critical", False)),
-        bool(step.get("continue_on_error", False)), inputs, outputs,
-        configuration, _mapping_span(path, spans),
-    )
-
-
-def _build_sequence(sequence: Mapping[str, Any], doc_index: int, spans) -> SequenceDefinition:
-    def build_section(name: str) -> tuple[StepDefinition, ...]:
-        return tuple(
-            _build_step(step, (doc_index, name, index), spans)
-            for index, step in enumerate(sequence.get(name, []))
-        )
-    return SequenceDefinition(
-        sequence["sequence_name"], sequence["description"],
-        FrozenMap.from_mapping(sequence["parameters"]),
-        FrozenMap.from_mapping(sequence["outputs"]),
-        FrozenMap.from_mapping(sequence["locals"]),
-        build_section("setup_steps"), build_section("steps"),
-        build_section("teardown_steps"), _mapping_span((doc_index,), spans),
-    )
-
-
-def _build_recipe(documents: list[Mapping[str, Any]], source_name: str, spans) -> RecipeDefinition:
-    raw = documents[0]
-    header = RecipeHeader(
-        raw["name"], raw["version"], raw["recipe_version"], raw["description"],
-        raw["main_sequence"], FrozenMap.from_mapping(raw["globals"]),
-        raw.get("continue_on_error"), raw.get("report", "overwrite"),
-        bool(raw.get("report_name_include_serial", False)), raw.get("test_package"),
-        _mapping_span((0,), spans),
-    )
-    sequences = tuple(
-        _build_sequence(sequence, index, spans)
-        for index, sequence in enumerate(documents[1:], start=1)
-    )
-    recipe_span = None
-    if documents:
-        first = spans.get((0,))
-        last = spans.get((len(documents) - 1,))
-        if first and last:
-            recipe_span = SourceSpan(first.start, last.end)
-    return RecipeDefinition(header, sequences, source_name, recipe_span)
+        connected = False
+        unclosed_connect: tuple[str, int] | None = None
+        for section, index, step in flattened:
+            if step.steptype == "SSHConnectStep":
+                connected = True
+                unclosed_connect = (section, index)
+            elif step.steptype == "SSHUploadStep" and not connected:
+                diagnostics.append(_diagnostic(
+                    "missing-ssh-connect",
+                    f"Sequence '{sequence.sequence_name}' uploads before an SSH connection.",
+                    (document_index, section, index),
+                    source_name,
+                    spans,
+                ))
+            elif step.steptype == "SSHCloseStep":
+                connected = False
+                unclosed_connect = None
+        if unclosed_connect is not None:
+            diagnostics.append(_diagnostic(
+                "missing-ssh-close",
+                f"Sequence '{sequence.sequence_name}' opens SSH without a later close.",
+                (document_index, "teardown_steps"),
+                source_name,
+                spans,
+            ))
+        # docs:ssh-semantics-end
+    return diagnostics
 
 
 def parse_recipe_text(text: str, source_name: str = "<memory>") -> ParseResult:
-    """Parse recipe YAML text without importing or invoking the runtime."""
+    """Parse candidate recipe-language 2 YAML without runtime or GUI imports."""
     if not isinstance(text, str):
-        diagnostic = Diagnostic("invalid-source", "Recipe source must be text.", source_name=source_name)
-        return ParseResult(None, (diagnostic,))
+        return ParseResult(None, (Diagnostic(
+            "invalid-source", "Recipe source must be text.", source_name=source_name
+        ),))
     if not text.strip():
-        diagnostic = Diagnostic("empty-recipe", "A recipe requires a header and at least one sequence.", source_name=source_name)
-        return ParseResult(None, (diagnostic,))
+        return ParseResult(None, (Diagnostic(
+            "empty-recipe", "A recipe requires a header and at least one sequence.",
+            source_name=source_name,
+        ),))
 
     try:
         nodes = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
     except yaml.YAMLError as error:
         mark = getattr(error, "problem_mark", None)
-        return ParseResult(None, (_source_diagnostic("yaml-syntax-error", str(error), source_name, mark),))
+        return ParseResult(None, (Diagnostic(
+            "yaml-syntax-error", str(error), source_name=source_name, span=_mark_span(mark)
+        ),))
 
     spans: dict[RecipePath, SourceSpan] = {}
     diagnostics: list[Diagnostic] = []
@@ -497,121 +459,87 @@ def parse_recipe_text(text: str, source_name: str = "<memory>") -> ParseResult:
     except yaml.YAMLError as error:
         mark = getattr(error, "problem_mark", None)
         code = "unsafe-yaml" if isinstance(error, yaml.constructor.ConstructorError) else "yaml-construction-error"
-        diagnostics.append(_source_diagnostic(code, str(error), source_name, mark))
+        diagnostics.append(Diagnostic(code, str(error), source_name=source_name, span=_mark_span(mark)))
         return ParseResult(None, tuple(diagnostics))
 
-    sequence_documents = {
-        document["sequence_name"]: index
-        for index, document in enumerate(documents)
-        if isinstance(document, Mapping) and isinstance(document.get("sequence_name"), str)
-    }
-    contract = validate_recipe_documents(documents)
-    diagnostics.extend(_enrich_diagnostics(contract.diagnostics, source_name, spans, sequence_documents))
-    diagnostics.extend(_normalization_warnings(documents, source_name, spans))
-    if any(item.severity == "error" for item in diagnostics):
+    if not documents or all(document is None for document in documents):
+        diagnostics.append(Diagnostic(
+            "empty-recipe", "A recipe requires a header and at least one sequence.",
+            source_name=source_name,
+        ))
         return ParseResult(None, tuple(diagnostics))
-    return ParseResult(_build_recipe(documents, source_name, spans), tuple(diagnostics))
+
+    header: RecipeHeader | None = None
+    semantic_header: RecipeHeader | None = None
+    raw_header = documents[0]
+    try:
+        header = RecipeHeader.model_validate(raw_header)
+        semantic_header = header
+    except ValidationError as error:
+        diagnostics.extend(_validation_diagnostics(error, (0,), source_name, spans))
+        if isinstance(raw_header, dict) and raw_header.get("recipe_version") != "2.0.0":
+            candidate = dict(raw_header)
+            candidate["recipe_version"] = "2.0.0"
+            try:
+                semantic_header = RecipeHeader.model_validate(candidate)
+            except ValidationError:
+                pass
+
+    sequences: list[tuple[int, Sequence]] = []
+    complete_sequences = True
+    for index, document in enumerate(documents[1:], start=1):
+        try:
+            sequences.append((index, Sequence.model_validate(document)))
+        except ValidationError as error:
+            complete_sequences = False
+            diagnostics.extend(_validation_diagnostics(error, (index,), source_name, spans))
+
+    if len(documents) == 1:
+        diagnostics.append(_diagnostic(
+            "missing-sequence", "A recipe requires at least one sequence.", (0,), source_name, spans
+        ))
+
+    diagnostics.extend(_semantic_diagnostics(
+        semantic_header,
+        sequences,
+        source_name,
+        spans,
+        complete_sequences=complete_sequences,
+    ))
+    if diagnostics:
+        return ParseResult(None, tuple(diagnostics))
+    assert header is not None
+    recipe = Recipe(header=header, sequences=[sequence for _, sequence in sequences])
+    return ParseResult(recipe)
 
 
 def parse_recipe_file(path: str | Path, encoding: str = "utf-8") -> ParseResult:
-    """Read and parse a recipe file, reporting read failures as diagnostics."""
+    """Read and parse a candidate recipe file."""
     source_path = Path(path)
-    source_name = str(source_path)
     try:
         text = source_path.read_text(encoding=encoding)
     except (OSError, UnicodeError) as error:
         return ParseResult(None, (Diagnostic(
-            "file-read-error", f"Could not read recipe: {error}",
-            source_name=source_name,
+            "file-read-error", f"Could not read recipe: {error}", source_name=str(source_path)
         ),))
-    return parse_recipe_text(text, source_name)
+    return parse_recipe_text(text, str(source_path))
 
 
-def _input_to_mapping(value: InputDefinition) -> dict[str, Any]:
-    if isinstance(value, DirectInput):
-        result = {"type": "direct", "value": _thaw(value.value)}
-        if value.indexed:
-            result["indexed"] = True
-        return result
-    if isinstance(value, LocalInput):
-        return {"type": "local", "local_name": value.local_name}
-    if isinstance(value, GlobalInput):
-        return {"type": "global", "global_name": value.global_name}
-    return {"type": "method", "value": _thaw(value.value)}
-
-
-def _output_to_mapping(value: OutputDefinition) -> dict[str, Any]:
-    if isinstance(value, PassFailOutput):
-        return {"type": "passfail"}
-    if isinstance(value, EqualsOutput):
-        return {"type": "equals", "value": _thaw(value.value)}
-    if isinstance(value, RangeOutput):
-        return {"type": "range", "min": _thaw(value.minimum), "max": _thaw(value.maximum)}
-    if isinstance(value, PassthroughOutput):
-        return {"type": "passthrough"}
-    if isinstance(value, LocalOutput):
-        return {"type": "local", "local_name": value.local_name}
-    if isinstance(value, GlobalOutput):
-        return {"type": "global", "global_name": value.global_name}
-    return {"type": "image"}
-
-
-def _step_to_mapping(step: StepDefinition) -> dict[str, Any]:
-    result: dict[str, Any] = {"steptype": step.steptype, "step_name": step.step_name}
-    if step.id is not None:
-        result["id"] = step.id
-    result["description"] = step.description
-    result["skip"] = step.skip
-    result["critical"] = step.critical
-    result["continue_on_error"] = step.continue_on_error
-    spec = STEP_SPECS_BY_NAME[step.steptype.casefold()]
-    for field_spec in spec.fields:
-        if field_spec.name in _COMMON_STEP_KEYS or field_spec.name not in step.configuration:
-            continue
-        result[field_spec.name] = _thaw(step.configuration[field_spec.name])
-    result["input_mapping"] = {
-        name: _input_to_mapping(value) for name, value in step.input_mapping.items()
-    }
-    result["output_mapping"] = {
-        name: _output_to_mapping(value) for name, value in step.output_mapping.items()
-    }
-    return result
-
-
-def _sequence_to_mapping(sequence: SequenceDefinition) -> dict[str, Any]:
-    return {
-        "sequence_name": sequence.sequence_name,
-        "description": sequence.description,
-        "parameters": _thaw(sequence.parameters),
-        "outputs": _thaw(sequence.outputs),
-        "locals": _thaw(sequence.locals),
-        "setup_steps": [_step_to_mapping(step) for step in sequence.setup_steps],
-        "steps": [_step_to_mapping(step) for step in sequence.steps],
-        "teardown_steps": [_step_to_mapping(step) for step in sequence.teardown_steps],
-    }
-
-
-def dump_recipe(recipe: RecipeDefinition) -> str:
-    """Serialize a typed recipe to stable canonical multi-document YAML."""
-    if not isinstance(recipe, RecipeDefinition):
-        raise TypeError("dump_recipe expects a RecipeDefinition")
-    header = recipe.header
-    header_document: dict[str, Any] = {
-        "name": header.name,
-        "version": header.version,
-        "recipe_version": header.recipe_version,
-        "description": header.description,
-        "main_sequence": header.main_sequence,
-    }
-    if header.test_package is not None:
-        header_document["test_package"] = header.test_package
-    if header.continue_on_error is not None:
-        header_document["continue_on_error"] = header.continue_on_error
-    header_document["report"] = header.report
-    header_document["report_name_include_serial"] = header.report_name_include_serial
-    header_document["globals"] = _thaw(header.globals)
-    documents = [header_document] + [_sequence_to_mapping(sequence) for sequence in recipe.sequences]
+def dump_recipe(recipe: Recipe) -> str:
+    """Serialize a typed recipe as canonical multi-document YAML."""
+    if not isinstance(recipe, Recipe):
+        raise TypeError("dump_recipe expects a Recipe")
+    documents = [
+        recipe.header.model_dump(mode="python", by_alias=True, exclude_none=True),
+        *[
+            sequence.model_dump(mode="python", by_alias=True, exclude_none=True)
+            for sequence in recipe.sequences
+        ],
+    ]
     return yaml.safe_dump_all(
-        documents, explicit_start=True, sort_keys=False,
-        default_flow_style=False, allow_unicode=True,
+        documents,
+        explicit_start=True,
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
     )

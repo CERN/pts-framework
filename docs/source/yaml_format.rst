@@ -4,12 +4,10 @@
 
 .. important::
 
-   This page documents the recipe syntax currently accepted by the production
-   runtime (recipe language version 1).  The accepted future Pydantic design is
-   recipe language ``2.0.0``; see :doc:`recipe_language_architecture` for its
-   architecture and :doc:`_generated/recipe_language_reference` for its
-   generated syntax reference.  Do not use the version 2 example with
-   production execution until the integration phase is complete.
+   Production parsing and execution require recipe language ``2.0.0``. See
+   :doc:`recipe_language_architecture` for its flow and
+   :doc:`_generated/recipe_language_reference` for the generated syntax
+   reference. Bundled version 1 examples remain unmigrated and are rejected.
 
 .. _yaml_format:
 

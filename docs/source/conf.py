@@ -58,7 +58,7 @@ html_show_sourcelink = True
 
 def _generate_recipe_language_docs(app):
     """Generate the schema and its human reference for this Sphinx build."""
-    from spikes.recipe_pydantic.artifacts import write_artifacts
+    from pypts.recipe_artifacts import write_artifacts
 
     generated = Path(app.srcdir) / "_generated"
     write_artifacts(

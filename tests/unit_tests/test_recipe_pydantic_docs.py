@@ -8,23 +8,23 @@ import ast
 import json
 from pathlib import Path
 
-from spikes.recipe_pydantic.artifacts import (
+from pypts.recipe_artifacts import (
     main,
     render_json_schema,
     rendered_artifacts,
     write_artifacts,
 )
-from spikes.recipe_pydantic.parser import (
+from pypts.recipe_parser import (
     dump_recipe,
     parse_recipe_file,
     parse_recipe_text,
 )
-from spikes.recipe_pydantic.reference import render_reference
+from pypts.recipe_reference import render_reference
 
 ROOT = Path(__file__).parents[2]
 DOC_RECIPE = ROOT / "docs" / "source" / "_examples" / "recipe_v2.yml"
 ARCHITECTURE = ROOT / "docs" / "source" / "recipe_language_architecture.rst"
-REFERENCE_RENDERER = ROOT / "spikes" / "recipe_pydantic" / "reference.py"
+REFERENCE_RENDERER = ROOT / "src" / "pypts" / "recipe_reference.py"
 
 
 def _mapping(schema, name):
@@ -115,10 +115,10 @@ def test_documentation_recipe_is_warning_free_and_model_stable():
 def test_literalinclude_markers_are_unique_and_paired():
     architecture = ARCHITECTURE.read_text(encoding="utf-8")
     sources = {
-        "models.py": (ROOT / "spikes" / "recipe_pydantic" / "models.py").read_text(
+        "models.py": (ROOT / "src" / "pypts" / "recipe_language.py").read_text(
             encoding="utf-8"
         ),
-        "parser.py": (ROOT / "spikes" / "recipe_pydantic" / "parser.py").read_text(
+        "parser.py": (ROOT / "src" / "pypts" / "recipe_parser.py").read_text(
             encoding="utf-8"
         ),
     }

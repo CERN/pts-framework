@@ -1199,6 +1199,8 @@ class SSHUploadStep(Step):
     ):
         super().__init__(continue_on_error=continue_on_error, **kwargs)
         self.files = files
+        if permissions is None:
+            permissions = 0o755
         if isinstance(permissions, str):
             self.permissions = int(permissions, 8) if permissions.startswith("0") else int(permissions)
         else:

@@ -7,12 +7,9 @@ Recipe Language 2 Architecture
 
 .. important::
 
-   This page describes the accepted architecture for recipe language
-   ``2.0.0``.  The Pydantic implementation is currently an isolated reference
-   under ``spikes/recipe_pydantic``.  Production parsing, execution, YamVIEW,
-   and bundled recipes continue to use the version 1 implementation until the
-   integration phase is complete.  See :doc:`yaml_format` for current runtime
-   guidance.
+   Recipe language ``2.0.0`` is the only production parsing and execution
+   path. Bundled version 1 recipes remain intentionally unmigrated and are
+   rejected with migration diagnostics.
 
 Exact version 2 fields, types, defaults, and examples are in the generated
 :doc:`_generated/recipe_language_reference`.  The aggregate schema is also available as
@@ -30,12 +27,12 @@ maintain another field registry.
 
 The modules and artifacts have deliberately one-way dependencies::
 
-   models.py
+   pypts.recipe_language
       |  Pydantic fields and discriminated unions
       +--------------------------+
       |                          |
       v                          v
-   parser.py                JSON Schema generator
+   pypts.recipe_parser      JSON Schema generator
       |                          |
       |                          v
       |               recipe_language.schema.json
@@ -50,8 +47,8 @@ The modules and artifacts have deliberately one-way dependencies::
    recipe.py runtime            Sphinx
    construction
 
-``models.py`` never imports YAML, runtime classes, concrete steps, YamVIEW, or
-Sphinx.  ``parser.py`` depends on the models and PyYAML, but still does not
+``recipe_language`` never imports YAML, runtime classes, concrete steps, YamVIEW, or
+Sphinx.  ``recipe_parser`` depends on the models and PyYAML, but still does not
 import runtime or UI code.  Documentation generation reads the model only to
 create JSON Schema; the RST renderer reads the JSON generated for the current
 build and has no Pydantic or Sphinx dependency.
@@ -88,7 +85,7 @@ semantics therefore remain separate stages::
            |
            +--> canonical multi-document YAML
            |
-           +--> future recipe.py runtime construction
+           +--> recipe.py runtime construction
 
 ``parse_recipe_text`` and ``parse_recipe_file`` return ``ParseResult``.  A
 valid result owns an aggregate :ref:`recipe-v2-header` plus one or more
@@ -113,7 +110,7 @@ envelope and nearest YAML span.
 
 For example, an indexed :ref:`recipe-v2-input-direct` must hold a list:
 
-.. literalinclude:: ../../spikes/recipe_pydantic/models.py
+.. literalinclude:: ../../src/pypts/recipe_language.py
    :language: python
    :start-after: # docs:indexed-direct-start
    :end-before: # docs:indexed-direct-end
@@ -121,7 +118,7 @@ For example, an indexed :ref:`recipe-v2-input-direct` must hold a list:
 
 A Python method action requires ``method_name``:
 
-.. literalinclude:: ../../spikes/recipe_pydantic/models.py
+.. literalinclude:: ../../src/pypts/recipe_language.py
    :language: python
    :start-after: # docs:method-name-start
    :end-before: # docs:method-name-end
@@ -129,7 +126,7 @@ A Python method action requires ``method_name``:
 
 Likewise, :ref:`recipe-v2-step-waitstep` requires a named ``wait_time`` input:
 
-.. literalinclude:: ../../spikes/recipe_pydantic/models.py
+.. literalinclude:: ../../src/pypts/recipe_language.py
    :language: python
    :start-after: # docs:wait-time-start
    :end-before: # docs:wait-time-end
@@ -139,7 +136,7 @@ Other rules require context that no individual JSON object or JSON Schema can
 see.  They remain in one explicit semantic pass.  Sequence names must be
 unique and ``main_sequence`` must resolve:
 
-.. literalinclude:: ../../spikes/recipe_pydantic/parser.py
+.. literalinclude:: ../../src/pypts/recipe_parser.py
    :language: python
    :start-after: # docs:sequence-semantics-start
    :end-before: # docs:sequence-semantics-end
@@ -148,7 +145,7 @@ unique and ``main_sequence`` must resolve:
 Every :ref:`recipe-v2-step-sequencestep` target is then resolved across all
 loaded documents:
 
-.. literalinclude:: ../../spikes/recipe_pydantic/parser.py
+.. literalinclude:: ../../src/pypts/recipe_parser.py
    :language: python
    :start-after: # docs:nested-reference-start
    :end-before: # docs:nested-reference-end
@@ -157,7 +154,7 @@ loaded documents:
 Indexed lists on one step must have equal lengths, while
 :ref:`recipe-v2-output-passthrough` must be the only verdict-producing output:
 
-.. literalinclude:: ../../spikes/recipe_pydantic/parser.py
+.. literalinclude:: ../../src/pypts/recipe_parser.py
    :language: python
    :start-after: # docs:mapping-semantics-start
    :end-before: # docs:mapping-semantics-end
@@ -167,7 +164,7 @@ SSH rules need both recipe globals and execution order.  The semantic pass
 checks required connection globals and credentials, rejects an upload before a
 connection, and requires an opened connection to be closed:
 
-.. literalinclude:: ../../spikes/recipe_pydantic/parser.py
+.. literalinclude:: ../../src/pypts/recipe_parser.py
    :language: python
    :start-after: # docs:ssh-semantics-start
    :end-before: # docs:ssh-semantics-end
@@ -178,16 +175,16 @@ aggregate structure, not multi-document YAML safety, source spans, equality
 between sibling list lengths, reference resolution, or ordered lifecycle
 state.
 
-How YamVIEW will consume the language
---------------------------------------
+How YamVIEW consumes the language
+---------------------------------
 
-YamVIEW will treat the aggregate JSON Schema as its form description.  The
+YamVIEW treats the aggregate JSON Schema as its form description.  The
 ``Step``, ``InputMapping``, and ``OutputMapping`` discriminator maps enumerate
 available variants; referenced definitions provide properties, required
 fields, strict types, defaults, descriptions, examples, and allowed literal
 values.
 
-The intended editor flow is::
+The editor flow is::
 
    generated/published JSON Schema
            |
@@ -210,10 +207,10 @@ not own supported step names or field rules.  Whole-recipe validation always
 goes through the parser so semantic rules and YAML diagnostics are identical
 between YamVIEW, command-line tools, and runtime loading.
 
-How the sequencer will consume the model
-----------------------------------------
+How the sequencer consumes the model
+------------------------------------
 
-The sequencer integration begins only after parsing succeeds.  It receives the
+Runtime construction begins only after parsing succeeds.  It receives the
 aggregate typed model, not raw YAML or loosely typed dictionaries::
 
    ParseResult.require_recipe()
@@ -237,27 +234,23 @@ aggregate typed model, not raw YAML or loosely typed dictionaries::
          v
       setup_steps -> steps -> teardown_steps
 
-This is an evolution of the runtime construction that already exists in
-``recipe.py``; it is not a separate adapter module.  Today ``Recipe`` loads raw
-YAML documents, ``Sequence`` iterates step dictionaries, and
-``Step.build_step()`` validates each dictionary before selecting an executable
-class from ``steps.py``.  The integration changes the input to that path:
-``Recipe`` receives the validated aggregate model, ``Sequence`` iterates typed
-definitions, and ``Step.build_step()`` becomes a small typed factory.
+This is implemented in the existing runtime construction path, not a separate
+adapter module. ``Recipe`` receives the validated aggregate model, ``Sequence``
+iterates typed definitions, and ``Step.build_step()`` is the sole typed factory
+that selects an executable class from ``steps.py``.
 
 The runtime registry remains because a canonical discriminator such as
 ``PythonModuleStep`` must be associated with the Python class that implements
 its behavior.  It is a behavior registry, not a second language schema: field
 names, types, defaults, and structural rules remain exclusively in the
-Pydantic models.  A completeness test will require every authorable model
+Pydantic models.  A completeness test requires every authorable model
 discriminator to have exactly one executable implementation.
 
 Concrete ``_step()`` methods in ``steps.py`` continue to own execution.  For
 example, the executable ``PythonModuleStep`` still imports and invokes Python
-code; it no longer needs to validate an untrusted recipe dictionary.  Common
-definition fields can be passed through one base ``Step.from_definition()``
-implementation, with concrete overrides only when runtime state differs from
-authored data.  ``IndexedStep`` remains a runtime-generated wrapper and is
+code; it no longer validates an untrusted recipe dictionary. Common definition
+fields are dumped once by ``Step.build_step()`` and passed to the existing
+constructors. ``IndexedStep`` remains a runtime-generated wrapper and is
 never added to the authorable model union.
 
 Synthetic runtime operations are also constructed directly.  For example,
@@ -273,8 +266,8 @@ Canonical documentation recipe
 This documentation-owned fixture demonstrates the version 2 header, two
 sequences, nested execution, canonical step names, explicit discriminators,
 indexed input, every input variant, and representative verdict, storage,
-image, and passthrough outputs.  Tests validate and round-trip it with the
-spike.  It is not a production bundled recipe.
+image, and passthrough outputs. Tests validate and round-trip it with the
+production parser. It is not a bundled recipe.
 
 .. literalinclude:: _examples/recipe_v2.yml
    :language: yaml
@@ -302,11 +295,9 @@ directory under ``docs/source``.  The schema is copied into the HTML output as a
 download, and the generated RST is included in the toctree.  Neither generated
 file is maintained manually or treated as a committed source artifact.
 
-The documentation environment therefore installs Pydantic.  CI and any
-documentation build image must install the ``doc`` extra and include the model,
-schema generator, and JSON-only renderer sources.  This is a build-time
-dependency for Phase 5; it does not make Pydantic a production runtime
-dependency by itself.
+Pydantic is a core production dependency. CI and any documentation build image
+must install the ``doc`` extra and include the model, schema generator, and
+JSON-only renderer sources.
 
 When adding a step or mapping, update its Pydantic model and discriminated
 union, add an independent round-trip fixture, and run the documentation build.

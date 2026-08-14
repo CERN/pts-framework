@@ -29,7 +29,6 @@ COPY pyproject.toml README.md ./
 COPY src ./src
 COPY tests ./tests
 COPY docs ./docs
-COPY spikes/recipe_pydantic ./spikes/recipe_pydantic
 
 RUN python -m pip install --no-cache-dir --upgrade pip \
     && python -m pip install --no-cache-dir ".[test,doc]" build

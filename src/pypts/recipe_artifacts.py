@@ -1,4 +1,7 @@
-"""Generate or check the documentation artifacts for recipe language 2.0."""
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+"""Generate or check production recipe-language documentation artifacts."""
 
 from __future__ import annotations
 
@@ -8,8 +11,8 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .models import Recipe
-from .reference import render_reference
+from pypts.recipe_language import Recipe
+from pypts.recipe_reference import load_schema, render_reference
 
 ROOT = Path(__file__).parents[2]
 DEFAULT_GENERATED_DIR = ROOT / "docs" / "source" / "_generated"
@@ -18,7 +21,6 @@ DEFAULT_REFERENCE_PATH = DEFAULT_GENERATED_DIR / "recipe_language_reference.rst"
 
 
 def render_json_schema() -> str:
-    """Render deterministic JSON Schema from the accepted Pydantic model."""
     schema = Recipe.model_json_schema(by_alias=True, mode="validation")
     schema["$comment"] = (
         "SPDX-FileCopyrightText: 2026 CERN <home.cern>; "
@@ -29,22 +31,20 @@ def render_json_schema() -> str:
 
 def rendered_artifacts() -> tuple[str, str]:
     schema_text = render_json_schema()
-    reference_text = render_reference(json.loads(schema_text))
-    return schema_text, reference_text
+    return schema_text, render_reference(json.loads(schema_text))
 
 
 def write_artifacts(
     schema_path: str | Path = DEFAULT_SCHEMA_PATH,
     reference_path: str | Path = DEFAULT_REFERENCE_PATH,
 ) -> None:
+    """Write schema first, then render RST from that exact staged file."""
     schema_path = Path(schema_path)
     reference_path = Path(reference_path)
     schema_path.parent.mkdir(parents=True, exist_ok=True)
     reference_path.parent.mkdir(parents=True, exist_ok=True)
-
     schema_path.write_text(render_json_schema(), encoding="utf-8")
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    reference_path.write_text(render_reference(schema), encoding="utf-8")
+    reference_path.write_text(render_reference(load_schema(schema_path)), encoding="utf-8")
 
 
 def check_artifacts(
@@ -62,16 +62,12 @@ def check_artifacts(
     return current == expected
 
 
-def _parser() -> argparse.ArgumentParser:
+def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--check", action="store_true", help="fail if either artifact is stale")
+    parser.add_argument("--check", action="store_true")
     parser.add_argument("--schema", type=Path, default=DEFAULT_SCHEMA_PATH)
     parser.add_argument("--reference", type=Path, default=DEFAULT_REFERENCE_PATH)
-    return parser
-
-
-def main(argv: Sequence[str] | None = None) -> int:
-    arguments = _parser().parse_args(argv)
+    arguments = parser.parse_args(argv)
     if arguments.check:
         if check_artifacts(arguments.schema, arguments.reference):
             return 0
@@ -82,8 +78,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     except OSError as error:
         print(f"Could not write recipe documentation artifacts: {error}", file=sys.stderr)
         return 2
-    print(f"Wrote {arguments.schema}")
-    print(f"Wrote {arguments.reference}")
     return 0
 
 

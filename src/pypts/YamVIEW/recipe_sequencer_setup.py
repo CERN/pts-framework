@@ -345,68 +345,22 @@ class SequencerWidget(QWidget):
             self.current_setup_window.close()
             self.current_setup_window.deleteLater()
             self.current_setup_window = None
-         # Identify type and extract node data
+        # Existing canonical data is rendered by the same schema-driven form
+        # used for new steps.
         node = step_data.get("_node", {})
-        step_type = node.get("steptype").lower()
-        step_name = node.get("step_name", "Unnamed Step")
         step_id = step_data.get("_id", None)
 
         self.current_setup_window = Step_setup()
         self.current_setup_window.AlreadyID = step_id
-        match step_type:
-            case "pythonmodulestep":
-                self.loaded_step_parameters(step_name, node=node, method =node.get("action_type", "method"), gui_name="PythonModuleStep")
-                self.current_setup_window.input_mapping_widget.no_extraSteps = True
-                self.current_setup_window.input_mapping_widget.load_existing_data(node.get("input_mapping", {}))
-                self.current_setup_window.output_mapping_widget.__dict__.update(Output = True)
-                self.current_setup_window.output_mapping_widget.load_existing_data(node.get("output_mapping", {}))
-                self.current_setup_window.finished.connect(lambda result: self.on_edit_window_closed(result))
-                self.current_setup_window.show()
-            case "userinteractionstep":
-                self.loaded_step_parameters(step_name, node=node, gui_name="UserInteractionStep")
-                self.current_setup_window.input_mapping_widget.__dict__.update(allow_message=True, allow_image=True, allow_options=True, no_extraSteps=True)
-                self.current_setup_window.input_mapping_widget.load_existing_data(node.get("input_mapping", {}))
-                self.current_setup_window.output_mapping_widget.__dict__.update(Output = True, no_extraSteps=False)
-                self.current_setup_window.output_mapping_widget.load_existing_data(node.get("output_mapping", {}))
-                self.current_setup_window.finished.connect(lambda result: self.on_edit_window_closed(result))
-                self.current_setup_window.show()
-            case "waitstep":
-                self.loaded_step_parameters(step_name, node=node, gui_name="WaitStep")
-                self.current_setup_window.finished.connect(lambda result: self.on_edit_window_closed(result))
-                self.current_setup_window.show()
-            case "userloadingstep":
-                self.loaded_step_parameters(step_name, node=node, gui_name="UserLoadingStep")
-                self.current_setup_window.input_mapping_widget.__dict__.update(allow_message=True, allow_image=True, allow_options=True, no_extraSteps=True)
-                self.current_setup_window.input_mapping_widget.load_existing_data(node.get("input_mapping", {}))
-                self.current_setup_window.output_mapping_widget.__dict__.update(loader=True, no_extraSteps=False, specific_method="passfail")
-                self.current_setup_window.output_mapping_widget.load_existing_data(node.get("output_mapping", {}))
-                self.current_setup_window.finished.connect(lambda result: self.on_edit_window_closed(result))
-                self.current_setup_window.show()
-            case "userrunmethodstep":
-                self.loaded_step_parameters(step_name, node=node, gui_name="UserRunMethodStep")
-                self.current_setup_window.input_mapping_widget.__dict__.update(allow_message=True, allow_image=True, allow_options=True, allow_method = True)
-                self.current_setup_window.input_mapping_widget.load_existing_data(node.get("input_mapping", {}))
-                self.current_setup_window.output_mapping_widget.__dict__.update(Output = True)
-                self.current_setup_window.output_mapping_widget.load_existing_data(node.get("output_mapping", {}))
-                self.current_setup_window.finished.connect(lambda result: self.on_edit_window_closed(result))
-                self.current_setup_window.show()
-            case "userwritestep":
-                self.loaded_step_parameters(step_name, node=node, gui_name="UserWriteStep")
-                #self.current_setup_window.input_mapping_widget.__dict__.update(allow_message=True, allow_image=True, allow_options=True, allow_method = True)
-                #self.current_setup_window.input_mapping_widget.load_existing_data(node.get("input_mapping", {}))
-                #self.output_mapping_widget = self.InOutputMappingWidget( output = True)
-                #self.current_setup_window.output_mapping_widget.load_existing_data(node.get("output_mapping", {}))
-                self.current_setup_window.finished.connect(lambda result: self.on_edit_window_closed(result))
-                self.current_setup_window.show()
-            case "sshconnectstep":
-                self.current_setup_window.clear_layout(self.current_setup_window.step_specific_container)
-                self.loaded_step_parameters(step_name, node=node,gui_name="SSHConnectStep")
-                self.current_setup_window.load_existing_globals(data=self.preamble_globals)
-                self.current_setup_window.finished.connect(lambda result: self.on_edit_window_closed(result))
-                self.current_setup_window.show()
-            
-            case _:
-                QMessageBox.warning(self, "Unsupported Step", f"Editing not yet supported for '{step_type}'.")
+        try:
+            self.current_setup_window.load_definition(node)
+        except (KeyError, ValueError) as error:
+            QMessageBox.warning(self, "Invalid Step", str(error))
+            return
+        self.current_setup_window.finished.connect(
+            lambda result: self.on_edit_window_closed(result)
+        )
+        self.current_setup_window.show()
 
     def on_edit_window_closed(self, result):
         if result == QDialog.Accepted:

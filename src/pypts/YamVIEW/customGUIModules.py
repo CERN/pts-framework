@@ -285,7 +285,7 @@ class RecipeCreatorDialog(QDialog):
         return {
             'name': self.name_field.text(),
             'version': "0.0.1",  # hardcoded
-            'recipe_version': "1.0.0",  # hardcoded
+            'recipe_version': "2.0.0",
             'description': self.description_field.text(),
             'main_sequence': self.sequence_name_field.text(),
             'num_steps': self.num_steps_field.value(),
@@ -344,8 +344,8 @@ class RecipeCreatorApp(QWidget):
             'steptype': 'UserInteractionStep',
                 'step_name': f'Setupstep',
                 'description': f'Empty setupstep',
-                'skip': 'False',
-                'continue_on_error': 'true',
+                'skip': False,
+                'continue_on_error': True,
                 'input_mapping': {
                     'message': {'type': 'direct', 'value': 'Tell the cook what to do'},
                     'options': {'type': 'direct', 'value': [{'yes': ''}, {'no': ''}]}
@@ -360,8 +360,8 @@ class RecipeCreatorApp(QWidget):
                 'steptype': 'UserInteractionStep',
                 'step_name': f'Step {i + 1}',
                 'description': f'Step {i + 1} description',
-                'skip': 'False',
-                'continue_on_error': 'true',
+                'skip': False,
+                'continue_on_error': True,
                 'input_mapping': {
                     'message': {'type': 'direct', 'value': 'Tell the cook what to do'},
                     'options': {'type': 'direct', 'value': [{'yes': ''}, {'no': ''}]}
@@ -375,8 +375,8 @@ class RecipeCreatorApp(QWidget):
             'steptype': 'UserInteractionStep',
                 'step_name': f'Teardownstep',
                 'description': f'Empty teardown step. Doesnt do anything',
-                'skip': 'False',
-                'continue_on_error': 'true',
+                'skip': False,
+                'continue_on_error': True,
                 'input_mapping': {
                     'message': {'type': 'direct', 'value': 'This is where you functions that are required to run after every test, even if it fails in the middle. fx closing SSH connection'},
                     'options': {'type': 'direct', 'value': [{'yes': ''}, {'no': ''}]}
@@ -396,7 +396,13 @@ class RecipeCreatorApp(QWidget):
         # REUSE-IgnoreEnd
 
         # Generate YAML
-        yaml_body = yaml.dump_all([header, sequence], sort_keys=False)
+        from pypts.recipe_language import Recipe as RecipeDefinition
+        from pypts.recipe_parser import dump_recipe
+
+        definition = RecipeDefinition.model_validate(
+            {"header": header, "sequences": [sequence]}
+        )
+        yaml_body = dump_recipe(definition)
 
         # Combine SPDX header and YAML body
         yaml_string = spdx_header + yaml_body

@@ -38,8 +38,9 @@ from datetime import datetime
 import webbrowser
 from pypts.YamVIEW.styles import *
 from pypts.YamVIEW.verify_recipe import *
+from pypts.recipe_parser import dump_recipe, parse_recipe_text
 import sys
-from PySide6.QtGui import QTextCharFormat, QFont
+from PySide6.QtGui import QColor, QTextCharFormat, QFont
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from pypts.YamVIEW.recipe_sequencer_setup import *
@@ -298,6 +299,23 @@ class RecipeEditorMainMenu(QMainWindow):
         self.yaml_viewer.ensureLineVisible(line_num)
         pass
 
+    def highlight_diagnostic(self, diagnostic):
+        """Highlight the exact parser span for one editor diagnostic."""
+        if diagnostic.span is None:
+            return
+        selection = QTextEdit.ExtraSelection()
+        cursor = self.yaml_viewer.textCursor()
+        cursor.setPosition(diagnostic.span.start.offset)
+        cursor.setPosition(
+            max(diagnostic.span.start.offset + 1, diagnostic.span.end.offset),
+            QTextCursor.MoveMode.KeepAnchor,
+        )
+        selection.cursor = cursor
+        selection.format.setBackground(QColor("#ffb3b3"))
+        self.yaml_viewer.setExtraSelections([selection])
+        self.yaml_viewer.setTextCursor(cursor)
+        self.yaml_viewer.ensureCursorVisible()
+
     def update_yaml_viewer(self):
         self.temporary_recipe_contents = self.sanitize_booleans(self.temporary_recipe_contents)
         self.yaml_viewer.setText(self.temporary_recipe_contents)
@@ -510,9 +528,9 @@ class RecipeEditorMainMenu(QMainWindow):
             # Validate recipe
             validation_result, description = self.validate_temporary_recipe_contents()
             if not validation_result:
-                if not self.ask_save_invalid_file():
-                    self.log("⚠️ Save aborted.")
-                    return
+                self.log("⚠️ Canonical save is blocked until the recipe validates as version 2.0.0.")
+                self.log(description)
+                return
 
         except Exception as e:
             self.log(f"❌ Recipe validation failed: {e}")
@@ -533,7 +551,9 @@ class RecipeEditorMainMenu(QMainWindow):
             # Extract data from the text view
             try:
                 # data = self.extract_treeView_to_data()
-                data = self.temporary_recipe_contents
+                data = dump_recipe(
+                    parse_recipe_text(self.temporary_recipe_contents, "<editor>").require_recipe()
+                )
             except Exception as e:
                 raise RuntimeError(f"Failed to extract data from the text editor: {e}")
             try:
@@ -569,9 +589,9 @@ class RecipeEditorMainMenu(QMainWindow):
             # Validate recipe
             validation_result, description = self.validate_temporary_recipe_contents()
             if not validation_result:
-                if not self.ask_save_invalid_file():
-                    self.log("⚠️ Save aborted.")
-                    return
+                self.log("⚠️ Canonical save is blocked until the recipe validates as version 2.0.0.")
+                self.log(description)
+                return
 
             if not self.current_file_path:
                 self.log("⚠️ Save aborted, no YAML file selected.")
@@ -580,7 +600,9 @@ class RecipeEditorMainMenu(QMainWindow):
             # Extract data from text view
             try:
                 # data = self.extract_treeView_to_data()
-                data = self.temporary_recipe_contents
+                data = dump_recipe(
+                    parse_recipe_text(self.temporary_recipe_contents, "<editor>").require_recipe()
+                )
             except Exception as e:
                 raise RuntimeError(f"Failed to extract data from the text view: {e}")
 
@@ -787,9 +809,12 @@ class RecipeEditorMainMenu(QMainWindow):
         return validation_result
 
     def validate_temporary_recipe_contents(self):
+        parsed = parse_recipe_text(self.temporary_recipe_contents, "<editor>")
         result, description = validate_recipe_string_variable(self.temporary_recipe_contents)
         if result == True:
             self.last_valid_recipe = self.temporary_recipe_contents
+        elif parsed.diagnostics and parsed.diagnostics[0].span is not None:
+            self.highlight_diagnostic(parsed.diagnostics[0])
         return result, description
 
     def open_recipe(self):
@@ -826,23 +851,29 @@ class RecipeEditorMainMenu(QMainWindow):
 
                 self.yaml_parser.preserve_quotes = True
 
+                parsed = parse_recipe_text(raw_text, file_path)
                 self.enable_recipe_verification = False
                 self.update_yaml_viewer()
-                self.update_yaml_treeview()
                 self.enable_recipe_verification = True
 
-                self.log(f"✅ Loaded {len(self.yaml_documents)} document(s) from: {file_path}")
-
                 try:
-                    self.temporary_recipe_contents = self.yaml_viewer.toPlainText()
-                    validation_result, description = self.validate_temporary_recipe_contents()
-                    if (validation_result == True):
+                    validation_result = parsed.is_valid
+                    description = "\n".join(format_diagnostic(item) for item in parsed.diagnostics)
+                    if validation_result:
+                        self.update_yaml_treeview()
+                        self.last_valid_recipe = raw_text
                         self.show_recipe_ok("✅ Recipe is valid")
                     else:
+                        self.yaml_documents = []
+                        self.sequencer.set_yaml_data([])
                         self.show_recipe_error("Opened recipe is invalid!")
                         self.log(description)
+                        if parsed.diagnostics and parsed.diagnostics[0].span is not None:
+                            self.highlight_diagnostic(parsed.diagnostics[0])
                 except Exception as e:
                     self.log(f"❌ YAML verification failed, {e}")
+
+                self.log(f"Loaded recipe text from: {file_path}")
 
 
                 self.stacked_layout.setCurrentIndex(1)
@@ -1025,7 +1056,7 @@ class RecipeEditorMainMenu(QMainWindow):
 # done 1.0 - fix the small gui imperfections
 # done 1.0 - Some gui and UX improvements
 # done 1.0 - Create new recipe from the template
-# done 1.0 - create a new helper file recipe_rules.py, where we can have yaml field type descriptions etc
+# done 1.0 - derive YAML field descriptions from the production schema
 # done 1.0 - Recipe interactive generator - one sequence, multiple steps
 # done 1.0 - increase 1st column size
 # done 1.0 - easy way to set the YamView application

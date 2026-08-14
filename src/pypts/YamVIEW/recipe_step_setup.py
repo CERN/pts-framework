@@ -9,6 +9,276 @@ from PySide6.QtWidgets import (QDialog,QFileDialog, QComboBox,
                                 QPushButton,QLineEdit,QTextEdit,QCheckBox, QHBoxLayout, QMessageBox,QWidget,QTableWidgetItem,QTableWidget,
                                 QAbstractItemView, QScrollArea)
 import os, uuid
+import json
+from typing import Any
+
+from pydantic import TypeAdapter
+
+from pypts.recipe_language import Recipe as RecipeDefinition
+from pypts.recipe_language import Step as AuthorableStepDefinition
+
+
+def recipe_form_schema() -> dict[str, Any]:
+    """Return the production aggregate schema used to build YamVIEW forms."""
+    return RecipeDefinition.model_json_schema(by_alias=True, mode="validation")
+
+
+def resolve_schema(schema: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
+    """Resolve a local JSON Schema reference without a parallel registry."""
+    while "$ref" in node:
+        prefix = "#/$defs/"
+        reference = node["$ref"]
+        if not reference.startswith(prefix):
+            raise ValueError(f"Unsupported schema reference: {reference}")
+        node = schema["$defs"][reference.removeprefix(prefix)]
+    return node
+
+
+def discriminator_schemas(name: str, schema: dict[str, Any] | None = None):
+    """Map discriminator values to their resolved model schemas."""
+    schema = schema or recipe_form_schema()
+    definition = schema["$defs"][name]
+    mapping = definition["discriminator"]["mapping"]
+    return {key: resolve_schema(schema, {"$ref": reference}) for key, reference in mapping.items()}
+
+
+def schema_widget_kind(field: dict[str, Any]) -> str:
+    """Select a primitive or structured editor solely from JSON Schema type."""
+    if "enum" in field or "const" in field:
+        return "choice"
+    variants = field.get("anyOf", [])
+    kinds = {item.get("type") for item in variants}
+    kind = field.get("type")
+    if kind == "boolean":
+        return "boolean"
+    if kind in {"integer", "number"}:
+        return "number"
+    if kind == "string":
+        return "text"
+    if kind in {"array", "object"} or kinds & {"array", "object"} or not (kind or kinds):
+        return "structured"
+    return "text"
+
+
+def recipe_form_description(schema: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Describe selectors and fields directly from the production JSON Schema."""
+    schema = schema or recipe_form_schema()
+
+    def variants(name: str):
+        result = {}
+        for discriminator, definition in discriminator_schemas(name, schema).items():
+            required = set(definition.get("required", []))
+            result[discriminator] = {
+                "title": definition.get("title", discriminator),
+                "description": definition.get("description", ""),
+                "fields": {
+                    field_name: {
+                        **field_schema,
+                        "required": field_name in required,
+                        "widget": schema_widget_kind(field_schema),
+                    }
+                    for field_name, field_schema in definition.get("properties", {}).items()
+                },
+            }
+        return result
+
+    return {
+        "steps": variants("Step"),
+        "inputs": variants("InputMapping"),
+        "outputs": variants("OutputMapping"),
+    }
+
+
+def build_schema_widget(field: dict[str, Any], parent=None):
+    """Build a primitive or structured editor from one resolved field schema."""
+    mapping_reference = field.get("additionalProperties", {}).get("$ref", "")
+    if mapping_reference.endswith("/InputMapping"):
+        return DiscriminatedMappingWidget("inputs", parent)
+    if mapping_reference.endswith("/OutputMapping"):
+        return DiscriminatedMappingWidget("outputs", parent)
+    kind = schema_widget_kind(field)
+    if kind == "choice":
+        widget = QComboBox(parent)
+        values = field.get("enum", [field.get("const")])
+        for value in values:
+            widget.addItem(str(value), value)
+    elif kind == "boolean":
+        widget = QCheckBox(parent)
+        widget.setChecked(bool(field.get("default", False)))
+    elif kind == "structured":
+        widget = QTextEdit(parent)
+        if "default" in field:
+            widget.setPlainText(json.dumps(field["default"], ensure_ascii=False))
+        widget.setMaximumHeight(90)
+    else:
+        widget = QLineEdit(parent)
+        if "default" in field and field["default"] is not None:
+            widget.setText(str(field["default"]))
+    details = field.get("description", "")
+    if field.get("examples"):
+        details += f" Example: {field['examples'][0]!r}."
+    widget.setToolTip(details)
+    return widget
+
+
+class SchemaFormWidget(QWidget):
+    """Generic YamVIEW form whose fields come entirely from JSON Schema."""
+
+    def __init__(self, variant: dict[str, Any], parent=None):
+        super().__init__(parent)
+        self.variant = variant
+        self.field_widgets = {}
+        layout = QVBoxLayout(self)
+        description = variant.get("description")
+        if description:
+            layout.addWidget(QLabel(description))
+        for name, field in variant.get("fields", {}).items():
+            suffix = " *" if field.get("required") else ""
+            label = QLabel(f"{name}{suffix}")
+            label.setToolTip(field.get("description", ""))
+            widget = build_schema_widget(field, self)
+            self.field_widgets[name] = widget
+            layout.addWidget(label)
+            layout.addWidget(widget)
+
+    def values(self) -> dict[str, Any]:
+        """Read authorable values from the schema-selected controls."""
+        values = {}
+        fields = self.variant["fields"]
+        for name, widget in self.field_widgets.items():
+            field = fields[name]
+            if isinstance(widget, DiscriminatedMappingWidget):
+                value = widget.values()
+            elif isinstance(widget, QComboBox):
+                value = widget.currentData()
+            elif isinstance(widget, QCheckBox):
+                value = widget.isChecked()
+            elif isinstance(widget, QTextEdit):
+                text = widget.toPlainText().strip()
+                if not text:
+                    if "default" not in field and not field.get("required"):
+                        continue
+                    value = field.get("default")
+                else:
+                    value = json.loads(text)
+            else:
+                text = widget.text().strip()
+                if not text and not field.get("required"):
+                    continue
+                value = text
+                if field.get("type") in {"integer", "number"}:
+                    value = json.loads(text)
+            values[name] = value
+        return values
+
+    def load_values(self, values: dict[str, Any]) -> None:
+        """Populate controls from an existing canonical step mapping."""
+        for name, value in values.items():
+            widget = self.field_widgets.get(name)
+            if widget is None:
+                continue
+            if isinstance(widget, DiscriminatedMappingWidget):
+                widget.load_values(value)
+            elif isinstance(widget, QComboBox):
+                index = widget.findData(value)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+            elif isinstance(widget, QCheckBox):
+                widget.setChecked(bool(value))
+            elif isinstance(widget, QTextEdit):
+                widget.setPlainText(json.dumps(value, ensure_ascii=False, indent=2))
+            else:
+                widget.setText("" if value is None else str(value))
+
+
+class DiscriminatedMappingWidget(QWidget):
+    """Editable mapping rows driven by an input/output discriminator schema."""
+
+    def __init__(self, mapping_kind: str, parent=None):
+        super().__init__(parent)
+        self.variants = recipe_form_description()[mapping_kind]
+        self.rows = []
+        self.layout = QVBoxLayout(self)
+        add_button = QPushButton("Add mapping")
+        add_button.clicked.connect(lambda: self.add_row())
+        self.layout.addWidget(add_button)
+
+    @staticmethod
+    def _clear(layout):
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+            elif item.layout() is not None:
+                DiscriminatedMappingWidget._clear(item.layout())
+
+    def add_row(self, name="", value=None):
+        value = value or {}
+        row_widget = QWidget(self)
+        row_layout = QVBoxLayout(row_widget)
+        heading = QHBoxLayout()
+        name_edit = QLineEdit(row_widget)
+        name_edit.setPlaceholderText("mapping name")
+        name_edit.setText(name)
+        type_combo = QComboBox(row_widget)
+        type_combo.addItems(self.variants)
+        mapping_type = value.get("type")
+        if mapping_type in self.variants:
+            type_combo.setCurrentText(mapping_type)
+        remove_button = QPushButton("Remove", row_widget)
+        heading.addWidget(name_edit)
+        heading.addWidget(type_combo)
+        heading.addWidget(remove_button)
+        row_layout.addLayout(heading)
+        form_layout = QVBoxLayout()
+        row_layout.addLayout(form_layout)
+        row = {
+            "widget": row_widget,
+            "name": name_edit,
+            "type": type_combo,
+            "form_layout": form_layout,
+            "form": None,
+            "value": value,
+        }
+        self.rows.append(row)
+        self.layout.insertWidget(self.layout.count() - 1, row_widget)
+
+        def render(discriminator):
+            self._clear(form_layout)
+            form = SchemaFormWidget(self.variants[discriminator], row_widget)
+            row["form"] = form
+            form_layout.addWidget(form)
+            if row["value"].get("type") == discriminator:
+                form.load_values(row["value"])
+            row["value"] = {}
+
+        def remove():
+            self.rows.remove(row)
+            row_widget.setParent(None)
+            row_widget.deleteLater()
+
+        type_combo.currentTextChanged.connect(render)
+        remove_button.clicked.connect(remove)
+        render(type_combo.currentText())
+
+    def values(self):
+        result = {}
+        for row in self.rows:
+            name = row["name"].text().strip()
+            if not name:
+                raise ValueError("Mapping rows require a name.")
+            value = row["form"].values()
+            value["type"] = row["type"].currentText()
+            result[name] = value
+        return result
+
+    def load_values(self, values):
+        for row in tuple(self.rows):
+            self.rows.remove(row)
+            row["widget"].setParent(None)
+            row["widget"].deleteLater()
+        for name, value in values.items():
+            self.add_row(name, value)
 
 class Sequence_setup(QDialog):
     def __init__(self, steps, parent=None):
@@ -243,33 +513,25 @@ class Step_setup(QDialog):
 
         layout.addWidget(QLabel("Steptype"))
         self.list_steptype = QComboBox()
-        self.steptypes = [
-            "PythonModuleStep",
-            "UserInteractionStep",
-            "WaitStep",
-            "UserLoadingStep",
-            "UserRunMethodStep",
-            "UserWriteStep",
-            "SSHConnectStep",
-            "SSHCloseStep"
-        ]
+        self.steptypes = list(discriminator_schemas("Step"))
         self.list_steptype.addItems(self.steptypes)
         layout.addWidget(self.list_steptype)
 
         self.list_steptype.currentTextChanged.connect(self.on_step_type_changed)
         self._previous_step_type = self.list_steptype.currentText()
         self._skip_warning = False
+        self.form_description = recipe_form_description()
+        self.schema_form = None
 
         # Container for step-specific widgets
         self.step_specific_container = QVBoxLayout()
         container_widget = QWidget()
         container_widget.setLayout(self.step_specific_container)
-        self.setup_pythonmodulestep()
+        self._render_schema_step(self.list_steptype.currentText())
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(container_widget)
-        self.step_specific_container.addStretch()
         layout.addWidget(scroll)
 
         # OK/Cancel buttons
@@ -315,10 +577,22 @@ class Step_setup(QDialog):
         self._previous_step_type = step_type
         # Clear previous widgets
         self.clear_layout(self.step_specific_container)
-        # Call the corresponding setup function
-        func_name = f"setup_{step_type.lower()}"
-        if hasattr(self, func_name):
-            getattr(self, func_name)()
+        self._render_schema_step(step_type)
+
+    def _render_schema_step(self, step_type: str):
+        """Render the selected authorable step directly from JSON Schema."""
+        self.schema_form = SchemaFormWidget(self.form_description["steps"][step_type])
+        self.step_specific_container.addWidget(self.schema_form)
+        self.step_specific_container.addStretch()
+
+    def load_definition(self, node: dict[str, Any]) -> None:
+        """Load an existing canonical step into the schema-driven editor."""
+        step_type = node["steptype"]
+        self._skip_warning = True
+        self.list_steptype.setCurrentText(step_type)
+        self._skip_warning = False
+        self.schema_form.load_values(node)
+        self.setWindowTitle(f"Edit Step: {node.get('step_name', step_type)}")
         
     def clear_layout(self, layout):
         while layout.count():
@@ -675,6 +949,34 @@ class Step_setup(QDialog):
             StepID = self.AlreadyID
         else:
             StepID = str(uuid.uuid4())
+
+        try:
+            authorable = self.schema_form.values()
+            authorable["steptype"] = step_type
+            definition = TypeAdapter(AuthorableStepDefinition).validate_python(authorable)
+        except Exception as error:
+            self.setStyleSheet("""QMessageBox QPushButton { color: black;}""")
+            QMessageBox.warning(self, "Invalid step", str(error))
+            return
+
+        node = definition.model_dump(mode="python", by_alias=True, exclude_none=True)
+        self.result_step = {
+            "steptype": step_type,
+            "step_name": definition.step_name,
+            "_parent": "main_folder",
+            "_node": node,
+            "_id": StepID,
+        }
+        self.global_variables = {}
+        self.local_variables = {}
+        globals_in, locals_in = self.extract_locals_globals(node["input_mapping"])
+        globals_out, locals_out = self.extract_locals_globals(node["output_mapping"])
+        self.global_variables.update(globals_in)
+        self.global_variables.update(globals_out)
+        self.local_variables.update(locals_in)
+        self.local_variables.update(locals_out)
+        super().accept()
+        return
 
         validate_method = f"validate_{step_type.lower()}"
         if hasattr(self, validate_method):
@@ -1128,20 +1430,8 @@ class Step_setup(QDialog):
 
             # direct/global/local
             row["type_combo"] = QComboBox()
-            if self.Output:
-                types = ["equals", "passthrough", "passfail", "range", "global", "local"]
-            elif self.loader:
-                types = ["global", "local"]
-            else:
-                types = ["direct", "global", "local"]
-            if self.allow_message:
-                types.append("message")
-            if self.allow_image:
-                types.append("image_path")
-            if self.allow_options:
-                types.append("options")
-            if self.allow_method:
-                types.append("method")
+            mapping_name = "OutputMapping" if self.Output else "InputMapping"
+            types = list(discriminator_schemas(mapping_name))
 
             row["type_combo"].addItems(types)
             

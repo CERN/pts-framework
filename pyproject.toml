@@ -39,6 +39,7 @@ dependencies = [
   "pymeasure==0.15.0",
   "pyserial",
   "paramiko",
+  "pydantic>=2.13,<3",
   "pyvisa"
 ]
 
@@ -52,7 +53,6 @@ test = [
 ]
 doc = [
   "Sphinx",
-  "pydantic>=2.13,<3",
 ]
 dev = [
   # Dependencies for development of the project, such as type checkers,
