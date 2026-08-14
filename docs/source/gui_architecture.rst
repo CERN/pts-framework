@@ -158,6 +158,11 @@ responsibilities:
   types, defaults, and field descriptions.
 * ``ScintillaYamlEditor`` owns editable source text and diagnostic highlighting.
 
+The sequencer displays executable sequence documents only. The recipe-header
+document (historically labelled ``Preamble``) remains part of the internal
+aggregate and is editable in the YAML pane, but is not shown as an inactive
+sequencer row.
+
 Editor data flow
 ~~~~~~~~~~~~~~~~
 

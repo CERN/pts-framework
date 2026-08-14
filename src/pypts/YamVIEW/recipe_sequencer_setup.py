@@ -146,6 +146,8 @@ class SequencerWidget(QWidget):
         self.list_widget.clear()
 
         def add_node(node: dict[str, Any], indent: int = 0) -> None:
+            if node.get("steptype") == "preamble":
+                return
             is_folder = node.get("steptype") in FOLDER_TYPES | {"sequence_folder"}
             if is_folder:
                 key = self._node_key(node)
@@ -173,26 +175,20 @@ class SequencerWidget(QWidget):
                         descendant.setHidden(True)
                 return
 
-            if node.get("steptype") == "preamble":
-                item = QListWidgetItem()
-                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
-                item.setData(Qt.UserRole, node)
-                widget = _build_header_widget(node["step_name"], indent)
-            else:
-                item = QListWidgetItem()
-                item.setFlags(
-                    Qt.ItemIsEnabled
-                    | Qt.ItemIsSelectable
-                    | Qt.ItemIsDragEnabled
-                    | Qt.ItemIsDropEnabled
-                )
-                item.setData(Qt.UserRole, node)
-                block = StepBlock(node.get("step_name", "Unnamed step"), node)
-                widget = QFrame()
-                row = QHBoxLayout(widget)
-                row.setContentsMargins(indent + 4, 2, 4, 2)
-                row.addWidget(block)
-                widget.setMinimumHeight(block.minimumHeight() + 4)
+            item = QListWidgetItem()
+            item.setFlags(
+                Qt.ItemIsEnabled
+                | Qt.ItemIsSelectable
+                | Qt.ItemIsDragEnabled
+                | Qt.ItemIsDropEnabled
+            )
+            item.setData(Qt.UserRole, node)
+            block = StepBlock(node.get("step_name", "Unnamed step"), node)
+            widget = QFrame()
+            row = QHBoxLayout(widget)
+            row.setContentsMargins(indent + 4, 2, 4, 2)
+            row.addWidget(block)
+            widget.setMinimumHeight(block.minimumHeight() + 4)
             item.setSizeHint(_item_size_for(widget))
             self.list_widget.addItem(item)
             self.list_widget.setItemWidget(item, widget)

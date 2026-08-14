@@ -33,6 +33,11 @@ def test_open_valid_recipe_populates_sequencer_and_enables_save(qtbot):
     assert window.save_as_action.isEnabled()
     assert window.sequencer.steps[0]["steptype"] == "preamble"
     assert window.sequencer.steps[1]["steptype"] == "sequence_folder"
+    visible_types = {
+        window.sequencer.list_widget.item(index).data(Qt.UserRole).get("steptype")
+        for index in range(window.sequencer.list_widget.count())
+    }
+    assert "preamble" not in visible_types
 
 
 def test_structured_edit_preserves_exact_discriminator_and_stage(qtbot):

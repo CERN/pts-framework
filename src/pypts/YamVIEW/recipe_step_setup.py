@@ -87,11 +87,13 @@ def recipe_form_description(
 
     def variants(name: str) -> dict[str, Any]:
         result = {}
+        discriminator_field = schema["$defs"][name]["discriminator"]["propertyName"]
         for discriminator, definition in discriminator_schemas(name, schema).items():
             required = set(definition.get("required", []))
             result[discriminator] = {
                 "title": definition.get("title", discriminator),
                 "description": definition.get("description", ""),
+                "discriminator_field": discriminator_field,
                 "fields": {
                     field_name: {
                         **field_schema,
@@ -156,11 +158,17 @@ class SchemaFormWidget(QWidget):
         if description:
             layout.addWidget(QLabel(description))
         for name, field in variant.get("fields", {}).items():
+            if name == variant.get("discriminator_field"):
+                continue
             suffix = " *" if field.get("required") else ""
-            label = QLabel(f"{name}{suffix}")
-            label.setToolTip(field.get("description", ""))
             widget = build_schema_widget(field, self)
             self.field_widgets[name] = widget
+            if isinstance(widget, QCheckBox):
+                widget.setText(f"{name.replace('_', ' ').capitalize()}{suffix}")
+                layout.addWidget(widget)
+                continue
+            label = QLabel(f"{name}{suffix}")
+            label.setToolTip(field.get("description", ""))
             layout.addWidget(label)
             layout.addWidget(widget)
 

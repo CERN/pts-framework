@@ -3,6 +3,7 @@
 """Schema-driven YamVIEW form tests."""
 
 import pytest
+from PySide6.QtWidgets import QCheckBox, QMessageBox
 
 from pypts.recipe_language import (
     INPUT_MODELS,
@@ -60,6 +61,82 @@ def test_step_dialog_round_trips_discriminated_mapping_rows(qapp, qtbot):
     assert authored["input_mapping"]["wait_time"]["type"] == "direct"
     assert authored["input_mapping"]["wait_time"]["value"] == 0
     assert authored["output_mapping"]["verdict"]["type"] == "passfail"
+
+
+def test_discriminator_has_one_authoritative_selector(qtbot):
+    dialog = Step_setup()
+    qtbot.addWidget(dialog)
+
+    assert {
+        dialog.list_steptype.itemText(index)
+        for index in range(dialog.list_steptype.count())
+    } == set(recipe_form_description()["steps"])
+    assert "steptype" not in dialog.schema_form.field_widgets
+
+    mapping = DiscriminatedMappingWidget("inputs")
+    qtbot.addWidget(mapping)
+    mapping.add_row("value", {"type": "direct", "value": 1})
+    assert "type" not in mapping.rows[0]["form"].field_widgets
+
+
+def test_boolean_fields_are_labeled_clickable_and_serialized(qtbot):
+    dialog = Step_setup()
+    qtbot.addWidget(dialog)
+    dialog.load_definition(
+        {
+            "steptype": "UserInteractionStep",
+            "step_name": "Boolean options",
+            "description": "Exercise all common execution flags.",
+            "skip": True,
+            "critical": False,
+            "continue_on_error": True,
+            "input_mapping": {},
+            "output_mapping": {},
+        }
+    )
+
+    expected = {
+        "skip": ("Skip", True),
+        "critical": ("Critical", False),
+        "continue_on_error": ("Continue on error", True),
+    }
+    for name, (label, checked) in expected.items():
+        widget = dialog.schema_form.field_widgets[name]
+        assert isinstance(widget, QCheckBox)
+        assert widget.text() == label
+        assert widget.toolTip()
+        assert widget.isChecked() is checked
+        widget.click()
+
+    dialog.accept()
+    authored = dialog.result_step["_node"]
+    assert authored["skip"] is False
+    assert authored["critical"] is True
+    assert authored["continue_on_error"] is False
+
+
+def test_step_type_switch_uses_top_selector_and_honors_confirmation(qtbot, monkeypatch):
+    dialog = Step_setup()
+    qtbot.addWidget(dialog)
+    dialog.load_definition(
+        {
+            "steptype": "UserInteractionStep",
+            "step_name": "Switch me",
+            "description": "Keep common fields.",
+            "input_mapping": {},
+            "output_mapping": {},
+        }
+    )
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Cancel)
+    dialog.list_steptype.setCurrentText("UserWriteStep")
+    assert dialog.list_steptype.currentText() == "UserInteractionStep"
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.Ok)
+    dialog.list_steptype.setCurrentText("UserWriteStep")
+    assert dialog.list_steptype.currentText() == "UserWriteStep"
+    assert "steptype" not in dialog.schema_form.field_widgets
+    assert dialog.schema_form.values()["step_name"] == "Switch me"
 
 
 STEP_SAMPLES = {
