@@ -397,12 +397,12 @@ class RecipeCreatorApp(QWidget):
 
         # Generate YAML
         from pypts.recipe_language import Recipe as RecipeDefinition
-        from pypts.recipe_parser import dump_recipe
+        from pypts.recipe_parser import recipe_to_yaml
 
         definition = RecipeDefinition.model_validate(
             {"header": header, "sequences": [sequence]}
         )
-        yaml_body = dump_recipe(definition)
+        yaml_body = recipe_to_yaml(definition)
 
         # Combine SPDX header and YAML body
         yaml_string = spdx_header + yaml_body

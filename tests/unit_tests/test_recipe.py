@@ -3,6 +3,7 @@
 """Typed recipe-to-runtime construction and execution tests."""
 
 import queue
+from pathlib import Path
 
 import pytest
 from pydantic import TypeAdapter
@@ -18,7 +19,10 @@ from pypts.recipe import (
 )
 from pypts.recipe_language import STEP_DEFINITION_MODELS, StepDefinition
 from pypts.recipe_language import Recipe as RecipeDefinition
-from pypts.recipe_parser import RecipeParseError, dump_recipe
+from pypts.recipe_parser import RecipeParseError, recipe_to_yaml
+
+ROOT = Path(__file__).parents[2]
+BUNDLED_RECIPES = sorted((ROOT / "src" / "pypts" / "recipes").glob("*.yml"))
 
 
 def step_example(kind, **updates):
@@ -141,7 +145,7 @@ def test_recipe_from_definition_constructs_typed_runtime_state_without_reparse()
 
 def test_recipe_path_requires_v2_and_raises_structured_error(tmp_path):
     v2 = tmp_path / "v2.yml"
-    v2.write_text(dump_recipe(definition()), encoding="utf-8")
+    v2.write_text(recipe_to_yaml(definition()), encoding="utf-8")
     assert Recipe(v2).main_sequence == "Main"
 
     legacy = tmp_path / "v1.yml"
@@ -149,6 +153,30 @@ def test_recipe_path_requires_v2_and_raises_structured_error(tmp_path):
     with pytest.raises(RecipeParseError) as caught:
         Recipe(legacy)
     assert "unsupported-recipe-version" in {d.code for d in caught.value.diagnostics}
+
+
+@pytest.mark.parametrize("path", BUNDLED_RECIPES)
+def test_every_bundled_recipe_constructs_runtime_state(path):
+    recipe = Recipe(path)
+    assert recipe.definition.header.recipe_version == "2.0.0"
+    assert recipe.main_sequence in recipe.sequences
+
+
+@pytest.mark.parametrize("path", BUNDLED_RECIPES)
+def test_every_bundled_recipe_enters_execution_without_hardware(path, monkeypatch):
+    monkeypatch.setattr(pypts.recipe.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(
+        pypts.recipe.ExecutableSequenceStep,
+        "run",
+        lambda self, active_runtime, inputs, stop_event: ResultType.DONE,
+    )
+    active_runtime = runtime()
+    recipe = Recipe(path)
+
+    assert recipe.run(active_runtime) == []
+    assert active_runtime.recipe_name == recipe.name
+    assert active_runtime.recipe_file_name == path.name
+    Runtime.stop_event.clear()
 
 
 def test_registry_exactly_matches_step_definition_discriminators():

@@ -525,10 +525,17 @@ def parse_recipe_file(path: str | Path, encoding: str = "utf-8") -> ParseResult:
     return parse_recipe_text(text, str(source_path))
 
 
-def dump_recipe(recipe: Recipe) -> str:
-    """Serialize a typed recipe as canonical multi-document YAML."""
+def recipe_to_yaml(recipe: Recipe) -> str:
+    """Return deterministic multi-document YAML for a validated aggregate recipe.
+
+    This function performs no file I/O. It emits field aliases and model
+    defaults, excludes ``None`` values, and uses explicit YAML document
+    separators. Comments, quoting choices, and other source formatting are not
+    preserved. Parsing the returned text produces an aggregate definition
+    semantically equal to the validated input.
+    """
     if not isinstance(recipe, Recipe):
-        raise TypeError("dump_recipe expects a Recipe")
+        raise TypeError("recipe_to_yaml expects a Recipe")
     documents = [
         recipe.header.model_dump(mode="python", by_alias=True, exclude_none=True),
         *[

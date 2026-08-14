@@ -12,7 +12,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from pypts import recipe_language
+from pypts import recipe_language, recipe_parser
 from pypts.recipe_artifacts import (
     DEFAULT_REFERENCE_PATH,
     DEFAULT_SCHEMA_PATH,
@@ -25,14 +25,17 @@ from pypts.recipe_language import (
 )
 from pypts.recipe_parser import (
     RecipeParseError,
-    dump_recipe,
     parse_recipe_file,
     parse_recipe_text,
+    recipe_to_yaml,
 )
 from pypts.recipe_reference import render_reference
 
 ROOT = Path(__file__).parents[2]
 RECIPES = ROOT / "src" / "pypts" / "recipes"
+SETUP_TEMPLATES = ROOT / "src" / "pypts" / "examples" / "environment_setup_tools"
+MAINTAINED_RECIPES = sorted(RECIPES.glob("*.yml"))
+MAINTAINED_TEMPLATES = sorted(SETUP_TEMPLATES.glob("*/*.yml"))
 
 
 def test_step_definition_names_are_the_only_public_union_and_model_registry():
@@ -149,7 +152,7 @@ def recipe_for_step(step):
 def test_every_step_validates_serializes_and_reparses(model):
     first = parse_recipe_text(recipe_for_step(STEP_EXAMPLES[model.__name__]))
     assert first.is_valid, first.errors
-    second = parse_recipe_text(dump_recipe(first.require_recipe()))
+    second = parse_recipe_text(recipe_to_yaml(first.require_recipe()))
     assert second.is_valid, second.errors
     assert second.recipe == first.recipe
 
@@ -169,7 +172,7 @@ def test_every_input_mapping_validates_serializes_and_reparses(model):
     }
     first = parse_recipe_text(recipe_for_step(step))
     assert isinstance(first.require_recipe().sequences[0].steps[0].input_mapping["example"], model)
-    assert parse_recipe_text(dump_recipe(first.require_recipe())).recipe == first.recipe
+    assert parse_recipe_text(recipe_to_yaml(first.require_recipe())).recipe == first.recipe
 
 
 OUTPUT_EXAMPLES = {
@@ -190,7 +193,7 @@ def test_every_output_mapping_validates_serializes_and_reparses(model):
     }
     first = parse_recipe_text(recipe_for_step(step))
     assert isinstance(first.require_recipe().sequences[0].steps[0].output_mapping["example"], model)
-    assert parse_recipe_text(dump_recipe(first.require_recipe())).recipe == first.recipe
+    assert parse_recipe_text(recipe_to_yaml(first.require_recipe())).recipe == first.recipe
 
 
 def test_defaults_are_typed_dumped_and_models_are_frozen():
@@ -198,10 +201,30 @@ def test_defaults_are_typed_dumped_and_models_are_frozen():
     step = recipe.sequences[0].steps[0]
     assert step.skip is step.critical is step.continue_on_error is False
     assert recipe.header.report == "overwrite"
-    dumped = dump_recipe(recipe)
+    dumped = recipe_to_yaml(recipe)
     assert "report: overwrite" in dumped and "skip: false" in dumped
     with pytest.raises(ValidationError):
         step.skip = True
+
+
+def test_recipe_to_yaml_is_deterministic_explicit_and_formatting_destructive():
+    assert recipe_parser.recipe_to_yaml is recipe_to_yaml
+    assert not hasattr(recipe_parser, "dump_recipe")
+    text = recipe_for_step(STEP_EXAMPLES["UserInteractionStep"])
+    commented = "# This comment is intentionally not retained.\n" + text
+    recipe = parse_recipe_text(commented).require_recipe()
+
+    first = recipe_to_yaml(recipe)
+    second = recipe_to_yaml(recipe)
+
+    assert first == second
+    assert first.startswith("---\n")
+    assert first.count("---\n") == 2
+    assert "report: overwrite" in first
+    assert "# This comment" not in first
+    assert parse_recipe_text(first).require_recipe() == recipe
+    with pytest.raises(TypeError, match="recipe_to_yaml expects a Recipe"):
+        recipe_to_yaml({})
 
 
 def test_strict_types_unknown_fields_and_structural_rules_are_rejected():
@@ -276,6 +299,14 @@ def test_v1_migration_errors_are_aggregated_across_documents():
     assert codes.count("removed-sequence-field") == 2
     assert {"unsupported-recipe-version", "noncanonical-step-type", "missing-input-type"} <= set(codes)
     assert all(item.source_name == "legacy.yml" and item.span is not None for item in result.errors)
+
+
+def test_missing_recipe_version_has_a_clear_diagnostic():
+    missing_version = header()
+    del missing_version["recipe_version"]
+    result = parse_recipe_text(source(missing_version, sequence()))
+    finding = next(item for item in result.errors if item.path[-1:] == ("recipe_version",))
+    assert finding.code == "missing-field"
 
 
 def test_source_spans_point_to_fields_and_nearest_parent():
@@ -359,28 +390,21 @@ def test_ssh_context_and_ordering_are_semantic_rules():
     }
 
 
-@pytest.mark.parametrize(
-    "path",
-    sorted(
-        path for path in RECIPES.glob("*.yml")
-        if path.name != "subsequence_executions_draft.yml"
-    ),
-)
-def test_bundled_corpus_is_rejected_until_phase_7(path):
+@pytest.mark.parametrize("path", MAINTAINED_RECIPES + MAINTAINED_TEMPLATES)
+def test_every_maintained_recipe_and_setup_template_is_valid_v2(path):
     result = parse_recipe_file(path)
-    assert not result.is_valid
-    assert "unsupported-recipe-version" in {item.code for item in result.errors}
+    assert result.is_valid, result.errors
+    assert not result.diagnostics
+    assert result.require_recipe().header.recipe_version == "2.0.0"
 
 
-def test_raw_legacy_corpus_exposes_migration_diagnostics():
-    results = [
-        parse_recipe_file(path)
-        for path in RECIPES.glob("*.yml")
-        if path.name != "subsequence_executions_draft.yml"
-    ]
-    assert all("unsupported-recipe-version" in {item.code for item in result.errors} for result in results)
-    all_codes = {item.code for result in results for item in result.errors}
-    assert {"noncanonical-step-type", "missing-input-type", "removed-sequence-field"} <= all_codes
+@pytest.mark.parametrize("path", MAINTAINED_RECIPES)
+def test_every_maintained_recipe_is_semantically_stable_when_serialized(path):
+    first = parse_recipe_file(path).require_recipe()
+    serialized = recipe_to_yaml(first)
+    second = parse_recipe_text(serialized, f"serialized:{path.name}")
+    assert second.is_valid, second.errors
+    assert second.require_recipe() == first
 
 
 def test_generated_schema_and_reference_are_complete_and_current():

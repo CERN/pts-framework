@@ -3,11 +3,11 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 name: Comprehensive Example Test recipe
 version: 0.1.0
-recipe_version: 1.0.0
+recipe_version: 2.0.0
 description: A sample recipe demonstrating many different combinations of input/outputs.
 main_sequence: Comprehensive_IO_Types
 test_package: pypts
-report_name_include_serial: True #Setting this to true will add the serial number to the report name. This is useful when running multiple tests on the same day to easily differentiate them.
+report_name_include_serial: True # Optional; defaults to false. True adds the serial number to the report name.
 # continue_on_error: False # Overall policy. When present, it overrides step-level settings.
 globals:
   global_value: 45
@@ -70,6 +70,7 @@ steps:
   skip: false
   input_mapping:
     wait_time:
+      type: direct
       value: '3'
 
 
@@ -500,6 +501,7 @@ steps:
   skip: false
   input_mapping:
     wait_time:
+      type: direct
       value: '3'
   output_mapping: {}
 

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 name: Example Test Recipe
 version: 0.1.0
-recipe_version: 1.0.0
+recipe_version: 2.0.0
 description: A sample recipe demonstrating how to call functions from example_tests.py
 main_sequence: Main
 continue_on_error: true

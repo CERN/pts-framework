@@ -3,17 +3,17 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 # this section is related to the whole recipe.
-# we could define the name, version and description herem as well as the
-# continue_on_error flag, which could abort tests on failure
+# it defines the name, versions, description, and execution policy.
 name: package_based recipe
 version: 0.1.0
-recipe_version: 1.0.0
+recipe_version: 2.0.0
 description: a sample recipe demonstrating how to call functions from 
   example_tests.py in a minimal pypts setup
 main_sequence: main
 test_package: example_package
+# optional; when omitted, each step uses its own continue_on_error setting.
+# continue_on_error: false
 globals:
-  #continue_on_error: false #overall continue_on_error. if it exists, then it will overwrite specific step specifications for continue_on_error
   global_value: 45
   loadfile_key: 'file'
   cancel_key: 'cancel' #key used for buttons that wishes to stop steps.
@@ -42,14 +42,14 @@ outputs:
 setup_steps:
 
   #creates a threading holding the opened ssh connection so it can be called and used elsewhere. 
-  - steptype: sshconnectstep
+  - steptype: SSHConnectStep
     step_name: find the ssh client connection
     description: asking user to find the file needed
     continue_on_error: false
     skip: true
 # we define multiple step types. following implementations can be treated as examples
 steps:
-  - steptype: userinteractionstep
+  - steptype: UserInteractionStep
     step_name: are you all right?
     description: asking user for confirmation
     skip: false
@@ -70,7 +70,7 @@ steps:
       output:
         type: equals
         value: 'yes'
-  - steptype: pythonmodulestep
+  - steptype: PythonModuleStep
     step_name: other_test
     description: python existing method - expect pass
     action_type: method
@@ -83,7 +83,7 @@ steps:
       value:
         type: local
         local_name: some_value
-  - steptype: pythonmodulestep
+  - steptype: PythonModuleStep
     step_name: other_testa
     description: python non-existing method - expect error
     action_type: method
@@ -98,7 +98,7 @@ steps:
         local_name: test_value
     continue_on_error: true
 
-  - steptype: pythonmodulestep
+  - steptype: PythonModuleStep
     step_name: simple_output
     description: python method, while providing non-existing inputs - expect 
       error
@@ -115,7 +115,7 @@ steps:
         local_name: calculated_output
     continue_on_error: true
 
-  - steptype: pythonmodulestep
+  - steptype: PythonModuleStep
     step_name: test_to_run (check value 45)
     description: python existing method - invalid range
     action_type: method
@@ -133,7 +133,7 @@ steps:
         local_name: some_string
     continue_on_error: true
 
-  - steptype: pythonmodulestep
+  - steptype: PythonModuleStep
     step_name: range_test (valid range)
     description: python existing method - invalid range
     action_type: method
@@ -152,15 +152,16 @@ steps:
     output_mapping:
       compare:
         type: passfail
-  - steptype: waitstep
+  - steptype: WaitStep
     step_name: wait for 3s
     description: waiting 3 seconds to let user check confirm
     skip: true
     input_mapping:
       wait_time:
+        type: direct
         value: '3'
     output_mapping: {}
-  - steptype: pythonmodulestep
+  - steptype: PythonModuleStep
     step_name: run range_test (outside range)
     description: some description
     action_type: method
@@ -179,7 +180,7 @@ steps:
     output_mapping:
       compare:
         type: passfail
-  - steptype: pythonmodulestep
+  - steptype: PythonModuleStep
     step_name: generate error deliberately
     description: some description
     action_type: method
@@ -187,10 +188,10 @@ steps:
     method_name: generate_error
     input_mapping: {}
     output_mapping: {}
-  - steptype: sshclosestep
+  - steptype: SSHCloseStep
     step_name: sshclose
     description: describe the test in this box
-  - steptype: pythonmodulestep
+  - steptype: PythonModuleStep
     step_name: sinewave test (60 hz)
     description: generate a 60 hz sinewave, validate it via fft, and attach the plot to the report
     action_type: method
@@ -209,5 +210,6 @@ steps:
       chart:
         type: image
 teardown_steps:
-  - steptype: sshclosestep
+  - steptype: SSHCloseStep
     step_name: closes the ssh client
+    description: close the ssh connection opened during setup

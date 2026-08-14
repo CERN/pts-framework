@@ -8,6 +8,8 @@ import ast
 import json
 from pathlib import Path
 
+import pytest
+
 from pypts.recipe_artifacts import (
     main,
     render_json_schema,
@@ -15,14 +17,14 @@ from pypts.recipe_artifacts import (
     write_artifacts,
 )
 from pypts.recipe_parser import (
-    dump_recipe,
     parse_recipe_file,
     parse_recipe_text,
+    recipe_to_yaml,
 )
 from pypts.recipe_reference import render_reference
 
 ROOT = Path(__file__).parents[2]
-DOC_RECIPE = ROOT / "docs" / "source" / "_examples" / "recipe_v2.yml"
+DOC_RECIPES = sorted((ROOT / "docs" / "source" / "_examples").glob("*.yml"))
 ARCHITECTURE = ROOT / "docs" / "source" / "recipe_language_architecture.rst"
 MAINTENANCE = ROOT / "docs" / "source" / "recipe_language_maintenance.rst"
 REFERENCE_RENDERER = ROOT / "src" / "pypts" / "recipe_reference.py"
@@ -96,7 +98,6 @@ def test_json_only_renderer_has_no_model_runtime_ui_or_sphinx_imports():
             imported.add(node.module)
     forbidden = {
         "pydantic",
-        "spikes.recipe_pydantic.models",
         "pypts.recipe",
         "pypts.steps",
         "pypts.YamVIEW",
@@ -109,11 +110,12 @@ def test_json_only_renderer_has_no_model_runtime_ui_or_sphinx_imports():
     )
 
 
-def test_documentation_recipe_is_warning_free_and_model_stable():
-    first = parse_recipe_file(DOC_RECIPE)
+@pytest.mark.parametrize("path", DOC_RECIPES)
+def test_documentation_recipes_are_warning_free_and_model_stable(path):
+    first = parse_recipe_file(path)
     assert first.is_valid, first.errors
     assert not first.warnings
-    second = parse_recipe_text(dump_recipe(first.require_recipe()), "canonical:recipe_v2.yml")
+    second = parse_recipe_text(recipe_to_yaml(first.require_recipe()), f"serialized:{path.name}")
     assert second.is_valid, second.errors
     assert not second.warnings
     assert second.recipe == first.recipe

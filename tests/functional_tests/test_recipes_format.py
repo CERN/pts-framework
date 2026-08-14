@@ -8,4 +8,4 @@ from pypts.YamVIEW.verify_recipe import validate_all_recipes_in_folder
 
 def test_recipes_format():
     recipe_path = get_project_root() / "src" / "pypts" / "recipes"
-    assert not validate_all_recipes_in_folder(recipe_path)
+    assert validate_all_recipes_in_folder(recipe_path)

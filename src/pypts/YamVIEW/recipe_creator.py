@@ -38,7 +38,7 @@ from datetime import datetime
 import webbrowser
 from pypts.YamVIEW.styles import *
 from pypts.YamVIEW.verify_recipe import *
-from pypts.recipe_parser import dump_recipe, parse_recipe_text
+from pypts.recipe_parser import parse_recipe_text, recipe_to_yaml
 import sys
 from PySide6.QtGui import QColor, QTextCharFormat, QFont
 from PySide6.QtCore import Qt
@@ -551,7 +551,7 @@ class RecipeEditorMainMenu(QMainWindow):
             # Extract data from the text view
             try:
                 # data = self.extract_treeView_to_data()
-                data = dump_recipe(
+                data = recipe_to_yaml(
                     parse_recipe_text(self.temporary_recipe_contents, "<editor>").require_recipe()
                 )
             except Exception as e:
@@ -600,7 +600,7 @@ class RecipeEditorMainMenu(QMainWindow):
             # Extract data from text view
             try:
                 # data = self.extract_treeView_to_data()
-                data = dump_recipe(
+                data = recipe_to_yaml(
                     parse_recipe_text(self.temporary_recipe_contents, "<editor>").require_recipe()
                 )
             except Exception as e:

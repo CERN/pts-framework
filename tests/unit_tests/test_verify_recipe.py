@@ -3,7 +3,7 @@
 
 import pytest
 
-from pypts.recipe_parser import dump_recipe, parse_recipe_file
+from pypts.recipe_parser import parse_recipe_file, recipe_to_yaml
 from pypts.YamVIEW.verify_recipe import (
     RecipeValidationError,
     validate_recipe_file,
@@ -66,6 +66,6 @@ def test_wrapper_canonical_output_round_trips(tmp_path):
     path = tmp_path / "recipe.yml"
     path.write_text(VALID, encoding="utf-8")
     definition = parse_recipe_file(path).require_recipe()
-    canonical = dump_recipe(definition)
+    canonical = recipe_to_yaml(definition)
     valid, _ = validate_recipe_string_variable(canonical)
     assert valid

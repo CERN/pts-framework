@@ -8,8 +8,8 @@ Recipe Language 2 Architecture
 .. important::
 
    Recipe language ``2.0.0`` is the only production parsing and execution
-   path. Bundled version 1 recipes remain intentionally unmigrated and are
-   rejected with migration diagnostics.
+   path. Maintained recipes and setup templates use version 2; external
+   version 1 files are rejected with migration diagnostics.
 
 Exact version 2 fields, types, defaults, and examples are in the generated
 :doc:`_generated/recipe_language_reference`.  The aggregate schema is also available as
@@ -90,8 +90,9 @@ semantics therefore remain separate stages::
 ``parse_recipe_text`` and ``parse_recipe_file`` return ``ParseResult``.  A
 valid result owns an aggregate :ref:`recipe-v2-header` plus one or more
 :ref:`recipe-v2-sequence` models.  ``require_recipe()`` raises with the complete
-diagnostic tuple when errors exist.  ``dump_recipe`` writes canonical version 2
-YAML; comments and original formatting are not a round-trip guarantee.
+diagnostic tuple when errors exist. ``recipe_to_yaml`` returns deterministic
+version 2 YAML without file I/O; comments, quoting, and original formatting
+are not preserved. Parse/serialize/reparse preserves the aggregate definition.
 
 Here, "composition" is PyYAML terminology, not a PyPTS adapter or an additional
 recipe representation.  ``yaml.compose_all(..., Loader=yaml.SafeLoader)``
