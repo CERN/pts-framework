@@ -1,38 +1,54 @@
 # SPDX-FileCopyrightText: 2025 CERN <home.cern>
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
+"""Sequence navigation and structured edit intents for YamVIEW."""
 
+from __future__ import annotations
 
-from PySide6.QtWidgets import (QDialog,
-                                QVBoxLayout,
-                                QLabel, QHBoxLayout, QMessageBox,QWidget,
-                                QAbstractItemView, QFrame, QToolBar, QApplication, QStyle, QListWidgetItem, QListWidget,
-                                QSizePolicy)
-from PySide6.QtCore import QSize, Qt, QPoint, Signal
-from PySide6.QtGui import QAction,QDrag
-from pypts.YamVIEW.recipe_step_setup import Step_setup, Skip_setup, Sequence_setup
-from pypts.YamVIEW.styles import get_editor_theme_colors
 import re
+from collections.abc import Callable
+from typing import Any
+
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtGui import QAction, QDrag
+from PySide6.QtWidgets import (
+    QAbstractItemView,
+    QApplication,
+    QDialog,
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QMessageBox,
+    QSizePolicy,
+    QStyle,
+    QToolBar,
+    QVBoxLayout,
+    QWidget,
+)
+
+from pypts.YamVIEW.recipe_step_setup import Sequence_setup, Skip_setup, Step_setup
+from pypts.YamVIEW.styles import get_editor_theme_colors
+
+FOLDER_TYPES = {"setup_folder", "main_folder", "teardown_folder"}
+
 
 class StepBlock(QFrame):
-    def __init__(self, step_name, step_data, parent=None):
+    def __init__(self, step_name: str, step_data: dict[str, Any], parent=None):
         super().__init__(parent)
         self.step_name = step_name
         self.step_data = step_data
         self.setFrameShape(QFrame.StyledPanel)
         self.setObjectName("sequencerCard")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
         label = QLabel(step_name)
         label.setObjectName("sequencerStepTitle")
-        label.setWordWrap(False)
         label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         layout.addWidget(label)
         layout.addStretch()
-        self._label = label
         self.setMinimumHeight(max(34, label.sizeHint().height() + 10))
 
 
@@ -40,18 +56,13 @@ def _build_header_widget(text: str, indent: int) -> QFrame:
     container = QFrame()
     container.setObjectName("sequencerHeaderContainer")
     container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-
     layout = QHBoxLayout(container)
     layout.setContentsMargins(indent + 8, 2, 8, 2)
-    layout.setSpacing(0)
-
     label = QLabel(text)
     label.setObjectName("sequencerHeader")
-    label.setWordWrap(False)
     label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
     layout.addWidget(label)
     layout.addStretch()
-
     container.setMinimumHeight(max(32, label.sizeHint().height() + 12))
     return container
 
@@ -62,438 +73,381 @@ def _item_size_for(widget: QWidget) -> QSize:
 
 
 class SequencerWidget(QWidget):
+    """Display the recipe structure and emit model-independent edit intents."""
+
     def __init__(self, yaml_viewer=None, parent=None):
         super().__init__(parent)
         self.yaml_viewer = yaml_viewer
-        self.steps = []
-        self.yaml_update_callback = None
-        self.expanded = False
-        self.new_sequence_request = None
+        self.steps: list[dict[str, Any]] = []
+        self.yaml_update_callback: Callable[[list[dict[str, Any]]], None] | None = None
         self._dark = False
+        self.expanded = False
+        self._expanded_ids: set[str] = set()
+        self.current_setup_window: Step_setup | None = None
 
-        self.preamble_globals = {}
-        self.sequence_locals = {}
-        self.updated_preamble_globals = {}
-        self.updated_sequence_locals = {}
-
-        # Main layout
-        self.layout = QVBoxLayout(self)
-        self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
-        # ---- Toolbar ----
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.Yamlbar = QToolBar()
         self.Yamlbar.setObjectName("yamSequencerToolbar")
         self.Yamlbar.setIconSize(QSize(22, 22))
-
         style = QApplication.style()
+        self.action_add_sequence = QAction(
+            style.standardIcon(QStyle.SP_FileDialogNewFolder), "Add sequence", self
+        )
+        self.action_add_step = QAction("➕", self)
+        self.action_add_step.setToolTip("Add step to the selected stage")
+        self.action_manage_steps = QAction("±", self)
+        self.action_manage_steps.setToolTip("Edit skip/error flags")
+        self.action_delete = QAction("Delete", self)
+        self.action_delete.setToolTip("Delete the selected step or sequence")
+        for action in (
+            self.action_add_sequence,
+            self.action_add_step,
+            self.action_manage_steps,
+            self.action_delete,
+        ):
+            self.Yamlbar.addAction(action)
+        self.action_add_sequence.triggered.connect(self.on_add_sequence)
+        self.action_add_step.triggered.connect(self.on_add_step)
+        self.action_manage_steps.triggered.connect(self.on_change_state_step)
+        self.action_delete.triggered.connect(self.delete_selected)
 
-        # "Add Sequence"
-        act_new_seq = QAction(style.standardIcon(QStyle.SP_FileDialogNewFolder), 
-                            "Add Sequence Folder", self)
-        act_new_seq.triggered.connect(self.on_add_sequence)
-        self.Yamlbar.addAction(act_new_seq)
-
-        # "Add Step" as a + icon
-        act_new_step = QAction("➕", self)
-        act_new_step.setToolTip("Make new step")
-        act_new_step.triggered.connect(self.on_add_step)
-        self.Yamlbar.addAction(act_new_step)
-
-        act_disable_enable = QAction("±", self)
-        act_disable_enable.setToolTip("Disable/enable steps")
-        act_disable_enable.triggered.connect(self.on_change_state_step)
-        self.Yamlbar.addAction(act_disable_enable)
-
-        # ---- List ----
-        self.list_widget = StepListWidget()
+        self.list_widget = StepListWidget(self)
         self.list_widget.setObjectName("sequencerList")
-        self.list_widget.setContentsMargins(0, 0, 0, 0)
-        self.list_widget.model().rowsMoved.connect(self.on_steps_reordered)
         self.list_widget.itemClicked.connect(self.on_item_clicked)
         self.list_widget.step_clicked.connect(self.navigate_to_step)
         self.list_widget.step_double_clicked.connect(self.edit_step)
-
-        # Add widgets
-        self.layout.addWidget(self.Yamlbar)
-        self.layout.addWidget(self.list_widget)
-
-        self.skip_warning = False
+        layout.addWidget(self.Yamlbar)
+        layout.addWidget(self.list_widget)
         self.set_dark(False)
 
-    def set_dark(self, dark: bool):
+    def set_dark(self, dark: bool) -> None:
         self._dark = dark
         colors = get_editor_theme_colors(dark)
         self.list_widget.setStyleSheet(
             "QListWidget#sequencerList {"
             f"background-color: {colors['surface_alt']};"
             f"border: 1px solid {colors['border']};"
-            "border-radius: 8px;"
-            "padding: 6px;"
-            "}"
+            "border-radius: 8px;padding: 6px;}"
         )
 
-    def set_yaml_data(self, steps_list):
+    def set_yaml_data(self, steps_list: list[dict[str, Any]]) -> None:
         self.steps = steps_list
         self.refresh()
 
-    def refresh(self):
-        """Render a fully nested collapsible tree of steps."""
+    def _node_key(self, node: dict[str, Any]) -> str:
+        return str(node.get("_id") or node.get("_sequence_id") or node.get("steptype"))
+
+    def refresh(self) -> None:
+        """Render sequence/stage headers and leaf steps from the working structure."""
+        selected = self.current_node()
+        selected_key = self._node_key(selected) if selected else None
         self.list_widget.clear()
 
-        def add_step_item(step, indent=0):
-            step_type = step.get("steptype", "")
-            step_name = step.get("step_name", "Unnamed Step")
-            children = step.get("children", [])
-            
-
-            # If the step has children → treat as collapsible folder
-            if children:
-
-                # Folder header
-                prefix = "➖" if self.expanded else "➕"
-                header_item = QListWidgetItem(f"{prefix} {step_name}")
-                header_item.setFlags(Qt.ItemIsEnabled)
-                header_item.setData(Qt.UserRole, step)
-                self.list_widget.addItem(header_item)
-
-                # Indent header
-                header_item.setData(Qt.UserRole + 2, indent)
-                header_widget = _build_header_widget(f"{prefix} {step_name}", indent)
-                header_item.setSizeHint(_item_size_for(header_widget))
-                self.list_widget.setItemWidget(header_item, header_widget)
-
-                # Add all children recursively
-                child_items = []
-                for child in children:
-                    child_index_start = self.list_widget.count()
-                    add_step_item(child, indent + 20)
-                    for i in range(child_index_start, self.list_widget.count()):
-                        child_items.append(self.list_widget.item(i))
-
-                # Save child references for collapse/expand
-                header_item.setData(Qt.UserRole + 1, child_items)
-
-                # Hide children initially if folder not expanded
-                if not self.expanded:
-                    for c in child_items:
-                        c.setHidden(True)
-                        widget = self.list_widget.itemWidget(c)
-                        if widget:
-                            widget.setVisible(False)
-
-            else:
-                # Leaf step → StepBlock
-                block = StepBlock(step_name, step)
-                container = QFrame()
-                container_layout = QHBoxLayout(container)
-                container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-                container_layout.setContentsMargins(indent + 4, 2, 4, 2)
-                container_layout.setSpacing(0)
-                container_layout.setAlignment(Qt.AlignLeft)
-                container_layout.addWidget(block)
-                container.setMinimumHeight(block.minimumHeight() + 4)
+        def add_node(node: dict[str, Any], indent: int = 0) -> None:
+            is_folder = node.get("steptype") in FOLDER_TYPES | {"sequence_folder"}
+            if is_folder:
+                key = self._node_key(node)
+                expanded = self.expanded or key in self._expanded_ids
+                prefix = "➖" if expanded else "➕"
                 item = QListWidgetItem()
-                item.setSizeHint(_item_size_for(container))
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                item.setData(Qt.UserRole, node)
+                item.setData(Qt.UserRole + 2, indent)
+                widget = _build_header_widget(f"{prefix} {node['step_name']}", indent)
+                item.setSizeHint(_item_size_for(widget))
                 self.list_widget.addItem(item)
-                self.list_widget.setItemWidget(item, container)
-                item.setData(Qt.UserRole, step)
+                self.list_widget.setItemWidget(item, widget)
+                descendants: list[QListWidgetItem] = []
+                for child in node.get("children", []):
+                    start = self.list_widget.count()
+                    add_node(child, indent + 20)
+                    descendants.extend(
+                        self.list_widget.item(index)
+                        for index in range(start, self.list_widget.count())
+                    )
+                item.setData(Qt.UserRole + 1, descendants)
+                if not expanded:
+                    for descendant in descendants:
+                        descendant.setHidden(True)
+                return
 
-        # Build the full tree
-        for step in self.steps:
-            add_step_item(step, indent=0)
+            if node.get("steptype") == "preamble":
+                item = QListWidgetItem()
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+                item.setData(Qt.UserRole, node)
+                widget = _build_header_widget(node["step_name"], indent)
+            else:
+                item = QListWidgetItem()
+                item.setFlags(
+                    Qt.ItemIsEnabled
+                    | Qt.ItemIsSelectable
+                    | Qt.ItemIsDragEnabled
+                    | Qt.ItemIsDropEnabled
+                )
+                item.setData(Qt.UserRole, node)
+                block = StepBlock(node.get("step_name", "Unnamed step"), node)
+                widget = QFrame()
+                row = QHBoxLayout(widget)
+                row.setContentsMargins(indent + 4, 2, 4, 2)
+                row.addWidget(block)
+                widget.setMinimumHeight(block.minimumHeight() + 4)
+            item.setSizeHint(_item_size_for(widget))
+            self.list_widget.addItem(item)
+            self.list_widget.setItemWidget(item, widget)
+            if selected_key == self._node_key(node):
+                self.list_widget.setCurrentItem(item)
 
+        for node in self.steps:
+            add_node(node)
 
-    def on_steps_reordered(self, parent, start, end, destination, row):
-        """Update folder order internally; don't touch YAML yet."""
-        # Iterate visible items and reorder them inside their folder
-        sequence_id = None
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            step_data = item.data(Qt.UserRole)
-            if step_data and "_sequence_id" in step_data:
-                sequence_id = step_data["_sequence_id"]
-                break
+    def current_node(self) -> dict[str, Any] | None:
+        item = self.list_widget.currentItem()
+        return item.data(Qt.UserRole) if item else None
 
-        if sequence_id is None:
-            print("No sequence_id found during reorder.")
-            return
+    def _sequence(self, sequence_id: str) -> dict[str, Any] | None:
+        return next(
+            (node for node in self.steps if node.get("_sequence_id") == sequence_id),
+            None,
+        )
 
-        folder_map = {}
-        for seq in self.steps:
-            if seq.get("_sequence_id") == sequence_id:
-                for folder in seq.get("children", []):
-                    folder_map[folder["steptype"]] = folder
-                break
+    def _folder(self, sequence_id: str, folder_type: str) -> dict[str, Any] | None:
+        sequence = self._sequence(sequence_id)
+        if sequence is None:
+            return None
+        return next(
+            (child for child in sequence["children"] if child.get("steptype") == folder_type),
+            None,
+        )
 
-        for i in range(self.list_widget.count()):
-            item = self.list_widget.item(i)
-            step_data = item.data(Qt.UserRole)
-            if not step_data:
-                continue
+    def _selected_destination(self) -> tuple[str, str] | None:
+        node = self.current_node()
+        if node and node.get("steptype") in FOLDER_TYPES:
+            return node["_sequence_id"], node["steptype"]
+        if node and node.get("_parent"):
+            return node["_sequence_id"], node["_parent"]
+        if node and node.get("steptype") == "sequence_folder":
+            return node["_sequence_id"], "main_folder"
+        sequence = next(
+            (item for item in self.steps if item.get("steptype") == "sequence_folder"),
+            None,
+        )
+        if sequence:
+            return sequence["_sequence_id"], "main_folder"
+        return None
 
-            parent_type = step_data.get("_parent")
-            if parent_type:
-                folder = folder_map.get(parent_type)
-                if folder:
-                    children = folder.get("children", [])
-                    # Remove & append to maintain new order
-                    if step_data in children:
-                        children.remove(step_data)
-                    children.append(step_data)
-
+    def _notify(self) -> bool:
+        self.refresh()
         if callable(self.yaml_update_callback):
-            self.yaml_update_callback(self.steps)
+            return self.yaml_update_callback(self.steps) is not False
+        return True
 
-    def move_step_to_folder(self, step, old_parent, new_parent, old_seq_id, new_seq_id):
-        print(f"Moving: {step['step_name']}  {old_parent} → {new_parent}")
-        # Find actual folder dicts
-        source_folder = None
-        dest_folder = None
-
-        for seq in self.steps:
-            if seq.get("_sequence_id") != old_seq_id:
-                continue
-
-            for folder in seq["children"]:
-                if folder["steptype"] == old_parent:
-                    source_folder = folder
-                    break
-
-        for seq in self.steps:
-            if seq.get("_sequence_id") != new_seq_id:
-                continue
-            for folder in seq["children"]:
-                if folder["steptype"] == new_parent:
-                    dest_folder = folder
-                    break
-        if not source_folder or not dest_folder:
-            print("Folder lookup failed (source or destination missing).")
+    def on_item_clicked(self, item: QListWidgetItem) -> None:
+        node = item.data(Qt.UserRole)
+        if node.get("steptype") not in FOLDER_TYPES | {"sequence_folder"}:
             return
-
-        try:
-            source_folder["children"].remove(step)
-        except ValueError:
-            print("Step not found in source folder. Possibly already moved or inconsistent tree.")
-            return
-
-
-        step["_parent"] = new_parent
-        step["_sequence_id"] = new_seq_id
-        dest_folder["children"].append(step)
+        key = self._node_key(node)
+        if key in self._expanded_ids:
+            self._expanded_ids.remove(key)
+        else:
+            self._expanded_ids.add(key)
         self.refresh()
 
-        if callable(self.yaml_update_callback):
-            self.yaml_update_callback(self.steps)
-
-    def on_item_clicked(self, item):
-        """Toggle collapsible folder visibility."""
-        children = item.data(Qt.UserRole + 1)
-        if not children:
-            return  # Not a folder
-            
-
-        hidden = children[0].isHidden()  # toggle state
-        for child_item in children:
-            child_item.setHidden(not hidden)
-
-        # Update header icon
-        if hidden:
-            item.setText(f"➖ {item.data(Qt.UserRole).get('step_name', 'Unnamed Step')}")
-            self.expanded = True
-        else:
-            item.setText(f"➕ {item.data(Qt.UserRole).get('step_name', 'Unnamed Step')}")
-            self.expanded = False
-    
-    def navigate_to_step(self, step_data):
-        if not self.yaml_viewer:
+    def navigate_to_step(self, step_data: dict[str, Any]) -> None:
+        if not self.yaml_viewer or "_node" not in step_data:
             return
-        step_name = step_data.get("step_name", "")
-
-        yaml_text = self.yaml_viewer.toPlainText()
-        cursor = self.yaml_viewer.textCursor()
-
-        # Try line number if stored
-        id_number = step_data.get("_id")
-        if id_number is not None:
-            step_type = step_data.get("steptype", "")
-            step_name = step_data.get("step_name", "")
-            step_description = step_data.get("description", "")
-
-            block_pattern = (
-            r"steptype:\s*" + re.escape(step_type) + r"\s*"
-             r"step_name:\s*" + re.escape(step_name) + r"\s*"
-            r"description:\s*" + re.escape(step_description)
+        node = step_data["_node"]
+        pattern = (
+            r"steptype:\s*" + re.escape(node.get("steptype", ""))
+            + r"[\s\S]*?step_name:\s*" + re.escape(node.get("step_name", ""))
         )
-            match = re.search(block_pattern, yaml_text)
-            if match:
-                position = match.start()
-                cursor.setPosition(position)
-        else:
-            # fallback: search by step_name
-            step_name = step_data.get("step_name", "")
-            position = yaml_text.find(step_name)
-            if position == -1:
-                return
-            cursor.setPosition(position)
+        match = re.search(pattern, self.yaml_viewer.toPlainText())
+        if match:
+            cursor = self.yaml_viewer.textCursor()
+            cursor.setPosition(match.start())
+            self.yaml_viewer.setTextCursor(cursor)
+            self.yaml_viewer.setFocus()
 
-        self.yaml_viewer.setTextCursor(cursor)
-        self.yaml_viewer.setFocus()
-    
-    def edit_step(self, step_data):
+    def on_add_sequence(self) -> None:
+        dialog = Sequence_setup(parent=self)
+        if not dialog.exec():
+            return
+        data = dialog.result_sequence
+        sequence_id = data["sequence_name"]
+        suffix = 2
+        while self._sequence(sequence_id):
+            sequence_id = f"{data['sequence_name']}#{suffix}"
+            suffix += 1
+        self.steps.append(_sequence_node(data, sequence_id))
+        self._expanded_ids.add(sequence_id)
+        self._notify()
 
-        if hasattr(self, "current_setup_window") and self.current_setup_window:
+    def on_add_step(self) -> None:
+        destination = self._selected_destination()
+        if destination is None:
+            QMessageBox.warning(self, "No sequence", "Add a sequence before adding steps.")
+            return
+        dialog = Step_setup(parent=self)
+        dialog._skip_warning = True
+        if not dialog.exec():
+            return
+        sequence_id, parent_type = destination
+        folder = self._folder(sequence_id, parent_type)
+        if folder is None:
+            return
+        step = dialog.result_step
+        step["_parent"] = parent_type
+        step["_sequence_id"] = sequence_id
+        folder["children"].append(step)
+        self._expanded_ids.update({sequence_id, f"{sequence_id}:{parent_type}"})
+        self._notify()
+
+    def edit_step(self, step_data: dict[str, Any]) -> None:
+        if "_node" not in step_data or not step_data.get("_parent"):
+            return
+        if self.current_setup_window:
             self.current_setup_window.close()
             self.current_setup_window.deleteLater()
-            self.current_setup_window = None
-        # Existing canonical data is rendered by the same schema-driven form
-        # used for new steps.
-        node = step_data.get("_node", {})
-        step_id = step_data.get("_id", None)
-
-        self.current_setup_window = Step_setup()
-        self.current_setup_window.AlreadyID = step_id
+        dialog = Step_setup(parent=self)
+        dialog.AlreadyID = step_data["_id"]
         try:
-            self.current_setup_window.load_definition(node)
+            dialog.load_definition(step_data["_node"])
         except (KeyError, ValueError) as error:
-            QMessageBox.warning(self, "Invalid Step", str(error))
+            QMessageBox.warning(self, "Invalid step", str(error))
             return
-        self.current_setup_window.finished.connect(
-            lambda result: self.on_edit_window_closed(result)
+        self.current_setup_window = dialog
+        dialog.finished.connect(
+            lambda result, original=step_data: self._finish_edit(result, original)
         )
-        self.current_setup_window.show()
+        dialog.show()
 
-    def on_edit_window_closed(self, result):
-        if result == QDialog.Accepted:
-            #self.skip_warning = self.current_setup_window.skip_checkbox
-            self.updatingYAMLFormat(self.current_setup_window, edit_child=True)
-            print("Ran after closing (OK pressed)")
-        self.refresh()
+    def _finish_edit(self, result: int, original: dict[str, Any]) -> None:
+        dialog = self.current_setup_window
+        if result != QDialog.Accepted or dialog is None:
+            return
+        replacement = dialog.result_step
+        replacement["_parent"] = original["_parent"]
+        replacement["_sequence_id"] = original["_sequence_id"]
+        folder = self._folder(original["_sequence_id"], original["_parent"])
+        if folder is None:
+            return
+        for index, child in enumerate(folder["children"]):
+            if child.get("_id") == original.get("_id"):
+                folder["children"][index] = replacement
+                self._notify()
+                return
 
-    def loaded_step_parameters(self, step_name, node, method = None, gui_name= None):
+    def move_step(
+        self,
+        step: dict[str, Any],
+        sequence_id: str,
+        parent_type: str,
+        index: int | None = None,
+    ) -> bool:
+        source = self._folder(step.get("_sequence_id", ""), step.get("_parent", ""))
+        destination = self._folder(sequence_id, parent_type)
+        if source is None or destination is None or step not in source["children"]:
+            return False
+        source["children"].remove(step)
+        step["_sequence_id"] = sequence_id
+        step["_parent"] = parent_type
+        if index is None:
+            destination["children"].append(step)
+        else:
+            destination["children"].insert(index, step)
+        return self._notify()
 
-        if gui_name:
-            self.current_setup_window._skip_warning = True
-            self.current_setup_window.list_steptype.setCurrentText(gui_name)
-            self.current_setup_window._skip_warning = False
-        self.current_setup_window.list_steptype.setCurrentText(step_name)
-        self.current_setup_window.step_name_input.setText(step_name)
-        self.current_setup_window.description_input.setText(node.get("description", ""))
-        self.current_setup_window.skip_checkbox.setChecked(node.get("skip", False))
-        self.current_setup_window.continue_on_error_checkbox.setChecked(node.get("continue_on_error", False))
-        self.current_setup_window.setWindowTitle(f"Edit Step: {step_name}")
-        if method:
-            self.current_setup_window.list_actiontypes.setCurrentText(node.get("action_type", "method"))
-            self.current_setup_window.module_input.setText(node.get("module", ""))
-            self.current_setup_window.method_input.setText(node.get("method_name", ""))
+    def move_step_to_folder(
+        self, step, old_parent, new_parent, old_seq_id, new_seq_id
+    ) -> None:
+        self.move_step(step, new_seq_id, new_parent)
 
-    def receive_globals(self, globals_dict: dict):
-        """Update the internal globals reference."""
-        self.preamble_globals = globals_dict
+    def on_steps_reordered(self, *args) -> None:
+        """Compatibility entry point; drag/drop commits through :meth:`move_step`."""
 
-    def update_global_value(self, key, value):
-        """Update or add a global value."""
-        self.updated_preamble_globals[key] = value
+    def on_change_state_step(self) -> None:
+        if not any(item.get("steptype") == "sequence_folder" for item in self.steps):
+            return
+        dialog = Skip_setup(self.steps, self)
+        if dialog.exec():
+            self._notify()
 
-    def receive_locals(self, globals_dict: dict):
-        """Update the internal locals reference."""
-        self.sequence_locals = globals_dict
+    def delete_selected(self, confirm: bool = True) -> bool:
+        node = self.current_node()
+        return self.delete_node(node, confirm=confirm)
 
-    def update_local_value(self, key, value):
-        """Update or add a local value."""
-        self.updated_sequence_locals[key] = value
+    def delete_node(self, node: dict[str, Any] | None, confirm: bool = True) -> bool:
+        """Delete one identified step or sequence; virtual folders are protected."""
+        if node is None:
+            return False
+        node_type = node.get("steptype")
+        if node_type == "preamble" or node_type in FOLDER_TYPES:
+            return False
+        if confirm:
+            label = node.get("step_name", "selected item")
+            answer = QMessageBox.question(
+                self,
+                "Delete item",
+                f"Delete '{label}'?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if answer != QMessageBox.Yes:
+                return False
+        if node_type == "sequence_folder":
+            self.steps.remove(node)
+        else:
+            folder = self._folder(node.get("_sequence_id", ""), node.get("_parent", ""))
+            if folder is None or node not in folder["children"]:
+                return False
+            folder["children"].remove(node)
+        return self._notify()
 
-    def on_add_sequence(self):
-
-        _sequence = Sequence_setup(self)
-        if _sequence.exec():
-            self.updatingYAMLFormat(_sequence)
-
-    def on_add_step(self):
-        _step = Step_setup(self)
-        _step._skip_warning = True
-        if _step.exec():  # blocks until OK or Cancel
-            self.updatingYAMLFormat(_step)
-
-    def on_change_state_step(self):
-
-        steps = self.steps[1]["children"][1]["children"]
-
-        dialog = Skip_setup(steps=self.steps)
-        if dialog.exec_():
-            self.updatingYAMLFormat(dialog, edit_child=True)
-
-    def updatingYAMLFormat(self, _step, edit_child = False):
-        new_step = getattr(_step, "result_step", None)
-        new_sequence = getattr(_step, "result_sequence", None)
-        
-        if hasattr(_step, "global_variables") and _step.global_variables:
-            for key, value in _step.global_variables.items():
-                self.update_global_value(key, value)
-
-        if hasattr(_step, "local_variables") and _step.local_variables:
-            for key, value in _step.local_variables.items():
-                self.update_local_value(key, value)    
-        
-        if new_step and not edit_child:
-            # Assign parent folder type before inserting
-            new_step["_parent"] = "main_folder"  
-
-            self.steps[1]["children"][1]["children"].append(new_step)
-
-            self.refresh()
-
-            if callable(self.yaml_update_callback):
-                self.yaml_update_callback(self.steps)
-
-        elif new_step and edit_child:
-
-            new_step["_parent"] = "main_folder"
-            new_ID = new_step.get("_id") 
-
-            for idx, child in enumerate(self.steps[1]["children"][1]["children"]):
-                if child.get("_id").strip() == str(new_ID).strip():
-                    self.steps[1]["children"][1]["children"][idx] = new_step
-                    break
-            else:
-                self.steps[1]["children"][1]["children"].append(new_step)
-
-            self.refresh()
-
-            if callable(self.yaml_update_callback):
-                self.yaml_update_callback(self.steps)
-        if new_sequence:
-
-            self.steps.append(new_sequence)
-            self.new_sequence_request = new_sequence
-
-            self.refresh()
-
-            if callable(self.yaml_update_callback):
-                self.yaml_update_callback(self.steps)
-
-    def clear(self):
-        """Completely removes all widgets and layouts from self.container_layout."""
-
-        lw = self.list_widget
-
-        lw.blockSignals(True)
-        # Remove widgets first
-        for i in range(lw.count()):
-            item = lw.item(i)
-            widget = lw.itemWidget(item)
-            if widget:
-                widget.setParent(None)
-                widget.deleteLater()
-
-        # Now clear the QListWidgetItem objects
-        lw.clear()
-
-        # Clear internal drag/selection state
-        lw.clearSelection()
-        lw._mouse_press_pos = None
-        lw.blockSignals(False)
+    def clear(self) -> None:
+        self.steps = []
+        self._expanded_ids.clear()
+        self.list_widget.clear()
 
 
+def _sequence_node(data: dict[str, Any], sequence_id: str) -> dict[str, Any]:
+    """Create YamVIEW navigation metadata around one plain sequence document."""
+    folders = []
+    for title, folder_type, field_name in (
+        ("Setup Steps", "setup_folder", "setup_steps"),
+        ("Main Steps", "main_folder", "steps"),
+        ("Teardown Steps", "teardown_folder", "teardown_steps"),
+    ):
+        children = []
+        for index, node in enumerate(data.get(field_name, [])):
+            stable_id = node.get("id") or f"{sequence_id}:{folder_type}:{index}"
+            children.append(
+                {
+                    "step_name": node["step_name"],
+                    "steptype": node["steptype"],
+                    "_node": node,
+                    "_parent": folder_type,
+                    "_sequence_id": sequence_id,
+                    "_id": stable_id,
+                }
+            )
+        folders.append(
+            {
+                "step_name": title,
+                "steptype": folder_type,
+                "children": children,
+                "_sequence_id": sequence_id,
+                "_id": f"{sequence_id}:{folder_type}",
+            }
+        )
+    return {
+        "step_name": f"Sequence: {data['sequence_name']}",
+        "steptype": "sequence_folder",
+        "children": folders,
+        "_node": data,
+        "_sequence_id": sequence_id,
+        "_id": sequence_id,
+    }
 
 
 class StepListWidget(QListWidget):
@@ -506,100 +460,68 @@ class StepListWidget(QListWidget):
         self.setDefaultDropAction(Qt.MoveAction)
         self.setSelectionMode(QListWidget.SingleSelection)
         self.setAcceptDrops(True)
-        self.setDropIndicatorShown(True)  
+        self.setDropIndicatorShown(True)
         self.setDragEnabled(True)
-        self._mouse_press_pos = None
+        self._mouse_press_pos = QPoint()
 
-    def startDrag(self, supportedActions):
+    @property
+    def sequencer(self) -> SequencerWidget:
+        return self.parent()
+
+    def startDrag(self, supported_actions) -> None:
         item = self.currentItem()
-        if not item:
+        node = item.data(Qt.UserRole) if item else None
+        if not node or not node.get("_parent"):
             return
-
         widget = self.itemWidget(item)
-        if not widget:
-            return
-
-        # Create a pixmap of the widget (the “ghost” that follows the mouse)
-        label_widget = widget.findChild(QLabel)
-        if label_widget:
-            pixmap_widget = label_widget.parentWidget()
-        else:
-            pixmap_widget = widget
-        pixmap = pixmap_widget.grab()
-        #pixmap = widget.grab()
-        # Optionally make it semi-transparent
-        pixmap.setDevicePixelRatio(widget.devicePixelRatioF())
-
-        # Create the drag object
         drag = QDrag(self)
-        selected_items = self.selectedItems()
-        mime_data = self.mimeData(selected_items)  # <-- important!
-        drag.setMimeData(mime_data)
-        drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
-
-        # Start the drag
+        drag.setMimeData(self.mimeData([item]))
+        if widget:
+            pixmap = widget.grab()
+            drag.setPixmap(pixmap)
+            drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
         drag.exec(Qt.MoveAction)
-    
-    def mousePressEvent(self, event):
+
+    def mousePressEvent(self, event) -> None:
         self._mouse_press_pos = event.position().toPoint()
         super().mousePressEvent(event)
 
-    def mouseReleaseEvent(self, event):
-        delta = (event.position().toPoint() - self._mouse_press_pos).manhattanLength()
-        if delta < QApplication.startDragDistance():
+    def mouseReleaseEvent(self, event) -> None:
+        if (event.position().toPoint() - self._mouse_press_pos).manhattanLength() < QApplication.startDragDistance():
             item = self.itemAt(event.position().toPoint())
-            if item:
-                step_data = item.data(Qt.UserRole)
-                if step_data:
-                    self.step_clicked.emit(step_data)  # notify parent
+            node = item.data(Qt.UserRole) if item else None
+            if node:
+                self.step_clicked.emit(node)
         super().mouseReleaseEvent(event)
-    
-    def mouseDoubleClickEvent(self, event):
+
+    def mouseDoubleClickEvent(self, event) -> None:
         item = self.itemAt(event.position().toPoint())
-        if item:
-            step_data = item.data(Qt.UserRole)
-            if step_data:
-                self.step_double_clicked.emit(step_data)
+        node = item.data(Qt.UserRole) if item else None
+        if node:
+            self.step_double_clicked.emit(node)
         super().mouseDoubleClickEvent(event)
 
-    def dropEvent(self, event):
-        pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
-        target_item = self.itemAt(pos)
-
-        if not target_item:
-            return super().dropEvent(event)
-
+    def dropEvent(self, event) -> None:
         dragged_item = self.currentItem()
-        if not dragged_item:
-            return super().dropEvent(event)
-
-        dragged_step = dragged_item.data(Qt.UserRole)
-        target_step = target_item.data(Qt.UserRole)
-
-
-        # Only handle drop ON a folder header
-        if target_step and "children" in target_step:
-            new_parent = target_step["steptype"]
-            old_parent = dragged_step["_parent"]
-
-            new_seq_id = target_step.get("_sequence_id")
-            old_seq_id = dragged_step.get("_sequence_id")
-
-            if new_parent != old_parent or new_seq_id != old_seq_id:
-                sequencer = self.parent()
-                if hasattr(sequencer, "move_step_to_folder"):
-                    sequencer.move_step_to_folder(
-                    step=dragged_step,
-                    old_parent=old_parent,
-                    new_parent=new_parent,
-                    old_seq_id=old_seq_id,
-                    new_seq_id=new_seq_id,
-                )
-
-            event.accept()
+        target_item = self.itemAt(event.position().toPoint())
+        dragged = dragged_item.data(Qt.UserRole) if dragged_item else None
+        target = target_item.data(Qt.UserRole) if target_item else None
+        if not dragged or not dragged.get("_parent") or not target:
+            event.ignore()
             return
-
-        #  Otherwise fallback to normal same-folder reorder
-        return super().dropEvent(event)
-
+        if target.get("steptype") in FOLDER_TYPES:
+            sequence_id = target["_sequence_id"]
+            parent_type = target["steptype"]
+            index = None
+        elif target.get("_parent"):
+            sequence_id = target["_sequence_id"]
+            parent_type = target["_parent"]
+            folder = self.sequencer._folder(sequence_id, parent_type)
+            index = folder["children"].index(target) if folder else None
+        else:
+            event.ignore()
+            return
+        if self.sequencer.move_step(dragged, sequence_id, parent_type, index):
+            event.acceptProposedAction()
+        else:
+            event.ignore()

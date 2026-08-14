@@ -208,6 +208,14 @@ not own supported step names or field rules.  Whole-recipe validation always
 goes through the parser so semantic rules and YAML diagnostics are identical
 between YamVIEW, command-line tools, and runtime loading.
 
+YamVIEW retains a locally valid structured edit even when whole-recipe
+semantics fail. The parser diagnostics are displayed and persistence is
+disabled until the edit is repaired or the last valid text is restored.
+Schema-invalid raw YAML remains available in the text editor, while the
+structured sequencer is disabled until an aggregate definition can be formed.
+Structured edits and persistence call ``recipe_to_yaml`` and therefore replace
+comments, quoting, and source layout with deterministic canonical formatting.
+
 How the sequencer consumes the model
 ------------------------------------
 

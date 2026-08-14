@@ -145,11 +145,43 @@ The editor window contains:
 * a log console at the bottom
 * a watermark/empty-state screen shown when no recipe is open
 
-The main editing widgets are still specific to ``YamVIEW``:
+The editing widgets are specific to ``YamVIEW``, with deliberately separate
+responsibilities:
 
-* ``SequencerWidget`` for sequence/step manipulation
-* ``ScintillaYamlEditor`` for YAML text editing and highlighting
-* several recipe-editing dialogs in ``recipe_step_setup.py`` and related modules
+* ``RecipeEditorMainMenu`` owns the working text, structural representation,
+  production-parser diagnostics, last-valid recovery state, and file I/O.
+* ``SequencerWidget`` owns selection and emits add, edit, move, reorder, and
+  delete intents identified by sequence, stage, and step identity. It does not
+  define recipe fields or serialize YAML.
+* ``Step_setup`` and its mapping rows render controls from the aggregate JSON
+  Schema. Pydantic remains the only owner of variants, required fields, strict
+  types, defaults, and field descriptions.
+* ``ScintillaYamlEditor`` owns editable source text and diagnostic highlighting.
+
+Editor data flow
+~~~~~~~~~~~~~~~~
+
+The structured editing path is::
+
+   production Pydantic model -> aggregate JSON Schema -> schema form
+            -> working aggregate -> recipe_to_yaml() -> YAML editor
+            -> parse_recipe_text() -> status, diagnostics, and save state
+
+A structured edit is committed once its individual definition is valid. If a
+cross-document or ordering rule then makes the aggregate invalid, the edit is
+retained, diagnostics are shown, and Save and Save As are disabled until the
+recipe is repaired or the last valid state is restored. Malformed JSON in an
+individual structured field remains in its dialog and is not committed.
+
+Raw YAML editing is intentionally more permissive. Invalid text remains visible
+and the first diagnostic span is highlighted. The sequencer stays available
+for structurally valid recipes with semantic diagnostics, but is disabled when
+the text cannot be represented safely as the aggregate model.
+
+Structured edits and saves use :func:`pypts.recipe_parser.recipe_to_yaml`.
+Consequently, they are deterministic and preserve recipe meaning, but they do
+not preserve comments, quoting, or source formatting. Raw text is never
+silently lowercased or otherwise migrated.
 
 Relationship Between The Two GUIs
 ---------------------------------
