@@ -37,7 +37,7 @@ steps:
         '
     image_path:
       type: direct
-      value: lego2.jpg
+      value: Front_Panel_Test.jpg
     options:
       type: direct
       value:
