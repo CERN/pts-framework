@@ -15,7 +15,7 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 | Package layout | Matches the system design: `core/`, `sequencer/`, `recipe/`, `step/`, `report/`, `hmi/{gui,cli}/`, `config_handler/`, `logger/`, `stream_handler/`, `hardware_layer/`, `helper_applications/{recipe_creator,recipe_verificator,example_finder}/`, `utilities/`, `launcher/`, plus `old_code/` holding the previous engine |
 | Process model | **Reworked (see §1.5).** `launcher/startup.py`: argparse `--mode gui/cli/connect` (gui is the default) and `--log-level`, spawns the Logger and Core as processes and the GUI as a third; Core runs the Sequencer and the Report as **threads of its own process**. Two processes plus the Logger, exactly as agreed below |
 | Typed messaging | **Reworked (see §1.1).** `pypts/messages/`: one frozen dataclass per message, one union per link, one generic `QueueWrapper` for all six links, every handler closed with `unhandled()`. The enums, the interface ABCs and the queue data-layer classes are gone, and with them the 4-step "add a message" workflow — it is two steps now. Protocol tests in `tests/unit_tests/test_messages.py` |
-| Health & errors | `HeartbeatManager` ticking from Sequencer/Report/HMI, Core-side timeout detection (armed only for modules still expected to run); `@catch_and_report_errors()` sending a typed `ModuleError` to Core, with the source resolved per function |
+| Health & errors | `HeartbeatManager` ticking from Sequencer/Report/HMI, Core-side timeout detection (armed only for modules still expected to run); two decorators sending a typed `ModuleError` to Core for what nobody expected, and `report_error()`/`report_problem()` for a raise site that recognised the failure and rates it (see §1.10, §1.11). Every one names the module, the method and the exception type |
 | GUI toolkit | **PySide6 migration done** (GUI skeleton + `test_pyside6_conversion.py`) — the PyQt6/LGPL conflict is resolved |
 | Licensing | LGPL-2.1-or-later + CC-BY-SA-4.0, SPDX headers, `reuse.toml`, `licenses/`, `dependency_license_analysis.rst` — REUSE compliance largely in place |
 | Logger | Single-writer Logger process: timestamped format (file:function, ms), file + stdout handlers, `set_stdout_logging_enabled()` toggle, and a level resolved once by the launcher from `--log-level` / config (§1.2) |
@@ -739,6 +739,77 @@ and it mattered more than it looks: reaching for a missing `self.core` raised `A
 Nothing uses `report_and_reraise()` yet; it lands with the steps in Phase 1. The decorator is
 tested on both paths in `test_utilities.py`.
 
+*Superseded in part by §1.11: the decorators are unchanged, but they are no longer the only way
+to report a failure, and the reported message now names the method and the exception type.*
+
+### 1.11 Handling a specific error where it happens — **done**
+
+> **Status: implemented.** Groundwork only, by decision: a raise site can now classify and
+> report a failure it recognised. What CORE *does* about one is deliberately unchanged.
+
+**The problem.** Everything reached CORE, and nothing was classified, so nothing could act on
+one. Three things were missing:
+
+- `report_error()` hard-coded `severity=ErrorSeverity.ERROR`, so `WARNING` and `CRITICAL` were
+  produced by nothing at all and CORE's one severity branch was effectively dead code;
+- `ModuleError.source` was `func.__module__` — the *module*. Which of a module's twenty methods
+  failed was recoverable only by reading the traceback string;
+- the exception type reached CORE only inside `repr(exc)`.
+
+The decorators could not have fixed that: what a failure *means* is knowable at the raise site
+and nowhere else. A decorator wrapping a whole method can only call everything an ERROR.
+
+**The split, now three ways.** The decorators are the net for what nobody expected; the two
+functions are how a method handles what it recognised:
+
+```python
+try:
+    reading = self.instrument.measure()
+except TimeoutError as exc:
+    report_error(self, exc, severity=ErrorSeverity.WARNING)   # slow, not broken
+    reading = self.retry_measurement()
+```
+
+| | For |
+|---|---|
+| `report_error(instance, exc, severity=…)` | a live exception the method caught and understood. Fills `error_type` and the traceback. |
+| `report_problem(instance, message, severity=…)` | a failure with no exception behind it — a refused command, an instrument answering nonsense. Raising one only to catch it a frame later would attach a traceback through the module's own guard, which tells the reader nothing. |
+
+Neither raises. The raise site keeps control of what happens next, because that decision belongs
+to it and not to the error-reporting module. Anything a method does *not* recognise still falls
+through to its decorator, unchanged.
+
+**`ModuleError` gained two fields** — `operation` (the failing method's qualname) and
+`error_type` (the exception class name). Plain strings, for the same reason `exception` is a
+repr: the message crosses the pickled HMI link. The decorators fill both in from the function
+they wrap, resolved at decoration time next to `source`, so an *unexpected* failure names its
+method too. Both decorators also take `severity=`, so a method whose failure is routine can say
+so once, where it is decorated, instead of at every raise site inside it.
+
+**CORE's authority is unchanged, on purpose.** `handle_module_error()` still logs and still
+forwards anything above `WARNING` to the frontend. What changed is that the log line names the
+method and the exception type before the message, and the *level* now follows the severity
+(`WARNING`/`ERROR`/`CRITICAL`) — which is the first time `ErrorSeverity` has meant anything. No
+policy table, no run control: see the open TODOs below.
+
+**First real use:** `Sequencer.run_sequence()` refusing a second sequence. It used to
+`raise RuntimeError(...)` and let the decorator convert it; the module knows exactly what that
+is — the operator asked for something it cannot do — so it reports it and returns. Same
+`ModuleError` to CORE, same line to the operator, without a traceback through the guard that
+produced it.
+
+Six tests in `test_utilities.py` cover the new half, including the no-outbox fallback for both
+functions.
+
+- [ ] **TODO (Phase 1):** decide what CORE *does* about an error beyond recording it — stop the
+  running sequence, abort the run, contribute to the run's `ResultType`. Needs the engine to
+  exist first; this is the same open item as the `FAIL`-vs-`ERROR` question below.
+- [ ] **TODO:** revisit whether a `PyptsError` base + family is wanted once the steps and the HAL
+  are ported. It was deliberately *not* introduced here — a raise site matches on the concrete
+  exception it already knows about, and a taxonomy with one user is a guess.
+- [ ] **TODO:** the heartbeat-timeout policy (`core.py: do_periodic_tasks()`) is still only a
+  warning. It is the other half of "what CORE does about a module in trouble".
+
 ---
 
 ## TODO — Recipe format: findings and decisions
@@ -1060,7 +1131,7 @@ Steps 1–3 are naturally done *while porting steps into the sequencer* — doin
 
 - **Pickling across process boundaries.** *(→ resolved.)* Only the HMI↔Core boundary remains a process boundary; user prompts are a request/response pair, and the pickle round-trip test guards every message on both unions permanently (§1.1). Step-to-step object passing and device handles stay in-engine and are unaffected.
 - **`old_code` divergence.** The branch's `old_code` is *newer* than master (consolidated steps, `test_package` resource loading). Freeze master, do the port from `old_code` only, and delete it at v0.3.0 — three coexisting engines (master, old_code, new modules) is the biggest confusion risk for the team.
-- **Error-handling policy.** *Half settled (§1.10).* The mechanism exists: `report_and_reraise` for the execution layer, `catch_and_report_errors` for event loops, so a step failure reaches its caller instead of being swallowed. What Phase 1 still has to decide is what the caller *does* with it — StepResult(ERROR) is agreed, continue-or-abort per recipe config is not.
+- **Error-handling policy.** *Mechanism complete (§1.10, §1.11); policy still open.* `report_and_reraise` for the execution layer, `catch_and_report_errors` for event loops, and `report_error()`/`report_problem()` for a raise site that recognised the failure and rates it itself — so a failure now reaches its caller, carrying which method raised it and what type it was. What is still undecided is what anyone *does* with one: StepResult(ERROR) is agreed, continue-or-abort per recipe config is not, and CORE deliberately still only logs and notifies.
 - **Core busy-loop & heartbeats.** 100 Hz polling in every module is fine for now; when Core gains real work, consider `Queue.get(timeout=...)`-driven loops. Heartbeat timeout currently only logs a warning — define the recovery action (restart module? abort run? notify HMI?).
 - ~~**Config in the temp directory.**~~ **Closed (§1.3):** moved to the `platformdirs` per-user config directory, single writer, versioned structure with migration, and structured data through dotted section families. It is still INI — deliberately, because the type information lives in `configuration_schema.py` and the file stays hand-editable on a bench. What remains open is *changing* configuration at runtime: `SetConfigParameter` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
 - **PyPI name.** The pyproject rename to `pts-framework` needs an early availability check on PyPI (v1.0.0 requirement), and alignment with the import name `pypts`.

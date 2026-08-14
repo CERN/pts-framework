@@ -146,9 +146,63 @@ def test_start_sequence_command_is_handled():
     """Currently a `pass` in handle_hmi_event - Phase 1."""
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_module_error_events_are_aggregated_not_swallowed():
-    ...
+def test_a_module_error_is_logged_naming_the_method_and_shown_to_the_operator(caplog):
+    """
+    The whole error path, through the real routing: reported by a module, logged
+    by CORE, forwarded to the frontend.
+
+    The line has to name the *method*, not just the module - `source` alone says
+    "pypts.sequencer.sequencer", and a module has twenty methods.
+    """
+    from pypts.messages.common_messages import ErrorSeverity, ModuleError
+    from pypts.messages.core_hmi_communication import ModuleErrorReported
+
+    core = build_core_that_spawns_nothing()
+    error = ModuleError(
+        source="pypts.sequencer.sequencer",
+        severity=ErrorSeverity.ERROR,
+        message="the DUT did not answer",
+        operation="Sequencer.execute_sequence",
+        error_type="TimeoutError",
+    )
+
+    core.from_sequencer.send(error)
+    with caplog.at_level(logging.WARNING):
+        core.poll_all_sources()
+
+    assert list(core.to_hmi.receive()) == [ModuleErrorReported(error)]
+
+    logged = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Sequencer.execute_sequence" in logged
+    assert "TimeoutError: the DUT did not answer" in logged
+
+
+def test_the_log_level_and_the_operator_both_follow_the_severity(caplog):
+    """
+    The sender rates its own failure - it is the only one who can - and CORE
+    takes it at its word. Until the severity meant something, every reported
+    failure was an ERROR in the log whatever the sender thought of it.
+
+    A WARNING stays in the log and is deliberately *not* forwarded: that rule is
+    what keeps the operator's runtime log readable during a long run.
+    """
+    from pypts.messages.common_messages import ErrorSeverity, ModuleError
+
+    core = build_core_that_spawns_nothing()
+
+    for severity, expected_level in (
+        (ErrorSeverity.WARNING, logging.WARNING),
+        (ErrorSeverity.CRITICAL, logging.CRITICAL),
+    ):
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            core.handle_module_error(
+                ModuleError(source="pypts.report.report", severity=severity, message="disk full")
+            )
+        assert [record.levelno for record in caplog.records] == [expected_level]
+
+    # One forwarded message in total: the CRITICAL. The WARNING stopped at CORE.
+    assert len(list(core.to_hmi.receive())) == 1
 
 
 def test_core_stops_when_all_modules_have_exited(caplog):

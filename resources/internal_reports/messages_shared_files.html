@@ -167,7 +167,9 @@ rather than importing <code>pypts.logger.log</code>, because <code>log.py</code>
   <tr><td><code>ErrorSeverity</code></td><td><code>Enum</code>: WARNING / ERROR / CRITICAL</td>
     <td><code>utilities/error_handling.py</code>, CORE (decides what the operator sees)</td></tr>
   <tr><td><code>ModuleError</code></td><td>frozen dataclass: <code>source, severity, message,
-    exception, traceback</code></td><td>Sent by <code>@catch_and_report_errors()</code>; in all
+    exception, traceback, operation, error_type</code></td><td>Sent by the two decorators in
+    <code>utilities/error_handling.py</code>, and by <code>report_error()</code> /
+    <code>report_problem()</code> from a raise site that recognised the failure itself; in all
     three engine link unions</td></tr>
   <tr><td><code>Heartbeat</code></td><td>frozen dataclass: <code>source, timestamp</code></td>
     <td><code>utilities/heartbeat_manager.py</code>; in all three link unions</td></tr>

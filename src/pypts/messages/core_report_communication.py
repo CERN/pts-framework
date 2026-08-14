@@ -2,14 +2,7 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-"""
-The CORE <-> Report link.
-
-A straight port of the old enums, with one change: the two notifications now
-carry the path of the artefact they produced. They used to carry nothing at all,
-which meant CORE could learn that a report existed but not where - and the CLI
-has to print that path to be useful.
-"""
+"""The CORE <-> Report link. The Report is a thread of the Core process."""
 
 from dataclasses import dataclass
 

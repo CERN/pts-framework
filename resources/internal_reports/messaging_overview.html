@@ -317,7 +317,8 @@ trip, and carries no live queue or handle.</div>
 <tr><td><code>unhandled(msg)</code></td><td>Last case of every match. Raises <code>UnhandledMessage</code>.</td></tr>
 <tr><td><code>messages/blocking_messages.py</code></td><td><code>PendingRequests.start(id)</code> · <code>.wait(id)</code> · <code>.return_caller(id, value)</code> · <code>.cancel(id)</code></td><td>The waiting half of a request/response pair. <code>wait()</code> returns <code>None</code> after 300 s.</td></tr>
 <tr><td><code>utilities/heartbeat_manager.py</code></td><td><code>HeartbeatManager(channel, source).tick()</code></td><td>Call from <code>do_periodic_tasks()</code>; it decides for itself when a beat is due (1 s).</td></tr>
-<tr><td><code>utilities/error_handling.py</code></td><td><code>@catch_and_report_errors()</code></td><td>Decorate a method of a class with a <code>core</code> attribute. Catches, reports a <code>ModuleError</code>, returns None.</td></tr>
+<tr><td rowspan="2"><code>utilities/error_handling.py</code></td><td><code>@catch_and_report_errors()</code> · <code>@report_and_reraise()</code></td><td>Decorate a method of a class with a <code>core</code> attribute. Catches, reports a <code>ModuleError</code> naming the method and the exception type, then swallows (event loops) or re-raises (execution layer).</td></tr>
+<tr><td><code>report_error(self, exc, severity=…)</code> · <code>report_problem(self, message, severity=…)</code></td><td>Call from inside your own <code>except</code> block for a failure you recognised, and rate it yourself. Neither raises — what happens next stays your decision.</td></tr>
 <tr><td><code>logger/log.py</code></td><td><code>init_logging(log_queue, level)</code> · <code>log</code> · <code>set_stdout_logging_enabled(bool)</code></td><td>First call in every <em>process</em> entry point — never from a thread, which shares the process's root logger. Then just <code>log.info(...)</code>.</td></tr>
 <tr><td><code>hmi/hmi_client.py</code></td><td><code>load_recipe()</code> · <code>start_sequence()</code> · <code>request_shutdown()</code> · <code>answer_user_prompt()</code> · <code>answer_serial_number()</code></td><td>Everything a frontend may say to CORE. The <code>show_*</code> hooks are what it overrides to draw.</td></tr>
 <tr><td><code>core/core.py</code></td><td><code>poll(channel, handler)</code> · <code>start_submodules()</code> · <code>join_submodules()</code> · <code>stop_all_modules()</code> · <code>note_heartbeat()</code> · <code>handle_module_error()</code></td><td>CORE's own machinery; nothing outside CORE calls these.</td></tr>
@@ -334,9 +335,19 @@ every 10 ms), and logs again when the module answers. What CORE should <em>do</e
 restart, abort, tell the operator — is still an open roadmap decision; today it only warns.</p>
 
 <h3>Errors</h3>
-<p><code>@catch_and_report_errors()</code> → <code>ModuleError</code> → CORE logs it, and if the
-severity is above WARNING forwards it to the HMI as <code>ModuleErrorReported</code>. CORE deciding
-what reaches the frontend is what keeps the runtime log readable during a long run.</p>
+<p>Two ways in, one way through. A failure <em>nobody expected</em> is caught by the decorator
+around the method — <code>@catch_and_report_errors()</code> for an event loop,
+<code>@report_and_reraise()</code> for the execution layer. A failure the method
+<em>recognised</em> is handled where it happened, in an ordinary <code>except</code>, and reported
+with <code>report_error()</code> (a live exception) or <code>report_problem()</code> (a refusal,
+with nothing raised behind it) at whatever severity the method thinks it deserves. Neither
+function raises, so the raise site keeps control of what it does next.</p>
+<p>Either way it becomes one <code>ModuleError</code>, carrying the module, <em>the method</em>
+(<code>operation</code>), the exception type and the traceback → CORE logs it at the level its
+severity asks for, and if the severity is above WARNING forwards it to the HMI as
+<code>ModuleErrorReported</code>. CORE deciding what reaches the frontend is what keeps the runtime
+log readable during a long run. What CORE should <em>do</em> beyond that — stop the sequence, abort
+the run — is deliberately still open (roadmap §1.11).</p>
 
 <h3>Questions to the operator (request/response)</h3>
 <p>The asking side generates a <code>request_id</code> with <code>uuid4()</code>; that id is what

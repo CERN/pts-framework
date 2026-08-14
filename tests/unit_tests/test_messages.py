@@ -102,6 +102,8 @@ AN_ERROR = ModuleError(
     message="boom",
     exception="ValueError('boom')",
     traceback="Traceback (most recent call last):\n...",
+    operation="Sequencer.poll_core",
+    error_type="ValueError",
 )
 
 AN_OUTCOME = StepOutcome(

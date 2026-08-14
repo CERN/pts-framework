@@ -29,7 +29,12 @@ import pytest
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
 from pypts.utilities.common import convert_string_to_int
-from pypts.utilities.error_handling import catch_and_report_errors, report_and_reraise
+from pypts.utilities.error_handling import (
+    catch_and_report_errors,
+    report_and_reraise,
+    report_error,
+    report_problem,
+)
 from pypts.utilities.heartbeat_manager import HeartbeatManager
 
 PLACEHOLDER = "placeholder - test not implemented yet"
@@ -168,6 +173,114 @@ def test_an_object_with_no_outbox_is_logged_rather_than_masked(decorator, caplog
                 NoOutbox().run()
         else:
             NoOutbox().run()
+
+    assert any("boom" in record.getMessage() for record in caplog.records)
+    assert any("has no outbox" in record.getMessage() for record in caplog.records)
+
+
+def test_a_reported_error_names_the_method_and_the_exception_type():
+    """
+    The decorator knows both without being told, and neither can be recovered
+    from `source` alone: it names the module, and a module has twenty methods.
+    """
+    outbox: queue.Queue = queue.Queue()
+
+    FakeModule(outbox).explode()
+
+    error = outbox.get_nowait()
+    assert error.operation == "FakeModule.explode"
+    assert error.error_type == "ValueError"
+
+
+def test_a_decorator_can_declare_the_severity_of_an_unexpected_failure():
+    """
+    ERROR is right for almost everything, which is why it is the default. A
+    method whose failure is routine says so once, where it is decorated.
+    """
+    outbox: queue.Queue = queue.Queue()
+
+    class Poller:
+        def __init__(self):
+            self.core = QueueWrapper(outbox)
+
+        @catch_and_report_errors(severity=ErrorSeverity.WARNING)
+        def poll(self):
+            raise TimeoutError("the instrument was slow")
+
+    Poller().poll()
+
+    assert outbox.get_nowait().severity is ErrorSeverity.WARNING
+
+
+def test_report_error_lets_a_raise_site_classify_what_it_caught():
+    """
+    The point of the raise-site half: the method that knows what a TimeoutError
+    means here says so, and carries on with its own recovery. The decorator
+    could only have called it an ERROR and swallowed the rest of the method.
+    """
+    outbox: queue.Queue = queue.Queue()
+
+    class Instrument:
+        def __init__(self):
+            self.core = QueueWrapper(outbox)
+
+        @catch_and_report_errors()
+        def measure(self):
+            try:
+                raise TimeoutError("no answer in 5 s")
+            except TimeoutError as exc:
+                report_error(self, exc, severity=ErrorSeverity.WARNING)
+                return "retried"
+
+    assert Instrument().measure() == "retried"
+
+    error = outbox.get_nowait()
+    assert isinstance(error, ModuleError)
+    assert error.severity is ErrorSeverity.WARNING
+    assert error.error_type == "TimeoutError"
+    assert error.source == Instrument.__module__
+    assert "TimeoutError: no answer in 5 s" in error.traceback
+    assert outbox.empty(), "the decorator reported it a second time"
+
+
+def test_report_problem_carries_no_traceback_because_nothing_was_raised():
+    """
+    A refusal is a fact worth reporting that nothing raised. Raising one only to
+    catch it a frame later would attach a traceback through the module's own
+    guard, which tells the reader nothing.
+    """
+    outbox: queue.Queue = queue.Queue()
+
+    class Module:
+        def __init__(self):
+            self.core = QueueWrapper(outbox)
+
+    report_problem(Module(), "already running", operation="Module.start")
+
+    error = outbox.get_nowait()
+    assert error.message == "already running"
+    assert error.operation == "Module.start"
+    assert error.traceback is None
+    assert error.exception is None
+    assert error.error_type == ""
+
+
+@pytest.mark.parametrize("report", [report_error, report_problem], ids=["error", "problem"])
+def test_a_raise_site_with_no_outbox_is_logged_rather_than_masked(report, caplog):
+    """
+    Same guarantee the decorators have. A driver or a half-built object can
+    report without CORE existing, and the failure still has to be recorded.
+    """
+    class NoOutbox:
+        """Deliberately has no `core` attribute."""
+
+    if report is report_error:
+        argument: object = ValueError("boom")
+    else:
+        argument = "boom"
+
+    with caplog.at_level("ERROR"):
+        report(NoOutbox(), argument)
 
     assert any("boom" in record.getMessage() for record in caplog.records)
     assert any("has no outbox" in record.getMessage() for record in caplog.records)

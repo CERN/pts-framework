@@ -44,7 +44,7 @@ from pypts.messages.core_sequencer_communication import (
     StopSequencer,
 )
 from pypts.messages.run_events import SerialNumberResponse, UserPromptResponse
-from pypts.utilities.error_handling import catch_and_report_errors
+from pypts.utilities.error_handling import catch_and_report_errors, report_problem
 from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
 
 #: The name CORE knows this module by, and the `source` on its heartbeats.
@@ -148,18 +148,21 @@ class Sequencer:
         operator's answer to a waiting step - happens on the loop this returns
         to. See the module docstring.
 
-        Raises:
-            RuntimeError: a sequence is already running. Refused rather than
-                queued: two sequences at once would interleave their progress
-                events, and the operator asked for something the module cannot
-                do. @catch_and_report_errors() turns this into a ModuleError, so
-                CORE hears about it and shows it.
+        A second request while one is running is refused rather than queued: two
+        sequences at once would interleave their progress events. It is reported
+        here rather than raised, because this module knows exactly what that
+        failure is - the operator asked for something it cannot do - and a
+        traceback through its own guard would tell them nothing. CORE still
+        hears about it and still shows it; only the noise is gone.
         """
         if self.sequence_is_running():
-            raise RuntimeError(
+            report_problem(
+                self,
                 f"Cannot start '{sequence_name}': a sequence is already running. "
-                f"Send StopSequence first."
+                f"Send StopSequence first.",
+                operation="Sequencer.run_sequence",
             )
+            return
 
         # Cleared here rather than at the end of a run, so that a stop arriving
         # after the previous sequence finished cannot abort the next one.

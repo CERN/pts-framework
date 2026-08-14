@@ -3,15 +3,10 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The CORE <-> Sequencer link.
+The CORE <-> Sequencer link. The Sequencer is a thread of the Core process.
 
-Two processes today, two threads in one process after the roadmap's topology
-change. Neither end knows the difference: the launcher decides which queue type
-the QueueWrapper wraps.
-
-Most of the traffic is the run-progress events in run_events.py. The Sequencer
-emits them, CORE forwards them to the HMI unchanged, and CORE reacts to the ones
-it cares about on the way past.
+Most of the traffic is the run-progress events in run_events.py: the Sequencer
+emits them and CORE forwards them to the HMI, reacting on the way past.
 """
 
 from dataclasses import dataclass
@@ -35,25 +30,14 @@ from pypts.messages.run_events import (
 
 @dataclass(frozen=True, slots=True)
 class RunSequence:
-    """
-    Run one named sequence of the recipe CORE has loaded.
-
-    The old CoreToSequencerInterface.run_sequence() took no arguments at all,
-    so the sequence name the operator picked had nowhere to go between the HMI
-    and the Sequencer.
-    """
+    """Run one named sequence of the recipe CORE has loaded."""
 
     sequence_name: str
 
 
 @dataclass(frozen=True, slots=True)
 class StopSequence:
-    """
-    Abort the running sequence but keep the module alive.
-
-    CORE had a method to send this and the Sequencer had no branch for it, so it
-    would have been logged as an unknown event while the sequence carried on.
-    """
+    """Abort the running sequence but keep the module alive."""
 
 
 @dataclass(frozen=True, slots=True)

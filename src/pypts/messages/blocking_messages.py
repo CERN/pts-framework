@@ -5,45 +5,24 @@
 """
 The waiting half of a request/response pair.
 
-A module that asks a question sends a request carrying a fresh `request_id`,
-then blocks until the matching response arrives on its inbox. The event loop
-that drains that inbox hands the answer over by calling return_caller(); the
-asking code wakes up in wait().
+    pending.start(rid); core.send(UserPromptRequest(rid, ...))
+    answer = pending.wait(rid)                 # asker, on a worker thread
+    pending.return_caller(rid, choice)         # event loop, draining the inbox
 
-    # asking side (a step, on its own worker thread)
-    request_id = uuid4()
-    pending.start(request_id)
-    core.send(UserPromptRequest(request_id, "Connect the DUT", ("OK", "Abort")))
-    answer = pending.wait(request_id)          # None if it timed out
-
-    # event loop, draining the inbox
-    case UserPromptResponse(request_id=rid, choice=choice):
-        pending.return_caller(rid, choice)
-
-IMPORTANT: the thread that calls wait() must not be the thread that drains the
-inbox, or the answer can never arrive and the module deadlocks. The Sequencer
-is single-threaded today, so porting user-interaction steps in Phase 1 means
-running the sequence on its own worker thread while the event loop keeps
-turning. This is noted as a TODO in the roadmap.
-
-Nothing uses this yet - it lands with the execution engine.
+IMPORTANT: the thread that calls wait() must not be the one draining the inbox,
+or the answer can never arrive and the module deadlocks.
 """
 
 from queue import Empty, SimpleQueue
 from threading import Lock
 from uuid import UUID
 
-#: How long wait() blocks before giving up. Five minutes matches the timeout the
-#: old user-interaction steps used for an operator standing at the bench.
+#: How long wait() blocks before giving up - an operator standing at the bench.
 DEFAULT_TIMEOUT_S = 300.0
 
 
 class PendingRequests:
-    """
-    Requests this module has sent and is still waiting on, keyed by request_id.
-
-    Safe to use from two threads: the asker and the event loop.
-    """
+    """Requests still in flight, keyed by request_id. Safe from two threads."""
 
     def __init__(self, timeout_s: float = DEFAULT_TIMEOUT_S) -> None:
         self._timeout_s = timeout_s
@@ -51,22 +30,12 @@ class PendingRequests:
         self._waiting: dict[UUID, SimpleQueue] = {}
 
     def start(self, request_id: UUID) -> None:
-        """
-        Register a request before sending it.
-
-        Call this first. Registering after the send would race a fast responder,
-        and the answer would be dropped as unknown.
-        """
+        """Register a request before sending it, or a fast responder wins the race."""
         with self._lock:
             self._waiting[request_id] = SimpleQueue()
 
     def wait(self, request_id: UUID, timeout_s: float | None = None):
-        """
-        Block until the answer arrives, then return it. Returns None on timeout.
-
-        The entry is always removed, so a late answer to a timed-out request is
-        discarded by return_caller() rather than being handed to nobody.
-        """
+        """Block until the answer arrives, then return it. None on timeout."""
         with self._lock:
             slot = self._waiting.get(request_id)
         if slot is None:
@@ -81,11 +50,9 @@ class PendingRequests:
 
     def return_caller(self, request_id: UUID, value) -> bool:
         """
-        Hand an answer to whoever is waiting for it, waking them out of wait().
+        Wake whoever is waiting on this request. False if nobody is.
 
-        Returns False if nobody is - an answer to a request that already timed
-        out, or one this module never sent. The caller should log that rather
-        than ignore it; it means the two ends disagree about what is in flight.
+        Worth logging: it means the two ends disagree about what is in flight.
         """
         with self._lock:
             slot = self._waiting.get(request_id)

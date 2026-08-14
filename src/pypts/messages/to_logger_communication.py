@@ -3,17 +3,11 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The any-module -> Logger link. The one link that does not go through CORE.
+The any-module -> Logger link. The one link that does not go through CORE, so a
+log record does not depend on CORE being alive.
 
-That exception is deliberate and worth keeping: every module needs to log, and a
-log record must not depend on CORE being alive to be written. See logger/log.py
-for why a single writer process owns the file.
-
-This link is also the only one whose queue carries two kinds of item. Ordinary
-log records are put on it by logging's own QueueHandler as plain
-logging.LogRecord objects; the control messages below travel the same queue and
-steer the Logger itself. The Logger tells them apart by type, which is why the
-control messages must stay dataclasses rather than anything LogRecord-shaped.
+Its queue carries two kinds of item: LogRecords put there by QueueHandler, and
+the control messages below. The Logger tells them apart by type.
 """
 
 from dataclasses import dataclass
@@ -23,25 +17,14 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True, slots=True)
 class SetStdoutEnabled:
-    """
-    Turn the console echo on or off for the whole application.
-
-    The Logger owns the console handler, so this has to be a message: a local
-    handler change in one process would not affect any other.
-    """
+    """Console echo for the whole application. The Logger owns that handler."""
 
     enabled: bool
 
 
 @dataclass(frozen=True, slots=True)
 class StopLogger:
-    """
-    Stop the Logger. Sent last, by the launcher.
-
-    Being queued rather than immediate is the point: the Logger drains
-    everything already in flight before it acts on this, so records emitted
-    while the other modules shut down still reach the file.
-    """
+    """Stop the Logger. Sent last, and queued, so pending records are written first."""
 
 
 # --- The link ------------------------------------------------------------------

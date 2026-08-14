@@ -5,33 +5,9 @@
 """
 What the engine reports while a recipe runs, and the two questions it asks back.
 
-These originate in the Sequencer, travel to CORE, and CORE forwards them
-unchanged to the HMI - so each one appears in both the sequencer link's union
-and the HMI link's union, and is defined once here.
-
-The set is a one-for-one port of the nine Qt signals in old_code/event_proxy.py,
-which is the closest thing the project has to a requirements document for what a
-frontend needs in order to draw a run:
-
-    pre_run_recipe     -> RunStarted
-    post_load_recipe   -> RecipeLoaded
-    pre_run_sequence   -> SequenceStarted
-    pre_run_step       -> StepStarted
-    post_run_step      -> StepFinished
-    post_run_sequence  -> SequenceFinished
-    post_run_recipe    -> RunFinished
-    user_interact      -> UserPromptRequest   / UserPromptResponse
-    get_serial_number  -> SerialNumberRequest / SerialNumberResponse
-
-Nothing sends most of these yet - the execution engine is still to be ported
-(roadmap Phase 1). They are declared now because the CLI, the GUI and the Report
-all have to agree on them, and agreeing before the call sites exist is much
-cheaper than agreeing after.
-
-The old code carried these as tuples of positional data behind a string event
-name, transformed into dicts by a proxy class. The colour lookup that proxy did
-(`get_step_result_colors`) is presentation and stays in the GUI: a message says
-what happened, never how to draw it.
+Emitted by the Sequencer, forwarded unchanged by CORE to the HMI, so each one
+belongs to two unions and is defined once here. A message says what happened,
+never how to draw it. Nothing sends most of them yet - roadmap Phase 1.
 """
 
 from dataclasses import dataclass
@@ -60,13 +36,7 @@ class RunStarted:
 
 @dataclass(frozen=True, slots=True)
 class RunFinished:
-    """
-    Execution finished, for any reason including being stopped.
-
-    `outcomes` is flat and in execution order. The old engine handed the GUI a
-    nested tree of StepResults; nesting is a Report concern, and the HMI's
-    results table only ever walked it flat.
-    """
+    """Execution finished, for any reason. `outcomes` is flat, in execution order."""
 
     result: ResultType
     outcomes: tuple[StepOutcome, ...] = ()
@@ -89,13 +59,7 @@ class SequenceFinished:
 
 @dataclass(frozen=True, slots=True)
 class StepStarted:
-    """
-    One step is about to run.
-
-    `step_id` is the step's own UUID from the recipe, which is how a frontend
-    finds the row to update. It is stable across a run; the outcome's id in
-    StepFinished is the same one.
-    """
+    """One step is about to run. `step_id` is how a frontend finds the row."""
 
     step_id: UUID
     step_name: str
@@ -110,13 +74,8 @@ class StepFinished:
 
 # --- Questions the engine asks the operator -----------------------------------
 #
-# A request and its response are joined by `request_id`, which the *asking* side
-# generates with uuid4(). That id is the whole reason these can cross a process
-# boundary at all: the old engine put a live queue.SimpleQueue inside the event
-# and had the GUI answer straight into it, which only ever worked because both
-# ends were threads in one process.
-#
-# The waiting side is in blocking_messages.py.
+# Joined by a `request_id` the asker generates, which is what lets these cross a
+# process boundary. The waiting side is in blocking_messages.py.
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,8 +83,7 @@ class UserPromptRequest:
     """
     Show the operator a message and wait for one of `options` to be chosen.
 
-    `image_path` is resolved to an absolute path by the sender, because the HMI
-    may be a different process with a different working directory.
+    `image_path` is absolute: the HMI is a different process.
     """
 
     request_id: UUID
@@ -136,15 +94,7 @@ class UserPromptRequest:
 
 @dataclass(frozen=True, slots=True)
 class UserPromptResponse:
-    """
-    The operator's answer. `choice` is None if they cancelled or the wait timed out.
-
-    TODO (roadmap Phase 1): some old_code interaction steps read a *second*
-    value off the same response queue after the first answer - a file path, a
-    measured value, or a (port, baudrate, IDN) triple. That follow-up is not
-    modelled here; when those steps are ported each follow-up needs to become
-    its own request rather than an untyped extra read.
-    """
+    """The operator's answer. `choice` is None if they cancelled or it timed out."""
 
     request_id: UUID
     choice: str | None

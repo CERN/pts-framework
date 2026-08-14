@@ -22,9 +22,11 @@ The three handlers below are the whole routing table. Each one ends in
 unhandled(), so a message nobody thought about raises instead of being dropped.
 """
 
+import logging
 import threading
 import time
 from queue import Queue
+from typing import ClassVar
 
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import QueueWrapper, UnhandledMessage, unhandled
@@ -399,13 +401,40 @@ class Core:
         log.info("Starting sequence '%s'.", sequence_name)
         self.to_sequencer.send(RunSequence(sequence_name))
 
+    #: What CORE logs a reported failure at. The sender rates its own failure -
+    #: it is the only one who can - and CORE takes it at its word. That is the
+    #: whole of the decision: what to *do* about an error beyond recording it
+    #: and telling the operator is Phase 1's to settle (roadmap §1.11).
+    LOG_LEVEL_FOR_SEVERITY: ClassVar[dict[ErrorSeverity, int]] = {
+        ErrorSeverity.WARNING: logging.WARNING,
+        ErrorSeverity.ERROR: logging.ERROR,
+        ErrorSeverity.CRITICAL: logging.CRITICAL,
+    }
+
     def handle_module_error(self, error: ModuleError) -> None:
         """
         Record a module failure and, unless it is only a warning, show it to the
         operator. CORE deciding what reaches the frontend is what keeps the
         runtime log readable during a long run.
+
+        The line names the method and the exception type as well as the module,
+        so the log says which of a module's twenty methods failed, and how,
+        without anyone having to read the traceback under it.
         """
-        log.error("%s: %s\n%s", error.source, error.message, error.traceback or "")
+        where = error.operation or error.source
+        if error.error_type:
+            what = error.error_type + ": " + error.message
+        else:
+            what = error.message
+
+        log.log(
+            self.LOG_LEVEL_FOR_SEVERITY[error.severity],
+            "%s: %s\n%s",
+            where,
+            what,
+            error.traceback or "",
+        )
+
         if error.severity is not ErrorSeverity.WARNING:
             self.to_hmi.send(ModuleErrorReported(error))
 

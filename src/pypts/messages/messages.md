@@ -20,6 +20,42 @@ has already happened · **STUB** declared, nothing sends or carries it out yet.
 
 ---
 
+## Transport — `queue_wrapper.py`
+
+One class carries every link. It wraps *anything* with `put()` and `get_nowait()`, and that
+is the whole reason one class serves both kinds of boundary: the launcher hands out a
+`multiprocessing.Queue` for HMI ↔ CORE, CORE hands out plain `queue.Queue` to the Sequencer
+and the Report, and a future `--mode connect` can hand out a socket-backed queue-alike.
+No module ever learns which one it holds.
+
+Nothing blocks. Each module polls its inboxes from an event loop, so `receive()` takes what
+is there at that moment and returns; a message sent between two ticks arrives on the next.
+`DEFAULT_BATCH = 64` caps one `receive()` so a busy link cannot starve the other inboxes the
+same loop tick has to service.
+
+**The trace.** `send()` and `receive()` each log one DEBUG line, so a run log at DEBUG holds
+every message twice — once where it was sent, once where it was taken off the queue. The
+pair is the point: *sent but never received* is the failure worth seeing, and it is invisible
+to anything that only logs on arrival. Because the trace sits on the one object every message
+already passes through, no module has to remember to log and no new message can escape it.
+
+The line names the **link**, not the sender — which is the only thing identifying the
+Sequencer and the Report in the log at all, since they are threads of the Core process and
+`%(processName)s` reads `Core` for their records too.
+
+Two details that look like accidents and are not:
+
+- `_trace` is obtained with `logging.getLogger()` rather than imported from `logger/log.py`,
+  because `log.py` imports this module — importing it back would be a cycle.
+- The trace line precedes the `put()`, so a message that then fails to pickle is still
+  recorded; `sent` is incremented after, so a failed send is not counted as a delivery.
+
+`sent` / `received` belong to the **holder, not the link**. A wrapper pickled into a child
+process gives the child its own copy; the Sequencer and the Report are threads, so they share
+CORE's object. For a whole-system view, read the trace in the run log instead.
+
+---
+
 ## Shared vocabulary — `common_messages.py` and `run_events.py`
 
 A type lives here when more than one link uses it: either every module sends it, or CORE
@@ -30,7 +66,7 @@ every hop.
 | Type | Kind | Meaning |
 |---|---|---|
 | `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all three links. |
-| `ModuleError(source, severity, message, exception, traceback)` | EVT | A failure the sender wants CORE to know about. Sent by `@catch_and_report_errors()`. |
+| `ModuleError(source, severity, message, exception, traceback, operation, error_type)` | EVT | A failure the sender wants CORE to know about. Sent by the two decorators in `utilities/error_handling.py` for what nobody expected, and by `report_error()` / `report_problem()` from a raise site that recognised the failure itself and rated it. `operation` names the method (`"Sequencer.poll_core"`), `error_type` the exception class — strings, because this crosses the pickled link. |
 | `ErrorSeverity` · `ResultType` · `StepOutcome` | — | Enums and the pickle-safe summary of one executed step. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
 | `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT · STUB | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Emitted by the Sequencer, forwarded unchanged by CORE to the HMI. (`RecipeLoaded` comes from CORE itself.) |
 | `UserPromptRequest/Response`, `SerialNumberRequest/Response` | EVT · STUB | The two questions the engine asks the operator, joined by a `request_id` the asker generates. |

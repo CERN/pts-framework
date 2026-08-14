@@ -5,9 +5,9 @@
 """
 Reporting a module's failures to CORE.
 
-Two decorators, because a failure means two different things depending on where
-it happens - and one decorator that did both was the open item roadmap Phase 0
-listed as "harden catch_and_report_errors".
+Two decorators and two functions, and the split between them is the design:
+**the decorators are the net for what nobody expected; the functions are how a
+method handles a failure it recognised.**
 
 `@catch_and_report_errors()` **reports and continues**. It is for event loop
 methods, where the alternative is worse: a module that dies on one bad message
@@ -24,9 +24,32 @@ The split is deliberately explicit rather than a flag. Which of the two a piece
 of code needs is a property of where it sits, so it should be readable at the
 call site without checking an argument.
 
-Both need the decorated method to belong to a class with a `core` attribute -
-that module's outbox to CORE - and both survive it being absent, because an
-error handler that raises AttributeError while handling an error destroys the
+## Handling a specific error where it happens
+
+Everything the decorators send is, by definition, a surprise: they cannot know
+what the failure meant, so it is always an ERROR with a traceback attached. A
+method that *does* know catches it itself and says so:
+
+    try:
+        reading = self.instrument.measure()
+    except TimeoutError as exc:
+        # The DUT is slow, not broken. Worth recording, not worth alarming
+        # the operator with.
+        report_error(self, exc, severity=ErrorSeverity.WARNING)
+        reading = self.retry_measurement()
+
+`report_error()` is for a live exception; `report_problem()` is for a failure
+with no exception behind it - a refused command, an instrument answering
+nonsense - which has no traceback worth sending and gains nothing from being
+raised only to be caught again one frame later.
+
+Anything the method does not recognise falls through to its decorator, which is
+what the decorator is for. Neither function raises, so the raise site keeps
+control of what happens next; that decision belongs to it and not here.
+
+All four need the decorated method to belong to a class with a `core` attribute
+- that module's outbox to CORE - and all four survive it being absent, because
+an error handler that raises AttributeError while handling an error destroys the
 one thing worth keeping: what actually went wrong.
 """
 
@@ -37,7 +60,9 @@ from pypts.logger.log import log
 from pypts.messages.common_messages import ErrorSeverity, ModuleError
 
 
-def catch_and_report_errors(module_name: str | None = None):
+def catch_and_report_errors(
+    module_name: str | None = None, severity: ErrorSeverity = ErrorSeverity.ERROR
+):
     """
     Report exceptions raised by a method to CORE, then swallow them.
 
@@ -47,6 +72,9 @@ def catch_and_report_errors(module_name: str | None = None):
     Args:
         module_name: value for ModuleError.source. Defaults to the module the
                      decorated function was defined in.
+        severity: how bad an unexpected failure in this method is. The default
+                  suits almost everything; a method whose failure is routine can
+                  say so once, here, instead of at every raise site inside it.
     """
 
     def decorator(func):
@@ -54,20 +82,25 @@ def catch_and_report_errors(module_name: str | None = None):
         # it from the call stack instead made the reported source depend on who
         # happened to call the function first.
         source = module_name or func.__module__
+        operation = func.__qualname__
 
         @wraps(func)
         def wrapper(self, *args, **kwargs):
             try:
                 return func(self, *args, **kwargs)
             except Exception as exc:  # noqa: BLE001 - catching everything is the point
-                report_error(self, source, exc)
+                report_error(
+                    self, exc, severity=severity, source=source, operation=operation
+                )
 
         return wrapper
 
     return decorator
 
 
-def report_and_reraise(module_name: str | None = None):
+def report_and_reraise(
+    module_name: str | None = None, severity: ErrorSeverity = ErrorSeverity.ERROR
+):
     """
     Report exceptions raised by a method to CORE, then let them propagate.
 
@@ -78,17 +111,21 @@ def report_and_reraise(module_name: str | None = None):
     Args:
         module_name: value for ModuleError.source. Defaults to the module the
                      decorated function was defined in.
+        severity: how bad an unexpected failure in this method is.
     """
 
     def decorator(func):
         source = module_name or func.__module__
+        operation = func.__qualname__
 
         @wraps(func)
         def wrapper(self, *args, **kwargs):
             try:
                 return func(self, *args, **kwargs)
             except Exception as exc:
-                report_error(self, source, exc)
+                report_error(
+                    self, exc, severity=severity, source=source, operation=operation
+                )
                 # Bare `raise`, not `raise exc`: the original traceback is the
                 # thing a step's result has to carry.
                 raise
@@ -98,9 +135,82 @@ def report_and_reraise(module_name: str | None = None):
     return decorator
 
 
-def report_error(instance, source: str, exc: Exception) -> None:
+def report_error(
+    instance,
+    exc: Exception,
+    *,
+    severity: ErrorSeverity = ErrorSeverity.ERROR,
+    source: str | None = None,
+    operation: str = "",
+) -> None:
     """
-    Send one ModuleError to CORE on behalf of `instance`.
+    Send one ModuleError describing `exc` to CORE, on behalf of `instance`.
+
+    Called by both decorators, and by a method that caught something it
+    recognised. It reports and returns; it never raises and never re-raises, so
+    what happens to the failure afterwards stays the raise site's decision.
+
+    Must be called from inside the `except` block - the traceback comes from
+    traceback.format_exc(), which is empty outside one.
+
+    Args:
+        instance: the module reporting, i.e. whatever holds the outbox to CORE.
+        exc: the exception being reported.
+        severity: how the sender rates it. CORE logs at the matching level and
+                  shows the operator anything above WARNING.
+        source: dotted module name. Defaults to the module `instance`'s class
+                was defined in - no call-stack inspection, deliberately.
+        operation: qualified name of the failing method. The decorators fill it
+                   in; a raise site passes it when the method is worth naming.
+    """
+    send_module_error(
+        instance,
+        ModuleError(
+            source=source or type(instance).__module__,
+            severity=severity,
+            message=str(exc),
+            exception=repr(exc),
+            traceback=traceback.format_exc(),
+            operation=operation,
+            error_type=type(exc).__name__,
+        ),
+    )
+
+
+def report_problem(
+    instance,
+    message: str,
+    *,
+    severity: ErrorSeverity = ErrorSeverity.ERROR,
+    source: str | None = None,
+    operation: str = "",
+) -> None:
+    """
+    Send one ModuleError to CORE for a failure with no exception behind it.
+
+    A command the module refuses, a device answering something impossible: a
+    fact worth reporting that nothing raised. Raising an exception purely to
+    catch it one frame later would only attach a traceback through the
+    framework's own guard, which tells the reader nothing.
+
+    Args:
+        message: the one-line summary. There is no exception to take it from.
+        instance, severity, source, operation: as report_error().
+    """
+    send_module_error(
+        instance,
+        ModuleError(
+            source=source or type(instance).__module__,
+            severity=severity,
+            message=message,
+            operation=operation,
+        ),
+    )
+
+
+def send_module_error(instance, error: ModuleError) -> None:
+    """
+    Put one ModuleError on `instance`'s outbox to CORE.
 
     Falls back to the log when the instance has no outbox. A driver, a helper
     or a half-built object under test can be decorated without CORE existing at
@@ -112,19 +222,11 @@ def report_error(instance, source: str, exc: Exception) -> None:
     if outbox is None:
         log.error(
             "%s: %s (not reported to CORE: %s has no outbox)\n%s",
-            source,
-            exc,
+            error.operation or error.source,
+            error.message,
             type(instance).__name__,
-            traceback.format_exc(),
+            error.traceback or "",
         )
         return
 
-    outbox.send(
-        ModuleError(
-            source=source,
-            severity=ErrorSeverity.ERROR,
-            message=str(exc),
-            exception=repr(exc),
-            traceback=traceback.format_exc(),
-        )
-    )
+    outbox.send(error)

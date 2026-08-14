@@ -173,6 +173,15 @@ Two error decorators in `utilities/error_handling.py`, and picking the wrong one
 one bad message takes the run with it); `@report_and_reraise()` reports and **re-raises**
 (execution layer — a step failure has to reach a `StepResult`). See roadmap §1.10.
 
+The decorators are the net for a failure **nobody expected**, so all they can call it is an
+ERROR. A failure a method **recognises** is handled where it happens — an ordinary
+`except SpecificError:` — and reported with `report_error(self, exc, severity=…)` (a live
+exception) or `report_problem(self, message, severity=…)` (a refusal, nothing raised). Neither
+raises: the raise site keeps control of what it does next. Every `ModuleError` names the module,
+the method (`operation`) and the exception type; CORE logs at the level the severity asks for and
+shows the operator anything above WARNING, and that is *all* CORE does about an error today. See
+roadmap §1.11.
+
 ## Running
 
 ```bash
@@ -209,7 +218,7 @@ All three must pass before any change is called done, and all three run in CI
 (`.gitlab-ci.yml`, `analyse` and `test` stages):
 
 ```bash
-pytest tests                 # 240 passed, 70 skipped as of the last green run
+pytest tests                 # 248 passed, 69 skipped as of the last green run
 ruff check src tests         # rules and line-length 100 in [tool.ruff] in pyproject.toml
 mypy                         # scope is [tool.mypy]: messages/ and the handler modules
 ```
