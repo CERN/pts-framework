@@ -149,7 +149,7 @@ def _common_step_fields(
 def render_reference(schema: dict[str, Any]) -> str:
     """Render deterministic RST using only a parsed JSON Schema document."""
     definitions = schema["$defs"]
-    steps = _discriminator_mapping(definitions, "Step")
+    steps = _discriminator_mapping(definitions, "StepDefinition")
     inputs = _discriminator_mapping(definitions, "InputMapping")
     outputs = _discriminator_mapping(definitions, "OutputMapping")
     common_fields = _common_step_fields(definitions, list(steps.values()))
@@ -171,7 +171,8 @@ def render_reference(schema: dict[str, Any]) -> str:
         ":download:`Download the JSON Schema <recipe_language.schema.json>`.",
         "",
         "See :doc:`/recipe_language_architecture` for parsing, semantic rules,",
-        "documentation maintenance, and the planned YamVIEW and sequencer flows.",
+        "YamVIEW, and runtime construction. Maintainers should also read",
+        ":doc:`/recipe_language_maintenance`.",
         "",
         "Documents",
         "---------",
@@ -189,7 +190,7 @@ def render_reference(schema: dict[str, Any]) -> str:
     representative = next(iter(steps.values()))
     lines.extend(_field_table(definitions[representative], include=common_fields))
 
-    lines.extend(("Authorable steps", "----------------", ""))
+    lines.extend(("Step definitions", "----------------", ""))
     for discriminator, definition_name in steps.items():
         lines.extend(_model_section(
             definition_name,

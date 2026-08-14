@@ -15,7 +15,7 @@ from typing import Any
 from pydantic import TypeAdapter
 
 from pypts.recipe_language import Recipe as RecipeDefinition
-from pypts.recipe_language import Step as AuthorableStepDefinition
+from pypts.recipe_language import StepDefinition
 
 
 def recipe_form_schema() -> dict[str, Any]:
@@ -83,7 +83,7 @@ def recipe_form_description(schema: dict[str, Any] | None = None) -> dict[str, A
         return result
 
     return {
-        "steps": variants("Step"),
+        "steps": variants("StepDefinition"),
         "inputs": variants("InputMapping"),
         "outputs": variants("OutputMapping"),
     }
@@ -142,7 +142,7 @@ class SchemaFormWidget(QWidget):
             layout.addWidget(widget)
 
     def values(self) -> dict[str, Any]:
-        """Read authorable values from the schema-selected controls."""
+        """Read recipe step-definition values from the schema controls."""
         values = {}
         fields = self.variant["fields"]
         for name, widget in self.field_widgets.items():
@@ -513,7 +513,7 @@ class Step_setup(QDialog):
 
         layout.addWidget(QLabel("Steptype"))
         self.list_steptype = QComboBox()
-        self.steptypes = list(discriminator_schemas("Step"))
+        self.steptypes = list(discriminator_schemas("StepDefinition"))
         self.list_steptype.addItems(self.steptypes)
         layout.addWidget(self.list_steptype)
 
@@ -580,7 +580,7 @@ class Step_setup(QDialog):
         self._render_schema_step(step_type)
 
     def _render_schema_step(self, step_type: str):
-        """Render the selected authorable step directly from JSON Schema."""
+        """Render the selected step definition directly from JSON Schema."""
         self.schema_form = SchemaFormWidget(self.form_description["steps"][step_type])
         self.step_specific_container.addWidget(self.schema_form)
         self.step_specific_container.addStretch()
@@ -951,9 +951,11 @@ class Step_setup(QDialog):
             StepID = str(uuid.uuid4())
 
         try:
-            authorable = self.schema_form.values()
-            authorable["steptype"] = step_type
-            definition = TypeAdapter(AuthorableStepDefinition).validate_python(authorable)
+            step_definition_data = self.schema_form.values()
+            step_definition_data["steptype"] = step_type
+            definition = TypeAdapter(StepDefinition).validate_python(
+                step_definition_data
+            )
         except Exception as error:
             self.setStyleSheet("""QMessageBox QPushButton { color: black;}""")
             QMessageBox.warning(self, "Invalid step", str(error))

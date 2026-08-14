@@ -24,6 +24,7 @@ from pypts.recipe_reference import render_reference
 ROOT = Path(__file__).parents[2]
 DOC_RECIPE = ROOT / "docs" / "source" / "_examples" / "recipe_v2.yml"
 ARCHITECTURE = ROOT / "docs" / "source" / "recipe_language_architecture.rst"
+MAINTENANCE = ROOT / "docs" / "source" / "recipe_language_maintenance.rst"
 REFERENCE_RENDERER = ROOT / "src" / "pypts" / "recipe_reference.py"
 
 
@@ -58,13 +59,19 @@ def test_every_discriminator_is_rendered_once():
     schema_text, reference = rendered_artifacts()
     schema = json.loads(schema_text)
     for group, definition in (
-        ("step", "Step"),
+        ("step", "StepDefinition"),
         ("input", "InputMapping"),
         ("output", "OutputMapping"),
     ):
         for discriminator in _mapping(schema, definition):
             anchor = f".. _recipe-v2-{group}-{discriminator.lower()}:"
             assert reference.count(anchor) == 1
+
+
+def test_schema_uses_step_definition_name_without_legacy_alias():
+    schema = json.loads(render_json_schema())
+    assert "StepDefinition" in schema["$defs"]
+    assert "Step" not in schema["$defs"]
 
 
 def test_reference_metadata_comes_from_json_schema():
@@ -144,5 +151,10 @@ def test_sphinx_sources_link_reference_schema_and_example():
     index = (ROOT / "docs" / "source" / "index.rst").read_text(encoding="utf-8")
     architecture = ARCHITECTURE.read_text(encoding="utf-8")
     assert "_generated/recipe_language_reference" in index
+    assert "recipe_language_maintenance" in index
     assert "_generated/recipe_language.schema.json" in architecture
     assert "_examples/recipe_v2.yml" in architecture
+    maintenance = MAINTENANCE.read_text(encoding="utf-8")
+    assert "STEP_TYPE_REGISTRY" in maintenance
+    assert "STEP_DEFINITION_MODELS" in maintenance
+    assert "Preparing a language version upgrade" in maintenance

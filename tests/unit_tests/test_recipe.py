@@ -16,9 +16,8 @@ from pypts.recipe import (
     Runtime,
     Step,
 )
-from pypts.recipe_language import STEP_MODELS
+from pypts.recipe_language import STEP_DEFINITION_MODELS, StepDefinition
 from pypts.recipe_language import Recipe as RecipeDefinition
-from pypts.recipe_language import Step as AuthorableStep
 from pypts.recipe_parser import RecipeParseError, dump_recipe
 
 
@@ -152,17 +151,17 @@ def test_recipe_path_requires_v2_and_raises_structured_error(tmp_path):
     assert "unsupported-recipe-version" in {d.code for d in caught.value.diagnostics}
 
 
-def test_registry_exactly_matches_authorable_discriminators():
+def test_registry_exactly_matches_step_definition_discriminators():
     discriminators = {
         model.model_fields["steptype"].examples[0]
-        for model in STEP_MODELS
+        for model in STEP_DEFINITION_MODELS
     }
     assert set(STEP_TYPE_REGISTRY) == discriminators
 
 
 @pytest.mark.parametrize("name", STEP_EXAMPLES)
 def test_every_typed_definition_builds_its_concrete_executable(name):
-    typed = TypeAdapter(AuthorableStep).validate_python(STEP_EXAMPLES[name])
+    typed = TypeAdapter(StepDefinition).validate_python(STEP_EXAMPLES[name])
     executable = Step.build_step(typed)
     assert type(executable).__name__ == name
     assert executable.input_mapping == typed.model_dump(

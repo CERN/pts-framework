@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 CERN <home.cern>
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
-"""Authoritative Pydantic model for the candidate recipe language.
+"""Authoritative Pydantic definitions for recipe language 2.0.0.
 
 Field declarations intentionally own types, defaults, descriptions, examples,
 serialization behavior, and JSON Schema.  There is no parallel field registry.
@@ -22,7 +22,7 @@ def described(description: str, *, example: Any = None, **kwargs: Any) -> Any:
 
 
 class RecipeModel(BaseModel):
-    """Strict, immutable base for all authorable structures."""
+    """Strict, immutable base for every validated recipe definition."""
 
     model_config = ConfigDict(
         extra="forbid",
@@ -161,8 +161,8 @@ class UploadFile(RecipeModel):
     remote: str = described("Remote destination path.", example="/tmp/tool")
 
 
-class CommonStep(RecipeModel):
-    """Fields shared by every authorable step."""
+class CommonStepDefinition(RecipeModel):
+    """Fields shared by every recipe step definition."""
 
     step_name: str = described("Human-readable step name.", example="Run test")
     description: str = described("Purpose of the step.", example="Run a test operation.")
@@ -180,7 +180,7 @@ class CommonStep(RecipeModel):
     )
 
 
-class PythonModuleStep(CommonStep):
+class PythonModuleStep(CommonStepDefinition):
     """Calls a method or reads/writes an attribute in a Python module."""
 
     steptype: Literal["PythonModuleStep"] = described(
@@ -203,7 +203,7 @@ class PythonModuleStep(CommonStep):
     # docs:method-name-end
 
 
-class SequenceStep(CommonStep):
+class SequenceStep(CommonStepDefinition):
     """Runs another sequence as a step."""
 
     steptype: Literal["SequenceStep"] = described(
@@ -214,7 +214,7 @@ class SequenceStep(CommonStep):
     )
 
 
-class UserInteractionStep(CommonStep):
+class UserInteractionStep(CommonStepDefinition):
     """Displays an operator interaction prompt."""
 
     steptype: Literal["UserInteractionStep"] = described(
@@ -222,7 +222,7 @@ class UserInteractionStep(CommonStep):
     )
 
 
-class WaitStep(CommonStep):
+class WaitStep(CommonStepDefinition):
     """Waits for a non-negative duration in seconds."""
 
     steptype: Literal["WaitStep"] = described("Canonical registered step type.", example="WaitStep")
@@ -236,7 +236,7 @@ class WaitStep(CommonStep):
     # docs:wait-time-end
 
 
-class UserLoadingStep(CommonStep):
+class UserLoadingStep(CommonStepDefinition):
     """Prompts the operator to select a file."""
 
     steptype: Literal["UserLoadingStep"] = described(
@@ -249,7 +249,7 @@ class UserLoadingStep(CommonStep):
     )
 
 
-class UserRunMethodStep(CommonStep):
+class UserRunMethodStep(CommonStepDefinition):
     """Optionally runs a Python method after an operator response."""
 
     steptype: Literal["UserRunMethodStep"] = described(
@@ -263,7 +263,7 @@ class UserRunMethodStep(CommonStep):
     method_name: str | None = described("Optional Python method name.", example="run", default=None)
 
 
-class UserWriteStep(CommonStep):
+class UserWriteStep(CommonStepDefinition):
     """Writes an operator-provided value to a configured destination."""
 
     steptype: Literal["UserWriteStep"] = described(
@@ -271,7 +271,7 @@ class UserWriteStep(CommonStep):
     )
 
 
-class SerialNumberStep(CommonStep):
+class SerialNumberStep(CommonStepDefinition):
     """Captures the device serial number."""
 
     steptype: Literal["SerialNumberStep"] = described(
@@ -279,7 +279,7 @@ class SerialNumberStep(CommonStep):
     )
 
 
-class SSHConnectStep(CommonStep):
+class SSHConnectStep(CommonStepDefinition):
     """Opens the SSH client stored in recipe globals."""
 
     steptype: Literal["SSHConnectStep"] = described(
@@ -287,7 +287,7 @@ class SSHConnectStep(CommonStep):
     )
 
 
-class SSHCloseStep(CommonStep):
+class SSHCloseStep(CommonStepDefinition):
     """Closes the SSH client stored in recipe globals."""
 
     steptype: Literal["SSHCloseStep"] = described(
@@ -295,7 +295,7 @@ class SSHCloseStep(CommonStep):
     )
 
 
-class SSHUploadStep(CommonStep):
+class SSHUploadStep(CommonStepDefinition):
     """Uploads files through an SSH connection."""
 
     steptype: Literal["SSHUploadStep"] = described(
@@ -316,7 +316,7 @@ class SSHUploadStep(CommonStep):
     )
 
 
-type Step = Annotated[
+type StepDefinition = Annotated[
     PythonModuleStep
     | SequenceStep
     | UserInteractionStep
@@ -365,9 +365,9 @@ class Sequence(RecipeModel):
     parameters: dict[str, Any] = described("Reserved sequence input metadata.", example={})
     outputs: dict[str, Any] = described("Reserved sequence output metadata.", example={})
     locals: dict[str, Any] = described("Variables local to the sequence.", example={})
-    setup_steps: list[Step] = described("Steps run before the main steps.", example=[])
-    steps: list[Step] = described("Ordered main steps.", example=[])
-    teardown_steps: list[Step] = described("Steps run during teardown.", example=[])
+    setup_steps: list[StepDefinition] = described("Steps run before the main steps.", example=[])
+    steps: list[StepDefinition] = described("Ordered main steps.", example=[])
+    teardown_steps: list[StepDefinition] = described("Steps run during teardown.", example=[])
 
 
 class Recipe(RecipeModel):
@@ -384,6 +384,6 @@ def _union_models(annotation: Any) -> tuple[type[RecipeModel], ...]:
     return get_args(annotated_union)
 
 
-STEP_MODELS = _union_models(Step)
+STEP_DEFINITION_MODELS = _union_models(StepDefinition)
 INPUT_MODELS = _union_models(InputMapping)
 OUTPUT_MODELS = _union_models(OutputMapping)

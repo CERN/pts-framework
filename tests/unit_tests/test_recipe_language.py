@@ -12,12 +12,17 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from pypts import recipe_language
 from pypts.recipe_artifacts import (
     DEFAULT_REFERENCE_PATH,
     DEFAULT_SCHEMA_PATH,
     render_json_schema,
 )
-from pypts.recipe_language import INPUT_MODELS, OUTPUT_MODELS, STEP_MODELS
+from pypts.recipe_language import (
+    INPUT_MODELS,
+    OUTPUT_MODELS,
+    STEP_DEFINITION_MODELS,
+)
 from pypts.recipe_parser import (
     RecipeParseError,
     dump_recipe,
@@ -28,6 +33,14 @@ from pypts.recipe_reference import render_reference
 
 ROOT = Path(__file__).parents[2]
 RECIPES = ROOT / "src" / "pypts" / "recipes"
+
+
+def test_step_definition_names_are_the_only_public_union_and_model_registry():
+    assert hasattr(recipe_language, "StepDefinition")
+    assert hasattr(recipe_language, "STEP_DEFINITION_MODELS")
+    assert not hasattr(recipe_language, "Step")
+    assert not hasattr(recipe_language, "CommonStep")
+    assert not hasattr(recipe_language, "STEP_MODELS")
 
 
 def header(**updates):
@@ -130,7 +143,9 @@ def recipe_for_step(step):
     return source(*documents)
 
 
-@pytest.mark.parametrize("model", STEP_MODELS, ids=lambda model: model.__name__)
+@pytest.mark.parametrize(
+    "model", STEP_DEFINITION_MODELS, ids=lambda model: model.__name__
+)
 def test_every_step_validates_serializes_and_reparses(model):
     first = parse_recipe_text(recipe_for_step(STEP_EXAMPLES[model.__name__]))
     assert first.is_valid, first.errors
@@ -375,14 +390,20 @@ def test_generated_schema_and_reference_are_complete_and_current():
     assert schema_text == DEFAULT_SCHEMA_PATH.read_text(encoding="utf-8")
     assert reference == DEFAULT_REFERENCE_PATH.read_text(encoding="utf-8")
     definitions = schema["$defs"]
-    for model in STEP_MODELS + INPUT_MODELS + OUTPUT_MODELS:
+    for model in STEP_DEFINITION_MODELS + INPUT_MODELS + OUTPUT_MODELS:
         assert model.__name__ in definitions
         kind = model.model_fields.get("steptype") or model.model_fields["type"]
         anchor_kind = kind.examples[0].lower()
-        group = "step" if model in STEP_MODELS else "input" if model in INPUT_MODELS else "output"
+        group = (
+            "step"
+            if model in STEP_DEFINITION_MODELS
+            else "input"
+            if model in INPUT_MODELS
+            else "output"
+        )
         assert reference.count(f".. _recipe-v2-{group}-{anchor_kind}:") == 1
 
-    report = STEP_MODELS[0].model_fields["skip"]
+    report = STEP_DEFINITION_MODELS[0].model_fields["skip"]
     assert report.description in reference
     assert 'default ``false``' in reference
     assert 'Example: ``false``.' in reference

@@ -424,7 +424,7 @@ class TestBuildStep:
         assert isinstance(step.template_step, WaitStep)
 
     def test_rejects_unvalidated_dictionary(self):
-        with pytest.raises(TypeError, match="validated authorable"):
+        with pytest.raises(TypeError, match="validated step definition"):
             Step.build_step({"steptype": "WaitStep"})
 
 

@@ -2,7 +2,11 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 """Schema-driven YamVIEW form tests."""
 
-from pypts.recipe_language import INPUT_MODELS, OUTPUT_MODELS, STEP_MODELS
+from pypts.recipe_language import (
+    INPUT_MODELS,
+    OUTPUT_MODELS,
+    STEP_DEFINITION_MODELS,
+)
 from pypts.YamVIEW.recipe_step_setup import (
     DiscriminatedMappingWidget,
     Step_setup,
@@ -17,7 +21,9 @@ def discriminator(model):
 
 def test_form_selectors_and_metadata_come_from_production_schema():
     description = recipe_form_description()
-    assert set(description["steps"]) == {discriminator(model) for model in STEP_MODELS}
+    assert set(description["steps"]) == {
+        discriminator(model) for model in STEP_DEFINITION_MODELS
+    }
     assert set(description["inputs"]) == {discriminator(model) for model in INPUT_MODELS}
     assert set(description["outputs"]) == {discriminator(model) for model in OUTPUT_MODELS}
 

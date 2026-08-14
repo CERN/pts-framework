@@ -243,7 +243,7 @@ The runtime registry remains because a canonical discriminator such as
 ``PythonModuleStep`` must be associated with the Python class that implements
 its behavior.  It is a behavior registry, not a second language schema: field
 names, types, defaults, and structural rules remain exclusively in the
-Pydantic models.  A completeness test requires every authorable model
+Pydantic models.  A completeness test requires every step-definition model
 discriminator to have exactly one executable implementation.
 
 Concrete ``_step()`` methods in ``steps.py`` continue to own execution.  For
@@ -251,7 +251,7 @@ example, the executable ``PythonModuleStep`` still imports and invokes Python
 code; it no longer validates an untrusted recipe dictionary. Common definition
 fields are dumped once by ``Step.build_step()`` and passed to the existing
 constructors. ``IndexedStep`` remains a runtime-generated wrapper and is
-never added to the authorable model union.
+never added to the ``StepDefinition`` model union.
 
 Synthetic runtime operations are also constructed directly.  For example,
 ``Recipe.run()`` must not fabricate a recipe dictionary merely to execute the
@@ -276,6 +276,10 @@ production parser. It is not a bundled recipe.
 Maintaining the documentation
 -----------------------------
 
+See :doc:`recipe_language_maintenance` for the complete extension and version
+upgrade workflow, including the definition/runtime boundary and the purpose of
+``STEP_TYPE_REGISTRY``.
+
 Every Sphinx build generates both artifacts before reading documentation
 sources::
 
@@ -298,13 +302,6 @@ file is maintained manually or treated as a committed source artifact.
 Pydantic is a core production dependency. CI and any documentation build image
 must install the ``doc`` extra and include the model, schema generator, and
 JSON-only renderer sources.
-
-When adding a step or mapping, update its Pydantic model and discriminated
-union, add an independent round-trip fixture, and run the documentation build.
-Review the generated schema and reference in the build output when relevant.
-Add custom semantic code only when a rule requires document, sibling, or
-ordering context.  Handwritten architecture prose explains those relationships;
-it must link to generated fields rather than restating field tables.
 
 The documentation contract is protected by tests that generate into temporary
 directories, verify deterministic model-to-JSON and JSON-to-RST output, count

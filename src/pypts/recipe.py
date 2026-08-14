@@ -19,7 +19,7 @@ import re
 from threading import Event
 from pypts.utils import WAIT_FOR_TERMINATION
 from pypts.recipe_language import (
-    CommonStep as AuthorableStepDefinition,
+    CommonStepDefinition as ValidatedStepDefinition,
     DirectInput as DirectInputDefinition,
     Recipe as RecipeDefinition,
     Sequence as SequenceDefinition,
@@ -655,18 +655,20 @@ class Step:
         return step_results # aggregate_result # single pass or fail type
 
     @staticmethod
-    def build_step(step_definition: AuthorableStepDefinition):
-        """
-        This function translates from validated Pydantic step definitions
-        to the corresponding executable Step objects.
+    def build_step(step_definition: ValidatedStepDefinition):
+        """Build an executable step from a validated recipe step definition.
+
+        This is the single boundary between declarative recipe data and
+        executable runtime behavior. The definition has already passed the
+        Pydantic and aggregate semantic validation performed by the parser.
 
         Args:
-            step_definition (AuthorableStepDefinition): the validated step definition
+            step_definition: Validated Pydantic step definition.
 
         Returns:
-            Step: This is a fully configured step object
+            Fully configured executable :class:`Step`.
         """
-        if not isinstance(step_definition, AuthorableStepDefinition):
+        if not isinstance(step_definition, ValidatedStepDefinition):
             raise TypeError("Step.build_step requires a validated step definition")
         step_type = step_definition.steptype
         step_class = STEP_TYPE_REGISTRY.get(step_type)
@@ -714,7 +716,13 @@ from pypts.steps import (
     SSHUploadStep as ExecutableSSHUploadStep,
 )
 
-# This dictionary maps step type names to their corresponding executable classes, allowing dynamic instantiation based on the step type specified in the recipe.
+# Runtime behavior dispatch belongs beside Step.build_step(), the sole typed
+# factory. This registry does not define fields or supported recipe structures:
+# those come exclusively from recipe_language.StepDefinition's discriminated
+# union. It only binds each already-validated canonical discriminator to the
+# concrete class in steps.py that implements its behavior. Keeping the mapping
+# here also preserves the dependency direction because steps.py depends on
+# runtime types defined in this module.
 STEP_TYPE_REGISTRY = {
     "PythonModuleStep": ExecutablePythonModuleStep,
     "SequenceStep": ExecutableSequenceStep,

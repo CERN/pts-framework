@@ -16,11 +16,15 @@ def test_reference_renders_every_discriminator_from_generated_json():
     schema = json.loads(render_json_schema())
     rendered = render_reference(schema)
     for group, definition in (
-        ("step", "Step"), ("input", "InputMapping"), ("output", "OutputMapping")
+        ("step", "StepDefinition"),
+        ("input", "InputMapping"),
+        ("output", "OutputMapping"),
     ):
         mapping = schema["$defs"][definition]["discriminator"]["mapping"]
         for name in mapping:
             assert rendered.count(f".. _recipe-v2-{group}-{name.lower()}:") == 1
+    assert "Step definitions" in rendered
+    assert "Authorable" not in rendered
 
 
 def test_json_only_renderer_has_no_model_runtime_gui_or_sphinx_imports():
