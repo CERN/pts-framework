@@ -302,6 +302,39 @@ class Recipe:
         self.test_package = header.test_package
         logger.info("Loaded recipe %s version %s.", self.name, self.version)
 
+    @property
+    def total_steps(self) -> int:
+        """Count the result rows this recipe is expected to produce."""
+        active_sequences = set()
+
+        def count_sequence(name):
+            if name in active_sequences:
+                raise ValueError(f"Recursive sequence reference detected: {name}")
+            active_sequences.add(name)
+            sequence = self.sequences[name]
+            try:
+                return sum(count_step(step) for step in [*sequence.steps, *sequence.teardown_steps])
+            finally:
+                active_sequences.remove(name)
+
+        def count_step(step):
+            if step.is_skipped():
+                return 1
+            if isinstance(step, IndexedStep):
+                indexed_values = [
+                    config["value"]
+                    for config in step.template_step.input_mapping.values()
+                    if config.get("indexed", False)
+                ]
+                repeats = min(map(len, indexed_values), default=1)
+                return 1 + repeats * count_step(step.template_step)
+            if isinstance(step, SequenceStep):
+                return 1 + count_sequence(step.sequence_config["name"])
+            return 1
+
+        # Recipe.run creates one top-level SequenceStep result.
+        return 1 + count_sequence(self.main_sequence)
+
     def run(self, runtime: Runtime, sequence_name: str | None = None):
         """Executes the main sequence of the recipe.
 

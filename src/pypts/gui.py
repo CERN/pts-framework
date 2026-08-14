@@ -5,32 +5,26 @@
 from __future__ import annotations
 
 import logging
-import os
 import subprocess
 import sys
 import webbrowser
-from importlib.resources import files
 from queue import SimpleQueue
-from typing import List
 
 import serial
 import serial.tools.list_ports
-from PySide6.QtCore import QAbstractItemModel, QEventLoop, QModelIndex, QObject, QSize, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QFont
+from PySide6.QtCore import QEventLoop, QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QAbstractItemView,
     QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
-    QHBoxLayout,
     QInputDialog,
     QLabel,
     QMainWindow,
     QMenuBar,
-    QMessageBox,
-    QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QStackedWidget,
@@ -50,8 +44,7 @@ from pypts.gui_components.step_table import StepTable
 from pypts.gui_components.styles import CERN_BLUE, MTA_BLUE, get_stylesheet
 from pypts.gui_components.toolbar import PtsToolBar
 from pypts.gui_theme import detect_system_dark_mode, install_system_theme_sync
-from pypts.utils import WAIT_FOR_TERMINATION, find_resource_path, get_project_root, get_step_result_colors, resolve_package_resource
-
+from pypts.utils import WAIT_FOR_TERMINATION, resolve_package_resource
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +106,8 @@ class MainWindow(QMainWindow):
         self._current_recipe_name = None
         self._current_recipe_description = None
         self._dark_mode = detect_system_dark_mode()
+        self._progress_total = 0
+        self._progress_completed = 0
 
         self.cern_logo = load_cern_logo_pixmap()
 
@@ -250,6 +245,11 @@ class MainWindow(QMainWindow):
         self.message_box = self._interaction_panel.message_label
         right_layout.addWidget(self._interaction_panel, stretch=1)
 
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(True)
+        right_layout.addWidget(self.progress_bar)
+        self._set_progress_total(0)
+
         log_label = QLabel("Log Output")
         log_label.setObjectName("sectionLabel")
         right_layout.addWidget(log_label)
@@ -287,9 +287,9 @@ class MainWindow(QMainWindow):
     def _update_tab_style(self):
         bg = "#2b2b2b" if self._dark_mode else CERN_BLUE
         if self._paused:
-            hover = f"QTabBar::tab:hover:!selected {{ background:rgba(255,255,255,0.10); }}"
+            hover = "QTabBar::tab:hover:!selected { background:rgba(255,255,255,0.10); }"
         else:
-            hover = f"QTabBar::tab:hover:!selected {{ background:transparent; }}"
+            hover = "QTabBar::tab:hover:!selected { background:transparent; }"
         self.screen_tab_bar.setStyleSheet(
             f"QTabBar {{ background:{bg}; }}"
             f"QTabBar::tab {{ background:transparent; color:#B3CFF0; padding:6px 16px; border:none;"
@@ -505,13 +505,39 @@ class MainWindow(QMainWindow):
         self.message_box.clear()
         self._interaction_panel.set_idle()
         self.clear_interaction_buttons()
+        self._set_progress_total(0)
         self._switch_screen(SCREEN_IDLE)
 
     def load_recipe(self):
         recipe_to_run = recipe.Recipe(self.recipe_file)
         self.recipe_to_run = recipe_to_run
+        self._set_progress_total(recipe_to_run.total_steps)
         sequence = recipe_to_run.sequences[recipe_to_run.main_sequence]
         self.update_sequence({"sequence": sequence})
+
+    def _set_progress_total(self, total: int):
+        self._progress_total = max(0, total)
+        self._progress_completed = 0
+        if self._progress_total == 0:
+            # A 0..0 range is Qt's indeterminate/busy state, so retain a
+            # determinate range and supply the zero-total text explicitly.
+            self.progress_bar.setRange(0, 1)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("0 / 0 steps (0%)")
+            return
+
+        self.progress_bar.setRange(0, self._progress_total)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFormat("%v / %m steps (%p%)")
+
+    def _advance_progress(self, units: int):
+        if self._progress_total <= 0 or units <= 0:
+            return
+        self._progress_completed = min(
+            self._progress_total,
+            self._progress_completed + units,
+        )
+        self.progress_bar.setValue(self._progress_completed)
 
     def add_interaction_button(self, label, value=None):
         self._interaction_panel.add_button(label, value or label)
@@ -610,9 +636,18 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Recipe loaded and ready to start")
 
     def update_step_result(self, step_status_vm: dict):
+        self._advance_progress(1)
+
         step_result = step_status_vm.get("step_result")
-        if step_result is not None:
+        is_sequence_container = (
+            step_result is not None
+            and isinstance(step_result.step, recipe.SequenceStep)
+        )
+        if step_result is not None and not is_sequence_container:
             self._partial_results.append(step_result)
+        if is_sequence_container:
+            return
+
         updated = self.step_list.update_step_status(
             str(step_status_vm["step_uuid"]),
             step_status_vm["status_text"],
@@ -626,7 +661,7 @@ class MainWindow(QMainWindow):
             )
 
     def show_results(self, event_dict):
-        results: List[recipe.StepResult] = event_dict["results"]
+        results: list[recipe.StepResult] = event_dict["results"]
         self._partial_results.clear()
         self._results_panel.set_results(results)
         self.running = False

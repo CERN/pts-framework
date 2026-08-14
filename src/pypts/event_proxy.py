@@ -2,16 +2,22 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-# src/pypts/event_proxy.py
-from pypts.utils import get_project_root, find_resource_path, get_step_result_colors, resolve_package_resource
 import logging
-from PySide6.QtCore import QObject, Signal, Slot
-from queue import SimpleQueue
 from contextlib import suppress
+from queue import SimpleQueue
+
+from PySide6.QtCore import QObject, Signal, Slot
+
 from pypts import recipe
-import uuid, queue
+from pypts.utils import (
+    find_resource_path,
+    get_project_root,
+    get_step_result_colors,
+    resolve_package_resource,
+)
 
 logger = logging.getLogger(__name__)
+
 
 class RecipeEventProxy(QObject):
     """Proxies events from the recipe execution thread's event queue 
@@ -73,19 +79,17 @@ class RecipeEventProxy(QObject):
             event_dict = {}
             if event_name == "post_run_step":
                 step_result: recipe.StepResult = event_data[0]  # event_data is a tuple
-                # Ignore events from SequenceStep itself as they aren't in the table
-                if not isinstance(step_result.step, recipe.SequenceStep):
-                    result_type = step_result.get_result()
-                    
-                    background_color, text_color = get_step_result_colors(result_type, recipe.ResultType)
+                step = step_result.step
+                result_type = step_result.get_result()
 
-                    event_dict = {
-                        "step_uuid": step_result.step.id,
-                        "status_text": str(result_type),
-                        "status_color": background_color,
-                        "text_color": text_color,
-                        "step_result": step_result,
-                    }
+                background_color, text_color = get_step_result_colors(result_type, recipe.ResultType)
+                event_dict = {
+                    "step_uuid": step.id,
+                    "status_text": str(result_type),
+                    "status_color": background_color,
+                    "text_color": text_color,
+                    "step_result": step_result,
+                }
             elif event_name == "pre_run_recipe":
                 event_dict = {
                     "recipe_name": event_data[0],

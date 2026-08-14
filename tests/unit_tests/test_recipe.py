@@ -141,6 +141,7 @@ def test_recipe_from_definition_constructs_typed_runtime_state_without_reparse()
     assert recipe.recipe_file_name == "fixture.yml"
     assert list(recipe.sequences) == ["Main", "Sub"]
     assert isinstance(recipe.sequences["Main"].steps[1], IndexedStep)
+    assert recipe.total_steps == 8
 
 
 def test_recipe_path_requires_v2_and_raises_structured_error(tmp_path):
@@ -228,3 +229,11 @@ def test_recipe_run_constructs_top_level_sequence_step_directly(monkeypatch):
     results = recipe.run(active_runtime)
     assert results
     assert active_runtime.recipe_name == recipe.name
+
+    pending = list(results)
+    result_count = 0
+    while pending:
+        result = pending.pop()
+        result_count += 1
+        pending.extend(result.subresults)
+    assert result_count == recipe.total_steps

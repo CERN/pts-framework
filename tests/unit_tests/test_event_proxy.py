@@ -5,14 +5,15 @@
 """Tests for RecipeEventProxy — covers all signal types, user interaction,
 unsupported events, and stop/sentinel behaviour."""
 
-import pytest
 import uuid
-from unittest.mock import MagicMock, patch
 from queue import SimpleQueue
-from PySide6.QtCore import QCoreApplication
-from pypts.event_proxy import RecipeEventProxy
-from pypts import recipe
+from unittest.mock import MagicMock, patch
 
+import pytest
+from PySide6.QtCore import QCoreApplication
+
+from pypts import recipe
+from pypts.event_proxy import RecipeEventProxy
 
 # ============================================================
 # Fixtures
@@ -124,15 +125,22 @@ class TestPostRunStepSignal:
         assert emitted["status_text"] == "PASS"
         assert "status_color" in emitted
 
-    def test_ignores_sequence_step(self, proxy, event_q):
-        """Verify that 'post_run_step' does NOT emit for SequenceStep instances."""
+    def test_sequence_step_emits_progress_only_event(self, proxy, event_q):
+        """Sequence containers reach progress accounting but not the step table."""
         mock_step_result = MagicMock()
-        mock_step_result.step = MagicMock(spec=recipe.SequenceStep)
+        mock_step_result.step = recipe.SequenceStep(
+            sequence={"type": "internal", "name": "Child"},
+            step_name="Run child",
+            input_mapping={},
+            output_mapping={},
+        )
+        mock_step_result.get_result.return_value = recipe.ResultType.PASS
 
         event_q.put(("post_run_step", (mock_step_result,)))
         proxy.run_once()
 
-        proxy.post_run_step_signal.emit.assert_not_called()
+        emitted = proxy.post_run_step_signal.emit.call_args[0][0]
+        assert emitted["step_result"] is mock_step_result
 
 
 # ============================================================

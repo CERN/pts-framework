@@ -7,15 +7,16 @@ from queue import SimpleQueue
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-import pytest
 from unittest.mock import Mock, patch
+
+import pytest
 from PySide6.QtCore import Qt
 
 from pypts import gui, recipe
-from pypts.recipe_language import Sequence as SequenceDefinition
-from pypts.startup import create_and_start_gui
 from pypts.gui_components import interaction_panel
 from pypts.gui_components.results_panel import StepResultModel
+from pypts.recipe_language import Sequence as SequenceDefinition
+from pypts.startup import create_and_start_gui
 
 
 @pytest.fixture
@@ -267,3 +268,33 @@ def test_update_sequence_shows_ready_to_start_when_loaded_not_running(main_windo
     assert main_window._screen_idx == gui.SCREEN_IDLE
     assert main_window.recipe_label.text() == "Loaded Test Sequence\nReady to start"
     assert main_window.statusBar().currentMessage() == "Recipe loaded and ready to start"
+
+
+def test_progress_bar_is_below_interaction_and_above_log(main_window):
+    right_layout = main_window.log_text_box.parentWidget().layout()
+
+    assert right_layout.indexOf(main_window.progress_bar) == right_layout.indexOf(main_window._interaction_panel) + 1
+    assert right_layout.indexOf(main_window.progress_bar) < right_layout.indexOf(main_window.log_text_box)
+    assert main_window.progress_bar.format() == "0 / 0 steps (0%)"
+
+    main_window._set_progress_total(4)
+    main_window._advance_progress(1)
+
+    assert main_window.progress_bar.maximum() == 4
+    assert main_window.progress_bar.value() == 1
+    assert main_window.progress_bar.format() == "%v / %m steps (%p%)"
+
+
+def test_progress_is_clamped_preserved_on_idle_and_reset_for_new_run(main_window):
+    main_window._set_progress_total(3)
+    main_window._advance_progress(2)
+    main_window._switch_screen(gui.SCREEN_IDLE)
+
+    assert main_window.progress_bar.value() == 2
+
+    main_window._advance_progress(5)
+    assert main_window.progress_bar.value() == 3
+
+    main_window.reset_gui()
+    assert main_window.progress_bar.value() == 0
+    assert main_window.progress_bar.format() == "0 / 0 steps (0%)"
