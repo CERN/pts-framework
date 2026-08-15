@@ -93,19 +93,23 @@ Sections currently in the schema:
 | `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
 | `report` | `type` (`html`/`csv`), `theme` |
 | `gui` | `theme` (`default`/`light`/`dark`), `window_width`, `window_height` |
-| `hardware.example_device` | `driver`, `resource`, `timeout_s` — the worked example of a section family |
 
-Two ideas explain the shape of the file:
+That is the whole schema — a flat list of named sections, nothing generated or matched by
+pattern. One idea explains the rest of the shape of the file:
 
 - **Derived values** ship *blank* in the template and are filled at creation from
   `platformdirs` / `platform`. This is how the template avoids `/tmp/pypts` (wrong on
   Windows) without hardcoding a Windows path (wrong on Linux). Once written they are
   ordinary values the user may edit, and nothing recomputes them. `_add_missing_keys()`
   refills a derived key only when it is *absent or empty*.
-- **Section families** are how a flat INI file carries structured data. Any section named
-  `hardware.<logical name>` is validated against the fields of `hardware.example_device`
-  (`SECTION_FAMILIES` in `configuration_schema.py`), so a bench can declare `[hardware.dmm1]`,
-  `[hardware.psu2]`, … without the schema knowing their names.
+
+**There is no hardware section.** There used to be: `[hardware.example_device]` in the
+template, a matching entry in `SCHEMA`, and a `SECTION_FAMILIES` prefix rule that validated
+any `[hardware.<logical name>]` against the example's fields. Nothing consumed it, and it
+committed the file to a shape Phase 5 had not chosen yet, so all three were removed. A
+hardware section a user writes today is simply a section the schema does not know: kept
+verbatim, reported once at WARNING, values returned as text. Phase 5 decides what replaces
+it.
 
 ---
 
@@ -115,13 +119,13 @@ Two ideas explain the shape of the file:
 config = ConfigHandler()
 config.get_parameter("paths.logs_dir")               # -> Path
 config.get_parameter("gui.window_width")             # -> int
-config.get_parameter("hardware.dmm1.timeout_s")      # -> float
+config.get_parameter("hardware.dmm1.timeout_s")      # -> str: not in the schema
 config.get_parameter("paths.nothing", default=None)  # -> None instead of raising
 ```
 
-Keys are dotted; **everything before the *last* dot is the section name**, which is what
-makes dotted section families work. Values come back as `Path` / `int` / `float` / `bool` /
-`str` per the schema; anything in a section the schema does not know is returned as text and
+Keys are dotted; **everything before the *last* dot is the section name**, so a dotted
+section name costs nothing. Values come back as `Path` / `int` / `float` / `bool` / `str`
+per the schema; anything in a section the schema does not know is returned as text and
 warned about once. A missing key raises `ConfigKeyError` naming what the section actually
 holds — unless a `default` was passed (`_UNSET` sentinel distinguishes "no default" from
 "the default is `None`").
@@ -237,7 +241,7 @@ otherwise outlive the `tmp_path` it was pointed at. **Only tests may call it**: 
 dropped its configuration mid-run would be reading a different file from its own threads.
 
 `tests/unit_tests/test_config_handler.py` (~60 tests) covers creation, reading, the singleton
-and its thread safety, write permission, validation, section families, migration, the
+and its thread safety, write permission, validation, unknown sections, migration, the
 bootstrap-log narration, comment preservation, and the schema/template agreement.
 
 ---
@@ -254,12 +258,11 @@ Roadmap §1.3 is the authority; the TODOs live there, not in code comments. In s
   the policy is decided, but no caller in the framework uses it — consequently
   `set_parameter()`, `restore_default()`, `dump()` and `get_whole_config()` are API surface
   that only the tests exercise today.
-- **A user-added device section is validated but not repaired.** `_add_missing_keys()`
-  iterates `SCHEMA` only, so a hand-written `[hardware.dmm1]` missing one of the family's
-  keys is a hard `ConfigSchemaError` at startup, not something bootstrap fills in.
-- **`hardware.*` is a placeholder.** The family and its validation exist; nothing consumes
-  them. Phase 5 should read `[hardware.<name>]` into a `DeviceConfig` and hand it to drivers
-  by logical name.
+- **Hardware is not configurable yet, at all.** The placeholder section and its family rule
+  were removed rather than left to be designed around; a `[hardware.dmm1]` written by hand is
+  preserved and returned as text, and nothing types it, repairs it or reads it. Phase 5 owns
+  the replacement — reading a device section into a `DeviceConfig` and handing it to drivers
+  by logical name — and is free to choose a shape that is not this one.
 - **`report.type` / `report.theme` and the `[gui]` keys are read but not yet used** —
   Phases 4 and 3 respectively.
 - **`stdout_logging_enabled` is still derived from `--mode`**, not from the configuration.

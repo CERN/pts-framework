@@ -148,16 +148,10 @@ class Core:
         to_hmi: QueueWrapper[CoreToHmi],
         from_hmi: QueueWrapper[HmiToCore],
         log_queue,
-        queue_factory=Queue,
         log_level: int = DEFAULT_LOG_LEVEL,
     ) -> None:
         """
         Args:
-            queue_factory: what to build the submodule queues out of. Defaults
-                to `queue.Queue`, because the Sequencer and the Report are
-                threads of this process. It stays an argument because it is the
-                seam a future `--mode connect` turns, and because tests use it
-                to build a CORE that starts nothing.
             log_queue: kept so CORE can hand it on if a submodule ever needs to
                 configure logging of its own. The threads do not: they share
                 this process's root logger, which core_main() has already
@@ -173,19 +167,18 @@ class Core:
         # One queue per direction. The QueueWrapper type parameter is the union that
         # queue is allowed to carry, and `link` is the name it goes by in the
         # trace - these four never leave this process, so the log is the only
-        # place they can be seen at all.
+        # place they can be seen at all. A plain `queue.Queue` is all they need,
+        # because the Sequencer and the Report are threads of this process; the
+        # one link that does cross a process boundary, HMI<->CORE, is built by
+        # the launcher out of `multiprocessing.Queue` and handed in above.
         self.to_sequencer: QueueWrapper[CoreToSequencer] = QueueWrapper(
-            queue_factory(), link=CORE_TO_SEQUENCER
+            Queue(), link=CORE_TO_SEQUENCER
         )
         self.from_sequencer: QueueWrapper[SequencerToCore] = QueueWrapper(
-            queue_factory(), link=SEQUENCER_TO_CORE
+            Queue(), link=SEQUENCER_TO_CORE
         )
-        self.to_report: QueueWrapper[CoreToReport] = QueueWrapper(
-            queue_factory(), link=CORE_TO_REPORT
-        )
-        self.from_report: QueueWrapper[ReportToCore] = QueueWrapper(
-            queue_factory(), link=REPORT_TO_CORE
-        )
+        self.to_report: QueueWrapper[CoreToReport] = QueueWrapper(Queue(), link=CORE_TO_REPORT)
+        self.from_report: QueueWrapper[ReportToCore] = QueueWrapper(Queue(), link=REPORT_TO_CORE)
 
         self.running = True
         self.shutting_down = False
@@ -319,6 +312,8 @@ class Core:
                 # The operator's answer belongs to whoever asked the question.
                 self.to_sequencer.send(message)
             case SetConfigParameter(key=key, value=value):
+                # NOT SENT YET - no frontend constructs this, and the branch is
+                # deliberately a refusal rather than an implementation.
                 # CORE is the only process allowed to write config.ini, which is
                 # why the message stops here. Carrying it out is not implemented:
                 # a change would have to reach the processes already running,
@@ -350,10 +345,14 @@ class Core:
                 | StepStarted()
                 | StepFinished()
             ):
+                # NOT SENT YET - the relay works, the emitter does not exist.
                 # Progress is the frontend's business. CORE relays the same
                 # object rather than repacking it, so nothing is lost on the way.
                 self.to_hmi.send(message)
             case UserPromptRequest() | SerialNumberRequest():
+                # NOT SENT YET - no step asks a question yet. The *answers* do
+                # come back through here (handle_hmi_message), so only this
+                # direction is idle.
                 self.to_hmi.send(message)
             case Heartbeat():
                 self.note_heartbeat(message)
@@ -366,6 +365,8 @@ class Core:
         match message:
             case ReportStopped():
                 self.module_running[REPORT] = False
+            # NOT SENT YET, both of them - the Report's two generating methods
+            # are stubs, and CORE never asks them for anything either.
             case ReportGenerated(report_path=path):
                 self.to_hmi.send(StatusChanged(f"Report generated: {path}"))
             case ReportExported(report_path=path):

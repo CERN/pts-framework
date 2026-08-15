@@ -18,6 +18,20 @@ a fact that has already happened; slotted because a typo in a field name should 
 Legend: **CMD** an instruction to one recipient, which may be refused · **EVT** a fact that
 has already happened · **STUB** declared, nothing sends or carries it out yet.
 
+Every message marked **STUB** here also carries a `NOT SENT YET` comment in the source, on the
+dataclass and again on the branch that receives it. The marker means one specific thing:
+**the receiving end is written and works; nothing constructs the message.** Fourteen messages
+are in that state today. Grep for it to find the set:
+
+```bash
+grep -rn "NOT SENT YET" src/pypts
+```
+
+The receivers were built ahead of the senders deliberately — the Sequencer, CORE, the CLI and
+the GUI all had to agree on the contract before the engine existed — and `mypy` plus
+`test_messages.py` keep every branch honest until the sender arrives. Delete the marker in the
+same change that starts sending the message.
+
 ---
 
 ## Transport — `queue_wrapper.py`

@@ -97,6 +97,10 @@ class HmiClient:
                 self.show_status(text)
             case ModuleErrorReported(error=error):
                 self.show_error(error)
+            # NOT SENT YET - everything from here to the end of the match. Each
+            # branch is complete and each presentation hook has a working
+            # default; nothing on the engine side constructs any of these
+            # messages, so none of them has ever arrived. Roadmap Phase 1.
             case RecipeLoaded(recipe_name=name, recipe_version=version):
                 self.show_recipe_loaded(name, version)
             case RunStarted(recipe_name=name, recipe_description=description):

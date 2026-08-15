@@ -392,12 +392,11 @@ def unwrapped(instance, method_name):
 
 @pytest.fixture
 def core():
-    """A Core wired to plain queues, so it spawns nothing."""
+    """A Core with its links built and its submodules never started."""
     return Core(
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
         log_queue=queue.Queue(),
-        queue_factory=queue.Queue,
     )
 
 

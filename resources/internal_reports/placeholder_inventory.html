@@ -1,0 +1,450 @@
+<!--
+SPDX-FileCopyrightText: 2025 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS — Placeholder Inventory</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#22201d; --muted:#6b665f; --line:#e2ded7;
+    --card:#ffffff; --accent:#8a5a2b; --code-bg:#f3f0ea;
+    --warn-bg:#fdf3ea; --warn-line:#e0a76a;
+    --ok-bg:#eef5ee; --ok-line:#8fb08f;
+    --bad-bg:#fbeeee; --bad-line:#c08080;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a18; --fg:#e8e4dd; --muted:#a09a91; --line:#332f2b;
+      --card:#232120; --accent:#d8a06a; --code-bg:#2a2724;
+      --warn-bg:#33261a; --warn-line:#8a6236;
+      --ok-bg:#1f2a20; --ok-line:#4d6b4d;
+      --bad-bg:#2e1e1e; --bad-line:#7d4a4a;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:28px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:38px 0 10px;padding-top:10px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px;color:var(--accent)}
+  p{margin:8px 0}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    font:13px/1.5 "SF Mono",Consolas,"Courier New",monospace}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;margin:10px 0}
+  pre code{background:none;padding:0;font-size:12.5px}
+  .tablewrap{overflow-x:auto;margin:10px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  td code{white-space:nowrap}
+  .note{background:var(--ok-bg);border-left:3px solid var(--ok-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn{background:var(--warn-bg);border-left:3px solid var(--warn-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .bad{background:var(--bad-bg);border-left:3px solid var(--bad-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn strong,.note strong,.bad strong{color:var(--accent)}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:14px 18px;margin:20px 0;font-size:14px}
+  .toc ol{columns:2;column-gap:30px;margin:6px 0}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px dotted var(--muted)}
+  .toc a:hover{color:var(--accent)}
+  .cards{display:flex;flex-wrap:wrap;gap:12px;margin:18px 0}
+  .card{flex:1 1 160px;background:var(--card);border:1px solid var(--line);
+    border-radius:8px;padding:14px 16px}
+  .card .n{font-size:26px;font-weight:600;color:var(--accent);line-height:1.2}
+  .card .l{font-size:13px;color:var(--muted);margin-top:2px}
+  .tag{display:inline-block;font-size:11px;font-weight:600;letter-spacing:.03em;
+    padding:1px 7px;border-radius:10px;border:1px solid var(--line);
+    background:var(--code-bg);color:var(--muted);white-space:nowrap}
+  .t-empty{background:var(--bad-bg);border-color:var(--bad-line);color:var(--accent)}
+  .t-stub{background:var(--warn-bg);border-color:var(--warn-line);color:var(--accent)}
+  .t-dead{background:var(--code-bg)}
+  .t-broken{background:var(--bad-bg);border-color:var(--bad-line);color:var(--accent)}
+  .bar{display:block;height:7px;border-radius:4px;background:var(--code-bg);
+    border:1px solid var(--line);overflow:hidden;min-width:90px}
+  .bar i{display:block;height:100%;background:var(--warn-line)}
+  footer{margin-top:50px;padding-top:14px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>PyPTS — Placeholder Inventory</h1>
+  <div class="sub">Everything on branch <code>architecture_refactor</code> that is declared but does not yet do anything —
+  code, messages, configuration, tests and documentation. Read from the working tree on 14 August 2026.</div>
+</header>
+
+<div class="cards">
+  <div class="card"><div class="n">4</div><div class="l">modules that are empty or a comment</div></div>
+  <div class="card"><div class="n">6</div><div class="l">functions that log a warning and return</div></div>
+  <div class="card"><div class="n">14</div><div class="l">messages nobody ever sends</div></div>
+  <div class="card"><div class="n">69</div><div class="l">tests skipped as placeholders</div></div>
+  <div class="card"><div class="n">45</div><div class="l">open TODOs in the roadmap</div></div>
+</div>
+
+<div class="note">
+  <strong>The short version.</strong> The plumbing is real and the engine is not. Everything boots, talks,
+  heartbeats, logs and configures itself; pressing <em>run</em> reaches a
+  <code>log.warning(...)</code> and stops. Four kinds of emptiness are worth telling apart, and the
+  sections below are ordered by them: a module that <em>does not exist</em>, a function that
+  <em>exists and does nothing</em>, a contract that is <em>declared but never exercised</em>, and a
+  thing that is <em>actually broken</em> rather than merely unfinished.
+</div>
+
+<div class="toc">
+  <strong>Contents</strong>
+  <ol>
+    <li><a href="#empty">Modules that do not exist yet</a></li>
+    <li><a href="#stubs">Functions that do nothing</a></li>
+    <li><a href="#dead">Messages nobody sends</a></li>
+    <li><a href="#config">Configuration read by nothing</a></li>
+    <li><a href="#tests">Tests that are placeholders</a></li>
+    <li><a href="#broken">Broken, not merely unfinished</a></li>
+    <li><a href="#docs">Where the documentation says so</a></li>
+    <li><a href="#order">What blocks what</a></li>
+  </ol>
+</div>
+
+<h2 id="empty">1. Modules that do not exist yet</h2>
+
+<p>Four packages in the shipping layout contain no executable code at all. They are directories that
+hold the shape of the architecture and nothing else.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Path</th><th>What is actually there</th><th>Where the real thing lives</th></tr>
+<tr>
+  <td><code>recipe/recipe.py</code></td>
+  <td>Two comment lines. <span class="tag t-empty">EMPTY</span></td>
+  <td><code>old_code/recipe.py</code> — parsing, validation, the sequence tree</td>
+</tr>
+<tr>
+  <td><code>step/</code></td>
+  <td>An empty <code>__init__.py</code>. No <code>step.py</code>, no step types. <span class="tag t-empty">EMPTY</span></td>
+  <td><code>old_code/steps.py</code> — the five step types</td>
+</tr>
+<tr>
+  <td><code>hardware_layer/hal.py</code></td>
+  <td>One comment: <code># hardware layer</code>. <span class="tag t-empty">EMPTY</span></td>
+  <td>Nowhere new — the drivers are hard dependencies of the old engine</td>
+</tr>
+<tr>
+  <td><code>stream_handler/</code></td>
+  <td>An empty <code>__init__.py</code>. <span class="tag t-empty">EMPTY</span></td>
+  <td><code>spikes/stream_handler/StreamContainer.py</code> and <code>spikes/GUI/XYGraph/</code>,
+      deliberately moved out of the package. Phase 3 promotes them.</td>
+</tr>
+</table>
+</div>
+
+<div class="warn">
+  <strong>Two details in there that are not just "unfinished".</strong>
+  <code>src/pypts/recipe/</code> has <em>no</em> <code>__init__.py</code> at all, so it is not an
+  importable package the way every sibling is — worth fixing whenever the port touches it.
+  And the <code>spikes/</code> copies are not dormant code: <code>StreamContainer</code> executes and
+  prints at import time, and <code>XY_graph.py</code> has undefined names that raise if reached.
+  Neither is imported by anything today, which is exactly why they were moved out.
+</div>
+
+<h2 id="stubs">2. Functions that do nothing</h2>
+
+<p>These exist, are wired, are reachable from the GUI and the CLI, and are decorated and logged like
+real methods. Each one logs that it cannot do its job and returns.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Function</th><th>Site</th><th>Behaviour today</th></tr>
+<tr>
+  <td><code>Sequencer.execute_sequence()</code></td>
+  <td><code>sequencer/sequencer.py:184</code></td>
+  <td>Runs on its own worker thread, logs <em>"the execution engine is not ported yet"</em>, exits.
+      The threading shape around it is real and tested; the body is the hole. <span class="tag t-stub">STUB</span></td>
+</tr>
+<tr>
+  <td><code>Report.generate_report()</code></td>
+  <td><code>report/report.py:118</code></td>
+  <td>Logs <em>"the report layer is not ported yet"</em>. Never answers <code>ReportGenerated</code>. <span class="tag t-stub">STUB</span></td>
+</tr>
+<tr>
+  <td><code>Report.export_report()</code></td>
+  <td><code>report/report.py:128</code></td>
+  <td>Same, for <code>ReportExported</code>. <span class="tag t-stub">STUB</span></td>
+</tr>
+<tr>
+  <td><code>Core.load_recipe()</code></td>
+  <td><code>core/core.py:375</code></td>
+  <td>Logs, then sends the operator a <code>StatusChanged</code> literally reading
+      <em>"Recipe loading is not implemented yet"</em>. Never sends <code>RecipeLoaded</code>. <span class="tag t-stub">STUB</span></td>
+</tr>
+<tr>
+  <td><code>Core</code> → <code>SetConfigParameter</code> branch</td>
+  <td><code>core/core.py:314</code></td>
+  <td>Accepts the message and logs that it is ignoring it. Deliberate: a live config change
+      would have to reach processes that each read their values at startup, and that is unsolved. <span class="tag t-stub">STUB</span></td>
+</tr>
+<tr>
+  <td><code>Core.do_periodic_tasks()</code> — heartbeat timeout</td>
+  <td><code>core/core.py:449–471</code></td>
+  <td>Detection is real; the <em>policy</em> is one <code>log.warning</code>. Nothing restarts,
+      aborts the run or tells the operator. <span class="tag t-stub">POLICY MISSING</span></td>
+</tr>
+</table>
+</div>
+
+<h3>Half-stubs — real code with a missing counterpart</h3>
+
+<ul>
+  <li><strong>CORE never asks the Report for anything.</strong> The only message it ever sends on that
+      link is <code>StopReport()</code> (<code>core.py:493</code>). <code>GenerateReport</code> and
+      <code>ExportReport</code> have handlers and no caller, so the Report thread runs an event loop,
+      heartbeats, resolves its output directory, logs where reports <em>will</em> go — and is never
+      spoken to.</li>
+  <li><strong>CORE sends no heartbeat of its own.</strong> The watch is one-directional: an HMI cannot
+      detect a dead CORE.</li>
+  <li><strong>The GUI cannot ask the operator anything.</strong> <code>HmiClient.ask_user()</code> and
+      <code>ask_serial_number()</code> default to <em>declining</em> — deliberately, since a blocked step
+      must hear something. The CLI overrides neither, and the GUI overrides neither, so today every
+      operator question would be auto-answered <code>None</code>. Nothing asks yet, so it does not bite.</li>
+  <li><strong>The GUI is a status label and a stop button.</strong> It overrides five presentation hooks
+      of the eleven <code>HmiClient</code> offers; the rest fall through to <code>log.info</code>. No widget
+      system, no recipe preview, no session persistence.</li>
+  <li><strong><code>--mode connect</code></strong> is accepted by argparse (<code>startup.py:80</code>) and has
+      <em>no branch</em> — it silently falls through and starts the CLI. <span class="tag t-broken">SILENT</span></li>
+</ul>
+
+<h2 id="dead">3. Messages nobody sends</h2>
+
+<p>Every message below has a receiving <code>case</code>, an entry in its link union, and an example in
+<code>test_messages.py</code> that drives it through the real handler. None of them is ever constructed
+outside <code>messages/</code> and the tests. The contract is half-built on purpose — the CLI, the GUI
+and the Report all had to agree on it before the engine existed.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Message</th><th>Link</th><th>Waiting on</th></tr>
+<tr><td><code>RecipeLoaded</code></td><td>CORE → HMI</td><td>The recipe layer. CORE answers <code>StatusChanged</code> instead.</td></tr>
+<tr><td><code>RunStarted</code>, <code>RunFinished</code></td><td>Sequencer → CORE → HMI</td><td rowspan="3"><code>execute_sequence()</code>. All seven run events are relayed by CORE and rendered by both frontends; the emitter is the stub.</td></tr>
+<tr><td><code>SequenceStarted</code>, <code>SequenceFinished</code></td><td>Sequencer → CORE → HMI</td></tr>
+<tr><td><code>StepStarted</code>, <code>StepFinished</code></td><td>Sequencer → CORE → HMI</td></tr>
+<tr><td><code>UserPromptRequest</code></td><td>Sequencer → CORE → HMI</td><td rowspan="2">Interaction steps. The <em>responses</em> are live — <code>hmi_client.py:142,147</code> sends them and the Sequencer's <code>PendingRequests</code> receives them — but nothing ever asks the question.</td></tr>
+<tr><td><code>SerialNumberRequest</code></td><td>Sequencer → CORE → HMI</td></tr>
+<tr><td><code>SetConfigParameter</code></td><td>HMI → CORE</td><td>No frontend sends it; CORE logs and ignores it. Dead at both ends.</td></tr>
+<tr><td><code>GenerateReport</code>, <code>ExportReport</code></td><td>CORE → Report</td><td>CORE has no trigger — see §2. Not even a stub call site.</td></tr>
+<tr><td><code>ReportGenerated</code>, <code>ReportExported</code></td><td>Report → CORE</td><td>The two stub methods that would send them.</td></tr>
+</table>
+</div>
+
+<div class="note">
+  <strong>This is the healthiest kind of placeholder in the repo.</strong> <code>mypy</code> flags any
+  <code>match</code> that stops covering its union, and <code>test_messages.py</code> fails until every member
+  has an example and a branch — so these fourteen cannot rot quietly, and the day something starts
+  sending them, both ends already work.
+</div>
+
+<h2 id="config">4. Configuration read by nothing</h2>
+
+<p>The config handler itself is finished and heavily tested (49 tests, none skipped). What is
+placeholder is the <em>consumption</em>: of the schema's fourteen keys, six are read anywhere in the
+framework (a seventh, <code>meta.config_version</code>, is used only internally by the migration).</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Key</th><th>Status</th><th>Reader</th></tr>
+<tr><td><code>paths.logs_dir</code></td><td>Used</td><td><code>startup.py:126</code>, Debug Monitor</td></tr>
+<tr><td><code>paths.reports_dir</code></td><td>Used</td><td><code>report.py:78</code> — to log a path nothing writes to</td></tr>
+<tr><td><code>logging.level</code></td><td>Used</td><td><code>startup.py:135</code></td></tr>
+<tr><td><code>operating_system.{name,version,architecture}</code></td><td>Used</td><td><code>startup.py:190–192</code> — banner only</td></tr>
+<tr><td><code>operating_system.kernel</code></td><td><span class="tag t-dead">WRITTEN, NEVER READ</span></td><td>—</td></tr>
+<tr><td><code>paths.base_dir</code></td><td><span class="tag t-dead">WRITTEN, NEVER READ</span></td><td>Derived and stored; only mentioned in a docstring</td></tr>
+<tr><td><code>report.type</code>, <code>report.theme</code></td><td><span class="tag t-stub">AWAITS PHASE 4</span></td><td>The report layer that would honour them is a stub</td></tr>
+<tr><td><code>gui.theme</code>, <code>gui.window_width</code>, <code>gui.window_height</code></td><td><span class="tag t-stub">AWAITS PHASE 3</span></td><td>The GUI is a fixed status window</td></tr>
+</table>
+</div>
+
+<p>Four public methods of <code>ConfigHandler</code> are exercised <em>only by tests</em>:
+<code>open_for_writing()</code>, <code>set_parameter()</code>, <code>restore_default()</code>,
+<code>dump()</code> and <code>get_whole_config()</code>. The write path is built and the policy — CORE is
+the single writer — is decided; no caller in the framework has taken it up yet. Hardware
+configuration does not exist at all: the placeholder <code>[hardware.*]</code> section was
+<em>removed</em> rather than left to be designed around, so a hand-written device section is preserved
+and returned as untyped text and nothing reads it.</p>
+
+<h2 id="tests">5. Tests that are placeholders</h2>
+
+<p>69 tests carry <code>@pytest.mark.skip(reason=PLACEHOLDER)</code> — an empty body declaring intended
+coverage. Nine files are 100% placeholder: they assert nothing whatsoever today.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>File</th><th>Placeholder / total</th><th></th><th>Blocked by</th></tr>
+<tr><td><code>functional/test_run_logging.py</code></td><td>8 / 8</td><td><span class="bar"><i style="width:100%"></i></span></td><td>Per-run log folders, run artefacts</td></tr>
+<tr><td><code>functional/test_launcher.py</code></td><td>6 / 6</td><td><span class="bar"><i style="width:100%"></i></span></td><td>End-to-end boot, <code>--mode connect</code></td></tr>
+<tr><td><code>functional/test_recipe_execution.py</code></td><td>6 / 6</td><td><span class="bar"><i style="width:100%"></i></span></td><td>The engine port. Holds the <em>characterization</em> test against <code>old_code</code> — the safety net for Phase 1.</td></tr>
+<tr><td><code>unit/test_recipe.py</code></td><td>6 / 6</td><td><span class="bar"><i style="width:100%"></i></span></td><td><code>recipe/</code> is empty</td></tr>
+<tr><td><code>unit/test_step.py</code></td><td>6 / 6</td><td><span class="bar"><i style="width:100%"></i></span></td><td><code>step/</code> is empty</td></tr>
+<tr><td><code>unit/test_hmi_cli.py</code></td><td>6 / 6</td><td><span class="bar"><i style="width:100%"></i></span></td><td>CLI features beyond the shell</td></tr>
+<tr><td><code>unit/test_report.py</code></td><td>5 / 5</td><td><span class="bar"><i style="width:100%"></i></span></td><td>CSV/HTML generation</td></tr>
+<tr><td><code>unit/test_hardware_layer.py</code></td><td>5 / 5</td><td><span class="bar"><i style="width:100%"></i></span></td><td><code>hal.py</code> is a comment</td></tr>
+<tr><td><code>unit/test_stream_handler.py</code></td><td>5 / 5</td><td><span class="bar"><i style="width:100%"></i></span></td><td>The package is empty</td></tr>
+<tr><td><code>unit/test_core.py</code></td><td>5 / 16</td><td><span class="bar"><i style="width:31%"></i></span></td><td>Recipe load, sequence orchestration</td></tr>
+<tr><td><code>unit/test_sequencer.py</code></td><td>5 / 13</td><td><span class="bar"><i style="width:38%"></i></span></td><td>Execution. The threading contract <em>is</em> tested.</td></tr>
+<tr><td><code>unit/test_hmi_gui.py</code></td><td>3 / 8</td><td><span class="bar"><i style="width:38%"></i></span></td><td>Widgets that do not exist</td></tr>
+<tr><td><code>unit/test_utilities.py</code></td><td>3 / 18</td><td><span class="bar"><i style="width:17%"></i></span></td><td>Assorted</td></tr>
+</table>
+</div>
+
+<p>For contrast, the files with <em>zero</em> placeholders — the parts of the branch that are genuinely
+finished: <code>test_config_handler.py</code> (49), <code>test_debug_monitor.py</code> (31),
+<code>test_messages.py</code> (17), <code>test_logger.py</code> (12),
+<code>test_queue_wrapper_trace.py</code> (8).</p>
+
+<div class="warn">
+  <strong>A skip is not a gap in the same way a stub is.</strong> These 69 are the specification of Phase 1
+  written down in advance, which is the right place for it. The one that matters most is
+  <code>test_results_match_the_old_code_baseline</code> — record what <code>old_code</code> produces
+  <em>before</em> moving anything, or the port has no oracle.
+</div>
+
+<h2 id="broken">6. Broken, not merely unfinished</h2>
+
+<p>Four things that will not work if used, as distinct from things that are honestly absent.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>What</th><th>Where</th><th>Failure</th></tr>
+<tr>
+  <td>Recipe verificator cannot import</td>
+  <td><code>helper_applications/recipe_verificator/verify_recipe.py:7</code></td>
+  <td><code>from pypts import RECIPE_HEADER_REQUIRED_FIELDS, …</code> — <code>src/pypts/__init__.py</code> is
+      minimal and defines none of them. <code>ImportError</code> on use. The module below it is 296 lines of
+      real, working validation logic that nothing can reach. <span class="tag t-broken">BROKEN</span></td>
+</tr>
+<tr>
+  <td><code>--mode connect</code></td>
+  <td><code>launcher/startup.py:80,208</code></td>
+  <td>Accepted, no branch, silently starts the CLI instead. <span class="tag t-broken">SILENT</span></td>
+</tr>
+<tr>
+  <td>Editor compatibility shims</td>
+  <td><code>recipe_creator/customGUIModules.py:174,209</code></td>
+  <td>Two methods marked <em>"stub for QsciScintilla compatibility"</em> — present so the widget API
+      matches, doing nothing. <span class="tag t-stub">STUB</span></td>
+</tr>
+<tr>
+  <td>Three disagreeing recipe rule sets</td>
+  <td><code>recipe_verificator/recipe_rules.py</code>, the creator, <code>old_code</code></td>
+  <td>Not a placeholder but a duplicate — recorded as a roadmap TODO because the port has to collapse
+      them into one schema. <span class="tag t-broken">DIVERGENT</span></td>
+</tr>
+</table>
+</div>
+
+<p>Also unrefactored, though working on their own terms: <code>recipe_creator</code> (1,080 lines) and
+<code>example_finder</code> (263 lines) are pre-refactor helper applications carried along untouched.
+The Debug Monitor, by contrast, is new and complete.</p>
+
+<h2 id="docs">7. Where the documentation says so</h2>
+
+<p>The docs are honest about all of the above — nothing in this report contradicts them. What is worth
+knowing is <em>which</em> document owns each admission, since they are the working to-do list.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Document</th><th>Placeholder content</th></tr>
+<tr>
+  <td><code>resources/roadmap/pypts_roadmap.md</code></td>
+  <td><strong>45 open <code>TODO</code> checkboxes</strong> against 10 closed. Its §1 "What is placeholder /
+      not yet ported" list is the canonical six items; §§1.1–1.11 each end with the TODOs that rework
+      opened. Two whole sections are plans rather than status: the two-process topology change
+      (<em>"decided, not yet implemented"</em>) and the recipe-format findings.</td>
+</tr>
+<tr>
+  <td><code>messages/messages.md</code></td>
+  <td>A <code>STUB</code> marker in the catalogue itself for every message in §3, plus an "Open items"
+      section naming the four unresolved ones.</td>
+</tr>
+<tr>
+  <td><code>config_handler/config_handler.md</code></td>
+  <td>A "Known gaps and sharp edges" section covering exactly §4 above — unused write API, unused
+      <code>report.*</code>/<code>gui.*</code> keys, no hardware configuration, no per-run log folders.</td>
+</tr>
+<tr>
+  <td><code>CLAUDE.md</code></td>
+  <td>Documents the placeholders as rules: <code>--mode connect</code> "has no branch",
+      <code>[logging] level</code> ships as <code>DEBUG</code> "for the duration of the refactor",
+      "the execution engine does not exist yet".</td>
+</tr>
+<tr>
+  <td>Commented-out code in <code>old_code/</code></td>
+  <td>Three dormant markers — <code>recipe.py:634</code> (<code>NotImplementedError</code>),
+      <code>report.py:534</code> (pass/fail summary), <code>steps.py:563</code> (no timeout if the UI never
+      answers). All inside comment blocks, all worth re-reading during the port.</td>
+</tr>
+</table>
+</div>
+
+<div class="note">
+  <strong>One documentation rule is being kept properly.</strong> There are no scattered <code>TODO</code>
+  comments in the new source — a grep across <code>src/pypts/</code> outside <code>old_code/</code> finds
+  none. Every open item is in the roadmap or a module <code>.md</code>, which is what makes a count like
+  "45" meaningful at all.
+</div>
+
+<h2 id="order">8. What blocks what</h2>
+
+<p>Almost everything in this report has one of three roots.</p>
+
+<pre><code>recipe/ + step/ are empty
+        │
+        ├─→ Core.load_recipe()      stub  ─→ RecipeLoaded          never sent
+        └─→ Sequencer.execute_sequence()  stub
+                    │
+                    ├─→ 7 run events       never sent ─→ GUI/CLI hooks never fire
+                    ├─→ prompt requests    never sent ─→ ask_user() never called
+                    └─→ RunFinished        never sent ─→ CORE never triggers the Report
+                                                              │
+report/ logic is a stub  ←──────────────────────────────────-─┘
+        └─→ ReportGenerated / ReportExported  never sent
+        └─→ report.type / report.theme        never read
+
+hardware_layer/ + stream_handler/ are empty
+        └─→ nothing above them can touch an instrument at all
+</code></pre>
+
+<p>So: <strong>port the recipe and step layers and the largest block of this report resolves itself</strong> —
+14 dead messages become live, four presentation paths start firing, 30-odd placeholder tests become
+writable. The report layer is a second, independent block; the HAL and the stream handler are a third
+and only matter once a step can run.</p>
+
+<p>What is <em>not</em> unblocked by the port, and needs a decision rather than a port:</p>
+<ul>
+  <li>The heartbeat-timeout <strong>policy</strong> — detection works, nobody decided what to do about it.</li>
+  <li><code>SetConfigParameter</code> — needs an answer to "how does a running process learn a value changed?"</li>
+  <li><code>--mode connect</code> — needs the event fan-out design before it can have a branch.</li>
+  <li>The verificator's broken import — a five-minute fix waiting on where the schema constants should live.</li>
+</ul>
+
+<footer>
+  Generated 14 August 2026 from the working tree of <code>architecture_refactor</code>
+  (HEAD <code>c59f756</code>, with uncommitted changes in <code>config_handler/</code>).
+  Counts are from the source, not from the roadmap — where the two disagree, the source was taken.
+  The roadmap remains the authority on status and plan.
+</footer>
+
+</div>
+</body>
+</html>

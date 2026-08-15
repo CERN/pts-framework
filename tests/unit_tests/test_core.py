@@ -39,9 +39,12 @@ def test_core_records_heartbeats_from_each_module():
 
 def build_core_that_spawns_nothing():
     """
-    A Core wired to plain in-process queues, so nothing is spawned.
+    A Core with every link wired up and nothing spawned.
 
-    This is what the queue_factory seam is for - see Core.__init__.
+    `Core.__init__` only builds the queues; `start_submodules()` is what starts
+    the Sequencer and the Report threads. So a test can construct a Core, put a
+    message on one of its links by hand and drive a single handler, with no
+    thread running behind it.
     """
     from pypts.core.core import Core
     from pypts.messages import QueueWrapper
@@ -50,7 +53,6 @@ def build_core_that_spawns_nothing():
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
         log_queue=queue.Queue(),
-        queue_factory=queue.Queue,
     )
 
 
@@ -118,7 +120,8 @@ def test_a_sequencer_event_is_routed_to_the_hmi():
     Driven by putting the message on the real inbox and turning the loop once,
     rather than by calling the handler - so the drain, the `match` and the
     forward are all exercised. This is the seam that used to need the debug
-    console's injection machinery; queue_factory is all it actually takes.
+    console's injection machinery; a Core with its links built and its threads
+    not started is all it actually takes.
     """
     from uuid import uuid4
 

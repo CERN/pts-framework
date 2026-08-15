@@ -5,22 +5,16 @@
 """
 The Config Handler: one place that answers "how is this installation set up".
 
-Three rules shape everything below.
+3 rules:
+**Multiple readers**
+The instance is per *process*, not per application - a spawned child shares no
+memory with its parent, so it builds its own instance and reads the same file.
+That is why reading is pure: it parses, it never writes.
 
-**One instance per process.** `ConfigHandler()` returns the same object however
-often it is called, so any module can reach the configuration without it being
-passed down through constructors. The instance is per *process*, not per
-application - a spawned child shares no memory with its parent, so it builds its
-own instance and reads the same file. That is why reading is pure: it parses,
-it never writes. The previous implementation created and rewrote the file on
-every read, which meant five processes rewriting one file per run.
-
-**One writer.** The launcher calls `bootstrap()` before anything else exists: it
-creates the file from the template if the machine has none, migrates it if it
-was written by an older pypts, and validates it. From then on the file is
-read-only to everyone except CORE, which opens it with `open_for_writing()`.
-Any other process calling `set_parameter()` gets a `ConfigWriteError` rather
-than a race.
+**One writer.** The launcher creates the file if it does not exist, and and
+validates it. From then on the file is read-only to everyone except CORE,
+which opens it with `open_for_writing()`. Any other process calling
+`set_parameter()` gets a `ConfigWriteError` instead.
 
 **It has to work before logging does.** `bootstrap()` runs before the Logger
 process exists - it is what decides where the log file goes - so it cannot log.
@@ -267,7 +261,7 @@ class ConfigHandler:
 
         Args:
             key: dotted, `section.option` - "paths.logs_dir",
-                "hardware.dmm1.timeout_s". Everything before the last dot is the
+                "gui.window_width". Everything before the last dot is the
                 section name.
             default: returned instead of raising when the key is absent. Pass it
                 only where an absent key is genuinely acceptable.

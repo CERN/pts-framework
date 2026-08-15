@@ -80,10 +80,14 @@ every one of them in one folder. This holds for *all* HTML documents in the proj
   to open from disk with no network.
 - `resources/**` is **not** covered by `reuse.toml`, so such a file needs its own inline SPDX
   header — `CC-BY-SA-4.0` for documentation, matching the two below.
-- **Always open it in the browser** as the last step of writing or updating it — do not offer,
-  do not ask, just open it: `Invoke-Item <path>` from PowerShell. The user reads these in a
-  browser, so a report that has been written but not opened is not finished. This applies to a
-  *re*-generated document as well as a new one. Say where you put it in the same breath.
+- **Open a *newly created* document in the browser** as the last step of writing it — do not
+  offer, do not ask, just open it: `Invoke-Item <path>` from PowerShell. A new report the user
+  has not seen yet is not finished until it is on screen. Say where you put it in the same
+  breath.
+- **Do not open a document you only edited.** Updating an existing file — a bullet corrected, a
+  section rewritten, a whole regeneration — ends with saying what changed and where. The user
+  already knows the file and opens it when they want it; a browser tab they did not ask for is
+  an interruption. Only if they ask ("open it", "show me") do you open an existing one.
 - List the folder to see what already exists rather than assuming; `messaging_overview.html`
   (the communication model) and `recipe_rules.html` (the recipe rules) are the two worth
   reading before writing about either subject.

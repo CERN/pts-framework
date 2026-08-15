@@ -14,7 +14,7 @@ cannot be parsed as its declared type. That test is the "config structure
 verification tool" the specification asks for, and CI already runs it - see the
 `dev_test` job in .gitlab-ci.yml.
 
-Two kinds of value need explaining.
+One kind of value needs explaining.
 
 *Derived* values ship blank in the template and are filled in the first time the
 config is created: the paths (from the platform's data directory) and the
@@ -23,11 +23,11 @@ of `/tmp/pypts`, which was wrong on Windows, without hardcoding a Windows path
 that would be wrong on Linux. Once written they are ordinary values the user may
 edit, and nothing recomputes them.
 
-*Section families* are how a flat INI file carries structured data. A section
-named `hardware.<logical name>` is validated against the fields of
-`hardware.example_device`, so a user may add as many devices as the bench has
-without the schema knowing their names. This is the shape Phase 5's
-`DeviceConfig` lookup will read.
+The schema is a flat list of named sections and nothing else. A section the user
+adds that is not in it - `[hardware.dmm1]`, most likely - is not an error: it is
+kept as it was written, reported once at WARNING, and its values come back as
+text. How hardware is configured is Phase 5's question, and this module does not
+pre-empt the answer.
 """
 
 from dataclasses import dataclass
@@ -102,19 +102,6 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
     },
-    # The worked example of the section-family convention. It is a placeholder:
-    # no driver reads it yet, and the HAL that will is Phase 5.
-    "hardware.example_device": {
-        "driver": Field("str", "none"),
-        "resource": Field("str", "none"),
-        "timeout_s": Field("float", "5.0"),
-    },
-}
-
-#: Section name prefix -> the schema section its members are validated against.
-#: `hardware.dmm1` is checked against the fields of `hardware.example_device`.
-SECTION_FAMILIES: dict[str, str] = {
-    "hardware.": "hardware.example_device",
 }
 
 #: Old dotted key -> its replacement, or None if the key was simply dropped.
@@ -144,14 +131,8 @@ def schema_for_section(section: str) -> dict[str, Field] | None:
     The fields a section is validated against, or None if it is not part of the
     schema at all.
 
-    Handles both the named sections and the families, so callers do not have to
-    know which kind they are holding.
+    A plain lookup today. It stays a function rather than a dict access because
+    it is the one place that decides what a section name means, and Phase 5 will
+    have to answer that question again for hardware.
     """
-    if section in SCHEMA:
-        return SCHEMA[section]
-
-    for prefix, template_section in SECTION_FAMILIES.items():
-        if section.startswith(prefix) and section != template_section:
-            return SCHEMA[template_section]
-
-    return None
+    return SCHEMA.get(section)

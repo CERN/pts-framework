@@ -145,10 +145,11 @@ which is what makes the trace free when it is off: `%`-style arguments mean the 
 only paid when a handler is actually going to emit.
 
 **What was given up.** The live filterable trace table, the injection UI, the generated
-message form, and the Modules tab. Injection needed no product code to survive: `Core`
-already takes `queue_factory`, so a test builds a Core that spawns nothing and calls
-`core.from_sequencer.send(...)` directly — `test_core.py::test_a_sequencer_event_is_routed_to_the_hmi`
-is the old injection test, rewritten that way.
+message form, and the Modules tab. Injection needed no product code to survive: `Core.__init__`
+builds every link but starts nothing, so a test constructs a Core, calls
+`core.from_sequencer.send(...)` directly and drives one handler with no thread behind it —
+`test_core.py::test_a_sequencer_event_is_routed_to_the_hmi` is the old injection test, rewritten
+that way.
 
 **Verified:** 9 tests in `tests/unit_tests/test_queue_wrapper_trace.py`, including that nothing is
 traced above DEBUG, that a message is not even formatted when the trace is off, that a
@@ -225,9 +226,17 @@ And `%TEMP%` is cleaned up, so a bench's settings were one reboot from gone.
 
 **The decisions worth recording.**
 
-- **INI stays.** The structure the spec asks for is carried by dotted section names —
-  `[hardware.dmm1]` — and a schema that gives every key a type. `get_parameter()` returns a
-  `Path`, an `int` or a `bool`, not a string.
+- **INI stays.** A schema gives every key a type, so `get_parameter()` returns a `Path`, an
+  `int` or a `bool`, not a string; dotted section names carry whatever structure the spec
+  asks for, since everything before the last dot is the section.
+- **The schema describes only what something reads.** `[hardware.example_device]` and the
+  `SECTION_FAMILIES` prefix rule that validated `[hardware.<name>]` against it were removed:
+  nothing consumed either, and shipping them committed the user's file — and Phase 5 — to a
+  device shape that had not been designed. A section the schema does not know is kept
+  verbatim, reported once at WARNING and returned as text, so a bench that already declares
+  hardware loses nothing. `CONFIG_VERSION` was deliberately *not* bumped and no `DEPRECATED`
+  entry was added: an existing `config.ini` keeps its `[hardware.example_device]` section and
+  is warned about once per start until the user deletes it.
 - **One instance per *process*, not per application.** Spawn gives a child no memory of its
   parent, so each process builds its own handler and reads the same file. Nothing is passed
   through `Process(args=...)`, which is what keeps the child entry points unchanged.
@@ -252,9 +261,12 @@ from `logging.level`; `report.py` takes its output directory from `paths.reports
       answers with a confirmation or an error, and how a process already running learns that
       a value it read at startup has changed. Until that is answered, a configuration change
       takes effect on the next start.
-- [ ] **TODO:** Phase 5 should read `[hardware.<name>]` into a `DeviceConfig` and hand it to
-      drivers by logical name. The section family and its validation exist; nothing consumes
-      them.
+- [ ] **TODO:** Phase 5 has to decide how a bench is described in the configuration and read
+      it into a `DeviceConfig` handed to drivers by logical name. Nothing exists for this —
+      the placeholder `[hardware.example_device]` section, its schema entry and the
+      `SECTION_FAMILIES` mechanism were all removed, so the design is unconstrained. Whatever
+      it becomes needs a `CONFIG_VERSION` bump and, if a user's file may already carry a
+      hardware section, a migration.
 - [ ] **TODO:** `report.type` / `report.theme` and the `[gui]` keys are read but not yet
       *used* — Phases 4 and 3 respectively.
 - [ ] **TODO:** Move the plaintext SSH password out of
@@ -484,7 +496,8 @@ already fails on `HEAD`.
 > TODOs (StreamHandler, HAL as a library, the promotion rule).
 
 **What changed.** `Core.start_submodules()` builds `threading.Thread` instead of
-`multiprocessing.Process`, and `Core.__init__`'s `queue_factory` defaults to `queue.Queue`.
+`multiprocessing.Process`, and `Core.__init__`'s `queue_factory` defaults to `queue.Queue`
+(that argument was removed later — see §1.12; the four links are plain `queue.Queue` now).
 `sequencer_main()` and `report_main()` lost their `log_queue` / `log_level` parameters and no
 longer call `init_logging()` — the root logger belongs to the Core process, and a thread
 reconfiguring it would tear the handler off a logger the other threads are using. `Core.start()`
@@ -812,6 +825,45 @@ functions.
 
 ---
 
+### 1.12 `Core.__init__` no longer takes a `queue_factory` — **done**
+
+> **Status: implemented.** A parameter removal, nothing else. No behaviour changed: every
+> caller in the repo was already getting `queue.Queue` out of it.
+
+**What it was.** §1.5 turned the Sequencer and the Report into threads and, in the same
+change, left `Core.__init__` a `queue_factory=Queue` parameter that built the four submodule
+links. Three reasons were recorded for keeping it. On inspection during the CORE refactor,
+none of them held:
+
+- *"What tests use to build a CORE that starts nothing."* They don't. Both call sites passed
+  `queue.Queue`, which was the default. What makes a constructed `Core` start nothing is that
+  `__init__` builds queues and `start_submodules()` starts threads — the argument had no part
+  in it.
+- *"The seam a future `--mode connect` turns."* Wrong seam. Connect mode needs event fan-out
+  from CORE to several **HMI** channels (the TODO in §1.1's list), and the HMI↔Core pair is
+  built by `startup.py` and handed to CORE as `to_hmi`/`from_hmi`. It never went through
+  `queue_factory`. What `queue_factory` did build — Core↔Sequencer, Core↔Report — stays inside
+  the Core process in every planned topology; StreamHandler joins them as a third *thread*.
+- *"The queue type is injected, never assumed."* That is `QueueWrapper`'s doing, not the
+  argument's: it wraps anything with `put()`/`get_nowait()`, and the launcher already exercises
+  both transports. Removing the argument leaves that property exactly as it was.
+
+So it was a variation point with no variation, and — being unannotated in a module that is
+inside mypy's scope — an implicit-`Any` in the signature of the class we are refactoring.
+
+**What changed.** The parameter is gone; `core.py` constructs the four links with `Queue()`
+directly, the comment above them now says *why* a plain `queue.Queue` is the right thing there,
+and the two test fixtures dropped the keyword. `from queue import Queue` stays.
+
+Should a submodule ever need a different transport, the honest change is to pass that module's
+built link in, the way the launcher already passes the HMI pair — not to re-add a factory that
+guesses which links are affected.
+
+**Verified:** the full suite unchanged at 248 passed / 69 skipped, `ruff check src tests` and
+`mypy` clean.
+
+---
+
 ## TODO — Recipe format: findings and decisions
 
 > **Status: analysed, parked.** The recipe refactoring itself is deferred — this section records
@@ -872,7 +924,7 @@ CLI mode: no HMI process at all — CLI runs in the launcher process, engine unc
 
 - [ ] **TODO:** Launcher stays the parent of *both* processes — the GUI is **not** spawned by Core. The supervisor must be the simplest, most stable component; the GUI must outlive an engine crash in order to report it. (`startup.py` already does this — keep it.)
 - [x] **DONE (see §1.5):** Core runs Sequencer and Report as **threads**, not `multiprocessing.Process` (`core.py: start_submodules()`). StreamHandler joins them as a third thread when it lands.
-- [x] **DONE (mechanism):** the **queue type is injected**, never assumed. `QueueWrapper` wraps anything with `put()`/`get_nowait()`; the launcher builds the HMI↔Core pair out of `multiprocessing.Queue` and `Core.__init__` takes a `queue_factory` (now defaulting to `queue.Queue`) for its submodule links. No module knows which it holds, and the argument survives as the seam a future `--mode connect` turns.
+- [x] **DONE (mechanism):** the **transport is not baked into any module**. `QueueWrapper` wraps anything with `put()`/`get_nowait()`, which is the whole mechanism: the launcher builds the HMI↔Core pair out of `multiprocessing.Queue` because that link crosses a process boundary, and `Core.__init__` builds its four submodule links out of `queue.Queue` because the Sequencer and the Report are threads of its own process. No module knows which of the two it is holding. See §1.12 for why the `queue_factory` argument that used to sit on `Core.__init__` is gone: `--mode connect` (TODO above) changes the *HMI* boundary, which the launcher owns, not the submodule links.
 - [ ] **TODO:** HAL becomes a **plain library** imported by the Sequencer — no process, no event loop, no queue. Driver calls stay ordinary function calls; this also keeps the spec's "HAL usable standalone outside the framework" true by construction.
 - [x] **DONE:** every HMI↔Core message type is round-tripped through `pickle.dumps`/`loads`, and a second test rejects any field that is not a plain value, a UUID, an Enum, a tuple or another message. Both are parametrised over the link unions, and a third test fails if a message exists without an example — so the coverage cannot rot. `tests/unit_tests/test_messages.py`.
 - [x] **DONE (contract):** user interaction is a **request/response pair** joined by a `request_id` — `UserPromptRequest`/`Response` and `SerialNumberRequest`/`Response` in `messages/run_events.py`, with `PendingRequests` as the waiting side. The live `SimpleQueue` is gone. *Remaining:* wiring it into the steps themselves during the Phase 1 port, and the worker-thread requirement noted in §1.1.
@@ -1133,7 +1185,7 @@ Steps 1–3 are naturally done *while porting steps into the sequencer* — doin
 - **`old_code` divergence.** The branch's `old_code` is *newer* than master (consolidated steps, `test_package` resource loading). Freeze master, do the port from `old_code` only, and delete it at v0.3.0 — three coexisting engines (master, old_code, new modules) is the biggest confusion risk for the team.
 - **Error-handling policy.** *Mechanism complete (§1.10, §1.11); policy still open.* `report_and_reraise` for the execution layer, `catch_and_report_errors` for event loops, and `report_error()`/`report_problem()` for a raise site that recognised the failure and rates it itself — so a failure now reaches its caller, carrying which method raised it and what type it was. What is still undecided is what anyone *does* with one: StepResult(ERROR) is agreed, continue-or-abort per recipe config is not, and CORE deliberately still only logs and notifies.
 - **Core busy-loop & heartbeats.** 100 Hz polling in every module is fine for now; when Core gains real work, consider `Queue.get(timeout=...)`-driven loops. Heartbeat timeout currently only logs a warning — define the recovery action (restart module? abort run? notify HMI?).
-- ~~**Config in the temp directory.**~~ **Closed (§1.3):** moved to the `platformdirs` per-user config directory, single writer, versioned structure with migration, and structured data through dotted section families. It is still INI — deliberately, because the type information lives in `configuration_schema.py` and the file stays hand-editable on a bench. What remains open is *changing* configuration at runtime: `SetConfigParameter` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
+- ~~**Config in the temp directory.**~~ **Closed (§1.3):** moved to the `platformdirs` per-user config directory, single writer, versioned structure with migration, and dotted section names for structure. It is still INI — deliberately, because the type information lives in `configuration_schema.py` and the file stays hand-editable on a bench. What remains open is *changing* configuration at runtime: `SetConfigParameter` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
 - **PyPI name.** The pyproject rename to `pts-framework` needs an early availability check on PyPI (v1.0.0 requirement), and alignment with the import name `pypts`.
 - **Recipe format versioning.** Before the Creator and third-party step plugins ship, add `format_version` to the recipe header and a compatibility policy — cheap now, expensive later.
 - **`pypts.api` stability.** Freezing the step/driver contract is the highest-leverage design decision left; review it with the module owners (per the Milestones page, each module has an assigned owner) before Phase 2 ends.

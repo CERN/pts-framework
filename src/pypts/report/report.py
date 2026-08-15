@@ -103,6 +103,8 @@ class Report:
     @catch_and_report_errors()
     def handle_core_message(self, message: CoreToReport) -> None:
         match message:
+            # NOT SENT YET, both - CORE never asks the Report for anything. The
+            # only message it puts on this link is StopReport, below.
             case GenerateReport():
                 self.generate_report()
             case ExportReport():

@@ -44,6 +44,13 @@ class StartSequence:
     sequence_name: str
 
 
+# NOT SENT YET - and the only message in the system that is dead at *both* ends.
+# No frontend constructs it, and CORE's branch for it
+# (`core.py: handle_hmi_message()`) deliberately logs that it is ignoring the
+# request rather than carrying it out. That refusal is the honest behaviour
+# until two questions are answered: whether CORE replies with a confirmation or
+# an error, and how a process that read a value at startup learns it changed.
+# Until then a configuration change takes effect on the next start.
 @dataclass(frozen=True, slots=True)
 class SetConfigParameter:
     """

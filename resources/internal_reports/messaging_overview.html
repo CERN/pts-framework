@@ -169,9 +169,10 @@ plain <code>queue.Queue</code>. Two rules keep the topology honest:</p>
   business talking to — the topology is enforced by construction, not by convention.</li>
   <li><strong>One swappable transport.</strong> <code>QueueWrapper</code> wraps anything with
   <code>put()</code> and <code>get_nowait()</code>, which is why the same class serves a process
-  boundary and a thread boundary. CORE still takes a <code>queue_factory</code> argument (now
-  defaulting to <code>queue.Queue</code>) — it is the seam a future <code>--mode connect</code>
-  turns, and what tests use to build a CORE that starts nothing.</li>
+  boundary and a thread boundary. The launcher builds the HMI↔Core pair out of
+  <code>multiprocessing.Queue</code> because that link crosses a process boundary; CORE builds its
+  four submodule links out of <code>queue.Queue</code> because the Sequencer and the Report are
+  threads of its own process. Neither end knows which of the two it is holding.</li>
 </ul>
 
 <div class="warn"><strong>The log queue is the odd one out:</strong> it carries two kinds of item —
