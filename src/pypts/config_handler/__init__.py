@@ -18,6 +18,7 @@ rules, `configuration_schema.py` for what the file contains, and
 """
 
 from pypts.config_handler.config_handler import (
+    BootstrapOutcome,
     ConfigError,
     ConfigFileMissing,
     ConfigHandler,
@@ -28,6 +29,7 @@ from pypts.config_handler.config_handler import (
 )
 
 __all__ = [
+    "BootstrapOutcome",
     "ConfigError",
     "ConfigFileMissing",
     "ConfigHandler",

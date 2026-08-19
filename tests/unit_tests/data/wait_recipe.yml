@@ -1,0 +1,36 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The smallest recipe that actually runs: two WaitSteps and nothing else.
+# It is the unit-test fixture for the recipe data layer and the sequencer;
+# resources/recipes/wait_recipe.yml is its runnable twin for a manual run.
+name: Wait demo
+description: Two short waits - the smallest recipe that runs end to end.
+version: 1.0.0
+main_sequence: Main
+globals: {}
+---
+sequence_name: Main
+description: Waits twice, briefly.
+parameters: {}
+locals: {}
+outputs: {}
+setup_steps: []
+steps:
+  - steptype: WaitStep
+    step_name: First wait
+    description: Pause briefly.
+    input_mapping:
+      wait_time:
+        type: direct
+        value: '0.01'
+    output_mapping: {}
+  - steptype: WaitStep
+    step_name: Second wait
+    description: Pause briefly again.
+    input_mapping:
+      wait_time:
+        value: '0.01'
+    output_mapping: {}
+teardown_steps: []

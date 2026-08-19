@@ -56,7 +56,8 @@ Keeping it current is part of every task:
 - When something is implemented, update its status in the same change that implements it.
 - If reality and the roadmap disagree, say so and ask — do not silently work around it.
 
-Also in that folder: `recipe_guide.md` — what a recipe is and what the old engine does with
+Also in that folder: `porting_changes.md` — the August 2026 porting session's index and its
+open review/parity findings (R-1..R-6, M-1..M-7) — and `recipe_guide.md` — what a recipe is and what the old engine does with
 it, the reference for the Phase 1 port.
 
 ## Module context files
@@ -64,7 +65,8 @@ it, the reference for the Phase 1 port.
 A module may carry a `<module>.md` beside its code holding the whole context of that folder:
 what each file owns, the rules and decisions behind them, how to extend it, its known gaps.
 **Read it before touching that module** — it knows more about it than this file or the
-roadmap does. Present: `config_handler/config_handler.md`, `messages/messages.md`.
+roadmap does. Present: `config_handler/config_handler.md`, `messages/messages.md`,
+`hmi/gui/gui.md`.
 
 It explains *how the module works*; the roadmap stays the authority on *status and plan*, and
 wins where they overlap. Update it in the same change, the way the roadmap is updated.
@@ -114,8 +116,8 @@ src/pypts/
   stream_handler/        empty placeholder package; the StreamContainer spike now lives in
                          spikes/stream_handler/ until Phase 3 promotes it
   config_handler/        ConfigHandler singleton; INI template -> config.ini in the
-                         per-user config dir, versioned, migrated, typed via
-                         configuration_schema.py (context: config_handler.md)
+                         per-user config dir, versioned (never migrated or repaired),
+                         typed via configuration_schema.py (context: config_handler.md)
   logger/log.py          the Logger process: single writer of the run log, plus init_logging()
   utilities/             error_handling, heartbeat_manager, local_storage, common
   helper_applications/   recipe_creator, recipe_verificator, example_finder (not yet refactored)
@@ -192,25 +194,36 @@ roadmap §1.11.
 python -m pypts                       # GUI mode (PySide6) - the default
 python -m pypts --mode cli            # CLI mode
 python -m pypts --log-level DEBUG     # adds the full message trace to the run log
-python -m pypts --debug-monitor       # opens the Debug Monitor on this run's log too
+python -m pypts --no-debug-monitor    # ...without the Debug Monitor beside it
 python run_tests.py                   # unit tests, then functional tests
 pytest tests                          # the same suite, directly
 
 python -m pypts.helper_applications.debug_monitor   # the Monitor alone, on the newest log
 ```
 
-`--debug-monitor` is off unless asked for. The launcher starts the Monitor with
-`subprocess.Popen`, never as an import, so the framework does not depend on it and it cannot
-stop a run; it is handed this run's log path, and left open when the run ends. It only has
-something to show at DEBUG. **Nothing in the framework may import
-`helper_applications/debug_monitor/`** — the dependency runs one way only. See roadmap §1.4.1.
+The Debug Monitor is **on by default for the duration of the refactor**, so simply running
+the launcher - `python -m pypts`, or `startup.py` straight from an editor's run button, with
+no arguments and no IDE configuration - brings up the frontend and the Monitor together.
+`--no-debug-monitor` is the run without it: a headless bench or CI, where there is no display
+to open a window on. It goes back to opt-in before v1.0 - see roadmap §1.4.1 and its revert
+TODO, which is the same bargain §1.6 struck for the DEBUG log level.
+
+The launcher starts the Monitor with `subprocess.Popen`, never as an import, so the framework
+does not depend on it and it cannot stop a run; it is handed this run's log path, and left
+open when the run ends. It only has something to show at DEBUG. **Nothing in the framework
+may import `helper_applications/debug_monitor/`** — the dependency runs one way only. See
+roadmap §1.4.1.
 
 `--log-level` overrides `[logging] level` in the generated `config.ini`, which **ships as
 `DEBUG` for the duration of the refactor** so every run carries the message trace and the
 Debug Monitor always has something to read. It reverts to `INFO` before v1.0 — see roadmap
 §1.6 and its revert TODO. The file lives in the per-user config directory (`%LOCALAPPDATA%\pypts\config.ini`
 on Windows, `~/.config/pypts/config.ini` on Linux); the launcher creates it from the
-template on first run and migrates it when its structure version is older than the code's.
+template on first run and never modifies it afterwards — there is no migration or repair.
+A file that is broken **or** version-mismatched is discarded whole for that run: the run
+continues on the template defaults in memory, the launcher shows a notice (popup in GUI
+mode, console banner otherwise) and the reason is an ERROR in the log. The fix is the
+user's: edit the file or delete it so it is recreated.
 A leftover `%TEMP%/pypts/config/config.ini` from an older build is no longer read at all.
 
 `--mode connect` is accepted by argparse but **has no branch**, so it silently falls
@@ -222,7 +235,7 @@ All three must pass before any change is called done, and all three run in CI
 (`.gitlab-ci.yml`, `analyse` and `test` stages):
 
 ```bash
-pytest tests                 # 248 passed, 69 skipped as of the last green run
+pytest tests                 # 341 passed, 51 skipped as of the last green run
 ruff check src tests         # rules and line-length 100 in [tool.ruff] in pyproject.toml
 mypy                         # scope is [tool.mypy]: messages/ and the handler modules
 ```
@@ -247,6 +260,8 @@ comprehensions. `SIM108` and `N818` are disabled in ruff for exactly this reason
 
 ## Working style
 
+- **`TODO.txt` in the repo root is the user's task inbox for Claude** - check it when asked
+  to work through tasks; mark items `[x]` with a note rather than deleting them.
 - The user orchestrates specific tasks; do that task, not the surrounding ones.
 - Prefer small, reviewable changes aligned with the roadmap phase in progress.
 - Match existing conventions (frozen message dataclasses, link modules, `unhandled()`-closed

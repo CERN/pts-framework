@@ -200,6 +200,14 @@ warn_unreachable = true
 module = "PySide6.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# The CI typecheck job installs only mypy, no dependencies, and the sequencer
+# now imports the recipe layer, which imports yaml - so mypy has to be told a
+# missing PyYAML is fine. TODO: install types or the package in that job and
+# drop this.
+module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
+
 [tool.acc_py_template]
 features = [
   {name = "core", version = 2},

@@ -30,6 +30,7 @@ import pytest
 
 from pypts.config_handler import file_locations, template_writer
 from pypts.config_handler.config_handler import (
+    BootstrapOutcome,
     ConfigFileMissing,
     ConfigHandler,
     ConfigKeyError,
@@ -53,29 +54,6 @@ def with_log_level(text: str, level: str) -> str:
     config handler and everything about the test.
     """
     return re.sub(r"^level = .*$", f"level = {level}", text, count=1, flags=re.MULTILINE)
-
-
-#: A pre-versioned config.ini, as the previous implementation wrote it. The
-#: logs_dir is deliberately not the default: migration has to keep it.
-LEGACY_CONFIG = """\
-[OperatingSystem]
-name = Linux
-version = 5.15.0
-architecture = x86_64
-kernel = generic
-
-[Paths]
-base_temp_dir = /tmp/pypts
-logs_dir = /my/own/logs
-config_dir = /tmp/pypts/config
-
-[Application]
-log_level = WARNING
-app_version = 1.0.0
-
-[Misc]
-example_flag = True
-"""
 
 
 @pytest.fixture
@@ -105,6 +83,16 @@ def test_config_is_created_from_the_template_when_missing(config_path):
     assert config_path.exists()
     assert handler.config_path == config_path
     assert handler.config_version == CONFIG_VERSION
+    assert handler.bootstrap_outcome is BootstrapOutcome.CREATED
+
+
+def test_an_existing_valid_file_is_loaded(config, config_path):
+    ConfigHandler.reset_for_testing()
+
+    reopened = ConfigHandler.bootstrap()
+
+    assert reopened.bootstrap_outcome is BootstrapOutcome.LOADED
+    assert reopened.bootstrap_problem is None
 
 
 def test_creation_fills_in_the_paths_for_this_platform(config):
@@ -307,33 +295,41 @@ def test_a_second_bootstrap_does_not_touch_the_file(config, config_path):
 # --- validation --------------------------------------------------------------------
 
 
-def test_a_value_of_the_wrong_type_is_refused_by_name(config, config_path):
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace(
-            "window_width = 1280", "window_width = wide"
-        ),
-        encoding="utf-8",
+def test_a_value_of_the_wrong_type_discards_the_file_and_names_the_key(config, config_path):
+    """
+    There is no repair and no partial use: a file with one bad value is
+    discarded whole, the defaults are in force in memory, and the reason names
+    the key so the user knows what to fix.
+    """
+    broken = config_path.read_text(encoding="utf-8").replace(
+        "window_width = 1280", "window_width = wide"
     )
+    config_path.write_text(broken, encoding="utf-8")
     ConfigHandler.reset_for_testing()
 
-    with pytest.raises(ConfigSchemaError) as error:
-        ConfigHandler()
+    handler = ConfigHandler()
 
-    assert "gui.window_width" in str(error.value)
+    assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert handler.bootstrap_problem is not None
+    assert "gui.window_width" in handler.bootstrap_problem
+    assert handler.get_parameter("gui.window_width") == 1280
+    # Discarded, not rewritten: the broken file is exactly as the user left it.
+    assert config_path.read_text(encoding="utf-8") == broken
 
 
-def test_a_value_outside_the_allowed_set_is_refused(config, config_path):
+def test_a_value_outside_the_allowed_set_discards_the_file(config, config_path):
     config_path.write_text(
         with_log_level(config_path.read_text(encoding="utf-8"), "CHATTY"),
         encoding="utf-8",
     )
     ConfigHandler.reset_for_testing()
 
-    with pytest.raises(ConfigSchemaError) as error:
-        ConfigHandler()
+    handler = ConfigHandler()
 
-    assert "logging.level" in str(error.value)
-    assert "DEBUG" in str(error.value)
+    assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert handler.bootstrap_problem is not None
+    assert "logging.level" in handler.bootstrap_problem
+    assert "DEBUG" in handler.bootstrap_problem
 
 
 def test_a_file_saved_with_a_byte_order_mark_still_reads(config, config_path):
@@ -348,19 +344,21 @@ def test_a_file_saved_with_a_byte_order_mark_still_reads(config, config_path):
     assert ConfigHandler().get_parameter("gui.window_width") == 1280
 
 
-def test_a_file_that_is_not_ini_is_refused_with_an_explanation(config, config_path):
+def test_a_file_that_is_not_ini_is_discarded_with_an_explanation(config, config_path):
     """
-    Raised before logging exists, so the message is all the user gets - it has
-    to say which file and what to do about it, not just what configparser thinks.
+    The reason becomes the launcher's notice, so it has to say which file and
+    what to do about it, not just what configparser thinks.
     """
     config_path.write_text("this is not an ini file\n", encoding="utf-8")
     ConfigHandler.reset_for_testing()
 
-    with pytest.raises(ConfigSchemaError) as error:
-        ConfigHandler.bootstrap()
+    handler = ConfigHandler.bootstrap()
 
-    assert str(config_path) in str(error.value)
-    assert "delete it" in str(error.value)
+    assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert handler.bootstrap_problem is not None
+    assert str(config_path) in handler.bootstrap_problem
+    assert "delete it" in handler.bootstrap_problem
+    assert handler.get_parameter("gui.window_width") == 1280
 
 
 def test_the_file_pypts_writes_has_no_byte_order_mark(config, config_path):
@@ -369,46 +367,43 @@ def test_the_file_pypts_writes_has_no_byte_order_mark(config, config_path):
     assert not config_path.read_bytes().startswith(b"\xef\xbb\xbf")
 
 
-def test_bootstrap_repairs_a_key_deleted_by_hand(config, config_path):
+def test_a_key_deleted_by_hand_discards_the_file(config, config_path):
+    """
+    There is no repair: the file is the user's, and pypts never modifies an
+    existing one. A missing key discards the file for the run; the reason names
+    the key so the user can add it back, or delete the file to start over.
+    """
+    broken = config_path.read_text(encoding="utf-8").replace("window_height = 720", "")
+    config_path.write_text(broken, encoding="utf-8")
+    ConfigHandler.reset_for_testing()
+
+    handler = ConfigHandler.bootstrap()
+
+    assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert handler.bootstrap_problem is not None
+    assert "window_height" in handler.bootstrap_problem
+    assert handler.get_parameter("gui.window_height") == 720
+    # Discarded, not rewritten: the broken file is exactly as the user left it.
+    assert config_path.read_text(encoding="utf-8") == broken
+
+
+def test_a_reader_applies_the_same_discard_rule(config, config_path):
+    """
+    Every process reads the file for itself, so every process has to reach the
+    same verdict about it - a run must agree with itself about the values in
+    force.
+    """
     config_path.write_text(
         config_path.read_text(encoding="utf-8").replace("window_height = 720", ""),
         encoding="utf-8",
     )
     ConfigHandler.reset_for_testing()
 
-    assert ConfigHandler.bootstrap().get_parameter("gui.window_height") == 720
+    reader = ConfigHandler()
 
-
-def test_a_reader_refuses_a_file_the_launcher_has_not_repaired(config, config_path):
-    """
-    A reader cannot repair - it is not the writer - so it must say what is wrong
-    rather than carry on with half a configuration.
-    """
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace("window_height = 720", ""),
-        encoding="utf-8",
-    )
-    ConfigHandler.reset_for_testing()
-
-    with pytest.raises(ConfigSchemaError) as error:
-        ConfigHandler()
-
-    assert "window_height" in str(error.value)
-
-
-def test_a_file_from_a_newer_pypts_is_refused(config, config_path):
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8").replace(
-            f"config_version = {CONFIG_VERSION}", f"config_version = {CONFIG_VERSION + 5}"
-        ),
-        encoding="utf-8",
-    )
-    ConfigHandler.reset_for_testing()
-
-    with pytest.raises(ConfigSchemaError) as error:
-        ConfigHandler.bootstrap()
-
-    assert "newer" in str(error.value)
+    assert reader.role is Role.READER
+    assert reader.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert reader.get_parameter("gui.window_height") == 720
 
 
 # --- sections the schema does not know ------------------------------------------------
@@ -452,68 +447,80 @@ def test_a_user_added_device_survives_a_rewrite(config, config_path):
     assert reopened.get_parameter("hardware.dmm1.resource") == "PXI1Slot2"
 
 
-# --- migration -------------------------------------------------------------------------
+# --- the structure version -------------------------------------------------------------
 
 
-def test_migration_keeps_user_values_and_maps_renamed_keys(config_path):
-    config_path.write_text(LEGACY_CONFIG, encoding="utf-8")
-
-    migrated = ConfigHandler.bootstrap()
-
-    assert migrated.config_version == CONFIG_VERSION
-    # Compared as parts, because a POSIX path read on Windows keeps its
-    # components but not its separators.
-    assert migrated.get_parameter("paths.logs_dir").parts[-3:] == ("my", "own", "logs")
-    assert migrated.get_parameter("logging.level") == "WARNING"
-    assert migrated.get_parameter("operating_system.name") == "Linux"
-
-
-def test_migration_adds_the_keys_the_new_version_introduced(config_path):
-    config_path.write_text(LEGACY_CONFIG, encoding="utf-8")
-
-    migrated = ConfigHandler.bootstrap()
-
-    assert migrated.get_parameter("report.type") == "html"
-    assert migrated.get_parameter("gui.window_width") == 1280
-    assert migrated.get_parameter("paths.reports_dir").is_absolute()
-
-
-def test_migration_keeps_the_previous_file(config_path):
-    config_path.write_text(LEGACY_CONFIG, encoding="utf-8")
-
-    ConfigHandler.bootstrap()
-
-    backup = config_path.with_suffix(".ini.v0.bak")
-    assert backup.exists()
-    assert backup.read_text(encoding="utf-8") == LEGACY_CONFIG
-
-
-def test_migration_drops_keys_that_no_longer_mean_anything(config_path):
-    config_path.write_text(LEGACY_CONFIG, encoding="utf-8")
-
-    ConfigHandler.bootstrap()
-
-    text = config_path.read_text(encoding="utf-8")
-    assert "example_flag" not in text
-    assert "config_dir" not in text
-    assert "app_version" not in text
-
-
-def test_migration_is_reported_once_logging_exists(config_path, caplog):
+def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, caplog):
     """
-    Bootstrap runs before the Logger process, so it buffers. Nothing about a
-    migration may be lost just because it happened too early to log.
+    A file with the wrong structure version is not trusted at all - even one
+    whose values would validate. The defaults are in force in memory, the file
+    is never touched, and the reason is an ERROR in the log.
     """
-    config_path.write_text(LEGACY_CONFIG, encoding="utf-8")
-    migrated = _bootstrap_before_logging()
+    mismatched = config_path.read_text(encoding="utf-8").replace(
+        f"config_version = {CONFIG_VERSION}", f"config_version = {CONFIG_VERSION + 5}"
+    )
+    mismatched = mismatched.replace("window_width = 1280", "window_width = 999")
+    config_path.write_text(mismatched, encoding="utf-8")
+    ConfigHandler.reset_for_testing()
 
-    with caplog.at_level(logging.INFO):
-        migrated.replay_bootstrap_log()
+    handler = _bootstrap_before_logging()
 
-    replayed = caplog.text
-    assert "migrated" in replayed
-    assert "logging.level" in replayed
-    assert str(config_path) in replayed
+    assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert handler.bootstrap_problem is not None
+    assert str(CONFIG_VERSION + 5) in handler.bootstrap_problem
+    assert f"expects {CONFIG_VERSION}" in handler.bootstrap_problem
+    # The defaults are in force, not the file's values.
+    assert handler.get_parameter("gui.window_width") == 1280
+    # Never modified: the mismatch is the user's to resolve.
+    assert config_path.read_text(encoding="utf-8") == mismatched
+
+    with caplog.at_level(logging.ERROR):
+        handler.replay_bootstrap_log()
+
+    assert "discarded" in caplog.text
+    assert f"expects {CONFIG_VERSION}" in caplog.text
+    assert str(config_path) in caplog.text
+
+
+def test_a_discarded_configuration_refuses_runtime_writes(config, config_path):
+    """
+    Writing one value while running on in-memory defaults would replace the
+    user's file with the defaults - exactly the modification pypts promises
+    never to make.
+    """
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace("window_height = 720", ""),
+        encoding="utf-8",
+    )
+    ConfigHandler.reset_for_testing()
+    writer = ConfigHandler.bootstrap()
+
+    assert writer.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    with pytest.raises(ConfigWriteError) as error:
+        writer.set_parameter("gui.theme", "dark")
+
+    assert "discarded" in str(error.value)
+
+
+def test_restore_default_ends_the_discarded_state(config, config_path):
+    """
+    restore_default() rewrites the file with the defaults deliberately, so
+    afterwards the file and the values in force agree again and writing works.
+    """
+    config_path.write_text("this is not an ini file\n", encoding="utf-8")
+    ConfigHandler.reset_for_testing()
+    writer = ConfigHandler.bootstrap()
+    assert writer.bootstrap_outcome is BootstrapOutcome.DISCARDED
+
+    writer.restore_default()
+
+    assert writer.bootstrap_outcome is BootstrapOutcome.LOADED
+    assert writer.bootstrap_problem is None
+    writer.set_parameter("gui.theme", "dark")
+    assert "theme = dark" in config_path.read_text(encoding="utf-8")
+
+
+# --- the bootstrap log -------------------------------------------------------------------
 
 
 def test_the_bootstrap_log_is_emptied_by_replaying_it(config_path, caplog):
@@ -551,11 +558,11 @@ def test_finding_an_existing_file_is_narrated(config, config_path, caplog):
         handler.replay_bootstrap_log()
 
     assert "Found an existing configuration file" in caplog.text
-    assert "nothing to migrate" in caplog.text
+    assert "declares the current structure version" in caplog.text
     assert "creating one from the template" not in caplog.text
 
 
-def test_a_reader_says_it_will_not_repair(config, config_path, caplog):
+def test_a_reader_narrates_its_role(config, config_path, caplog):
     ConfigHandler.reset_for_testing()
     root = logging.getLogger()
     saved = root.handlers[:]
@@ -569,7 +576,6 @@ def test_a_reader_says_it_will_not_repair(config, config_path, caplog):
         reader.replay_bootstrap_log()
 
     assert "opened as reader" in caplog.text
-    assert "neither creates nor repairs" in caplog.text
 
 
 def test_every_value_in_force_is_logged_at_debug(config, caplog):

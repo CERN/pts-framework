@@ -5,9 +5,12 @@
 """
 The Sequencer - executes the sequences of a loaded recipe.
 
-Runs as a thread of the Core process. The event loop and the link to CORE are
-real; execution is not. execute_sequence() is where the engine in old_code/ is
-going to land (roadmap Phase 1).
+Runs as a thread of the Core process. CORE hands it the validated recipe with
+UseRecipe; RunSequence starts one of its sequences, and execute_sequence()
+drives the step layer (pypts.step) through a Runtime whose emit/should_stop
+seams point back here. What execution can do so far is bounded by the ported
+step types - see step/steps.py; the rest of the engine port is roadmap
+Phase 1.
 
 **A sequence runs on a thread of its own, not on the event loop.** That shape is
 here before the engine is, because the engine cannot be dropped into the other
@@ -35,6 +38,7 @@ import time
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
+from pypts.messages.common_messages import ResultType
 from pypts.messages.core_sequencer_communication import (
     CoreToSequencer,
     RunSequence,
@@ -42,9 +46,22 @@ from pypts.messages.core_sequencer_communication import (
     SequencerToCore,
     StopSequence,
     StopSequencer,
+    UseRecipe,
 )
-from pypts.messages.run_events import SerialNumberResponse, UserPromptResponse
-from pypts.utilities.error_handling import catch_and_report_errors, report_problem
+from pypts.messages.run_events import (
+    RunFinished,
+    RunStarted,
+    SerialNumberResponse,
+    UserPromptResponse,
+)
+from pypts.recipe.recipe import Recipe
+from pypts.step.runtime import Runtime
+
+# Aliased: run_sequence() here is the loop-thread method that *starts* a run;
+# the step layer's run_sequence() is the sequence body itself.
+from pypts.step.step import StepResult
+from pypts.step.step import run_sequence as run_sequence_body
+from pypts.utilities.error_handling import catch_and_report_errors, report_error, report_problem
 from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
 
 #: The name CORE knows this module by, and the `source` on its heartbeats.
@@ -88,6 +105,9 @@ class Sequencer:
               steps. One writer, one reader, one bool - no lock needed.
         sequence_thread: the thread a sequence is running on, or None if none
               has been started yet.
+        recipe: the validated Recipe CORE handed over with UseRecipe, or None
+              until it does. A live object, not a copy - the two threads share
+              one process.
     """
 
     def __init__(
@@ -102,6 +122,7 @@ class Sequencer:
         self.pending = PendingRequests()
         self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
         self.sequence_thread: threading.Thread | None = None
+        self.recipe: Recipe | None = None
 
     def start(self) -> None:
         log.info("Starting module.")
@@ -125,6 +146,8 @@ class Sequencer:
     @catch_and_report_errors()
     def handle_core_message(self, message: CoreToSequencer) -> None:
         match message:
+            case UseRecipe(recipe=recipe):
+                self.take_recipe(recipe)
             case RunSequence(sequence_name=sequence_name):
                 self.run_sequence(sequence_name)
             case StopSequence():
@@ -137,6 +160,17 @@ class Sequencer:
                 unhandled(message)
 
     # --- Execution ------------------------------------------------------------
+
+    @catch_and_report_errors()
+    def take_recipe(self, recipe: Recipe) -> None:
+        """Store the validated recipe subsequent RunSequence commands run."""
+        self.recipe = recipe
+        log.info(
+            "Recipe '%s' (version %s) received. Sequences: %s",
+            recipe.name,
+            recipe.version,
+            ", ".join(recipe.sequences),
+        )
 
     @catch_and_report_errors()
     def run_sequence(self, sequence_name: str) -> None:
@@ -185,18 +219,64 @@ class Sequencer:
         """
         Run one named sequence. **On the sequence thread, not the event loop.**
 
-        Not implemented: this is where the Recipe/Step/Runtime engine from
-        old_code/ gets ported. When it does, it emits the progress events in
-        messages/run_events.py as it goes, answers with RunFinished, and checks
-        `stop_requested` between steps.
+        The *requested* sequence, deliberately: the old engine overwrote the
+        requested name with the header's main_sequence, so no other sequence
+        could ever run (F3). main_sequence is only the frontend's default.
+
+        Emits RunStarted/RunFinished itself; everything in between
+        (SequenceStarted, the step events, SequenceFinished) comes out of the
+        step layer through the Runtime's emit seam. The invariant that makes
+        an HMI possible: **RunStarted is answered by exactly one RunFinished**,
+        whatever happens in between - without it a frontend is stuck on
+        "running" forever.
 
         It may block for as long as a run takes, and it may block *inside* a
         step waiting for the operator through PendingRequests.wait() - both are
         only safe because this is not the thread draining the inbox.
         """
-        log.warning(
-            "Cannot run '%s': the execution engine is not ported yet.", sequence_name
+        if self.recipe is None:
+            report_problem(
+                self,
+                f"No recipe loaded - cannot run '{sequence_name}'. Send LoadRecipe first.",
+                operation="Sequencer.execute_sequence",
+            )
+            return
+        sequence = self.recipe.sequences.get(sequence_name)
+        if sequence is None:
+            report_problem(
+                self,
+                f"Recipe '{self.recipe.name}' has no sequence '{sequence_name}'. "
+                f"Sequences: {', '.join(self.recipe.sequences)}",
+                operation="Sequencer.execute_sequence",
+            )
+            return
+
+        log.info("Run started: sequence '%s' of recipe '%s'.", sequence_name, self.recipe.name)
+        runtime = Runtime(
+            globals=dict(self.recipe.globals),
+            emit=self.core.send,
+            should_stop=lambda: self.stop_requested,
+            base_dir=self.recipe.base_dir,
         )
+        self.core.send(
+            RunStarted(
+                recipe_name=self.recipe.name, recipe_description=self.recipe.description
+            )
+        )
+        step_results: list[StepResult] = []
+        try:
+            result, step_results = run_sequence_body(runtime, sequence)
+        except Exception as error:  # noqa: BLE001 - RunStarted must be answered
+            # The engine itself failed - not a step, which run() turns into a
+            # result. Report it, and still close the run for the frontend.
+            report_error(self, error, operation="Sequencer.execute_sequence")
+            result = ResultType.ERROR
+        if self.stop_requested:
+            result = ResultType.STOP
+        self.core.send(
+            RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in step_results))
+        )
+        log.info("Run finished: %s.", result)
 
     @catch_and_report_errors()
     def stop_sequence(self) -> None:

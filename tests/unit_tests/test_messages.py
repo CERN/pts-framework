@@ -75,6 +75,7 @@ from pypts.messages.core_sequencer_communication import (
     SequencerToCore,
     StopSequence,
     StopSequencer,
+    UseRecipe,
 )
 from pypts.messages.run_events import (
     RecipeLoaded,
@@ -82,16 +83,20 @@ from pypts.messages.run_events import (
     RunStarted,
     SequenceFinished,
     SequenceStarted,
+    SequenceSummary,
     SerialNumberRequest,
     SerialNumberResponse,
     StepFinished,
     StepStarted,
+    StepSummary,
     UserPromptRequest,
     UserPromptResponse,
 )
 from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
+from pypts.recipe.recipe import Recipe, Sequence
 from pypts.report.report import Report
 from pypts.sequencer.sequencer import Sequencer
+from pypts.step.steps import WaitStep
 
 STEP_ID = UUID("00000000-0000-4000-8000-000000000001")
 REQUEST_ID = UUID("00000000-0000-4000-8000-000000000002")
@@ -104,6 +109,27 @@ AN_ERROR = ModuleError(
     traceback="Traceback (most recent call last):\n...",
     operation="Sequencer.poll_core",
     error_type="ValueError",
+)
+
+#: A tiny but real Recipe, for the UseRecipe example. Built with the plain
+#: constructors rather than parsed, so this file stays free of YAML fixtures.
+A_RECIPE = Recipe(
+    name="DUT smoke test",
+    description="Nightly",
+    version="1.2.0",
+    globals={},
+    main_sequence="Main",
+    sequences={
+        "Main": Sequence(
+            name="Main",
+            description="",
+            locals={},
+            parameters={},
+            outputs={},
+            steps=[WaitStep(step_name="Pause", input_mapping={"wait_time": {"value": "0"}})],
+            teardown_steps=[],
+        )
+    },
 )
 
 AN_OUTCOME = StepOutcome(
@@ -120,7 +146,21 @@ EXAMPLES = {
     Heartbeat: Heartbeat(source="sequencer", timestamp=1_760_000_000.5),
     ModuleError: AN_ERROR,
     # run_events
-    RecipeLoaded: RecipeLoaded(recipe_name="DUT smoke test", recipe_version="1.2.0"),
+    RecipeLoaded: RecipeLoaded(
+        recipe_name="DUT smoke test",
+        recipe_version="1.2.0",
+        main_sequence="Main",
+        sequences=(
+            SequenceSummary(
+                sequence_name="Main",
+                steps=(
+                    StepSummary(
+                        step_id=STEP_ID, step_name="Measure voltage", description="With the DMM"
+                    ),
+                ),
+            ),
+        ),
+    ),
     RunStarted: RunStarted(recipe_name="DUT smoke test", recipe_description="Nightly"),
     RunFinished: RunFinished(result=ResultType.PASS, outcomes=(AN_OUTCOME,)),
     SequenceStarted: SequenceStarted(sequence_name="Main"),
@@ -146,6 +186,7 @@ EXAMPLES = {
     StatusChanged: StatusChanged(text="Idle"),
     ModuleErrorReported: ModuleErrorReported(error=AN_ERROR),
     # core_sequencer_communication
+    UseRecipe: UseRecipe(recipe=A_RECIPE),
     RunSequence: RunSequence(sequence_name="Main"),
     StopSequence: StopSequence(),
     StopSequencer: StopSequencer(),

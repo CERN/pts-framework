@@ -18,11 +18,13 @@ GUI tests need a display. On a headless machine set `QT_QPA_PLATFORM=offscreen`.
 
 ## Current state
 
-`test_logger.py` is real. Everything else is a **placeholder**: a named, skipped
-stub that declares what should be covered once the module it targets exists.
-Most of those modules are still stubs themselves (`sequencer.run_sequence()`,
-`recipe/`, `step/`, `report.generate_report()`, `hal.py`), so there is
-deliberately nothing to assert yet.
+Most of the suite is real now: the message protocol, the queue-wrapper trace,
+the config handler, the logger, the sequencer (threading shape *and* engine),
+the recipe and step layers, CORE's routing and the Debug Monitor all have live
+tests. What remains **placeholder** - a named, skipped stub declaring intended
+coverage - tracks the modules that are still stubs themselves
+(`report.generate_report()`, `hal.py`, the stream handler) and the step types
+not yet ported from `old_code/`.
 
 The point of the skeleton is to fix the *shape* of the suite before the port
 starts, so a ported module has an obvious place to land and the remaining gaps

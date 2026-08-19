@@ -28,8 +28,10 @@ clear communication between modules using well-structured message patterns.
 
 ### Sequencer
 
-- Runs the sequences of a loaded recipe and reports progress. Execution is still to be ported
-  from `old_code/`.
+- Runs the sequences of a loaded recipe and reports progress. The engine skeleton is real -
+  the recipe data layer (`recipe/`), the step lifecycle and registry (`step/`), and
+  `execute_sequence()` running a sequence on its own thread - with one step type (WaitStep)
+  ported so far; the other nine are still in `old_code/`.
 
 ### Report
 

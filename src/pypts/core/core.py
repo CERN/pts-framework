@@ -25,6 +25,7 @@ unhandled(), so a message nobody thought about raises instead of being dropped.
 import logging
 import threading
 import time
+import traceback
 from queue import Queue
 from typing import ClassVar
 
@@ -57,6 +58,7 @@ from pypts.messages.core_sequencer_communication import (
     SequencerStopped,
     SequencerToCore,
     StopSequencer,
+    UseRecipe,
 )
 from pypts.messages.links import (
     CORE_TO_REPORT,
@@ -65,6 +67,7 @@ from pypts.messages.links import (
     SEQUENCER_TO_CORE,
 )
 from pypts.messages.run_events import (
+    RecipeLoaded,
     RunFinished,
     RunStarted,
     SequenceFinished,
@@ -73,9 +76,11 @@ from pypts.messages.run_events import (
     SerialNumberResponse,
     StepFinished,
     StepStarted,
+    StopSequence,
     UserPromptRequest,
     UserPromptResponse,
 )
+from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.report.report import report_main
 from pypts.sequencer.sequencer import sequencer_main
 
@@ -182,6 +187,10 @@ class Core:
 
         self.running = True
         self.shutting_down = False
+
+        #: The recipe LoadRecipe loaded and validated, or None until one has.
+        #: The Sequencer holds the same object - one process, nothing copied.
+        self.recipe: Recipe | None = None
 
         #: When CORE stops waiting for the modules it asked to stop. None until
         #: it has asked, because there is nothing to time out before that.
@@ -294,7 +303,7 @@ class Core:
         except UnhandledMessage as exc:
             log.error(str(exc))
         except Exception:
-            log.exception("Failure while handling a message")
+            log.exception("Failure while receiving a message")
 
     # --- Routing --------------------------------------------------------------
 
@@ -308,6 +317,10 @@ class Core:
                 self.load_recipe(recipe_path)
             case StartSequence(sequence_name=sequence_name):
                 self.start_sequence(sequence_name)
+            case StopSequence():
+                # The operator's abort. Relayed unchanged; the Sequencer answers
+                # with the run's own RunFinished(STOP).
+                self.to_sequencer.send(message)
             case UserPromptResponse() | SerialNumberResponse():
                 # The operator's answer belongs to whoever asked the question.
                 self.to_sequencer.send(message)
@@ -345,9 +358,10 @@ class Core:
                 | StepStarted()
                 | StepFinished()
             ):
-                # NOT SENT YET - the relay works, the emitter does not exist.
                 # Progress is the frontend's business. CORE relays the same
-                # object rather than repacking it, so nothing is lost on the way.
+                # object rather than repacking it, so nothing is lost on the
+                # way. TODO(roadmap): on RunFinished, also trigger the Report
+                # (GenerateReport) - that wiring lands with the Report port.
                 self.to_hmi.send(message)
             case UserPromptRequest() | SerialNumberRequest():
                 # NOT SENT YET - no step asks a question yet. The *answers* do
@@ -382,14 +396,30 @@ class Core:
 
     def load_recipe(self, recipe_path: str) -> None:
         """
-        Load and validate a recipe.
+        Load and validate a recipe; validation gates execution.
 
-        The recipe layer has not been ported yet, so all CORE can honestly do is
-        say so. Once it lands, this answers with RecipeLoaded on success and a
-        ModuleError on a validation failure.
+        On success the HMI gets RecipeLoaded and the Sequencer gets the live
+        Recipe object with UseRecipe. On failure the Sequencer gets nothing at
+        all - an invalid recipe never reaches it - and the operator sees the
+        error through the ModuleError path.
         """
-        log.warning("Cannot load '%s': the recipe layer is not ported yet.", recipe_path)
-        self.to_hmi.send(StatusChanged(f"Recipe loading is not implemented yet ({recipe_path})"))
+        log.info("Loading recipe '%s'.", recipe_path)
+        try:
+            recipe = Recipe.from_file(recipe_path)
+        except RecipeError as error:
+            self.report_own_error(error, operation="Core.load_recipe")
+            return
+        self.recipe = recipe
+        self.to_sequencer.send(UseRecipe(recipe))
+        self.to_hmi.send(
+            RecipeLoaded(
+                recipe_name=recipe.name,
+                recipe_version=recipe.version,
+                main_sequence=recipe.main_sequence,
+                sequences=recipe.to_summary(),
+            )
+        )
+        log.info("Recipe loaded: '%s' (version %s).", recipe.name, recipe.version)
 
     def start_sequence(self, sequence_name: str) -> None:
         """
@@ -411,6 +441,28 @@ class Core:
         ErrorSeverity.ERROR: logging.ERROR,
         ErrorSeverity.CRITICAL: logging.CRITICAL,
     }
+
+    def report_own_error(self, error: Exception, operation: str) -> None:
+        """
+        Report a failure of CORE's own, through the same path as everyone else's.
+
+        CORE cannot use report_error(): that reports *to* CORE through an
+        instance's `core` outbox, and CORE has no outbox to itself. So it
+        builds the same ModuleError by hand and feeds its own handler - the
+        error is logged and shown to the operator exactly like a reported one.
+        Called from inside an `except` block, like report_error().
+        """
+        self.handle_module_error(
+            ModuleError(
+                source="pypts.core.core",
+                severity=ErrorSeverity.ERROR,
+                message=str(error),
+                exception=repr(error),
+                traceback=traceback.format_exc(),
+                operation=operation,
+                error_type=type(error).__name__,
+            )
+        )
 
     def handle_module_error(self, error: ModuleError) -> None:
         """

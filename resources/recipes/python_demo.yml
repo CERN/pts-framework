@@ -1,0 +1,65 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# Four Python-function tests and one 2-second wait - the smallest recipe that
+# exercises PythonModuleStep. `module:` resolves relative to this file, so the
+# functions live next door in example_tests.py. The even-number check fails on
+# purpose: a FAIL never stops a sequence, so the run finishes with result FAIL
+# and every later step still runs.
+name: Python demo
+description: Four function calls and a wait - PythonModuleStep end to end.
+version: 1.0.0
+main_sequence: Main
+globals: {}
+---
+sequence_name: Main
+description: Adds, measures, waits, checks and greets.
+parameters: {}
+locals: {}
+outputs: {}
+setup_steps: []
+steps:
+  - steptype: PythonModuleStep
+    step_name: Add numbers
+    description: 2 + 3 must equal 5.
+    module: example_tests.py
+    method_name: add
+    input_mapping:
+      a: {value: 2}
+      b: {value: 3}
+    output_mapping:
+      sum: {type: equals, value: 5}
+  - steptype: PythonModuleStep
+    step_name: Measure voltage
+    description: The reading must sit between 11 and 13 volts.
+    module: example_tests.py
+    method_name: measure_voltage
+    input_mapping: {}
+    output_mapping:
+      voltage: {type: range, min: '11', max: '13'}
+  - steptype: WaitStep
+    step_name: Settle
+    description: Let the bench settle for two seconds.
+    input_mapping:
+      wait_time: {value: '2'}
+    output_mapping: {}
+  - steptype: PythonModuleStep
+    step_name: Even check (fails on purpose)
+    description: 7 is not even - this one shows a FAIL verdict.
+    module: example_tests.py
+    method_name: is_even
+    input_mapping:
+      number: {value: 7}
+    output_mapping:
+      even: {type: passfail}
+  - steptype: PythonModuleStep
+    step_name: Greet the operator
+    description: A scalar return, wrapped as "output" and compared.
+    module: example_tests
+    method_name: greet
+    input_mapping:
+      name: {value: operator}
+    output_mapping:
+      output: {type: equals, value: 'Hello, operator!'}
+teardown_steps: []

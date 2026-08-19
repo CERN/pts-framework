@@ -6,7 +6,7 @@
 
 ## 1. Where the branch stands today
 
-The `architecture_refactor` branch is a real step toward the spec: the **process skeleton and communication plumbing are built**, while the **execution engine has not yet been ported into it**. It is a "walking skeleton" — everything boots, talks, and heartbeats, but pressing "run" executes nothing yet.
+The `architecture_refactor` branch is a real step toward the spec: the **process skeleton and communication plumbing are built**, and the **first slice of the execution engine is in** (§1.13): the recipe data layer, the base Step lifecycle with one step type (WaitStep), and a Sequencer that really runs a sequence. Pressing "run" executes a WaitStep-only recipe end to end; every other step type still lives in `old_code/`.
 
 ### What is already done ✓
 
@@ -19,7 +19,7 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 | GUI toolkit | **PySide6 migration done** (GUI skeleton + `test_pyside6_conversion.py`) — the PyQt6/LGPL conflict is resolved |
 | Licensing | LGPL-2.1-or-later + CC-BY-SA-4.0, SPDX headers, `reuse.toml`, `licenses/`, `dependency_license_analysis.rst` — REUSE compliance largely in place |
 | Logger | Single-writer Logger process: timestamped format (file:function, ms), file + stdout handlers, `set_stdout_logging_enabled()` toggle, and a level resolved once by the launcher from `--log-level` / config (§1.2) |
-| Config handler | **Reworked (see §1.3).** `ConfigHandler` singleton in the per-user config directory (`platformdirs`), created from a commented template, versioned and migrated, typed access through a schema, single writer, comment-preserving writes. The launcher takes the log directory from it and Report the report directory |
+| Config handler | **Reworked (see §1.3).** `ConfigHandler` singleton in the per-user config directory (`platformdirs`), created from a commented template, versioned (a broken or mismatched file is discarded for the run — defaults in memory, launcher notice, ERROR in the log; never migrated or repaired — August 2026, see §1.3), typed access through a schema, single writer, comment-preserving writes. The launcher takes the log directory from it and Report the report directory |
 | Recipe verificator | Substantial real implementation: YAML line-map extraction, faults vs warnings, per-steptype required fields, bulk folder validation, string-variable validation for the creator |
 | Recipe creator | GUI application present (`recipe_creator.py`, custom GUI modules, styles) |
 | Tests | `unit_tests/unit_tests/` + `functional_tests/` + `run_tests.py` (event proxy, recipe, report, steps, GUI, version…) |
@@ -27,12 +27,12 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 
 ### What is placeholder / not yet ported
 
-1. **The execution engine.** `sequencer.run_sequence()` is `pass`; `recipe/recipe.py` is a one-line comment; `step/` is empty; Core's `LOAD_RECIPE` / `START_SEQUENCE` handlers are `pass`. The working engine (Recipe/Sequence/Step/Runtime/StepResult, the five step types, resource-based `test_package` module loading described in `architecture.rst`) lives in **`old_code/`** and is not reachable from the new launcher.
+1. **The execution engine - nine of ten step types.** The skeleton is real now (§1.13): `recipe/` parses and validates, `step/` has the base lifecycle + `WaitStep` + the registry, `execute_sequence()` runs the requested sequence and emits every run event, and Core's `LoadRecipe`/`StartSequence` handlers work. Still in **`old_code/`**: `PythonModuleStep` (and the resource-based `test_package` module loading described in `architecture.rst`), the four interactive types, `SequenceStep`/`IndexedStep` (nesting), and the SSH pair - plus the continue_on_error policy.
 2. **Report module** — process shell with heartbeat exists; `generate_report()` / `export_report()` are `pass`. The CSV/HTML logic is in `old_code/report.py`.
 3. **HAL** — `hal.py` is a one-line comment.
 4. **Stream handler** — `src/pypts/stream_handler/` is an empty placeholder package. The `StreamContainer` singleton and the XYGraph widget spike were moved out of the shipping package to `spikes/stream_handler/` and `spikes/GUI/XYGraph/`: neither was imported by anything, `StreamContainer` executed and printed at import, and XYGraph has undefined names that raise if reached. Phase 3 promotes them from there.
 5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet. Neither frontend shows the message layer, and neither needs to: `--log-level DEBUG` puts every message on every link into the run log (§1.2), and the Debug Monitor renders that log live (§1.4).
-6. **Step construction still uses `eval(step_type + "(**step_data)")`** in `old_code/recipe.py` — the closed, unsafe step factory rides along into whatever gets ported.
+6. ~~**Step construction still uses `eval(...)`**~~ **Closed (§1.13):** the new `step/registry.py` is a plain dict lookup with a clear unknown-steptype error; the `eval()` stays behind in `old_code/` and dies with it.
 
 ### Defects worth fixing early (spotted while reading the branch)
 
@@ -183,8 +183,9 @@ produces zero trace lines.
       real Phase 1 run shows the log queue backing up.
 - [x] **DONE (§1.3):** An existing `%TEMP%/pypts/config/config.ini` saying `log_level = DEBUG`
       no longer affects anything: the config moved to the per-user config directory, so the
-      old file is not read at all, and the handler now migrates rather than only creating.
-      The stale file under `%TEMP%` is harmless and may be deleted by hand.
+      old file is not read at all. (The handler migrated old files for a while; migration
+      and repair were removed again in August 2026 — see §1.3.) The stale file under
+      `%TEMP%` is harmless and may be deleted by hand.
 - [ ] **TODO:** `--mode cli` still imports PySide6, through `startup.py → hmi/gui/gui.py`.
       Removing the debug console did not fix this — deferring the GUI import into the `gui`
       branch is a one-line change nobody has made.
@@ -220,9 +221,9 @@ And `%TEMP%` is cleaned up, so a bench's settings were one reboot from gone.
 | File | Owns |
 |---|---|
 | `file_locations.py` | where the file is — `platformdirs`, and the seam tests monkeypatch |
-| `configuration_schema.py` | what the file contains: section → key → type, default, allowed values; the deprecation map; `CONFIG_VERSION` |
+| `configuration_schema.py` | what the file contains: section → key → type, default, allowed values; `CONFIG_VERSION` |
 | `template_writer.py` | writing without losing the comments |
-| `config_handler.py` | the singleton: load, migrate, validate, get/set, dump |
+| `config_handler.py` | the singleton: load, create, validate, get/set, dump |
 
 **The decisions worth recording.**
 
@@ -241,10 +242,23 @@ And `%TEMP%` is cleaned up, so a bench's settings were one reboot from gone.
   parent, so each process builds its own handler and reads the same file. Nothing is passed
   through `Process(args=...)`, which is what keeps the child entry points unchanged.
 - **Reading is pure.** Only `bootstrap()`, called once by the launcher before anything else
-  exists, may create or repair the file. CORE is the only runtime writer.
-- **Migration keeps user values.** A file from an older version has its renamed keys moved,
-  its dead keys dropped and its new keys added; the previous file is kept as
-  `config.ini.v<n>.bak`. A file from a *newer* pypts is refused rather than guessed at.
+  exists, may create the file. CORE is the only runtime writer.
+- **No migration, no repair — discard instead (August 2026 decision).** The handler
+  originally migrated old files (renamed keys moved, dead keys dropped, new keys added,
+  `config.ini.v<n>.bak` kept) and refused files from a newer pypts. All of that was removed:
+  an existing file is **never modified by pypts**, and keeping it correct is the user's job
+  — edit it by hand, or delete it to have it recreated from the template. A file that is
+  broken (a missing key, a value of the wrong type, not INI at all) **or** whose
+  `config_version` does not match is **discarded whole for the run**: the template defaults
+  are used in memory, `BootstrapOutcome.DISCARDED`/`bootstrap_problem` carry the verdict,
+  the launcher shows a startup notice (`show_config_notice()`: QMessageBox in GUI mode,
+  console banner in CLI/headless), and the reason is an ERROR in the run log. The run never
+  stops for a bad config; `bootstrap()` raising is a last resort (unreadable template).
+  While discarded, `set_parameter()` refuses (`ConfigWriteError`) so the user's file cannot
+  be overwritten with defaults; `restore_default()` stays allowed and ends the state. Every
+  process applies the same discard rule, so a run agrees with itself about the values in
+  force. No CORE involvement — the notice is the launcher's. The `DEPRECATED` map and the
+  migration/repair helpers are gone from the code.
 - **Derived paths, not shipped paths.** The template ships the path values blank; they are
   filled at creation from the platform's data directory. That is why no path in the template
   can be wrong on either platform — asserted by a test.
@@ -265,8 +279,8 @@ from `logging.level`; `report.py` takes its output directory from `paths.reports
       it into a `DeviceConfig` handed to drivers by logical name. Nothing exists for this —
       the placeholder `[hardware.example_device]` section, its schema entry and the
       `SECTION_FAMILIES` mechanism were all removed, so the design is unconstrained. Whatever
-      it becomes needs a `CONFIG_VERSION` bump and, if a user's file may already carry a
-      hardware section, a migration.
+      it becomes needs a `CONFIG_VERSION` bump; there is no migration mechanism any more, so
+      existing files are updated by hand or recreated from the template.
 - [ ] **TODO:** `report.type` / `report.theme` and the `[gui]` keys are read but not yet
       *used* — Phases 4 and 3 respectively.
 - [ ] **TODO:** Move the plaintext SSH password out of
@@ -412,19 +426,34 @@ knowing before someone reads it as a lost message.
       the race itself is unchanged, because it is about ordering, not about how long a start
       takes.
 
-### 1.4.1 Starting the Monitor with the run (`--debug-monitor`) — **done**
+### 1.4.1 Starting the Monitor with the run (`--debug-monitor`) — **done; default flipped**
 
-> **Status: implemented.** `startup.py` can now open the Debug Monitor beside a run,
-> instead of the operator starting it by hand in a second shell.
+> **Status: implemented.** `startup.py` opens the Debug Monitor beside a run, instead of the
+> operator starting it by hand in a second shell. **Amended: it is on by default** for the
+> duration of the refactor, so a bare `startup.py` gives you both windows; `--no-debug-monitor`
+> is the opt-out. The revert TODO is at the end of this section.
 
 ```bash
-python -m pypts --log-level DEBUG --debug-monitor      # GUI mode, plus the Monitor
-python -m pypts --mode cli --log-level DEBUG --debug-monitor
+python -m pypts                                       # GUI mode, plus the Monitor
+python -m pypts --mode cli                            # CLI mode, plus the Monitor
+python -m pypts --no-debug-monitor                    # the run without it
 ```
 
-**Opt-in, not default.** The flag is `store_true` and off unless asked for, so a headless
-run, a test bench and CI are unaffected — none of them can open a Qt window, and none of
-them should try.
+**On by default, for now — amended.** It shipped as `store_true`, opt-in, on the argument
+that a headless run, a test bench and CI cannot open a Qt window and should not try. That
+argument still stands; what changed is the phase, exactly as in §1.6. During the refactor
+nearly every run is a developer's, and an opt-in flag means the Monitor is only ever there
+when someone remembered to ask - which in practice meant an IDE run configuration, a launcher
+script or a hand-typed command line, i.e. a dependency on something other than plain Python
+just to start the tool the refactor is being debugged with. The flag is now
+`argparse.BooleanOptionalAction` with `default=True`, so **`python startup.py` with no
+arguments starts the frontend and the Monitor**, and `--no-debug-monitor` is the opt-out for
+the runs that cannot use it.
+
+Nothing else about it changed: the Monitor still cannot affect a run, so the worst a default
+`True` can do on a machine with no display is a child that exits on its own and a WARNING in
+the log — see *It cannot stop a run* below. The automated suite never goes through
+`startup.py:main()`, so CI does not spawn one either.
 
 **Started as a program, not imported.** `start_debug_monitor()` runs
 `subprocess.Popen([sys.executable, "-m", "pypts.helper_applications.debug_monitor", <log>])`.
@@ -473,6 +502,10 @@ already fails on `HEAD`.
       property — "the launcher names the module in a string and never imports it". If that is
       worth keeping honest, it wants a test: import `pypts.launcher.startup` and assert no
       `pypts.helper_applications` module is in `sys.modules`.
+- [ ] **TODO (revert before v1.0):** `--debug-monitor` defaults to `True`. Put it back to
+      opt-in - `default=False`, or `store_true` again - when the refactor is over and runs
+      stop being developers'. The same revert as §1.6's DEBUG log level, and worth doing in
+      the same change: an operator's run should open one window, not two.
 - [ ] **TODO:** The child inherits the launcher's stdout. In a terminal that is right; behind
       a **pipe** it means the pipe stays open after pypts exits, because the Monitor is still
       holding it — which is how it behaved when the verification run was piped into a reader.
@@ -563,8 +596,8 @@ below rather than an intention.
 `args.log_level or config.get_parameter("logging.level")`, so the effective default is the
 *config file*, not a constant in the code. Two places therefore had to change —
 `configuration_schema.py` (the `Field` default) and `config_template.ini` (the shipped
-literal) — and a third had to be done by hand: migration deliberately **keeps every user
-value**, so a `config.ini` that already exists goes on saying `INFO` until someone edits that
+literal) — and a third had to be done by hand: pypts never modifies an existing file (§1.3),
+so a `config.ini` that already exists goes on saying `INFO` until someone edits that
 line. That is correct behaviour for a file that belongs to the user, and it is worth knowing
 before wondering why a particular machine did not pick the change up.
 
@@ -864,6 +897,233 @@ guesses which links are affected.
 
 ---
 
+### 1.13 Engine skeleton: recipe / step / sequencer, WaitStep end-to-end — **done**
+
+> **Status: implemented.** The first slice of the Phase 1 engine port. `--mode cli` loads
+> `resources/recipes/wait_recipe.yml` and runs it: `load_recipe` → `RecipeLoaded`,
+> `start_sequence Main` → both WaitSteps execute on the sequence thread, every run event
+> reaches the frontend, and the DEBUG trace shows the whole conversation. One step type;
+> the structure is the deliverable.
+
+**The layout.** `recipe/` is pure data — parse + validate, no queues, no Sequencer import
+(pinned by a test that imports it in a fresh interpreter). `step/` is the execution unit:
+`step.py` (base `Step` lifecycle, `StepResult`, `run_steps()`, `run_sequence()` — the
+sequence body a future `SequenceStep` reuses), `steps.py` (`WaitStep`), `registry.py` (the
+`eval()` replacement: a dict `steptype -> class`, unknown names get an error listing what
+exists — F11 closed), `runtime.py` (globals + the locals stack + two callable seams).
+`sequencer/execute_sequence()` looks the sequence up, builds a `Runtime`, and brackets the
+run with `RunStarted`/`RunFinished`.
+
+**The emission model.** `Runtime` carries `emit` (the Sequencer passes its outbox's
+`send`) and `should_stop` (a lambda over `stop_requested`). `Step.run()` emits
+`StepStarted`/`StepFinished` itself; `run_sequence()` emits the sequence pair; the
+Sequencer only the run pair. Chosen over "the sequencer loop emits" because a nested
+sequence inside a future `SequenceStep` then reports through the same channel it already
+holds — no rework when nesting lands. `step/` imports message *dataclasses* only, never
+`QueueWrapper`; a bare `Runtime()` is a complete fake context, which is what keeps steps
+testable stand-alone.
+
+**The recipe handoff.** CORE loads and validates (`Recipe.from_file`, every failure a
+`RecipeError`), stores the recipe, answers `RecipeLoaded` to the HMI — and hands the **live
+`Recipe` object** to the Sequencer in the new `UseRecipe` message on the internal link.
+That is the design choice §1.5 left open ("whether to allow live objects on the engine
+links"), now taken deliberately: this link never leaves the Core process, nothing is
+pickled, and the message's docstring says so. The boundary link stays pickle-tested and
+carries only `StepOutcome`, the flat projection of the rich, engine-internal `StepResult`.
+An invalid recipe never reaches the Sequencer — CORE reports the `RecipeError` through
+`report_own_error()` (CORE has no outbox to itself, so it builds the `ModuleError` by hand
+and feeds its own `handle_module_error`) and sends nothing.
+
+**Old defects fixed by construction during the port:** F3 (`execute_sequence` runs the
+*requested* sequence; `main_sequence` is only the frontend's default), F11 (`eval` → the
+registry), F12 (mutable-default mappings), F16 (sequence locals pushed as a copy, so a
+re-run starts clean), the `global_name` short-circuit that made `case "global"` dead code,
+the silent skip of unnamed sequence documents and silent last-wins of duplicate names
+(both are `RecipeError`s now), the caller's step dict being mutated, and teardown's
+accidental `stop_event.clear()` (teardown now runs with the stop check suppressed,
+explicitly). The run invariant an HMI depends on is pinned by test: **`RunStarted` is
+answered by exactly one `RunFinished`**, whatever happens in between.
+
+**Deliberately kept / deferred, each with the reasoning:**
+
+- **F6 kept for parity (decided):** when several `output_mapping` entries judge, the last
+  one wins, exactly as the old engine did. Documented in `process_outputs()` and pinned by
+  a test that says so.
+- **continue_on_error is not ported.** The old engine had three disagreeing sources of
+  truth (runtime attribute, global variable, per-step YAML key — F8 leaked one step's
+  setting onto the next). Current policy is minimal and explicit: a step ERROR stops the
+  sequence, FAIL never does, `skip` is honoured, `critical` is parsed and stored but not
+  consulted. The real policy design is a Phase 1 decision.
+- **WaitStep sleeps in one piece.** The framework contract is a stop at the *step
+  boundary* (pinned by `test_stop_requested_is_checked_between_steps_not_inside_one`); a
+  stop-aware sliced sleep is a courtesy for later.
+- **`id:` must now be a valid UUID string when given.** The typed events
+  (`StepStarted.step_id: UUID`) force it; no existing recipe sets one.
+
+**Verified:** 305 passed / 52 skipped (was 248 / 69 — the recipe, step, sequencer-engine
+and core-orchestration placeholders are real tests now), `ruff check src tests` and `mypy`
+clean, and the end-to-end CLI run confirmed on Windows: `--mode cli --log-level DEBUG`,
+`load_recipe resources/recipes/wait_recipe.yml` → `RecipeLoaded`, `start_sequence Main` →
+both steps DONE, `Run finished: DONE (2 steps)`, clean shutdown, exit 0 — and the run log
+carries the full send/recv trace including `UseRecipe` on `core->sequencer`.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** revisit F6 - should every judging `output_mapping` entry have to pass
+      (worst verdict wins), as the old documentation claimed? One-line change in
+      `process_outputs()` plus the pinning test; a behaviour change, so decide it, don't
+      slip it in.
+- [ ] **TODO:** design the continue_on_error policy (per-recipe? per-step? `critical`
+      re-arming the stop?) before porting the step types that used it - one source of
+      truth this time.
+- [ ] **TODO:** `WaitStep`: sleep in slices and honour `should_stop()`, so a long wait
+      does not hold up an abort.
+- [ ] **TODO:** stable step ids - the old code accepted arbitrary strings for `id:`; the
+      typed events force UUIDs. Decide a policy (hash of name? explicit UUIDs in the
+      Creator?) before the Report and the Creator need stable identity across runs.
+- [ ] **TODO:** the `"method"` input type (identical to `direct` in the old code) returns
+      with `PythonModuleStep`.
+- [ ] **TODO:** `Core` should trigger `GenerateReport` on `RunFinished` - lands with the
+      Report port (Phase 1 step 4), the branch is marked in `core.py`.
+- [ ] **TODO:** the CI `typecheck` job installs only mypy, so `[[tool.mypy.overrides]]`
+      silences the missing PyYAML; install `types-PyYAML` (or the package) in that job and
+      drop the override.
+- [ ] **TODO:** `resources/recipes/*.yml` other than `wait_recipe.yml` still target the
+      old engine's step types and a missing `example_tests.py` (F24);
+      `test_every_example_recipe_in_resources_parses` stays skipped until the registry
+      grows. Unskip it steptype by steptype.
+
+---
+
+### 1.14 GUI groundwork: old GUI studied, scaffold vendored as PySide6 — **done**
+
+> **Status: two preparation steps for the GUI rebuild are in; the GUI itself is
+> unchanged (still the minimal status window).** The plan for the rebuild lives in
+> `src/pypts/hmi/gui/gui.md` — the module context file — not here.
+
+**The study.** `old_code/gui.py` (868 lines) plus its event proxy, command loop and
+assembly were read end to end and written up in `hmi/gui/gui.md`: the screen anatomy, the
+nine-signal pipeline, the UUID-keyed step table mechanic, the toolbar state machine, the
+interaction pattern, the result color table — and the defects not to reproduce (the GUI
+parsing the recipe itself, the `sleep(1)` startup race, the nested-QEventLoop abort, the
+root-logger tap, live engine objects in the view). Section 4 of that file maps every old
+mechanism onto its typed equivalent in the new architecture; section 5 lists what the
+basic-execution GUI still needs decided.
+
+**The scaffold.** The GUI's layout will come from `pyrade_gui_scaffold` 1.3.0 (CERN RADE's
+four-panel QSplitter main window). Upstream is PyQt6 — the GPL licensing the PySide6
+migration removed — so it is **vendored as a PySide6 port** in `src/pypts/hmi/gui/scaffold/`
+(same class names, same public API, upstream's test suite ported alongside:
+18 tests in `tests/unit_tests/test_gui_scaffold.py`), with provenance in the package
+docstring. Reviewed against the old GUI's features first: everything fits the four regions;
+the mapping and the one API trap (`set_content()` deletes, so it is assembly-time only) are
+recorded in `gui.md` §6.
+
+**Verified:** 323 passed / 52 skipped, `ruff` and `mypy` clean.
+
+**New TODOs this opened:**
+
+- [ ] **TODO (license):** the template repo carries **no license** (no LICENSE file, no
+      SPDX, no pyproject `license` field). The port proceeded on the user's decision with
+      full attribution; get written clearance from its author (or a LICENSE upstream) and
+      record the license in the vendored package **before any release**.
+- [x] **DONE (§1.15):** fit the basic-execution GUI into the scaffold per `gui.md` §5-§6:
+      the panel content widgets, `GUI(HmiClient)` as the assembler, and the two protocol
+      gaps (the recipe summary and the HMI→CORE stop-the-run message).
+
+---
+
+### 1.15 The four-panel operator GUI, and the two protocol additions it needed — **done**
+
+> **Status: implemented.** `python -m pypts` now opens the real operator screen: open a
+> recipe → the step table pre-fills "Pending" and the sequence chooser offers every
+> sequence (main selected) → Start → rows go "Running..." then take the old color table's
+> verdicts live → Stop aborts at the step boundary → the status line narrates. The CLI
+> gained the same abort (`stop_sequence`). Design record: `hmi/gui/gui.md` §5 (each of the
+> five open points, settled) and §6.
+
+**Protocol addition 1 — the operator's abort.** `StopSequence` moved from
+`core_sequencer_communication.py` to `run_events.py` and joined `HmiToCore`: it rides two
+links and CORE relays the same object (the shared-message rule in `src/pypts/README.md`,
+the `UserPromptResponse` precedent — also what keeps `recipe/`+`yaml` out of the HMI
+process's import graph). `HmiClient.stop_sequence()` sends it; the confirmation is the
+run's own `RunFinished(STOP)`, so nothing waits. CLI verb: `stop_sequence` (`stop` was
+already an exit alias).
+
+**Protocol addition 2 — the recipe summary.** `RecipeLoaded` now carries `main_sequence`
+and `sequences: tuple[SequenceSummary, ...]`, each a tuple of
+`StepSummary(step_id, step_name, description)` built by `Recipe.to_summary()` /
+`Sequence.to_summary()` (mirroring `StepResult.to_outcome()`). The summary includes the
+**teardown steps** — they run through the same lifecycle and emit the same events, so they
+need table rows. This closes the old GUI's ugliest habit: parsing the recipe a second time
+GUI-side just to fill the table (`gui.md` §3). The `show_recipe_loaded` hook now takes the
+whole event.
+
+**The GUI itself.** `gui.py` is the assembler (`GUI(HmiClient)` builds the scaffold
+window, one content per panel, one `set_content()` each); the contents are pure views:
+`top_bar.py` (Open/dropdown/Start/Stop + the event-driven state machine — every transition
+caused by a message, nothing blocks), `step_table.py` (the UUID-in-UserRole row mechanic,
+verdicts in `result_colors.py`'s old table, error_info as tooltip), `center_view.py` (a
+QStackedWidget: CERN-logo idle page — the logo is package data under `hmi/gui/images/` —
+a prompt page and a serial-number page, with an exactly-once answer guard: a new request
+declines the unanswered one, RunFinished cancels whatever is pending, and the pair is
+cleared before the callback fires). The serial form is a page, not the old modal dialog —
+no nested event loop. `PtsMainWindow` subclasses the scaffold (scaffold untouched) to turn
+the first [X] into `ShutdownRequested`; the real close happens on `StopHmi`, so closing
+the window can no longer orphan the engine.
+
+**Verified:** 341 passed / 51 skipped (18 GUI tests, was 8), `ruff` and `mypy` clean, and
+a CLI end-to-end on Windows that exercised load → start → a *refused* second start
+("already running", shown to the operator) → `stop_sequence` mid-run →
+`Run finished: STOP (1 steps)` → clean exit 0.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** the interactive prompt pages have no sender yet — the `User*` step types
+      are the next engine port, and the GUI side of them is now already built and tested.
+- [ ] **TODO:** the old GUI's File/About menus (wiki, GitLab, recipe-creator launcher) and
+      the live log box were deliberately left out of the basic screen — Phase 3, with the
+      widget system. Same for dark mode: `force_light_mode()` pins the light scheme because
+      the verdict colors are designed light; a dark palette is a Phase 3 design task, not a
+      toggle.
+- [ ] **TODO:** `StepStarted` for a sequence the table is not showing logs a warning and
+      is dropped; revisit when `SequenceStep` nesting lands (the display policy for nested
+      rows lives in the presentation layer now, not the transport).
+
+---
+
+### 1.16 PythonModuleStep, minimal — **done**
+
+> **Status: implemented.** The second step type: call one Python function with the
+> recipe's resolved inputs as keyword arguments and judge what comes back. Demo:
+> `resources/recipes/python_demo.yml` + `example_tests.py` beside it — four function tests
+> (equals, range, a deliberate passfail FAIL, a wrapped scalar) and a 2 s wait; verified
+> end to end in the CLI: PASS/PASS/DONE/FAIL/PASS → `Run finished: FAIL (5 steps)`.
+
+**What was ported and what deliberately was not.** `action_type: method` only —
+`read_attribute`/`write_attribute` stay in old_code, refused with a clear error. Module
+resolution replaced the old project-wide rglob heuristic (bare `except` at its heart,
+`old_code/steps.py __load_module`): a recipe's `module:` is either **a file next to the
+recipe** (`example_tests.py` or `example_tests`; `Recipe.from_file` records `base_dir`,
+the Sequencer hands it to the `Runtime`, absolute paths work too) or **a dotted import
+name** (stdlib/installed code). File-loaded modules are executed without touching
+`sys.modules`.
+
+**Verified:** 350 passed / 51 skipped, `ruff` and `mypy` clean, plus the CLI run above.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** the module-loading *design* is still the recorded open question — this
+      port is the minimal contract (beside-the-recipe or importable), and the old
+      `test_package` header key is still tolerated-and-ignored. Decide the final shape
+      before the verificator learns to check `module:`/`method_name:` resolution.
+- [ ] **TODO:** `resources/recipes/simple_recipe.yml` steps 2-9 now *almost* run (they
+      use PythonModuleStep + WaitStep) but reference the still-missing `example_tests.py`
+      module with different function names (F24) and a `UserInteractionStep` first step.
+      Revisit when the User* types land.
+
+---
+
 ## TODO — Recipe format: findings and decisions
 
 > **Status: analysed, parked.** The recipe refactoring itself is deferred — this section records
@@ -957,7 +1217,7 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 
 - Fix the verificator's broken schema-constants import; give `RECIPE_*_REQUIRED_FIELDS` / `STEP_REQUIRED_FIELDS` a dedicated schema module (this becomes the programmatic recipe schema the spec asks for).
 - ~~Harden `catch_and_report_errors`: re-raise or return sentinel by policy, per-function module detection, and don't require `self.core` implicitly.~~ **Done — §1.10.**
-- Decide logging/config process policy. **Decided (§1.2, §1.3):** one `--log-level` for the whole run, overriding `[logging] level`, resolved once by the launcher and passed to every process as an argument, so filtering happens at the sender rather than in the Logger; and the config is created/migrated once by the launcher's `bootstrap()` and read-only everywhere else, with every process reading the file for itself. **Still open:** one log directory per *test run* with per-process log files inside it — the log directory now comes from `paths.logs_dir`, but the per-run folder does not exist yet.
+- Decide logging/config process policy. **Decided (§1.2, §1.3):** one `--log-level` for the whole run, overriding `[logging] level`, resolved once by the launcher and passed to every process as an argument, so filtering happens at the sender rather than in the Logger; and the config is created once by the launcher's `bootstrap()` (never migrated — see §1.3) and read-only everywhere else, with every process reading the file for itself. **Still open:** one log directory per *test run* with per-process log files inside it — the log directory now comes from `paths.logs_dir`, but the per-run folder does not exist yet.
 - Get `run_tests.py` + unit tests green in CI on the branch; add an X-server (or `QT_QPA_PLATFORM=offscreen`) job for GUI tests (already a TODO).
 - Characterization tests around `old_code`: run an example recipe end-to-end and assert on the CSV rows — this is the safety net for the port in Phase 1.
 - Resolve `requirements.txt` → pyproject-only (existing TODO), REUSE check in CI (existing TODO).
@@ -973,8 +1233,8 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 
 Recommended porting order (each step is one reviewable MR):
 
-1. **Recipe (data layer):** move loading/parsing/validation from `old_code/recipe.py` into `recipe/recipe.py`, stripped of all execution logic. Keep the consolidated `steps.py` implementations and resource-based `test_package` loading (`architecture.rst`). Integrate the verificator: a recipe that fails validation is never handed to the Sequencer.
-2. **Step & Sequencer (execution):** move `Step`/`Sequence`/`Runtime`/`StepResult` execution into `sequencer/` + `step/`; implement `run_sequence(sequence_name)` behind the existing `RunSequence` command. The events it has to emit already exist — `RunStarted`, `SequenceStarted`, `StepStarted`, `StepFinished`, `SequenceFinished`, `RunFinished` in `messages/run_events.py`, ported one-for-one from the nine signals in `old_code/event_proxy.py` — so this step is about producing them, not designing them.
+1. **Recipe (data layer):** ~~move loading/parsing/validation from `old_code/recipe.py` into `recipe/recipe.py`, stripped of all execution logic~~ **done (§1.13)** - every load failure is a loud `RecipeError` and an invalid recipe never reaches the Sequencer. Still open here: the verificator integration (it has its own broken-import problem, Phase 0), and `test_package` handling, which lands with `PythonModuleStep`.
+2. **Step & Sequencer (execution):** **skeleton done (§1.13)** - the base `Step` lifecycle, `StepResult`, `Runtime` and `execute_sequence()` are in and all seven run events are produced on every run. What remains of this item is porting the other nine step types onto that base, one reviewable MR each, in dependency order: `PythonModuleStep` (module loading design) → the four `User*` types (the request/response prompt wiring) → `SequenceStep`/`IndexedStep` (nesting - `run_sequence()` and `StepResult.subresults` are already shaped for it) → the SSH pair (credentials move to the Config Handler first, F22).
 3. **Core orchestration:** implement `LOAD_RECIPE`/`START_SEQUENCE` handlers, runtime metadata (recipe info, DUT serials, timing, machine info), result aggregation, and forwarding to HMI + Report.
 4. **Report:** port incremental CSV writing + HTML generation behind `GENERATE`/`EXPORT`; intermediate result file (YAML/CSV) per spec; artifacts organized per run folder.
 5. **HMI:** CLI first — recipe load/validate/run, sequence selection, prompts (serial number, user interaction now crossing a process boundary — see pickling risk in §4), report/log locations, exit codes `0/1/2/3`, `--version`. Then grow the GUI beyond the status window (recipe preview, runtime log, results table).
@@ -1185,7 +1445,7 @@ Steps 1–3 are naturally done *while porting steps into the sequencer* — doin
 - **`old_code` divergence.** The branch's `old_code` is *newer* than master (consolidated steps, `test_package` resource loading). Freeze master, do the port from `old_code` only, and delete it at v0.3.0 — three coexisting engines (master, old_code, new modules) is the biggest confusion risk for the team.
 - **Error-handling policy.** *Mechanism complete (§1.10, §1.11); policy still open.* `report_and_reraise` for the execution layer, `catch_and_report_errors` for event loops, and `report_error()`/`report_problem()` for a raise site that recognised the failure and rates it itself — so a failure now reaches its caller, carrying which method raised it and what type it was. What is still undecided is what anyone *does* with one: StepResult(ERROR) is agreed, continue-or-abort per recipe config is not, and CORE deliberately still only logs and notifies.
 - **Core busy-loop & heartbeats.** 100 Hz polling in every module is fine for now; when Core gains real work, consider `Queue.get(timeout=...)`-driven loops. Heartbeat timeout currently only logs a warning — define the recovery action (restart module? abort run? notify HMI?).
-- ~~**Config in the temp directory.**~~ **Closed (§1.3):** moved to the `platformdirs` per-user config directory, single writer, versioned structure with migration, and dotted section names for structure. It is still INI — deliberately, because the type information lives in `configuration_schema.py` and the file stays hand-editable on a bench. What remains open is *changing* configuration at runtime: `SetConfigParameter` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
+- ~~**Config in the temp directory.**~~ **Closed (§1.3):** moved to the `platformdirs` per-user config directory, single writer, versioned structure (migration was later removed — see §1.3), and dotted section names for structure. It is still INI — deliberately, because the type information lives in `configuration_schema.py` and the file stays hand-editable on a bench. What remains open is *changing* configuration at runtime: `SetConfigParameter` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
 - **PyPI name.** The pyproject rename to `pts-framework` needs an early availability check on PyPI (v1.0.0 requirement), and alignment with the import name `pypts`.
 - **Recipe format versioning.** Before the Creator and third-party step plugins ship, add `format_version` to the recipe header and a compatibility policy — cheap now, expensive later.
 - **`pypts.api` stability.** Freezing the step/driver contract is the highest-leverage design decision left; review it with the module owners (per the Milestones page, each module has an assigned owner) before Phase 2 ends.

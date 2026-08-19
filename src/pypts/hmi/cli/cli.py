@@ -18,11 +18,15 @@ from pypts.logger.log import log
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
 from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore
+from pypts.messages.run_events import RecipeLoaded
 
 #: Seconds between polls of the CORE inbox, in the background thread.
 POLL_INTERVAL_S = 0.05
 
-HELP_TEXT = "Available commands: start_sequence <name>, load_recipe <path>, status, exit, help"
+HELP_TEXT = (
+    "Available commands: load_recipe <path>, start_sequence <name>, stop_sequence, "
+    "status, exit, help"
+)
 
 
 def cli_main(to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]) -> None:
@@ -100,6 +104,9 @@ class CLI(HmiClient):
                         self.start_sequence(parts[1])
                     else:
                         print("Usage: start_sequence <sequence_name>")
+                case "stop_sequence":
+                    # Aborts the run only; plain `stop` above exits the shell.
+                    self.stop_sequence()
                 case "load_recipe":
                     if len(parts) == 2:
                         self.load_recipe(parts[1])
@@ -134,8 +141,16 @@ class CLI(HmiClient):
         log.error("%s: %s", error.source, error.message)
         print(f"ERROR [{error.source}] {error.message}")
 
-    def show_recipe_loaded(self, recipe_name: str, recipe_version: str) -> None:
-        print(f"Recipe loaded: {recipe_name} (version {recipe_version})")
+    def show_recipe_loaded(self, event: RecipeLoaded) -> None:
+        print(f"Recipe loaded: {event.recipe_name} (version {event.recipe_version})")
+        # Name the sequences so the operator knows what start_sequence accepts.
+        names = []
+        for sequence in event.sequences:
+            if sequence.sequence_name == event.main_sequence:
+                names.append(f"{sequence.sequence_name} (main)")
+            else:
+                names.append(sequence.sequence_name)
+        print(f"Sequences: {', '.join(names)}")
 
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
         print(f"Running {recipe_name}: {recipe_description}")

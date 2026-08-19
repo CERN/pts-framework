@@ -11,9 +11,11 @@ The instance is per *process*, not per application - a spawned child shares no
 memory with its parent, so it builds its own instance and reads the same file.
 That is why reading is pure: it parses, it never writes.
 
-**One writer.** The launcher creates the file if it does not exist, and and
-validates it. From then on the file is read-only to everyone except CORE,
-which opens it with `open_for_writing()`. Any other process calling
+**One writer.** The launcher creates the file if it does not exist, and
+validates it. An existing file that is broken or version-mismatched is never
+repaired: it is discarded for the run and the template defaults are used in
+memory (see `BootstrapOutcome`). From then on the file is read-only to everyone
+except CORE, which opens it with `open_for_writing()`. Any other process calling
 `set_parameter()` gets a `ConfigWriteError` instead.
 
 **It has to work before logging does.** `bootstrap()` runs before the Logger
@@ -29,7 +31,6 @@ Typical use:
 """
 
 import configparser
-import copy
 import logging
 import platform
 import threading
@@ -42,7 +43,6 @@ from typing import Any, Self
 from pypts.config_handler import file_locations, template_writer
 from pypts.config_handler.configuration_schema import (
     CONFIG_VERSION,
-    DEPRECATED,
     FALSE_VALUES,
     SCHEMA,
     TRUE_VALUES,
@@ -93,6 +93,23 @@ class Role(Enum):
     WRITER = "writer"
 
 
+class BootstrapOutcome(Enum):
+    """
+    How this process's configuration came to be.
+
+    LOADED: the file was read, validated and is in force. CREATED: no file
+    existed, one was written from the template and is in force. DISCARDED: a
+    file exists but is broken or declares the wrong structure version, so the
+    template defaults are in force **in memory** - the file itself is left
+    exactly as the user wrote it. The launcher reads this to decide whether
+    the operator needs a notice before the run starts.
+    """
+
+    LOADED = "loaded"
+    CREATED = "created"
+    DISCARDED = "discarded"
+
+
 class ConfigHandler:
     """
     The per-process singleton. Build it with `ConfigHandler()`, or with
@@ -127,17 +144,19 @@ class ConfigHandler:
         Prepare the configuration for this run. The launcher's job, and only the
         launcher's.
 
-        Creates the file from the template if it does not exist, migrates it if
-        it predates this version of pypts, repairs missing keys, and validates
-        the result. Writes only when something actually changed, so a second run
-        leaves the file untouched.
+        Creates the file from the template if it does not exist. An existing
+        file is never modified: it is validated, and if it is broken or declares
+        the wrong structure version it is **discarded for this run** - the
+        template defaults are used in memory instead, and `bootstrap_outcome` /
+        `bootstrap_problem` tell the launcher what to show the operator. Keeping
+        the file correct is the user's job: edit it, or delete it to have it
+        recreated.
 
         Returns:
             The writer instance for this process.
 
         Raises:
             ConfigWriteError: a read-only instance already exists here.
-            ConfigSchemaError: the file cannot be made to fit the schema.
         """
         return cls._obtain(Role.WRITER, create_if_missing=True)
 
@@ -182,7 +201,7 @@ class ConfigHandler:
 
     def _setup(self, role: Role, create_if_missing: bool) -> None:
         """
-        Find, create or repair the file, then read it.
+        Find or create the file, then read it.
 
         Narrated deliberately thoroughly. This runs once per process, before
         anything else in that process, and it is what decides where the run log
@@ -194,6 +213,7 @@ class ConfigHandler:
         self._path = file_locations.config_file_path()
         self._template_text = _read_template()
         self._bootstrap_log: list[tuple[int, str]] = []
+        self.bootstrap_problem: str | None = None
 
         self._note(
             logging.DEBUG,
@@ -218,28 +238,30 @@ class ConfigHandler:
                 logging.INFO,
                 f"Configuration created at {self._path} (structure version {CONFIG_VERSION}).",
             )
+            self.bootstrap_outcome = BootstrapOutcome.CREATED
+            values = self._validate(raw)
         else:
             self._note(
                 logging.DEBUG,
                 f"Found an existing configuration file at {self._path} "
                 f"({self._path.stat().st_size} bytes).",
             )
-            raw = _read_raw(self._path)
-            if create_if_missing:
-                raw = self._repair(raw)
-            else:
-                self._note(
-                    logging.DEBUG,
-                    "Opened read-only; this process neither creates nor repairs the file.",
-                )
+            raw, values = self._load_or_discard()
 
         self._raw = raw
-        self._values = self._validate(raw)
-        self._note(
-            logging.INFO,
-            f"Configuration loaded from {self._path} (structure version "
-            f"{self.config_version}, {len(self._values)} sections).",
-        )
+        self._values = values
+        if self.bootstrap_outcome is BootstrapOutcome.DISCARDED:
+            self._note(
+                logging.INFO,
+                f"Configuration defaults in force ({len(self._values)} sections); "
+                f"{self._path} was discarded and left untouched.",
+            )
+        else:
+            self._note(
+                logging.INFO,
+                f"Configuration loaded from {self._path} (structure version "
+                f"{self.config_version}, {len(self._values)} sections).",
+            )
         self._note_active_configuration()
 
     def _note_active_configuration(self) -> None:
@@ -321,7 +343,7 @@ class ConfigHandler:
             f"Structure version: {self.config_version}",
         ]
         # Schema order first, so the dump reads like the file rather than like
-        # whatever order a migrated file happened to leave the sections in.
+        # whatever order the file on disk happens to have.
         ordered = [section for section in SCHEMA if section in self._values]
         ordered += [section for section in self._values if section not in SCHEMA]
         for section in ordered:
@@ -361,6 +383,13 @@ class ConfigHandler:
         run is not implemented; it is a roadmap item.
         """
         self._require_writer("set_parameter")
+        if self.bootstrap_outcome is BootstrapOutcome.DISCARDED:
+            raise ConfigWriteError(
+                f"The configuration file {self._path} was discarded at startup and this "
+                f"process runs on in-memory defaults; writing one value now would replace "
+                f"the user's file with the defaults. Correct or delete the file and "
+                f"restart, or call restore_default() to rewrite it deliberately."
+            )
 
         section, _, option = key.rpartition(".")
         if section not in self._raw or option not in self._raw[section]:
@@ -391,6 +420,10 @@ class ConfigHandler:
         self._raw = self._build_from_defaults()
         self._values = self._validate(self._raw)
         self._write(self._raw)
+        # The file and the values in force agree again, so a configuration that
+        # was discarded at startup is discarded no longer.
+        self.bootstrap_outcome = BootstrapOutcome.LOADED
+        self.bootstrap_problem = None
         log.warning("Configuration restored to defaults in %s", self._path)
 
     def _require_writer(self, action: str) -> None:
@@ -408,7 +441,7 @@ class ConfigHandler:
         # never have to be inferred from mtime.
         self._note(logging.DEBUG, f"Configuration file written: {self._path}")
 
-    # --- creation, migration, validation ---------------------------------------
+    # --- creation, validation ---------------------------------------------------
 
     def _build_from_defaults(self) -> dict[str, dict[str, str]]:
         """
@@ -424,19 +457,64 @@ class ConfigHandler:
         raw["paths"] = _default_paths()
         return raw
 
-    def _repair(self, raw: dict[str, dict[str, str]]) -> dict[str, dict[str, str]]:
+    def _load_or_discard(
+        self,
+    ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
         """
-        Bring an existing file up to the current structure, keeping every value
-        the user set.
+        Read and validate the existing file - or discard it for this run.
 
-        Renames deprecated keys, drops the ones that no longer mean anything,
-        adds keys this version introduced, and fills in any derived value that
-        is missing. Writes only if that changed something, and keeps the
-        previous file as config.ini.v<n>.bak when it did.
+        There is no migration and no repair: the file is the user's, and pypts
+        never modifies an existing one. If the file cannot be used - it is not
+        INI, its structure version is not this pypts', or a value does not fit
+        the schema - the whole file is discarded and the template defaults are
+        used **in memory** instead. The reason lands in `bootstrap_problem` and
+        as an ERROR in the log; the launcher turns it into a notice for the
+        operator. Every process applies the same rule to the same file, so a
+        run agrees with itself about the values in force.
+        """
+        raw: dict[str, dict[str, str]] | None = None
+        values: dict[str, dict[str, Any]] | None = None
+        problem: str | None = None
 
-        Raises:
-            ConfigSchemaError: the file was written by a newer pypts, whose
-                structure this code cannot know.
+        try:
+            raw = _read_raw(self._path)
+        except ConfigSchemaError as error:
+            problem = str(error)
+
+        if raw is not None:
+            problem = self._structure_version_problem(raw)
+
+        if raw is not None and problem is None:
+            try:
+                values = self._validate(raw)
+            except ConfigSchemaError as error:
+                problem = str(error)
+
+        if raw is not None and values is not None and problem is None:
+            self.bootstrap_outcome = BootstrapOutcome.LOADED
+            return raw, values
+
+        self.bootstrap_outcome = BootstrapOutcome.DISCARDED
+        self.bootstrap_problem = problem
+        self._note(
+            logging.ERROR,
+            f"Configuration file {self._path} is discarded for this run: {problem} "
+            f"Running on the default template in memory; no parameter was taken from "
+            f"the file, and the file was not modified. Correct it, or delete it to "
+            f"have it recreated.",
+        )
+        raw = self._build_from_defaults()
+        values = self._validate(raw)
+        return raw, values
+
+    def _structure_version_problem(self, raw: dict[str, dict[str, str]]) -> str | None:
+        """
+        One sentence naming the version mismatch, or None when there is none.
+
+        A mismatched version - older or newer - means the file's structure is
+        not the one this pypts was written against, so the file is not trusted
+        at all; the caller discards it. The version key itself is not repaired
+        or rewritten, like everything else in the file.
         """
         found_version = raw.get("meta", {}).get("config_version", "0")
         try:
@@ -444,50 +522,17 @@ class ConfigHandler:
         except ValueError:
             file_version = 0
 
-        self._note(
-            logging.DEBUG,
-            f"Configuration declares structure version {file_version}; this pypts "
-            f"expects {CONFIG_VERSION}.",
-        )
-
-        if file_version > CONFIG_VERSION:
-            raise ConfigSchemaError(
-                f"{self._path} declares structure version {file_version}, but this pypts "
-                f"understands version {CONFIG_VERSION}. It was written by a newer "
-                f"version; upgrade pypts or remove the file to start again."
-            )
-
-        repaired = copy.deepcopy(raw)
-        changes: list[str] = []
-
-        _apply_deprecations(repaired, changes)
-        _add_missing_keys(repaired, changes)
-
-        if file_version != CONFIG_VERSION:
-            repaired.setdefault("meta", {})["config_version"] = str(CONFIG_VERSION)
-            changes.append(f"structure version {file_version} -> {CONFIG_VERSION}")
-
-        if not changes:
+        if file_version == CONFIG_VERSION:
             self._note(
                 logging.DEBUG,
-                "Configuration is complete and current; nothing to migrate, "
-                "and the file is left untouched.",
+                f"Configuration declares the current structure version {CONFIG_VERSION}.",
             )
-            return repaired
+            return None
 
-        self._note(
-            logging.INFO,
-            f"Configuration needs {len(changes)} change(s); migrating {self._path}.",
+        return (
+            f"It declares structure version {file_version}, but this pypts expects "
+            f"{CONFIG_VERSION}."
         )
-        for change in changes:
-            self._note(logging.INFO, f"  {change}")
-
-        backup = self._path.with_suffix(f".ini.v{file_version}.bak")
-        backup.write_text(self._path.read_text(encoding="utf-8"), encoding="utf-8")
-        self._write(repaired)
-
-        self._note(logging.INFO, f"Configuration migrated; previous file kept as {backup}")
-        return repaired
 
     def _validate(self, raw: dict[str, dict[str, str]]) -> dict[str, dict[str, Any]]:
         """
@@ -528,17 +573,16 @@ class ConfigHandler:
             if missing:
                 raise ConfigSchemaError(
                     f"Configuration section [{section}] in {self._path} is missing: "
-                    f"{', '.join(sorted(missing))}. Start pypts through its launcher, "
-                    f"which repairs the file, or delete it to have it recreated."
+                    f"{', '.join(sorted(missing))}. Add the missing keys by hand, or "
+                    f"delete the file to have it recreated from the template."
                 )
             values[section] = converted
 
         for section in SCHEMA:
             if section not in values:
                 raise ConfigSchemaError(
-                    f"Configuration in {self._path} has no [{section}] section. Start "
-                    f"pypts through its launcher, which repairs the file, or delete it "
-                    f"to have it recreated."
+                    f"Configuration in {self._path} has no [{section}] section. Add it "
+                    f"by hand, or delete the file to have it recreated from the template."
                 )
 
         return values
@@ -693,58 +737,3 @@ def _parse(section: str, key: str, text: str, field: Field) -> Any:
         )
 
     raise ConfigSchemaError(f"Configuration key {where} declares unknown type {field.type!r}.")
-
-
-def _apply_deprecations(raw: dict[str, dict[str, str]], changes: list[str]) -> None:
-    """Rename what moved, drop what no longer means anything."""
-    for old_key, replacement in DEPRECATED.items():
-        old_section, _, old_option = old_key.rpartition(".")
-        if old_section not in raw or old_option not in raw[old_section]:
-            continue
-
-        value = raw[old_section].pop(old_option)
-        if replacement is None:
-            changes.append(f"removed '{old_key}' (no longer used)")
-        else:
-            new_section, _, new_option = replacement.rpartition(".")
-            target = raw.setdefault(new_section, {})
-            # An already-present target wins: the user set it in the new place,
-            # and the old key is a leftover.
-            if new_option not in target or not target[new_option]:
-                target[new_option] = value
-                changes.append(f"moved '{old_key}' to '{replacement}'")
-            else:
-                changes.append(f"removed '{old_key}' (superseded by '{replacement}')")
-
-        if not raw[old_section]:
-            del raw[old_section]
-
-
-def _add_missing_keys(raw: dict[str, dict[str, str]], changes: list[str]) -> None:
-    """
-    Add whatever this version introduced, and fill any derived value that has
-    ended up blank.
-
-    Derived values are only filled when they are absent or empty. A path the
-    user pointed at their own drive is a value like any other once written, and
-    nothing here recomputes it.
-    """
-    derived_defaults = {
-        "operating_system": _detect_operating_system(),
-        "paths": _default_paths(),
-    }
-
-    for section, fields in SCHEMA.items():
-        target = raw.setdefault(section, {})
-        for key, field in fields.items():
-            if target.get(key):
-                continue
-            if field.derived:
-                value = derived_defaults.get(section, {}).get(key, field.default)
-            else:
-                value = field.default
-            if key not in target:
-                changes.append(f"added '{section}.{key}' = {value!r}")
-            else:
-                changes.append(f"filled in empty '{section}.{key}' = {value!r}")
-            target[key] = value

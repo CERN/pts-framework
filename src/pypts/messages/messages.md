@@ -20,8 +20,9 @@ has already happened · **STUB** declared, nothing sends or carries it out yet.
 
 Every message marked **STUB** here also carries a `NOT SENT YET` comment in the source, on the
 dataclass and again on the branch that receives it. The marker means one specific thing:
-**the receiving end is written and works; nothing constructs the message.** Fourteen messages
-are in that state today. Grep for it to find the set:
+**the receiving end is written and works; nothing constructs the message.** Seven messages
+are in that state today: the two prompt requests, `SetConfigParameter`, and the Report
+link's four generate/export messages. Grep for it to find the set:
 
 ```bash
 grep -rn "NOT SENT YET" src/pypts
@@ -82,15 +83,16 @@ every hop.
 | `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all three links. |
 | `ModuleError(source, severity, message, exception, traceback, operation, error_type)` | EVT | A failure the sender wants CORE to know about. Sent by the two decorators in `utilities/error_handling.py` for what nobody expected, and by `report_error()` / `report_problem()` from a raise site that recognised the failure itself and rated it. `operation` names the method (`"Sequencer.poll_core"`), `error_type` the exception class — strings, because this crosses the pickled link. |
 | `ErrorSeverity` · `ResultType` · `StepOutcome` | — | Enums and the pickle-safe summary of one executed step. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
-| `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT · STUB | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Emitted by the Sequencer, forwarded unchanged by CORE to the HMI. (`RecipeLoaded` comes from CORE itself.) |
-| `UserPromptRequest/Response`, `SerialNumberRequest/Response` | EVT · STUB | The two questions the engine asks the operator, joined by a `request_id` the asker generates. |
+| `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
+| `UserPromptRequest/Response`, `SerialNumberRequest/Response` | EVT · STUB (requests only) | The two questions the engine asks the operator, joined by a `request_id` the asker generates. The *responses* are live; nothing sends the requests until the interactive steps are ported. |
 
 ## CORE ↔ HMI — `core_hmi_communication.py` (the only process boundary)
 
-| `HmiToCore` (9) | Kind | Meaning |
+| `HmiToCore` (10) | Kind | Meaning |
 |---|---|---|
 | `LoadRecipe(recipe_path)` | CMD | Load and validate a recipe. CORE answers `RecipeLoaded` or `ModuleError`. |
 | `StartSequence(sequence_name)` | CMD | Run one named sequence of the loaded recipe. |
+| `StopSequence()` | CMD | Abort the running sequence; the application stays up. Defined in `run_events.py` because it rides two links: CORE relays the same object to the Sequencer, and the confirmation is the run's own `RunFinished(STOP)`. |
 | `SetConfigParameter(key, value)` | CMD · STUB | CORE is the single writer of `config.ini`, so a frontend asks instead of writing. The handler currently logs that it is not implemented. |
 | `ShutdownRequested()` | CMD | Shut the whole application down. The *launcher* sends this too, on the same link. |
 | `HmiStopped()` | EVT | The frontend's loop has ended. CORE waits for this before it may exit. |
@@ -113,7 +115,7 @@ that stops being true.
 
 | Direction | Messages |
 |---|---|
-| `CoreToSequencer` (5) | **CMD** `RunSequence(sequence_name)` · `StopSequence()` (abort the run, keep the module alive) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `SerialNumberResponse` — answers relayed back from the HMI |
+| `CoreToSequencer` (6) | **CMD** `UseRecipe(recipe)` (the live, validated Recipe subsequent runs use - the one message carrying a rich object, allowed because this link never leaves the Core process) · `RunSequence(sequence_name)` · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `SerialNumberResponse` — answers relayed back from the HMI |
 | `SequencerToCore` (11) | **EVT** `SequencerStopped()` · the 6 run-progress events · the 2 operator requests · `Heartbeat` · `ModuleError` |
 
 ## CORE ↔ Report — `core_report_communication.py` (thread of the Core process)
@@ -137,11 +139,6 @@ that stops being true.
 These are the things to settle when the message layer is revisited — the roadmap remains the
 authority on when.
 
-- **Nothing emits the run-progress events yet.** `Sequencer.run_sequence()` is a stub, so
-  that half of the contract is currently write-only. They were declared early on purpose:
-  the CLI, the GUI and the Report all have to agree on them.
-- **`RecipeLoaded` is never sent.** `Core.load_recipe()` answers `StatusChanged` saying the
-  recipe layer is not ported.
 - **`SetConfigParameter` is accepted and ignored.** Two questions are open: whether CORE
   answers with a confirmation or an error, and how a process that already read a value at
   startup learns that it changed.
@@ -155,6 +152,7 @@ authority on when.
   threading constraint with it: the thread that calls `wait()` must not be the one draining
   the inbox.
 - **Now that the Sequencer is in-process**, the engine links no longer have to be
-  pickle-safe. Whether to allow live objects (a `Recipe`, a device handle) on
-  `core_sequencer_communication` is a real design choice, not an oversight — and it does not apply to
-  `core_hmi_communication`, which still crosses a process boundary.
+  pickle-safe. The choice was made with the first slice of the engine port: `UseRecipe`
+  carries the live `Recipe`, deliberately and documented on the message — and it does not
+  apply to `core_hmi_communication`, which still crosses a process boundary and stays
+  pickle-tested.

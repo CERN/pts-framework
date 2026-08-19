@@ -139,14 +139,69 @@ def test_a_sequencer_event_is_routed_to_the_hmi():
     assert list(core.to_hmi.receive()) == [StepFinished(outcome=outcome)]
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
 def test_load_recipe_command_is_handled():
-    """Currently a `pass` in handle_hmi_event - Phase 1."""
+    """
+    LoadRecipe -> CORE parses and validates -> RecipeLoaded to the HMI, and the
+    *live* Recipe object to the Sequencer.
+
+    Identity, not equality, on the handoff: the Sequencer runs the very object
+    CORE holds - one process, nothing pickled, which is the sanctioned way the
+    engine gets rich objects (see core.py's module docstring).
+    """
+    from pathlib import Path
+
+    from pypts.messages.core_hmi_communication import LoadRecipe
+    from pypts.messages.core_sequencer_communication import UseRecipe
+    from pypts.messages.run_events import RecipeLoaded
+
+    recipe_path = Path(__file__).parent / "data" / "wait_recipe.yml"
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(LoadRecipe(recipe_path=str(recipe_path)))
+    core.poll_all_sources()
+
+    to_hmi = list(core.to_hmi.receive())
+    assert len(to_hmi) == 1
+    loaded = to_hmi[0]
+    assert isinstance(loaded, RecipeLoaded)
+    assert loaded.recipe_name == "Wait demo"
+    assert loaded.recipe_version == "1.0.0"
+    assert loaded.main_sequence == "Main"
+    # The summary describes the very recipe CORE holds - step ids are random
+    # per parse, so compare against the live object, never literals.
+    assert [s.sequence_name for s in loaded.sequences] == ["Main"]
+    summary_steps = loaded.sequences[0].steps
+    real_steps = core.recipe.sequences["Main"].steps
+    assert [s.step_name for s in summary_steps] == ["First wait", "Second wait"]
+    assert [s.step_id for s in summary_steps] == [step.id for step in real_steps]
+    handoff = list(core.to_sequencer.receive())
+    assert len(handoff) == 1
+    assert isinstance(handoff[0], UseRecipe)
+    assert handoff[0].recipe is core.recipe
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
 def test_start_sequence_command_is_handled():
-    """Currently a `pass` in handle_hmi_event - Phase 1."""
+    from pypts.messages.core_hmi_communication import StartSequence
+    from pypts.messages.core_sequencer_communication import RunSequence
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(StartSequence(sequence_name="Main"))
+    core.poll_all_sources()
+
+    assert list(core.to_sequencer.receive()) == [RunSequence(sequence_name="Main")]
+
+
+def test_stop_sequence_from_hmi_is_forwarded_to_the_sequencer():
+    """The operator's abort: CORE relays the same object, like the responses."""
+    from pypts.messages.run_events import StopSequence
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(StopSequence())
+    core.poll_all_sources()
+
+    assert list(core.to_sequencer.receive()) == [StopSequence()]
 
 
 def test_a_module_error_is_logged_naming_the_method_and_shown_to_the_operator(caplog):

@@ -9,12 +9,14 @@ Emitted by the Sequencer, forwarded unchanged by CORE to the HMI, so each one
 belongs to two unions and is defined once here. A message says what happened,
 never how to draw it.
 
-Almost everything here is marked `NOT SENT YET`. That marker means one thing
-throughout `messages/`: **the receiving end is written and works; nothing
-constructs the message.** Grep for it to find the whole set. The receivers were
-built first on purpose - the Sequencer, CORE, the CLI and the GUI all had to
-agree on the contract before the engine existed, and `mypy` plus
-`test_messages.py` keep every branch honest in the meantime.
+The two prompt *requests* are marked `NOT SENT YET`. That marker means one
+thing throughout `messages/`: **the receiving end is written and works;
+nothing constructs the message.** Grep for it to find the whole set. The
+receivers were built first on purpose - the Sequencer, CORE, the CLI and the
+GUI all had to agree on the contract before the engine existed, and `mypy`
+plus `test_messages.py` keep every branch honest in the meantime. The seven
+progress events below carried the marker until the first slice of the engine
+port landed; now the Sequencer and the step layer send them on every run.
 """
 
 from dataclasses import dataclass
@@ -24,24 +26,62 @@ from pypts.messages.common_messages import ResultType, StepOutcome
 
 # --- Progress -----------------------------------------------------------------
 #
-# NOT SENT YET, all seven. The receiving end is complete: CORE relays them
-# unchanged (`core.py: handle_sequencer_message()`) and both frontends render
-# them through the presentation hooks in `hmi/hmi_client.py`. The sender is
-# `Sequencer.execute_sequence()`, which is a stub - roadmap Phase 1.
-# `RecipeLoaded` is the exception: its sender is `Core.load_recipe()`, equally a
-# stub, which answers `StatusChanged` saying so instead.
+# All seven are live. CORE relays them unchanged
+# (`core.py: handle_sequencer_message()`) and both frontends render them
+# through the presentation hooks in `hmi/hmi_client.py`. The senders:
+# `Sequencer.execute_sequence()` for the run-level pair, the step layer
+# (through `Runtime.emit`) for the sequence and step events, and
+# `Core.load_recipe()` for `RecipeLoaded`.
 
 
-# NOT SENT YET - receiver: hmi_client.py show_recipe_loaded()
+@dataclass(frozen=True, slots=True)
+class StepSummary:
+    """
+    One step, as a frontend needs to draw its table row before the run.
+
+    `step_id` is the same UUID the step's StepStarted/StepFinished will carry,
+    which is what lets a frontend find the row again. A summary, not the Step:
+    the live object must never cross the HMI boundary.
+    """
+
+    step_id: UUID
+    step_name: str
+    description: str
+
+
+@dataclass(frozen=True, slots=True)
+class SequenceSummary:
+    """
+    One sequence's rows, in the order they will run.
+
+    Includes the teardown steps at the end: they run through the same
+    lifecycle and emit the same events, so they need rows too.
+    """
+
+    sequence_name: str
+    steps: tuple[StepSummary, ...]
+
+
+# Sender: Core.load_recipe(). Receiver: hmi_client.py show_recipe_loaded()
 @dataclass(frozen=True, slots=True)
 class RecipeLoaded:
-    """A recipe file was parsed and validated. Emitted by CORE, not the Sequencer."""
+    """
+    A recipe file was parsed and validated. Emitted by CORE, not the Sequencer.
+
+    Carries the whole pickle-safe summary of the recipe - every sequence and
+    every step row - because the HMI is another process and this message is
+    all it will ever know about the file: it is what fills the sequence
+    chooser and pre-fills the step table before a run. `main_sequence` is the
+    default a frontend offers; any sequence may be requested.
+    """
 
     recipe_name: str
     recipe_version: str
+    main_sequence: str
+    sequences: tuple[SequenceSummary, ...]
 
 
-# NOT SENT YET - receiver: hmi_client.py show_run_started()
+# Sender: Sequencer.execute_sequence(). Receiver: hmi_client.py show_run_started()
 @dataclass(frozen=True, slots=True)
 class RunStarted:
     """Execution of a recipe has begun."""
@@ -50,7 +90,7 @@ class RunStarted:
     recipe_description: str
 
 
-# NOT SENT YET - receiver: hmi_client.py show_run_finished()
+# Sender: Sequencer.execute_sequence(). Receiver: hmi_client.py show_run_finished()
 @dataclass(frozen=True, slots=True)
 class RunFinished:
     """Execution finished, for any reason. `outcomes` is flat, in execution order."""
@@ -59,7 +99,7 @@ class RunFinished:
     outcomes: tuple[StepOutcome, ...] = ()
 
 
-# NOT SENT YET - receiver: hmi_client.py show_sequence_started()
+# Sender: step.run_sequence(). Receiver: hmi_client.py show_sequence_started()
 @dataclass(frozen=True, slots=True)
 class SequenceStarted:
     """One named sequence within the recipe has begun."""
@@ -67,7 +107,7 @@ class SequenceStarted:
     sequence_name: str
 
 
-# NOT SENT YET - receiver: hmi_client.py show_sequence_finished()
+# Sender: step.run_sequence(). Receiver: hmi_client.py show_sequence_finished()
 @dataclass(frozen=True, slots=True)
 class SequenceFinished:
     """One named sequence finished, with its aggregated result."""
@@ -76,7 +116,7 @@ class SequenceFinished:
     result: ResultType
 
 
-# NOT SENT YET - receiver: hmi_client.py show_step_started()
+# Sender: Step.run(). Receiver: hmi_client.py show_step_started()
 @dataclass(frozen=True, slots=True)
 class StepStarted:
     """One step is about to run. `step_id` is how a frontend finds the row."""
@@ -85,12 +125,28 @@ class StepStarted:
     step_name: str
 
 
-# NOT SENT YET - receiver: hmi_client.py show_step_finished()
+# Sender: Step.run(). Receiver: hmi_client.py show_step_finished()
 @dataclass(frozen=True, slots=True)
 class StepFinished:
     """One step finished. Carries the whole outcome so a frontend needs no lookup."""
 
     outcome: StepOutcome
+
+
+# --- Commands the operator gives about a run ----------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class StopSequence:
+    """
+    Abort the running sequence but keep the module alive.
+
+    Rides two links, and CORE relays the same object: a frontend sends it
+    (HmiToCore) and CORE forwards it to the Sequencer (CoreToSequencer), which
+    checks the flag between steps - so the abort lands at the next step
+    boundary, never in the middle of one. The confirmation a frontend gets is
+    the run's own RunFinished with result STOP.
+    """
 
 
 # --- Questions the engine asks the operator -----------------------------------

@@ -15,28 +15,68 @@ Every test here drives the loop by hand, calling `poll_core()` the way
 run" an assertion rather than a hope, and it keeps the tests free of sleeps
 waiting for a background loop to come round.
 
-The second half is still placeholders. The execution engine lives in
-src/pypts/old_code/; `execute_sequence()` is a stub, and Phase 1 of
-resources/roadmap/pypts_roadmap.md ports it here.
+The second half tests the engine itself, by handing the Sequencer a recipe
+with UseRecipe and calling `execute_sequence()` directly on the test thread -
+it is a plain instance method, so asserting on event ordering needs no thread
+behind it. The threading half already proves it runs on its own thread.
 """
 
 import queue
 import threading
 import time
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
 from pypts.messages import QueueWrapper
-from pypts.messages.common_messages import Heartbeat, ModuleError
+from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType
 from pypts.messages.core_sequencer_communication import (
     RunSequence,
     SequencerStopped,
     StopSequence,
     StopSequencer,
+    UseRecipe,
 )
-from pypts.messages.run_events import SerialNumberResponse
+from pypts.messages.run_events import (
+    RunFinished,
+    RunStarted,
+    SequenceFinished,
+    SerialNumberResponse,
+    StepFinished,
+    StepStarted,
+)
+from pypts.recipe.recipe import Recipe
 from pypts.sequencer.sequencer import Sequencer
+
+WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
+
+#: A recipe whose only step errors (negative wait), plus an always-run teardown.
+FAILING_RECIPE = """\
+name: Fails
+description: The error path.
+version: 1.0.0
+main_sequence: Main
+globals: {}
+---
+sequence_name: Main
+parameters: {}
+locals: {}
+outputs: {}
+setup_steps: []
+steps:
+  - steptype: WaitStep
+    step_name: Bad wait
+    input_mapping:
+      wait_time: {value: '-1'}
+    output_mapping: {}
+  - steptype: WaitStep
+    step_name: Never runs
+    input_mapping:
+      wait_time: {value: '0'}
+    output_mapping: {}
+teardown_steps: []
+"""
 
 PLACEHOLDER = "placeholder - test not implemented yet"
 
@@ -285,26 +325,112 @@ def test_a_stop_from_a_finished_sequence_does_not_abort_the_next_one(sequencer):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_run_sequence_executes_steps_in_order():
-    ...
+def load_wait_recipe(instance, inbox, recipe_text=None):
+    """Hand the Sequencer a recipe the way CORE does: UseRecipe on the inbox."""
+    if recipe_text is None:
+        recipe = Recipe.from_file(str(WAIT_RECIPE))
+    else:
+        recipe = Recipe.from_yaml_text(recipe_text)
+    inbox.put(UseRecipe(recipe))
+    instance.poll_core()
+    return recipe
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_each_step_result_is_reported_to_core():
-    """Per-step STEP_RESULT events, so an HMI can update live."""
+def test_use_recipe_stores_the_live_recipe(sequencer):
+    instance, _outbox, inbox = sequencer
+    recipe = load_wait_recipe(instance, inbox)
+    assert instance.recipe is recipe
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_a_failing_step_produces_a_step_result_not_a_silent_continue():
-    ...
+def test_run_sequence_executes_steps_in_order(sequencer):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Main")
+
+    started = [m.step_name for m in drain(outbox) if isinstance(m, StepStarted)]
+    assert started == ["First wait", "Second wait"]
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_stop_requested_is_checked_between_steps_not_inside_one():
+def test_each_step_result_is_reported_to_core(sequencer):
+    """Per-step StepFinished events, so an HMI can update live."""
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Main")
+
+    finished = [m.outcome for m in drain(outbox) if isinstance(m, StepFinished)]
+    assert [o.step_name for o in finished] == ["First wait", "Second wait"]
+    assert all(o.result is ResultType.DONE for o in finished)
+
+
+def test_a_failing_step_produces_a_step_result_not_a_silent_continue(sequencer):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox, FAILING_RECIPE)
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    finished = [m.outcome for m in messages if isinstance(m, StepFinished)]
+    assert [o.step_name for o in finished] == ["Bad wait"], "the error must stop the sequence"
+    assert finished[0].result is ResultType.ERROR
+    assert "wait_time" in finished[0].error_info
+    run_finished = [m for m in messages if isinstance(m, RunFinished)]
+    assert [m.result for m in run_finished] == [ResultType.ERROR]
+
+
+def test_stop_requested_is_checked_between_steps_not_inside_one(sequencer):
     """A step must be allowed to leave its hardware in a known state."""
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+    instance.stop_requested = True
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    assert not [m for m in messages if isinstance(m, StepStarted)]
+    run_finished = [m for m in messages if isinstance(m, RunFinished)]
+    assert [m.result for m in run_finished] == [ResultType.STOP]
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_sequence_result_is_sent_once_at_the_end():
-    ...
+def test_sequence_result_is_sent_once_at_the_end(sequencer):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    assert len([m for m in messages if isinstance(m, RunStarted)]) == 1
+    assert len([m for m in messages if isinstance(m, SequenceFinished)]) == 1
+    run_finished = [m for m in messages if isinstance(m, RunFinished)]
+    assert len(run_finished) == 1
+    assert run_finished[0].result is ResultType.DONE
+    assert [o.step_name for o in run_finished[0].outcomes] == ["First wait", "Second wait"]
+    # RunFinished is the last thing a run says.
+    assert isinstance(messages[-1], RunFinished)
+
+
+def test_running_without_a_recipe_is_refused_with_an_error(sequencer):
+    instance, outbox, _inbox = sequencer
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    errors = [m for m in messages if isinstance(m, ModuleError)]
+    assert len(errors) == 1
+    assert "No recipe" in errors[0].message
+    assert not [m for m in messages if isinstance(m, RunStarted)], (
+        "a refused run must not start reporting one"
+    )
+
+
+def test_an_unknown_sequence_name_is_refused_listing_the_real_ones(sequencer):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Setup")
+
+    errors = [m for m in drain(outbox) if isinstance(m, ModuleError)]
+    assert len(errors) == 1
+    assert "Setup" in errors[0].message
+    assert "Main" in errors[0].message

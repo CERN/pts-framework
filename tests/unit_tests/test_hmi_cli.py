@@ -5,18 +5,53 @@
 """
 Unit tests for the CLI HMI (src/pypts/hmi/cli/).
 
-SKELETON ONLY - placeholders declaring intended coverage. The CLI runs in the
+Mostly placeholders declaring intended coverage. The CLI runs in the
 launcher process; only the GUI keeps a process boundary.
 """
 
+import queue
+
 import pytest
+
+from pypts.messages import QueueWrapper
+from pypts.messages.core_hmi_communication import LoadRecipe, ShutdownRequested, StartSequence
+from pypts.messages.run_events import StopSequence
 
 PLACEHOLDER = "placeholder - test not implemented yet"
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_known_commands_are_dispatched_to_core():
-    ...
+def test_known_commands_are_dispatched_to_core(monkeypatch):
+    """Each shell verb sends its message; `stop_sequence` aborts the run while
+    plain `stop` stays an exit alias."""
+    from pypts.hmi.cli.cli import CLI
+
+    outbox: queue.Queue = queue.Queue()
+    inbox: queue.Queue = queue.Queue()
+    cli = CLI(QueueWrapper(outbox), QueueWrapper(inbox))
+
+    lines = iter(
+        [
+            "load_recipe recipes/wait_recipe.yml",
+            "start_sequence Main",
+            "stop_sequence",
+            "exit",
+        ]
+    )
+    monkeypatch.setattr("builtins.input", lambda prompt: next(lines))
+    cli._command_loop()
+
+    sent = []
+    while True:
+        try:
+            sent.append(outbox.get_nowait())
+        except queue.Empty:
+            break
+    assert sent == [
+        LoadRecipe(recipe_path="recipes/wait_recipe.yml"),
+        StartSequence(sequence_name="Main"),
+        StopSequence(),
+        ShutdownRequested(),
+    ]
 
 
 @pytest.mark.skip(reason=PLACEHOLDER)

@@ -23,6 +23,9 @@ from pypts.messages.run_events import (
     SerialNumberResponse,
     StepFinished,
     StepStarted,
+    # Defined in run_events because it rides two links: a frontend sends it
+    # here and CORE relays the very same object to the Sequencer.
+    StopSequence,
     UserPromptRequest,
     UserPromptResponse,
 )
@@ -109,6 +112,7 @@ class ModuleErrorReported:
 HmiToCore = (
     LoadRecipe
     | StartSequence
+    | StopSequence
     | SetConfigParameter
     | ShutdownRequested
     | HmiStopped

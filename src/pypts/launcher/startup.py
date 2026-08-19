@@ -10,16 +10,22 @@ frontend, and it is the parent of all of them. It must stay the simplest
 component in the system, because it is the one that has to survive anything the
 others do.
 
-The tree is three processes in GUI mode - launcher, Logger, CORE, plus the GUI -
+The tree is three processes in GUI mode - launcher, Logger, CORE, plus the GUI -1
 and two in CLI mode, where the CLI runs here in the launcher's own process. The
 Sequencer and the Report are not among them: they are threads inside CORE.
 
 It also builds the HMI <-> CORE links, the only pair that still crosses a
 process boundary and therefore the only pair whose messages are pickled.
 
-`--debug-monitor` starts the Debug Monitor beside the run. It is the one thing
-the launcher starts that is not part of the framework, and it is started the way
-you would start it by hand - `subprocess.Popen` on `python -m
+The Debug Monitor is started beside the run, and it is **on by default**: running
+this file with no arguments at all gives you the frontend and the Monitor
+together, which is what a developer wants during the refactor and is the only way
+to get it without a launcher script or an IDE configuration. `--no-debug-monitor`
+turns it off for the runs that cannot use it - a headless bench, CI - and roadmap
+§1.4.1 holds the revert TODO for v1.0, where it goes back to opt-in.
+
+It is the one thing the launcher starts that is not part of the framework, and it
+is started the way you would start it by hand - `subprocess.Popen` on `python -m
 pypts.helper_applications.debug_monitor <this run's log>` - so that nothing here
 imports the tool and the tool still cannot affect the run. See
 `start_debug_monitor()` for what that costs and what it deliberately does not do.
@@ -33,7 +39,7 @@ import time
 from multiprocessing import Process, Queue
 from pathlib import Path
 
-from pypts.config_handler import ConfigError, ConfigHandler
+from pypts.config_handler import BootstrapOutcome, ConfigError, ConfigHandler
 from pypts.core.core import core_main
 from pypts.hmi.cli.cli import cli_main
 from pypts.hmi.gui.gui import gui_main
@@ -93,30 +99,57 @@ def main() -> None:
     )
     parser.add_argument(
         "--debug-monitor",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         help=(
-            "Also open the Debug Monitor on this run's log. It is a separate "
-            "program that only reads the log file, so it changes nothing about "
-            "the run, and it is left open when the run ends. Needs "
-            "--log-level DEBUG to have a message trace to show."
+            "Open the Debug Monitor on this run's log. On by default, so plainly "
+            "running the launcher gives you the frontend and the Monitor together; "
+            "pass --no-debug-monitor for a run without it - a headless bench or CI, "
+            "where there is no display to open a window on. It is a separate "
+            "program that only reads the log file, so it changes nothing about the "
+            "run, and it is left open when the run ends. Needs --log-level DEBUG to "
+            "have a message trace to show."
         ),
     )
     args = parser.parse_args()
 
     # Before anything else, including logging: the configuration is what says
-    # where the log file goes. This is the one call that may create or migrate
-    # config.ini - every other process only reads it. Nothing here can be
+    # where the log file goes. This is the one call that may create config.ini
+    # - an existing file is never modified, and every other process only reads
+    # it. A broken or version-mismatched file does not stop the run any more:
+    # bootstrap() discards it and runs on the template defaults in memory, and
+    # the notice below is how the operator learns that. Nothing here can be
     # logged yet, so the handler buffers its own messages and they are replayed
     # below, once there is somewhere to put them.
     try:
         config = ConfigHandler.bootstrap()
     except ConfigError as error:
-        # The file is meant to be edited by hand, so the likeliest cause is a
-        # typo in it. There is no log yet and never will be on this path, so the
-        # message goes to stderr and the traceback is suppressed: it would only
-        # bury the one line that says what to fix.
+        # Last resort - a broken file no longer raises, so reaching this means
+        # something like an unreadable template. There is no log yet and never
+        # will be on this path, so the message goes to stderr and the traceback
+        # is suppressed: it would only bury the one line that says what to fix.
         print(f"pypts cannot start: {error}", file=sys.stderr)
         raise SystemExit(CONFIG_EXIT_CODE) from None
+
+    if config.bootstrap_outcome is BootstrapOutcome.CREATED:
+        show_config_notice(
+            args.mode,
+            "pypts configuration created",
+            f"No configuration was found; a new one was created with default "
+            f"values at:\n{config.config_path}",
+            warning=False,
+        )
+    elif config.bootstrap_outcome is BootstrapOutcome.DISCARDED:
+        show_config_notice(
+            args.mode,
+            "pypts configuration discarded",
+            f"The configuration file could not be used:\n\n"
+            f"{config.bootstrap_problem}\n\n"
+            f"pypts is running on the default template in memory; no parameter "
+            f"was taken from the file, and the file was not modified.\n"
+            f"Correct it, or delete it to have it recreated:\n{config.config_path}",
+            warning=True,
+        )
 
     # Logging is set up before anything else, so that no module has to fall back
     # to an uninitialised logger. The log file path is decided here exactly once
@@ -166,7 +199,7 @@ def main() -> None:
     monitor_process = None
     try:
         # Everything the configuration did before there was a logger: which file
-        # it used, whether it had to create or migrate it, and any section it
+        # it used, whether it had to create it, and any section it
         # did not recognise. Replayed first, because it explains the paths the
         # rest of this run is about to use.
         config.replay_bootstrap_log()
@@ -238,6 +271,52 @@ def main() -> None:
         logger_process.join(timeout=LOGGER_SHUTDOWN_TIMEOUT_S)
         if logger_process.is_alive():
             logger_process.terminate()
+
+
+def show_config_notice(mode: str, title: str, text: str, *, warning: bool) -> None:
+    """
+    Put a configuration notice in front of the user, before the frontend exists.
+
+    GUI mode gets a modal message box: startup waits until it is acknowledged,
+    so the operator has read the notice before the application window appears.
+    CLI mode - and any machine where Qt cannot open a window, a headless bench
+    or CI - gets a framed banner on the console instead. A failing popup must
+    never stop the run: the same information is already in the bootstrap log
+    and reaches the run log when it is replayed.
+    """
+    if mode == "gui":
+        try:
+            _open_message_box(title, text, warning=warning)
+            return
+        except Exception:  # noqa: BLE001 - no display, no Qt: the banner below is the fallback
+            pass
+    _print_config_banner(title, text)
+
+
+def _open_message_box(title: str, text: str, *, warning: bool) -> None:
+    """One modal QMessageBox. Separate so tests can make it fail on purpose."""
+    from PySide6.QtWidgets import QApplication, QMessageBox
+
+    if QApplication.instance() is None:
+        QApplication([])
+    box = QMessageBox()
+    box.setWindowTitle(title)
+    box.setText(text)
+    if warning:
+        box.setIcon(QMessageBox.Icon.Warning)
+    else:
+        box.setIcon(QMessageBox.Icon.Information)
+    box.exec()
+
+
+def _print_config_banner(title: str, text: str) -> None:
+    """The console form of the notice, framed so it survives scrollback."""
+    line = "=" * 72
+    print(line)
+    print(title.upper())
+    print()
+    print(text)
+    print(line)
 
 
 def start_debug_monitor(log_file_path: str, log_level: int) -> subprocess.Popen | None:

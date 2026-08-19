@@ -15,10 +15,10 @@ re-reading the four modules.
 | File | Owns |
 |---|---|
 | `file_locations.py` | *Where* the file is. `platformdirs`, and the seam tests monkeypatch. |
-| `configuration_schema.py` | *What* the file contains: section → key → type, default, allowed values; the deprecation map; `CONFIG_VERSION`. |
+| `configuration_schema.py` | *What* the file contains: section → key → type, default, allowed values; `CONFIG_VERSION`. |
 | `config_template.ini` | The shipped defaults **and** the comments the user reads. |
 | `template_writer.py` | Writing the file without throwing the comments away. |
-| `config_handler.py` | The singleton: load, create, migrate, validate, get/set, dump. |
+| `config_handler.py` | The singleton: load, create, validate, get/set, dump. |
 
 `__init__.py` re-exports `ConfigHandler`, `Role` and the five exception types. Nothing else
 is public.
@@ -36,8 +36,12 @@ implementation called `create_config_from_template()` on every read, so five pro
 rewrote one file per run.)
 
 **One writer.** The launcher calls `ConfigHandler.bootstrap()` before anything else exists:
-it creates the file if the machine has none, migrates it if it predates this pypts, repairs
-missing keys, and validates the result. From then on the file is read-only to everyone.
+it creates the file if the machine has none, and validates it. An existing file is **never
+modified** — there is no migration and no repair; keeping the file correct is the user's job.
+A file that is broken or version-mismatched is **discarded for the run**: the template
+defaults are used in memory, `bootstrap_outcome`/`bootstrap_problem` carry the verdict, and
+the launcher shows the operator a notice (popup in GUI mode, console banner otherwise). The
+run does not stop. From then on the file is read-only to everyone.
 `set_parameter()` on a reader raises `ConfigWriteError` rather than racing. A reader can
 never be promoted to writer — `open_for_writing()` in a process that already holds a reader
 raises.
@@ -53,9 +57,12 @@ run. `_note()` checks for root handlers, so once logging is up nothing is buffer
 
 ```
 launcher/startup.py
-  ConfigHandler.bootstrap()          # may create / migrate / repair; buffers its log
-      ├─ file missing → _build_from_defaults() → _write()
-      └─ file present → _read_raw() → _repair() → _write() only if something changed
+  ConfigHandler.bootstrap()          # may create; never modifies an existing file
+      ├─ file missing → _build_from_defaults() → _write()          # outcome CREATED
+      └─ file present → _load_or_discard()
+            ├─ reads, version matches, validates → outcome LOADED
+            └─ anything wrong → defaults in memory, no write → outcome DISCARDED
+  show_config_notice(...)            # launcher: popup (GUI) / banner (CLI) for CREATED/DISCARDED
   _validate()                        # every value converted to its declared type
   get_parameter("paths.logs_dir")    # decides the log file path
   init_logging(...)
@@ -65,9 +72,10 @@ any other process / module
   ConfigHandler().get_parameter(...) # read-only; raises ConfigFileMissing if bootstrap never ran
 ```
 
-A `ConfigError` out of `bootstrap()` is fatal by design: the launcher prints one line to
-stderr (no traceback — it would bury the message the user has to act on) and exits with
-`CONFIG_EXIT_CODE`.
+A broken file no longer stops the run — it is discarded (see below). A `ConfigError` out of
+`bootstrap()` is therefore a last resort (an unreadable template, say): the launcher prints
+one line to stderr (no traceback — it would bury the message the user has to act on) and
+exits with `CONFIG_EXIT_CODE`.
 
 ---
 
@@ -100,8 +108,7 @@ pattern. One idea explains the rest of the shape of the file:
 - **Derived values** ship *blank* in the template and are filled at creation from
   `platformdirs` / `platform`. This is how the template avoids `/tmp/pypts` (wrong on
   Windows) without hardcoding a Windows path (wrong on Linux). Once written they are
-  ordinary values the user may edit, and nothing recomputes them. `_add_missing_keys()`
-  refills a derived key only when it is *absent or empty*.
+  ordinary values the user may edit, and nothing recomputes them.
 
 **There is no hardware section.** There used to be: `[hardware.example_device]` in the
 template, a matching entry in `SCHEMA`, and a `SECTION_FAMILIES` prefix rule that validated
@@ -157,25 +164,37 @@ it into place, so an interrupted write cannot leave a half-written config behind
 
 ---
 
-## Migration
+## Structure version — no migration, no repair, discard instead
 
 `CONFIG_VERSION` (in `configuration_schema.py`, currently **1**) is bumped whenever a
 section or key is added, removed or renamed.
 
-- File version **<** code version → migrated on the next `bootstrap()`: `DEPRECATED` keys are
-  renamed or dropped, new keys are added, empty derived keys are filled. Every user value
-  survives. The previous file is kept as `config.ini.v<n>.bak`, and every individual change
-  is logged at INFO.
-- File version **==** code version and complete → **nothing is written**; a second run leaves
-  the file byte-identical.
-- File version **>** code version → refused with `ConfigSchemaError`. This code cannot know
-  what a future pypts meant.
+There used to be a migration/repair pass in `bootstrap()` (renamed keys moved via a
+`DEPRECATED` map, new keys added, `config.ini.v<n>.bak` backups, newer files refused). It was
+removed in August 2026: **pypts never modifies an existing file.** Keeping it correct is the
+user's job — edit it by hand, or delete it to have it recreated from the template.
 
-`DEPRECATED` maps old dotted key → replacement, or `None` if the key was simply dropped. It
-currently covers the pre-versioned layout (`[OperatingSystem]`, `[Paths]`, `[Application]`,
-`[Misc]`), which had no `[meta]` section at all and is therefore treated as version 0. When
-both the old and new key are present with a value, **the new one wins** — the user set it in
-the new place and the old key is a leftover.
+`_load_or_discard()` decides what an existing file is worth, and the decision is whole-file:
+
+- Reads as INI, version **==** code version, every value validates → **LOADED**: the file is
+  in force. A version match alone is a DEBUG note.
+- Anything wrong — not INI at all, version **≠** code version (older *or* newer), a missing
+  key or section, a value of the wrong type → **DISCARDED**: the template defaults are built
+  in memory (`_build_from_defaults()`), **nothing is written**, the reason lands in
+  `bootstrap_problem` and as an ERROR in the log, and the launcher shows the operator a
+  notice. The run continues on the defaults.
+
+The same rule runs in every process (readers included), so a run agrees with itself about the
+values in force — the defaults are recomputed identically on the same machine. Deliberate
+consequence: a file whose only fault is a stale version number loses *all* its settings for
+the run; the version must match for the file to be trusted at all.
+
+While discarded, `set_parameter()` refuses with `ConfigWriteError` — writing one value would
+replace the user's file with the defaults. `restore_default()` stays allowed (rewriting the
+file deliberately is its job) and ends the discarded state.
+
+An existing file is therefore byte-identical after any number of starts; the only writes ever
+made are creation from the template, `set_parameter()` and `restore_default()`.
 
 ---
 
@@ -185,8 +204,9 @@ the new place and the old key is a leftover.
 `ConfigSchemaError` naming the key and saying what *is* allowed, because the message is read
 by whoever has to fix the file. An unknown section or key is not fatal — it is kept as text
 and warned about once, since a typo that silently does nothing is worse than one that is
-mentioned. A *missing* key in a known section **is** fatal, with the advice to start through
-the launcher (which repairs) or delete the file.
+mentioned. A *missing* key in a known section fails validation — which at startup means the
+whole file is discarded for the run (see the structure-version section above), with the
+advice to add it by hand or delete the file so it is recreated from the template.
 
 Two file-format details worth knowing:
 
@@ -202,7 +222,7 @@ Two file-format details worth knowing:
 
 | Caller | Uses |
 |---|---|
-| `launcher/startup.py` | `bootstrap()`, `paths.logs_dir`, `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
+| `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_notice()` (popup/banner), `paths.logs_dir`, `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
 | `core/core.py` | receives `SetConfigParameter` (HMI→CORE) and **logs a warning and ignores it** |
 
@@ -217,7 +237,8 @@ Two file-format details worth knowing:
    ship **blank**.
 3. Bump `CONFIG_VERSION` in `configuration_schema.py` **and** the literal `config_version`
    in the template — the two are checked against each other.
-4. If you renamed or removed a key, add it to `DEPRECATED` so existing files migrate.
+4. There is no migration: an existing file now reports a version mismatch at ERROR until its
+   owner updates it by hand or deletes it to have it recreated from the template.
 
 `tests/unit_tests/test_config_handler.py::test_schema_and_template_agree` fails if a key
 exists in one and not the other; `test_every_template_default_is_valid_for_its_type` fails if
@@ -240,9 +261,10 @@ invisible.
 otherwise outlive the `tmp_path` it was pointed at. **Only tests may call it**: a process that
 dropped its configuration mid-run would be reading a different file from its own threads.
 
-`tests/unit_tests/test_config_handler.py` (~60 tests) covers creation, reading, the singleton
-and its thread safety, write permission, validation, unknown sections, migration, the
-bootstrap-log narration, comment preservation, and the schema/template agreement.
+`tests/unit_tests/test_config_handler.py` (~47 tests) covers creation, reading, the singleton
+and its thread safety, write permission, validation, unknown sections, the structure-version
+mismatch, the bootstrap-log narration, comment preservation, and the schema/template
+agreement.
 
 ---
 

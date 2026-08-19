@@ -33,9 +33,11 @@ pre-empt the answer.
 from dataclasses import dataclass
 
 #: Bumped whenever a section or key is added, removed or renamed. An existing
-#: config.ini declaring a lower version is migrated on the next launch; one
-#: declaring a higher version is refused, because this code cannot know what a
-#: future pypts meant by it.
+#: config.ini declaring a different version is not trusted at all: it is
+#: discarded for the run (template defaults in memory, a notice at startup, an
+#: ERROR in the log) - pypts never modifies an existing file. Bringing it up to
+#: date is the user's job: edit it by hand, or delete it to have it recreated
+#: from the template.
 CONFIG_VERSION = 1
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
@@ -103,28 +105,6 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "window_height": Field("int", "720"),
     },
 }
-
-#: Old dotted key -> its replacement, or None if the key was simply dropped.
-#: Consulted only during migration. Everything here comes from the pre-versioned
-#: layout that shipped before this module existed, which had no [meta] section
-#: at all and is therefore treated as version 0.
-DEPRECATED: dict[str, str | None] = {
-    "OperatingSystem.name": "operating_system.name",
-    "OperatingSystem.version": "operating_system.version",
-    "OperatingSystem.architecture": "operating_system.architecture",
-    "OperatingSystem.kernel": "operating_system.kernel",
-    "Paths.base_temp_dir": "paths.base_dir",
-    "Paths.logs_dir": "paths.logs_dir",
-    # The config no longer lives where the config says it lives; the location is
-    # computed (see file_locations.py), so a stored copy could only ever be a lie.
-    "Paths.config_dir": None,
-    "Application.log_level": "logging.level",
-    # Was a hand-maintained duplicate of the package version, which setuptools-scm
-    # already owns. Read pypts.__version__ instead.
-    "Application.app_version": None,
-    "Misc.example_flag": None,
-}
-
 
 def schema_for_section(section: str) -> dict[str, Field] | None:
     """

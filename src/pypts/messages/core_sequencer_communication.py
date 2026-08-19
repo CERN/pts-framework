@@ -21,11 +21,29 @@ from pypts.messages.run_events import (
     SerialNumberResponse,
     StepFinished,
     StepStarted,
+    # Defined in run_events because it rides two links: a frontend sends it and
+    # CORE relays the very same object here (see the class docstring).
+    StopSequence,
     UserPromptRequest,
     UserPromptResponse,
 )
+from pypts.recipe.recipe import Recipe
 
 # --- CORE -> Sequencer: commands ----------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class UseRecipe:
+    """
+    The live, validated Recipe that subsequent RunSequence commands run.
+
+    The one message in the system that carries a rich object rather than
+    plain values - allowed because this link never leaves the Core process,
+    so nothing is ever pickled (see core.py). CORE only sends a recipe that
+    passed validation: an invalid file never reaches the Sequencer.
+    """
+
+    recipe: Recipe
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,11 +51,6 @@ class RunSequence:
     """Run one named sequence of the recipe CORE has loaded."""
 
     sequence_name: str
-
-
-@dataclass(frozen=True, slots=True)
-class StopSequence:
-    """Abort the running sequence but keep the module alive."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +69,8 @@ class SequencerStopped:
 # --- The link ------------------------------------------------------------------
 
 CoreToSequencer = (
-    RunSequence
+    UseRecipe
+    | RunSequence
     | StopSequence
     | StopSequencer
     # Answers to questions the Sequencer asked, relayed back by CORE.

@@ -43,6 +43,7 @@ from pypts.messages.run_events import (
     SerialNumberResponse,
     StepFinished,
     StepStarted,
+    StopSequence,
     UserPromptRequest,
     UserPromptResponse,
 )
@@ -97,12 +98,12 @@ class HmiClient:
                 self.show_status(text)
             case ModuleErrorReported(error=error):
                 self.show_error(error)
-            # NOT SENT YET - everything from here to the end of the match. Each
-            # branch is complete and each presentation hook has a working
-            # default; nothing on the engine side constructs any of these
-            # messages, so none of them has ever arrived. Roadmap Phase 1.
-            case RecipeLoaded(recipe_name=name, recipe_version=version):
-                self.show_recipe_loaded(name, version)
+            # The progress events below are live: CORE and the engine send all
+            # of them on every run. Only the two prompt *requests* at the end
+            # are still NOT SENT YET - their senders are the interactive step
+            # types, roadmap Phase 1.
+            case RecipeLoaded():
+                self.show_recipe_loaded(message)
             case RunStarted(recipe_name=name, recipe_description=description):
                 self.show_run_started(name, description)
             case RunFinished(result=result, outcomes=outcomes):
@@ -129,6 +130,16 @@ class HmiClient:
 
     def start_sequence(self, sequence_name: str) -> None:
         self.core.send(StartSequence(sequence_name))
+
+    def stop_sequence(self) -> None:
+        """
+        Ask CORE to abort the running sequence; the application stays up.
+
+        The abort lands at the next step boundary, and the confirmation a
+        frontend gets is the run's own RunFinished with result STOP - there is
+        no separate acknowledgement to wait for.
+        """
+        self.core.send(StopSequence())
 
     def request_shutdown(self) -> None:
         """
@@ -192,8 +203,9 @@ class HmiClient:
     def show_error(self, error: ModuleError) -> None:
         log.error("%s: %s", error.source, error.message)
 
-    def show_recipe_loaded(self, recipe_name: str, recipe_version: str) -> None:
-        log.info("recipe loaded: %s %s", recipe_name, recipe_version)
+    def show_recipe_loaded(self, event: RecipeLoaded) -> None:
+        """Passed whole: the summary is what fills a table or a sequence chooser."""
+        log.info("recipe loaded: %s %s", event.recipe_name, event.recipe_version)
 
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
         log.info("run started: %s", recipe_name)
