@@ -251,7 +251,7 @@ And `%TEMP%` is cleaned up, so a bench's settings were one reboot from gone.
   broken (a missing key, a value of the wrong type, not INI at all) **or** whose
   `config_version` does not match is **discarded whole for the run**: the template defaults
   are used in memory, `BootstrapOutcome.DISCARDED`/`bootstrap_problem` carry the verdict,
-  the launcher shows a startup notice (`show_config_notice()`: QMessageBox in GUI mode,
+  the launcher shows a startup notice (`show_config_popup()`: QMessageBox in GUI mode,
   console banner in CLI/headless), and the reason is an ERROR in the run log. The run never
   stops for a bad config; `bootstrap()` raising is a last resort (unreadable template).
   While discarded, `set_parameter()` refuses (`ConfigWriteError`) so the user's file cannot

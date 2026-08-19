@@ -20,7 +20,7 @@ def test_cli_mode_prints_a_banner_instead_of_a_popup(capsys, monkeypatch):
 
     monkeypatch.setattr(startup, "_open_message_box", fail_if_called)
 
-    startup.show_config_notice("cli", "pypts configuration created", "the details", warning=False)
+    startup.show_config_popup("cli", "pypts configuration created", "the details", warning=False)
 
     printed = capsys.readouterr().out
     assert "PYPTS CONFIGURATION CREATED" in printed
@@ -35,7 +35,7 @@ def test_a_failing_popup_falls_back_to_the_banner(capsys, monkeypatch):
 
     monkeypatch.setattr(startup, "_open_message_box", broken_box)
 
-    startup.show_config_notice("gui", "pypts configuration discarded", "the reason", warning=True)
+    startup.show_config_popup("gui", "pypts configuration discarded", "the reason", warning=True)
 
     printed = capsys.readouterr().out
     assert "PYPTS CONFIGURATION DISCARDED" in printed
@@ -50,7 +50,7 @@ def test_gui_mode_uses_the_popup_and_skips_the_banner(capsys, monkeypatch):
 
     monkeypatch.setattr(startup, "_open_message_box", record_box)
 
-    startup.show_config_notice("gui", "pypts configuration discarded", "the reason", warning=True)
+    startup.show_config_popup("gui", "pypts configuration discarded", "the reason", warning=True)
 
     assert shown == [("pypts configuration discarded", "the reason", True)]
     assert capsys.readouterr().out == ""

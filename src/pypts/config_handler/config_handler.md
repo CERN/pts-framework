@@ -62,7 +62,7 @@ launcher/startup.py
       └─ file present → _load_or_discard()
             ├─ reads, version matches, validates → outcome LOADED
             └─ anything wrong → defaults in memory, no write → outcome DISCARDED
-  show_config_notice(...)            # launcher: popup (GUI) / banner (CLI) for CREATED/DISCARDED
+  show_config_popup(...)            # launcher: popup (GUI) / banner (CLI) for CREATED/DISCARDED
   _validate()                        # every value converted to its declared type
   get_parameter("paths.logs_dir")    # decides the log file path
   init_logging(...)
@@ -72,10 +72,10 @@ any other process / module
   ConfigHandler().get_parameter(...) # read-only; raises ConfigFileMissing if bootstrap never ran
 ```
 
-A broken file no longer stops the run — it is discarded (see below). A `ConfigError` out of
-`bootstrap()` is therefore a last resort (an unreadable template, say): the launcher prints
-one line to stderr (no traceback — it would bury the message the user has to act on) and
-exits with `CONFIG_EXIT_CODE`.
+A broken file cannot stop the run — it is discarded (see below), so `bootstrap()` raising is
+no longer a user-facing case. If it raises anyway, the installation itself is broken (an
+unreadable shipped template, say), and the launcher lets the traceback propagate: that is a
+bug to report, not a file to fix. The former `CONFIG_EXIT_CODE` went with it.
 
 ---
 
@@ -222,7 +222,7 @@ Two file-format details worth knowing:
 
 | Caller | Uses |
 |---|---|
-| `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_notice()` (popup/banner), `paths.logs_dir`, `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
+| `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.logs_dir`, `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
 | `core/core.py` | receives `SetConfigParameter` (HMI→CORE) and **logs a warning and ignores it** |
 

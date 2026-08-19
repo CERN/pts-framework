@@ -28,10 +28,7 @@ class UnhandledMessage(Exception):
 
 def unhandled(message: Never) -> NoReturn:
     """
-    Close a `match` over a link's union. Always the last case.
-
-    Typed `Never`, so an unmatched member is a type error, and it raises, so the
-    same mistake is loud without a checker.
+    Typed `Never`, so an unmatched member is a type error, and it raises here.
     """
     raise UnhandledMessage(f"No handler for message: {message!r}")
 

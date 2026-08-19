@@ -39,7 +39,7 @@ import time
 from multiprocessing import Process, Queue
 from pathlib import Path
 
-from pypts.config_handler import BootstrapOutcome, ConfigError, ConfigHandler
+from pypts.config_handler import BootstrapOutcome, ConfigHandler
 from pypts.core.core import core_main
 from pypts.hmi.cli.cli import cli_main
 from pypts.hmi.gui.gui import gui_main
@@ -60,10 +60,6 @@ CORE_SHUTDOWN_TIMEOUT_S = 5.0
 
 #: How long the Logger gets to drain whatever is still queued.
 LOGGER_SHUTDOWN_TIMEOUT_S = 5.0
-
-#: Exit code for a configuration pypts cannot work with. Distinct from 1, so a
-#: script can tell "your config.ini is wrong" from "the run failed".
-CONFIG_EXIT_CODE = 2
 
 #: The Debug Monitor's entry point, spelled as `-m` takes it. A string rather
 #: than an import: the launcher must not import the tool. See §1.4.
@@ -113,26 +109,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    # Before anything else, including logging: the configuration is what says
-    # where the log file goes. This is the one call that may create config.ini
-    # - an existing file is never modified, and every other process only reads
-    # it. A broken or version-mismatched file does not stop the run any more:
-    # bootstrap() discards it and runs on the template defaults in memory, and
-    # the notice below is how the operator learns that. Nothing here can be
-    # logged yet, so the handler buffers its own messages and they are replayed
-    # below, once there is somewhere to put them.
-    try:
-        config = ConfigHandler.bootstrap()
-    except ConfigError as error:
-        # Last resort - a broken file no longer raises, so reaching this means
-        # something like an unreadable template. There is no log yet and never
-        # will be on this path, so the message goes to stderr and the traceback
-        # is suppressed: it would only bury the one line that says what to fix.
-        print(f"pypts cannot start: {error}", file=sys.stderr)
-        raise SystemExit(CONFIG_EXIT_CODE) from None
+    # Before anything else, including logging: the configuration.
+    # This is the one call that either open config.ini or creates it.
+    # An existing file is never modified, and every other process only reads
+    # it. A broken or version-mismatched file cannot stop the run: bootstrap()
+    # discards it and runs on the template defaults, prompting user about it.
+    config = ConfigHandler.bootstrap()
 
     if config.bootstrap_outcome is BootstrapOutcome.CREATED:
-        show_config_notice(
+        show_config_popup(
             args.mode,
             "pypts configuration created",
             f"No configuration was found; a new one was created with default "
@@ -140,42 +125,32 @@ def main() -> None:
             warning=False,
         )
     elif config.bootstrap_outcome is BootstrapOutcome.DISCARDED:
-        show_config_notice(
+        show_config_popup(
             args.mode,
             "pypts configuration discarded",
             f"The configuration file could not be used:\n\n"
             f"{config.bootstrap_problem}\n\n"
             f"pypts is running on the default template in memory; no parameter "
-            f"was taken from the file, and the file was not modified.\n"
+            f"was taken from the file.\n"
             f"Correct it, or delete it to have it recreated:\n{config.config_path}",
             warning=True,
         )
 
-    # Logging is set up before anything else, so that no module has to fall back
-    # to an uninitialised logger. The log file path is decided here exactly once
-    # and owned by a single writer - the Logger process - which every other
-    # process reaches through log_queue. See logger/log.py for the reasoning.
+    # Logging is set up now. The log file path is decided here exactly once
+    # and owned by a single writer. The queue is what guarantees that no
+    # parallel writes are made to the log file.
+
     log_queue = Queue()
     log_file_path = get_log_file_path(config.get_parameter("paths.logs_dir"))
 
-    # Resolved once, here, and passed to every process, so that one run is
-    # captured at one level throughout - a child reading the config for itself
-    # would not know about --log-level, and half the run would be at the other
-    # level.
-    #
-    # parse_log_level() falls back rather than raising, so an unusable name
-    # cannot stop the application from starting; the warning comes below.
     configured_level = args.log_level or config.get_parameter("logging.level")
     log_level = parse_log_level(configured_level)
     # -1 is not a level, so it survives only when the name meant nothing.
     level_was_understood = not configured_level or parse_log_level(configured_level, -1) != -1
 
-    # The Logger owns the console handler, so this choice applies to every
-    # process. The GUI wants it: with no terminal of its own, the launcher's
-    # console is where its log is read. The CLI does not, because its own
-    # print()-based shell shares that console.
     stdout_logging_enabled = args.mode == "gui"
 
+    # Use as a separate pocess instead of standalone import (many writers)
     logger_process = Process(
         target=logger_main,
         name="Logger",
@@ -186,38 +161,24 @@ def main() -> None:
     logger_control: QueueWrapper[LoggerControl] = QueueWrapper(log_queue, link=ANY_TO_LOGGER)
     init_logging(log_queue, log_level)
 
-    # The one process boundary in the framework, and so the only place a
-    # multiprocessing queue is still needed. CORE builds its own links out of
-    # queue.Queue, because the modules on the other end are its own threads.
+    # CORE-HMI process links
     to_core: QueueWrapper[HmiToCore] = QueueWrapper(Queue(), link=HMI_TO_CORE)
     to_hmi: QueueWrapper[CoreToHmi] = QueueWrapper(Queue(), link=CORE_TO_HMI)
 
+    #: Held for the lifetime of the run. The launcher never waits on it and never kills it.
     core_process = None
-    #: Held for the lifetime of the run only so that the Popen object is not
-    #: collected while its child is alive. The launcher never waits on it and
-    #: never kills it - see start_debug_monitor().
     monitor_process = None
     try:
-        # Everything the configuration did before there was a logger: which file
-        # it used, whether it had to create it, and any section it
-        # did not recognise. Replayed first, because it explains the paths the
-        # rest of this run is about to use.
+        # Everything the launcher did before there was a logger: since there is
+        # no logging before log_path, the bootstrap actions are replayed and
+        # logged now.
         config.replay_bootstrap_log()
 
-        # The log file names itself. The Logger announces this on the console
-        # too, but it has to: it is the one component that cannot log about
-        # logging. That leaves the file itself silent about where it lives,
-        # which matters as soon as a log is copied off the machine that wrote
-        # it - and it is the proof that paths.logs_dir was actually honoured.
+        # Basic information about the runtime
         log.info("Run log: %s", log_file_path)
-
-        # Recorded next, so the log always says what it was configured to
-        # capture - the answer to "why is the trace missing from this file".
         log.info("Log level: %s", logging.getLevelName(log_level))
         if not level_was_understood:
             log.warning("Unknown log level: %r. Using the default.", configured_level)
-
-        # Recorded once per run, so a report can say which machine produced it.
         log.info(
             "Operating system: %s %s (%s)",
             config.get_parameter("operating_system.name"),
@@ -225,12 +186,12 @@ def main() -> None:
             config.get_parameter("operating_system.architecture"),
         )
 
-        # Before CORE, so that the Monitor is already following when the first
-        # messages of the run are traced. It reads the file from the beginning
-        # in any case, so this only saves it some catching up.
+        # Debug monitor is a developer-only helper application to trace and
+        # simulate queue communication. To be removed after reaching stable build.
         if args.debug_monitor:
             monitor_process = start_debug_monitor(log_file_path, log_level)
 
+        # Spawning CORE and UI
         core_process = Process(
             target=core_main,
             name="Core",
@@ -249,15 +210,11 @@ def main() -> None:
             # third process in CLI mode.
             cli_main(to_core, to_hmi)
     finally:
-        # Order matters: CORE first, the Logger last, both in the finally block
-        # so that an exception in the UI can neither leave a process behind nor
-        # cut the log short before the shutdown was recorded.
+        # In case of shutdown of the launcher (instead of clean exit from the UI)
         stop_core(core_process, to_core)
 
-        # Deliberately not stopped with the rest. The trace of the run that has
-        # just ended is what you want to read *after* it ends, and a reader of a
-        # file leaves nothing behind. The last lines it will see are the ones
-        # below.
+        # Deliberately not stopped with the rest - for debugging purposes.
+        # To be removed after reaching stable build.
         if monitor_process is not None and monitor_process.poll() is None:
             log.info(
                 "Debug Monitor (pid %d) left running; close its window when you are done.",
@@ -273,16 +230,9 @@ def main() -> None:
             logger_process.terminate()
 
 
-def show_config_notice(mode: str, title: str, text: str, *, warning: bool) -> None:
+def show_config_popup(mode: str, title: str, text: str, *, warning: bool) -> None:
     """
-    Put a configuration notice in front of the user, before the frontend exists.
-
-    GUI mode gets a modal message box: startup waits until it is acknowledged,
-    so the operator has read the notice before the application window appears.
-    CLI mode - and any machine where Qt cannot open a window, a headless bench
-    or CI - gets a framed banner on the console instead. A failing popup must
-    never stop the run: the same information is already in the bootstrap log
-    and reaches the run log when it is replayed.
+    Shows a pop-up if the configuration bootstrap raised any warnings.
     """
     if mode == "gui":
         try:
@@ -321,24 +271,9 @@ def _print_config_banner(title: str, text: str) -> None:
 
 def start_debug_monitor(log_file_path: str, log_level: int) -> subprocess.Popen | None:
     """
-    Open the Debug Monitor on this run's log, without letting it touch the run.
-
-    Started as a *program*, not as an import: `python -m
-    pypts.helper_applications.debug_monitor <log file>`, through the same
-    interpreter that is running pypts. That spelling is the whole point. The
-    tool reads the run log and nothing else (roadmap §1.4), and keeping it
-    behind `subprocess` means `startup.py` has no import of it, no message from
-    it and no way for it to raise into the launcher - the framework still has no
-    idea it exists, it is merely started at the same time.
-
-    The log file is passed explicitly rather than letting the Monitor pick the
-    newest one. Its default is "the most recently modified pypts_*.log", which is
-    this run right up until someone starts a second one, and being pointed at the
-    wrong run is exactly the kind of confusion a debug tool must not create.
-
-    Nothing here can stop a run. Every failure - no log file, no PySide6, no
-    interpreter - is a warning in the log and a `None` return, because the run
-    the operator asked for matters more than the window they also asked for.
+    Open the Debug Monitor
+    This application is purely used for troubleshooting by the developer.
+    To be removed after reaching stable run.
 
     Args:
         log_file_path: the run log the Monitor is to follow. It may not exist
@@ -374,15 +309,10 @@ def start_debug_monitor(log_file_path: str, log_level: int) -> subprocess.Popen 
         time.sleep(MONITOR_LOG_POLL_S)
 
     try:
-        # No shell, and sys.executable is an absolute path decided by the
-        # running interpreter, so there is nothing here to inject into.
         monitor_process = subprocess.Popen(
             [sys.executable, "-m", DEBUG_MONITOR_MODULE, str(path)]
         )
     except OSError as error:
-        # OSError covers the interpreter being unusable; an ImportError inside
-        # the child (no PySide6) cannot reach here at all - it is the child's
-        # traceback on the child's stderr, and the run carries on regardless.
         log.warning("Debug Monitor could not be started: %s", error)
         return None
 
@@ -393,16 +323,10 @@ def start_debug_monitor(log_file_path: str, log_level: int) -> subprocess.Popen 
 def stop_core(core_process: Process | None, to_core: QueueWrapper[HmiToCore]) -> None:
     """
     Bring CORE down, asking before killing.
+    Normally, application is stopped by cleanly prompting it from the UI.
+    But in case of closing the lancher, the application would be terminated too
 
-    The launcher has just joined the frontend, so it can state as fact that the
-    HMI has stopped - CORE would otherwise wait for an acknowledgement from a
-    process that no longer exists. It then asks for shutdown on the same
-    link, because CORE having exactly one shutdown path is worth more than
-    the launcher having a link of its own.
-
-    terminate() stays, but only as the timeout fallback it should always have
-    been. As the primary path it gave CORE no chance to stop its own children,
-    which is why they were left orphaned.
+    Like using CTRL+X on the terminal to stop.
     """
     if core_process is None:
         return
