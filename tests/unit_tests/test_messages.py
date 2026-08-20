@@ -126,7 +126,7 @@ A_RECIPE = Recipe(
             locals={},
             parameters={},
             outputs={},
-            steps=[WaitStep(step_name="Pause", input_mapping={"wait_time": {"value": "0"}})],
+            steps=[WaitStep(step_name="Pause", wait_time="0")],
             teardown_steps=[],
         )
     },

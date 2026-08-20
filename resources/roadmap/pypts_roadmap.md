@@ -1124,10 +1124,80 @@ name** (stdlib/installed code). File-loaded modules are executed without touchin
 
 ---
 
+### 1.17 Recipe format simplified: rules as code, one validator, `PythonModule`/`Wait` — **done**
+
+> **Status: implemented.** The recipe format for the two ported step types is now defined in
+> one importable place and enforced by one validator, and a recipe states **only what it
+> needs**: every optional field left out is assumed empty. No `{}`/`[]` boilerplate ever again.
+> Reference recipe: `resources/recipes/python_demo.yml`; readable rules page:
+> `resources/internal_reports/recipe_format.html`.
+
+**The pieces.**
+
+- **`recipe/rules.py`** — the format rules as data: required fields, optional fields and their
+  defaults, per-steptype required keys (`STEP_TYPE_REQUIRED`) — definitions only, the code
+  that acts on them lives in the parser and the validator. A
+  header needs only `name`; a sequence only `sequence_name` and `steps`; a step `steptype`,
+  `step_name` and what its type requires. A bare `locals:` line (YAML None) counts as absent.
+  An omitted `main_sequence` means *the first sequence in the file*. This is the beginning of
+  the "one per-steptype schema" the format study asked for (F9/F19/F21/F23) — the old
+  verificator's tables and `Step.REQUIRED_INPUTS` (now removed) are superseded by it.
+- **`recipe/validator.py`** — parsed YAML in, a list of problems out. The parser runs it before
+  building anything and raises **one `RecipeError` naming every problem at once**, so a bad
+  file is fixed in one round trip.
+- **Steptype names drop the `Step` suffix in YAML**: `steptype: PythonModule`, `steptype: Wait`
+  (case-insensitive, only these spellings — the class names keep the suffix). A `Wait` carries
+  `wait_time` directly on the step — no `input_mapping` nesting, no `output_mapping` — because
+  a fixed wait has no inputs to resolve and nothing to judge.
+- **The recipe language is case-insensitive** (`recipe_parser.py`'s normalize functions,
+  applied once in the parser so everything downstream stays strict): keys, `steptype`,
+  mapping `type`/`action_type` values, and the `main_sequence` lookup ignore case; sequence
+  names must therefore be unique without case. `module`, `method_name`, variable names,
+  mapping entry names and compared values keep their case — they name the user's code and
+  data, which are case-sensitive.
+- The demo and fixture recipes (`python_demo.yml`, both `wait_recipe.yml`) were trimmed to the
+  new format and double as its showcase.
+
+**Verified:** 358 passed / 31 skipped, `ruff` clean on everything touched, `mypy` clean.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** `helper_applications/recipe_verificator/` still carries its own (older,
+      disagreeing, broken-import) rule tables — when it is refactored it must import
+      `recipe/rules.py` + `recipe/validator.py` and delete its own copies. Its remaining
+      added value over `Recipe.from_file` is YAML line numbers in the messages.
+- [ ] **TODO:** the unported example recipes still spell steptypes with the `Step` suffix;
+      rename them as their types are ported (they do not parse today either way).
+
+---
+
+### 1.18 Recipe package layered: `recipe_parser.py`, warn-only `format_version` — **done**
+
+> **Status: implemented.** The final cut of the recipe package's separation of concerns:
+> `rules.py` defines → `validator.py` checks → **`recipe_parser.py` does the work** (read,
+> YAML-parse, normalize case, validate, version-check, apply defaults, build) →
+> `recipe.py` is pure data: the `Recipe`/`Sequence` objects the Sequencer executes.
+
+`Recipe.from_file()` / `Recipe.from_yaml_text()` stay as thin facades delegating to
+`recipe_parser.load_recipe()` / `parse_recipe()` (parser imported inside the method body -
+the module-level dependency runs one way, parser → data), so CORE and the existing tests
+needed no changes; the untouched suite is the proof the move broke nothing.
+
+New with the layer: the **`format_version` check, warn-only** for the duration of the
+refactor. The optional header key declares which format the recipe was written for; absent
+means "the current one"; a mismatch against `rules.RECIPE_FORMAT_VERSION` is one ERROR log
+line ("… - loading anyway") and the recipe still loads. The hard refusal and the
+supported-versions window come with the compatibility policy, ~v1.0 (§4 risk entry).
+
+**Verified:** 365 passed / 30 skipped (the reserved `format_version` placeholder became two
+real tests), `ruff` and `mypy` clean.
+
+---
+
 ## TODO — Recipe format: findings and decisions
 
-> **Status: analysed, parked.** The recipe refactoring itself is deferred — this section records
-> what was found so it can be picked up later.
+> **Status: analysed; the format itself now exists for the ported types (§1.17), the rest is
+> still parked.** This section records what the study found so it can be picked up later.
 >
 > - **`resources/roadmap/recipe_guide.md`** — full reference: what a recipe is, what the old
 >   engine actually does with it, where the three rule sets disagree, 28 findings with
@@ -1151,6 +1221,8 @@ Recipe-format work items surfaced by that study (IDs refer to `recipe_guide.md` 
 - [ ] **TODO:** Collapse the **three** disagreeing rule sets (`recipe_rules.py`,
   `recipe_creator.py:795-800`, `yaml_format.rst`) into the one per-steptype schema described in
   §3.2 — this is the concrete form of the Phase 0 "schema module" item and closes F9/F19/F21/F23.
+  **Started (§1.17):** `recipe/rules.py` is that schema for the two ported types; the old copies
+  still exist in the unrefactored helper applications and docs.
 - [ ] **TODO:** Restore `resources/recipes/*.yml` to runnable state before the Phase 0
   characterization tests — they all reference `example_tests.py`, which is not in the repo (F24).
 - [ ] **TODO (security):** `resources/recipes/comprehensive_recipe.yml:20` commits a plaintext
@@ -1447,5 +1519,5 @@ Steps 1–3 are naturally done *while porting steps into the sequencer* — doin
 - **Core busy-loop & heartbeats.** 100 Hz polling in every module is fine for now; when Core gains real work, consider `Queue.get(timeout=...)`-driven loops. Heartbeat timeout currently only logs a warning — define the recovery action (restart module? abort run? notify HMI?).
 - ~~**Config in the temp directory.**~~ **Closed (§1.3):** moved to the `platformdirs` per-user config directory, single writer, versioned structure (migration was later removed — see §1.3), and dotted section names for structure. It is still INI — deliberately, because the type information lives in `configuration_schema.py` and the file stays hand-editable on a bench. What remains open is *changing* configuration at runtime: `SetConfigParameter` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
 - **PyPI name.** The pyproject rename to `pts-framework` needs an early availability check on PyPI (v1.0.0 requirement), and alignment with the import name `pypts`.
-- **Recipe format versioning.** Before the Creator and third-party step plugins ship, add `format_version` to the recipe header and a compatibility policy — cheap now, expensive later.
+- **Recipe format versioning.** Before the Creator and third-party step plugins ship, the compatibility policy must get teeth. What exists (§1.18): `recipe/rules.py: RECIPE_FORMAT_VERSION = "0.1.0"` (bumped in the same change that alters a rule), the optional `format_version` header key, and a **warn-only** check in the parser — a mismatch is an ERROR in the log, the recipe still loads. Still open: the hard refusal and the supported-versions window, ~v1.0.
 - **`pypts.api` stability.** Freezing the step/driver contract is the highest-leverage design decision left; review it with the module owners (per the Milestones page, each module has an assigned owner) before Phase 2 ends.

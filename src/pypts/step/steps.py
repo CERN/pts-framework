@@ -21,7 +21,7 @@ import importlib.util
 import time
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar
+from typing import Any
 
 from pypts.logger.log import log
 from pypts.step.runtime import Runtime
@@ -31,17 +31,22 @@ from pypts.step.step import Step
 class WaitStep(Step):
     """
     Sleep for `wait_time` seconds. The simplest step there is.
+    Named `Wait` in a recipe's `steptype:`.
 
     It exists to pace a sequence around slow hardware, and here also as the
     first ported type: it exercises the whole base lifecycle with no
-    dependencies at all. Returns {} - with no output to judge, the verdict
-    is DONE.
+    dependencies at all. `wait_time` is written directly on the step - a
+    fixed wait has no inputs to resolve and no outputs to judge, so it
+    carries no input_mapping and no output_mapping. Returns {} - with no
+    output to judge, the verdict is DONE.
     """
 
-    REQUIRED_INPUTS: ClassVar[tuple[str, ...]] = ("wait_time",)
+    def __init__(self, wait_time: float | str, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.wait_time = wait_time
 
     def _step(self, runtime: Runtime, step_input: dict[str, Any]) -> dict[str, Any]:
-        wait_time = float(step_input["wait_time"])
+        wait_time = float(self.wait_time)
         if wait_time < 0:
             raise ValueError(f"wait_time must not be negative, got {wait_time}")
         log.info("Waiting %s s.", wait_time)
@@ -107,13 +112,12 @@ def load_python_module(module_ref: str, base_dir: str) -> ModuleType:
 class PythonModuleStep(Step):
     """
     Call one function of a Python module; its return value is the output.
+    Named `PythonModule` in a recipe's `steptype:`.
 
     The minimal port: `action_type: method` only. The resolved inputs become
     the function's keyword arguments, and the base class judges whatever
     comes back (a non-dict return is wrapped as {"output": value}).
     """
-
-    REQUIRED_INPUTS: ClassVar[tuple[str, ...]] = ()
 
     def __init__(
         self,

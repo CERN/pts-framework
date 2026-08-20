@@ -2,35 +2,23 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-# The smallest recipe that actually runs: two WaitSteps and nothing else.
+# The smallest recipe that actually runs: two Wait steps and nothing else.
 # It is the unit-test fixture for the recipe data layer and the sequencer;
 # resources/recipes/wait_recipe.yml is its runnable twin for a manual run.
+# Optional fields are deliberately left out - the parser assumes them empty.
 name: Wait demo
 description: Two short waits - the smallest recipe that runs end to end.
 version: 1.0.0
 main_sequence: Main
-globals: {}
 ---
 sequence_name: Main
 description: Waits twice, briefly.
-parameters: {}
-locals: {}
-outputs: {}
-setup_steps: []
 steps:
-  - steptype: WaitStep
+  - steptype: Wait
     step_name: First wait
     description: Pause briefly.
-    input_mapping:
-      wait_time:
-        type: direct
-        value: '0.01'
-    output_mapping: {}
-  - steptype: WaitStep
+    wait_time: '0.01'
+  - steptype: Wait
     step_name: Second wait
     description: Pause briefly again.
-    input_mapping:
-      wait_time:
-        value: '0.01'
-    output_mapping: {}
-teardown_steps: []
+    wait_time: '0.01'

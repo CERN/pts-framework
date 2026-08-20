@@ -51,31 +51,20 @@ from pypts.sequencer.sequencer import Sequencer
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
 
-#: A recipe whose only step errors (negative wait), plus an always-run teardown.
+#: A recipe whose first step errors (negative wait), so the second never runs.
 FAILING_RECIPE = """\
 name: Fails
 description: The error path.
-version: 1.0.0
 main_sequence: Main
-globals: {}
 ---
 sequence_name: Main
-parameters: {}
-locals: {}
-outputs: {}
-setup_steps: []
 steps:
-  - steptype: WaitStep
+  - steptype: Wait
     step_name: Bad wait
-    input_mapping:
-      wait_time: {value: '-1'}
-    output_mapping: {}
-  - steptype: WaitStep
+    wait_time: '-1'
+  - steptype: Wait
     step_name: Never runs
-    input_mapping:
-      wait_time: {value: '0'}
-    output_mapping: {}
-teardown_steps: []
+    wait_time: '0'
 """
 
 PLACEHOLDER = "placeholder - test not implemented yet"

@@ -76,35 +76,36 @@ def test_step_type_is_resolved_without_eval():
     That is arbitrary code execution driven by a recipe file. The registry
     is a plain dict lookup: nothing a recipe writes is ever executed.
     """
-    step = build_step({"steptype": "WaitStep", "step_name": "pause"})
+    step = build_step({"steptype": "Wait", "step_name": "pause", "wait_time": "0"})
     assert isinstance(step, WaitStep)
     assert step.name == "pause"
 
 
 def test_steptype_matching_is_case_insensitive():
     """The old factory lower-cased eight of ten types and forgot the SSH two."""
-    step = build_step({"steptype": "waitstep", "step_name": "pause"})
+    step = build_step({"steptype": "wait", "step_name": "pause", "wait_time": "0"})
     assert isinstance(step, WaitStep)
 
 
 def test_build_step_does_not_mutate_the_callers_dict():
     """The old factory removed "steptype" from the YAML-loaded dict in place."""
-    step_data = {"steptype": "WaitStep", "step_name": "pause"}
+    step_data = {"steptype": "Wait", "step_name": "pause", "wait_time": "0"}
     build_step(step_data)
-    assert step_data == {"steptype": "WaitStep", "step_name": "pause"}
+    assert step_data == {"steptype": "Wait", "step_name": "pause", "wait_time": "0"}
 
 
 def test_unknown_steptype_raises_a_clear_error_listing_available_types():
     with pytest.raises(ValueError, match="PythonModulStep") as excinfo:
         build_step({"steptype": "PythonModulStep", "step_name": "typo"})
-    assert "waitstep" in str(excinfo.value)
+    assert "pythonmodule" in str(excinfo.value)
 
 
-def test_each_step_type_declares_its_required_fields():
-    """Feeds the verificator, the docs and the Recipe Creator toolbar from one source."""
-    for name, step_class in STEP_TYPES.items():
-        required = step_class.REQUIRED_INPUTS
-        assert isinstance(required, tuple), f"{name} declares no REQUIRED_INPUTS tuple"
+def test_the_rules_and_the_registry_agree_on_the_steptypes():
+    """rules.py is the one source for what each type requires; the registry is
+    the one source for what exists. They must name the same types."""
+    from pypts.recipe.rules import STEP_TYPE_REQUIRED
+
+    assert set(STEP_TYPE_REQUIRED) == set(STEP_TYPES)
 
 
 # --------------------------------------------------------------------------
@@ -274,13 +275,13 @@ def test_a_step_outcome_is_the_pickle_safe_projection():
 
 def test_steps_are_testable_standalone_with_a_fake_context():
     """"Tests executable stand-alone" is an explicit requirement in the spec."""
-    step = WaitStep(step_name="pause", input_mapping={"wait_time": {"value": "0"}})
+    step = WaitStep(step_name="pause", wait_time="0")
     result = step.run(Runtime())
     assert result.result is ResultType.DONE
 
 
 def test_a_negative_wait_time_is_an_error():
-    step = WaitStep(step_name="pause", input_mapping={"wait_time": {"value": "-1"}})
+    step = WaitStep(step_name="pause", wait_time="-1")
     result = step.run(Runtime())
     assert result.result is ResultType.ERROR
 

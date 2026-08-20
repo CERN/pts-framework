@@ -29,7 +29,7 @@ handling (parsed and stored, not yet consulted).
 
 import traceback
 import uuid
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any
 
 from pypts.messages.common_messages import ResultType, StepOutcome
 from pypts.messages.run_events import SequenceFinished, SequenceStarted, StepFinished, StepStarted
@@ -109,11 +109,6 @@ class Step:
     recipe's step mapping is splatted into it by the registry, so an unknown
     key is a TypeError at load time, not a surprise at run time.
     """
-
-    #: The input_mapping keys this step type cannot run without. Owned by the
-    #: step itself so the verificator, the docs and the Recipe Creator can all
-    #: ask one source (roadmap: the per-steptype schema grows from here).
-    REQUIRED_INPUTS: ClassVar[tuple[str, ...]] = ()
 
     def __init__(
         self,

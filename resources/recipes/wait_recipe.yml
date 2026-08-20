@@ -2,37 +2,23 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-# The smallest recipe that actually runs on the new engine: two WaitSteps and
-# nothing else. The other recipes in this folder still target the old engine's
-# step types and reference a test package that is not in the repo - this one
-# exists so `load_recipe resources/recipes/wait_recipe.yml` has something real
-# to load until they are portable.
+# The smallest recipe that actually runs on the new engine: two Wait steps
+# and nothing else. The other recipes in this folder still target the old
+# engine's step types and reference a test package that is not in the repo -
+# this one exists so `load_recipe resources/recipes/wait_recipe.yml` has
+# something real to load until they are portable.
 name: Wait demo
 description: Two short waits - the smallest recipe that runs end to end.
 version: 1.0.0
-main_sequence: Main
-globals: {}
 ---
 sequence_name: Main
 description: Waits twice, briefly.
-parameters: {}
-locals: {}
-outputs: {}
-setup_steps: []
 steps:
-  - steptype: WaitStep
+  - steptype: Wait
     step_name: First wait
     description: Pause briefly.
-    input_mapping:
-      wait_time:
-        type: direct
-        value: '0.5'
-    output_mapping: {}
-  - steptype: WaitStep
+    wait_time: '0.5'
+  - steptype: Wait
     step_name: Second wait
     description: Pause briefly again.
-    input_mapping:
-      wait_time:
-        value: '0.5'
-    output_mapping: {}
-teardown_steps: []
+    wait_time: '0.5'

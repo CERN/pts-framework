@@ -5,8 +5,11 @@
 """
 The step types: the unit of work a sequence is made of.
 
-A step is a class. `steptype:` in the YAML names it, the rest of the step's
-YAML keys become its constructor arguments, and its `_step()` does the work.
+A step is a class. `steptype:` in the YAML names it - `PythonModule`, `Wait`;
+the class names keep a Step suffix but the YAML names drop it - the rest of
+the step's YAML keys become its constructor arguments, and its `_step()`
+does the work. What each type requires and what is optional is declared in
+pypts.recipe.rules, the one importable source for the recipe format.
 The base class owns everything that is the same for all of them:
 
     resolve inputs  ->  _step()  ->  judge outputs  ->  StepResult
