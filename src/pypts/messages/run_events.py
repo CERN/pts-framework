@@ -20,6 +20,7 @@ port landed; now the Sequencer and the step layer send them on every run.
 """
 
 from dataclasses import dataclass
+from typing import Any
 from uuid import UUID
 
 from pypts.messages.common_messages import ResultType, StepOutcome
@@ -131,6 +132,31 @@ class StepFinished:
     """One step finished. Carries the whole outcome so a frontend needs no lookup."""
 
     outcome: StepOutcome
+
+
+# Sender: Step.run(). Receiver: report.py record_step()
+@dataclass(frozen=True, slots=True)
+class StepExecuted:
+    """
+    One step finished, with everything the Report writes about it.
+
+    The rich sibling of StepFinished, and **engine-internal**: it rides
+    Sequencer->CORE and CORE->Report only, two links that never leave the Core
+    process, so `inputs` and `outputs` may hold whatever the step touched. It
+    must never join the HMI unions - the flat StepOutcome is the projection
+    that crosses the process boundary.
+
+    `started_at` is epoch seconds (time.time()); `duration_s` is measured with
+    a monotonic clock around the whole lifecycle - resolve inputs, _step(),
+    judge outputs.
+    """
+
+    outcome: StepOutcome
+    step_type: str
+    inputs: dict[str, Any]
+    outputs: dict[str, Any]
+    started_at: float
+    duration_s: float
 
 
 # --- Commands the operator gives about a run ----------------------------------

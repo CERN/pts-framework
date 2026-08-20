@@ -17,7 +17,7 @@ from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
-from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore
+from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore, ReportReady
 from pypts.messages.run_events import RecipeLoaded
 
 #: Seconds between polls of the CORE inbox, in the background thread.
@@ -166,6 +166,10 @@ class CLI(HmiClient):
         if outcome.error_info:
             line = f"{line} - {outcome.error_info}"
         print(line)
+
+    def show_report_ready(self, event: ReportReady) -> None:
+        log.info("report ready: %s", event.report_path)
+        print(f"Report: {event.report_path}")
 
     def on_stop(self) -> None:
         print("Goodbye!")

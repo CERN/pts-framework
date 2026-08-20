@@ -270,7 +270,7 @@ toolbars, dialogs, threading or event plumbing, by design.
 | TopBar | recipe controls: Open, sequence dropdown, Start, Stop, recipe name label (the §2 toolbar state machine, event-driven per §5.4) |
 | LeftSidebar | the step table - UUID-keyed rows, §2 colors (`LayoutConfig` widens it; default 1:4 stretch is too narrow for it) |
 | CenterView | a `QStackedWidget` with three pages: idle (logo) → prompt (message + image + option buttons) → results |
-| BottomBar | status line (`StatusChanged`, errors); a log view later |
+| BottomBar | status line (`StatusChanged`, errors) + the "Open report folder" button (dead until the first `ReportReady`, then opens `report_dir` via `QDesktopServices`); a log view later |
 | native `QMainWindow.setMenuBar()` | File/About menus - the scaffold leaves it free |
 
 **Integration shape:** the template's `GUIAssembler` example is exactly our

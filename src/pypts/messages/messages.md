@@ -20,9 +20,9 @@ has already happened · **STUB** declared, nothing sends or carries it out yet.
 
 Every message marked **STUB** here also carries a `NOT SENT YET` comment in the source, on the
 dataclass and again on the branch that receives it. The marker means one specific thing:
-**the receiving end is written and works; nothing constructs the message.** Seven messages
+**the receiving end is written and works; nothing constructs the message.** Five messages
 are in that state today: the two prompt requests, `SetConfigParameter`, and the Report
-link's four generate/export messages. Grep for it to find the set:
+link's export pair (`ExportReport` / `ReportExported`). Grep for it to find the set:
 
 ```bash
 grep -rn "NOT SENT YET" src/pypts
@@ -83,7 +83,8 @@ every hop.
 | `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all three links. |
 | `ModuleError(source, severity, message, exception, traceback, operation, error_type)` | EVT | A failure the sender wants CORE to know about. Sent by the two decorators in `utilities/error_handling.py` for what nobody expected, and by `report_error()` / `report_problem()` from a raise site that recognised the failure itself and rated it. `operation` names the method (`"Sequencer.poll_core"`), `error_type` the exception class — strings, because this crosses the pickled link. |
 | `ErrorSeverity` · `ResultType` · `StepOutcome` | — | Enums and the pickle-safe summary of one executed step. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
-| `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
+| `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. CORE also forwards `RunStarted` and `SequenceStarted` to the Report, which needs the run brackets for its folder and its rows. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
+| `StepExecuted(outcome, step_type, inputs, outputs, started_at, duration_s)` | EVT | The rich sibling of `StepFinished`, emitted by `Step.run()` right after it: everything the Report writes about one executed step, including the resolved inputs, the judged outputs and the measured duration. **Engine-internal**: it rides Sequencer→CORE and CORE→Report only, two links that never leave the Core process — it must never join the HMI unions, whose flat `StepOutcome` is the projection that crosses the boundary. |
 | `UserPromptRequest/Response`, `SerialNumberRequest/Response` | EVT · STUB (requests only) | The two questions the engine asks the operator, joined by a `request_id` the asker generates. The *responses* are live; nothing sends the requests until the interactive steps are ported. |
 
 ## CORE ↔ HMI — `core_hmi_communication.py` (the only process boundary)
@@ -99,11 +100,12 @@ every hop.
 | `UserPromptResponse`, `SerialNumberResponse` | EVT | The operator's answers; CORE relays them to the Sequencer. |
 | `Heartbeat`, `ModuleError` | EVT | Shared vocabulary, as above. |
 
-| `CoreToHmi` (12) | Kind | Meaning |
+| `CoreToHmi` (13) | Kind | Meaning |
 |---|---|---|
 | `StopHmi()` | CMD | Close the frontend. It answers `HmiStopped`. |
 | `StatusChanged(text)` | EVT | One line of free text for the runtime log. Anything with structure has its own message now. |
 | `ModuleErrorReported(error)` | EVT | An error CORE decided the operator should see (severity above WARNING). |
+| `ReportReady(report_path, report_dir)` | EVT | The run's report is on disk. Sent by CORE when the Report answers `ReportGenerated`; the structured sibling of the `StatusChanged` sent beside it. `report_dir` is what a frontend's "open report folder" control opens. |
 | the 7 progress events + the 2 requests | EVT | Forwarded from the Sequencer, unchanged. |
 
 Everything on this link is **pickled**: it is the one link that still crosses a process
@@ -116,14 +118,14 @@ that stops being true.
 | Direction | Messages |
 |---|---|
 | `CoreToSequencer` (6) | **CMD** `UseRecipe(recipe)` (the live, validated Recipe subsequent runs use - the one message carrying a rich object, allowed because this link never leaves the Core process) · `RunSequence(sequence_name)` · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `SerialNumberResponse` — answers relayed back from the HMI |
-| `SequencerToCore` (11) | **EVT** `SequencerStopped()` · the 6 run-progress events · the 2 operator requests · `Heartbeat` · `ModuleError` |
+| `SequencerToCore` (12) | **EVT** `SequencerStopped()` · the 6 run-progress events · `StepExecuted` (routed to the Report, never the HMI) · the 2 operator requests · `Heartbeat` · `ModuleError` |
 
 ## CORE ↔ Report — `core_report_communication.py` (thread of the Core process)
 
 | Direction | Messages |
 |---|---|
-| `CoreToReport` (3) | **CMD** `GenerateReport()` · `ExportReport()` · `StopReport()` |
-| `ReportToCore` (5) | **EVT** `ReportStopped()` · `ReportGenerated(report_path)` · `ReportExported(report_path)` · `Heartbeat` · `ModuleError`<br>The paths are absolute, and they are new: the old notifications carried nothing, so CORE learned a report existed but not where. |
+| `CoreToReport` (7) | **EVT** `RunStarted` (opens the run folder and the incremental CSV) · `SequenceStarted` (names the rows that follow) · `StepExecuted` (one CSV row, flushed) · `RunFinished` (closes the CSV) — all forwarded from the Sequencer<br>**CMD** `GenerateReport()` (sent by CORE right behind `RunFinished`; one queue, so the order is guaranteed) · `ExportReport()` (STUB) · `StopReport()` |
+| `ReportToCore` (5) | **EVT** `ReportStopped()` · `ReportGenerated(report_path)` (answers `GenerateReport`; CORE relays it to the operator as `ReportReady`) · `ReportExported(report_path)` (STUB) · `Heartbeat` · `ModuleError`<br>The paths are absolute, and they are new: the old notifications carried nothing, so CORE learned a report existed but not where. |
 
 ## any → Logger — `to_logger_communication.py`
 

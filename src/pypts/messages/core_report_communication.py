@@ -5,24 +5,26 @@
 """
 The CORE <-> Report link. The Report is a thread of the Core process.
 
-Four of this link's six messages are marked `NOT SENT YET` - the marker used
-throughout `messages/`, meaning the receiving end is written and works and
-nothing constructs the message. This is the emptiest link in the system: today
-the only thing CORE ever puts on it is `StopReport`, so the Report thread runs
-its event loop, heartbeats and resolves its output directory without ever being
-asked for anything. Both ends unblock together when the report layer is ported -
-roadmap Phase 4, and the CSV/HTML logic to port is in `old_code/report.py`.
+Most of the CORE->Report traffic is run events forwarded from the Sequencer:
+RunStarted opens the run's folder and its incremental CSV, each StepExecuted
+appends one row, RunFinished closes the CSV, and the GenerateReport CORE sends
+right after it turns the rows into the run's HTML report. The Report answers
+with ReportGenerated, which CORE relays to the operator as ReportReady.
+
+The link never leaves the Core process, which is why it may carry StepExecuted
+- the rich step record the HMI boundary must never see.
 """
 
 from dataclasses import dataclass
 
 from pypts.messages.common_messages import Heartbeat, ModuleError
+from pypts.messages.run_events import RunFinished, RunStarted, SequenceStarted, StepExecuted
 
 # --- CORE -> Report: commands -------------------------------------------------
 
 
-# NOT SENT YET - receiver: report.py generate_report(). CORE has no trigger for
-# this at all: it should send it on RunFinished, which is itself never sent.
+# Sender: core.py handle_sequencer_message(), right after it forwards
+# RunFinished. Receiver: report.py generate_report().
 @dataclass(frozen=True, slots=True)
 class GenerateReport:
     """Build the report for the run that just finished."""
@@ -48,9 +50,8 @@ class ReportStopped:
     """The Report's event loop has ended."""
 
 
-# NOT SENT YET - receiver: core.py handle_report_message(), which turns it into
-# a StatusChanged for the operator. Sent once generate_report() is more than a
-# warning.
+# Sender: report.py generate_report(). Receiver: core.py
+# handle_report_message(), which relays it to the operator as ReportReady.
 @dataclass(frozen=True, slots=True)
 class ReportGenerated:
     """A report was built. `report_path` is absolute."""
@@ -68,6 +69,14 @@ class ReportExported:
 
 # --- The link ------------------------------------------------------------------
 
-CoreToReport = GenerateReport | ExportReport | StopReport
+CoreToReport = (
+    RunStarted
+    | SequenceStarted
+    | StepExecuted
+    | RunFinished
+    | GenerateReport
+    | ExportReport
+    | StopReport
+)
 
 ReportToCore = ReportStopped | ReportGenerated | ReportExported | Heartbeat | ModuleError

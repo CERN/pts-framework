@@ -21,9 +21,9 @@ presentation in separate objects.
 
 import sys
 
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QWidget
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QCloseEvent, QDesktopServices
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QPushButton, QWidget
 
 from pypts.hmi.gui.center_view import CenterContent
 from pypts.hmi.gui.scaffold.main_window import MainWindow
@@ -34,7 +34,7 @@ from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
-from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore
+from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore, ReportReady
 from pypts.messages.run_events import (
     RecipeLoaded,
     SerialNumberRequest,
@@ -140,11 +140,19 @@ class GUI(HmiClient):
         self.center = CenterContent()
         self.status_label = QLabel("Status: Idle")
 
+        #: The folder of the newest report, or None before the first one.
+        self.report_dir: str | None = None
+        self.open_report_button = QPushButton("Open report folder")
+        # Dead until a ReportReady names a folder to open.
+        self.open_report_button.setEnabled(False)
+        self.open_report_button.clicked.connect(self.open_report_folder)
+
         bottom = QWidget()
         bottom_layout = QHBoxLayout(bottom)
         bottom_layout.setContentsMargins(8, 2, 8, 2)
         bottom_layout.addWidget(self.status_label)
         bottom_layout.addStretch()
+        bottom_layout.addWidget(self.open_report_button)
 
         self.window.top_bar.set_content(self.top_bar)
         self.window.left_sidebar.set_content(self.step_table)
@@ -208,6 +216,17 @@ class GUI(HmiClient):
 
     def show_step_finished(self, outcome: StepOutcome) -> None:
         self.step_table.show_outcome(outcome)
+
+    def show_report_ready(self, event: ReportReady) -> None:
+        self.report_dir = event.report_dir
+        self.open_report_button.setEnabled(True)
+        self.status_label.setText(f"Report ready: {event.report_path}")
+
+    def open_report_folder(self) -> None:
+        """Open the newest report's folder in the platform's file browser."""
+        if self.report_dir is None:
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(self.report_dir))
 
     def ask_user(self, request: UserPromptRequest) -> None:
         self.center.show_prompt(

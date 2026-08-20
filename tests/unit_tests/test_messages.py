@@ -52,6 +52,7 @@ from pypts.messages.core_hmi_communication import (
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
+    ReportReady,
     SetConfigParameter,
     ShutdownRequested,
     StartSequence,
@@ -86,6 +87,7 @@ from pypts.messages.run_events import (
     SequenceSummary,
     SerialNumberRequest,
     SerialNumberResponse,
+    StepExecuted,
     StepFinished,
     StepStarted,
     StepSummary,
@@ -167,6 +169,14 @@ EXAMPLES = {
     SequenceFinished: SequenceFinished(sequence_name="Main", result=ResultType.FAIL),
     StepStarted: StepStarted(step_id=STEP_ID, step_name="Measure voltage"),
     StepFinished: StepFinished(outcome=AN_OUTCOME),
+    StepExecuted: StepExecuted(
+        outcome=AN_OUTCOME,
+        step_type="WaitStep",
+        inputs={"wait_time": "0.5"},
+        outputs={"voltage": 3.3},
+        started_at=1_760_000_000.5,
+        duration_s=0.5,
+    ),
     UserPromptRequest: UserPromptRequest(
         request_id=REQUEST_ID,
         message="Connect the DUT",
@@ -185,6 +195,9 @@ EXAMPLES = {
     StopHmi: StopHmi(),
     StatusChanged: StatusChanged(text="Idle"),
     ModuleErrorReported: ModuleErrorReported(error=AN_ERROR),
+    ReportReady: ReportReady(
+        report_path="/tmp/run/report.html", report_dir="/tmp/run"
+    ),
     # core_sequencer_communication
     UseRecipe: UseRecipe(recipe=A_RECIPE),
     RunSequence: RunSequence(sequence_name="Main"),

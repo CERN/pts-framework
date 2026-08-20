@@ -77,3 +77,18 @@ def test_exit_codes_follow_the_specification():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_version_flag_prints_the_package_version():
     ...
+
+
+def test_report_ready_is_printed_with_its_path(capsys):
+    """The CLI has no button; the path on the console is its whole feature."""
+    from pypts.hmi.cli.cli import CLI
+    from pypts.messages.core_hmi_communication import ReportReady
+
+    cli = CLI(QueueWrapper(queue.Queue()), QueueWrapper(queue.Queue()))
+
+    cli.handle_core_message(
+        ReportReady(report_path="/runs/run_1/report.html", report_dir="/runs/run_1")
+    )
+
+    printed = capsys.readouterr().out
+    assert "/runs/run_1/report.html" in printed

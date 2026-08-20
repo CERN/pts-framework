@@ -28,6 +28,7 @@ from pypts.messages.core_hmi_communication import (
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
+    ReportReady,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
@@ -98,6 +99,8 @@ class HmiClient:
                 self.show_status(text)
             case ModuleErrorReported(error=error):
                 self.show_error(error)
+            case ReportReady():
+                self.show_report_ready(message)
             # The progress events below are live: CORE and the engine send all
             # of them on every run. Only the two prompt *requests* at the end
             # are still NOT SENT YET - their senders are the interactive step
@@ -224,6 +227,12 @@ class HmiClient:
 
     def show_step_finished(self, outcome: StepOutcome) -> None:
         log.info("step finished: %s -> %s", outcome.step_name, outcome.result)
+
+    def show_report_ready(self, event: ReportReady) -> None:
+        """The run's report is on disk. Passed whole: a frontend that offers
+        "open the folder" needs `report_dir`, one that names the file needs
+        `report_path`."""
+        log.info("report ready: %s", event.report_path)
 
     def ask_user(self, request: UserPromptRequest) -> None:
         """

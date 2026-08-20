@@ -104,6 +104,21 @@ class ModuleErrorReported:
     error: ModuleError
 
 
+@dataclass(frozen=True, slots=True)
+class ReportReady:
+    """
+    The report of the run that just finished is on disk.
+
+    Sent by CORE when the Report answers ReportGenerated. Both paths are
+    absolute strings: `report_path` is the HTML file, `report_dir` the run
+    folder holding it and the CSV - what a frontend's "open report folder"
+    control opens.
+    """
+
+    report_path: str
+    report_dir: str
+
+
 # --- The link ------------------------------------------------------------------
 #
 # The two unions are the contract: `unhandled()` is checked against them, and the
@@ -126,6 +141,7 @@ CoreToHmi = (
     StopHmi
     | StatusChanged
     | ModuleErrorReported
+    | ReportReady
     | RecipeLoaded
     | RunStarted
     | RunFinished

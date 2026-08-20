@@ -18,7 +18,13 @@ import uuid
 import pytest
 
 from pypts.messages.common_messages import ResultType, StepOutcome
-from pypts.messages.run_events import SequenceFinished, SequenceStarted, StepFinished, StepStarted
+from pypts.messages.run_events import (
+    SequenceFinished,
+    SequenceStarted,
+    StepExecuted,
+    StepFinished,
+    StepStarted,
+)
 from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
 from pypts.step.step import Step, StepResult, run_sequence
@@ -238,10 +244,55 @@ def test_a_step_run_produces_a_result_and_both_events():
 
     assert result.result is ResultType.PASS
     assert result.outputs == {"ok": True}
-    assert events == [
+    # The rich StepExecuted for the Report follows; its own test is below.
+    assert events[:2] == [
         StepStarted(step_id=step.id, step_name="works"),
         StepFinished(outcome=result.to_outcome()),
     ]
+
+
+def test_a_step_run_emits_the_rich_record_for_the_report():
+    """StepExecuted carries what the CSV needs: type, data, and timing.
+
+    Emitted last, after StepFinished - the frontend's flat event is not held
+    up by the record keeping.
+    """
+    events = []
+    runtime = Runtime(emit=events.append)
+    step = WaitStep(step_name="pause", wait_time="0.05")
+
+    result = step.run(runtime)
+
+    executed = [event for event in events if isinstance(event, StepExecuted)]
+    assert len(executed) == 1
+    record = executed[0]
+    assert events[-1] is record
+    assert record.outcome == result.to_outcome()
+    assert record.step_type == "WaitStep"
+    # A WaitStep has no input_mapping - wait_time sits on the step itself -
+    # so its resolved inputs are legitimately empty.
+    assert record.inputs == result.inputs == {}
+    assert record.outputs == result.outputs
+    assert record.duration_s >= 0.05
+    assert record.started_at > 0
+
+
+def test_the_rich_record_carries_the_resolved_inputs_and_outputs():
+    events = []
+    runtime = Runtime(emit=events.append)
+    step = ReturnsDict(
+        step_name="works",
+        payload={"ok": True},
+        input_mapping={"limit": {"type": "direct", "value": "9"}},
+        output_mapping={"ok": {"type": "passfail"}},
+    )
+
+    step.run(runtime)
+
+    record = events[-1]
+    assert isinstance(record, StepExecuted)
+    assert record.inputs == {"limit": "9"}
+    assert record.outputs == {"ok": True}
 
 
 def test_a_non_dict_return_is_wrapped_and_none_becomes_empty():

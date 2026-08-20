@@ -28,10 +28,10 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 ### What is placeholder / not yet ported
 
 1. **The execution engine - nine of ten step types.** The skeleton is real now (§1.13): `recipe/` parses and validates, `step/` has the base lifecycle + `WaitStep` + the registry, `execute_sequence()` runs the requested sequence and emits every run event, and Core's `LoadRecipe`/`StartSequence` handlers work. Still in **`old_code/`**: `PythonModuleStep` (and the resource-based `test_package` module loading described in `architecture.rst`), the four interactive types, `SequenceStep`/`IndexedStep` (nesting), and the SSH pair - plus the continue_on_error policy.
-2. **Report module** — process shell with heartbeat exists; `generate_report()` / `export_report()` are `pass`. The CSV/HTML logic is in `old_code/report.py`.
+2. **Report module** — **first real slice in (§1.19):** one folder per run, an incremental CSV growing step by step, a simple self-contained `report.html` on `RunFinished`, and the operator told where it is (`ReportReady`; the GUI's "Open report folder" button). Still missing against `old_code/report.py` and the spec: the serial-number column (nothing asks for one yet), TDMS plots, configurable templates/`report.type`/`report.theme` (Phase 4), `ExportReport` (stub at both ends).
 3. **HAL** — `hal.py` is a one-line comment.
 4. **Stream handler** — `src/pypts/stream_handler/` is an empty placeholder package. The `StreamContainer` singleton and the XYGraph widget spike were moved out of the shipping package to `spikes/stream_handler/` and `spikes/GUI/XYGraph/`: neither was imported by anything, `StreamContainer` executed and printed at import, and XYGraph has undefined names that raise if reached. Phase 3 promotes them from there.
-5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing but no recipe/report/exit-code features yet. Neither frontend shows the message layer, and neither needs to: `--log-level DEBUG` puts every message on every link into the run log (§1.2), and the Debug Monitor renders that log live (§1.4).
+5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing and prints the report path (§1.19), but no exit-code features yet. Neither frontend shows the message layer, and neither needs to: `--log-level DEBUG` puts every message on every link into the run log (§1.2), and the Debug Monitor renders that log live (§1.4).
 6. ~~**Step construction still uses `eval(...)`**~~ **Closed (§1.13):** the new `step/registry.py` is a plain dict lookup with a clear unknown-steptype error; the `eval()` stays behind in `old_code/` and dies with it.
 
 ### Defects worth fixing early (spotted while reading the branch)
@@ -83,8 +83,8 @@ is two edits rather than four, and both ends of a link are now one file.
       queue after the first answer (a file path, a measured value, a `(port, baudrate, IDN)`
       triple). `UserPromptResponse` does not model this; each follow-up needs to become its own
       request when those steps are ported.
-- [ ] **TODO:** Core does not yet trigger `GenerateReport` on `RunFinished`, or forward run
-      events to the Report at all. That wiring belongs with the Phase 1 engine port.
+- [x] **DONE (§1.19):** Core forwards `RunStarted`/`SequenceStarted`/`StepExecuted`/
+      `RunFinished` to the Report and sends `GenerateReport` right behind `RunFinished`.
 - [x] **DONE (§1.9):** mypy is configured over `pypts/messages/` and the handler modules, and
       runs in CI. Note the framing in that TODO was too strong: exhaustiveness was never
       *only* a runtime check — `test_messages.py` drives every member of every union through
@@ -983,8 +983,8 @@ carries the full send/recv trace including `UseRecipe` on `core->sequencer`.
       Creator?) before the Report and the Creator need stable identity across runs.
 - [ ] **TODO:** the `"method"` input type (identical to `direct` in the old code) returns
       with `PythonModuleStep`.
-- [ ] **TODO:** `Core` should trigger `GenerateReport` on `RunFinished` - lands with the
-      Report port (Phase 1 step 4), the branch is marked in `core.py`.
+- [x] **DONE (§1.19):** `Core` triggers `GenerateReport` on `RunFinished`, and forwards the
+      run events the Report records.
 - [ ] **TODO:** the CI `typecheck` job installs only mypy, so `[[tool.mypy.overrides]]`
       silences the missing PyYAML; install `types-PyYAML` (or the package) in that job and
       drop the override.
@@ -1194,6 +1194,69 @@ real tests), `ruff` and `mypy` clean.
 
 ---
 
+### 1.19 The Report is real: incremental CSV + HTML per run — **done (first slice)**
+
+> **Status: implemented.** The first half of Phase 1 step 4. A run now leaves artefacts:
+> one folder per run under `paths.reports_dir`, a `report.csv` that grows step by step
+> while the run is going, a self-contained `report.html` built when it finishes, and the
+> operator told where it all is — the CLI prints the path, the GUI's new
+> **"Open report folder"** button opens the folder.
+
+**The message flow, following the architecture rather than working around it:**
+
+1. `Step.run()` now also emits **`StepExecuted`** (new, in `run_events.py`), right after
+   `StepFinished`: the rich per-step record — `StepOutcome` plus `step_type`, the resolved
+   `inputs`, the judged `outputs`, `started_at` and a `duration_s` measured with a
+   monotonic clock around the whole lifecycle. **Engine-internal by contract**: it rides
+   Sequencer→CORE and CORE→Report only, never the HMI boundary — the flat `StepOutcome`
+   remains the pickled projection, exactly the split its docstring always promised.
+2. CORE forwards `RunStarted` and `SequenceStarted` to the Report as well as the HMI,
+   routes `StepExecuted` to the Report alone, and on `RunFinished` forwards it and sends
+   `GenerateReport` right behind it — one queue, so the Report closes the CSV before it is
+   asked to generate. This closes the §1.1 wiring TODO.
+3. The Report opens `<timestamp>_<recipe name>/report.csv` on `RunStarted` (a collision
+   gets a numeric suffix), appends **and flushes** one row per `StepExecuted` — a run that
+   dies mid-sequence still leaves the results it produced — closes it on `RunFinished`,
+   writes `report.html` from the recorded rows on `GenerateReport`, and answers
+   `ReportGenerated(report_path)`.
+4. CORE relays that to the operator as `StatusChanged` plus the new structured
+   **`ReportReady(report_path, report_dir)`** (`core_hmi_communication.py`); the shared
+   `show_report_ready()` hook lands in `hmi_client.py`, the CLI prints the path, the GUI
+   enables the button (dead until the first report of the session).
+
+**The CSV** mirrors the old engine's report where a column existed there
+(`old_code/report.py`): recipe/sequence/step names, step id and type, result, inputs and
+outputs as JSON, error info — plus `started_at` and `duration_s`, which the old report did
+not have. **The HTML** is deliberately plain: run context, summary counts, one colored row
+per step, inline CSS, opens from disk.
+
+**Verified:** 387 passed / 45 skipped (test_report.py's five placeholders are ten real
+tests; routing tests in test_core.py, emission tests in test_step.py, one presentation
+test per frontend), `mypy` clean, `ruff` clean on everything this change touched (it
+reports two E501 and a BLE001 in `logger/log.py`, pre-existing from commit ee4dc1c and
+deliberately not fixed here), and the end-to-end CLI run confirmed on
+Windows: `load_recipe` → `start_sequence Main` → `Run finished: DONE (2 steps)` →
+`Report: …\reports\20260820_183324_Wait_demo\report.html`, with the CSV's two rows
+carrying real durations (~0.5 s each).
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** the `serial_number` column returns when something sends
+      `SerialNumberRequest` (the four `User*` step types, Phase 1 step 2), and the
+      `pypts_version` column with it — stamped by the Report, not carried on every event.
+- [ ] **TODO:** `ExportReport`/`ReportExported` are now the Report link's only stubs. They
+      wait for Phase 4's format work (`report.type`/`report.theme` are still read and
+      unused, §1.3), which is also where the old TDMS plot generation gets rethought.
+- [ ] **TODO:** the Report keeps the run's rows in memory for the HTML pass. Fine for
+      bench-sized runs; the old code re-read the CSV instead, which is the fallback if a
+      soak test ever makes this matter.
+- [ ] **TODO:** the run folder solves "artifacts organized per run folder" for *reports*;
+      the log file still lives in one flat `logs/` directory (the per-run-folder item in
+      Phase 0's logging decision). Deciding whether the log joins the report folder is
+      part of that open item.
+
+---
+
 ## TODO — Recipe format: findings and decisions
 
 > **Status: analysed; the format itself now exists for the ported types (§1.17), the rest is
@@ -1308,7 +1371,7 @@ Recommended porting order (each step is one reviewable MR):
 1. **Recipe (data layer):** ~~move loading/parsing/validation from `old_code/recipe.py` into `recipe/recipe.py`, stripped of all execution logic~~ **done (§1.13)** - every load failure is a loud `RecipeError` and an invalid recipe never reaches the Sequencer. Still open here: the verificator integration (it has its own broken-import problem, Phase 0), and `test_package` handling, which lands with `PythonModuleStep`.
 2. **Step & Sequencer (execution):** **skeleton done (§1.13)** - the base `Step` lifecycle, `StepResult`, `Runtime` and `execute_sequence()` are in and all seven run events are produced on every run. What remains of this item is porting the other nine step types onto that base, one reviewable MR each, in dependency order: `PythonModuleStep` (module loading design) → the four `User*` types (the request/response prompt wiring) → `SequenceStep`/`IndexedStep` (nesting - `run_sequence()` and `StepResult.subresults` are already shaped for it) → the SSH pair (credentials move to the Config Handler first, F22).
 3. **Core orchestration:** implement `LOAD_RECIPE`/`START_SEQUENCE` handlers, runtime metadata (recipe info, DUT serials, timing, machine info), result aggregation, and forwarding to HMI + Report.
-4. **Report:** port incremental CSV writing + HTML generation behind `GENERATE`/`EXPORT`; intermediate result file (YAML/CSV) per spec; artifacts organized per run folder.
+4. **Report:** ~~port incremental CSV writing + HTML generation behind `GENERATE`/`EXPORT`; intermediate result file (YAML/CSV) per spec; artifacts organized per run folder~~ **first slice done (§1.19)** - incremental CSV, HTML on `GenerateReport`, one folder per run. Still open: `ExportReport`, the serial-number column, TDMS plots, and the template/theme work of Phase 4.
 5. **HMI:** CLI first — recipe load/validate/run, sequence selection, prompts (serial number, user interaction now crossing a process boundary — see pickling risk in §4), report/log locations, exit codes `0/1/2/3`, `--version`. Then grow the GUI beyond the status window (recipe preview, runtime log, results table).
 6. **Delete `old_code/`** once parity is proven by the Phase 0 characterization tests. v0.3.0 is tagged here.
 

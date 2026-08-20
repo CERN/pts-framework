@@ -19,6 +19,7 @@ from pypts.messages.run_events import (
     SequenceStarted,
     SerialNumberRequest,
     SerialNumberResponse,
+    StepExecuted,
     StepFinished,
     StepStarted,
     # Defined in run_events because it rides two links: a frontend sends it and
@@ -86,6 +87,7 @@ SequencerToCore = (
     | SequenceFinished
     | StepStarted
     | StepFinished
+    | StepExecuted
     | UserPromptRequest
     | SerialNumberRequest
     | Heartbeat

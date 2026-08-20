@@ -27,12 +27,19 @@ Deliberately absent, recorded in the roadmap: the continue_on_error policy
 handling (parsed and stored, not yet consulted).
 """
 
+import time
 import traceback
 import uuid
 from typing import TYPE_CHECKING, Any
 
 from pypts.messages.common_messages import ResultType, StepOutcome
-from pypts.messages.run_events import SequenceFinished, SequenceStarted, StepFinished, StepStarted
+from pypts.messages.run_events import (
+    SequenceFinished,
+    SequenceStarted,
+    StepExecuted,
+    StepFinished,
+    StepStarted,
+)
 from pypts.step.runtime import Runtime
 
 if TYPE_CHECKING:
@@ -227,10 +234,14 @@ class Step:
 
         Emits StepStarted before the work and StepFinished after it, through
         the Runtime - so the same events flow whether the step runs at the
-        top of a sequence or (later) nested inside one.
+        top of a sequence or (later) nested inside one. A StepExecuted with
+        the rich record for the Report follows last, so the frontend's flat
+        event is never held up by the record keeping.
         """
         step_result = StepResult(self)
         runtime.emit(StepStarted(step_id=self.id, step_name=self.name))
+        started_at = time.time()
+        work_began = time.perf_counter()
 
         if self.skip:
             step_result.set_skip()
@@ -251,7 +262,19 @@ class Step:
                 verdict = self.process_outputs(runtime, step_output)
                 step_result.set_result(verdict, step_input, step_output)
 
+        duration_s = time.perf_counter() - work_began
         runtime.emit(StepFinished(outcome=step_result.to_outcome()))
+        runtime.emit(
+            StepExecuted(
+                outcome=step_result.to_outcome(),
+                step_type=type(self).__name__,
+                # Copies: the message is a fact, and the result's dicts live on.
+                inputs=dict(step_result.inputs),
+                outputs=dict(step_result.outputs),
+                started_at=started_at,
+                duration_s=duration_s,
+            )
+        )
         return step_result
 
     @staticmethod

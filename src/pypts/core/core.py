@@ -26,6 +26,7 @@ import logging
 import threading
 import time
 import traceback
+from pathlib import Path
 from queue import Queue
 from typing import ClassVar
 
@@ -38,6 +39,7 @@ from pypts.messages.core_hmi_communication import (
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
+    ReportReady,
     SetConfigParameter,
     ShutdownRequested,
     StartSequence,
@@ -46,6 +48,7 @@ from pypts.messages.core_hmi_communication import (
 )
 from pypts.messages.core_report_communication import (
     CoreToReport,
+    GenerateReport,
     ReportExported,
     ReportGenerated,
     ReportStopped,
@@ -74,6 +77,7 @@ from pypts.messages.run_events import (
     SequenceStarted,
     SerialNumberRequest,
     SerialNumberResponse,
+    StepExecuted,
     StepFinished,
     StepStarted,
     StopSequence,
@@ -350,19 +354,28 @@ class Core:
         match message:
             case SequencerStopped():
                 self.module_running[SEQUENCER] = False
-            case (
-                RunStarted()
-                | RunFinished()
-                | SequenceStarted()
-                | SequenceFinished()
-                | StepStarted()
-                | StepFinished()
-            ):
-                # Progress is the frontend's business. CORE relays the same
-                # object rather than repacking it, so nothing is lost on the
-                # way. TODO(roadmap): on RunFinished, also trigger the Report
-                # (GenerateReport) - that wiring lands with the Report port.
+            case RunStarted() | SequenceStarted():
+                # Progress is the frontend's business, and these two are the
+                # Report's as well: RunStarted opens the run folder and the
+                # CSV, SequenceStarted names the rows that follow. The same
+                # object is relayed rather than repacked, so nothing is lost
+                # on the way.
+                self.to_report.send(message)
                 self.to_hmi.send(message)
+            case RunFinished():
+                # The Report closes the CSV on RunFinished, then builds the
+                # HTML on the GenerateReport sent right behind it - one queue,
+                # so the order is guaranteed.
+                self.to_report.send(message)
+                self.to_report.send(GenerateReport())
+                self.to_hmi.send(message)
+            case SequenceFinished() | StepStarted() | StepFinished():
+                self.to_hmi.send(message)
+            case StepExecuted():
+                # The rich step record. Report only - the HMI already got the
+                # flat StepFinished, and this one must not cross the process
+                # boundary (see its docstring).
+                self.to_report.send(message)
             case UserPromptRequest() | SerialNumberRequest():
                 # NOT SENT YET - no step asks a question yet. The *answers* do
                 # come back through here (handle_hmi_message), so only this
@@ -379,10 +392,16 @@ class Core:
         match message:
             case ReportStopped():
                 self.module_running[REPORT] = False
-            # NOT SENT YET, both of them - the Report's two generating methods
-            # are stubs, and CORE never asks them for anything either.
             case ReportGenerated(report_path=path):
+                log.info("Report generated: %s", path)
                 self.to_hmi.send(StatusChanged(f"Report generated: {path}"))
+                # The structured sibling of the status line: the paths a
+                # frontend can wire an "open report folder" control to.
+                self.to_hmi.send(
+                    ReportReady(report_path=path, report_dir=str(Path(path).parent))
+                )
+            # NOT SENT YET - export_report() is still a stub and nothing asks
+            # for it either.
             case ReportExported(report_path=path):
                 self.to_hmi.send(StatusChanged(f"Report exported: {path}"))
             case Heartbeat():

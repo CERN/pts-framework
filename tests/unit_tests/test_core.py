@@ -356,3 +356,91 @@ def test_a_module_still_running_before_any_stop_request_is_not_abandoned():
 
     assert core.running is True
     assert core.shutdown_deadline is None
+
+# --------------------------------------------------------------------------
+# Run events reach the Report (roadmap: the report wiring)
+# --------------------------------------------------------------------------
+
+
+def a_step_executed():
+    from uuid import uuid4
+
+    from pypts.messages.common_messages import ResultType, StepOutcome
+    from pypts.messages.run_events import StepExecuted
+
+    return StepExecuted(
+        outcome=StepOutcome(step_id=uuid4(), step_name="measure", result=ResultType.PASS),
+        step_type="WaitStep",
+        inputs={"wait_time": "0.5"},
+        outputs={},
+        started_at=1_760_000_000.5,
+        duration_s=0.5,
+    )
+
+
+def test_run_started_and_sequence_started_reach_report_and_hmi():
+    """The Report needs the run brackets to open its folder and name its rows."""
+    from pypts.messages.run_events import RunStarted, SequenceStarted
+
+    core = build_core_that_spawns_nothing()
+    started = RunStarted(recipe_name="Wait demo", recipe_description="")
+    sequence = SequenceStarted(sequence_name="Main")
+
+    core.from_sequencer.send(started)
+    core.from_sequencer.send(sequence)
+    core.poll_all_sources()
+
+    assert list(core.to_report.receive()) == [started, sequence]
+    assert list(core.to_hmi.receive()) == [started, sequence]
+
+
+def test_run_finished_triggers_report_generation():
+    """CORE forwards RunFinished to the Report and asks for the report in the
+    same breath - the ordering on one queue is what lets the Report close the
+    CSV before it is asked to generate."""
+    from pypts.messages.common_messages import ResultType
+    from pypts.messages.core_report_communication import GenerateReport
+    from pypts.messages.run_events import RunFinished
+
+    core = build_core_that_spawns_nothing()
+    finished = RunFinished(result=ResultType.DONE)
+
+    core.from_sequencer.send(finished)
+    core.poll_all_sources()
+
+    assert list(core.to_report.receive()) == [finished, GenerateReport()]
+    assert list(core.to_hmi.receive()) == [finished]
+
+
+def test_step_executed_goes_to_the_report_not_the_hmi():
+    """The rich record stays inside the engine process; the HMI already got the
+    flat StepFinished."""
+    core = build_core_that_spawns_nothing()
+    executed = a_step_executed()
+
+    core.from_sequencer.send(executed)
+    core.poll_all_sources()
+
+    assert list(core.to_report.receive()) == [executed]
+    assert list(core.to_hmi.receive()) == []
+
+
+def test_report_generated_is_relayed_as_report_ready():
+    """The operator learns where the report is, in a message a frontend can
+    wire a button to."""
+    from pathlib import Path
+
+    from pypts.messages.core_hmi_communication import ReportReady, StatusChanged
+    from pypts.messages.core_report_communication import ReportGenerated
+
+    core = build_core_that_spawns_nothing()
+    report_path = str(Path("reports") / "run_1" / "report.html")
+
+    core.from_report.send(ReportGenerated(report_path=report_path))
+    core.poll_all_sources()
+
+    to_hmi = list(core.to_hmi.receive())
+    assert [type(m) for m in to_hmi] == [StatusChanged, ReportReady]
+    ready = to_hmi[1]
+    assert ready.report_path == report_path
+    assert ready.report_dir == str(Path("reports") / "run_1")

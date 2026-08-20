@@ -455,3 +455,24 @@ def test_widgets_are_resolved_by_step_or_stream_type():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_view_refreshes_on_every_event():
     """Known bug in TODO.txt: the GUI does not always refresh properly."""
+
+# --------------------------------------------------------------------------
+# The report button
+# --------------------------------------------------------------------------
+
+
+def test_report_ready_enables_the_open_report_button(gui, tmp_path):
+    """The button is dead until there is a folder to open, then points at it."""
+    from pypts.messages.core_hmi_communication import ReportReady
+
+    instance, _outbox, inbox = gui
+    assert instance.open_report_button.isEnabled() is False
+
+    run_dir = tmp_path / "run_1"
+    inbox.send(
+        ReportReady(report_path=str(run_dir / "report.html"), report_dir=str(run_dir))
+    )
+    instance.poll_core()
+
+    assert instance.open_report_button.isEnabled() is True
+    assert instance.report_dir == str(run_dir)

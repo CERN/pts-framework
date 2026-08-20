@@ -109,7 +109,7 @@ src/pypts/
                          thread of its own, so the loop keeps turning; execute_sequence() is
                          still a stub
   recipe/  step/         recipe data layer + step types (empty; to be ported from old_code)
-  report/                event loop is real; CSV/HTML logic is a stub (see old_code/report.py)
+  report/                incremental CSV + simple HTML, one folder per run (roadmap §1.19)
   hmi/hmi_client.py      the protocol half every frontend shares
   hmi/cli/  hmi/gui/     CLI shell and PySide6 GUI
   hardware_layer/hal.py  HAL (empty stub)
