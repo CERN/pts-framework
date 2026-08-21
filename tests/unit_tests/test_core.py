@@ -357,6 +357,97 @@ def test_a_module_still_running_before_any_stop_request_is_not_abandoned():
     assert core.running is True
     assert core.shutdown_deadline is None
 
+
+def test_shutdown_holds_stop_report_until_the_sequencer_has_stopped():
+    """
+    The Report is stopped LAST. Stopping it first threw away every step of a run
+    aborted by shutdown: the Report closed within one 10 ms tick while the
+    Sequencer was still unwinding, so the tail it emitted was never drained.
+    """
+    from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
+    from pypts.messages.core_report_communication import StopReport
+    from pypts.messages.core_sequencer_communication import SequencerStopped, StopSequencer
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(ShutdownRequested())
+    core.poll_all_sources()
+
+    assert list(core.to_sequencer.receive()) == [StopSequencer()]
+    assert list(core.to_hmi.receive()) == [StopHmi()]
+    assert list(core.to_report.receive()) == []
+
+    core.from_sequencer.send(SequencerStopped())
+    core.poll_all_sources()
+
+    assert list(core.to_report.receive()) == [StopReport()]
+
+
+def test_the_aborted_runs_tail_reaches_the_report_before_stop():
+    """
+    One queue, so the order is the guarantee: the aborted run's RunFinished and
+    the GenerateReport behind it are both in front of the held StopReport.
+    """
+    from pypts.messages.common_messages import ResultType
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+    from pypts.messages.core_report_communication import GenerateReport, StopReport
+    from pypts.messages.core_sequencer_communication import SequencerStopped
+    from pypts.messages.run_events import RunFinished
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(ShutdownRequested())
+    core.poll_all_sources()
+
+    finished = RunFinished(result=ResultType.STOP, outcomes=())
+    core.from_sequencer.send(finished)
+    core.from_sequencer.send(SequencerStopped())
+    core.poll_all_sources()
+
+    assert list(core.to_report.receive()) == [finished, GenerateReport(), StopReport()]
+
+
+def test_shutdown_deadline_releases_the_held_stop_report(caplog):
+    """
+    A Sequencer that never answers must not leave the Report held open for ever.
+    The deadline releases the stop it was holding, then abandons what is late.
+    """
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+    from pypts.messages.core_report_communication import StopReport
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(ShutdownRequested())
+    core.poll_all_sources()
+
+    # Pretend the budget has already run out, rather than sleeping through it.
+    core.shutdown_deadline = time.time() - 1
+
+    with caplog.at_level(logging.ERROR):
+        core.check_stop_status()
+
+    assert list(core.to_report.receive()) == [StopReport()]
+    assert [r for r in caplog.records if "abandoned" in r.message]
+
+
+def test_a_second_shutdown_request_sends_nothing_new():
+    """
+    Shutdown is legitimately asked for twice - by the frontend and again by the
+    launcher - and the guard must still hold now that the sends have moved.
+    """
+    from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
+    from pypts.messages.core_sequencer_communication import StopSequencer
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(ShutdownRequested())
+    core.from_hmi.send(ShutdownRequested())
+    core.poll_all_sources()
+
+    assert list(core.to_sequencer.receive()) == [StopSequencer()]
+    assert list(core.to_hmi.receive()) == [StopHmi()]
+
+
 # --------------------------------------------------------------------------
 # Run events reach the Report (roadmap: the report wiring)
 # --------------------------------------------------------------------------

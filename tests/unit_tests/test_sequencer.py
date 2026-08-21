@@ -309,6 +309,40 @@ def test_a_stop_from_a_finished_sequence_does_not_abort_the_next_one(sequencer):
     release.set()
 
 
+def test_an_abandoned_sequence_is_reported_critical_before_sequencer_stopped(
+    sequencer, monkeypatch
+):
+    """
+    A sequence thread that outlives the join is left running, possibly mid-step
+    with no teardown behind it. That is a fact about the bench, so the operator
+    hears it as a CRITICAL ModuleError - and hears it *before* CORE is told the
+    module stopped, or the report would read as a clean exit.
+    """
+    from pypts.messages.common_messages import ErrorSeverity
+
+    instance, outbox, inbox = sequencer
+
+    # The real 2 s budget is not worth a test's time; the code reads the module
+    # global, so shortening it here exercises exactly the same branch.
+    monkeypatch.setattr("pypts.sequencer.sequencer.SEQUENCE_JOIN_TIMEOUT_S", 0.05)
+
+    # Deliberately not released: the fake body ignores stop_requested, so the
+    # join times out and the thread is abandoned.
+    release = start_a_blocking_sequence(instance, inbox)
+
+    instance.stop()
+
+    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
+    assert [type(m) for m in messages] == [ModuleError, SequencerStopped]
+    reported = messages[0]
+    assert reported.severity is ErrorSeverity.CRITICAL
+    assert reported.operation == "Sequencer.stop_running_sequence"
+    assert "bench state is unknown" in reported.message
+
+    # Let the abandoned thread go, so the fixture's teardown join returns.
+    release.set()
+
+
 # --------------------------------------------------------------------------
 # The engine itself - Phase 1
 # --------------------------------------------------------------------------

@@ -192,6 +192,11 @@ class Core:
         self.running = True
         self.shutting_down = False
 
+        #: True between "shutdown asked" and "the Report has been told to stop".
+        #: The Report is stopped LAST so it can drain the aborted run's tail
+        #: (StepExecuted / RunFinished / GenerateReport) before it closes.
+        self.stop_report_pending = False
+
         #: The recipe LoadRecipe loaded and validated, or None until one has.
         #: The Sequencer holds the same object - one process, nothing copied.
         self.recipe: Recipe | None = None
@@ -354,6 +359,7 @@ class Core:
         match message:
             case SequencerStopped():
                 self.module_running[SEQUENCER] = False
+                self.release_stop_report()
             case RunStarted() | SequenceStarted():
                 # Progress is the frontend's business, and these two are the
                 # Report's as well: RunStarted opens the run folder and the
@@ -569,9 +575,19 @@ class Core:
         self.shutdown_deadline = time.time() + self.SHUTDOWN_TIMEOUT_S
 
         log.info("Shutdown requested, stopping all modules.")
-        self.to_report.send(StopReport())
         self.to_sequencer.send(StopSequencer())
         self.to_hmi.send(StopHmi())
+        # StopReport is held back: the Sequencer may still be finishing an
+        # aborted sequence whose events must reach the Report first. It is
+        # released by SequencerStopped, or by the shutdown deadline.
+        self.stop_report_pending = True
+
+    def release_stop_report(self) -> None:
+        """Send the held StopReport, exactly once."""
+        if not self.stop_report_pending:
+            return
+        self.stop_report_pending = False
+        self.to_report.send(StopReport())
 
     def check_stop_status(self) -> None:
         """
@@ -599,6 +615,9 @@ class Core:
 
         if self.shutdown_deadline is None or time.time() < self.shutdown_deadline:
             return
+
+        # The Sequencer never answered; stop holding the Report for it.
+        self.release_stop_report()
 
         # Reached once: self.running is cleared below, so the loop that calls
         # this does not come back round to log the same sentence again.

@@ -571,6 +571,12 @@ that enforces that is unchanged.
 - [ ] **TODO:** **A fault in either thread now takes CORE with it.** The mitigation the
       architecture section assumes — the GUI survives and reports it — holds, but the
       heartbeat-timeout policy TODO below is now the *only* place a stuck module gets noticed.
+- [x] **DONE (plans/002):** shutdown is ordered: `StopReport` is held until
+      `SequencerStopped` (or the shutdown deadline), so a run aborted by
+      shutdown still gets its CSV tail and its report.html; and a sequence
+      thread that outlives the 2 s join is reported to the operator as a
+      CRITICAL ModuleError ("bench state unknown") instead of only an ERROR
+      log line. Policy for *acting* on it stays the §1.11 TODO.
 - [ ] **TODO:** `Core.__init__` still accepts `log_queue` and `log_level` and no longer needs
       to hand them anywhere. Keep them only until it is settled whether a future in-engine
       module needs them; drop them otherwise.

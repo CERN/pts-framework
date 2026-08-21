@@ -19,7 +19,7 @@ import time
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
-from pypts.messages.common_messages import ResultType
+from pypts.messages.common_messages import ErrorSeverity, ResultType
 from pypts.messages.core_sequencer_communication import (
     CoreToSequencer,
     RunSequence,
@@ -276,7 +276,14 @@ class Sequencer:
         thread.join(timeout=SEQUENCE_JOIN_TIMEOUT_S)
 
         if thread.is_alive():
-            log.error(
-                "The running sequence did not stop within %.0fs; abandoning it.",
-                SEQUENCE_JOIN_TIMEOUT_S,
+            # The bench may be mid-step with teardown never run: the operator
+            # must hear this, not just the log. What CORE *does* about it is
+            # the open error-policy TODO; this only makes the abandonment loud.
+            report_problem(
+                self,
+                f"The running sequence did not stop within "
+                f"{SEQUENCE_JOIN_TIMEOUT_S:.0f}s and is being abandoned; "
+                f"teardown steps have not run and the bench state is unknown.",
+                severity=ErrorSeverity.CRITICAL,
+                operation="Sequencer.stop_running_sequence",
             )
