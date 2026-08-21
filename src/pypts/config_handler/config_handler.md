@@ -178,11 +178,18 @@ user's job — edit it by hand, or delete it to have it recreated from the templ
 
 - Reads as INI, version **==** code version, every value validates → **LOADED**: the file is
   in force. A version match alone is a DEBUG note.
-- Anything wrong — not INI at all, version **≠** code version (older *or* newer), a missing
-  key or section, a value of the wrong type → **DISCARDED**: the template defaults are built
-  in memory (`_build_from_defaults()`), **nothing is written**, the reason lands in
-  `bootstrap_problem` and as an ERROR in the log, and the launcher shows the operator a
-  notice. The run continues on the defaults.
+- Anything wrong — cannot be opened at all, not INI, version **≠** code version (older *or*
+  newer), a missing key or section, a value of the wrong type → **DISCARDED**: the template
+  defaults are built in memory (`_build_from_defaults()`), **nothing is written**, the reason
+  lands in `bootstrap_problem` and as an ERROR in the log, and the launcher shows the operator
+  a notice. The run continues on the defaults.
+
+A file that exists but cannot be opened (ACL on a shared bench, a lock held by another tool)
+is its own discard reason — *"exists but cannot be opened"* — distinct from a malformed file
+and from a version mismatch. `_read_raw()` opens the file explicitly rather than handing the
+path to `ConfigParser.read()`, which swallows the `OSError` per-file and returns an empty
+parser; that empty result used to read as `config_version = 0` and the operator was told to
+fix a version key that was fine.
 
 The same rule runs in every process (readers included), so a run agrees with itself about the
 values in force — the defaults are recomputed identically on the same machine. Deliberate

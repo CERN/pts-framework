@@ -361,6 +361,31 @@ def test_a_file_that_is_not_ini_is_discarded_with_an_explanation(config, config_
     assert handler.get_parameter("gui.window_width") == 1280
 
 
+def test_an_unopenable_file_is_reported_as_unopenable_not_version_zero(config_path):
+    """
+    A file that exists but cannot be opened - wrong ACL on a shared bench, or
+    held by another tool - used to be swallowed by `ConfigParser.read()`, which
+    skips an unreadable file silently. The empty result then read as
+    `config_version = 0` and the operator was told to fix a version key that was
+    perfectly fine. The reason has to name the real cause.
+
+    A directory at the config path is the deterministic way to produce that: it
+    exists, and opening it raises PermissionError on Windows and
+    IsADirectoryError on Linux - both OSError.
+    """
+    config_path.mkdir()
+
+    handler = ConfigHandler.bootstrap()
+
+    assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert handler.bootstrap_problem is not None
+    assert "cannot be opened" in handler.bootstrap_problem
+    assert "structure version" not in handler.bootstrap_problem
+    assert str(config_path) in handler.bootstrap_problem
+    assert "delete it" in handler.bootstrap_problem
+    assert handler.get_parameter("gui.window_width") == 1280
+
+
 def test_the_file_pypts_writes_has_no_byte_order_mark(config, config_path):
     config.set_parameter("gui.theme", "dark")
 

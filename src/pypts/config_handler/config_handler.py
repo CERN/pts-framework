@@ -635,13 +635,23 @@ def _read_raw(path: Path) -> dict[str, dict[str, str]]:
     plain utf-8, so a file pypts wrote has no BOM to begin with.
 
     Raises:
-        ConfigSchemaError: the file is not readable as INI at all. Wrapped
-            because this runs before logging exists, where a bare configparser
-            traceback is the only thing the user would get.
+        ConfigSchemaError: the file cannot be opened at all, or is not readable
+            as INI. Wrapped because this runs before logging exists, where a
+            bare configparser traceback is the only thing the user would get.
     """
     parser = configparser.ConfigParser(interpolation=None)
     try:
-        parser.read(path, encoding="utf-8-sig")
+        # Not parser.read(path): that swallows OSError per-file and returns
+        # an empty parser, which downstream then misdiagnoses as a structure-
+        # version mismatch. Opening explicitly makes "exists but unreadable"
+        # its own, correctly-worded refusal.
+        with open(path, encoding="utf-8-sig") as config_file:
+            parser.read_file(config_file)
+    except OSError as error:
+        raise ConfigSchemaError(
+            f"{path} exists but cannot be opened: {error}. Correct it, or "
+            f"delete it and pypts will create it again from the template."
+        ) from error
     except configparser.Error as error:
         raise ConfigSchemaError(
             f"{path} cannot be read as a configuration file: {error}. Correct it, or "

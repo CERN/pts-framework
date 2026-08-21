@@ -289,6 +289,10 @@ from `logging.level`; `report.py` takes its output directory from `paths.reports
 - [ ] **TODO:** `stdout_logging_enabled` is still derived from `--mode` rather than from the
       configuration. Probably correct — it follows from having a console, not from a
       preference — but it is the one logging decision the config does not own.
+- [x] **DONE (plans/004):** an existing-but-unopenable config.ini is discarded
+      with "exists but cannot be opened: <OS error>" instead of being
+      misdiagnosed as "declares structure version 0" — `_read_raw` opens the
+      file explicitly rather than letting configparser swallow the OSError.
 
 ---
 
