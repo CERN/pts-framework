@@ -20,6 +20,9 @@ bench, not for a test suite.
 
 import logging
 import queue
+import sys
+
+import pytest
 
 from pypts.launcher import startup
 from pypts.messages import QueueWrapper
@@ -66,6 +69,48 @@ def test_gui_mode_uses_the_popup_and_skips_the_banner(capsys, monkeypatch):
 
     assert shown == [("pypts configuration discarded", "the reason", True)]
     assert capsys.readouterr().out == ""
+
+
+# --------------------------------------------------------------------------
+# The multiprocessing start method
+# --------------------------------------------------------------------------
+
+
+class Abort(Exception):
+    """Sentinel: stops main() the moment the pin and argparse are behind it."""
+
+
+def test_main_pins_the_spawn_start_method_before_building_anything(monkeypatch):
+    """
+    Children are spawned on every platform, and the pin happens before the
+    first Queue() - queues take the start method from the default context at
+    call time, so a later pin would be too late. Bootstrap is replaced with a
+    raise, which is how main() is stopped before it spawns anything real.
+    """
+    pinned = []
+
+    def abort():
+        raise Abort
+
+    monkeypatch.setattr(sys, "argv", ["pypts"])
+    monkeypatch.setattr(startup.ConfigHandler, "bootstrap", abort)
+    monkeypatch.setattr(startup, "set_start_method", pinned.append)
+    monkeypatch.setattr(startup, "get_start_method", lambda allow_none=False: "fork")
+
+    with pytest.raises(Abort):
+        startup.main()
+
+    assert pinned == ["spawn"]
+
+    # And again with spawn already in place: pinning twice is a RuntimeError,
+    # so the guard - not force=True - is what makes a second call harmless.
+    pinned.clear()
+    monkeypatch.setattr(startup, "get_start_method", lambda allow_none=False: "spawn")
+
+    with pytest.raises(Abort):
+        startup.main()
+
+    assert pinned == []
 
 
 # --------------------------------------------------------------------------

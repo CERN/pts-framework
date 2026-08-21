@@ -1341,6 +1341,12 @@ CLI mode: no HMI process at all — CLI runs in the launcher process, engine unc
 - [ ] **TODO:** Define the heartbeat-timeout **policy** in Core (restart thread? abort run? notify HMI?) — currently it only logs a warning.
 - [ ] **TODO:** Write down the **promotion rule**: a module moves from thread to its own process only in response to a concrete incident (e.g. a crash-prone C driver → wrap *that one driver* in a sidecar process; never the whole HAL).
 - [ ] **TODO:** Bulk data (waveforms, acquisitions) never goes through message queues: in-engine it is passed by reference; if it must reach the GUI, use `multiprocessing.shared_memory` or a file-path handoff.
+- [x] **DONE (plans/005):** the launcher pins `set_start_method("spawn")` on
+      every platform, first thing in `main()`. Closes the Linux fork hazard
+      (the bootstrap notice can create a QApplication in the launcher before
+      the children exist), and makes Linux exercise the same spawn semantics
+      Windows always had. Cost accepted: slower child startup on Linux.
+      Linux end-to-end run still owed - see the verification note in the plan.
 
 ### Why threads inside the engine (instead of processes) — pros and cons
 

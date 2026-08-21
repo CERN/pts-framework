@@ -36,7 +36,7 @@ import logging
 import subprocess
 import sys
 import time
-from multiprocessing import Process, Queue
+from multiprocessing import Process, Queue, get_start_method, set_start_method
 from pathlib import Path
 
 from pypts.config_handler import BootstrapOutcome, ConfigHandler
@@ -76,6 +76,17 @@ MONITOR_LOG_POLL_S = 0.05
 
 
 def main() -> None:
+    # Children are always spawned, never forked - on every platform. Two
+    # reasons. The bootstrap notice below can create a QApplication in this
+    # process, and forking a process that holds live Qt state is unsupported
+    # (children can abort or hang on the duplicated display connection). And
+    # Windows - where all development runs - always spawns, so pinning spawn
+    # makes Linux exercise the same code paths instead of quietly different
+    # ones. Must happen before the first Queue() below: queues are built from
+    # the default context at call time.
+    if get_start_method(allow_none=True) != "spawn":
+        set_start_method("spawn")
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
