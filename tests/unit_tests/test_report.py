@@ -17,7 +17,12 @@ import queue
 
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
-from pypts.messages.core_report_communication import GenerateReport, ReportGenerated
+from pypts.messages.core_report_communication import (
+    GenerateReport,
+    ReportGenerated,
+    ReportStopped,
+    StopReport,
+)
 from pypts.messages.run_events import RunFinished, RunStarted, SequenceStarted, StepExecuted
 from pypts.report.report import Report
 from pypts.step.steps import WaitStep
@@ -220,6 +225,79 @@ def test_generate_without_a_run_answers_nothing(tmp_path):
     sent = sent_to_core(report)
     assert not [m for m in sent if isinstance(m, ReportGenerated)]
     assert not [m for m in sent if isinstance(m, ModuleError)]
+
+
+def test_a_failed_run_dir_does_not_resurrect_the_previous_run(tmp_path, monkeypatch):
+    """A run folder that cannot be created must not hand the run to the previous one.
+
+    @catch_and_report_errors() swallows the failure, so if start_run() left the
+    old run_dir/run_info/rows in place, this run's verdict would be stamped on
+    the previous run and its report.html rewritten in the previous run's folder.
+    """
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        A_RUN,
+        SequenceStarted(sequence_name="Main"),
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+        GenerateReport(),
+    )
+    first_run_dir = report.run_dir
+    first_html = (first_run_dir / "report.html").read_text(encoding="utf-8")
+    sent_to_core(report)  # drain what the first run said, so what follows is new
+
+    def refuse_to_make_a_run_dir(recipe_name):
+        raise OSError("disk says no")
+
+    monkeypatch.setattr(report, "make_run_dir", refuse_to_make_a_run_dir)
+
+    drive(
+        report,
+        RunStarted(recipe_name="Second recipe", recipe_description="After the failure"),
+        SequenceStarted(sequence_name="Main"),
+        a_step_executed("Step of the second run"),
+        RunFinished(result=ResultType.FAIL),
+        GenerateReport(),
+    )
+
+    assert report.run_dir is None
+    assert (first_run_dir / "report.html").read_text(encoding="utf-8") == first_html
+    sent = sent_to_core(report)
+    # The decorator reports the OSError; nothing announces a report to the operator.
+    assert [m for m in sent if isinstance(m, ModuleError)]
+    assert not [m for m in sent if isinstance(m, ReportGenerated)]
+
+
+def test_run_dir_name_is_capped_and_never_empty(tmp_path):
+    """A pathological recipe name must still produce a folder that can be created.
+
+    Non-ASCII letters pass isalnum() and survive the sanitising pass; only the
+    length and the existence of the folder are asserted.
+    """
+    names = ["", "!!!", "x" * 250, "Wärme Prüfung"]
+    for index, recipe_name in enumerate(names):
+        output_dir = tmp_path / f"case_{index}"
+        output_dir.mkdir()
+        report = build_report(output_dir)
+
+        drive(report, RunStarted(recipe_name=recipe_name, recipe_description=""))
+
+        run_dirs = [path for path in output_dir.iterdir() if path.is_dir()]
+        assert len(run_dirs) == 1
+        assert len(run_dirs[0].name) <= len("YYYYMMDD_HHMMSS_") + 60
+        assert (run_dirs[0] / "report.csv").is_file()
+
+
+def test_stop_closes_the_csv_and_answers_report_stopped(tmp_path):
+    report = build_report(tmp_path)
+
+    drive(report, A_RUN, StopReport())
+
+    assert report.csv_file is None
+    assert report.running is False
+    assert isinstance(sent_to_core(report)[-1], ReportStopped)
 
 
 def test_report_output_path_comes_from_the_config_handler(tmp_path, monkeypatch):

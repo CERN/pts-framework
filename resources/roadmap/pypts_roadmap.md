@@ -1254,6 +1254,11 @@ carrying real durations (~0.5 s each).
       the log file still lives in one flat `logs/` directory (the per-run-folder item in
       Phase 0's logging decision). Deciding whether the log joins the report folder is
       part of that open item.
+- [x] **DONE (plans/001):** `start_run()` resets the run state *before*
+      creating the run folder, so a failed `make_run_dir` (long name, unwritable
+      directory) leaves the Report in the "no run open" state instead of
+      silently rewriting the previous run's report.html; run-folder names are
+      capped at 60 chars and never empty.
 
 ---
 

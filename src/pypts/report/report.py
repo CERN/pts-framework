@@ -13,6 +13,7 @@ import json
 import time
 from pathlib import Path
 from typing import IO
+
 from pypts.config_handler import ConfigHandler
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
@@ -144,12 +145,18 @@ class Report:
     @catch_and_report_errors()
     def start_run(self, event: RunStarted) -> None:
         """Open this run's folder and its CSV, header written and flushed."""
+        # Clear the previous run's state first: if make_run_dir() raises below,
+        # the decorator swallows it, and stale state would silently attribute
+        # this run's verdict and HTML to the previous run's folder.
         self.close_csv()
-        self.run_dir = self.make_run_dir(event.recipe_name)
-        self.run_info = event
+        self.run_dir = None
+        self.run_info = None
         self.run_result = None
         self.rows = []
         self.current_sequence = ""
+
+        self.run_dir = self.make_run_dir(event.recipe_name)
+        self.run_info = event
 
         csv_path = self.run_dir / "report.csv"
         # SIM115 silenced because the file *must* outlive this method: it
@@ -164,7 +171,9 @@ class Report:
         """
         One folder per run: <reports_dir>/<timestamp>_<recipe name>.
         """
-        safe_name = "".join(c if c.isalnum() else "_" for c in recipe_name)
+        safe_name = "".join(c if c.isalnum() else "_" for c in recipe_name)[:60]
+        if not safe_name:
+            safe_name = "recipe"
         base = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "_" + safe_name
         run_dir = self.output_dir / base
         suffix = 1
