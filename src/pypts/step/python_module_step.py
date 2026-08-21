@@ -3,22 +3,19 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The concrete step types.
+PythonModuleStep - call one function of a Python module.
 
-Two so far: WaitStep, and a deliberately minimal PythonModuleStep (`method`
-calls only - the old `read_attribute`/`write_attribute` actions and the rglob
-module search stay in old_code until the module-loading design is settled;
-this port resolves `module:` against the recipe's own folder, or imports a
-dotted name). The other eight are ported as their dependencies land: the four
-User* types need the request/response prompt wiring, SequenceStep/IndexedStep
-need nesting, the SSH pair needs the credentials-in-config decision. Every
-type is documented with its YAML in section 10 of
-resources/roadmap/recipe_guide.md.
+A deliberately minimal port: `action_type: method` calls only - the old
+`read_attribute`/`write_attribute` actions and the rglob module search stay
+in old_code until the module-loading design is settled; this port resolves
+`module:` against the recipe's own folder, or imports a dotted name.
+
+One concrete step type per module; the package docstring in __init__.py
+holds the map of the ported types and of what still lives in old_code.
 """
 
 import importlib
 import importlib.util
-import time
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -26,35 +23,6 @@ from typing import Any
 from pypts.logger.log import log
 from pypts.step.runtime import Runtime
 from pypts.step.step import Step
-
-
-class WaitStep(Step):
-    """
-    Sleep for `wait_time` seconds. The simplest step there is.
-    Named `Wait` in a recipe's `steptype:`.
-
-    It exists to pace a sequence around slow hardware, and here also as the
-    first ported type: it exercises the whole base lifecycle with no
-    dependencies at all. `wait_time` is written directly on the step - a
-    fixed wait has no inputs to resolve and no outputs to judge, so it
-    carries no input_mapping and no output_mapping. Returns {} - with no
-    output to judge, the verdict is DONE.
-    """
-
-    def __init__(self, wait_time: float | str, **kwargs: Any) -> None:
-        super().__init__(**kwargs)
-        self.wait_time = wait_time
-
-    def _step(self, runtime: Runtime, step_input: dict[str, Any]) -> dict[str, Any]:
-        wait_time = float(self.wait_time)
-        if wait_time < 0:
-            raise ValueError(f"wait_time must not be negative, got {wait_time}")
-        log.info("Waiting %s s.", wait_time)
-        # TODO(roadmap): sleep in slices and honour runtime.should_stop(), so a
-        # long wait does not hold up an abort. The framework contract only
-        # promises a stop at the next step boundary, so this is a courtesy.
-        time.sleep(wait_time)
-        return {}
 
 
 def load_python_module(module_ref: str, base_dir: str) -> ModuleType:

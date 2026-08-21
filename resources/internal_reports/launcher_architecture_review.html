@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Launcher Architecture Review — startup.py</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #1c2330;
+    --muted: #5b6575;
+    --line: #d9dee6;
+    --accent: #0b62a4;
+    --iface: #cfe3f2;
+    --iface-ink: #0b3a5c;
+    --impl: #e9eef4;
+    --impl-ink: #33404f;
+    --bad: #b3423a;
+    --bad-bg: #f7e3e1;
+    --good: #2e7d4f;
+    --good-bg: #e0f0e6;
+    --warn: #9a6b0a;
+    --warn-bg: #f7ecd2;
+    --ghost: #a4adb9;
+    --code-bg: #eef1f5;
+    --badge-strong: #2e7d4f;
+    --badge-strong-bg: #e0f0e6;
+    --badge-worth: #9a6b0a;
+    --badge-worth-bg: #f7ecd2;
+    --badge-spec: #5b6575;
+    --badge-spec-bg: #e7eaef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14181f;
+      --card: #1d232d;
+      --ink: #e4e8ee;
+      --muted: #9aa4b2;
+      --line: #333c49;
+      --accent: #5aa5d8;
+      --iface: #1d3a52;
+      --iface-ink: #a8cfec;
+      --impl: #263041;
+      --impl-ink: #b9c4d2;
+      --bad: #e08078;
+      --bad-bg: #3a2523;
+      --good: #6dbb8e;
+      --good-bg: #1f3428;
+      --warn: #d8b25e;
+      --warn-bg: #37301c;
+      --ghost: #5b6575;
+      --code-bg: #12161d;
+      --badge-strong: #6dbb8e;
+      --badge-strong-bg: #1f3428;
+      --badge-worth: #d8b25e;
+      --badge-worth-bg: #37301c;
+      --badge-spec: #9aa4b2;
+      --badge-spec-bg: #2a323e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.55 Georgia, "Times New Roman", serif;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 1.9em; margin: 0 0 4px; }
+  h2 { font-size: 1.35em; margin: 44px 0 10px; border-bottom: 2px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 1.1em; margin: 0; }
+  p { margin: 10px 0; }
+  .sub { color: var(--muted); margin-bottom: 26px; }
+  code, .mono {
+    font-family: Consolas, "Cascadia Mono", Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin: 22px 0;
+  }
+  .card-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .num { color: var(--accent); font-weight: bold; font-size: 1.1em; }
+  .badge {
+    font-family: Consolas, Menlo, monospace; font-size: 0.72em;
+    padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+    letter-spacing: 0.03em;
+  }
+  .b-strong { color: var(--badge-strong); background: var(--badge-strong-bg); border: 1px solid var(--badge-strong); }
+  .b-worth  { color: var(--badge-worth);  background: var(--badge-worth-bg);  border: 1px solid var(--badge-worth); }
+  .b-spec   { color: var(--badge-spec);   background: var(--badge-spec-bg);   border: 1px solid var(--badge-spec); }
+  .tag {
+    font-family: Consolas, Menlo, monospace; font-size: 0.68em;
+    padding: 3px 8px; border-radius: 4px; white-space: nowrap;
+    color: var(--muted); background: var(--impl); border: 1px solid var(--line);
+  }
+  .files { color: var(--muted); font-size: 0.85em; margin: 2px 0 12px; }
+  .files code { background: transparent; padding: 0; }
+  dt { font-weight: bold; margin-top: 12px; }
+  dd { margin: 4px 0 0 0; }
+  dl { margin: 12px 0; }
+  .callout {
+    border-left: 4px solid var(--warn);
+    background: var(--warn-bg);
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    margin: 14px 0;
+    font-size: 0.95em;
+  }
+  /* ---------- diagram primitives ---------- */
+  .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 18px 0 6px; }
+  @media (max-width: 760px) { .ba { grid-template-columns: 1fr; } }
+  .pane {
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+  }
+  .pane-label {
+    font-family: Consolas, Menlo, monospace; font-size: 0.75em;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); margin-bottom: 10px;
+  }
+  .pane.after { border-style: solid; border-color: var(--good); }
+  .pane.after .pane-label { color: var(--good); }
+  .pane.before .pane-label { color: var(--bad); }
+  .mod {
+    border: 1.5px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 8px 0;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 0.78em;
+    min-width: 130px;
+  }
+  .mod .if {
+    background: var(--iface); color: var(--iface-ink);
+    padding: 4px 8px; border-bottom: 1.5px solid var(--line);
+  }
+  .mod .im { background: var(--impl); color: var(--impl-ink); padding: 6px 8px; }
+  .mod.wide .if { padding: 10px 8px; }
+  .mod.wide .im { padding: 3px 8px; }
+  .mod.deep .if { padding: 3px 8px; }
+  .mod.deep .im { padding: 14px 8px; }
+  .mod.ghost { border-style: dashed; opacity: 0.6; }
+  .mod.ghost .if, .mod.ghost .im { background: transparent; color: var(--ghost); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
+  .row > .mod { flex: 1; margin: 4px 0; }
+  .arrow, .xarrow {
+    font-family: Consolas, Menlo, monospace; font-size: 0.8em;
+    color: var(--muted); padding: 2px 0 2px 12px;
+  }
+  .xarrow { color: var(--bad); }
+  .garrow { color: var(--good); }
+  .note-bad { color: var(--bad); font-family: Consolas, Menlo, monospace; font-size: 0.78em; }
+  .note-good { color: var(--good); font-family: Consolas, Menlo, monospace; font-size: 0.78em; }
+  /* cross-section bands */
+  .band {
+    font-family: Consolas, Menlo, monospace; font-size: 0.74em;
+    border-left: 4px solid var(--line);
+    background: var(--impl); color: var(--impl-ink);
+    padding: 4px 10px; margin: 3px 0; border-radius: 0 4px 4px 0;
+  }
+  .band.hot { border-left-color: var(--bad); background: var(--bad-bg); color: var(--bad); }
+  .band.cold { border-left-color: var(--good); background: var(--good-bg); color: var(--good); }
+  .band.seam { border-left-color: var(--accent); background: var(--iface); color: var(--iface-ink); }
+  .lifeline {
+    font-family: Consolas, Menlo, monospace; font-size: 0.74em;
+    display: grid; grid-template-columns: 96px 1fr; gap: 5px 10px; align-items: center;
+  }
+  .lifeline .t { color: var(--muted); text-align: right; }
+  .lifeline .bar { height: 16px; border-radius: 3px; background: var(--impl); border: 1px solid var(--line); }
+  .lifeline .bar.risk { background: var(--bad-bg); border-color: var(--bad); }
+  .lifeline .bar.ok { background: var(--good-bg); border-color: var(--good); }
+  table.plain { border-collapse: collapse; width: 100%; font-size: 0.92em; margin: 12px 0; }
+  table.plain th, table.plain td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+  table.plain th { background: var(--impl); }
+  table.plain td.mono, table.plain th.mono { font-family: Consolas, Menlo, monospace; font-size: 0.86em; background: transparent; padding: 6px 10px; }
+  table.plain th.mono { background: var(--impl); }
+  .top {
+    border: 2px solid var(--accent);
+    border-radius: 10px;
+    background: var(--card);
+    padding: 22px 26px;
+    margin: 22px 0;
+  }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  .legend { font-family: Consolas, Menlo, monospace; font-size: 0.76em; color: var(--muted); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Launcher Architecture Review</h1>
+<p class="sub">
+  <code>src/pypts/launcher/startup.py</code> @ <code>architecture_refactor</code> — 2026-08-21.
+  Scope set by the request: the launcher only. Read against <code>tests/unit_tests/test_startup.py</code>,
+  <code>tests/functional_tests/test_launcher.py</code>, <code>config_handler/</code>, <code>logger/log.py</code>
+  and <code>resources/roadmap/pypts_roadmap.md</code>.
+</p>
+<p class="legend">
+  solid box = module · top band = interface, lower band = implementation · thick lower band = deep module ·
+  red = leakage or a failure path · blue band = seam
+</p>
+
+<h2>The shape today</h2>
+<div class="card">
+  <p>
+    The launcher module presents one interface: <code>main() -&gt; None</code>, plus <code>sys.argv</code>.
+    Behind it are 145 lines that resolve the configuration, resolve the log level, decide the stdout policy,
+    create three queues, start two processes and one subprocess, run the frontend, and shut everything down
+    in order. There is no seam between <em>deciding</em> and <em>doing</em>, so nothing between line 128 and
+    line 241 can be exercised without spawning the real system.
+  </p>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">main() as a cross-section</div>
+      <div class="band">87–88 &nbsp; pin spawn</div>
+      <div class="band">90–121 &nbsp; argparse</div>
+      <div class="band hot">128–148 &nbsp; bootstrap, then phrase two notices</div>
+      <div class="band hot">154–162 &nbsp; log path (creates dirs), level, stdout policy</div>
+      <div class="band hot">165–173 &nbsp; start Logger — outside the try below</div>
+      <div class="band">176–177 &nbsp; build the HMI links</div>
+      <div class="band seam">182 &nbsp; try:</div>
+      <div class="band hot">202–203 &nbsp; Debug Monitor — waits up to 5 s</div>
+      <div class="band">206–211 &nbsp; start CORE</div>
+      <div class="band">213–222 &nbsp; gui branch / everything-else branch</div>
+      <div class="band">223–241 &nbsp; finally: stop CORE, then the Logger</div>
+    </div>
+    <div class="pane before">
+      <div class="pane-label">what the tests can reach</div>
+      <div class="mod wide">
+        <div class="if">main() — the whole boot</div>
+        <div class="im">entered only by making bootstrap() raise</div>
+      </div>
+      <div class="xarrow">test_startup.py: 8 tests, one fact asserted inside main()</div>
+      <div class="mod ghost">
+        <div class="if">level resolution · stdout policy · process set · shutdown order</div>
+        <div class="im">untested, and untestable through this interface</div>
+      </div>
+      <div class="xarrow">test_launcher.py: 6 tests, 6 @pytest.mark.skip</div>
+    </div>
+  </div>
+</div>
+
+<h2>Deepening candidates</h2>
+
+<!-- ==================== 1 ==================== -->
+<div class="card" id="c1">
+  <div class="card-head">
+    <span class="num">1</span>
+    <h3>The boot sequence has no interface, so its decisions cannot be read without starting the system</h3>
+    <span class="badge b-strong">Strong</span>
+    <span class="tag">in-process</span>
+  </div>
+  <div class="files">
+    <code>launcher/startup.py:78–241</code> ·
+    <code>tests/unit_tests/test_startup.py:83–113</code> ·
+    <code>tests/functional_tests/test_launcher.py</code> (6 skipped)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>
+      Deciding and doing are interleaved line by line, so every decision the launcher makes — which level, which
+      log file, whether stdout echoes, which frontend, which notice — is observable only by spawning the processes
+      that consume it. The one test that calls <code>main()</code> stops it by monkeypatching
+      <code>ConfigHandler.bootstrap</code> to raise, which is the honest measure of the interface: there is no
+      other way in.
+    </dd>
+    <dt>Solution</dt>
+    <dd>
+      One seam, where facts stop being decided and start being acted on. <code>resolve_run(argv, config)</code>
+      returns a <code>RunPlan</code> — mode, level, log file path, stdout policy, the notice if any, whether the
+      Monitor is wanted — and <code>main()</code> becomes plan, start, stop. The spawner is a parameter, so a test
+      substitutes a recorder for <code>Process</code>.
+    </dd>
+    <dt>Wins</dt>
+    <dd>
+      <ul>
+        <li>The interface becomes the test surface</li>
+        <li>Locality: every boot decision in one place</li>
+        <li>Six skipped functional tests become unit tests</li>
+        <li>Leverage: candidates 2, 4, 5, 6 land on it</li>
+      </ul>
+    </dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before</div>
+      <div class="mod wide">
+        <div class="if">main() + argv</div>
+        <div class="im">decide, act, decide, act — 145 lines</div>
+      </div>
+      <div class="xarrow">no seam: to read a decision you must run its consequence</div>
+      <div class="band hot">a test asserts one fact, then aborts with a raise</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After</div>
+      <div class="mod deep">
+        <div class="if">resolve_run(argv, config) → RunPlan</div>
+        <div class="im">every decision, no side effect</div>
+      </div>
+      <div class="band seam">— seam: the plan is the interface —</div>
+      <div class="mod deep">
+        <div class="if">start_run(plan, spawn=Process)</div>
+        <div class="im">side effects only, nothing decided here</div>
+      </div>
+      <div class="note-good">tests assert a RunPlan; no process near them</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 2 ==================== -->
+<div class="card" id="c2">
+  <div class="card-head">
+    <span class="num">2</span>
+    <h3><code>mode</code> is a bare string compared in five places, and one of its three values silently does the wrong thing</h3>
+    <span class="badge b-strong">Strong</span>
+    <span class="tag">in-process</span>
+  </div>
+  <div class="files">
+    <code>launcher/startup.py:91–96, 132, 139, 162, 213–222, 248</code> ·
+    <code>launcher/startup.py:44–45</code> (the GUI import)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>
+      <code>argparse</code> declares three modes; the implementation branches on <code>== "gui"</code> and lets
+      everything else fall through to the CLI. <code>--mode connect</code> therefore starts a CLI and says nothing —
+      the interface promises a mode that does not exist. The same string is compared again for the notice channel,
+      for the stdout policy and for the process branch, so four facts are derived independently from one word. And
+      because <code>gui_main</code> is imported at module level, <code>--mode cli</code> loads PySide6 anyway
+      (recorded, roadmap §1.2).
+    </dd>
+    <dt>Solution</dt>
+    <dd>
+      One table keyed by mode, holding what the mode actually determines: how the frontend starts, whether it runs
+      in its own process, whether stdout echoes, how a notice is shown. <code>connect</code> gets an entry that
+      refuses with a message instead of an entry that lies. The frontend import moves inside its own starter.
+    </dd>
+    <dt>Wins</dt>
+    <dd>
+      <ul>
+        <li><code>connect</code> refuses instead of pretending</li>
+        <li>Locality: one row per mode, four facts each</li>
+        <li>A CLI bench stops importing Qt</li>
+        <li>A fourth mode is a row, not five edits</li>
+      </ul>
+    </dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — one string, four re-derivations</div>
+      <div class="band hot">132 / 139 &nbsp; show_config_popup(args.mode, …)</div>
+      <div class="band hot">162 &nbsp; stdout_logging_enabled = args.mode == "gui"</div>
+      <div class="band hot">213 &nbsp; if args.mode == "gui": … else: cli_main(…)</div>
+      <div class="band hot">248 &nbsp; if mode == "gui": _open_message_box(…)</div>
+      <div class="xarrow">"connect" matches none of them, so it becomes a CLI, silently</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — one table</div>
+      <table class="plain">
+        <tr><th class="mono">mode</th><th class="mono">frontend</th><th class="mono">stdout</th><th class="mono">notice</th></tr>
+        <tr><td class="mono">gui</td><td class="mono">own process</td><td class="mono">on</td><td class="mono">popup</td></tr>
+        <tr><td class="mono">cli</td><td class="mono">this process</td><td class="mono">off</td><td class="mono">banner</td></tr>
+        <tr><td class="mono">connect</td><td class="mono" colspan="3">not implemented — refuse, and say so</td></tr>
+      </table>
+      <div class="note-good">each row's starter holds its own import</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 3 ==================== -->
+<div class="card" id="c3">
+  <div class="card-head">
+    <span class="num">3</span>
+    <h3>The Logger is started outside the block that stops it, so a failure in the next four lines hangs the run</h3>
+    <span class="badge b-strong">Strong</span>
+    <span class="tag">in-process</span>
+  </div>
+  <div class="files">
+    <code>launcher/startup.py:165–177, 182, 235–241</code> ·
+    <code>logger/log.py:155–177</code> (the blocking loop)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>
+      <code>logger_process.start()</code> is at line 170; the <code>try</code> whose <code>finally</code> sends
+      <code>StopLogger</code> opens at 182. Between them sit <code>init_logging()</code> and two
+      <code>Queue()</code> constructions. Anything raised there escapes with a live, non-daemon Logger blocked in
+      <code>log_queue.get()</code> — a loop only <code>StopLogger</code> ends — and interpreter exit joins it. The
+      launcher does not crash; it hangs, and has to be killed.
+    </dd>
+    <dt>Solution</dt>
+    <dd>
+      Make the Logger's lifetime the interface: a context manager that starts the process, yields the control
+      wrapper, and on exit sends <code>StopLogger</code>, joins with the timeout, and terminates if it must. Start
+      and stop stop being two places that have to agree.
+    </dd>
+    <dt>Wins</dt>
+    <dd>
+      <ul>
+        <li>No window where a child outlives its stopper</li>
+        <li>Locality: one module owns start, stop, timeout</li>
+        <li>Shutdown order becomes nesting, not line order</li>
+      </ul>
+    </dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — the gap</div>
+      <div class="lifeline">
+        <span class="t">170 start()</span><span class="bar ok"></span>
+        <span class="t">172–177</span><span class="bar risk"></span>
+        <span class="t">182 try:</span><span class="bar ok"></span>
+        <span class="t">238 StopLogger</span><span class="bar ok"></span>
+      </div>
+      <div class="xarrow">a raise in the red band → the Logger is never told to stop → exit blocks on join</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — one bracket</div>
+      <div class="mod deep">
+        <div class="if">with running_logger(path, stdout) as control:</div>
+        <div class="im">start · yield · StopLogger · join · terminate</div>
+      </div>
+      <div class="note-good">no line can fall between the start and the stop</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 4 ==================== -->
+<div class="card" id="c4">
+  <div class="card-head">
+    <span class="num">4</span>
+    <h3>The configuration is built so a bad file cannot stop the run; the launcher then lets one of its values do exactly that</h3>
+    <span class="badge b-strong">Strong</span>
+    <span class="tag">in-process</span>
+  </div>
+  <div class="files">
+    <code>launcher/startup.py:155</code> ·
+    <code>utilities/local_storage.py:31–50</code> ·
+    <code>config_handler/config_handler.py:96–111</code>
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>
+      <code>get_log_file_path(config.get_parameter("paths.logs_dir"))</code> creates the directory, and the value is
+      user-editable in <code>config.ini</code>. An unwritable or invalid path raises <code>OSError</code> at line 155
+      — before the Logger exists, before the <code>try</code>, and after the notice machinery has already run — so
+      the operator gets a bare traceback on stderr, no log file and no notice. <code>DISCARDED</code> exists
+      precisely so that a bad configuration degrades to defaults with a notice; that policy stops at the config
+      module's edge.
+    </dd>
+    <dt>Solution</dt>
+    <dd>
+      Give the launcher the same policy for the values it consumes that the config module has for the file:
+      resolving the log destination is one call that either returns a usable path or falls back to the template
+      default and reports why, through the notice channel candidate 5 defines.
+    </dd>
+    <dt>Wins</dt>
+    <dd>
+      <ul>
+        <li>One rule for a bad configuration, file or value</li>
+        <li>A run always has a log to explain itself</li>
+        <li>The operator gets a notice, not a traceback</li>
+      </ul>
+    </dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — two policies for one class of error</div>
+      <div class="band cold">config.ini broken → DISCARDED → defaults, notice, ERROR in the log</div>
+      <div class="band hot">paths.logs_dir bad → OSError at :155 → traceback, no log, no notice</div>
+      <div class="xarrow">the careful path and the fatal path are one line apart</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After</div>
+      <div class="mod deep">
+        <div class="if">resolve_log_destination(config) → path, notice?</div>
+        <div class="im">try the configured directory, fall back to the<br>template default, report the reason the same way</div>
+      </div>
+      <div class="note-good">the run survives every value the user can type</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 5 ==================== -->
+<div class="card" id="c5">
+  <div class="card-head">
+    <span class="num">5</span>
+    <h3>The launcher phrases the configuration module's errors, so it has to know which field belongs to which outcome</h3>
+    <span class="badge b-worth">Worth exploring</span>
+    <span class="tag">in-process</span>
+  </div>
+  <div class="files">
+    <code>launcher/startup.py:128–148, 244–254</code> ·
+    <code>config_handler/config_handler.py:96–111, 241–266</code>
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>
+      <code>bootstrap()</code> hands back a handler; the launcher reassembles the story from three of its attributes
+      and hard-codes both messages, including which outcome carries a <code>bootstrap_problem</code> and which does
+      not. The config module's interface has leaked its enum, its field-per-outcome rule and its wording into a
+      module whose stated job is starting processes. A fourth outcome is an edit here.
+    </dd>
+    <dt>Solution</dt>
+    <dd>
+      <code>config.bootstrap_notice() -&gt; Notice | None</code>, carrying title, text and severity. The launcher
+      keeps only what is genuinely its own: which channel this mode can show a notice on.
+      <code>show_config_popup(mode, title, text, warning=)</code> narrows to <code>show_notice(mode, notice)</code>.
+    </dd>
+    <dt>Wins</dt>
+    <dd>
+      <ul>
+        <li>Interface shrinks from four facts to one</li>
+        <li>Locality: outcomes and their wording in one module</li>
+        <li>The launcher stops phrasing config errors</li>
+        <li>Candidate 4's fallback reuses the channel</li>
+      </ul>
+    </dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before</div>
+      <div class="row">
+        <div class="mod wide"><div class="if">ConfigHandler: outcome · path · problem</div><div class="im">bootstrap()</div></div>
+        <div class="mod wide"><div class="if">startup: enum branches + both message texts</div><div class="im">show_config_popup(mode, title, text, warning)</div></div>
+      </div>
+      <div class="xarrow">config wording leaks across the seam into the launcher</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After</div>
+      <div class="mod deep"><div class="if">config.bootstrap_notice() → Notice | None</div><div class="im">outcome, path, problem, wording, severity</div></div>
+      <div class="arrow">one value crosses the seam</div>
+      <div class="mod deep"><div class="if">show_notice(mode, notice)</div><div class="im">popup, or the banner when there is no display</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 6 ==================== -->
+<div class="card" id="c6">
+  <div class="card-head">
+    <span class="num">6</span>
+    <h3>Nothing watches CORE, though the module docstring promises a supervisor</h3>
+    <span class="badge b-worth">Worth exploring</span>
+    <span class="tag">ports &amp; adapters</span>
+  </div>
+  <div class="files">
+    <code>launcher/startup.py:8–11, 213–222</code> ·
+    <code>messages/core_hmi_communication.py:125–136</code> ·
+    <code>core/core.py:536–556</code>
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>
+      The docstring says the launcher owns the process tree and "has to survive anything the others do", but in GUI
+      mode <code>main()</code> blocks on <code>ui_process.join()</code> and waits for exactly one child.
+      <code>Heartbeat</code> is a member of <code>HmiToCore</code> only: CORE watches the frontend and its own
+      threads, and no one watches CORE. If CORE dies, the GUI keeps drawing against a dead link, the launcher stays
+      blocked, and the operator has a window that is alive and answers nothing.
+    </dd>
+    <dt>Solution</dt>
+    <dd>
+      Either narrow the promise — say in the docstring that the launcher reaps and does not supervise — or put
+      supervision behind the seam candidate 1 creates: <code>supervise(children)</code> waits for the
+      <em>first</em> child to exit, whichever it is, and brings the rest down through the existing shutdown path.
+    </dd>
+    <dt>Wins</dt>
+    <dd>
+      <ul>
+        <li>A dead CORE ends the run instead of freezing it</li>
+        <li>One place decides what a lost child means</li>
+        <li>Docstring and behaviour say the same thing</li>
+      </ul>
+    </dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before</div>
+      <div class="row">
+        <div class="mod"><div class="if">launcher</div><div class="im">join(GUI)</div></div>
+        <div class="mod ghost"><div class="if">Logger</div><div class="im">unwatched</div></div>
+        <div class="mod ghost"><div class="if">CORE</div><div class="im">unwatched</div></div>
+      </div>
+      <div class="arrow">GUI ──heartbeat──▶ CORE ──watch──▶ Sequencer, Report</div>
+      <div class="xarrow">CORE dies → nobody notices → UI alive, launcher blocked</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After</div>
+      <div class="mod deep">
+        <div class="if">supervise(children) → the one that left</div>
+        <div class="im">wait on the first exit, whichever child it is,<br>then run the shutdown that already exists</div>
+      </div>
+      <div class="note-good">any child leaving ends the run the same way</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 7 ==================== -->
+<div class="card" id="c7">
+  <div class="card-head">
+    <span class="num">7</span>
+    <h3>A developer tool sits in the boot path, and can delay CORE by five seconds</h3>
+    <span class="badge b-worth">Worth exploring</span>
+    <span class="tag">local-substitutable</span>
+  </div>
+  <div class="files">
+    <code>launcher/startup.py:20–31, 202–203, 206–211, 283–331</code>
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>
+      <code>start_debug_monitor()</code> polls for the run log until it exists or <code>MONITOR_LOG_WAIT_S</code>
+      elapses, and it is called <em>before</em> CORE is started — with the Monitor on by default. The usual case
+      costs one <code>is_file()</code>, but a slow or failed Logger delays the whole run by up to five seconds
+      before CORE has been spawned at all. The module docstring is explicit that the Monitor "cannot stop the run";
+      today it can hold it up.
+    </dd>
+    <dt>Solution</dt>
+    <dd>
+      Start CORE and the frontend first and the Monitor last, so the wait overlaps a run that is already up; or hand
+      the wait to the Monitor itself, which is the module that knows why it needs the file.
+    </dd>
+    <dt>Wins</dt>
+    <dd>
+      <ul>
+        <li>The tool cannot delay the framework</li>
+        <li>Boot order matches the stated dependency</li>
+        <li>The wait lives with the reason for it</li>
+      </ul>
+    </dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before</div>
+      <div class="lifeline">
+        <span class="t">Logger</span><span class="bar ok"></span>
+        <span class="t">Monitor wait</span><span class="bar risk"></span>
+        <span class="t">CORE</span><span class="bar"></span>
+        <span class="t">frontend</span><span class="bar"></span>
+      </div>
+      <div class="xarrow">the framework waits behind a tool that only reads a file</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After</div>
+      <div class="lifeline">
+        <span class="t">Logger</span><span class="bar ok"></span>
+        <span class="t">CORE</span><span class="bar ok"></span>
+        <span class="t">frontend</span><span class="bar ok"></span>
+        <span class="t">Monitor wait</span><span class="bar"></span>
+      </div>
+      <div class="note-good">the wait overlaps a run that is already going</div>
+    </div>
+  </div>
+</div>
+
+<h2>Already on the books — not re-litigated here</h2>
+<div class="card">
+  <ul>
+    <li><b><code>stop_core()</code> forges <code>HmiStopped()</code></b> on the frontend's behalf — card 8 of
+      <code>architecture_deepening_review.html</code>. Still the widest leak in this file; it is recorded, so it gets
+      a pointer rather than a card.</li>
+    <li><b><code>--mode cli</code> imports PySide6</b> — roadmap §1.2 TODO. Folded into candidate 2, where the fix
+      falls out of the mode table instead of being a separate change.</li>
+    <li><b><code>--mode connect</code> unimplemented</b> — roadmap TODO. Candidate 2 does not implement it; it makes
+      the launcher say so instead of starting the wrong frontend.</li>
+    <li><b>Monitor TODOs</b> — inherited stdout, Ctrl+C reaching the child, <code>pid</code> under a venv — roadmap
+      §1.4.1. Candidate 7 is about boot ordering only and touches none of them.</li>
+  </ul>
+</div>
+
+<h2>Where the depth already is — do not "fix" these</h2>
+<div class="card">
+  <ul>
+    <li><b><code>_open_message_box()</code> split out of <code>show_config_popup()</code></b> — an internal seam that
+      exists so three tests can make the popup fail on purpose. Exactly the shape this review is asking for elsewhere.</li>
+    <li><b><code>stop_core()</code>'s ask-then-kill order</b> — a small interface over a real invariant, and the only
+      part of the shutdown covered by tests.</li>
+    <li><b>The spawn pin</b> — four lines, ten lines of comment saying why, and a test that asserts both branches.</li>
+    <li><b>The Monitor started as a string, never an import</b> — the one-way dependency is enforced by the shape of
+      the call, not by a convention.</li>
+  </ul>
+</div>
+
+<h2>Top recommendation</h2>
+<div class="top">
+  <h3><a href="#c1">1 — Put a seam between deciding and doing</a></h3>
+  <p>
+    It is the candidate the others are waiting on. A <code>RunPlan</code> gives candidate 2 somewhere for the mode
+    table to land, candidate 4 somewhere to fall back to, candidate 5 somewhere to carry a notice, and candidate 6
+    somewhere to hold the child list. It is also the only one that moves the test story: the six skipped placeholders
+    in <code>test_launcher.py</code> exist because the facts they want to assert are unreachable today, and most of
+    them are properties of the plan rather than of the running system.
+  </p>
+</div>
+
+</div>
+</body>
+</html>

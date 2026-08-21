@@ -918,7 +918,9 @@ guesses which links are affected.
 **The layout.** `recipe/` is pure data — parse + validate, no queues, no Sequencer import
 (pinned by a test that imports it in a fresh interpreter). `step/` is the execution unit:
 `step.py` (base `Step` lifecycle, `StepResult`, `run_steps()`, `run_sequence()` — the
-sequence body a future `SequenceStep` reuses), `steps.py` (`WaitStep`), `registry.py` (the
+sequence body a future `SequenceStep` reuses), one module per concrete step type
+(`wait_step.py`, `python_module_step.py` — the schema every newly ported type follows),
+`registry.py` (the
 `eval()` replacement: a dict `steptype -> class`, unknown names get an error listing what
 exists — F11 closed), `runtime.py` (globals + the locals stack + two callable seams).
 `sequencer/execute_sequence()` looks the sequence up, builds a `Runtime`, and brackets the

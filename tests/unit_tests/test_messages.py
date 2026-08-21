@@ -98,7 +98,7 @@ from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabl
 from pypts.recipe.recipe import Recipe, Sequence
 from pypts.report.report import Report
 from pypts.sequencer.sequencer import Sequencer
-from pypts.step.steps import WaitStep
+from pypts.step.wait_step import WaitStep
 
 STEP_ID = UUID("00000000-0000-4000-8000-000000000001")
 REQUEST_ID = UUID("00000000-0000-4000-8000-000000000002")

@@ -25,7 +25,7 @@ import pytest
 
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
 from pypts.recipe.rules import RECIPE_FORMAT_VERSION
-from pypts.step.steps import WaitStep
+from pypts.step.wait_step import WaitStep
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
 

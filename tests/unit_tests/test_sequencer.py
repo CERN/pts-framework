@@ -427,7 +427,7 @@ def test_an_abort_between_steps_reports_the_finished_steps(sequencer, monkeypatc
     step 1, which is where the between-steps check in Step.run_steps() is the
     only thing keeping step 2 from starting.
     """
-    from pypts.step.steps import WaitStep
+    from pypts.step.wait_step import WaitStep
 
     instance, outbox, inbox = sequencer
     load_wait_recipe(instance, inbox)

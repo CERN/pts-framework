@@ -25,7 +25,7 @@ from pypts.messages.core_report_communication import (
 )
 from pypts.messages.run_events import RunFinished, RunStarted, SequenceStarted, StepExecuted
 from pypts.report.report import Report
-from pypts.step.steps import WaitStep
+from pypts.step.wait_step import WaitStep
 
 A_RUN = RunStarted(recipe_name="Wait demo", recipe_description="Two short waits")
 

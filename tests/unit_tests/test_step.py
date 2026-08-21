@@ -25,10 +25,11 @@ from pypts.messages.run_events import (
     StepFinished,
     StepStarted,
 )
+from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
 from pypts.step.step import Step, StepResult, run_sequence
-from pypts.step.steps import PythonModuleStep, WaitStep
+from pypts.step.wait_step import WaitStep
 
 
 class ReturnsDict(Step):

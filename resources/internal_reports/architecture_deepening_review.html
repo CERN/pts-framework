@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architecture Deepening Review — pts-framework</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #1c2330;
+    --muted: #5b6575;
+    --line: #d9dee6;
+    --accent: #0b62a4;
+    --iface: #cfe3f2;
+    --iface-ink: #0b3a5c;
+    --impl: #e9eef4;
+    --impl-ink: #33404f;
+    --bad: #b3423a;
+    --bad-bg: #f7e3e1;
+    --good: #2e7d4f;
+    --good-bg: #e0f0e6;
+    --warn: #9a6b0a;
+    --warn-bg: #f7ecd2;
+    --ghost: #a4adb9;
+    --code-bg: #eef1f5;
+    --badge-strong: #2e7d4f;
+    --badge-strong-bg: #e0f0e6;
+    --badge-worth: #9a6b0a;
+    --badge-worth-bg: #f7ecd2;
+    --badge-spec: #5b6575;
+    --badge-spec-bg: #e7eaef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14181f;
+      --card: #1d232d;
+      --ink: #e4e8ee;
+      --muted: #9aa4b2;
+      --line: #333c49;
+      --accent: #5aa5d8;
+      --iface: #1d3a52;
+      --iface-ink: #a8cfec;
+      --impl: #263041;
+      --impl-ink: #b9c4d2;
+      --bad: #e08078;
+      --bad-bg: #3a2523;
+      --good: #6dbb8e;
+      --good-bg: #1f3428;
+      --warn: #d8b25e;
+      --warn-bg: #37301c;
+      --ghost: #5b6575;
+      --code-bg: #12161d;
+      --badge-strong: #6dbb8e;
+      --badge-strong-bg: #1f3428;
+      --badge-worth: #d8b25e;
+      --badge-worth-bg: #37301c;
+      --badge-spec: #9aa4b2;
+      --badge-spec-bg: #2a323e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.55 Georgia, "Times New Roman", serif;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 1.9em; margin: 0 0 4px; }
+  h2 { font-size: 1.35em; margin: 44px 0 10px; border-bottom: 2px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 1.1em; margin: 0; }
+  p { margin: 10px 0; }
+  .sub { color: var(--muted); margin-bottom: 26px; }
+  code, .mono {
+    font-family: Consolas, "Cascadia Mono", Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin: 22px 0;
+  }
+  .card-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .num { color: var(--accent); font-weight: bold; font-size: 1.1em; }
+  .badge {
+    font-family: Consolas, Menlo, monospace; font-size: 0.72em;
+    padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+    letter-spacing: 0.03em;
+  }
+  .b-strong { color: var(--badge-strong); background: var(--badge-strong-bg); border: 1px solid var(--badge-strong); }
+  .b-worth  { color: var(--badge-worth);  background: var(--badge-worth-bg);  border: 1px solid var(--badge-worth); }
+  .b-spec   { color: var(--badge-spec);   background: var(--badge-spec-bg);   border: 1px solid var(--badge-spec); }
+  .files { color: var(--muted); font-size: 0.85em; margin: 2px 0 12px; }
+  .files code { background: transparent; padding: 0; }
+  dt { font-weight: bold; margin-top: 12px; }
+  dd { margin: 4px 0 0 0; }
+  dl { margin: 12px 0; }
+  .callout {
+    border-left: 4px solid var(--warn);
+    background: var(--warn-bg);
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    margin: 14px 0;
+    font-size: 0.95em;
+  }
+  /* ---------- diagram primitives ---------- */
+  .ba { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin: 18px 0 6px; }
+  @media (max-width: 760px) { .ba { grid-template-columns: 1fr; } }
+  .pane {
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+  }
+  .pane-label {
+    font-family: Consolas, Menlo, monospace; font-size: 0.75em;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--muted); margin-bottom: 10px;
+  }
+  .pane.after { border-style: solid; border-color: var(--good); }
+  .pane.after .pane-label { color: var(--good); }
+  .pane.before .pane-label { color: var(--bad); }
+  .mod {
+    border: 1.5px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    margin: 8px 0;
+    font-family: Consolas, Menlo, monospace;
+    font-size: 0.78em;
+    min-width: 130px;
+  }
+  .mod .if {
+    background: var(--iface); color: var(--iface-ink);
+    padding: 4px 8px; border-bottom: 1.5px solid var(--line);
+  }
+  .mod .im { background: var(--impl); color: var(--impl-ink); padding: 6px 8px; }
+  .mod.wide .if { padding: 10px 8px; }   /* shallow: big interface */
+  .mod.wide .im { padding: 3px 8px; }
+  .mod.deep .if { padding: 3px 8px; }    /* deep: small interface */
+  .mod.deep .im { padding: 14px 8px; }
+  .mod.ghost { border-style: dashed; opacity: 0.6; }
+  .mod.ghost .if, .mod.ghost .im { background: transparent; color: var(--ghost); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: stretch; }
+  .row > .mod { flex: 1; margin: 4px 0; }
+  .arrow, .xarrow {
+    font-family: Consolas, Menlo, monospace; font-size: 0.8em;
+    color: var(--muted); padding: 2px 0 2px 12px;
+  }
+  .xarrow { color: var(--bad); }
+  .garrow { color: var(--good); }
+  .note-bad { color: var(--bad); font-family: Consolas, Menlo, monospace; font-size: 0.78em; }
+  .note-good { color: var(--good); font-family: Consolas, Menlo, monospace; font-size: 0.78em; }
+  table.plain { border-collapse: collapse; width: 100%; font-size: 0.92em; margin: 12px 0; }
+  table.plain th, table.plain td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; vertical-align: top; }
+  table.plain th { background: var(--impl); }
+  .top {
+    border: 2px solid var(--accent);
+    border-radius: 10px;
+    background: var(--card);
+    padding: 22px 26px;
+    margin: 22px 0;
+  }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Architecture Deepening Review</h1>
+<p class="sub">
+  <code>pts-framework</code> @ <code>architecture_refactor</code> — 2026-08-21.
+  Surveyed against <code>resources/roadmap/pypts_roadmap.md</code> and
+  <code>porting_changes.md</code>; candidates that merely restate a recorded roadmap TODO were
+  dropped. Vocabulary: a <b>module</b> is anything with an <b>interface</b> (everything a caller
+  must know) and an implementation; it is <b>deep</b> when a small interface hides a lot of
+  behaviour, <b>shallow</b> when the interface is nearly as complex as the implementation.
+  Depth gives callers <b>leverage</b> and maintainers <b>locality</b>. A <b>seam</b> is where an
+  interface lives; an <b>adapter</b> satisfies it there.
+</p>
+
+<h2>Where the depth already is — do not "fix" these</h2>
+<div class="card">
+  <ul>
+    <li><b><code>hmi/hmi_client.py</code></b> — one implementation of the whole HMI↔CORE protocol; frontends override only <code>show_*</code>/<code>ask_*</code> hooks, and a test pins that neither overrides the protocol itself. The deepest module in the tree.</li>
+    <li><b><code>messages/queue_wrapper.py</code></b> — 77 lines carrying all seven links across one process seam and several thread seams, tracing both directions. The highest leverage per line in the repo.</li>
+    <li><b><code>step/runtime.py</code>'s no-op defaults</b> — a bare <code>Runtime()</code> is a complete fake context, which is why <code>test_step.py</code> needs zero monkeypatching. Candidate 2 below must <em>preserve</em> this property while extending it.</li>
+    <li><b>The test suite</b> — 15 monkeypatches across 20 test modules, event loops driven by hand rather than mocked. Where tests <em>do</em> struggle, that is the friction signal (candidates 1 and 8).</li>
+  </ul>
+</div>
+
+<h2>Deepening candidates</h2>
+
+<!-- ==================== 1 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">1</span>
+    <h3>A step type is declared in four places, and one of them is dead</h3>
+    <span class="badge b-strong">Strong</span>
+  </div>
+  <div class="files">
+    <code>recipe/rules.py:52–68</code> · <code>step/registry.py:30–51</code> ·
+    <code>step/steps.py</code> (constructor signatures) · <code>recipe/validator.py:63–84</code> ·
+    plus the two un-refactored copies in <code>helper_applications/</code> (roadmap §1.17 TODO)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>Adding a step type today means editing <code>rules.STEP_TYPE_REQUIRED</code>, <code>rules.STEP_TYPE_DEFAULTS</code>, <code>registry.STEP_TYPES</code>, and the class <code>__init__</code> — which is the <em>third</em> statement of the same required/optional split, since <code>build_step()</code> splats the YAML mapping into it. The knowledge "what is a Wait step" has no locality. And <b><code>STEP_TYPE_DEFAULTS</code> has no reader at all</b>: one definition, zero uses — a maintainer following <code>rules.py</code>'s own "one importable source of truth" docstring will fill it in for a new type and it will do nothing. <code>test_step.py:112–114</code> exists purely to pin that two of the four copies agree — a test whose only job is guarding duplication is the tell.</dd>
+    <dt>Solution</dt>
+    <dd>Make the step class the single declaration: each <code>Step</code> subclass states its required and optional recipe keys once (class attributes), and the registry derives what <code>rules.py</code> and <code>validator.validate_step()</code> currently hand-maintain. Delete <code>STEP_TYPE_DEFAULTS</code>. This is the in-tree half of what roadmap §3.2 already sketches as <code>StepPlugin</code> — doing it now, while only two types exist, means the nine remaining step-type ports each land as <b>one file</b> instead of four edits.</dd>
+    <dt>Benefits</dt>
+    <dd>Locality: a step type's whole contract lives beside its behaviour, so a port MR touches one module. Leverage: the validator, the registry, and (later, Phase 2/6) the verificator and Creator all read the same declaration instead of carrying copies. The duplication-pinning test becomes unnecessary and the real per-type tests get simpler setup.</dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — four shallow declarations, one dead</div>
+      <div class="row">
+        <div class="mod wide"><div class="if">rules.STEP_TYPE_REQUIRED</div><div class="im">{"wait": …, "pythonmodule": …}</div></div>
+        <div class="mod wide ghost"><div class="if">rules.STEP_TYPE_DEFAULTS</div><div class="im">no reader — dead</div></div>
+      </div>
+      <div class="row">
+        <div class="mod wide"><div class="if">registry.STEP_TYPES</div><div class="im">{"wait": WaitStep, …}</div></div>
+        <div class="mod wide"><div class="if">WaitStep.__init__(wait_time, …)</div><div class="im">the real defaults</div></div>
+      </div>
+      <div class="note-bad">test_step.py pins that two of these agree; nothing checks the rest</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — one deep declaration, everything derives</div>
+      <div class="mod deep"><div class="if">class WaitStep — steptype, required, optional</div><div class="im">the behaviour, the keys, the defaults — one place</div></div>
+      <div class="arrow garrow">└─ registry derives name→class &nbsp;·&nbsp; validator derives required keys &nbsp;·&nbsp; parser derives defaults</div>
+      <div class="note-good">a new step type = one new module; rules.py shrinks to format-level rules only</div>
+    </div>
+  </div>
+  <div class="callout">Roadmap alignment: §3.2 plans this shape for Phase 2 ("schemas derived from step plugins"). The friction argument is only about <em>timing</em> — the declaration merge pays for itself during the Phase 1 ports, and the entry-point discovery half can still wait for Phase 2.</div>
+</div>
+
+<!-- ==================== 2 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">2</span>
+    <h3>The <code>Runtime</code> seam has two hooks; the Phase 1 port needs four</h3>
+    <span class="badge b-strong">Strong</span>
+  </div>
+  <div class="files">
+    <code>step/runtime.py:42–87</code> · <code>sequencer/sequencer.py:90, 188, 199–204, 235–248</code> ·
+    <code>messages/blocking_messages.py:24–67</code> · reference: <code>old_code/steps.py</code> (User*, SequenceStep, IndexedStep)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd><code>Runtime</code> is the seam between the step layer and the Sequencer, and it is a good one — <code>emit</code>, <code>should_stop</code>, the variable scopes, <code>base_dir</code>, with no-op defaults that make a bare <code>Runtime()</code> a complete fake. But the next ports need things it does not offer: the four <code>User*</code> types must <b>ask a question and block for the answer</b> (the waiting half, <code>PendingRequests</code>, exists but is private to the Sequencer with no path from a step to it); <code>SequenceStep</code> must <b>resolve a sequence by name</b> (the new <code>Runtime</code> never holds the <code>Recipe</code> — the Sequencer looks up the one sequence and hands it down); and nesting needs <b>parent identity</b> (<code>StepResult.subresults</code> exists and nothing writes it; no run event carries a parent id). When the first interactive step is ported, the cheapest move in that moment — reach for <code>Sequencer.pending</code> from inside <code>execute_sequence</code>, or hand the step a live Sequencer — destroys the exact property that keeps the whole step layer testable without queues.</dd>
+    <dt>Solution</dt>
+    <dd>Grow the existing seam, before the ports: <code>Runtime.ask(request) → answer</code> (blocking; the Sequencer wires it to <code>PendingRequests.start()/wait()</code> + its outbox; the bare instance answers "declined" immediately), a sequence-resolution hook for <code>SequenceStep</code>, and parentage carried through the emission model. The additions belong <em>on</em> the seam, not beside it — <code>step/</code> keeps importing message dataclasses only, never <code>QueueWrapper</code>.</dd>
+    <dt>Benefits</dt>
+    <dd>Leverage: every interactive step type gets prompting for the price of one call, and its tests fake it by constructing a <code>Runtime</code> with a canned answer — no threads, no queues, no monkeypatching. Locality: the deadlock constraint <code>blocking_messages.py</code> warns about ("the thread that calls <code>wait()</code> must not be the thread that drains the inbox") is satisfied in exactly one place, the Sequencer's wiring, instead of in every step that asks. The roadmap's M-1 decision (prompt option shape) then has one obvious home.</dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — the asking half has no path</div>
+      <div class="mod deep"><div class="if">Runtime: emit · should_stop · scopes</div><div class="im">complete fake with no-op defaults — the property to keep</div></div>
+      <div class="xarrow">UserPromptStep ──?──▶ Sequencer.pending &nbsp;(private; no path — the tempting shortcut couples steps to the Sequencer)</div>
+      <div class="xarrow">SequenceStep ──?──▶ recipe.sequences &nbsp;(Runtime never holds the Recipe)</div>
+      <div class="note-bad">first User* port hits this; the shortcut breaks test_step.py's no-queue property</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — same seam, four hooks</div>
+      <div class="mod deep"><div class="if">Runtime: emit · should_stop · ask() · resolve_sequence()</div><div class="im">Sequencer wires ask → PendingRequests + outbox, once;<br>bare Runtime answers "declined" — still a complete fake</div></div>
+      <div class="arrow garrow">UserPromptStep ──▶ runtime.ask(UserPromptRequest…) — blocks, typed answer back</div>
+      <div class="arrow garrow">SequenceStep ──▶ runtime.resolve_sequence(name) — nesting resolves without a Sequencer reference</div>
+      <div class="note-good">step tests: Runtime(answer=…) — still zero monkeypatches</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 3 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">3</span>
+    <h3>The promised parity oracle cannot run: <code>old_code/</code> is 100% commented out</h3>
+    <span class="badge b-strong">Strong</span>
+  </div>
+  <div class="files">
+    all of <code>src/pypts/old_code/</code> (4,271 lines, no executable line) ·
+    <code>tests/functional_tests/test_recipe_execution.py:26–28</code> · roadmap Phase 0, last item
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>Roadmap Phase 0 promises characterization tests — "run an example recipe end-to-end and assert on the CSV rows — this is the safety net for the port in Phase 1" — and <code>test_results_match_the_old_code_baseline</code> sits skipped waiting for them. They are not merely unwritten; they are <b>unwritable</b>: every file in <code>old_code/</code> is entirely commented out, so nothing there can be imported or executed, and the example recipes beyond the two ported ones do not parse under either engine (F24). Every parity judgement so far (F6 last-wins, M-5 per-step STOP, continue_on_error) has been made by reading, not running. The skipped test makes the port look mechanically safer than it is.</dd>
+    <dt>Solution</dt>
+    <dd>Stop promising an oracle that cannot fire. Two honest options: (a) check out the last commit where the old engine ran (it is in git history), restore <code>example_tests.py</code>, run the example recipes once, and record the CSVs as golden files the functional test compares against — the oracle runs once, offline, not in CI; or (b) amend Phase 0 to say the baseline is the read-and-record work that already exists (<code>recipe_guide.md</code> §16's 28 findings, <code>porting_changes.md</code> §3's parity matrix) and delete the skipped placeholder. Per the prime rule this is the user's decision; the report only surfaces that the current state is neither.</dd>
+    <dt>Benefits</dt>
+    <dd>Locality of truth: today the "safety net" exists in three inconsistent states (a plan, a skipped test, an inert reference). Either option collapses them to one. Option (a) additionally gives the nine remaining step-type ports a mechanical parity check where today there is only careful reading.</dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — a net that isn't attached</div>
+      <div class="mod ghost"><div class="if">old_code/ — the oracle</div><div class="im">4,271 lines, all commented — cannot import, cannot run</div></div>
+      <div class="xarrow">test_results_match_the_old_code_baseline — skipped, forever satisfiable-looking</div>
+      <div class="note-bad">parity is asserted by reading; nothing can contradict a porting mistake</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After (option a) — golden files recorded once</div>
+      <div class="mod deep"><div class="if">tests/functional_tests/golden/*.csv</div><div class="im">recorded from the last runnable old-engine commit, one offline run</div></div>
+      <div class="arrow garrow">new engine run ──▶ compare CSV rows ──▶ real pass/fail per ported step type</div>
+      <div class="note-good">or option b: amend Phase 0, delete the skipped test — the documents become the recorded baseline</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 4 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">4</span>
+    <h3>"Adding a message is two edits" is six to ten for anything CORE forwards</h3>
+    <span class="badge b-worth">Worth exploring</span>
+  </div>
+  <div class="files">
+    <code>core/core.py:353–412</code> · <code>hmi/hmi_client.py:93–127</code> · <code>report/report.py:123–140</code> ·
+    the three link unions · <code>src/pypts/README.md</code> (the two-step procedure)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>The two-edit procedure holds for point-to-point messages (<code>LoadRecipe</code>). For a <em>forwarded run event</em> — most of the traffic — the real trace for <code>StepExecuted</code> was six files: declare, add to <code>SequencerToCore</code>, add to <code>CoreToReport</code>, a branch in <code>Core.handle_sequencer_message</code>, a branch in <code>Report.handle_core_message</code>, an example in <code>test_messages.py</code>. An event that also reaches a frontend costs nine or ten. <code>Core.handle_sequencer_message</code> is nine <code>case</code> arms of which six are the one-liner <code>self.to_hmi.send(message)</code>: in its mediator role CORE is shallow — the interface (two unions matched exhaustively) is as large as the implementation. The cost recurs ~nine more times during the step port, since each <code>User*</code> type brings request/response pairs.</dd>
+    <dt>Solution</dt>
+    <dd>Narrow, not a bus: let a run event declare which links it rides (a small typed attribute on the event family, or one routing table in <code>run_events.py</code> beside the declarations), and CORE's forwarding arms collapse to one data-driven branch. Commands and everything with behaviour behind it (<code>LoadRecipe</code>, <code>StartSequence</code>, errors, heartbeats) keep their explicit <code>case</code> arms. mypy exhaustiveness and the <code>unhandled()</code> guarantee stay intact for those.</dd>
+    <dt>Benefits</dt>
+    <dd>Locality: a new run event is declared, routed, and exampled in two files again — the README's promise becomes true for the common case. The routing topology stays explicit, just declared beside the event instead of restated as three one-line <code>case</code> arms.</dd>
+  </dl>
+  <div class="callout"><b>Contradicts a recorded decision — flag, don't just do.</b> Roadmap §1.1 rejected a string-topic event bus because "it would erase the explicit topology." This proposal is deliberately weaker — typed events, a closed set of links, no subscription — but it moves fan-out from <code>match</code> arms into data, which is the same axis. Worth reopening only because the cost is now measured (6–10 edits per event) and about to be paid ~9 more times; if the answer is "keep the arms," record it and this stops being re-suggested.</div>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — one event, six edit sites</div>
+      <div class="row">
+        <div class="mod wide"><div class="if">run_events.py — declare</div><div class="im">1</div></div>
+        <div class="mod wide"><div class="if">SequencerToCore ∪</div><div class="im">2</div></div>
+        <div class="mod wide"><div class="if">CoreToReport ∪</div><div class="im">3</div></div>
+      </div>
+      <div class="row">
+        <div class="mod wide"><div class="if">Core: case → forward</div><div class="im">4</div></div>
+        <div class="mod wide"><div class="if">Report: case → record</div><div class="im">5</div></div>
+        <div class="mod wide"><div class="if">test_messages EXAMPLES</div><div class="im">6</div></div>
+      </div>
+      <div class="note-bad">+3 more (HmiClient branch, hook, per-frontend override) if the operator sees it</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — routing declared with the event</div>
+      <div class="mod deep"><div class="if">run_events.py — declare + rides: (REPORT, HMI)</div><div class="im">unions built from the declarations; CORE forwards by data</div></div>
+      <div class="arrow garrow">CORE keeps explicit case arms for commands, errors, heartbeats — unhandled() unchanged there</div>
+      <div class="note-good">a new run event: declare + example + consume — the README's two steps, plus one</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 5 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">5</span>
+    <h3>Three shapes for one executed step, and the invariant separating them is a docstring</h3>
+    <span class="badge b-worth">Worth exploring</span>
+  </div>
+  <div class="files">
+    <code>step/step.py:49–108, 266–277</code> · <code>messages/common_messages.py:82–94</code> ·
+    <code>messages/run_events.py:129–159</code> · <code>report/report.py:178–205</code>
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd><code>Step.run()</code> builds a <code>StepResult</code>, projects it to <code>StepOutcome</code> twice on adjacent lines, wraps one in <code>StepFinished</code> (for frontends) and the other in <code>StepExecuted</code> (for the Report), and <code>run_sequence()</code> projects a third time into <code>RunFinished(outcomes=…)</code>. The reason for the split is real — the pickled HMI seam — but the interface now has three shapes for one fact, and the rule keeping the rich <code>StepExecuted</code> off the HMI unions is enforced by a docstring only: nothing mechanical stops someone adding it to <code>CoreToHmi</code>, and the pickle test would pass. It is also the direct cause of parity loss M-3: per-step inputs/outputs reach no frontend, and cannot without widening <code>StepOutcome</code> or adding a fourth message.</dd>
+    <dt>Solution</dt>
+    <dd>One emission: <code>StepExecuted</code> becomes the single per-step event, and the HMI-safe subset becomes a projection applied at the seam (CORE projects when forwarding to the HMI link), not a second message emitted by the step. Add the missing negative test either way: assert <code>StepExecuted ∉ CoreToHmi</code>. Settling this also decides M-3's fix — the projection is the one place to choose what the operator sees of inputs/outputs.</dd>
+    <dt>Benefits</dt>
+    <dd>Locality: what crosses the pickled seam is decided at the seam, in one function, instead of by which of two near-identical messages a step emitted. The step layer emits once; the emission-order test simplifies; the docstring invariant becomes code.</dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — the step chooses per audience</div>
+      <div class="mod wide"><div class="if">Step.run(): StepResult → to_outcome() ×2 → StepFinished + StepExecuted</div><div class="im">two messages, two lines apart, same fact</div></div>
+      <div class="xarrow">"engine-internal by contract" — a docstring, untested; RunFinished projects a third time</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — project at the seam</div>
+      <div class="mod deep"><div class="if">Step.run(): emit StepExecuted (rich)</div><div class="im">one emission per step</div></div>
+      <div class="arrow garrow">CORE ──▶ Report: as-is &nbsp;&nbsp;·&nbsp;&nbsp; CORE ──▶ HMI: project(StepExecuted) — pickle-safe subset chosen here</div>
+      <div class="note-good">+ a test: StepExecuted is not a member of CoreToHmi</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 6 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">6</span>
+    <h3>Step identity promises a static table; the engine about to land produces a tree</h3>
+    <span class="badge b-strong">Strong</span>
+  </div>
+  <div class="files">
+    <code>step/step.py:141</code> · <code>recipe/recipe.py:58–68</code> · <code>hmi/gui/step_table.py:58–71, 112–120</code> ·
+    <code>report/report.py:192</code> · reference: <code>old_code/steps.py</code> (deepcopy per iteration)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>The interface of <code>StepSummary</code>/<code>StepStarted</code> implies a pre-enumerable set of rows keyed by UUID; <code>step_table._find_row</code> warns and drops anything unknown. <code>IndexedStep</code> deep-copies its template per iteration — copying <code>self.id</code> — so N iterations emit N <code>StepStarted</code> with the <em>same</em> UUID; either one row flickers N times or the port re-mints ids and nothing matches the summary. <code>SequenceStep</code> re-enters <code>run_sequence()</code> with ids the displayed summary never contained — and <em>cannot</em> contain, because an <code>IndexedStep</code>'s row count is only known at run time. The Report's <code>step_id</code> column shares the problem, and roadmap §1.13 already asks for a stable-id policy. This is an invariant mismatch, not a missing feature, and it is cheapest to settle before nesting lands (the <code>User*</code> ports don't stress it; <code>SequenceStep</code>/<code>IndexedStep</code> do).</dd>
+    <dt>Solution</dt>
+    <dd>Decide once what the summary promises. Either identity becomes <code>(step_id, occurrence)</code> with parentage on the events (which candidate 2's emission work would carry anyway), or the summary stops claiming completeness and the table creates rows on first <code>StepStarted</code>, with the summary as the initial fill. Taken once at the contract level, both frontends and the Report inherit the answer; taken later, each grows its own workaround.</dd>
+    <dt>Benefits</dt>
+    <dd>Locality: the "what is a row" decision lives in the message contract, not in three consumers. Leverage: nesting and iteration land on frontends that already know how to display them; the §1.15 TODO ("display policy for nested rows") gets its prerequisite.</dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — static promise, dynamic reality</div>
+      <div class="mod wide"><div class="if">RecipeLoaded.summary: rows keyed by uuid4-at-parse</div><div class="im">table pre-fills; _find_row drops unknowns</div></div>
+      <div class="xarrow">IndexedStep: N events, one UUID &nbsp;·&nbsp; SequenceStep: events with ids no summary held</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — identity decided at the contract</div>
+      <div class="mod deep"><div class="if">events carry (step_id, occurrence, parent)</div><div class="im">summary = initial fill; rows may be born at StepStarted</div></div>
+      <div class="note-good">one decision; GUI table, CSV column, and future Creator identity all inherit it</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 7 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">7</span>
+    <h3>Stacked <code>@catch_and_report_errors()</code> makes error policy depend on nesting depth</h3>
+    <span class="badge b-worth">Worth exploring</span>
+  </div>
+  <div class="files">
+    <code>utilities/error_handling.py:63–98</code> · <code>sequencer/sequencer.py</code> (8 applications) ·
+    <code>report/report.py</code> (9, incl. <code>start</code> <em>and</em> <code>main_loop</code>) · <code>hmi/hmi_client.py</code> (4)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>The decorator swallows, so only the innermost decorated frame on a call chain can ever fire; every outer application is unreachable for anything raised below it. Some nesting is earning its keep (a guard on <code>handle_core_message</code> saves the rest of a batch, as CORE's <code>poll()</code> documents), but four levels is more than that buys, and two spots are actively misleading: <b>if <code>Report.main_loop</code> dies, its decorator swallows, <code>start()</code> logs <code>"Module stopped."</code> and returns — and <code>ReportStopped</code> is never sent</b>, so the log says the module stopped cleanly while CORE waits out <code>SHUTDOWN_TIMEOUT_S</code> and names it abandoned. And <code>Sequencer.execute_sequence</code> is decorated <em>and</em> has the inner <code>try</code> that preserves "one <code>RunStarted</code> ⇒ one <code>RunFinished</code>" — the outer decorator silently voids that invariant for anything raised after the inner block. §1.10 chose two decorator names precisely so the behaviour is "readable at the call site"; stacking makes it depend on depth, which no call site shows. Nothing in <code>test_utilities.py</code> tests the decorators stacked, and nothing tests that a module dying in its loop still tells CORE.</dd>
+    <dt>Solution</dt>
+    <dd>Concentrate the lifecycle failure path: one guard at the message level (where the batch argument applies) and one at the module lifecycle — <code>start → loop → report-stopped-even-on-failure</code> — owned in one place per module (or in a small shared lifecycle helper, since Sequencer, Report and HmiClient repeat the same start/loop/stop shape). Strip the decorator from <code>start</code>, <code>main_loop</code>, <code>do_periodic_tasks</code>, <code>stop</code> where an inner application already covers them. Add the missing test: a loop that raises still produces <code>*Stopped</code>.</dd>
+    <dt>Benefits</dt>
+    <dd>Locality: the effective policy for "the module is dying" exists in one frame instead of being the emergent result of four stacked swallows. The <code>"Module stopped."</code>-but-abandoned contradiction becomes impossible by construction.</dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — four swallows deep</div>
+      <div class="mod wide"><div class="if">@catch… start / @catch… main_loop / @catch… poll / @catch… handler</div><div class="im">innermost wins; outers unreachable</div></div>
+      <div class="xarrow">loop dies → swallowed → "Module stopped." logged → ReportStopped never sent → CORE: abandoned</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — two guards, each with a job</div>
+      <div class="mod deep"><div class="if">per-message guard + lifecycle guard</div><div class="im">bad message: report, keep batch;<br>dying loop: report, send *Stopped, exit honestly</div></div>
+      <div class="note-good">+ test: a raising loop still reports itself stopped</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 8 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">8</span>
+    <h3>The launcher forges half the HMI handshake, and imports everything it spawns</h3>
+    <span class="badge b-worth">Worth exploring</span>
+  </div>
+  <div class="files">
+    <code>launcher/startup.py:44–45, 211, 323–341</code> · <code>core/core.py:562–565</code> ·
+    <code>messages/core_sequencer_communication.py:31</code> (the <code>messages → recipe → step</code> chain)
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd>Three leaks across the launcher's stated interface ("spawn and watch"). First, <code>stop_core()</code> sends <code>HmiStopped()</code> on the frontend's behalf — forging a message whose docstring says it means "the frontend's loop has ended"; <code>Core.stop_all_modules()</code> is idempotent precisely because two senders exist, which is the same leak seen from CORE's side. Second, <code>import pypts.launcher.startup</code> loads PySide6 even for <code>--mode cli</code> (roadmap §1.2 TODO, "a one-line change nobody has made"). Third — not yet recorded anywhere — declaring <code>UseRecipe(recipe: Recipe)</code> makes the <em>messages</em> package import the engine's data layer (<code>messages → recipe → step</code>), so the message vocabulary is no longer importable without the engine; a deliberate §1.13 decision with an undocumented consequence. The tests already feel it: <code>test_startup.py</code> has the highest monkeypatch density in the suite.</dd>
+    <dt>Solution</dt>
+    <dd>Three small cuts, separable: defer the GUI import into the <code>gui</code> branch (the recorded one-liner); replace the forged <code>HmiStopped</code> with the honest fact — the launcher knows the frontend <em>process</em> ended, so either a distinct message saying that, or CORE treating frontend-process-exit as the launcher's to report and <code>HmiStopped</code> as only ever the frontend's; and record (or revisit) the <code>UseRecipe</code> import chain in <code>messages.md</code> — if the vocabulary should stay engine-free, <code>UseRecipe</code> can live beside the Sequencer instead of in the shared vocabulary.</dd>
+    <dt>Benefits</dt>
+    <dd>Locality: shutdown truth has one author per fact, and <code>Core.stop_all_modules()</code> no longer needs to be idempotent-by-accident. A headless bench stops importing Qt to run a CLI recipe. <code>test_startup.py</code> sheds monkeypatches as the launcher's interface stops including other modules' internals.</dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before</div>
+      <div class="mod wide"><div class="if">startup.py — spawn, watch, and…</div><div class="im">…speak HMI protocol, import PySide6 + engine always</div></div>
+      <div class="xarrow">stop_core(): sends HmiStopped() — a fact only the frontend can know</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After</div>
+      <div class="mod deep"><div class="if">startup.py — spawn and watch</div><div class="im">GUI imported in the gui branch only;<br>reports what it knows: the process ended</div></div>
+      <div class="note-good">HmiStopped has one sender again; messages importable without the engine (or the exception recorded)</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 9 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">9</span>
+    <h3><code>ResultType</code> puts verdicts and execution facts on one ordered scale</h3>
+    <span class="badge b-worth">Worth exploring</span>
+  </div>
+  <div class="files">
+    <code>messages/common_messages.py:62–79</code> · <code>step/step.py:101–108</code> · <code>sequencer/sequencer.py:216–217</code>
+  </div>
+  <dl>
+    <dt>Problem</dt>
+    <dd><code>SKIP &lt; DONE &lt; PASS &lt; FAIL &lt; ERROR &lt; STOP</code>, and aggregation is <code>max()</code>. <code>PASS/FAIL/ERROR/DONE</code> are verdicts about the unit under test; <code>SKIP</code> and <code>STOP</code> are facts about execution — nothing was measured. On one comparable scale, a sequence where a step <b>errored</b> and the operator then <b>aborted</b> aggregates to <code>STOP</code>: the error disappears from the run verdict. The docstring's "keep the order if you add a member" is the sign the ordering is doing work nobody can check, and nothing pins the error-under-abort case.</dd>
+    <dt>Solution</dt>
+    <dd>A split, not a deletion: a verdict and a completion state, each aggregated by its own rule, projected to one string where the CSV and the table need a single cell. Interacts directly with M-5 (the old engine marked un-run steps <code>STOP</code>) — settle both in one change, ideally alongside the continue_on_error policy design the roadmap already schedules, since all three are "what does a run's outcome mean."</dd>
+    <dt>Benefits</dt>
+    <dd>An aborted-but-erroring run stops lying; the aggregation rule becomes checkable per axis; M-5's grayed-out rows get a principled representation instead of overloading the verdict column.</dd>
+  </dl>
+  <div class="ba">
+    <div class="pane before">
+      <div class="pane-label">Before — one scale, max() wins</div>
+      <div class="mod wide"><div class="if">SKIP&lt;DONE&lt;PASS&lt;FAIL&lt;ERROR&lt;STOP</div><div class="im">max() of mixed facts</div></div>
+      <div class="xarrow">ERROR then abort → run says STOP; the error vanishes from the verdict</div>
+    </div>
+    <div class="pane after">
+      <div class="pane-label">After — two axes, one projection</div>
+      <div class="mod deep"><div class="if">verdict × completion</div><div class="im">worst verdict; separate "was interrupted / skipped";<br>projected to one cell for CSV and table</div></div>
+      <div class="note-good">error-under-abort pinned by test; M-5's STOP rows come free</div>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 10 ==================== -->
+<div class="card">
+  <div class="card-head">
+    <span class="num">10</span>
+    <h3>Small fold-ins: modules that fail the deletion test quietly</h3>
+    <span class="badge b-spec">Speculative</span>
+  </div>
+  <table class="plain">
+    <tr><th>Module</th><th>Finding</th><th>Deletion-test verdict</th></tr>
+    <tr>
+      <td><code>utilities/common.py</code></td>
+      <td><code>convert_string_to_int</code>, 10 lines, <b>no caller in <code>src/</code></b> — only its own test.</td>
+      <td>Delete. Nothing concentrates; it is a module, a docstring and a test for <code>int()</code>.</td>
+    </tr>
+    <tr>
+      <td><code>utilities/local_storage.py:26–28</code></td>
+      <td><code>ensure_folder_exists</code> wraps <code>os.makedirs(exist_ok=True)</code>, called once, same file.</td>
+      <td>Inline. <code>get_log_file_path</code> stays — it owns the per-run timestamp convention.</td>
+    </tr>
+    <tr>
+      <td><code>step/registry.py</code></td>
+      <td>4-entry dict + 15-line function.</td>
+      <td>Merge into candidate 1's single declaration; don't delete separately.</td>
+    </tr>
+    <tr>
+      <td><code>config_handler/</code></td>
+      <td>Deep for the four calls the framework makes; <code>set_parameter</code>, <code>restore_default</code>, <code>dump</code>, <code>get_whole_config</code> and the <code>Role</code> mechanism have no caller outside tests.</td>
+      <td>Already recorded in <code>config_handler.md</code>'s "Known gaps" — cited here so it isn't rediscovered; no action until <code>SetConfigParameter</code> is designed (§1.3 TODO).</td>
+    </tr>
+  </table>
+</div>
+
+<!-- ==================== TOP ==================== -->
+<h2>Top recommendation</h2>
+<div class="top">
+  <p><b>Start with candidate 2 — grow the <code>Runtime</code> seam — with candidate 1 as its companion in the same porting wave.</b></p>
+  <p>
+    The reasoning is timing, not severity. The next scheduled work is the Phase 1 port of the four
+    <code>User*</code> step types (roadmap §2, Phase 1 step 2), and that port <em>cannot be written</em>
+    against today's <code>Runtime</code>: the asking half of <code>PendingRequests</code> has no path from a
+    step, so whoever ports the first interactive step will either wait on this decision or take the
+    shortcut that couples <code>step/</code> to the Sequencer and destroys the bare-<code>Runtime()</code>
+    testability the whole step layer stands on. Deepening the seam first means every one of the nine
+    remaining step-type ports lands on an interface that already supports it — that is leverage
+    multiplied nine times, at the moment of maximum payoff.
+  </p>
+  <p>
+    Candidate 1 (single step-type declaration) belongs in the same wave because it changes the
+    <em>shape</em> of each port MR from four-file edits to one new module — cheapest before the nine
+    ports, pointless after. Candidate 6 (step identity) is the third Phase-1-gated decision, but it
+    only bites when <code>SequenceStep</code>/<code>IndexedStep</code> land, so it can trail the
+    <code>User*</code> ports. Candidate 3 is the one to <em>decide</em> soonest (one conversation, not a
+    refactor); candidates 4, 5, 7, 8, 9 are real but not on the critical path.
+  </p>
+</div>
+
+<p class="sub">
+  Sources: full-tree walk on 2026-08-21; <code>pypts_roadmap.md</code> §1.1–§1.19, §2–§4;
+  <code>porting_changes.md</code> R-1..R-6, M-1..M-7; module context files
+  <code>config_handler.md</code>, <code>messages.md</code>, <code>gui.md</code>.
+  Findings already tracked in those documents are cited, not re-reported.
+</p>
+
+</div>
+</body>
+</html>

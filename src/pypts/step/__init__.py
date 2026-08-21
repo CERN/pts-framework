@@ -16,16 +16,23 @@ The base class owns everything that is the same for all of them:
 
 Who owns what in this package:
 
-    step.py      the base Step and its lifecycle, StepResult, run_steps()
-                 (the sequence-body policy) and run_sequence() (one sequence,
-                 steps then teardown-in-finally)
-    steps.py     the concrete step types - WaitStep, and a minimal
-                 PythonModuleStep (method calls only; module beside the recipe
-                 or a dotted import)
-    registry.py  steptype name -> class, and build_step(); the replacement
-                 for the old eval() factory
-    runtime.py   the execution context: globals, the locals stack, and the
-                 two seams the Sequencer fills in (emit, should_stop)
+    step.py                the base Step and its lifecycle, StepResult,
+                           run_steps() (the sequence-body policy) and
+                           run_sequence() (one sequence, steps then
+                           teardown-in-finally)
+    wait_step.py           WaitStep
+    python_module_step.py  a minimal PythonModuleStep (method calls only;
+                           module beside the recipe or a dotted import) and
+                           load_python_module()
+    registry.py            steptype name -> class, and build_step(); the
+                           replacement for the old eval() factory
+    runtime.py             the execution context: globals, the locals stack,
+                           and the two seams the Sequencer fills in (emit,
+                           should_stop)
+
+Each concrete step type gets a module of its own, named after the class
+(snake_case, keeping the class's Step suffix). A newly ported type follows
+the same schema: its own file here, plus its registry entry.
 
 The emission model: a step emits its own StepStarted/StepFinished through
 `Runtime.emit`, and run_sequence() emits SequenceStarted/SequenceFinished the

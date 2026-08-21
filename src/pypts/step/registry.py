@@ -19,8 +19,9 @@ same table.
 
 from typing import Any
 
+from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.step import Step
-from pypts.step.steps import PythonModuleStep, WaitStep
+from pypts.step.wait_step import WaitStep
 
 #: Every steptype a recipe may name, keyed lowercase - the YAML spelling is
 #: case-insensitive (the old factory lower-cased eight of ten types and
@@ -41,11 +42,15 @@ def build_step(step_data: dict[str, Any]) -> Step:
     unknown key is a TypeError at load time (the recipe layer wraps it with
     the sequence and step context). The caller's dict is not touched.
     """
-    remaining = dict(step_data)
-    step_type = remaining.pop("steptype")
+    step_type = step_data["steptype"]
     step_class = STEP_TYPES.get(step_type.lower())
     if step_class is None:
         raise ValueError(
             f"Unknown steptype {step_type!r}. Available: {', '.join(sorted(STEP_TYPES))}"
         )
-    return step_class(**remaining)
+
+    constructor_arguments = {}
+    for name, value in step_data.items():
+        if name != "steptype":
+            constructor_arguments[name] = value
+    return step_class(**constructor_arguments)
