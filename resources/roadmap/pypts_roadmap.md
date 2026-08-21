@@ -1368,6 +1368,10 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 - Characterization tests around `old_code`: run an example recipe end-to-end and assert on the CSV rows — this is the safety net for the port in Phase 1.
 - Resolve `requirements.txt` → pyproject-only (existing TODO), REUSE check in CI (existing TODO).
 - Merge strategy: get `architecture_refactor` merged to master early (it already carries the licensing work) and continue in small MRs per the Development workflow page, rather than letting the branch drift further.
+- ~~Unit-test net under shutdown/abort/exit paths~~ **Done (plans/003):** Core
+  fan-out + poison survival, mid-run abort partial outcomes, the HMI exit
+  handshake both ways, and the launcher's `stop_core()`/monitor-wait bounds
+  are asserted; two `test_core.py` placeholders became real tests.
 
 **Exit criteria:** CI green on the branch; skeleton boots in GUI and CLI mode on Windows and Linux; characterization baseline recorded.
 

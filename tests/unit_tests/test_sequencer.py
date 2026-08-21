@@ -416,6 +416,49 @@ def test_stop_requested_is_checked_between_steps_not_inside_one(sequencer):
     assert [m.result for m in run_finished] == [ResultType.STOP]
 
 
+def test_an_abort_between_steps_reports_the_finished_steps(sequencer, monkeypatch):
+    """
+    A mid-run abort is not an empty run: the steps that did complete are facts
+    about the bench and have to reach CORE, or the report of an aborted run
+    would show nothing at all.
+
+    The sibling test above sets the flag before the run, so no step executes and
+    the outcome tuple is empty either way. Here the flag is set from *inside*
+    step 1, which is where the between-steps check in Step.run_steps() is the
+    only thing keeping step 2 from starting.
+    """
+    from pypts.step.steps import WaitStep
+
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    real_step = WaitStep._step
+    first_call = []
+
+    def stops_after_the_first_step(self, runtime, step_input):
+        """Completes normally - the abort must land at the boundary, not in here."""
+        if not first_call:
+            first_call.append(self.name)
+            instance.stop_requested = True
+        return real_step(self, runtime, step_input)
+
+    monkeypatch.setattr(WaitStep, "_step", stops_after_the_first_step)
+
+    instance.execute_sequence("Main")
+
+    assert first_call == ["First wait"]
+
+    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
+    started = [m for m in messages if isinstance(m, StepStarted)]
+    finished = [m for m in messages if isinstance(m, StepFinished)]
+    assert [m.step_name for m in started] == ["First wait"]
+    assert [m.outcome.step_name for m in finished] == ["First wait"]
+
+    assert isinstance(messages[-1], RunFinished)
+    assert messages[-1].result is ResultType.STOP
+    assert [o.step_name for o in messages[-1].outcomes] == ["First wait"]
+
+
 def test_sequence_result_is_sent_once_at_the_end(sequencer):
     instance, outbox, inbox = sequencer
     load_wait_recipe(instance, inbox)

@@ -27,16 +27,6 @@ def test_core_starts_its_submodules():
     ...
 
 
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_core_routes_hmi_exit_to_every_submodule():
-    ...
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_core_records_heartbeats_from_each_module():
-    ...
-
-
 def build_core_that_spawns_nothing():
     """
     A Core with every link wired up and nothing spawned.
@@ -111,6 +101,63 @@ def test_a_stopped_module_does_not_produce_timeout_warnings(caplog):
         core.do_periodic_tasks()
 
     assert not [r for r in caplog.records if "Heartbeat timeout" in r.message]
+
+
+def test_core_records_heartbeats_from_each_module():
+    """
+    All three liveness tables are fed through the real routing.
+
+    Each module's beat arrives on its own link and each link has its own
+    handler, so "the HMI's beat is recorded" says nothing about the other two -
+    the branch could be missing from either of the other handlers and every
+    other test here would still pass.
+    """
+    from pypts.messages.common_messages import Heartbeat
+    from pypts.utilities.heartbeat_manager import HMI, REPORT, SEQUENCER
+
+    core = build_core_that_spawns_nothing()
+    inboxes = {
+        HMI: core.from_hmi,
+        SEQUENCER: core.from_sequencer,
+        REPORT: core.from_report,
+    }
+    # Distinct, and none of them "now", so a beat recorded against the wrong
+    # module is a failure rather than a coincidence.
+    timestamps = {HMI: 1_700_000_001.0, SEQUENCER: 1_700_000_002.0, REPORT: 1_700_000_003.0}
+
+    for name, inbox in inboxes.items():
+        inbox.send(Heartbeat(source=name, timestamp=timestamps[name]))
+    core.poll_all_sources()
+
+    assert core.last_heartbeat == timestamps
+
+
+def test_a_poisoned_message_does_not_stop_the_mediator(caplog):
+    """
+    CORE is the module errors are reported *to*, so it cannot be allowed to die
+    on one. A message with no branch is logged and dropped; the link keeps
+    working, and what was behind the bad message is delivered on the next tick
+    rather than lost.
+    """
+    from pypts.messages.common_messages import Heartbeat
+    from pypts.utilities.heartbeat_manager import REPORT
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_report.send("not a message")
+    core.from_report.send(Heartbeat(source=REPORT, timestamp=1_700_000_003.0))
+
+    with caplog.at_level(logging.ERROR):
+        # The first poll trips over the poison and abandons the rest of the
+        # batch; the second one finds the good message still queued.
+        core.poll_all_sources()
+        core.poll_all_sources()
+
+    assert core.running is True
+    errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 1, f"expected one error, got {len(errors)}"
+    assert "No handler for message" in errors[0].getMessage()
+    assert core.last_heartbeat[REPORT] == 1_700_000_003.0
 
 
 def test_a_sequencer_event_is_routed_to_the_hmi():
@@ -428,6 +475,33 @@ def test_shutdown_deadline_releases_the_held_stop_report(caplog):
 
     assert list(core.to_report.receive()) == [StopReport()]
     assert [r for r in caplog.records if "abandoned" in r.message]
+
+
+def test_core_routes_hmi_exit_to_every_submodule():
+    """
+    The shutdown fan-out: each of the three gets exactly its own stop message
+    and nothing else, across the two phases the handshake takes.
+
+    Sibling of test_shutdown_holds_stop_report_until_the_sequencer_has_stopped,
+    which pins *when* the Report is told; this one pins *that all three are
+    told*, which is the claim a send dropped from stop_all_modules() or from
+    release_stop_report() would break.
+    """
+    from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
+    from pypts.messages.core_report_communication import StopReport
+    from pypts.messages.core_sequencer_communication import SequencerStopped, StopSequencer
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(ShutdownRequested())
+    core.poll_all_sources()
+
+    core.from_sequencer.send(SequencerStopped())
+    core.poll_all_sources()
+
+    assert list(core.to_sequencer.receive()) == [StopSequencer()]
+    assert list(core.to_hmi.receive()) == [StopHmi()]
+    assert list(core.to_report.receive()) == [StopReport()]
 
 
 def test_a_second_shutdown_request_sends_nothing_new():
