@@ -612,6 +612,38 @@ def test_the_window_reads_the_log_it_was_given(qapp, tmp_path):
 
 
 @requires_qt
+def test_the_open_logs_folder_button_shows_the_logs_directory(qapp, tmp_path, monkeypatch):
+    """
+    The button answers "where are my logs": it hands the folder of the log
+    being followed - every run's log is a sibling there - to the system file
+    browser. The hand-off is what is tested; opening a real Explorer window
+    from a unit test would be an interruption, not a check.
+    """
+    from pathlib import Path
+
+    from PySide6.QtGui import QDesktopServices
+
+    from pypts.helper_applications.debug_monitor.main_window import DebugMonitor
+
+    log_file = tmp_path / "pypts_20260812_093258.log"
+    log_file.write_text(INFO_LINE + "\n", encoding="utf-8")
+
+    opened = []
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", staticmethod(lambda url: opened.append(url) or True)
+    )
+
+    monitor = DebugMonitor(log_file)
+    try:
+        monitor.timer.stop()
+        monitor.open_logs_button.click()
+    finally:
+        monitor.close()
+
+    assert [Path(url.toLocalFile()) for url in opened] == [tmp_path]
+
+
+@requires_qt
 def test_a_log_with_no_trace_says_so_rather_than_showing_nothing(qapp, tmp_path):
     """
     A run at INFO produces a log with no trace in it. An empty table reads as

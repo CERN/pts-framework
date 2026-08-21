@@ -30,8 +30,8 @@ table keeps a window on the tail regardless.
 
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -126,6 +126,10 @@ class DebugMonitor(QMainWindow):
 
         self.status = QLabel()
         self.statusBar().addWidget(self.status)
+        # Permanent (right side of the status bar), so it is there on both tabs.
+        self.open_logs_button = QPushButton("Open logs folder")
+        self.open_logs_button.clicked.connect(self._open_logs_folder)
+        self.statusBar().addPermanentWidget(self.open_logs_button)
         self._refresh_status()
 
         self.timer = QTimer(self)
@@ -259,6 +263,16 @@ class DebugMonitor(QMainWindow):
         self.trace_filter.set_hidden_links(
             link for link, box in self.link_boxes.items() if not box.isChecked()
         )
+
+    def _open_logs_folder(self) -> None:
+        """
+        Show the folder this log lives in, in the system file browser.
+
+        Every run's log is a sibling file there - the folder is
+        `paths.logs_dir` from config.ini - so this is the one button that
+        answers "where are my logs".
+        """
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.log_path.parent)))
 
     def _clear_trace(self) -> None:
         """

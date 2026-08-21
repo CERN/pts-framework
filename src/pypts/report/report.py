@@ -4,19 +4,7 @@
 
 """
 The Report module - builds and exports the artefacts of a run.
-
-Runs as a thread of the Core process. CORE forwards the run events here:
-RunStarted opens one folder per run and the incremental CSV inside it, every
-StepExecuted appends one row and flushes - so a run that dies mid-sequence
-still leaves the results it produced - RunFinished closes the CSV, and the
-GenerateReport CORE sends right behind it turns the recorded rows into a
-self-contained report.html in the same folder. The Report answers with
-ReportGenerated, which CORE relays to the operator as ReportReady.
-
-The CSV mirrors the shape of the old engine's report (old_code/report.py):
-one flat row per executed step, inputs and outputs serialised to JSON. What
-the old code had and this does not yet - TDMS plots, the serial-number column,
-report.type/report.theme - is recorded in the roadmap.
+Runs as a thread of the Core process. CORE forwards the run events here
 """
 
 import csv
@@ -25,7 +13,6 @@ import json
 import time
 from pathlib import Path
 from typing import IO
-
 from pypts.config_handler import ConfigHandler
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
@@ -44,13 +31,10 @@ from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import REPORT, HeartbeatManager
 
 #: The name CORE knows this module by, and the `source` on its heartbeats.
-#: Imported rather than spelled again: CORE keys its liveness tables on the
-#: same string, and nothing would catch the two drifting apart.
+#: Imported rather than spelled again
 MODULE_NAME = REPORT
 
-#: One flat row per executed step, matching the old engine's report where a
-#: column already existed there. `serial_number` returns when something asks
-#: for one (roadmap).
+#: One flat row per executed step
 CSV_COLUMNS = (
     "recipe_name",
     "sequence_name",
@@ -72,11 +56,6 @@ def report_main(
 ) -> None:
     """
     Entry point called by CORE. Runs on the Report thread.
-
-    Deliberately does not call init_logging(), for the reason given in
-    sequencer.py: the root logger belongs to the Core process, and this thread
-    shares it. It also means `ConfigHandler()` below returns CORE's instance
-    rather than building a second one.
     """
     Report(to_core, from_core).start()
 
@@ -84,15 +63,14 @@ def report_main(
 class Report:
     """
     Attributes:
-        core: outbox to CORE. Named `core` because @catch_and_report_errors()
-              reports failures through it.
+        core: outbox to CORE
         inbox: commands from CORE.
         output_dir: where the run folders go, from the configuration.
         run_dir: the folder of the run in progress (or just finished), or None
               before the first run.
         csv_file: the open, growing report.csv, or None outside a run.
         rows: what has been written to the CSV, kept for the HTML pass.
-        run_info: the RunStarted of the current run.
+        run_info: the RunStarted of the current run.`
         run_result: the RunFinished verdict, or None while the run is going.
         current_sequence: the sequence name stamped on the rows being written.
     """
@@ -103,11 +81,6 @@ class Report:
         from_core: QueueWrapper[CoreToReport],
         output_dir: Path | None = None,
     ) -> None:
-        """
-        Args:
-            output_dir: overrides `paths.reports_dir`. Tests pass a tmp_path;
-                the framework passes nothing and the configuration decides.
-        """
         self.core = to_core
         self.inbox = from_core
         self.running = True
@@ -128,8 +101,6 @@ class Report:
     @catch_and_report_errors()
     def start(self) -> None:
         log.info("Starting module.")
-        # Stated once, at startup, because "where did my report go" is asked
-        # after the run, when the answer is no longer on screen.
         log.info("Reports will be written to: %s", self.output_dir)
         self.main_loop()
         log.info("Module stopped.")
@@ -192,9 +163,6 @@ class Report:
     def make_run_dir(self, recipe_name: str) -> Path:
         """
         One folder per run: <reports_dir>/<timestamp>_<recipe name>.
-
-        A second run in the same second gets a numeric suffix rather than the
-        first run's folder.
         """
         safe_name = "".join(c if c.isalnum() else "_" for c in recipe_name)
         base = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "_" + safe_name
@@ -208,10 +176,8 @@ class Report:
 
     @catch_and_report_errors()
     def record_step(self, event: StepExecuted) -> None:
-        """Append one row for one executed step, flushed immediately.
-
-        The flush is the point: an incremental report is only worth having if
-        the row survives whatever kills the rest of the run.
+        """
+        Append one row for one executed step, flushed immediately.
         """
         if self.csv_writer is None or self.csv_file is None:
             log.warning(
@@ -258,10 +224,7 @@ class Report:
     @catch_and_report_errors()
     def generate_report(self) -> None:
         """
-        Build report.html from the recorded rows, beside the CSV.
-
-        Answers with ReportGenerated carrying the absolute path, which CORE
-        relays to the operator as ReportReady.
+        Build report.html from the recorded rows
         """
         if self.run_dir is None or self.run_info is None:
             log.warning("Cannot generate: no run has been recorded.")
@@ -348,9 +311,7 @@ tr.STOP td {{ background: #ece0f4; }}
     def export_report(self) -> None:
         """
         Write the generated report out in another format.
-
-        Not implemented, and nothing sends ExportReport yet. Answers with
-        ReportExported carrying the path once it does something.
+        Not implemented yet
         """
         log.warning("Cannot export: report export is not implemented.")
 
