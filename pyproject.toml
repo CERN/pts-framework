@@ -11,16 +11,21 @@ name = "pts-framework"
 dynamic = [
   "version",  # The version is taken directly from the repository, using setuptools-scm.
 ]
-# description = "<Insert short description of the project>"
+description = "Hardware-oriented testing framework developed by BE-CEM-MTA"
 readme = "README.md"
+license = "LGPL-2.1-or-later"
+keywords = ["testing", "hardware", "instrumentation", "cern"]
 classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
   "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
   "Operating System :: OS Independent",
 ]
 authors = [
   { name = "Odd Oyvind Andreassen", email = "odd.oyvind.andreassen@cern.ch" },
-  { name = "Joseph Tagg", email = "joseph.tagg@cern.ch" },
-  { name = "Bartlomiej Banas", email = "joseph.tagg@cern.ch" },
+  { name = "Bartlomiej Banas", email = "Bartlomiej.Banas@cern.ch" },
+  { name = "Oliver Damborg", email = "odamborg@cern.ch" },
   { name = "Alvaro Martinez Landete", email = "alvaro.martinez.landete@cern.ch" },
 ]
 # Specify the minimum Python version required. It is not safe to use
@@ -65,8 +70,8 @@ dev = [
 ]
 
 [project.urls]
-# Homepage = "PyPTS repository"
-Repository = "https://gitlab.cern.ch/pts/framework/pypts"
+Homepage = "https://github.com/CERN/pts-framework"
+Repository = "https://github.com/CERN/pts-framework"
 
 [project.scripts]
 init_env_min = "pypts.examples.environment_setup_tools.Minimal_setup.init_env_min:main"
