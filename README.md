@@ -6,7 +6,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # pypts
 
-![pypts quick run](images/pypts_quick_run.gif)
+![pypts GIF](images/pypts_quick_run.gif)
 
 Hardware-oriented testing framework developed by BE-CEM-MTA.
 
@@ -22,7 +22,7 @@ Hardware-oriented testing framework developed by BE-CEM-MTA.
 *   **HTML Reports:** Provides a utility to convert the CSV report into a styled HTML file (`report.html`) for easy viewing, similar to `pytest-html`.
 *   **Event System:** Uses queues for inter-thread communication and event reporting (e.g., step start/end).
 
-For full documentation, please visit [PTS Framework Documentation](https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/stable/).
+For full documentation, please visit [PTS Framework Documentation](https://cern.github.io/pts-framework/).
 
 =======
 
@@ -52,4 +52,4 @@ artifact for 30 days; PyPI is the permanent package source. See
 
 pypts is distributed under the **LGPL-2.1-or-later** licence.
 
-pypts comes with a [dependency licence compatibility analysis report](https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/stable/dependency_license_analysis.html).
+pypts comes with a [dependency licence compatibility analysis report](https://cern.github.io/pts-framework/dependency_license_analysis.html).
