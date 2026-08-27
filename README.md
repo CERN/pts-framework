@@ -6,7 +6,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # pypts
 
-![pypts quick run](images/pypts_quick_run.gif)
+![pypts GIF](images/pypts_quick_run.gif)
 
 Hardware-oriented testing framework developed by BE-CEM-MTA.
 
