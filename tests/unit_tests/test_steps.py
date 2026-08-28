@@ -51,6 +51,20 @@ class PassFailStep(Step):
         return input
 
 
+class EchoWithVerdictStep(Step):
+    """Echoes the indexed input 'a' as a data output plus a passing verdict."""
+    def _step(self, runtime, input, parent_step):
+        return {"value": input["a"], "passed": True}
+
+
+class FlakyEchoStep(Step):
+    """Echoes the indexed input 'a', but raises when it is 20."""
+    def _step(self, runtime, input, parent_step):
+        if input["a"] == 20:
+            raise ValueError("deliberate failure")
+        return {"value": input["a"]}
+
+
 @pytest.fixture
 def mock_runtime():
     """A lightweight mock Runtime that satisfies Step.run's contract."""
@@ -423,6 +437,34 @@ class TestBuildStep:
         assert isinstance(step, IndexedStep)
         assert isinstance(step.template_step, WaitStep)
 
+    def test_build_indexed_step_keeps_storage_output_mapping(self):
+        """Storage outputs survive on the wrapper; verdicts stay on the template."""
+        from pypts.recipe_language import WaitStep as WaitDefinition
+
+        definition = WaitDefinition(
+            steptype="WaitStep",
+            step_name="IndexedWait",
+            description="Wait twice and store the waits.",
+            input_mapping={
+                "wait_time": {
+                    "type": "direct", "value": [0.01, 0.02], "indexed": True
+                }
+            },
+            output_mapping={
+                "waited": {"type": "local", "local_name": "waited"},
+                "passed": {"type": "passfail"},
+            },
+        )
+        step = Step.build_step(definition)
+        assert isinstance(step, IndexedStep)
+        assert step.output_mapping["waited"] == {
+            "type": "local", "local_name": "waited"
+        }
+        assert step.output_mapping["__result"] == {"type": "passthrough"}
+        assert "passed" not in step.output_mapping
+        # The template keeps the full authored mapping (shared-dict aliasing guard).
+        assert set(step.template_step.output_mapping) == {"waited", "passed"}
+
     def test_rejects_unvalidated_dictionary(self):
         with pytest.raises(TypeError, match="validated step definition"):
             Step.build_step({"steptype": "WaitStep"})
@@ -655,6 +697,164 @@ class TestIndexedStep:
 
         result = indexed.run(mock_runtime, {})
         assert result.result == ResultType.SKIP
+
+    # --- Output storage -------------------------------------------------
+
+    @staticmethod
+    def _prepare(runtime):
+        """Give a real Runtime the scopes and metadata Step.run needs."""
+        runtime.stop_event = Event()
+        runtime.push_locals({})
+        runtime.set_globals({})
+        runtime.recipe_name = "T"
+        runtime.recipe_file_name = "t.yaml"
+        runtime.serial_number = "SN"
+        runtime.current_sequence_name = "Main"
+
+    def test_local_output_stores_aggregated_list(self, real_runtime):
+        self._prepare(real_runtime)
+        # build_step passes one and the same mapping object to both, so do that here.
+        mapping = {"a": {"type": "local", "local_name": "measured"}}
+        template = PassFailStep(
+            step_name="Inner",
+            input_mapping={"a": {"type": "direct", "indexed": True}},
+            output_mapping=mapping,
+        )
+        indexed = IndexedStep(
+            template,
+            step_name="Outer",
+            input_mapping={
+                "a": {"type": "direct", "value": [10, 20, 30], "indexed": True}
+            },
+            output_mapping=mapping,
+        )
+
+        result = indexed.run(real_runtime, {})
+        assert real_runtime.get_local("measured") == [10, 20, 30]
+        assert result.outputs["a"] == [10, 20, 30]
+
+    def test_global_output_stores_aggregated_list(self, real_runtime):
+        self._prepare(real_runtime)
+        mapping = {"a": {"type": "global", "global_name": "saved"}}
+        template = PassFailStep(
+            step_name="Inner",
+            input_mapping={"a": {"type": "direct", "indexed": True}},
+            output_mapping=mapping,
+        )
+        indexed = IndexedStep(
+            template,
+            step_name="Outer",
+            input_mapping={
+                "a": {"type": "direct", "value": [1, 2], "indexed": True}
+            },
+            output_mapping=mapping,
+        )
+
+        indexed.run(real_runtime, {})
+        assert real_runtime.get_global("saved") == [1, 2]
+
+    def test_verdict_and_storage_coexist(self, real_runtime):
+        """A verdict output next to a storage output must not trip the
+        passthrough-exclusivity rule, and both must still take effect."""
+        self._prepare(real_runtime)
+        mapping = {
+            "passed": {"type": "passfail"},
+            "value": {"type": "local", "local_name": "measured"},
+        }
+        template = EchoWithVerdictStep(
+            step_name="Inner",
+            input_mapping={"a": {"type": "direct", "indexed": True}},
+            output_mapping=mapping,
+        )
+        indexed = IndexedStep(
+            template,
+            step_name="Outer",
+            input_mapping={
+                "a": {"type": "direct", "value": [10, 20], "indexed": True}
+            },
+            output_mapping=mapping,
+        )
+
+        result = indexed.run(real_runtime, {})
+        assert result.error_info == ""
+        assert result.result == ResultType.PASS
+        assert real_runtime.get_local("measured") == [10, 20]
+        # The verdict was evaluated once per iteration, on the sub-steps.
+        assert [sub.result for sub in result.subresults] == [
+            ResultType.PASS, ResultType.PASS
+        ]
+
+    def test_wrapper_and_template_mappings_are_split(self, mock_runtime):
+        mapping = {
+            "passed": {"type": "passfail"},
+            "value": {"type": "local", "local_name": "measured"},
+            "chart": {"type": "image"},
+        }
+        template = EchoWithVerdictStep(
+            step_name="Inner",
+            input_mapping={"a": {"type": "direct", "indexed": True}},
+            output_mapping=mapping,
+        )
+        indexed = IndexedStep(
+            template,
+            step_name="Outer",
+            input_mapping={
+                "a": {"type": "direct", "value": [10, 20], "indexed": True}
+            },
+            output_mapping=mapping,
+        )
+
+        # Wrapper keeps only storage mappings, plus its own aggregate verdict.
+        assert set(indexed.output_mapping) == {"value", "__result"}
+        # The shared authored mapping is left untouched on the template.
+        assert set(template.output_mapping) == {"passed", "value", "chart"}
+
+        indexed.run(mock_runtime, {})
+        for sub in indexed.steps:
+            assert set(sub.output_mapping) == {"passed", "chart"}
+
+    def test_empty_indexed_list_stores_empty_list(self, real_runtime):
+        self._prepare(real_runtime)
+        mapping = {"a": {"type": "local", "local_name": "measured"}}
+        template = PassFailStep(
+            step_name="Inner",
+            input_mapping={"a": {"type": "direct", "indexed": True}},
+            output_mapping=mapping,
+        )
+        indexed = IndexedStep(
+            template,
+            step_name="Outer",
+            input_mapping={"a": {"type": "direct", "value": [], "indexed": True}},
+            output_mapping=mapping,
+        )
+
+        result = indexed.run(real_runtime, {})
+        assert result.result == ResultType.SKIP
+        assert real_runtime.get_local("measured") == []
+
+    def test_errored_iteration_still_stores_list(self, real_runtime):
+        """A failing iteration must surface as ERROR, not be masked by a
+        KeyError while storing the aggregate."""
+        self._prepare(real_runtime)
+        mapping = {"value": {"type": "local", "local_name": "measured"}}
+        template = FlakyEchoStep(
+            step_name="Inner",
+            input_mapping={"a": {"type": "direct", "indexed": True}},
+            output_mapping=mapping,
+        )
+        indexed = IndexedStep(
+            template,
+            step_name="Outer",
+            input_mapping={
+                "a": {"type": "direct", "value": [10, 20, 30], "indexed": True}
+            },
+            output_mapping=mapping,
+        )
+
+        result = indexed.run(real_runtime, {})
+        assert result.result == ResultType.ERROR
+        assert result.error_info == ""  # the wrapper itself did not raise
+        assert real_runtime.get_local("measured") == [10]
 
 
 # ============================================================

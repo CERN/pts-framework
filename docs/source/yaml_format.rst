@@ -72,6 +72,15 @@ verdict mapping on a step. ``local`` and ``global`` store values, while
 :ref:`recipe-v2-output-passfail` through :ref:`recipe-v2-output-range`
 definitions for exact fields.
 
+On a step with an indexed input, output mappings are split between the iterations
+and the wrapper. ``passfail``, ``equals``, ``range`` and ``image`` are evaluated
+(or attached to the report) once per iteration, so each iteration gets its own
+verdict row and its own images. ``local`` and ``global`` are stored once, by the
+wrapper, and receive the **list** of per-iteration values — one entry per
+iteration, in iteration order. An indexed step whose indexed lists are empty
+skips and stores empty lists. ``indexed`` is an input-only field; it is rejected
+on an output mapping.
+
 Runtime-specific behavior
 -------------------------
 

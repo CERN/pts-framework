@@ -20,6 +20,12 @@ from pypts.utils import get_package_root, find_resource_path, get_project_root, 
 
 logger = logging.getLogger(__name__)
 
+# Output types evaluated per iteration by each generated sub-step.
+_PER_ITERATION_RESULT_TYPES = ("passthrough", "passfail", "equals", "range")
+# Output types the IndexedStep wrapper owns: values are aggregated across all
+# iterations and stored once, so the iterations must not write them N times.
+_STORAGE_OUTPUT_TYPES = ("local", "global")
+
 
 class IndexedStep(Step):
     """
@@ -40,11 +46,20 @@ class IndexedStep(Step):
             raise TypeError(f"IndexedStep requires a valid Step instance, got {type(step)}")
         self.template_step: Step = step
         self.steps: List[Step] = [] # Stores the generated step instances for each run
-        # Override output_mapping for the wrapper step itself to capture the aggregate result
-        self.output_mapping = {"__result": {"type": "passthrough"}}
-        # Note: Any output mappings defined in the original step_data for the wrapper
-        # (like saving the aggregated result to a variable) should be added here or
-        # processed by the base Step.process_outputs method using self.output_mapping.
+        # The wrapper owns the storage (local/global) mappings: their values are
+        # aggregated over every iteration and saved once, from process_outputs.
+        # Verdict and image mappings stay on the template step so they are evaluated
+        # (or attached to the report) per iteration.
+        # A new dict is built on purpose: build_step hands the *same* output_mapping
+        # object to both the template step and this wrapper, so mutating in place would
+        # corrupt the template and break the aggregation below.
+        self.output_mapping = {
+            name: config
+            for name, config in self.output_mapping.items()
+            if isinstance(config, dict) and config.get("type") in _STORAGE_OUTPUT_TYPES
+        }
+        # The wrapper's own verdict is the aggregate of every iteration's result.
+        self.output_mapping["__result"] = {"type": "passthrough"}
 
     def check_indexing(self):
         """
@@ -79,6 +94,17 @@ class IndexedStep(Step):
 
         indexed_list_names = list(indexed_input_configs.keys())
 
+        # Pre-seed the aggregation with an empty list per non-verdict output of the
+        # template step. Every key the wrapper's output_mapping may reference then
+        # always exists in the returned dict, even when an iteration errors (which
+        # leaves StepResult.outputs empty) or when there is nothing to run at all.
+        aggregated_outputs = {
+            name: []
+            for name, config in self.template_step.output_mapping.items()
+            if isinstance(config, dict)
+            and config.get("type") not in _PER_ITERATION_RESULT_TYPES
+        }
+
         # Get the actual input *values* provided to the IndexedStep wrapper
         wrapper_inputs = input
 
@@ -98,7 +124,9 @@ class IndexedStep(Step):
                 num_runs = min(len(wrapper_inputs[name]) for name in indexed_list_names)
                 if num_runs == 0:
                     logger.warning(f"IndexedStep '{self.name}' has empty lists for indexed inputs. Skipping execution.")
-                    return {"__result": ResultType.SKIP} # Or DONE? SKIP seems appropriate.
+                    # Storage outputs still resolve — to empty lists — so the wrapper's
+                    # process_outputs does not fail on a missing key.
+                    return {**aggregated_outputs, "__result": ResultType.SKIP} # Or DONE? SKIP seems appropriate.
             except ValueError: # Handle case where indexed_list_names is empty after checks
                 logger.warning(f"IndexedStep '{self.name}' inconsistency: Indexed inputs found, but failed to determine run count. Running once.")
                 num_runs = 1
@@ -132,22 +160,15 @@ class IndexedStep(Step):
             copied_step.input_mapping = iteration_input_mapping
 
             # Remove local/global variable *saving* definitions from the copied step's *output* mapping.
-            # We want to aggregate these values in the wrapper, not have each iteration save potentially overwriting variables.
-            # Pass/Fail/Range/Equals checks on outputs should still happen per iteration.
-            output_mapping_keys = list(copied_step.output_mapping.keys())
-            for key in output_mapping_keys:
-                output_conf = copied_step.output_mapping[key]
-                if isinstance(output_conf, dict):
-                    if output_conf.get("indexed", False):
-                        values = output_conf.get("value", [])
-                        if i < len(values):
-                            copied_step.output_mapping[key]["value"] = values[i]
-                        else:
-                            logger.warning(f"No indexed output value for iteration {i} in '{self.name}'")
-                            copied_step.output_mapping[key]["value"] = None #could also be a specified standard value.
-                    elif output_conf.get("type") in ["local", "global"]:
-                        logger.debug(f"Removing output mapping '{key}' (type: {output_conf.get('type')}) from iteration {i} of '{self.name}'")
-                        del copied_step.output_mapping[key]
+            # The wrapper aggregates these values and saves them once, instead of each
+            # iteration overwriting the same variable.
+            # Pass/Fail/Range/Equals checks and image outputs still happen per iteration.
+            copied_step.output_mapping = {
+                name: config
+                for name, config in copied_step.output_mapping.items()
+                if not (isinstance(config, dict)
+                        and config.get("type") in _STORAGE_OUTPUT_TYPES)
+            }
 
             # Modify the name for clarity in logs and results.
             # If step_name contains {input_name} placeholders, substitute
@@ -174,20 +195,12 @@ class IndexedStep(Step):
         # Aggregate outputs from the individual step results.
         # We only aggregate outputs that were *not* used for pass/fail/range/equals checks
         # within the iterations (i.e., likely intended as data outputs).
-        aggregated_outputs = {}
-        # These types imply the output was used for per-iteration result calculation.
-        per_iteration_result_types = ["passthrough", "passfail", "equals", "range"]
-
+        # aggregated_outputs was pre-seeded above with the template's non-verdict
+        # outputs, so only those names are collected here.
         for result in step_results:
             # Iterate through the outputs recorded in the StepResult for this iteration
             for output_name, output_value in result.outputs.items():
-                # Check the *template* step's original output mapping config for this output name.
-                template_output_conf = self.template_step.output_mapping.get(output_name)
-
-                # If the output exists in the template config AND its type was NOT a per-iteration check, aggregate it.
-                if template_output_conf and isinstance(template_output_conf, dict) and template_output_conf.get("type") not in per_iteration_result_types:
-                    if output_name not in aggregated_outputs:
-                        aggregated_outputs[output_name] = []
+                if output_name in aggregated_outputs:
                     aggregated_outputs[output_name].append(output_value)
 
         # Determine the overall result of the IndexedStep based on all iteration results.
