@@ -149,7 +149,7 @@ def validate_recipe_file(filepath):
     faults = []
     warnings = []
 
-    with open(filepath, 'r') as f:
+    with open(filepath, 'r', encoding='utf-8') as f:
         content = f.read()
 
     try:

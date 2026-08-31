@@ -33,7 +33,7 @@ class Simulated_sine_wave(threading.Thread):
         dt = 1 / self.sampling_rate
         # Open the CSV file for writing
 
-        with open(self.file_name, mode='w', newline='', buffering=1) as csv_file:
+        with open(self.file_name, mode='w', encoding='utf-8', newline='', buffering=1) as csv_file:
             writer = csv.writer(csv_file)
             # Write the header row
             writer.writerow(["Timestamp", "Signal"])

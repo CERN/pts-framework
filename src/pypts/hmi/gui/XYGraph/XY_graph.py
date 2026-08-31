@@ -288,7 +288,7 @@ class PlotWindow(QtWidgets.QWidget):
         file_path = stream.hook
         timestamps = []
         signals = []
-        with open(file_path, 'r') as file:
+        with open(file_path, 'r', encoding='utf-8', newline='') as file:
             reader = csv.DictReader(file)
             for row in reader:
                 timestamps.append(datetime.strptime(row['Timestamp'], "%Y-%m-%d %H:%M:%S.%f"))

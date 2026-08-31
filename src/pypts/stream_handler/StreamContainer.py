@@ -1,4 +1,12 @@
 class GlobalContainer:
+    """Per-process singleton container for streams.
+
+    NOTE: this singleton is scoped to the current Python process. Under
+    multiprocessing (spawn on Windows, and spawn on Linux from 3.14+), each
+    subprocess re-imports this module and gets its own independent container.
+    If cross-process stream sharing is required, use multiprocessing.Manager
+    or an explicit IPC queue instead.
+    """
     _instance = None
     def __new__(cls, *args, **kwargs):
 

@@ -464,7 +464,7 @@ class RecipeEditorMainMenu(QMainWindow):
             try:
                 base, _ = os.path.splitext(new_path)
                 new_path_fixed = f"{base}.yml"
-                with open(new_path_fixed, 'w') as f:
+                with open(new_path_fixed, 'w', encoding='utf-8') as f:
                     # yaml.dump_all(data, f, sort_keys=False)
                     f.write(data)
             except Exception as e:
@@ -513,7 +513,7 @@ class RecipeEditorMainMenu(QMainWindow):
             try:
                 base, ext = os.path.splitext(self.current_file_path)
                 new_path = f"{base}{ext}"
-                with open(new_path, 'w') as f:
+                with open(new_path, 'w', encoding='utf-8') as f:
                     # yaml.dump_all(data, f, sort_keys=False)
                     f.write(data)
             except Exception as e:
@@ -739,7 +739,7 @@ class RecipeEditorMainMenu(QMainWindow):
     def load_yaml_recipe(self, file_path):
         if file_path:
             try:
-                with open(file_path, 'r') as f:
+                with open(file_path, 'r', encoding='utf-8') as f:
                     raw_text = f.read()
                     self.temporary_recipe_contents = raw_text
                     self.current_file_path = file_path

@@ -9,7 +9,7 @@ if __name__ == "__main__":
         "-s",
         "-v",
         "--color=yes",
-        "tests/unit_tests",
-        "tests/functional_tests"
+        "unit_tests/unit_tests",
+        "unit_tests/functional_tests"
     ])
     exit(exit_code)

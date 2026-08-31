@@ -85,3 +85,11 @@ features = [
   {name = "core", version = 2},
   {name = "docs", version = 2},
 ]
+
+[tool.ruff]
+extend-exclude = ["src/pypts/old_code"]
+
+[tool.ruff.lint]
+# PLW1514: warn on open() without an explicit encoding — required for
+# cross-platform correctness (Windows defaults to cp1252, not utf-8).
+extend-select = ["PLW1514"]
