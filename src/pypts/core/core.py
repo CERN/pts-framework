@@ -1,106 +1,284 @@
-from multiprocessing import Process, Queue
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+"""
+CORE - the mediator, and the engine process.
+
+Every message in the framework except log records passes through here. CORE owns
+the links to the Sequencer and the Report, holds the link to the HMI that the
+launcher built, and is the only module that talks to more than one other.
+
+The Sequencer and the Report are **threads of this process**, not processes of
+their own. Only the HMI is still across a process boundary, so that the
+operator's window survives an engine crash. What that buys: the four engine
+links are plain `queue.Queue`, nothing on them is pickled, and the engine can
+hand the Sequencer a live object - a recipe, a device handle - the day the
+execution engine lands. What it costs is recorded in the roadmap: a fault in
+either thread now takes CORE down with it, and the run log identifies both of
+them as "Core", because the format names the process.
+
+The three handlers below are the whole routing table. Each one ends in
+unhandled(), so a message nobody thought about raises instead of being dropped.
+"""
+
+import logging
+import threading
 import time
+import traceback
+from pathlib import Path
+from queue import Queue
+from typing import ClassVar
 
-from pypts.core.sequencer_to_core_interface import SequencerToCoreInterface, SequencerToCoreQueue
-from pypts.core.report_to_core_interface import ReportToCoreInterface, ReportToCoreQueue
-
-from pypts.hmi.core_to_HMI_interface import CoreToHMIQueue
-from pypts.hmi.HMI_MESSAGES import HMIToCoreCommand, HMIToCoreEvent
-
-from pypts.sequencer.core_to_sequencer_interface import CoreToSequencerQueue
-from pypts.sequencer.sequencer import sequencer_main
-from pypts.sequencer.SEQUENCER_MESSAGES import SequencerToCoreCommand, SequencerToCoreEvent
-
-from pypts.report.core_to_report_interface import CoreToReportQueue
+from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
+from pypts.messages import QueueWrapper, UnhandledMessage, unhandled
+from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
+from pypts.messages.core_hmi_communication import (
+    CoreToHmi,
+    HmiStopped,
+    HmiToCore,
+    LoadRecipe,
+    ModuleErrorReported,
+    ReportReady,
+    SetConfigParameter,
+    ShutdownRequested,
+    StartSequence,
+    StatusChanged,
+    StopHmi,
+)
+from pypts.messages.core_report_communication import (
+    CoreToReport,
+    GenerateReport,
+    ReportExported,
+    ReportGenerated,
+    ReportStopped,
+    ReportToCore,
+    StopReport,
+)
+from pypts.messages.core_sequencer_communication import (
+    CoreToSequencer,
+    RunSequence,
+    SequencerStopped,
+    SequencerToCore,
+    StopSequencer,
+    UseRecipe,
+)
+from pypts.messages.links import (
+    CORE_TO_REPORT,
+    CORE_TO_SEQUENCER,
+    REPORT_TO_CORE,
+    SEQUENCER_TO_CORE,
+)
+from pypts.messages.run_events import (
+    RecipeLoaded,
+    RunFinished,
+    RunStarted,
+    SequenceFinished,
+    SequenceStarted,
+    SerialNumberRequest,
+    SerialNumberResponse,
+    StepExecuted,
+    StepFinished,
+    StepStarted,
+    StopSequence,
+    UserPromptRequest,
+    UserPromptResponse,
+)
+from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.report.report import report_main
-from pypts.report.REPORT_MESSAGES import ReportToCoreEvent, ReportToCoreCommand
+from pypts.sequencer.sequencer import sequencer_main
 
-from pypts.logger.log import log
-from pypts.utilities.common import poll_queue
+# The heartbeat protocol - the timeout CORE applies and the names it knows the
+# modules by - is declared with the sender's half in heartbeat_manager.py, so
+# that the two cannot drift and so that a tool needing only the names does not
+# have to import the engine to get them.
+from pypts.utilities.heartbeat_manager import (
+    HEARTBEAT_TIMEOUT_S,
+    HMI,
+    REPORT,
+    SEQUENCER,
+)
 
-"""
-Entry point for launcher. Responsible for instantiating Core class 
-and starting its execution thread.
-"""
-def core_main(coreToHMIInterface: CoreToHMIQueue,hmi_to_core_queue: Queue):
-    core = Core(coreToHMIInterface, hmi_to_core_queue)
-    core.start()
+
+def core_main(
+    to_hmi: QueueWrapper[CoreToHmi],
+    from_hmi: QueueWrapper[HmiToCore],
+    log_queue,
+    log_level: int = DEFAULT_LOG_LEVEL,
+) -> None:
+    """
+    Entry point for the launcher. Runs in the Core process.
+
+    Routing log records to the Logger has to happen before anything is logged
+    and before the submodule threads start, so it is the first thing done here.
+    It is also the *only* place it happens in this process: the Sequencer and
+    the Report inherit the root logger configured here rather than each
+    configuring one of their own.
+
+    Args:
+        log_level: the level the launcher resolved for the whole run. Passed
+            rather than read from the config here, because --log-level overrides
+            the config for one run and a child process has no way to know that.
+            Everything else CORE needs it reads from the config itself.
+    """
+    init_logging(log_queue, log_level)
+    Core(to_hmi, from_hmi, log_queue, log_level=log_level).start()
 
 
 class Core:
     """
-    Main central module managing communication and lifecycle of HMI, Sequencer, and Report modules.
-    Maintains queues and interfaces for message passing and spawns subprocesses for submodules.
+    Mediator, and the thread that owns the Sequencer and the Report.
+
+    Naming convention for the six links: `to_x` is what CORE sends to module x,
+    `from_x` is what x sends to CORE. CORE builds both halves of its own links
+    and hands them to the thread that runs the module, so a module cannot
+    construct a link to anyone it has no business talking to.
     """
-    def __init__(self, coreToHMIInterface: CoreToHMIQueue, hmi_to_core_queue: Queue):
-        """
-        Initializes interfaces and communication queues for all submodules.
-        Sets running flags and placeholders for watchdog/timeouts (to be implemented).
-        """
-        self.hmi = coreToHMIInterface
-        self.hmi_to_core_queue = hmi_to_core_queue
 
-        # Sequencer communication setup
-        self.sequencer_to_core_queue = Queue()
-        self.sequencerToCoreInterface = SequencerToCoreQueue(self.sequencer_to_core_queue)
-        self.core_to_sequencer_queue = Queue()
-        self.sequencer = CoreToSequencerQueue(self.core_to_sequencer_queue)
+    #: How long a submodule thread gets to leave its event loop once it has
+    #: reported itself stopped. It has already said it is done, so this only
+    #: covers the return from the loop; it is not a shutdown budget.
+    THREAD_JOIN_TIMEOUT_S = 5.0
 
-        # Report communication setup
-        self.report_to_core_queue = Queue()
-        self.reportToCoreInterface = ReportToCoreQueue(self.report_to_core_queue)
-        self.core_to_report_queue = Queue()
-        self.report = CoreToReportQueue(self.core_to_report_queue)
+    #: How long every module together gets to answer a stop request. This one
+    #: *is* the shutdown budget: it starts when stop_all_modules() asks, and it
+    #: covers a module noticing the request, finishing what it is doing and
+    #: reporting itself stopped.
+    #:
+    #: Without it CORE waits forever for a module that will never answer, and
+    #: the only thing that ends the run is the launcher's own join timeout
+    #: terminating the process - which loses the log line saying who was to
+    #: blame. Five seconds because it matches the launcher's budget and the
+    #: heartbeat timeout; a module quiet for that long is already presumed dead.
+    SHUTDOWN_TIMEOUT_S = 5.0
+
+    def __init__(
+        self,
+        to_hmi: QueueWrapper[CoreToHmi],
+        from_hmi: QueueWrapper[HmiToCore],
+        log_queue,
+        log_level: int = DEFAULT_LOG_LEVEL,
+    ) -> None:
+        """
+        Args:
+            log_queue: kept so CORE can hand it on if a submodule ever needs to
+                configure logging of its own. The threads do not: they share
+                this process's root logger, which core_main() has already
+                pointed at the Logger.
+            log_level: kept for the same reason.
+        """
+        self.to_hmi = to_hmi
+        self.from_hmi = from_hmi
+
+        self.log_queue = log_queue
+        self.log_level = log_level
+
+        # One queue per direction. The QueueWrapper type parameter is the union that
+        # queue is allowed to carry, and `link` is the name it goes by in the
+        # trace - these four never leave this process, so the log is the only
+        # place they can be seen at all. A plain `queue.Queue` is all they need,
+        # because the Sequencer and the Report are threads of this process; the
+        # one link that does cross a process boundary, HMI<->CORE, is built by
+        # the launcher out of `multiprocessing.Queue` and handed in above.
+        self.to_sequencer: QueueWrapper[CoreToSequencer] = QueueWrapper(
+            Queue(), link=CORE_TO_SEQUENCER
+        )
+        self.from_sequencer: QueueWrapper[SequencerToCore] = QueueWrapper(
+            Queue(), link=SEQUENCER_TO_CORE
+        )
+        self.to_report: QueueWrapper[CoreToReport] = QueueWrapper(Queue(), link=CORE_TO_REPORT)
+        self.from_report: QueueWrapper[ReportToCore] = QueueWrapper(Queue(), link=REPORT_TO_CORE)
 
         self.running = True
+        self.shutting_down = False
 
-        # Flags for module running statuses - for monitoring and graceful shutdown
-        self.report_running = True
-        self.sequencer_running = True
-        self.hmi_running = True
+        #: True between "shutdown asked" and "the Report has been told to stop".
+        #: The Report is stopped LAST so it can drain the aborted run's tail
+        #: (StepExecuted / RunFinished / GenerateReport) before it closes.
+        self.stop_report_pending = False
 
-        self.last_heartbeat = {
-            "sequencer": time.time(),
-            "report": time.time(),
-            "hmi": time.time()
-        }
-        self.heartbeat_timeout = 5.0  # seconds, adjust as needed
+        #: The recipe LoadRecipe loaded and validated, or None until one has.
+        #: The Sequencer holds the same object - one process, nothing copied.
+        self.recipe: Recipe | None = None
 
-    # --- Startup ---
-    def start(self):
-        """
-        Begins Core module execution by spawning submodules and entering main event loop.
-        Logs lifecycle events.
-        """
-        log.info("Starting module...")
+        #: When CORE stops waiting for the modules it asked to stop. None until
+        #: it has asked, because there is nothing to time out before that.
+        self.shutdown_deadline: float | None = None
+
+        # Set by start_submodules(). A CORE built by a test may never start
+        # them, so join_submodules() has to cope with them being absent.
+        self.sequencer_thread: threading.Thread | None = None
+        self.report_thread: threading.Thread | None = None
+
+        # Which modules CORE is still waiting for before it may exit.
+        self.module_running = {HMI: True, SEQUENCER: True, REPORT: True}
+        self.last_heartbeat = {name: time.time() for name in self.module_running}
+
+        # Which modules have already been reported late. The main loop turns
+        # every 10 ms, so without this the timeout below would log the same
+        # warning about a hundred times a second for the rest of the run.
+        self.heartbeat_lost = {name: False for name in self.module_running}
+
+    # --- Startup --------------------------------------------------------------
+
+    def start(self) -> None:
+        log.info("Starting module.")
         self.start_submodules()
         self.main_loop()
-        log.info("Stopping module...")
+        self.join_submodules()
+        log.info("Module stopped.")
 
-    def start_submodules(self):
+    def start_submodules(self) -> None:
         """
-        Spawns Sequencer and Report modules in separate processes.
-        Passes their respective communication interfaces and queues.
+        Start the Sequencer and the Report, handing each the two links it needs:
+        its outbox to CORE and its inbox from CORE.
+
+        Threads, not processes. They are named, so that anything reading a
+        thread dump can tell them apart even though the run log cannot.
+
+        Daemon threads deliberately: a submodule that wedges must not be able to
+        keep the process alive after CORE has decided to leave. The clean path
+        does not rely on it - join_submodules() waits for both - but the clean
+        path is not the one worth designing for here.
         """
-        self.sequencerProcess = Process(
+        self.sequencer_thread = threading.Thread(
             target=sequencer_main,
-            args=(self.sequencerToCoreInterface, self.core_to_sequencer_queue)
+            name="Sequencer",
+            args=(self.from_sequencer, self.to_sequencer),
+            daemon=True,
         )
-        self.sequencerProcess.start()
+        self.sequencer_thread.start()
 
-        self.reportProcess = Process(
+        self.report_thread = threading.Thread(
             target=report_main,
-            args=(self.reportToCoreInterface, self.core_to_report_queue)
+            name="Report",
+            args=(self.from_report, self.to_report),
+            daemon=True,
         )
-        self.reportProcess.start()
+        self.report_thread.start()
 
-    # --- Main event loop ---
-    def main_loop(self):
+    def join_submodules(self) -> None:
         """
-        Continuously polls all message queues for incoming events from submodules.
-        Executes periodic background tasks and checks stop conditions.
-        Sleeps briefly to avoid busy waiting.
+        Wait for both submodule threads to return, once the loop has ended.
+
+        By the time CORE leaves its loop both have reported themselves stopped,
+        so this normally returns at once. A thread still alive here is stuck
+        somewhere after its loop and is worth a line in the log: the process
+        will exit anyway, because they are daemons.
         """
+        for name, thread in (
+            (SEQUENCER, self.sequencer_thread),
+            (REPORT, self.report_thread),
+        ):
+            if thread is None:
+                continue
+            thread.join(timeout=self.THREAD_JOIN_TIMEOUT_S)
+            if thread.is_alive():
+                log.warning("Module thread did not finish in time: %s", name)
+
+    # --- Main event loop ------------------------------------------------------
+
+    def main_loop(self) -> None:
         log.info("Starting main event loop.")
         while self.running:
             self.poll_all_sources()
@@ -108,112 +286,345 @@ class Core:
             self.check_stop_status()
             time.sleep(0.01)
 
-    def poll_all_sources(self):
-        """
-        Polls queues for HMI, Sequencer and Report events, dispatching to appropriate handlers.
-        """
-        poll_queue(self.hmi_to_core_queue, self.handle_hmi_event)
-        poll_queue(self.sequencer_to_core_queue, self.handle_sequencer_event)
-        poll_queue(self.report_to_core_queue, self.handle_report_event)
+    def poll_all_sources(self) -> None:
+        self.poll(self.from_hmi, self.handle_hmi_message)
+        self.poll(self.from_sequencer, self.handle_sequencer_message)
+        self.poll(self.from_report, self.handle_report_message)
 
-    def handle_hmi_event(self, event: HMIToCoreEvent):
+    def poll(self, inbox, handler) -> None:
         """
-        Handles events from HMI module.
-        Supports exit and stop commands.
-        Placeholders for additional commands like load_recipe and start_sequence.
+        Handle what is waiting on one inbox, surviving anything it contains.
+
+        CORE cannot use @catch_and_report_errors(): it is the module errors are
+        reported *to*. A message it cannot handle is logged and dropped, because
+        the alternative - letting it escape - takes the mediator down and with
+        it every other module's only way of being heard.
+
+        The cost of that guarantee is that one bad message abandons the rest of
+        the batch: the exception leaves the receive() generator, and the
+        remainder stays queued for the next tick. That is the right trade - they
+        are not lost, only delayed - but it is why the try wraps the whole loop
+        rather than each message, which would be the alternative.
         """
-        log.info(f"Received HMI event: {event}")
-        match event.cmd:
-            case HMIToCoreCommand.EXIT:
+        try:
+            for message in inbox.receive():
+                handler(message)
+        except UnhandledMessage as exc:
+            log.error(str(exc))
+        except Exception:
+            log.exception("Failure while receiving a message")
+
+    # --- Routing --------------------------------------------------------------
+
+    def handle_hmi_message(self, message: HmiToCore) -> None:
+        match message:
+            case ShutdownRequested():
                 self.stop_all_modules()
-            case HMIToCoreCommand.STOP:
-                self.hmi_stopped()
-            case HMIToCoreCommand.LOAD_RECIPE:
-                pass  # Implement recipe loading logic here
-            case HMIToCoreCommand.START_SEQUENCE:
-                pass  # Implement sequence starting logic here
-            case HMIToCoreCommand.HEARTBEAT:
-                self.last_heartbeat["hmi"] = time.time()
+            case HmiStopped():
+                self.module_running[HMI] = False
+            case LoadRecipe(recipe_path=recipe_path):
+                self.load_recipe(recipe_path)
+            case StartSequence(sequence_name=sequence_name):
+                self.start_sequence(sequence_name)
+            case StopSequence():
+                # The operator's abort. Relayed unchanged; the Sequencer answers
+                # with the run's own RunFinished(STOP).
+                self.to_sequencer.send(message)
+            case UserPromptResponse() | SerialNumberResponse():
+                # The operator's answer belongs to whoever asked the question.
+                self.to_sequencer.send(message)
+            case SetConfigParameter(key=key, value=value):
+                # NOT SENT YET - no frontend constructs this, and the branch is
+                # deliberately a refusal rather than an implementation.
+                # CORE is the only process allowed to write config.ini, which is
+                # why the message stops here. Carrying it out is not implemented:
+                # a change would have to reach the processes already running,
+                # each holding what it read at startup, and that is unsolved.
+                log.warning(
+                    "Ignoring a request to set %s to %r: changing the configuration "
+                    "while the application runs is not implemented.",
+                    key,
+                    value,
+                )
+            case Heartbeat():
+                self.note_heartbeat(message)
+            case ModuleError():
+                # Previously the HMI link had no branch for this at all, so
+                # every error a frontend reported was silently discarded.
+                self.handle_module_error(message)
             case _:
-                pass  # Unknown or unhandled command
+                unhandled(message)
 
-    def handle_sequencer_event(self, event: SequencerToCoreEvent):
-        log.info(f"Received sequencer event: {event}")
-        match event.cmd:
-            case SequencerToCoreCommand.STOP:
-                self.sequencer_stopped()
-            case SequencerToCoreCommand.SEQUENCE_RESULT:
-                # handle sequence result here
-                pass
-            case SequencerToCoreCommand.ERROR:
-                # Extract error details from payload
-                error_info = event.payload
-                # Decide on further action, e.g. notify, restart, alert, etc.
-            case SequencerToCoreCommand.HEARTBEAT:
-                self.last_heartbeat["sequencer"] = time.time()
+    def handle_sequencer_message(self, message: SequencerToCore) -> None:
+        match message:
+            case SequencerStopped():
+                self.module_running[SEQUENCER] = False
+                self.release_stop_report()
+            case RunStarted() | SequenceStarted():
+                # Progress is the frontend's business, and these two are the
+                # Report's as well: RunStarted opens the run folder and the
+                # CSV, SequenceStarted names the rows that follow. The same
+                # object is relayed rather than repacked, so nothing is lost
+                # on the way.
+                self.to_report.send(message)
+                self.to_hmi.send(message)
+            case RunFinished():
+                # The Report closes the CSV on RunFinished, then builds the
+                # HTML on the GenerateReport sent right behind it - one queue,
+                # so the order is guaranteed.
+                self.to_report.send(message)
+                self.to_report.send(GenerateReport())
+                self.to_hmi.send(message)
+            case SequenceFinished() | StepStarted() | StepFinished():
+                self.to_hmi.send(message)
+            case StepExecuted():
+                # The rich step record. Report only - the HMI already got the
+                # flat StepFinished, and this one must not cross the process
+                # boundary (see its docstring).
+                self.to_report.send(message)
+            case UserPromptRequest() | SerialNumberRequest():
+                # NOT SENT YET - no step asks a question yet. The *answers* do
+                # come back through here (handle_hmi_message), so only this
+                # direction is idle.
+                self.to_hmi.send(message)
+            case Heartbeat():
+                self.note_heartbeat(message)
+            case ModuleError():
+                self.handle_module_error(message)
             case _:
-                pass  # Unknown command
+                unhandled(message)
 
-    def handle_report_event(self, event: ReportToCoreEvent):
-        """
-        Handles events from Report module.
-        Supports STOP, REPORT_GENERATED and REPORT_EXPORTED commands.
-        Logs unknown events as errors.
-        """
-        log.info(f"Received report event: {event}")
-        match event.cmd:
-            case ReportToCoreCommand.STOP:
-                self.report_stopped()
-            case ReportToCoreCommand.REPORT_GENERATED:
-                pass  # Handle report generated notification here
-            case ReportToCoreCommand.REPORT_EXPORTED:
-                pass  # Handle report exported notification here
-            case ReportToCoreCommand.ERROR:
-                # Extract error details from payload
-                error_info = event.payload
-                # Decide on further action, e.g. notify, restart, alert, etc.
-                pass
-            case ReportToCoreCommand.HEARTBEAT:
-                self.last_heartbeat["report"] = time.time()
+    def handle_report_message(self, message: ReportToCore) -> None:
+        match message:
+            case ReportStopped():
+                self.module_running[REPORT] = False
+            case ReportGenerated(report_path=path):
+                log.info("Report generated: %s", path)
+                self.to_hmi.send(StatusChanged(f"Report generated: {path}"))
+                # The structured sibling of the status line: the paths a
+                # frontend can wire an "open report folder" control to.
+                self.to_hmi.send(
+                    ReportReady(report_path=path, report_dir=str(Path(path).parent))
+                )
+            # NOT SENT YET - export_report() is still a stub and nothing asks
+            # for it either.
+            case ReportExported(report_path=path):
+                self.to_hmi.send(StatusChanged(f"Report exported: {path}"))
+            case Heartbeat():
+                self.note_heartbeat(message)
+            case ModuleError():
+                self.handle_module_error(message)
             case _:
-                log.error(f"Unknown event: {event}")
+                unhandled(message)
 
-    # --- Background tasks ---
-    def do_periodic_tasks(self):
+    # --- Orchestration --------------------------------------------------------
+
+    def load_recipe(self, recipe_path: str) -> None:
         """
-        Placeholder for periodic background tasks, e.g., health monitoring or housekeeping.
+        Load and validate a recipe; validation gates execution.
+
+        On success the HMI gets RecipeLoaded and the Sequencer gets the live
+        Recipe object with UseRecipe. On failure the Sequencer gets nothing at
+        all - an invalid recipe never reaches it - and the operator sees the
+        error through the ModuleError path.
+        """
+        log.info("Loading recipe '%s'.", recipe_path)
+        try:
+            recipe = Recipe.from_file(recipe_path)
+        except RecipeError as error:
+            self.report_own_error(error, operation="Core.load_recipe")
+            return
+        self.recipe = recipe
+        self.to_sequencer.send(UseRecipe(recipe))
+        self.to_hmi.send(
+            RecipeLoaded(
+                recipe_name=recipe.name,
+                recipe_version=recipe.version,
+                main_sequence=recipe.main_sequence,
+                sequences=recipe.to_summary(),
+            )
+        )
+        log.info("Recipe loaded: '%s' (version %s).", recipe.name, recipe.version)
+
+    def start_sequence(self, sequence_name: str) -> None:
+        """
+        Ask the Sequencer to run a sequence.
+
+        The name now reaches the Sequencer, which the old interface could not do:
+        its run_sequence() took no arguments, so the operator's choice stopped at
+        CORE. Execution itself is still a stub inside the Sequencer.
+        """
+        log.info("Starting sequence '%s'.", sequence_name)
+        self.to_sequencer.send(RunSequence(sequence_name))
+
+    #: What CORE logs a reported failure at. The sender rates its own failure -
+    #: it is the only one who can - and CORE takes it at its word. That is the
+    #: whole of the decision: what to *do* about an error beyond recording it
+    #: and telling the operator is Phase 1's to settle (roadmap §1.11).
+    LOG_LEVEL_FOR_SEVERITY: ClassVar[dict[ErrorSeverity, int]] = {
+        ErrorSeverity.WARNING: logging.WARNING,
+        ErrorSeverity.ERROR: logging.ERROR,
+        ErrorSeverity.CRITICAL: logging.CRITICAL,
+    }
+
+    def report_own_error(self, error: Exception, operation: str) -> None:
+        """
+        Report a failure of CORE's own, through the same path as everyone else's.
+
+        CORE cannot use report_error(): that reports *to* CORE through an
+        instance's `core` outbox, and CORE has no outbox to itself. So it
+        builds the same ModuleError by hand and feeds its own handler - the
+        error is logged and shown to the operator exactly like a reported one.
+        Called from inside an `except` block, like report_error().
+        """
+        self.handle_module_error(
+            ModuleError(
+                source="pypts.core.core",
+                severity=ErrorSeverity.ERROR,
+                message=str(error),
+                exception=repr(error),
+                traceback=traceback.format_exc(),
+                operation=operation,
+                error_type=type(error).__name__,
+            )
+        )
+
+    def handle_module_error(self, error: ModuleError) -> None:
+        """
+        Record a module failure and, unless it is only a warning, show it to the
+        operator. CORE deciding what reaches the frontend is what keeps the
+        runtime log readable during a long run.
+
+        The line names the method and the exception type as well as the module,
+        so the log says which of a module's twenty methods failed, and how,
+        without anyone having to read the traceback under it.
+        """
+        where = error.operation or error.source
+        if error.error_type:
+            what = error.error_type + ": " + error.message
+        else:
+            what = error.message
+
+        log.log(
+            self.LOG_LEVEL_FOR_SEVERITY[error.severity],
+            "%s: %s\n%s",
+            where,
+            what,
+            error.traceback or "",
+        )
+
+        if error.severity is not ErrorSeverity.WARNING:
+            self.to_hmi.send(ModuleErrorReported(error))
+
+    def note_heartbeat(self, beat: Heartbeat) -> None:
+        if beat.source not in self.last_heartbeat:
+            log.warning("Heartbeat from an unknown module: %s", beat.source)
+            return
+
+        # A module that was reported late and is now answering again is worth
+        # one line, so the log says the outage ended instead of just going quiet.
+        if self.heartbeat_lost[beat.source]:
+            log.info("Module is responding again: %s", beat.source)
+            self.heartbeat_lost[beat.source] = False
+
+        self.last_heartbeat[beat.source] = beat.timestamp
+
+    # --- Background tasks -----------------------------------------------------
+
+    def do_periodic_tasks(self) -> None:
+        """
+        Watch the heartbeats.
+
+        Only modules still expected to be running are checked, so a module that
+        has already reported itself stopped does not produce a timeout warning
+        for the rest of the run. What CORE should *do* about a timeout - restart
+        the module, abort the run, tell the operator - is still an open decision
+        recorded in the roadmap; for now it warns.
+
+        One warning per outage, not one per tick. The loop calling this turns
+        every 10 ms and a timed-out module stays timed out, so logging on every
+        pass would bury the ModuleError explaining the crash under thousands of
+        copies of the same sentence. note_heartbeat() clears the flag when the
+        module answers again, so a second outage is reported afresh.
         """
         now = time.time()
-        for module, last_time in self.last_heartbeat.items():
-            if now - last_time > self.heartbeat_timeout:
-                log.warning(f"Heartbeat timeout detected for module: {module}!!!")
-                # Example action: log, send restart command, alert, etc.
+        for name, last_seen in self.last_heartbeat.items():
+            if not self.module_running[name]:
+                continue
+            if now - last_seen > HEARTBEAT_TIMEOUT_S and not self.heartbeat_lost[name]:
+                log.warning("Heartbeat timeout for module: %s", name)
+                self.heartbeat_lost[name] = True
 
-    # shutdown detection
-    def stop_all_modules(self):
+    # --- Shutdown -------------------------------------------------------------
+
+    def stop_all_modules(self) -> None:
         """
-        Commands all submodules to stop via their interfaces.
+        Ask every module to stop. Each answers with its own *Stopped event.
+
+        Idempotent, because shutdown is legitimately requested twice: the
+        frontend asks when the operator leaves, and the launcher asks again once
+        it has joined the UI process - it cannot assume the frontend got the
+        chance. Without the guard every module is told to stop twice.
         """
-        self.report.stop()
-        self.sequencer.stop()
-        self.hmi.stop()
+        if self.shutting_down:
+            return
+        self.shutting_down = True
 
-    def report_stopped(self):
-        self.report_running = False
+        # The clock starts here rather than at the first unanswered check, so
+        # the budget covers the whole shutdown and not just the tail of it.
+        self.shutdown_deadline = time.time() + self.SHUTDOWN_TIMEOUT_S
 
-    def sequencer_stopped(self):
-        self.sequencer_running = False
+        log.info("Shutdown requested, stopping all modules.")
+        self.to_sequencer.send(StopSequencer())
+        self.to_hmi.send(StopHmi())
+        # StopReport is held back: the Sequencer may still be finishing an
+        # aborted sequence whose events must reach the Report first. It is
+        # released by SequencerStopped, or by the shutdown deadline.
+        self.stop_report_pending = True
 
-    def hmi_stopped(self):
-        self.hmi_running = False
+    def release_stop_report(self) -> None:
+        """Send the held StopReport, exactly once."""
+        if not self.stop_report_pending:
+            return
+        self.stop_report_pending = False
+        self.to_report.send(StopReport())
 
-    def check_stop_status(self):
+    def check_stop_status(self) -> None:
         """
-        Checks running flags of all modules; stops Core if all have cleanly exited.
-        TODO: Implement watchdog timeout to handle silent module deaths.
+        CORE exits once every module has reported itself stopped, or once it has
+        waited SHUTDOWN_TIMEOUT_S for the ones that have not.
+
+        The clean path is the first branch and is what almost always happens.
+        The second exists because a module that dies without reporting used to
+        leave CORE waiting forever, and the only thing that ended the run was the
+        launcher terminating the process - which killed the log along with it, so
+        the one fact worth keeping, *which* module never answered, was the one
+        fact lost. Naming them is most of the point of having a timeout at all.
+
+        There is no killing to do. The Sequencer and the Report are daemon
+        threads, so abandoning them is exactly what letting CORE leave means:
+        they cannot hold the process open, and join_submodules() logs any that
+        are still running when it goes. The HMI is a process the launcher owns,
+        so CORE could not kill it even if threads were killable - which is the
+        other reason this reports rather than acts.
         """
-        if (self.hmi_running or self.report_running or self.sequencer_running):
-            pass
-        else:
+        if not any(self.module_running.values()):
             log.info("All modules stopped cleanly")
             self.running = False
+            return
+
+        if self.shutdown_deadline is None or time.time() < self.shutdown_deadline:
+            return
+
+        # The Sequencer never answered; stop holding the Report for it.
+        self.release_stop_report()
+
+        # Reached once: self.running is cleared below, so the loop that calls
+        # this does not come back round to log the same sentence again.
+        late = sorted(name for name, running in self.module_running.items() if running)
+        log.error(
+            "Modules did not stop within %.0fs and are being abandoned: %s",
+            self.SHUTDOWN_TIMEOUT_S,
+            ", ".join(late),
+        )
+        self.running = False

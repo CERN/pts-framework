@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The basic scenario, end to end: greet in setup, measure, pass a value from
+# one step to the next through a local, pace the bench with a wait, and
+# always tear down. Every step passes - this is what a healthy run looks
+# like (python_demo.yml is the tour of verdicts, including a deliberate
+# FAIL). Format rules: resources/internal_reports/recipe_format.html.
+name: Basic scenario
+description: Setup, two measurements, a step-to-step value, a wait, teardown.
+version: 1.0.0
+globals:
+  operator_name: operator
+---
+sequence_name: Main
+description: The shape of an ordinary bench run.
+setup_steps:
+  # A setup step is an ordinary step that runs first. Its input comes from
+  # the recipe's globals.
+  - steptype: PythonModule
+    step_name: Greet the operator
+    description: Read a value from the globals and check the reply.
+    module: example_tests.py
+    method_name: greet
+    input_mapping:
+      name: {type: global, global_name: operator_name}
+    output_mapping:
+      output: {type: equals, value: 'Hello, operator!'}
+steps:
+  - steptype: PythonModule
+    step_name: Measure voltage
+    description: The reading must sit between 11 and 13 volts.
+    module: example_tests.py
+    method_name: measure_voltage
+    output_mapping:
+      voltage: {type: range, min: '11', max: '13'}
+  - steptype: PythonModule
+    step_name: Add numbers
+    description: Store the sum in a local instead of judging it - verdict DONE.
+    module: example_tests.py
+    method_name: add
+    input_mapping:
+      a: {value: 2}
+      b: {value: 4}
+    output_mapping:
+      sum: {type: local, local_name: measured_sum}
+  - steptype: Wait
+    step_name: Settle
+    description: Let the bench settle for a second.
+    wait_time: 1
+  - steptype: PythonModule
+    step_name: Check the sum is even
+    description: The next step reads what the earlier one stored.
+    module: example_tests.py
+    method_name: is_even
+    input_mapping:
+      number: {type: local, local_name: measured_sum}
+    output_mapping:
+      even: {type: passfail}
+teardown_steps:
+  # Teardown always runs - after a failure or an abort too.
+  - steptype: Wait
+    step_name: Cool down
+    description: Return the bench to a known state.
+    wait_time: '0.5'

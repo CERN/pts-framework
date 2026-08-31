@@ -1,0 +1,512 @@
+<!--
+SPDX-FileCopyrightText: 2025 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Messaging — The Five Shared Files</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#22201d; --muted:#6b665f; --line:#e2ded7;
+    --card:#ffffff; --accent:#8a5a2b; --code-bg:#f3f0ea;
+    --warn-bg:#fdf3ea; --warn-line:#e0a76a;
+    --ok-bg:#eef5ee; --ok-line:#8fb08f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a18; --fg:#e8e4dd; --muted:#a09a91; --line:#332f2b;
+      --card:#232120; --accent:#d8a06a; --code-bg:#2a2724;
+      --warn-bg:#33261a; --warn-line:#8a6236;
+      --ok-bg:#1f2a20; --ok-line:#4d6b4d;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:28px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:38px 0 10px;padding-top:10px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px;color:var(--accent)}
+  h4{font-size:14.5px;margin:16px 0 4px}
+  p{margin:8px 0}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    font:13px/1.5 "SF Mono",Consolas,"Courier New",monospace}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;margin:10px 0}
+  pre code{background:none;padding:0;font-size:12.5px}
+  .tablewrap{overflow-x:auto;margin:10px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  td code{white-space:nowrap}
+  .note{background:var(--ok-bg);border-left:3px solid var(--ok-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn{background:var(--warn-bg);border-left:3px solid var(--warn-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn strong,.note strong{color:var(--accent)}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:14px 18px;margin:20px 0;font-size:14px}
+  .toc ol{columns:2;column-gap:30px;margin:6px 0}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px dotted var(--muted)}
+  .toc a:hover{color:var(--accent)}
+  .flow{font:13px/1.7 "SF Mono",Consolas,monospace;background:var(--code-bg);
+    border:1px solid var(--line);border-radius:8px;padding:14px;white-space:pre;overflow-x:auto}
+  .tag{display:inline-block;border-radius:3px;padding:0 6px;font-size:11.5px;
+    font-weight:700;letter-spacing:.02em;vertical-align:2px}
+  .live{background:#4a6b8a;color:#fff}
+  .partial{background:#8a5a2b;color:#fff}
+  .stub{background:#a03c33;color:#fff}
+  .filecard{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:4px 18px 14px;margin:14px 0}
+  .filecard h3{margin-top:14px}
+  .meta{color:var(--muted);font-size:13px;margin:2px 0 10px}
+  footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>PyPTS Messaging — The Five Shared Files</h1>
+  <div class="sub">What <code>common_messages.py</code>, <code>blocking_messages.py</code>,
+  <code>run_events.py</code>, <code>queue_wrapper.py</code> and <code>links.py</code> each own,
+  and where their responsibilities come close to each other.
+  Read from <code>src/pypts/messages/</code> and from every module that imports it ·
+  branch <code>architecture_refactor</code>, 2026-08-13.<br>
+  Companion documents: <code>messaging_overview.html</code> (the structural picture) and
+  <code>src/pypts/messages/messages.md</code> (the catalogue of messages per link).</div>
+</header>
+
+<div class="toc">
+  <ol>
+    <li><a href="#place">Where these five sit</a></li>
+    <li><a href="#common">common_messages.py</a></li>
+    <li><a href="#runevents">run_events.py</a></li>
+    <li><a href="#requests">blocking_messages.py</a></li>
+    <li><a href="#queue_wrapper">queue_wrapper.py</a></li>
+    <li><a href="#links">links.py</a></li>
+    <li><a href="#overlap">Overlap analysis</a></li>
+    <li><a href="#drift">Drift found while reading</a></li>
+  </ol>
+</div>
+
+<h2 id="place">1. Where these five sit</h2>
+
+<p>The <code>messages</code> package splits cleanly in two. Four modules are <em>link
+contracts</em> — <code>core_hmi_communication.py</code>, <code>core_sequencer_communication.py</code>,
+<code>core_report_communication.py</code>, <code>to_logger_communication.py</code> — each declaring the messages of
+one link and the union type per direction. The five files in this report are everything
+else: the substrate those contracts are written on top of.</p>
+
+<p>They are not five variations of one idea. Each answers a different question, and the four
+questions do not intersect:</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>File</th><th>Answers</th><th>Kind of thing</th><th>Size</th></tr>
+  <tr><td><code>queue_wrapper.py</code></td><td><em>How</em> does a message move, and how is a
+    handler kept complete?</td><td>Behaviour (one class, one function, one exception)</td><td>9.6 kB</td></tr>
+  <tr><td><code>links.py</code></td><td><em>What is each direction called?</em></td>
+    <td>Seven string constants, nothing else</td><td>1.1 kB</td></tr>
+  <tr><td><code>common_messages.py</code></td><td><em>What vocabulary</em> does more than one link
+    need?</td><td>Data (2 enums, 3 dataclasses)</td><td>3.3 kB</td></tr>
+  <tr><td><code>run_events.py</code></td><td><em>What does a run look like</em> from outside the
+    engine?</td><td>Data (11 dataclasses)</td><td>5.1 kB</td></tr>
+  <tr><td><code>blocking_messages.py</code></td><td><em>How does the asker block</em> until an answer comes
+    back?</td><td>Behaviour (one class)</td><td>3.6 kB</td></tr>
+</table>
+</div>
+
+<h4>Import layering</h4>
+
+<p>Verified against the source: there is exactly <strong>one</strong> import edge among the five,
+and none of them imports a link module. That is what makes the package's dependency graph a
+layering rather than a web.</p>
+
+<div class="flow">   links.py           queue_wrapper.py      blocking_messages.py
+   (imports           (logging, queue,      (queue, threading,
+    nothing)           typing)               uuid)
+       │                     │                     │
+       │                     │                     │  no messages import at
+       │                     │                     │  all - generic machinery
+       ▼                     ▼                     ▼
+   ┌──────────────────────────────────────────────────────────┐
+   │  used by launcher, core, logger, hmi, sequencer, report   │
+   └──────────────────────────────────────────────────────────┘
+
+   common_messages.py  ◄──────────────  run_events.py      the one edge:
+   (stdlib only)        ResultType, StepOutcome            run_events is built
+       ▲                          ▲                        out of the value types
+       │                          │
+   every link module          core_hmi_communication.py, core_sequencer_communication.py
+   (Heartbeat, ModuleError)</div>
+
+<div class="note"><strong>Two deliberate cycle-breaks.</strong> <code>links.py</code> imports
+nothing at all, which is what lets both <code>messages</code> and <code>logger</code> use it.
+<code>queue_wrapper.py</code> reaches its logger with <code>logging.getLogger("pypts.trace")</code>
+rather than importing <code>pypts.logger.log</code>, because <code>log.py</code> imports
+<em>it</em>. Both are stated in the source docstrings, not inferred here.</div>
+
+<h2 id="common">2. <code>common_messages.py</code> — vocabulary shared by more than one link</h2>
+
+<div class="filecard">
+<p class="meta"><span class="tag live">LIVE</span> All five types are sent or consumed today.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Name</th><th>What it is</th><th>Who uses it</th></tr>
+  <tr><td><code>ErrorSeverity</code></td><td><code>Enum</code>: WARNING / ERROR / CRITICAL</td>
+    <td><code>utilities/error_handling.py</code>, CORE (decides what the operator sees)</td></tr>
+  <tr><td><code>ModuleError</code></td><td>frozen dataclass: <code>source, severity, message,
+    exception, traceback, operation, error_type</code></td><td>Sent by the two decorators in
+    <code>utilities/error_handling.py</code>, and by <code>report_error()</code> /
+    <code>report_problem()</code> from a raise site that recognised the failure itself; in all
+    three engine link unions</td></tr>
+  <tr><td><code>Heartbeat</code></td><td>frozen dataclass: <code>source, timestamp</code></td>
+    <td><code>utilities/heartbeat_manager.py</code>; in all three link unions</td></tr>
+  <tr><td><code>ResultType</code></td><td><code>IntEnum</code>: SKIP 0 … STOP 5</td>
+    <td><code>run_events.py</code>, CLI, GUI, <code>hmi_client.py</code></td></tr>
+  <tr><td><code>StepOutcome</code></td><td>frozen dataclass: <code>step_id, step_name, result,
+    error_info</code></td><td>same as above</td></tr>
+</table>
+</div>
+
+<h3>Responsibility</h3>
+<p>Hold the types that would otherwise be declared twice — or, worse, be repacked on the way
+through CORE. The docstring is explicit that this is a reaction to a real defect: the old code
+flattened <code>ModuleErrorEvent</code> into a five-key dict at every sender, which downgraded
+<code>severity</code> from an enum to a string, and CORE never rebuilt it. Putting the type here
+means CORE forwards <em>the same object</em> from one link to another.</p>
+
+<h3>Decisions worth knowing</h3>
+<ul>
+  <li><code>Heartbeat.source</code> looks redundant — CORE knows which queue it drained — but it
+  lets one CORE handler serve all three links instead of three near-identical ones.</li>
+  <li><code>ResultType</code>'s integer order is load-bearing: a group aggregates to the
+  <em>highest</em> member, so one FAIL among PASSes makes the group FAIL. Ported unchanged from
+  <code>old_code/recipe.py</code>.</li>
+  <li><code>StepOutcome</code> is deliberately <em>not</em> old_code's <code>StepResult</code>.
+  <code>StepResult</code> holds a live <code>Step</code> and a tree of subresults; neither may
+  cross the HMI process boundary. The Report gets the rich object in-engine, the HMI gets this.</li>
+</ul>
+</div>
+
+<h2 id="runevents">3. <code>run_events.py</code> — what the engine reports while a recipe runs</h2>
+
+<div class="filecard">
+<p class="meta"><span class="tag stub">MOSTLY STUB</span> Declared and wired into two link unions;
+almost nothing emits them, because <code>Sequencer.run_sequence()</code> is not ported.</p>
+
+<p>Eleven frozen dataclasses in two groups.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Group</th><th>Members</th><th>Carries</th></tr>
+  <tr><td>Progress (7)</td><td><code>RecipeLoaded</code>, <code>RunStarted</code>,
+    <code>RunFinished</code>, <code>SequenceStarted</code>, <code>SequenceFinished</code>,
+    <code>StepStarted</code>, <code>StepFinished</code></td>
+    <td>Names, a <code>ResultType</code>, and <code>StepOutcome</code>s</td></tr>
+  <tr><td>Questions (4)</td><td><code>UserPromptRequest</code>/<code>Response</code>,
+    <code>SerialNumberRequest</code>/<code>Response</code></td>
+    <td>A <code>request_id: UUID</code> plus the question or the answer</td></tr>
+</table>
+</div>
+
+<h3>Responsibility</h3>
+<p>These originate in the Sequencer, travel to CORE, and CORE forwards them <em>unchanged</em> to
+the HMI. Because each therefore appears in both <code>core_sequencer_communication</code>'s union and
+<code>core_hmi_communication</code>'s union, it has to be defined in one place that is neither — this file.
+The set is a one-for-one port of the nine Qt signals in <code>old_code/event_proxy.py</code>,
+which the docstring calls the closest thing the project has to a requirements document for what
+a frontend needs in order to draw a run.</p>
+
+<h3>Decisions worth knowing</h3>
+<ul>
+  <li><strong>A message says what happened, never how to draw it.</strong> The old proxy's colour
+  lookup (<code>get_step_result_colors</code>) is presentation and stays in the GUI.</li>
+  <li><code>RunFinished.outcomes</code> is <em>flat</em> and in execution order. The old engine
+  handed the GUI a nested tree; nesting is a Report concern and the results table only ever
+  walked it flat.</li>
+  <li>The <code>request_id</code> is the whole reason a question can cross a process boundary.
+  The old engine put a live <code>SimpleQueue</code> inside the event and had the GUI answer
+  straight into it — which only worked because both ends were threads in one process.</li>
+  <li>Declared before the senders exist on purpose: the CLI, the GUI and the Report all have to
+  agree on this set, and agreeing before the call sites exist is cheaper than after.</li>
+</ul>
+</div>
+
+<h2 id="requests">4. <code>blocking_messages.py</code> — the waiting half of a request/response pair</h2>
+
+<div class="filecard">
+<p class="meta"><span class="tag partial">HALF-WIRED</span> The Sequencer owns a
+<code>PendingRequests</code> and calls <code>return_caller()</code>; nothing calls
+<code>start()</code>/<code>wait()</code> yet.</p>
+
+<p>One class, <code>PendingRequests</code>, and one constant, <code>DEFAULT_TIMEOUT_S = 300.0</code>
+(five minutes — matching the timeout the old interaction steps allowed an operator standing at
+the bench). Internally: a <code>dict[UUID, SimpleQueue]</code> behind a <code>Lock</code>.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Method</th><th>Called by</th><th>Contract</th></tr>
+  <tr><td><code>start(request_id)</code></td><td>the asker, <em>before</em> sending</td>
+    <td>Registering after the send would race a fast responder and the answer would be dropped
+    as unknown</td></tr>
+  <tr><td><code>wait(request_id, timeout_s=None)</code></td><td>the asker</td>
+    <td>Blocks; returns the value, or <code>None</code> on timeout. Always removes the entry, so a
+    late answer is discarded by <code>return_caller()</code> rather than handed to nobody. Raises
+    <code>KeyError</code> if <code>start()</code> was never called</td></tr>
+  <tr><td><code>return_caller(request_id, value)</code></td><td>the event loop draining the inbox</td>
+    <td>Returns <code>False</code> if nobody is waiting — the caller should log that, it means the
+    two ends disagree about what is in flight</td></tr>
+  <tr><td><code>cancel(request_id)</code></td><td>internal / cleanup</td>
+    <td>Idempotent, so <code>wait()</code> can call it unconditionally in a <code>finally</code></td></tr>
+</table>
+</div>
+
+<h3>Responsibility</h3>
+<p>Turn an asynchronous message pair into a blocking call, without either half knowing about
+queues or links. Note what this file does <em>not</em> import: nothing from <code>messages</code>
+at all. It is generic machinery keyed by UUID — the <code>UserPromptRequest</code> half lives in
+<code>run_events.py</code>, and the two are joined only by the id.</p>
+
+<div class="warn"><strong>Threading constraint, stated in the docstring.</strong> The thread that
+calls <code>wait()</code> must not be the thread that drains the inbox, or the answer can never
+arrive and the module deadlocks. The Sequencer is single-threaded today, so porting the
+user-interaction steps in Phase 1 means running the sequence on its own worker thread while the
+event loop keeps turning.</div>
+
+<p>What is wired today: <code>Sequencer.__init__</code> constructs <code>self.pending</code>
+(<code>sequencer.py:63</code>) and <code>deliver_response()</code> calls
+<code>self.pending.return_caller(...)</code>, warning when nobody was waiting
+(<code>sequencer.py:141</code>). The asking side arrives with the execution engine.</p>
+</div>
+
+<h2 id="queue_wrapper">5. <code>queue_wrapper.py</code> — the one transport</h2>
+
+<div class="filecard">
+<p class="meta"><span class="tag live">LIVE</span> Every message in the framework passes through
+this class; seven wrappers are built at startup.</p>
+
+<p>Three public names — <code>QueueWrapper</code>, <code>unhandled()</code>,
+<code>UnhandledMessage</code> — and they are the only things <code>messages/__init__.py</code>
+re-exports.</p>
+
+<h3><code>QueueWrapper[Msg]</code> — a typed handle on <em>one direction</em> of one link</h3>
+<ul>
+  <li><strong>Duck-typed queue.</strong> It accepts any object with <code>put()</code> and
+  <code>get_nowait()</code>. That single decision is what lets the same class serve a process
+  boundary (<code>multiprocessing.Queue</code> for HMI↔CORE), a thread boundary
+  (<code>queue.Queue</code> for Sequencer and Report), and a future socket-backed queue-alike for
+  <code>--mode connect</code>. No module ever learns which one it holds.</li>
+  <li><strong>Nothing ever blocks.</strong> <code>receive()</code> is a generator that yields what
+  is on the queue right now, up to <code>DEFAULT_BATCH = 64</code>. The limit stops a busy link
+  starving the other inboxes in the same tick; a generator rather than a list, so a caller that
+  breaks early leaves the rest queued instead of having paid to remove it.</li>
+  <li><strong>Topology by construction.</strong> A wrapper is built by whoever owns the link — the
+  launcher builds the HMI↔CORE pair, CORE builds its links to the Sequencer and the Report — and
+  handed to the module that uses it. A module cannot invent a link to somebody it has no business
+  talking to.</li>
+  <li><strong>Self-tracing.</strong> <code>send()</code> and <code>receive()</code> each emit one
+  DEBUG line on the <code>pypts.trace</code> logger. A run at <code>--log-level DEBUG</code>
+  therefore contains every message twice, and a message that was <em>sent and never received</em>
+  — the failure actually worth seeing — becomes visible. Because the trace sits on the object
+  every message already passes through, no module has to remember to log and no new message can
+  escape it.</li>
+  <li><strong>Counters.</strong> <code>sent</code> and <code>received</code>, incremented
+  <em>after</em> the put and <em>as</em> the message is handed to the caller, so neither number
+  ever claims something that did not happen. They belong to the holder, not to the link: a
+  wrapper pickled into a child process gives that child its own copy.</li>
+</ul>
+
+<h3><code>unhandled()</code> — the closing <code>case</code> of every handler</h3>
+<p>Two jobs in one call. Its parameter is typed <code>Never</code>, so a type checker accepts the
+call only when every member of the union has already been matched — a forgotten message is a
+reported error. At runtime it raises <code>UnhandledMessage</code>, so the same mistake is loud in
+a plain run where no checker was involved. It replaces the old <code>case _: pass</code>, under
+which CORE quietly discarded every error the HMI reported.</p>
+
+<div class="note"><strong>Micro-detail that is easy to undo by accident.</strong> The trace uses
+<code>%</code>-style arguments (<code>_trace.debug("send %s %r", …)</code>) so the
+<code>repr()</code> is computed only if a handler will actually emit. Below DEBUG the whole method
+costs one cached level check. Rewriting it as an f-string would silently make every send pay for a
+repr it throws away.</div>
+</div>
+
+<h2 id="links">6. <code>links.py</code> — the name of every direction</h2>
+
+<div class="filecard">
+<p class="meta"><span class="tag live">LIVE</span> All seven constants are in use.</p>
+
+<pre><code>HMI_TO_CORE = "hmi->core"          CORE_TO_HMI = "core->hmi"
+CORE_TO_SEQUENCER = "core->sequencer"   SEQUENCER_TO_CORE = "sequencer->core"
+CORE_TO_REPORT = "core->report"    REPORT_TO_CORE = "report->core"
+ANY_TO_LOGGER = "any->logger"</code></pre>
+
+<h3>Responsibility</h3>
+<p>One string per direction, defined once, so the launcher, CORE and anyone reading a log cannot
+drift apart on spelling. They are handed to <code>QueueWrapper(link=…)</code> by whoever builds
+the wrapper, and they are what a trace line is identified by — which makes
+<code>grep 'sequencer-&gt;core' pypts_*.log</code> the whole-system view of one link.</p>
+
+<p>This matters more than it looks. The Sequencer and the Report are <em>threads</em> of the Core
+process, so <code>%(processName)s</code> says <code>Core</code> for their records too. The link
+name is the only thing in the run log that tells those two apart.</p>
+
+<p><code>ANY_TO_LOGGER</code> is not a link between two modules but the one path out of every
+process; the docstring says it is named here with the rest rather than being the single anonymous
+wrapper. Consumers today: <code>launcher/startup.py</code> (3), <code>core/core.py</code> (4),
+<code>logger/log.py</code> (1), plus <code>helper_applications/debug_monitor</code>, which builds
+its filter checkboxes from these names rather than spelling them again.</p>
+</div>
+
+<h2 id="overlap">7. Overlap analysis</h2>
+
+<p><strong>Short answer: there is no duplicated functionality among the five.</strong> Each owns a
+distinct axis, and removing any one of them breaks something the others cannot supply. There are,
+however, four <em>seams</em> where two files describe adjacent halves of one idea, and one place
+where the same information genuinely exists twice — by design.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>Axis</th><th>Owner</th><th>If it were removed</th></tr>
+  <tr><td>Movement</td><td><code>queue_wrapper.py</code></td><td>Every module touches a raw queue —
+    the thing the architecture exists to prevent</td></tr>
+  <tr><td>Identity</td><td><code>links.py</code></td><td>Link names get spelled inline at seven
+    call sites; the trace and the log filters drift</td></tr>
+  <tr><td>Cross-link payloads</td><td><code>common_messages.py</code></td><td>Heartbeat and ModuleError get
+    declared per link, and CORE cannot forward one object</td></tr>
+  <tr><td>Run narrative</td><td><code>run_events.py</code></td><td>The eleven progress/question
+    types get declared twice, once per union</td></tr>
+  <tr><td>Ask-and-block</td><td><code>blocking_messages.py</code></td><td>Every asker re-invents an
+    id→queue map with its own locking and timeout</td></tr>
+</table>
+</div>
+
+<h3>Seam A — <code>common_messages.py</code> ↔ <code>run_events.py</code>: the criterion does not describe
+half the file</h3>
+
+<p>Both files hold "types more than one place needs", so the boundary between them is the one
+worth checking. <code>common_messages.py</code>'s docstring states the rule: <em>"A type belongs here when
+it appears in at least two link modules."</em> Checked against the imports:</p>
+
+<ul>
+  <li><code>Heartbeat</code> and <code>ModuleError</code> — imported by all three engine link
+  modules. The rule holds exactly.</li>
+  <li><code>ResultType</code> and <code>StepOutcome</code> — imported by <strong>no link module at
+  all</strong>. The only importer inside <code>messages/</code> is <code>run_events.py</code>;
+  outside it, the CLI, the GUI and <code>hmi_client.py</code> take them straight from
+  <code>common</code>.</li>
+</ul>
+
+<p>So half of <code>common_messages.py</code> is there for a different reason than the one written down:
+not "used by two links", but "value types that the run events are built out of and that a
+frontend renders directly". That is a defensible reason — <code>StepOutcome</code> is what a
+results table draws, independently of which message delivered it — but as written, the file's own
+rule would put both types in <code>run_events.py</code>.</p>
+
+<p><em>Recommendation:</em> restate the criterion rather than move the types. The header line
+already says "vocabulary shared by more than one <strong>link</strong>"; widening that to "more
+than one <strong>module</strong>" makes it true of all five members, and keeps the HMI importing a
+value type from a file that has no run-progress semantics in it.</p>
+
+<h3>Seam B — <code>blocking_messages.py</code> ↔ <code>run_events.py</code>: one mechanism, two files</h3>
+
+<p>A request/response round trip is split: the four dataclasses are in
+<code>run_events.py</code>, the waiting machinery is in <code>blocking_messages.py</code>, and the only
+thing joining them is the <code>request_id</code>. Neither file imports the other.</p>
+
+<p>This is the right split, and it is load-bearing rather than cosmetic:
+<code>PendingRequests</code> imports nothing from <code>messages</code>, so it works for any future
+request/response pair without touching the message layer, and the messages stay pure data with no
+threading in them. The only cost is that reading either file alone does not tell the whole story —
+already mitigated, since <code>run_events.py</code> ends its questions section with
+<em>"The waiting side is in blocking_messages.py"</em> and <code>blocking_messages.py</code> opens with a worked
+example of both halves.</p>
+
+<h3>Seam C — <code>links.py</code> ↔ <code>queue_wrapper.py</code>: naming is a convention, not a
+constraint</h3>
+
+<p><code>QueueWrapper.__init__</code> takes <code>link: str = ""</code>. Nothing checks that the
+string came from <code>links.py</code>; a typo — <code>"core-&gt;hmi "</code>,
+<code>"core→hmi"</code> — constructs happily and produces trace lines that no
+<code>grep</code> and no Monitor filter will match. An unnamed wrapper traces as <code>"?"</code>,
+which the tests rely on, so the empty default is intentional.</p>
+
+<p>This is not overlap; it is a missing constraint at the join between the two files. Cheap and
+low-risk to tighten (a <code>StrEnum</code>, or <code>Literal[…]</code> on the parameter), and all
+seven production call sites already import from <code>links.py</code>, so nothing would have to
+change to satisfy it. Worth raising as a roadmap TODO rather than doing unasked.</p>
+
+<h3>Seam D — <code>queue_wrapper.py</code> also owns a log format</h3>
+
+<p>The trace text <code>"send &lt;link&gt; &lt;repr&gt;"</code> / <code>"recv &lt;link&gt;
+&lt;repr&gt;"</code> is not private to this file. <code>helper_applications/debug_monitor/
+trace_parser.py</code> re-derives it with a regex, matching on the two method names
+(<code>send</code>, <code>receive</code>) and the two prefixes (<code>send </code>,
+<code>recv </code>) — and it documents the mismatch between them, because both are needed. The
+Monitor's own docstring names this: <em>"the trace text lives in
+<code>pypts/messages/queue_wrapper.py</code>; if it changes, this file is what has to follow."</em></p>
+
+<p>So <code>queue_wrapper.py</code> owns one thing beyond transport: an implicit wire format for the
+run log, with a consumer in another package. It is not duplicated inside the five files, but it is
+the one responsibility in them that leaks outside the module, and it is the reason a one-word
+change to a debug string is a breaking change.</p>
+
+<h3>The one genuine duplication: counters vs. the trace</h3>
+
+<p><code>QueueWrapper.sent</code>/<code>received</code> and the DEBUG trace answer the same
+question — how many messages moved on this link. Both live in the same file, and the docstring
+already argues the case: the counters are per-holder, always on, and readable in-process; the
+trace is whole-system, DEBUG-only, and written to one file by the Logger regardless of which
+process emitted it. Neither can be derived from the other at runtime. Complementary, not
+redundant — but it is worth knowing that a number and a log line can disagree, and that when they
+do, the trace is the whole-system view.</p>
+
+<h3>One judgement call worth recording</h3>
+
+<p><code>unhandled()</code> and <code>UnhandledMessage</code> live in
+<code>queue_wrapper.py</code>, and they have nothing to do with a queue — they are the
+<em>handler</em> side of the contract. The justification is that the transport and the exhaustive
+<code>match</code> are two halves of "a typed link", and that <code>messages/__init__.py</code>
+re-exports all three names together, so nobody imports them by path anyway. A reader looking for
+<code>unhandled()</code> would probably not guess the file, and a third of the module docstring is
+spent on something the module title does not cover. Not a defect; the alternative (a
+<code>handlers.py</code> holding two names) is arguably worse.</p>
+
+<h2 id="drift">8. Drift found while reading</h2>
+
+<div class="warn"><strong><code>messages.md</code> says <code>PendingRequests</code> has no
+user.</strong> It has half of one. <code>sequencer.py:63</code> constructs
+<code>self.pending = PendingRequests()</code> and <code>sequencer.py:141</code> calls
+<code>self.pending.return_caller(...)</code> from <code>deliver_response()</code>, logging a warning
+when nobody was waiting. What has no user is the <em>asking</em> side —
+<code>start()</code> and <code>wait()</code> — which lands with the execution engine, exactly as
+the threading note predicts. The catalogue's open-items list is accurate about the constraint and
+stale about the status.</div>
+
+<p>Nothing else read here contradicted <code>messages.md</code>, the roadmap or
+<code>CLAUDE.md</code>. The statuses in this report (<span class="tag live">LIVE</span> /
+<span class="tag partial">HALF-WIRED</span> / <span class="tag stub">MOSTLY STUB</span>) were taken
+from the call sites, not from the docs.</p>
+
+<footer>
+Generated for branch <code>architecture_refactor</code>, 2026-08-13 · sources:
+<code>src/pypts/messages/{common,requests,run_events,queue_wrapper,links,__init__}.py</code>, the
+four link modules, and every importer under <code>src/pypts/</code> and <code>tests/</code>
+(<code>old_code/</code> excluded) · status is authoritative in
+<code>resources/roadmap/pypts_roadmap.md</code>.
+</footer>
+
+</div>
+</body>
+</html>

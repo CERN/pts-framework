@@ -1,0 +1,121 @@
+<!--
+SPDX-FileCopyrightText: 2025 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Recipe Lifecycle — from file to verdict</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#22201d; --muted:#6b665f; --line:#e2ded7;
+    --card:#ffffff; --accent:#8a5a2b; --code-bg:#f3f0ea;
+    --lane:#efe9df; --arrow:#8a5a2b;
+    --ok-bg:#eef5ee; --ok-line:#8fb08f;
+    --err-bg:#fdf0ec; --err-line:#d98a76;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a18; --fg:#e8e4dd; --muted:#a09a91; --line:#332f2b;
+      --card:#232120; --accent:#d8a06a; --code-bg:#2a2724;
+      --lane:#2b2823; --arrow:#d8a06a;
+      --ok-bg:#1f2a20; --ok-line:#4d6b4d;
+      --err-bg:#31221d; --err-line:#8a5040;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:860px;margin:0 auto;padding:32px 20px 70px}
+  header{border-bottom:2px solid var(--line);padding-bottom:14px;margin-bottom:18px}
+  h1{font-size:24px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:14px}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    font:12.5px/1.5 "SF Mono",Consolas,"Courier New",monospace}
+  .diagram{overflow-x:auto}
+  .grid{display:grid;grid-template-columns:1fr 1fr 1fr;min-width:640px;
+    column-gap:14px;row-gap:10px;align-items:center}
+  .lane{background:var(--lane);border:1px solid var(--line);border-radius:8px;
+    text-align:center;font-weight:700;padding:8px 4px;position:sticky;top:0}
+  .lane small{display:block;font-weight:400;color:var(--muted);font-size:12px}
+  .msg{position:relative;border-top:2px solid var(--arrow);align-self:center;
+    padding:6px 14px 0;font-size:13.5px;text-align:center;color:var(--muted)}
+  .msg code{color:var(--fg)}
+  .msg::after{content:"";position:absolute;top:-6px;border:5px solid transparent}
+  .r::after{right:-2px;border-left:8px solid var(--arrow)}
+  .l::after{left:-2px;border-right:8px solid var(--arrow)}
+  .hmi-core{grid-column:1/3}
+  .core-seq{grid-column:2/4}
+  .full{grid-column:1/4}
+  .note{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:8px 12px;font-size:13.5px}
+  .note b{color:var(--accent)}
+  .in-core{grid-column:2/3}
+  .in-seq{grid-column:3/4}
+  .phase{grid-column:1/4;color:var(--accent);font-weight:700;font-size:13px;
+    text-transform:uppercase;letter-spacing:.06em;margin-top:10px}
+  .good{background:var(--ok-bg);border-left:3px solid var(--ok-line);
+    padding:9px 13px;border-radius:0 6px 6px 0;margin:16px 0 0;font-size:14px}
+  .bad{background:var(--err-bg);border-left:3px solid var(--err-line);
+    padding:9px 13px;border-radius:0 6px 6px 0;margin:10px 0 0;font-size:14px}
+  .more{color:var(--muted);font-size:13px;margin-top:22px;border-top:1px solid var(--line);
+    padding-top:10px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Recipe Lifecycle — from file to verdict</h1>
+  <div class="sub">One page, one run: open → parse → hand to the Sequencer → execute →
+  results back through CORE → shown on the HMI. Everything travels as messages; modules
+  never call each other.</div>
+</header>
+
+<div class="diagram"><div class="grid">
+
+  <div class="lane">HMI<small>frontend process</small></div>
+  <div class="lane">CORE<small>engine process — the mediator</small></div>
+  <div class="lane">Sequencer<small>thread of CORE</small></div>
+
+  <div class="phase">1 · Load</div>
+  <div class="msg r hmi-core"><code>LoadRecipe(path)</code><br>the operator picked a .yml</div>
+  <div class="note in-core"><b>Parse &amp; validate</b> — <code>Recipe.from_file()</code>:
+    normalize case, check every mandatory field against <code>rules.py</code>, fill the
+    optional defaults, build Recipe → Sequences → Steps.</div>
+  <div class="msg l hmi-core"><code>RecipeLoaded(summary)</code><br>fills the sequence chooser and the step table</div>
+  <div class="msg r core-seq"><code>UseRecipe(recipe)</code><br>the live, validated object — this link never leaves the process</div>
+
+  <div class="phase">2 · Run</div>
+  <div class="msg r hmi-core"><code>StartSequence(name)</code><br>the operator pressed run</div>
+  <div class="msg r core-seq"><code>RunSequence(name)</code></div>
+  <div class="note in-seq"><b>Execute</b> — on a worker thread, so the event loop keeps
+    turning (heartbeats, <code>StopSequence</code>). Each step: resolve inputs → do the work
+    → judge outputs → <code>StepResult</code>. Teardown always runs, even after a failure
+    or an abort.</div>
+
+  <div class="phase">3 · Results</div>
+  <div class="msg l full"><code>RunStarted → StepStarted / StepFinished</code> (each step) <code>→ SequenceFinished → RunFinished(result)</code><br>
+    emitted live by the Sequencer, forwarded <b>unchanged</b> by CORE to the HMI —
+    the step table updates as the run happens</div>
+
+</div></div>
+
+<div class="good"><b>The verdict:</b> every step ends as PASS, FAIL, DONE, SKIP, ERROR or
+STOP; a run aggregates to its <em>highest</em> one. Only ERROR stops a sequence — a FAIL
+is a result, not a crash.</div>
+
+<div class="bad"><b>A bad file never runs:</b> parsing raises one <code>RecipeError</code>
+naming every problem at once; CORE reports it to the operator
+(<code>ModuleErrorReported</code>) and the Sequencer never sees the recipe.</div>
+
+<p class="more">More detail: <code>recipe_format.html</code> (what a recipe may contain) ·
+<code>messaging_overview.html</code> (links, queues, transport) ·
+<code>src/pypts/messages/messages.md</code> (the full message catalogue).</p>
+
+</div>
+</body>
+</html>

@@ -34,6 +34,9 @@ dependencies = [
   "nidmm==1.4.8",
   "nptdms==1.10.0",
   "numpy",
+  # Per-user config/data directories, so config.ini and the run output land
+  # where the platform expects rather than in the temp directory.
+  "platformdirs",
   "PySide6==6.9.1",
   "PyYAML==6.0.2",
   "ruamel.yaml",
@@ -60,6 +63,7 @@ dev = [
   # Include the "test" and "doc" dependencies in the dev dependencies.
   "pts-framework[doc,test]",
   "ruff",
+  "mypy",
 ]
 
 [project.urls]
@@ -79,6 +83,130 @@ include = ["pypts", "pypts.*"]
 # Tell setuptools_scm to write a _version.py file in the package. The
 # _version.py file must not be committed to the repository.
 version_file = "src/pypts/_version.py"
+
+[tool.pytest.ini_options]
+# Default selection when pytest is invoked without arguments.
+testpaths = ["tests/unit_tests", "tests/functional_tests"]
+
+[tool.ruff]
+# 100 rather than the default 88: the module docstrings in this project carry the
+# reasoning behind each decision, and 88 breaks their sentences badly. The code
+# itself already fits well inside 100.
+line-length = 100
+target-version = "py311"
+
+# Frozen or unintegrated code that is not held to the current style.
+#   old_code/  is the legacy implementation, read-only by project rule.
+#   spikes/    is unintegrated experiments, kept deliberately as they were written.
+exclude = [
+  "src/pypts/old_code",
+  "spikes",
+  "docs/source/conf.py",
+]
+
+[tool.ruff.lint]
+# Chosen so that the `# noqa:` codes already written into the source mean
+# something: BLE001 on the event loops, DTZ007 in the trace parser, B008 on the
+# Qt model overrides. Before this section existed those suppressions named rules
+# that nothing enabled.
+select = [
+  "E",    # pycodestyle
+  "F",    # pyflakes - undefined names, unused imports, unused variables
+  "I",    # import sorting, so import order is mechanical rather than argued about
+  "N",    # pep8-naming
+  "UP",   # pyupgrade
+  "B",    # flake8-bugbear
+  "BLE",  # blind except
+  "DTZ",  # naive datetime
+  "SIM",  # simplifiable code
+  "PIE",  # misc lints
+  "G",    # logging format - keeps log calls %-style and lazily formatted
+  "RUF",  # ruff's own rules
+]
+
+ignore = [
+  # N818 wants every exception class to end in "Error". `UnhandledMessage` is
+  # named for what it carries rather than for its class, deliberately and
+  # consistently across the docs, and `ConfigError` is already the base of a
+  # family that reads correctly. Renaming them to satisfy a suffix rule would
+  # cost more than it buys.
+  "N818",
+
+  # SIM108 rewrites a four-line if/else into a one-line conditional expression.
+  # This project prefers the plain form: an if/else reads top to bottom and
+  # takes an extra branch without being restructured. Shortest is not clearest.
+  "SIM108",
+]
+
+# The framework's logger is exported as `log` from pypts.logger.log, so ruff has
+# to be told that it is a logger - otherwise the G rules see an ordinary object
+# and the %-style convention stays unenforced.
+logger-objects = ["pypts.logger.log.log"]
+
+[tool.ruff.lint.per-file-ignores]
+# The helper applications are pre-refactor and are ported in roadmap Phase 6.
+# Silenced wholesale rather than half-fixed, so the rest of the tree has a clean
+# baseline; the outstanding findings are recorded in the roadmap.
+"src/pypts/helper_applications/recipe_creator/*" = ["ALL"]
+"src/pypts/helper_applications/recipe_verificator/*" = ["ALL"]
+"src/pypts/helper_applications/example_finder/*" = ["ALL"]
+
+# Qt overrides camelCase virtuals - the names are Qt's signature, not a choice.
+"src/pypts/helper_applications/debug_monitor/trace_model.py" = ["N802"]
+"src/pypts/helper_applications/debug_monitor/main_window.py" = ["N802"]
+
+# Sample log records, quoted verbatim from a real run log. Wrapping them would
+# make the sample a worse copy of the thing it exists to describe or check.
+"tests/unit_tests/test_debug_monitor.py" = ["E501"]
+"src/pypts/helper_applications/debug_monitor/trace_parser.py" = ["E501"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pypts"]
+
+[tool.mypy]
+# Scoped to the message layer and the modules that handle messages, which is
+# where the type annotations are load-bearing rather than decorative:
+#
+#   - `unhandled()` is typed `Never`, so a `match` that has forgotten a member
+#     of a link's union is an error here. The protocol tests already catch that
+#     at test time; this catches it while the code is being written.
+#   - `QueueWrapper[CoreToSequencer]` says which messages may travel on a link.
+#     Nothing checked that before, so sending the wrong message on the wrong
+#     link ran perfectly and arrived in the wrong place.
+#
+# Not the whole tree on purpose: old_code/ is frozen, spikes/ is experiments,
+# and the helper applications are Phase 6. Widening the scope is cheap once
+# those are dealt with.
+python_version = "3.11"
+files = [
+  "src/pypts/messages",
+  "src/pypts/core",
+  "src/pypts/sequencer",
+  "src/pypts/report",
+  "src/pypts/logger",
+  "src/pypts/utilities",
+  "src/pypts/hmi/hmi_client.py",
+]
+
+# Deliberately not `strict`. The value here is in the message contract being
+# checked, and demanding an annotation on every local in the modules around it
+# would bury that in noise. Tighten when the engine port settles.
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+# PySide6 ships incomplete stubs and the GUI is Phase 3.
+module = "PySide6.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The CI typecheck job installs only mypy, no dependencies, and the sequencer
+# now imports the recipe layer, which imports yaml - so mypy has to be told a
+# missing PyYAML is fine. TODO: install types or the package in that job and
+# drop this.
+module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
 
 [tool.acc_py_template]
 features = [

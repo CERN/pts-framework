@@ -1,0 +1,372 @@
+<!--
+SPDX-FileCopyrightText: 2025 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Recipe Rules — Summary</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#22201d; --muted:#6b665f; --line:#e2ded7;
+    --card:#ffffff; --accent:#8a5a2b; --code-bg:#f3f0ea;
+    --warn-bg:#fdf3ea; --warn-line:#e0a76a;
+    --ok-bg:#eef5ee; --ok-line:#8fb08f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a18; --fg:#e8e4dd; --muted:#a09a91; --line:#332f2b;
+      --card:#232120; --accent:#d8a06a; --code-bg:#2a2724;
+      --warn-bg:#33261a; --warn-line:#8a6236;
+      --ok-bg:#1f2a20; --ok-line:#4d6b4d;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:28px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:38px 0 10px;padding-top:10px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px;color:var(--accent)}
+  p{margin:8px 0}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    font:13px/1.5 "SF Mono",Consolas,"Courier New",monospace}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;margin:10px 0}
+  pre code{background:none;padding:0;font-size:12.5px}
+  .tablewrap{overflow-x:auto;margin:10px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  td code{white-space:nowrap}
+  .note{background:var(--ok-bg);border-left:3px solid var(--ok-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn{background:var(--warn-bg);border-left:3px solid var(--warn-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn strong,.note strong{color:var(--accent)}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:14px 18px;margin:20px 0;font-size:14px}
+  .toc ol{columns:2;column-gap:30px;margin:6px 0}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px dotted var(--muted)}
+  .toc a:hover{color:var(--accent)}
+  .sev{display:inline-block;min-width:20px;text-align:center;font-weight:700;
+    border-radius:3px;padding:0 5px;font-size:12px}
+  .H{background:#c0392b;color:#fff}
+  .M{background:#d1893c;color:#fff}
+  .L{background:#7d8a7d;color:#fff}
+  .flow{font:13px/1.7 "SF Mono",Consolas,monospace;background:var(--code-bg);
+    border:1px solid var(--line);border-radius:8px;padding:14px;white-space:pre;overflow-x:auto}
+  footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>PyPTS Recipe Rules — Summary</h1>
+  <div class="sub">What a recipe is, and what the engine <em>actually</em> does with it.
+  Derived from <code>src/pypts/old_code/{recipe,steps,gui}.py</code>,
+  the verificator, and <code>docs/source/yaml_format.rst</code>.
+  Full version: <code>resources/roadmap/recipe_guide.md</code> · read 2026-08-11, branch <code>architecture_refactor</code>.</div>
+</header>
+
+<div class="toc">
+  <ol>
+    <li><a href="#model">The model</a></li>
+    <li><a href="#header">Header document</a></li>
+    <li><a href="#sequence">Sequence document</a></li>
+    <li><a href="#step">Step — common fields</a></li>
+    <li><a href="#inputs">input_mapping</a></li>
+    <li><a href="#outputs">output_mapping &amp; verdict</a></li>
+    <li><a href="#results">Result model</a></li>
+    <li><a href="#flow">Error &amp; abort flow</a></li>
+    <li><a href="#types">Step types</a></li>
+    <li><a href="#globals">Required globals</a></li>
+    <li><a href="#yaml">YAML pitfalls</a></li>
+    <li><a href="#val">What is validated</a></li>
+    <li><a href="#find">Top findings</a></li>
+  </ol>
+</div>
+
+<h2 id="model">1 · The model</h2>
+<p>A recipe is a <strong>multi-document YAML file</strong>: document 1 is the header, every
+following document is a sequence. A sequence is an ordered list of steps. A step names a
+<code>steptype</code> (which Python class runs it), an <code>input_mapping</code> (where its
+arguments come from) and an <code>output_mapping</code> (what to do with what came back).</p>
+
+<div class="flow">Recipe (header: name, version, main_sequence, globals)
+└── Sequence "Main"                     locals pushed on a stack
+    ├── setup_steps   ─┐
+    ├── steps          ├─ concatenated into ONE flat list
+    └── teardown_steps ─┘ run in a finally block — always execute</div>
+
+<p>Two scopes only: <strong>globals</strong> (whole recipe, one flat dict) and
+<strong>locals</strong> (one dict per sequence). <em>Steps never call each other</em> — they
+communicate exclusively by writing and reading these variables. Every step yields one
+<code>ResultType</code>; results form a tree and a parent takes the max severity of its children.</p>
+
+<h2 id="header">2 · Document 1 — the header</h2>
+<pre><code>name: My Recipe            # must be the FIRST key (the validator identifies the doc by it)
+version: 0.1.0
+description: What this recipe tests
+main_sequence: Main        # the sequence that runs
+test_package: my_pkg.tests # optional — makes `module:` resolve as a package resource
+globals:
+  cancel_key: 'cancel'
+  host: my-dut</code></pre>
+
+<div class="tablewrap"><table>
+<tr><th>Field</th><th>Required by loader</th><th>Required by validator</th><th>Actually used?</th></tr>
+<tr><td><code>name</code></td><td>yes</td><td>no — but must be first key</td><td>report + GUI title</td></tr>
+<tr><td><code>description</code></td><td>yes</td><td>yes</td><td>GUI</td></tr>
+<tr><td><code>version</code></td><td>yes</td><td>yes</td><td>report metadata</td></tr>
+<tr><td><code>globals</code></td><td>yes</td><td>yes</td><td>the global store</td></tr>
+<tr><td><code>main_sequence</code></td><td>yes in effect (raw KeyError)</td><td>yes</td><td>yes — and it <em>overrides</em> any requested sequence</td></tr>
+<tr><td><code>test_package</code></td><td>no</td><td>no</td><td>module resolution</td></tr>
+<tr><td><code>recipe_version</code></td><td>no</td><td>no</td><td><strong>never read by any code</strong></td></tr>
+<tr><td><code>continue_on_error</code></td><td>no</td><td>no</td><td><strong>never read here</strong> — only <code>globals.continue_on_error</code> is</td></tr>
+</table></div>
+
+<div class="note"><strong>globals</strong> are read with a bare dict index — a missing global is a
+<code>KeyError</code> that surfaces as <code>ERROR</code> on the step that touched it. No defaults,
+no declarations, no types. <code>serial_number</code> is injected by the engine; never declare it.</div>
+
+<h2 id="sequence">3 · Documents 2..N — a sequence</h2>
+<pre><code>sequence_name: Main        # must be the FIRST key
+description: The main flow
+parameters: {}             # parsed — NEVER USED
+locals:                    # sequence-scoped variables
+  target_value: '45'
+outputs: {}                # parsed — NEVER USED
+setup_steps: []
+steps: []
+teardown_steps: []</code></pre>
+<p>All seven keys are read with plain indexing → <strong>every one is mandatory</strong>, and a
+blank value (<code>locals:</code> with nothing after it) is <code>null</code>, which crashes on
+first use. Write <code>locals: {}</code> explicitly.</p>
+<p>Locals are pushed <em>by reference</em>, so running the same sequence twice does not start
+clean. A subsequence cannot see its caller's locals (correct isolation — and the only isolation
+there is).</p>
+
+<h2 id="step">4 · A step — common fields</h2>
+<pre><code>- steptype: PythonModuleStep     # required; selects the class
+  step_name: Measure 3V3 rail    # required
+  description: ...               # required by the validator
+  id: stable-id                  # optional, defaults to a uuid4
+  skip: false                    # optional — skipped steps never resolve inputs
+  critical: false                # optional
+  continue_on_error: false       # optional — NOT accepted by every steptype
+  input_mapping: {}
+  output_mapping: {}</code></pre>
+<ul>
+  <li>The leading <code>-</code> is structural — <code>steps</code> is a YAML list. Losing it is
+      the most common authoring error.</li>
+  <li><code>steptype</code> is case-insensitive for 8 of 10 types, <strong>case-sensitive for the
+      two SSH ones</strong>. Always use exact CamelCase.</li>
+  <li>Construction is <code>eval(step_type + "(**step_data)")</code> → any unknown key in the step
+      is a <code>TypeError</code> at load; an unknown steptype is a raw <code>NameError</code>;
+      a recipe file can execute arbitrary Python.</li>
+</ul>
+
+<h2 id="inputs">5 · <code>input_mapping</code> — where arguments come from</h2>
+<div class="tablewrap"><table>
+<tr><th>type</th><th>extra keys</th><th>behaviour</th></tr>
+<tr><td><code>direct</code> (default)</td><td><code>value</code></td><td>literal value from the YAML</td></tr>
+<tr><td><code>local</code></td><td><code>local_name</code></td><td>reads the current sequence's locals</td></tr>
+<tr><td><code>global</code></td><td><code>global_name</code></td><td>reads recipe globals</td></tr>
+<tr><td><code>method</code></td><td><code>value</code></td><td>identical to <code>direct</code>; used only for <code>method_name</code></td></tr>
+<tr><td>any + <code>indexed: true</code></td><td>—</td><td>turns the step into an IndexedStep (loop)</td></tr>
+</table></div>
+<div class="warn"><strong>Two traps.</strong> (1) A non-empty <code>global_name</code> key wins over
+whatever <code>type</code> says — it is checked first. (2) <strong>Nothing coerces types</strong>:
+<code>value: 45</code> ≠ <code>value: '45'</code>, and that silently decides <code>equals</code>
+outcomes.</div>
+
+<h2 id="outputs">6 · <code>output_mapping</code> — judging and storing</h2>
+<p>Each key must <strong>exactly match a key in the dict the step returned</strong>. A non-dict
+return is wrapped as <code>{"output": value}</code>; <code>None</code> becomes <code>{}</code>.
+A mapping key with no matching output is a <code>KeyError</code> → <code>ERROR</code>.</p>
+<div class="tablewrap"><table>
+<tr><th>type</th><th>extra keys</th><th>effect on the step's result</th></tr>
+<tr><td><code>passfail</code></td><td>—</td><td>PASS if truthy, else FAIL</td></tr>
+<tr><td><code>equals</code></td><td><code>value</code></td><td>PASS if <code>==</code> (no coercion)</td></tr>
+<tr><td><code>range</code></td><td><code>min</code>, <code>max</code></td><td>PASS if <code>min &lt;= float(out) &lt;= max</code> (strings OK)</td></tr>
+<tr><td><code>passthrough</code></td><td>—</td><td>the value already <em>is</em> a ResultType (<code>__result</code>)</td></tr>
+<tr><td><code>local</code></td><td><code>local_name</code></td><td>stores it — <strong>does not</strong> change the result</td></tr>
+<tr><td><code>global</code></td><td><code>global_name</code></td><td>stores it — <strong>does not</strong> change the result</td></tr>
+</table></div>
+<div class="warn"><strong>The real verdict rule.</strong> The result starts at <code>DONE</code> and
+each judging mapping <em>assigns</em> it, so <strong>the last one wins</strong> — a failing check
+followed by a passing one reports PASS. The docs claim "all must pass"; that is false. No judging
+mapping at all → <code>DONE</code>, which is <em>not</em> a failure.</div>
+
+<h2 id="results">7 · The result model</h2>
+<div class="flow">SKIP(0)  &lt;  DONE(1)  &lt;  PASS(2)  &lt;  FAIL(3)  &lt;  ERROR(4)  &lt;  STOP(5)
+                    a parent's result = max(children)</div>
+<p>So: one FAIL anywhere makes the whole sequence FAIL; ERROR (an unhandled exception) outranks
+FAIL; STOP (operator abort) outranks everything; all-skipped → SKIP.</p>
+<p>The report's CSV columns are exactly the StepResult fields:
+<code>recipe_name, recipe_file_name, sequence_name, serial_number, pypts_version, step_name,
+step_id, step_type, result, inputs, outputs, error_info</code> —
+<strong>anything you want in the report must be a step input or output.</strong> There is no
+free-form annotation channel.</p>
+
+<h2 id="flow">8 · Error &amp; abort flow</h2>
+<pre><code>try: runtime.continue_on_error = runtime.get_global('continue_on_error')
+except: pass
+if result is ERROR and (not continue_on_error or step.is_critical()):
+    break</code></pre>
+<ol>
+  <li><strong>Only ERROR stops a sequence.</strong> A FAIL — a failed measurement — never halts
+      anything. Intended (characterise the DUT fully), but documented nowhere.</li>
+  <li><code>globals.continue_on_error</code>, if present, <strong>overrides every step-level
+      setting</strong> and is re-read at each step boundary.</li>
+  <li>If that global is absent, the runtime keeps whatever value <em>the last executed step</em>
+      assigned — and WaitStep / SequenceStep / IndexedStep don't assign one, so step-level
+      settings <strong>leak forward</strong>.</li>
+  <li><code>critical: true</code> re-arms the stop even when continuing is enabled.</li>
+</ol>
+<div class="tablewrap"><table>
+<tr><th>continue_on_error</th><th>critical</th><th>on ERROR</th></tr>
+<tr><td>false</td><td>false</td><td>stop</td></tr>
+<tr><td>false</td><td>true</td><td>stop</td></tr>
+<tr><td>true</td><td>false</td><td>continue</td></tr>
+<tr><td>true</td><td>true</td><td>stop</td></tr>
+</table></div>
+<p><strong>Abort:</strong> the stop event is checked before each step and again right after it
+returns → result <code>STOP</code>, then unwind into teardown. Interactive steps poll the same
+event while waiting, so an abort during a prompt is honoured within ~1 s.</p>
+
+<h2 id="types">9 · Step types</h2>
+<div class="tablewrap"><table>
+<tr><th>steptype</th><th>what it does</th><th>key fields</th><th><code>continue_on_error</code></th></tr>
+<tr><td><code>PythonModuleStep</code></td><td>calls user Python; inputs become <strong>keyword args</strong></td><td><code>action_type</code> (method / read_attribute / write_attribute), <code>module</code>, <code>method_name</code></td><td>✓</td></tr>
+<tr><td><code>WaitStep</code></td><td>sleeps; always DONE</td><td>input <code>wait_time</code> (seconds)</td><td>✗</td></tr>
+<tr><td><code>UserInteractionStep</code></td><td>prompt with buttons</td><td>inputs <code>message</code>, <code>image_path</code>, <code>options</code>; optional <code>trigger_response</code></td><td>✓</td></tr>
+<tr><td><code>SequenceStep</code></td><td>calls another sequence</td><td><code>sequence: {type: internal, name: X}</code>; returns only <code>__result</code></td><td>✗</td></tr>
+<tr><td><code>UserLoadingStep</code></td><td>operator picks a file</td><td><code>file_save_location</code>; needs <code>loadFile_key</code></td><td>✓</td></tr>
+<tr><td><code>UserRunMethodStep</code></td><td>prompt, then run a method</td><td><code>action_type</code>, <code>module</code>, <code>method_name</code> as a <code>type: method</code> input, <code>trigger_response</code></td><td>✓</td></tr>
+<tr><td><code>UserWriteStep</code></td><td>operator types a value, or configures a serial port</td><td>option keys <code>wrt</code> / <code>ID</code></td><td>✓</td></tr>
+<tr><td><code>SSHConnectStep</code> / <code>SSHCloseStep</code></td><td>paramiko session published as the global <code>ssh_client</code></td><td>reads <strong>globals only</strong>, never input_mapping</td><td>✓</td></tr>
+<tr><td><code>IndexedStep</code></td><td>synthesised wrapper — never written by hand</td><td>triggered by <code>indexed: true</code> on any input</td><td>dropped</td></tr>
+</table></div>
+
+<h3>How <code>options</code> really works</h3>
+<pre><code>options:
+  type: direct
+  value:
+    - 'next': 'Next'      # KEY = the value the step receives back
+    - 'cancel': 'Cancel'  # VALUE = the button caption
+    - 'yes': ''           # empty caption → falls back to Key.capitalize()</code></pre>
+<p>A list of single-entry dicts. No options at all → one unlabelled button. Three response values
+are magic in the GUI and open a <em>second</em> dialog whose answer is pushed onto the same queue:
+<code>file</code> (file chooser), <code>wrt</code> (text input), <code>ID</code>
+(serial-port chooser returning <code>port, baudrate, IDN</code>).</p>
+
+<h3>Looping — <code>indexed: true</code></h3>
+<p>The only control flow the format has. Give an input a list and mark it indexed; the step runs
+once per element. Iteration count = <strong>the shortest</strong> indexed list; empty → SKIP.
+Non-indexed inputs repeat verbatim. Each iteration is a deepcopy, results become subresults, and
+per-iteration <code>local</code>/<code>global</code> writes are stripped so iterations don't
+overwrite each other. There is no <code>while</code>, no <code>repeat</code>, no conditional.</p>
+
+<h3>Subsequences — unfinished</h3>
+<p><code>parameters</code> and <code>outputs</code> are parsed and then never referenced.
+<code>SequenceStep</code> returns only <code>__result</code>. To get data out of a subsequence
+today, the subsequence must write to a <strong>global</strong>. The draft recipe is entirely
+commented out with the note "never actually tested yet".</p>
+
+<h2 id="globals">10 · Required globals per step type</h2>
+<div class="tablewrap"><table>
+<tr><th>Step type</th><th>Required globals</th><th>Required locals</th></tr>
+<tr><td>SSHConnect / SSHClose</td><td><code>host</code>, <code>user</code>, <code>password</code>, <code>private_key</code>, <code>port</code>, <code>ssh_client</code></td><td>—</td></tr>
+<tr><td>UserLoadingStep</td><td><code>cancel_key</code>, <code>loadFile_key</code></td><td>—</td></tr>
+<tr><td>UserRunMethodStep</td><td><code>cancel_key</code></td><td>—</td></tr>
+<tr><td>UserWriteStep</td><td><code>cancel_key</code>, <code>wrt_key</code>, <code>ID_key</code></td><td><code>serial_ID</code>, <code>serialport</code>, <code>baudrate</code> — only with the <code>ID</code> option</td></tr>
+<tr><td>UserInteractionStep</td><td><code>cancel_key</code> (soft); <code>file</code> + <code>loadFile_key</code> if <code>trigger_response</code> is used</td><td>—</td></tr>
+</table></div>
+<div class="warn">These magic-string globals are the format's worst wart: hidden coupling,
+order-dependent, undiscoverable. And <code>ssh_client</code> publishes a <strong>live paramiko
+object</strong> through a global — unpicklable, so it breaks the moment anything crosses a
+process boundary.</div>
+
+<h2 id="yaml">11 · YAML pitfalls</h2>
+<ol>
+  <li><strong><code>yes</code>/<code>no</code>/<code>on</code>/<code>off</code> are booleans</strong>
+      in YAML 1.1. <code>- yes: ''</code> gives the key <code>True</code>, and comparing against
+      <code>'yes'</code> then fails. Always quote them.</li>
+  <li><strong><code>None</code> is the string "None"</strong>, not null. YAML null is
+      <code>null</code>, <code>~</code>, or empty. Only SSHConnectStep defends against both.</li>
+  <li><strong>Quoting decides the type and nothing coerces</strong> — matters for
+      <code>equals</code>. (<code>range</code> is safe; it calls <code>float()</code>.)</li>
+  <li><strong>The leading <code>-</code></strong> is what makes a step a list element.</li>
+  <li><strong>Key order matters to the validator</strong>: header must start with <code>name:</code>,
+      a sequence with <code>sequence_name:</code>.</li>
+  <li><strong>A blank <code>locals:</code> is null, not <code>{}</code>.</strong></li>
+  <li>Tabs are illegal. Duplicate keys silently win-last — including duplicate
+      <code>sequence_name</code> across documents.</li>
+</ol>
+
+<h2 id="val">12 · What the validator actually checks</h2>
+<p><strong>Checks:</strong> each document is a dict; document kind from its first key; header
+fields present/typed/non-empty; sequence's seven keys present and typed; and for entries in
+<code>steps</code> only — the per-steptype required-field list, that the two mappings are dicts,
+and that <code>skip</code> is a bool. Faults carry line numbers.</p>
+<p><strong>Does not check:</strong></p>
+<ul>
+  <li><code>setup_steps</code> and <code>teardown_steps</code> contents — never validated at all</li>
+  <li>that <code>main_sequence</code> names an existing sequence</li>
+  <li>that <code>steptype</code> is known — and SequenceStep/IndexedStep aren't in the rules, so
+      they're wrongly required to have <code>action_type</code>/<code>module</code>/<code>method_name</code></li>
+  <li>anything <em>inside</em> the mappings: no check that <code>type</code> is valid, that
+      <code>direct</code> has <code>value</code>, that <code>equals</code> has <code>value</code>,
+      that <code>range</code> has <code>min</code>/<code>max</code></li>
+  <li>that referenced locals/globals are declared, or that a steptype's required globals exist</li>
+  <li>that <code>module</code>/<code>method_name</code> resolve; no uniqueness of step names/ids</li>
+</ul>
+<div class="warn">The rules live in <strong>three disagreeing places</strong> —
+<code>recipe_rules.py</code>, the Recipe Creator's own copy, and <code>yaml_format.rst</code> — and
+the verificator <strong>currently cannot even be imported</strong> (its constants come
+<code>from pypts</code>, which no longer exports them).</div>
+
+<h2 id="find">13 · Top findings</h2>
+<div class="tablewrap"><table>
+<tr><th>#</th><th></th><th>Finding</th></tr>
+<tr><td>F1</td><td><span class="sev H">H</span></td><td>Header-level <code>continue_on_error:</code> is never read — only <code>globals.continue_on_error</code>. 4 of 5 example recipes set it at header level and therefore run with error-stops enabled, opposite to intent.</td></tr>
+<tr><td>F6</td><td><span class="sev H">H</span></td><td><code>output_mapping</code> is last-writer-wins, not "all checks must pass" as documented. A failing check followed by a passing one reports PASS.</td></tr>
+<tr><td>F7</td><td><span class="sev H">H</span></td><td>Only ERROR stops a sequence; FAIL never does. Documented nowhere.</td></tr>
+<tr><td>F3</td><td><span class="sev H">H</span></td><td><code>run(sequence_name=…)</code> is overwritten by <code>main_sequence</code> on the next line — no other sequence can be run.</td></tr>
+<tr><td>F8</td><td><span class="sev H">H</span></td><td>Step-level <code>continue_on_error</code> is stored on the runtime and leaks to later steps that don't set it.</td></tr>
+<tr><td>F13</td><td><span class="sev H">H</span></td><td>UserInteractionStep's Cancel is dead — its AbortTestException is raised inside a <code>try</code> with <code>except Exception: pass</code>.</td></tr>
+<tr><td>F14</td><td><span class="sev H">H</span></td><td>UserWriteStep <code>wrt</code> writes the operator's text, then <code>process_outputs</code> overwrites it with the literal <code>"wrt"</code>. The mode cannot work as documented.</td></tr>
+<tr><td>F12</td><td><span class="sev H">H</span></td><td>Mutable default <code>output_mapping={}</code> is shared across steps, and SequenceStep mutates it — polluting every step that omitted the field.</td></tr>
+<tr><td>F16</td><td><span class="sev H">H</span></td><td>Sequence <code>parameters</code>/<code>outputs</code> parsed and never used; locals pushed by reference so a sequence run twice doesn't start clean.</td></tr>
+<tr><td>F11</td><td><span class="sev H">H</span></td><td>Steps built with <code>eval()</code> → arbitrary code execution from a recipe file.</td></tr>
+<tr><td>F22</td><td><span class="sev H">H</span></td><td><code>comprehensive_recipe.yml:20</code> commits a <strong>plaintext SSH password</strong>. Rotate if the host is live.</td></tr>
+<tr><td>F24</td><td><span class="sev M">M</span></td><td>The example recipes are <strong>not runnable</strong> — they all reference <code>example_tests.py</code>, which is not in the repo. This blocks the Phase 0 characterization tests.</td></tr>
+<tr><td>F2</td><td><span class="sev M">M</span></td><td><code>recipe_version</code> gates nothing; the documented "requires 1.1.0" mechanism does not exist.</td></tr>
+<tr><td>F10</td><td><span class="sev M">M</span></td><td><code>steptype</code> case-insensitivity is broken for exactly the two SSH types (lowercased string compared against CamelCase).</td></tr>
+<tr><td>F5</td><td><span class="sev M">M</span></td><td>The validator identifies documents by first key, the loader by position — the two can disagree about the same file.</td></tr>
+<tr><td>F9 / F19 / F21 / F23</td><td><span class="sev M">M</span></td><td>Three disagreeing rule sets; <code>continue_on_error</code> is a load-time TypeError on WaitStep/SequenceStep; <code>parameters</code> is a list per docs and a dict per the validator.</td></tr>
+</table></div>
+<p>28 findings in total, each with file:line evidence, in
+<code>resources/roadmap/recipe_guide.md</code> §16. Format proposals are in §17, open questions
+in §18.</p>
+
+<footer>
+Generated from the study of the old engine and the recipe rules ·
+full guide: <code>resources/roadmap/recipe_guide.md</code> ·
+roadmap TODOs: <code>resources/roadmap/pypts_roadmap.md</code>
+</footer>
+
+</div>
+</body>
+</html>

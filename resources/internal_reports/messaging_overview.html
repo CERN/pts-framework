@@ -1,0 +1,436 @@
+<!--
+SPDX-FileCopyrightText: 2025 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Messaging — Overview</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#22201d; --muted:#6b665f; --line:#e2ded7;
+    --card:#ffffff; --accent:#8a5a2b; --code-bg:#f3f0ea;
+    --warn-bg:#fdf3ea; --warn-line:#e0a76a;
+    --ok-bg:#eef5ee; --ok-line:#8fb08f;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a18; --fg:#e8e4dd; --muted:#a09a91; --line:#332f2b;
+      --card:#232120; --accent:#d8a06a; --code-bg:#2a2724;
+      --warn-bg:#33261a; --warn-line:#8a6236;
+      --ok-bg:#1f2a20; --ok-line:#4d6b4d;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:1000px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:28px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:38px 0 10px;padding-top:10px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px;color:var(--accent)}
+  p{margin:8px 0}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    font:13px/1.5 "SF Mono",Consolas,"Courier New",monospace}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;margin:10px 0}
+  pre code{background:none;padding:0;font-size:12.5px}
+  .tablewrap{overflow-x:auto;margin:10px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  td code{white-space:nowrap}
+  .note{background:var(--ok-bg);border-left:3px solid var(--ok-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn{background:var(--warn-bg);border-left:3px solid var(--warn-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn strong,.note strong{color:var(--accent)}
+  ul,ol{margin:8px 0;padding-left:22px}
+  li{margin:4px 0}
+  .toc{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:14px 18px;margin:20px 0;font-size:14px}
+  .toc ol{columns:2;column-gap:30px;margin:6px 0}
+  .toc a{color:var(--fg);text-decoration:none;border-bottom:1px dotted var(--muted)}
+  .toc a:hover{color:var(--accent)}
+  .flow{font:13px/1.7 "SF Mono",Consolas,monospace;background:var(--code-bg);
+    border:1px solid var(--line);border-radius:8px;padding:14px;white-space:pre;overflow-x:auto}
+  .tag{display:inline-block;border-radius:3px;padding:0 6px;font-size:11.5px;
+    font-weight:700;letter-spacing:.02em;vertical-align:2px}
+  .cmd{background:#8a5a2b;color:#fff}
+  .evt{background:#4a6b8a;color:#fff}
+  .stub{background:#a03c33;color:#fff}
+  footer{margin-top:44px;padding-top:14px;border-top:1px solid var(--line);
+    color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>PyPTS Messaging — Overview</h1>
+  <div class="sub">How the modules talk: links, queues, transport, handlers.
+  Read from <code>src/pypts/messages/</code>, <code>core/core.py</code>,
+  <code>hmi/hmi_client.py</code>, <code>sequencer/</code>, <code>report/</code>,
+  <code>logger/log.py</code>, <code>launcher/startup.py</code> ·
+  branch <code>architecture_refactor</code>, 2026-08-12.<br>
+  The message catalogue that used to be §4 now lives in
+  <code>src/pypts/messages/messages.md</code>.</div>
+</header>
+
+<div class="toc">
+  <ol>
+    <li><a href="#model">The model in one picture</a></li>
+    <li><a href="#links">Links &amp; queues</a></li>
+    <li><a href="#transport">The transport: <code>QueueWrapper</code></a></li>
+    <li><a href="#messages">The messages, per link → moved</a></li>
+    <li><a href="#handlers">Who handles what, and where</a></li>
+    <li><a href="#adding">Adding a message</a></li>
+    <li><a href="#functions">Functions you actually call</a></li>
+    <li><a href="#patterns">Heartbeats, errors, questions, shutdown</a></li>
+    <li><a href="#status">What is real, what is a stub</a></li>
+  </ol>
+</div>
+
+<h2 id="model">1. The model in one picture</h2>
+
+<p>Modules never touch a queue and never call each other. <strong>Everything goes through
+CORE</strong> — except log records, which go straight to the Logger so that logging survives a
+dead CORE.</p>
+
+<div class="flow">                 ┌──────────────┐
+                 │   LAUNCHER    │  builds HMI↔CORE queues + log queue
+                 └──┬────────┬──┘  parent of every process
+   HmiStopped +     │        │
+   ShutdownRequested│        │ spawns
+                    ▼        ▼
+   ┌─────────┐             ╔═══════════════════════════════════════╗
+   │   HMI   │             ║  CORE process                         ║
+   │ GUI/CLI │  hmi->core  ║ ┌────────┐  core->sequencer ┌───────┐ ║
+   │         │ ──────────► ║ │        │ ───────────────► │ SEQU- │ ║
+   │ process │ ◄────────── ║ │  CORE  │ ◄─────────────── │ ENCER │ ║
+   │ (GUI) / │  core->hmi  ║ │mediator│  sequencer->core └───────┘ ║
+   │ launcher│             ║ │        │  core->report    ┌───────┐ ║
+   │  (CLI)  │             ║ │  main  │ ───────────────► │REPORT │ ║
+   └─────────┘             ║ │ thread │ ◄─────────────── │       │ ║
+        │                  ║ └────┬───┘  report->core    └───────┘ ║
+        │                  ║      │          threads       │      ║
+        │                  ╚══════╪══════════════════════╪════════╝
+        └─────────────────────────┴──────────────────────┘
+                    any->logger   ▼   (LogRecords + control, NOT via CORE)
+                            ┌────────┐
+                            │ LOGGER │  process; single writer of the run log
+                            └────────┘</div>
+
+<div class="note"><strong>One process boundary, and it is deliberate:</strong> HMI ↔ CORE, so the
+operator's window survives an engine crash. The Sequencer and the Report are
+<strong>threads of the Core process</strong>: their links are plain <code>queue.Queue</code>,
+nothing on them is pickled, and the engine will be able to hand the Sequencer a live object — a
+recipe, a device handle — when the execution engine lands.</div>
+
+<div class="warn"><strong>What that costs.</strong> A fault in either thread can take CORE down
+with it, where a dead child process could previously be observed and reported. And the run log
+cannot tell them apart: the format names the <em>process</em>
+(<code>%(processName)s</code>), so Sequencer and Report records both read <code>Core</code>.
+The <code>filename:funcName</code> column and the link name in a trace line are what identify
+them now.</div>
+
+<h2 id="links">2. Links &amp; queues</h2>
+
+<p>A <strong>link</strong> is a pair of modules. Each direction is its own queue wrapped in its own
+<code>QueueWrapper</code>, named by a constant in <code>messages/links.py</code> — that name is what
+a trace line is identified by. A link module is named after the two ends it joins and holds
+<em>both</em> directions; the Logger is the exception, named for its single direction because
+nothing is ever sent back.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Link name</th><th>Direction</th><th>Queue built by</th><th>Contract module</th></tr>
+<tr><td><code>hmi-&gt;core</code></td><td>HMI → CORE</td><td rowspan="2">launcher, <code>multiprocessing.Queue</code></td><td rowspan="2"><code>core_hmi_communication.py</code></td></tr>
+<tr><td><code>core-&gt;hmi</code></td><td>CORE → HMI</td></tr>
+<tr><td><code>core-&gt;sequencer</code></td><td>CORE → Sequencer</td><td rowspan="2"><code>Core.__init__</code>, <code>queue.Queue</code></td><td rowspan="2"><code>core_sequencer_communication.py</code></td></tr>
+<tr><td><code>sequencer-&gt;core</code></td><td>Sequencer → CORE</td></tr>
+<tr><td><code>core-&gt;report</code></td><td>CORE → Report</td><td rowspan="2"><code>Core.__init__</code>, <code>queue.Queue</code></td><td rowspan="2"><code>core_report_communication.py</code></td></tr>
+<tr><td><code>report-&gt;core</code></td><td>Report → CORE</td></tr>
+<tr><td><code>any-&gt;logger</code></td><td>every process and thread → Logger</td><td>launcher, <code>multiprocessing.Queue</code></td><td><code>to_logger_communication.py</code></td></tr>
+</table>
+</div>
+
+<p><strong>Seven queues in total</strong> (6 link directions + 1 log queue). Three of them cross a
+process boundary and are therefore <code>multiprocessing.Queue</code>; the four engine links are
+plain <code>queue.Queue</code>. Two rules keep the topology honest:</p>
+
+<ul>
+  <li><strong>The owner builds the handle.</strong> Whoever owns a link constructs both wrappers and
+  hands them to the module that needs them. A module cannot invent a link to somebody it has no
+  business talking to — the topology is enforced by construction, not by convention.</li>
+  <li><strong>One swappable transport.</strong> <code>QueueWrapper</code> wraps anything with
+  <code>put()</code> and <code>get_nowait()</code>, which is why the same class serves a process
+  boundary and a thread boundary. The launcher builds the HMI↔Core pair out of
+  <code>multiprocessing.Queue</code> because that link crosses a process boundary; CORE builds its
+  four submodule links out of <code>queue.Queue</code> because the Sequencer and the Report are
+  threads of its own process. Neither end knows which of the two it is holding.</li>
+</ul>
+
+<div class="warn"><strong>The log queue is the odd one out:</strong> it carries two kinds of item —
+plain <code>logging.LogRecord</code> objects put there by logging's own <code>QueueHandler</code>,
+and the <code>LoggerControl</code> dataclasses. The Logger tells them apart with
+<code>isinstance</code>, which is why control messages must not be LogRecord-shaped.</div>
+
+<h2 id="transport">3. The transport: <code>QueueWrapper</code></h2>
+
+<p>One generic class, <code>messages/queue_wrapper.py</code>. A typed, one-way pipe with two
+operations.</p>
+
+<pre><code>self.core.send(StartSequence("power_on"))      # never blocks, never inspects
+
+for message in self.inbox.receive():           # never blocks; yields what is waiting now
+    self.handle_core_message(message)</code></pre>
+
+<div class="tablewrap">
+<table>
+<tr><th>Member</th><th>What it does</th></tr>
+<tr><td><code>send(message)</code></td><td>DEBUG-traces, then <code>put()</code>, then increments <code>sent</code>. The trace comes <em>before</em> the put so a message that fails to pickle is still recorded.</td></tr>
+<tr><td><code>receive(limit=64)</code></td><td>Generator. Yields waiting messages up to <code>limit</code> and stops on empty. Bounded so one busy link cannot starve the other inboxes; a caller that breaks early leaves the rest queued.</td></tr>
+<tr><td><code>link</code></td><td>The direction's name, from <code>links.py</code>. An unnamed wrapper traces as <code>?</code>.</td></tr>
+<tr><td><code>sent</code> / <code>received</code></td><td>Counters belonging to the holder. A wrapper pickled to a child process increments the child's own copy; the Sequencer and the Report share CORE's object, so both numbers live in one place.</td></tr>
+</table>
+</div>
+
+<p><strong>Nothing ever blocks on a queue.</strong> Every module runs a poll loop
+(<code>while running: poll → periodic tasks → sleep(0.01)</code>), so a message sent between two
+ticks simply arrives on the next one. The only exception is the Logger, which blocks on
+<code>get()</code> because it has no second source to service.</p>
+
+<h3>The trace — the only debug switch there is</h3>
+
+<p>Both <code>send()</code> and <code>receive()</code> log one DEBUG line to the
+<code>pypts.trace</code> logger, so <code>--log-level DEBUG</code> puts every message in the system
+into the run log <em>twice</em>: once from the sender, once from the receiver. A send with no
+matching receive is a lost message, and seeing that is the whole point.</p>
+
+<pre><code>...;DEBUG;Core;queue_wrapper.py:send;send core-&gt;sequencer RunSequence(sequence_name='power_on')
+...;DEBUG;Core;queue_wrapper.py:receive;recv core-&gt;sequencer RunSequence(sequence_name='power_on')
+
+grep 'sequencer-&gt;core' pypts_*.log     # the whole-system view of one link</code></pre>
+
+<div class="note"><strong>There is no debug build and nothing else to turn on.</strong> Because the
+trace sits on the one object every message passes through, no module has to remember to log
+anything, and no new message can escape it. It is also the only way to see
+<code>core↔sequencer</code> and <code>core↔report</code>, which never leave the Core process —
+and, now that both are threads of it, the link name is the only thing in the line that says
+which module was involved.</div>
+
+<h2 id="messages">4. The messages, per link → moved</h2>
+
+<div class="note"><strong>The catalogue now lives in
+<code>src/pypts/messages/messages.md</code></strong> — every message on every link, what it
+means, and which of them nothing sends yet. It moved out of this page on purpose: the
+structure above is settled, the message set is the next thing to review, and one file per
+concern beats one page that goes stale in halves.</div>
+
+<p>What holds for all of them, and belongs here rather than there: every message is a
+<strong>frozen slotted dataclass of plain values</strong>, each direction has a union type that
+<em>is</em> the contract, and a type shared by two links lives in <code>common_messages.py</code> or
+<code>run_events.py</code> so both ends refer to the same class. Only the HMI link is pickled;
+the four engine links are in-process and no longer have to be.</p>
+
+<h2 id="handlers">5. Who handles what, and where</h2>
+
+<p>One handler per inbox. Every one is a <code>match</code> closed with
+<code>unhandled(message)</code> — never <code>case _: pass</code>.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Module</th><th>Handler</th><th>Consumes</th></tr>
+<tr><td rowspan="3">CORE <span class="sub">(main thread)</span></td><td><code>core.py:284 handle_hmi_message</code></td><td><code>HmiToCore</code></td></tr>
+<tr><td><code>core.py:317 handle_sequencer_message</code></td><td><code>SequencerToCore</code></td></tr>
+<tr><td><code>core.py:341 handle_report_message</code></td><td><code>ReportToCore</code></td></tr>
+<tr><td>HMI <span class="sub">(GUI + CLI, own process)</span></td><td><code>hmi_client.py:88 handle_core_message</code></td><td><code>CoreToHmi</code></td></tr>
+<tr><td>Sequencer <span class="sub">(thread)</span></td><td><code>sequencer.py:86 handle_core_message</code></td><td><code>CoreToSequencer</code></td></tr>
+<tr><td>Report <span class="sub">(thread)</span></td><td><code>report.py:103 handle_core_message</code></td><td><code>CoreToReport</code></td></tr>
+<tr><td>Logger <span class="sub">(own process)</span></td><td><code>log.py:253 handle_control_message</code></td><td><code>LoggerControl</code></td></tr>
+</table>
+</div>
+
+<p>CORE's three handlers <em>are</em> the whole routing table. Read them and you know the system:</p>
+
+<pre><code>def handle_sequencer_message(self, message: SequencerToCore) -&gt; None:
+    match message:
+        case SequencerStopped():
+            self.module_running[SEQUENCER] = False
+        case RunStarted() | RunFinished() | SequenceStarted() | ... :
+            self.to_hmi.send(message)          # relayed, not repacked
+        case Heartbeat():
+            self.note_heartbeat(message)
+        case ModuleError():
+            self.handle_module_error(message)
+        case _:
+            unhandled(message)</code></pre>
+
+<div class="warn"><strong>Two different survival policies.</strong> Every other module wraps its
+handlers in <code>@catch_and_report_errors()</code>, which reports the failure to CORE as a
+<code>ModuleError</code> and carries on. CORE <em>cannot</em> — it is what errors are reported
+<em>to</em> — so <code>Core.poll()</code> catches <code>UnhandledMessage</code> and everything else,
+logs it, and drops that message. The cost is that one bad message abandons the rest of that batch;
+those stay queued for the next tick.</div>
+
+<p>One handler is shared: <strong>the GUI and the CLI both use <code>HmiClient</code></strong>. The
+protocol lives once in <code>hmi_client.py</code>; subclasses override only the <code>show_*</code>
+hooks they can draw, and every hook has a logging default — so adding a message to
+<code>CoreToHmi</code> cannot break a frontend that has not caught up.</p>
+
+<h2 id="adding">6. Adding a message</h2>
+
+<p>Two edits. That is the whole procedure.</p>
+
+<pre><code># 1. Declare it in the link module, and add it to that link's union
+@dataclass(frozen=True, slots=True)
+class StartSequence:
+    sequence_name: str
+
+HmiToCore = LoadRecipe | StartSequence | ...
+
+# 2. Handle it with a case in the recipient's handler
+case StartSequence(sequence_name=name):
+    self.start_sequence(name)</code></pre>
+
+<div class="note"><strong>Everything else is found for you.</strong> A type checker flags every
+<code>match</code> that is now incomplete, because <code>unhandled()</code> takes a
+<code>Never</code> and only type-checks once every union member has been matched.
+<code>test_messages.py</code> fails until the message has an example in its table and a branch in
+its recipient — it enumerates the unions with <code>typing.get_args()</code>, so a new message is
+covered automatically. It also asserts the message is a frozen dataclass, survives a pickle round
+trip, and carries no live queue or handle.</div>
+
+<p>A message shared by two links — anything CORE forwards rather than repacks — belongs in
+<code>common_messages.py</code> or <code>run_events.py</code>, so both ends refer to the same class.</p>
+
+<h2 id="functions">7. Functions you actually call</h2>
+
+<div class="tablewrap">
+<table>
+<tr><th>Where</th><th>Call</th><th>For</th></tr>
+<tr><td rowspan="2"><code>messages/queue_wrapper.py</code></td><td><code>channel.send(msg)</code> · <code>channel.receive(limit=64)</code></td><td>The only two verbs on the transport.</td></tr>
+<tr><td><code>unhandled(msg)</code></td><td>Last case of every match. Raises <code>UnhandledMessage</code>.</td></tr>
+<tr><td><code>messages/blocking_messages.py</code></td><td><code>PendingRequests.start(id)</code> · <code>.wait(id)</code> · <code>.return_caller(id, value)</code> · <code>.cancel(id)</code></td><td>The waiting half of a request/response pair. <code>wait()</code> returns <code>None</code> after 300 s.</td></tr>
+<tr><td><code>utilities/heartbeat_manager.py</code></td><td><code>HeartbeatManager(channel, source).tick()</code></td><td>Call from <code>do_periodic_tasks()</code>; it decides for itself when a beat is due (1 s).</td></tr>
+<tr><td rowspan="2"><code>utilities/error_handling.py</code></td><td><code>@catch_and_report_errors()</code> · <code>@report_and_reraise()</code></td><td>Decorate a method of a class with a <code>core</code> attribute. Catches, reports a <code>ModuleError</code> naming the method and the exception type, then swallows (event loops) or re-raises (execution layer).</td></tr>
+<tr><td><code>report_error(self, exc, severity=…)</code> · <code>report_problem(self, message, severity=…)</code></td><td>Call from inside your own <code>except</code> block for a failure you recognised, and rate it yourself. Neither raises — what happens next stays your decision.</td></tr>
+<tr><td><code>logger/log.py</code></td><td><code>init_logging(log_queue, level)</code> · <code>log</code> · <code>set_stdout_logging_enabled(bool)</code></td><td>First call in every <em>process</em> entry point — never from a thread, which shares the process's root logger. Then just <code>log.info(...)</code>.</td></tr>
+<tr><td><code>hmi/hmi_client.py</code></td><td><code>load_recipe()</code> · <code>start_sequence()</code> · <code>request_shutdown()</code> · <code>answer_user_prompt()</code> · <code>answer_serial_number()</code></td><td>Everything a frontend may say to CORE. The <code>show_*</code> hooks are what it overrides to draw.</td></tr>
+<tr><td><code>core/core.py</code></td><td><code>poll(channel, handler)</code> · <code>start_submodules()</code> · <code>join_submodules()</code> · <code>stop_all_modules()</code> · <code>note_heartbeat()</code> · <code>handle_module_error()</code></td><td>CORE's own machinery; nothing outside CORE calls these.</td></tr>
+</table>
+</div>
+
+<h2 id="patterns">8. Heartbeats, errors, questions, shutdown</h2>
+
+<h3>Heartbeats</h3>
+<p>Every module ticks a <code>HeartbeatManager</code> from its periodic tasks — one
+<code>Heartbeat(source, timestamp)</code> per second on its outbox to CORE. CORE records it per
+module and warns after <strong>5 s</strong> of silence, <em>once</em> per outage (its loop turns
+every 10 ms), and logs again when the module answers. What CORE should <em>do</em> about a timeout —
+restart, abort, tell the operator — is still an open roadmap decision; today it only warns.</p>
+
+<h3>Errors</h3>
+<p>Two ways in, one way through. A failure <em>nobody expected</em> is caught by the decorator
+around the method — <code>@catch_and_report_errors()</code> for an event loop,
+<code>@report_and_reraise()</code> for the execution layer. A failure the method
+<em>recognised</em> is handled where it happened, in an ordinary <code>except</code>, and reported
+with <code>report_error()</code> (a live exception) or <code>report_problem()</code> (a refusal,
+with nothing raised behind it) at whatever severity the method thinks it deserves. Neither
+function raises, so the raise site keeps control of what it does next.</p>
+<p>Either way it becomes one <code>ModuleError</code>, carrying the module, <em>the method</em>
+(<code>operation</code>), the exception type and the traceback → CORE logs it at the level its
+severity asks for, and if the severity is above WARNING forwards it to the HMI as
+<code>ModuleErrorReported</code>. CORE deciding what reaches the frontend is what keeps the runtime
+log readable during a long run. What CORE should <em>do</em> beyond that — stop the sequence, abort
+the run — is deliberately still open (roadmap §1.11).</p>
+
+<h3>Questions to the operator (request/response)</h3>
+<p>The asking side generates a <code>request_id</code> with <code>uuid4()</code>; that id is what
+lets the pair cross the HMI process boundary at all. The old engine put a live
+<code>queue.SimpleQueue</code> inside the event and had the GUI answer straight into it, which only
+worked because both ends were threads of one process — which the Sequencer and CORE are again, but
+the operator answering the question is not.</p>
+
+<pre><code># asking side (a step, on its own worker thread)
+request_id = uuid4()
+pending.start(request_id)                       # register BEFORE sending
+core.send(UserPromptRequest(request_id, "Connect the DUT", ("OK", "Abort")))
+answer = pending.wait(request_id)               # None if it timed out
+
+# event loop, draining the inbox
+case UserPromptResponse(request_id=rid, choice=choice):
+    pending.return_caller(rid, choice)</code></pre>
+
+<div class="warn"><strong>The thread that calls <code>wait()</code> must not be the thread draining
+the inbox</strong>, or the answer can never arrive and the module deadlocks. The Sequencer runs its
+loop on one thread today, so porting user-interaction steps means running the sequence on a worker
+thread while the event loop keeps turning. Noted as a TODO in the roadmap.</div>
+
+<h3>Shutdown — one path, and it is idempotent</h3>
+
+<div class="flow">HMI  request_shutdown()  ──ShutdownRequested──►  CORE
+CORE stop_all_modules()  ──StopReport──►  Report     ──ReportStopped──►    CORE
+                         ──StopSequencer──► Sequencer ──SequencerStopped──► CORE
+                         ──StopHmi──►      HMI       ──HmiStopped──►       CORE
+CORE exits its loop once no module is still running,
+     then join_submodules() waits for both threads to return (5 s each, then a warning).
+
+launcher (after joining the UI process):
+   ──HmiStopped──►  CORE   (states as fact what CORE would otherwise wait for)
+   ──ShutdownRequested──►  CORE   (second request; stop_all_modules() guards itself)
+   join(5 s) else terminate()  ─►  then StopLogger, join(5 s) else terminate()</div>
+
+<p>A frontend never stops itself: it asks, and CORE brings everything down in order. The launcher is
+the supervisor of last resort and uses the same link, because CORE having exactly one shutdown
+path is worth more than the launcher having a link of its own. The submodule threads are
+<strong>daemons</strong>: the clean path joins them, but one that wedges must not be able to keep
+the Core process alive.</p>
+
+<h2 id="status">9. What is real, what is a stub</h2>
+
+<div class="tablewrap">
+<table>
+<tr><th>Real today</th><th>Declared but not carried out</th></tr>
+<tr><td>
+  <ul>
+    <li><code>QueueWrapper</code> + trace, all 7 queues, all 6 handlers</li>
+    <li>The two-process topology: Sequencer and Report run as threads of CORE</li>
+    <li>Every union, every dataclass, the pickle guarantee on the HMI link</li>
+    <li>Heartbeats, error reporting, the full shutdown handshake</li>
+    <li>GUI and CLI sharing one protocol implementation</li>
+    <li>The Logger: single writer, control messages, drain on stop</li>
+  </ul>
+</td><td>
+  <ul>
+    <li><code>Core.load_recipe()</code> — recipe layer not ported; answers <code>StatusChanged</code>, never <code>RecipeLoaded</code></li>
+    <li><code>Sequencer.run_sequence()</code> — execution engine not ported, so <em>no run-progress event is ever emitted yet</em></li>
+    <li><code>Report.generate_report()</code> / <code>export_report()</code> — CSV/HTML logic not ported</li>
+    <li><code>SetConfigParameter</code> — CORE logs and ignores it; propagating a change to running processes is unsolved</li>
+    <li><code>PendingRequests</code> — lands with the execution engine</li>
+    <li>Heartbeat timeouts still only warn; CORE sends no heartbeat of its own</li>
+  </ul>
+</td></tr>
+</table>
+</div>
+
+<p>The messages exist ahead of their senders on purpose: the CLI, the GUI and the Report all have to
+agree on them, and agreeing before the call sites exist is much cheaper than agreeing after. The
+catalogue of them is now <code>src/pypts/messages/messages.md</code>, and reworking it is its own
+task.</p>
+
+<footer>
+  Source of truth for status and plan: <code>resources/roadmap/pypts_roadmap.md</code>.
+  Procedure and layout: <code>src/pypts/README.md</code>.
+  Message catalogue: <code>src/pypts/messages/messages.md</code>.
+  This page summarises the code as it stands on <code>architecture_refactor</code>.
+</footer>
+
+</div>
+</body>
+</html>

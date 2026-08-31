@@ -1,0 +1,173 @@
+<!--
+SPDX-FileCopyrightText: 2025 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Recipe Format — the simplified rules</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#22201d; --muted:#6b665f; --line:#e2ded7;
+    --card:#ffffff; --accent:#8a5a2b; --code-bg:#f3f0ea;
+    --req:#a34b3c; --opt:#5a7a54;
+    --ok-bg:#eef5ee; --ok-line:#8fb08f;
+    --warn-bg:#fdf3ea; --warn-line:#e0a76a;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a18; --fg:#e8e4dd; --muted:#a09a91; --line:#332f2b;
+      --card:#232120; --accent:#d8a06a; --code-bg:#2a2724;
+      --req:#e08a7a; --opt:#9dbd95;
+      --ok-bg:#1f2a20; --ok-line:#4d6b4d;
+      --warn-bg:#33261a; --warn-line:#8a6236;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:900px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:26px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:38px 0 10px;padding-top:10px;border-top:1px solid var(--line)}
+  p{margin:8px 0}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    font:13px/1.5 "SF Mono",Consolas,"Courier New",monospace}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;margin:10px 0}
+  pre code{background:none;padding:0;font-size:12.5px}
+  .tablewrap{overflow-x:auto;margin:10px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:520px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  td code{white-space:nowrap}
+  .req{color:var(--req);font-weight:700}
+  .opt{color:var(--opt);font-weight:600}
+  .note{background:var(--ok-bg);border-left:3px solid var(--ok-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .warn{background:var(--warn-bg);border-left:3px solid var(--warn-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .note strong,.warn strong{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>PyPTS Recipe Format — the simplified rules</h1>
+  <div class="sub">The new engine's recipe contract, as enforced by
+  <code>src/pypts/recipe/rules.py</code> and <code>validator.py</code>.
+  The legacy engine's rules are the separate page <code>recipe_rules.html</code>.</div>
+</header>
+
+<div class="note"><strong>One idea:</strong> a recipe states only what it needs.
+Every optional field left out is assumed empty — no <code>{}</code> or <code>[]</code>
+boilerplate is ever required. An optional key written with no value
+(a bare <code>locals:</code> line) counts as absent too.</div>
+
+<div class="note"><strong>Case does not matter</strong> in the recipe's own language:
+keys (<code>NAME:</code>, <code>Step_Name:</code>), <code>steptype</code> values,
+mapping <code>type</code> values, and the <code>main_sequence</code> lookup all ignore
+case. What names <em>your</em> code or data keeps its case, because Python and file
+systems care: <code>module</code>, <code>method_name</code>, variable names, mapping
+entry names (they become keyword arguments and output keys) and every compared
+<code>value</code>.</div>
+
+<h2>The file</h2>
+<p>A recipe is one multi-document YAML file. <strong>Document order matters</strong>:
+document&nbsp;1 is the <em>header</em>, every document after it is a <em>sequence</em>.
+There must be at least one sequence.</p>
+
+<h2>Header (document 1)</h2>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>Rule</th><th>When absent</th></tr>
+  <tr><td><code>name</code></td><td class="req">required</td><td>—</td></tr>
+  <tr><td><code>description</code></td><td class="opt">optional</td><td><code>""</code></td></tr>
+  <tr><td><code>version</code></td><td class="opt">optional</td><td><code>""</code></td></tr>
+  <tr><td><code>format_version</code></td><td class="opt">optional</td>
+      <td>assumed written for the current format; a mismatch is logged as an ERROR
+      and the recipe still loads (hard refusal comes ~v1.0)</td></tr>
+  <tr><td><code>main_sequence</code></td><td class="opt">optional</td>
+      <td>the <em>first sequence in the file</em></td></tr>
+  <tr><td><code>globals</code></td><td class="opt">optional</td><td><code>{}</code></td></tr>
+</table></div>
+<p>Unknown header keys (e.g. the legacy <code>recipe_version</code>,
+<code>continue_on_error</code>) are tolerated and ignored, so old files still load.</p>
+
+<h2>Sequence (every following document)</h2>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>Rule</th><th>When absent</th></tr>
+  <tr><td><code>sequence_name</code></td><td class="req">required</td>
+      <td>— (must also be unique in the file)</td></tr>
+  <tr><td><code>steps</code></td><td class="req">required</td>
+      <td>— (must contain <strong>at least one step</strong>)</td></tr>
+  <tr><td><code>description</code></td><td class="opt">optional</td><td><code>""</code></td></tr>
+  <tr><td><code>setup_steps</code></td><td class="opt">optional</td>
+      <td><code>[]</code> — setup steps are ordinary steps that run first</td></tr>
+  <tr><td><code>teardown_steps</code></td><td class="opt">optional</td>
+      <td><code>[]</code> — teardown always runs, even after a failure or an abort</td></tr>
+  <tr><td><code>parameters</code>, <code>locals</code>, <code>outputs</code></td>
+      <td class="opt">optional</td><td><code>{}</code></td></tr>
+</table></div>
+
+<h2>Steps</h2>
+<p>Every step needs <code>steptype</code> and <code>step_name</code>;
+<code>description</code> is always optional. The <code>steptype</code> value is
+case-insensitive and names one of the ported types — note the names carry
+<strong>no <code>Step</code> suffix</strong>:</p>
+
+<h2 style="border:none;font-size:17px;margin-top:24px"><code>steptype: PythonModule</code> — call one Python function</h2>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>Rule</th><th>Meaning</th></tr>
+  <tr><td><code>module</code></td><td class="req">required</td>
+      <td>a file beside the recipe (<code>example_tests.py</code> /
+      <code>example_tests</code>) or a dotted import name</td></tr>
+  <tr><td><code>method_name</code></td><td class="req">required</td>
+      <td>the function to call</td></tr>
+  <tr><td><code>input_mapping</code></td><td class="opt">optional</td>
+      <td>keyword arguments; absent = the function takes none</td></tr>
+  <tr><td><code>output_mapping</code></td><td class="opt">optional</td>
+      <td>how to judge/store what came back; absent = nothing to judge, verdict DONE</td></tr>
+</table></div>
+
+<h2 style="border:none;font-size:17px;margin-top:24px"><code>steptype: Wait</code> — sleep</h2>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>Rule</th><th>Meaning</th></tr>
+  <tr><td><code>wait_time</code></td><td class="req">required</td>
+      <td>seconds, written <strong>directly on the step</strong> — no
+      <code>input_mapping</code> nesting, and no <code>output_mapping</code>:
+      a fixed wait has nothing to resolve and nothing to judge</td></tr>
+</table></div>
+
+<h2>The smallest valid recipe</h2>
+<pre><code>name: Wait demo
+---
+sequence_name: Main
+steps:
+  - steptype: Wait
+    step_name: Only wait
+    wait_time: '0.5'</code></pre>
+<p>A fuller example — four function calls and a wait, showing
+<code>input_mapping</code>/<code>output_mapping</code> in use — is
+<code>resources/recipes/python_demo.yml</code>.</p>
+
+<h2>Validation</h2>
+<p><code>validator.py</code> checks every mandatory field against
+<code>rules.py</code> before anything is built, and the parser raises
+<strong>one <code>RecipeError</code> naming every problem at once</strong> —
+a bad file is fixed in one round trip. Loading a recipe
+(<code>Recipe.from_file(path)</code>) <em>is</em> the verification: if it returns,
+the file is well-formed and fully built in memory; if not, the one error says
+everything that is wrong.</p>
+
+<div class="warn"><strong>Where the rules live:</strong> change a rule in
+<code>src/pypts/recipe/rules.py</code> and the validator, the parser and this page
+must follow — this page is documentation, the code is the authority.</div>
+
+</div>
+</body>
+</html>
