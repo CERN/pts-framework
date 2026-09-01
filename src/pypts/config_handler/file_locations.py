@@ -24,6 +24,20 @@ the conventional per-user locations instead:
               data    %LOCALAPPDATA%\\pypts\\{logs,reports}
     Linux     config  ~/.config/pypts/config.ini
               data    ~/.local/share/pypts/{logs,reports}
+              state   ~/.local/state/pypts/recent_recipes.json
+
+Config, data and state are three different things, and that split is why there
+are three functions rather than one. *Config* is the user's - pypts reads it and
+never rewrites it. *Data* is output the user would miss if it vanished: logs and
+reports. *State* is what pypts keeps for its own convenience - the recent-recipes
+list today, a window size or a last-used folder tomorrow: app-owned, rewritten
+constantly, and losing it costs a convenience rather than information. None of it
+is a *cache*, which would mean a copy of something pypts could recompute; there is
+nothing of that kind here yet, and `platformdirs.user_cache_dir` is where it would
+go if there ever is.
+
+On Windows all three collapse onto %LOCALAPPDATA%\\pypts, so the distinction costs
+nothing there and is correct on Linux.
 
 There is no override - no `--config` flag, no environment variable. Every
 process resolves the same path by computing it, which is what lets a child
@@ -42,6 +56,9 @@ APP_NAME = "pypts"
 #: The file name inside the config directory.
 CONFIG_FILE_NAME = "config.ini"
 
+#: The file name inside the state directory.
+RECENT_RECIPES_FILE_NAME = "recent_recipes.json"
+
 
 def config_dir() -> Path:
     """The per-user directory holding config.ini."""
@@ -55,6 +72,21 @@ def config_file_path() -> Path:
     Monkeypatch this in tests; everything else derives from it.
     """
     return config_dir() / CONFIG_FILE_NAME
+
+
+def state_dir() -> Path:
+    """The per-user directory holding what pypts remembers between runs."""
+    return Path(platformdirs.user_state_dir(APP_NAME, appauthor=False))
+
+
+def recent_recipes_path() -> Path:
+    """
+    Full path of the recent-recipes list, whether or not it exists yet.
+
+    Monkeypatch this in tests, the way `config_file_path` is monkeypatched; the
+    store asks nothing else where its file lives.
+    """
+    return state_dir() / RECENT_RECIPES_FILE_NAME
 
 
 def default_data_dir() -> Path:

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pypts.hmi.gui.palette import get_palette
 from pypts.hmi.gui.resources import load_cern_logo_pixmap, make_placeholder_pixmap
 
 
@@ -27,7 +28,7 @@ class InteractionPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._dark = False
-        self._logo_pixmap = load_cern_logo_pixmap()
+        self._logo_pixmap = load_cern_logo_pixmap(get_palette(False).logo_tint)
         self._selected_button_index = -1
         self._current_image_path: str | None = None
         self._interaction_blocked = False
@@ -68,9 +69,15 @@ class InteractionPanel(QWidget):
 
     def set_dark(self, dark: bool):
         self._dark = dark
-        frame_bg = "#1e1e1e" if dark else "#F0F4FA"
-        border = "#3a3a3a" if dark else "#e2e8f0"
-        text_color = "#f0f0f0" if dark else "#1a1a2e"
+        palette = get_palette(dark)
+        # The logo is artwork, not a stylesheet colour, so it is reloaded rather
+        # than restyled - dark tints it, light draws the file as it is.
+        self._logo_pixmap = load_cern_logo_pixmap(palette.logo_tint)
+        if self._current_image_path is None:
+            self._refresh_idle_visual()
+        frame_bg = palette.panel_background
+        border = palette.border
+        text_color = palette.text
         self._frame.setStyleSheet(
             "QFrame#interactionFrame {"
             f"background-color:{frame_bg}; border:1px solid {border}; border-radius:8px;"

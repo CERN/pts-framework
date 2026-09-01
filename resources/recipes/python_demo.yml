@@ -52,6 +52,41 @@ steps:
       number: {value: 7}
     output_mapping:
       even: {type: passfail}
+  # An Indexed step is expanded when the recipe loads: one ordinary step per
+  # parameter set, each with its own inputs *and* its own expected output. Ten
+  # sets here, so the step table shows ten rows and the report gets ten rows -
+  # nothing loops at run time. `inputs` are direct values, `expect` is an
+  # `equals` check; anything the ten cases share goes on the `template`.
+  - steptype: Indexed
+    step_name: Add numbers
+    description: Ten additions, each checked against its own expected sum.
+    template:
+      steptype: PythonModule
+      module: example_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {a: 1, b: 1}
+        expect: {sum: 2}
+      - inputs: {a: 2, b: 3}
+        expect: {sum: 5}
+      - inputs: {a: 10, b: 5}
+        expect: {sum: 15}
+      - inputs: {a: 0, b: 0}
+        expect: {sum: 0}
+      - inputs: {a: -4, b: 4}
+        expect: {sum: 0}
+      - inputs: {a: 100, b: 250}
+        expect: {sum: 350}
+      - inputs: {a: 7, b: 8}
+        expect: {sum: 15}
+      - inputs: {a: -6, b: -9}
+        expect: {sum: -15}
+      - inputs: {a: 1.5, b: 2.5}
+        expect: {sum: 4.0}
+      # The odd one out: 6 + 7 is 13, not 12, so this row shows a FAIL among
+      # nine passes - the point of parameterizing the expectation as well.
+      - inputs: {a: 6, b: 7}
+        expect: {sum: 12}
   - steptype: PythonModule
     step_name: Greet the operator
     description: A scalar return, wrapped as "output" and compared.

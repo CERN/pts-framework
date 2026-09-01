@@ -15,6 +15,8 @@ This module owns the whole loading pipeline, in order:
     check format_version       warn-only for now: a mismatch is an ERROR in the
                                log, the recipe still loads (hard refusal ~v1.0)
     apply the defaults         every absent optional field gets its rules.py value
+    expand                     an Indexed step becomes one ordinary step mapping
+                               per parameter set (pypts.step.indexed_step)
     build                      Recipe -> Sequences -> Steps (via the step registry)
 
 recipe.py holds the data classes this returns, plus the `Recipe.from_file` /
@@ -32,6 +34,7 @@ from pypts.logger.log import log
 from pypts.recipe import validator
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
 from pypts.recipe.rules import HEADER_DEFAULTS, RECIPE_FORMAT_VERSION, SEQUENCE_DEFAULTS
+from pypts.step import indexed_step
 from pypts.step.registry import build_step
 from pypts.step.step import Step
 
@@ -166,6 +169,33 @@ def _normalize_step(step_data: Any) -> Any:
             step_data[mapping_name] = {
                 entry_name: _normalize_entry(config) for entry_name, config in mapping.items()
             }
+    if indexed_step.is_indexed_step(step_data):
+        step_data = _normalize_indexed_step(step_data)
+    return step_data
+
+
+def _normalize_indexed_step(step_data: dict[str, Any]) -> dict[str, Any]:
+    """
+    The two keys only an Indexed step has.
+
+    The template is an ordinary step mapping, so it is normalized as one. In a
+    parameter set only `inputs` and `expect` are the recipe's own language -
+    what is inside them are argument and output names, which keep their case
+    exactly as mapping entry names do.
+    """
+    template = step_data.get(indexed_step.TEMPLATE_KEY)
+    if isinstance(template, dict):
+        step_data[indexed_step.TEMPLATE_KEY] = _normalize_step(template)
+
+    sets = step_data.get(indexed_step.SETS_KEY)
+    if isinstance(sets, list):
+        normalized_sets = []
+        for one_set in sets:
+            if isinstance(one_set, dict):
+                normalized_sets.append(_lowercase_keys(one_set))
+            else:
+                normalized_sets.append(one_set)
+        step_data[indexed_step.SETS_KEY] = normalized_sets
     return step_data
 
 
@@ -212,15 +242,16 @@ def _build_sequence(document: dict[str, Any]) -> Sequence:
     name = document["sequence_name"]
 
     # Setup steps are ordinary steps that run first - one flat list.
+    authored = list(document["setup_steps"]) + list(document["steps"])
     steps = [
         _build_step_or_refuse(name, position, step_data)
-        for position, step_data in enumerate(
-            list(document["setup_steps"]) + list(document["steps"]), start=1
-        )
+        for position, step_data in enumerate(_expand_indexed_steps(name, authored), start=1)
     ]
     teardown_steps = [
         _build_step_or_refuse(name, position, step_data)
-        for position, step_data in enumerate(document["teardown_steps"], start=1)
+        for position, step_data in enumerate(
+            _expand_indexed_steps(name, list(document["teardown_steps"])), start=1
+        )
     ]
     return Sequence(
         name=name,
@@ -231,6 +262,32 @@ def _build_sequence(document: dict[str, Any]) -> Sequence:
         steps=steps,
         teardown_steps=teardown_steps,
     )
+
+
+def _expand_indexed_steps(
+    sequence_name: str, step_datas: list[Any]
+) -> list[Any]:
+    """
+    Replace every Indexed step with the ordinary steps it stands for.
+
+    Everything downstream - the registry, the Sequencer, the events, the report -
+    then deals with plain steps and never learns that the steptype exists. The
+    positions in a later error message therefore count expanded steps, which is
+    what the operator sees in the step table too.
+    """
+    expanded: list[Any] = []
+    for position, step_data in enumerate(step_datas, start=1):
+        if not indexed_step.is_indexed_step(step_data):
+            expanded.append(step_data)
+            continue
+        step_name = step_data.get("step_name", "<unnamed>")
+        try:
+            expanded.extend(indexed_step.expand_indexed_step(step_data))
+        except ValueError as error:
+            raise RecipeError(
+                f"Sequence '{sequence_name}', step {position} ('{step_name}'): {error}"
+            ) from error
+    return expanded
 
 
 def _build_step_or_refuse(sequence_name: str, position: int, step_data: dict[str, Any]) -> Step:

@@ -170,7 +170,7 @@ def main() -> None:
     logger_process.start()
 
     logger_control: QueueWrapper[LoggerControl] = QueueWrapper(log_queue, link=ANY_TO_LOGGER)
-    init_logging(log_queue, log_level)
+    init_logging(log_queue, log_level, log_file_path)
 
     # CORE-HMI process links
     to_core: QueueWrapper[HmiToCore] = QueueWrapper(Queue(), link=HMI_TO_CORE)
@@ -211,8 +211,13 @@ def main() -> None:
         core_process.start()
 
         if args.mode == "gui":
+            # The GUI is given the log path as well as the queue: it tails the
+            # run log into its LOG OUTPUT panel, and the launcher is the only
+            # one that knows which file this run writes to.
             ui_process = Process(
-                target=gui_main, name="GUI", args=(to_core, to_hmi, log_queue, log_level)
+                target=gui_main,
+                name="GUI",
+                args=(to_core, to_hmi, log_queue, log_level, log_file_path),
             )
             ui_process.start()
             ui_process.join()

@@ -118,7 +118,8 @@ There must be at least one sequence.</p>
 <p>Every step needs <code>steptype</code> and <code>step_name</code>;
 <code>description</code> is always optional. The <code>steptype</code> value is
 case-insensitive and names one of the ported types — note the names carry
-<strong>no <code>Step</code> suffix</strong>:</p>
+<strong>no <code>Step</code> suffix</strong>. Two of them run;
+<code>Indexed</code> is expanded into ordinary steps while the recipe loads:</p>
 
 <h2 style="border:none;font-size:17px;margin-top:24px"><code>steptype: PythonModule</code> — call one Python function</h2>
 <div class="tablewrap"><table>
@@ -142,6 +143,50 @@ case-insensitive and names one of the ported types — note the names carry
       <code>input_mapping</code> nesting, and no <code>output_mapping</code>:
       a fixed wait has nothing to resolve and nothing to judge</td></tr>
 </table></div>
+
+<h2 style="border:none;font-size:17px;margin-top:24px"><code>steptype: Indexed</code> — the same step, once per parameter set</h2>
+<p>Not a step that runs: it is <strong>expanded when the recipe loads</strong> into
+one ordinary step per parameter set, each with its own id, its own row in the step
+table and its own row in the report. Ten sets means ten steps — nothing loops at
+run time.</p>
+<div class="tablewrap"><table>
+  <tr><th>Field</th><th>Rule</th><th>Meaning</th></tr>
+  <tr><td><code>template</code></td><td class="req">required</td>
+      <td>an ordinary step mapping — the type and everything the cases share.
+      It needs no <code>step_name</code>: each generated step is named after its
+      own parameters</td></tr>
+  <tr><td><code>parameter_sets</code></td><td class="req">required</td>
+      <td>a non-empty list; one entry becomes one step</td></tr>
+  <tr><td><code>inputs</code> <span class="muted">(in a set)</span></td><td class="opt">optional</td>
+      <td>argument name → value. Direct values, merged over the template's
+      <code>input_mapping</code></td></tr>
+  <tr><td><code>expect</code> <span class="muted">(in a set)</span></td><td class="opt">optional</td>
+      <td>output name → expected value, i.e. an <code>equals</code> check.
+      A set must carry at least one of <code>inputs</code>/<code>expect</code></td></tr>
+</table></div>
+<pre><code>- steptype: Indexed
+  step_name: Add numbers
+  description: Additions, each checked against its own expected sum.
+  template:
+    steptype: PythonModule
+    module: example_tests.py
+    method_name: add
+  parameter_sets:
+    - inputs: {a: 1, b: 1}
+      expect: {sum: 2}
+    - inputs: {a: 2, b: 3}
+      expect: {sum: 5}</code></pre>
+<p>Produces the steps <code>Add numbers [a=1, b=1]</code> and
+<code>Add numbers [a=2, b=3]</code>. A set that varies only its expectation has no
+parameters to show and is named <code>Add numbers 1/2</code> instead.</p>
+<p><code>inputs</code>/<code>expect</code> are deliberately terse — a set is a test
+case and reads like a row of a table. A case needing <code>range</code>,
+<code>passfail</code>, <code>local</code> or <code>global</code> puts it on the
+<code>template</code>, which takes the full vocabulary; set entries are merged
+over it key by key. An <code>Indexed</code> step carries no
+<code>input_mapping</code>, <code>output_mapping</code> or <code>id</code> of its
+own — all three are refused, because they would apply to nothing or to N steps at
+once. <code>skip: true</code> on it skips every generated step.</p>
 
 <h2>The smallest valid recipe</h2>
 <pre><code>name: Wait demo

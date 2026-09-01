@@ -109,10 +109,20 @@ def test_unknown_steptype_raises_a_clear_error_listing_available_types():
 
 def test_the_rules_and_the_registry_agree_on_the_steptypes():
     """rules.py is the one source for what each type requires; the registry is
-    the one source for what exists. They must name the same types."""
-    from pypts.recipe.rules import STEP_TYPE_REQUIRED
+    the one source for what *runs*. They must name the same types, except the
+    ones the parser expands away before anything is built."""
+    from pypts.recipe.rules import EXPANDED_STEP_TYPES, STEP_TYPE_REQUIRED
 
-    assert set(STEP_TYPE_REQUIRED) == set(STEP_TYPES)
+    assert set(STEP_TYPE_REQUIRED) - set(EXPANDED_STEP_TYPES) == set(STEP_TYPES)
+
+
+def test_an_expanded_steptype_never_reaches_the_registry():
+    """An Indexed step is gone by build time: it becomes N ordinary steps, and
+    nothing downstream may be able to build one."""
+    from pypts.recipe.rules import EXPANDED_STEP_TYPES
+
+    for steptype in EXPANDED_STEP_TYPES:
+        assert steptype not in STEP_TYPES
 
 
 # --------------------------------------------------------------------------
@@ -513,3 +523,172 @@ def test_python_module_step_refuses_unported_action_types():
         PythonModuleStep(
             step_name="attr", module="m", method_name="f", action_type="read_attribute"
         )
+
+
+# --------------------------------------------------------------------------
+# The indexed step - expanded at load time, one ordinary step per set
+# --------------------------------------------------------------------------
+
+
+def an_indexed_step(**overrides):
+    """The shape python_demo.yml uses, as the parser hands it over."""
+    step_data = {
+        "steptype": "indexed",
+        "step_name": "Add numbers",
+        "description": "Ten additions.",
+        "template": {
+            "steptype": "PythonModule",
+            "module": "example_tests.py",
+            "method_name": "add",
+        },
+        "parameter_sets": [
+            {"inputs": {"a": 1, "b": 1}, "expect": {"sum": 2}},
+            {"inputs": {"a": 2, "b": 3}, "expect": {"sum": 5}},
+        ],
+    }
+    step_data.update(overrides)
+    return step_data
+
+
+def test_an_indexed_step_becomes_one_ordinary_step_per_set():
+    """The whole point: N sets in, N plain step mappings out."""
+    from pypts.step.indexed_step import expand_indexed_step
+
+    expanded = expand_indexed_step(an_indexed_step())
+
+    assert len(expanded) == 2
+    for generated in expanded:
+        assert generated["steptype"] == "PythonModule"
+        assert generated["method_name"] == "add"
+        # Nothing of the indexed step itself survives into what runs.
+        assert "template" not in generated
+        assert "parameter_sets" not in generated
+
+
+def test_a_set_parameterizes_the_inputs_and_the_expected_outputs():
+    """Both halves: `inputs` are direct values, `expect` are equals checks."""
+    from pypts.step.indexed_step import expand_indexed_step
+
+    first, second = expand_indexed_step(an_indexed_step())
+
+    assert first["input_mapping"] == {
+        "a": {"type": "direct", "value": 1},
+        "b": {"type": "direct", "value": 1},
+    }
+    assert first["output_mapping"] == {"sum": {"type": "equals", "value": 2}}
+    assert second["output_mapping"] == {"sum": {"type": "equals", "value": 5}}
+
+
+def test_generated_steps_are_named_after_their_parameters():
+    """A failed row has to explain itself without opening the recipe."""
+    from pypts.step.indexed_step import expand_indexed_step
+
+    names = [generated["step_name"] for generated in expand_indexed_step(an_indexed_step())]
+
+    assert names == ["Add numbers [a=1, b=1]", "Add numbers [a=2, b=3]"]
+
+
+def test_a_set_without_inputs_falls_back_to_its_position():
+    """A set that varies only the expectation has no parameters to show."""
+    from pypts.step.indexed_step import expand_indexed_step
+
+    step_data = an_indexed_step(
+        template={"steptype": "PythonModule", "module": "m.py", "method_name": "f"},
+        parameter_sets=[{"expect": {"out": 1}}, {"expect": {"out": 2}}],
+    )
+
+    names = [generated["step_name"] for generated in expand_indexed_step(step_data)]
+
+    assert names == ["Add numbers 1/2", "Add numbers 2/2"]
+
+
+def test_a_set_is_merged_over_what_the_template_shares():
+    """The template holds what every case shares; a set says what differs."""
+    from pypts.step.indexed_step import expand_indexed_step
+
+    step_data = an_indexed_step(
+        template={
+            "steptype": "PythonModule",
+            "module": "example_tests.py",
+            "method_name": "add",
+            "input_mapping": {
+                "a": {"type": "direct", "value": 999},
+                "shared": {"type": "global", "global_name": "rig"},
+            },
+        },
+        parameter_sets=[{"inputs": {"a": 1}, "expect": {"sum": 2}}],
+    )
+
+    generated = expand_indexed_step(step_data)[0]
+
+    # The set wins where they collide, the template survives where they do not.
+    assert generated["input_mapping"]["a"] == {"type": "direct", "value": 1}
+    assert generated["input_mapping"]["shared"] == {"type": "global", "global_name": "rig"}
+
+
+def test_the_group_description_is_inherited_when_the_template_has_none():
+    from pypts.step.indexed_step import expand_indexed_step
+
+    generated = expand_indexed_step(an_indexed_step())[0]
+
+    assert generated["description"] == "Ten additions."
+
+
+def test_skipping_an_indexed_step_skips_every_generated_step():
+    from pypts.step.indexed_step import expand_indexed_step
+
+    expanded = expand_indexed_step(an_indexed_step(skip=True))
+
+    assert [generated["skip"] for generated in expanded] == [True, True]
+
+
+def test_an_indexed_step_may_not_carry_an_id():
+    """One id would be handed to N steps, and the step table is keyed by id."""
+    from pypts.step.indexed_step import check_indexed_step
+
+    problems = check_indexed_step(an_indexed_step(id="12345678-1234-5678-1234-567812345678"))
+
+    assert any("'id'" in problem for problem in problems)
+
+
+def test_mappings_on_the_indexed_step_itself_are_refused():
+    """They would apply to nothing; silently ignoring them would be worse."""
+    from pypts.step.indexed_step import check_indexed_step
+
+    problems = check_indexed_step(an_indexed_step(input_mapping={"a": {"value": 1}}))
+
+    assert any("template" in problem for problem in problems)
+
+
+def test_an_empty_or_malformed_set_list_is_refused():
+    from pypts.step.indexed_step import check_indexed_step
+
+    assert check_indexed_step(an_indexed_step(parameter_sets=[]))
+    assert check_indexed_step(an_indexed_step(parameter_sets="not a list"))
+    assert check_indexed_step(an_indexed_step(parameter_sets=[{}]))
+
+
+def test_an_unknown_key_in_a_set_names_what_would_have_worked():
+    from pypts.step.indexed_step import check_indexed_step
+
+    problems = check_indexed_step(
+        an_indexed_step(parameter_sets=[{"inputs": {"a": 1}, "outputs": {"sum": 2}}])
+    )
+
+    assert any("outputs" in problem and "inputs, expect" in problem for problem in problems)
+
+
+def test_an_indexed_step_cannot_be_the_template_of_another():
+    from pypts.step.indexed_step import check_indexed_step
+
+    problems = check_indexed_step(an_indexed_step(template=an_indexed_step()))
+
+    assert any("template" in problem for problem in problems)
+
+
+def test_expanding_a_broken_indexed_step_raises_rather_than_guessing():
+    """The parser validates first; this is the guard for a caller that did not."""
+    from pypts.step.indexed_step import expand_indexed_step
+
+    with pytest.raises(ValueError):
+        expand_indexed_step(an_indexed_step(parameter_sets=[]))

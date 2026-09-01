@@ -313,13 +313,28 @@ def test_the_python_demo_recipe_parses_and_knows_its_folder():
     assert recipe.name == "Python demo"
     # The demo omits main_sequence - the first sequence is the one.
     assert recipe.main_sequence == "Main"
-    assert [step.name for step in recipe.sequences["Main"].steps] == [
+    names = [step.name for step in recipe.sequences["Main"].steps]
+    # Five authored steps, one of which is an Indexed step carrying ten
+    # parameter sets - so fourteen steps reach the Sequencer.
+    assert names[:4] == [
         "Add numbers",
         "Measure voltage",
         "Settle",
         "Even check (fails on purpose)",
-        "Greet the operator",
     ]
+    assert names[4:14] == [
+        "Add numbers [a=1, b=1]",
+        "Add numbers [a=2, b=3]",
+        "Add numbers [a=10, b=5]",
+        "Add numbers [a=0, b=0]",
+        "Add numbers [a=-4, b=4]",
+        "Add numbers [a=100, b=250]",
+        "Add numbers [a=7, b=8]",
+        "Add numbers [a=-6, b=-9]",
+        "Add numbers [a=1.5, b=2.5]",
+        "Add numbers [a=6, b=7]",
+    ]
+    assert names[14] == "Greet the operator"
     assert recipe.base_dir == str(demo.resolve().parent)
 
 
@@ -406,3 +421,94 @@ def test_a_matching_or_absent_format_version_is_silent(caplog):
         Recipe.from_yaml_text(matching)
 
     assert not [r for r in caplog.records if "format_version" in r.getMessage()]
+
+
+# --------------------------------------------------------------------------
+# Indexed steps - expanded while the recipe loads
+# --------------------------------------------------------------------------
+
+#: Two parameter sets, the terse spelling python_demo.yml uses.
+INDEXED = """\
+name: Indexed demo
+---
+sequence_name: Main
+steps:
+  - steptype: Indexed
+    step_name: Add numbers
+    description: Additions with their own expected sums.
+    template:
+      steptype: PythonModule
+      module: example_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {a: 1, b: 1}
+        expect: {sum: 2}
+      - inputs: {a: 2, b: 3}
+        expect: {sum: 5}
+"""
+
+
+def test_an_indexed_step_is_expanded_into_real_steps_at_load_time():
+    """Nothing loops at run time: the recipe holds N ordinary steps, and the
+    Indexed steptype is gone before anything is built."""
+    recipe = Recipe.from_yaml_text(INDEXED)
+
+    steps = recipe.sequences["Main"].steps
+    assert [step.name for step in steps] == [
+        "Add numbers [a=1, b=1]",
+        "Add numbers [a=2, b=3]",
+    ]
+    assert [step.input_mapping["a"]["value"] for step in steps] == [1, 2]
+    assert [step.output_mapping["sum"]["value"] for step in steps] == [2, 5]
+
+
+def test_generated_steps_have_ids_of_their_own():
+    """The step table is keyed by step id, so N rows need N ids."""
+    steps = Recipe.from_yaml_text(INDEXED).sequences["Main"].steps
+
+    assert len({step.id for step in steps}) == len(steps)
+
+
+def test_an_indexed_step_pre_fills_one_table_row_per_set():
+    """What a frontend receives in RecipeLoaded - no frontend knows the
+    steptype exists, it just gets more rows."""
+    recipe = Recipe.from_yaml_text(INDEXED)
+
+    rows = recipe.to_summary()[0].steps
+    assert [row.step_name for row in rows] == [
+        "Add numbers [a=1, b=1]",
+        "Add numbers [a=2, b=3]",
+    ]
+
+
+def test_an_indexed_step_without_its_own_keys_is_refused_with_context():
+    text = INDEXED.replace("    parameter_sets:\n", "    other_key:\n")
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "parameter_sets" in str(error.value)
+    assert "Main" in str(error.value)
+
+
+def test_a_broken_template_is_reported_before_anything_is_built():
+    """The template is checked as the step it will become."""
+    text = INDEXED.replace("      method_name: add\n", "")
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "template" in str(error.value)
+    assert "method_name" in str(error.value)
+
+
+def test_the_indexed_keys_are_case_insensitive_but_parameter_names_are_not():
+    """The recipe's own language is case-insensitive; argument names are
+    Python keyword arguments and must survive exactly as written."""
+    text = INDEXED.replace("    template:", "    TEMPLATE:").replace(
+        "      - inputs: {a: 1, b: 1}", "      - INPUTS: {a: 1, B: 1}"
+    )
+    recipe = Recipe.from_yaml_text(text)
+
+    first = recipe.sequences["Main"].steps[0]
+    assert set(first.input_mapping) == {"a", "B"}

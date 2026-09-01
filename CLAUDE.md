@@ -80,7 +80,7 @@ A module may carry a `<module>.md` beside its code holding the whole context of 
 what each file owns, the rules and decisions behind them, how to extend it, its known gaps.
 **Read it before touching that module** — it knows more about it than this file or the
 roadmap does. Present: `config_handler/config_handler.md`, `messages/messages.md`,
-`hmi/gui/gui.md`.
+`hmi/gui/gui.md`, `step/step.md`.
 
 It explains *how the module works*; the roadmap stays the authority on *status and plan*, and
 wins where they overlap. Update it in the same change, the way the roadmap is updated.

@@ -23,6 +23,7 @@ the whole file in hand.
 from typing import Any
 
 from pypts.recipe import rules
+from pypts.step import indexed_step
 
 
 def validate_header(header: dict[str, Any]) -> list[str]:
@@ -81,4 +82,21 @@ def validate_step(step_data: Any) -> list[str]:
     for field in type_required:
         if step_data.get(field) is None:
             problems.append(f"a {steptype} step requires the key '{field}'")
+
+    # An indexed step is checked twice over: its own shape here, and its
+    # template as the ordinary step it will be expanded into. Both before
+    # anything is built, so the author sees every problem in one error.
+    if indexed_step.is_indexed_step(step_data):
+        problems.extend(indexed_step.check_indexed_step(step_data))
+        template = step_data.get(indexed_step.TEMPLATE_KEY)
+        if isinstance(template, dict):
+            # The template is checked as the step it will become, so it is
+            # given the name expansion will give it: a template states what
+            # every generated step shares, and the name is not shared - each
+            # one is named after its own parameters.
+            probe = dict(template)
+            if probe.get("step_name") is None:
+                probe["step_name"] = step_data.get("step_name") or "<the indexed step's>"
+            for problem in validate_step(probe):
+                problems.append(f"{indexed_step.TEMPLATE_KEY}: {problem}")
     return problems

@@ -51,11 +51,18 @@ SEQUENCE_DEFAULTS: dict[str, Any] = {
 #: What every step must carry, whatever its type.
 STEP_REQUIRED: tuple[str, ...] = ("steptype", "step_name")
 
+#: Steptypes that are expanded when the recipe loads and never run as a step of
+#: their own, so they exist in the rules below but not in the step registry.
+#: `indexed` becomes one ordinary step per parameter set - see
+#: pypts.step.indexed_step.
+EXPANDED_STEP_TYPES: tuple[str, ...] = ("indexed",)
+
 #: What each steptype additionally requires, keyed by lowercased steptype.
 #: These are the only steptypes a recipe may name.
 STEP_TYPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "pythonmodule": ("module", "method_name"),
     "wait": ("wait_time",),
+    "indexed": ("template", "parameter_sets"),
 }
 
 #: Optional step fields per steptype. An absent `input_mapping` means the
@@ -65,4 +72,8 @@ STEP_TYPE_REQUIRED: dict[str, tuple[str, ...]] = {
 STEP_TYPE_DEFAULTS: dict[str, dict[str, Any]] = {
     "pythonmodule": {"description": "", "input_mapping": {}, "output_mapping": {}},
     "wait": {"description": ""},
+    # An Indexed step owns no mappings of its own: what every generated step
+    # shares goes on the `template`, what differs goes in a `parameter_sets`
+    # entry. It is gone before anything is built.
+    "indexed": {"description": ""},
 }

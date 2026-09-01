@@ -43,6 +43,11 @@ log = logging.getLogger()
 # Stays None in standalone mode, where there is no Logger process to talk to.
 _logger_control: QueueWrapper[LoggerControl] | None = None
 
+# The run log this process writes to, as the launcher decided it; set by
+# init_logging(). Stays None where nobody passed one - a standalone tool, a
+# test, or any process the launcher did not hand the path to.
+_log_file_path: str | None = None
+
 
 def build_formatter() -> logging.Formatter:
     """
@@ -60,7 +65,7 @@ def parse_log_level(name, default: int = DEFAULT_LOG_LEVEL) -> int:
     return logging.getLevelNamesMapping().get(str(name).strip().upper(), default)
 
 
-def init_logging(log_queue=None, level=DEFAULT_LOG_LEVEL):
+def init_logging(log_queue=None, level=DEFAULT_LOG_LEVEL, log_file_path=None):
     """
     Configures logging for the *current* process. Call this once, first thing
     in every module entry point.
@@ -70,11 +75,18 @@ def init_logging(log_queue=None, level=DEFAULT_LOG_LEVEL):
                  to the Logger process through it. If None, the process logs
                  straight to stdout instead - used by standalone tools and tests.
       level: minimum level captured by the root logger
+      log_file_path: the run log the Logger is writing, so this process can read
+                 it back through get_log_path(). Only the launcher knows it - it
+                 is decided there, once per run - so a process that wants it has
+                 to be handed it. Optional: nothing here opens the file, and a
+                 process that never reads the log does not need to be told.
 
     Returns:
       The configured root logger.
     """
-    global _logger_control
+    global _logger_control, _log_file_path
+
+    _log_file_path = log_file_path
 
     root = logging.getLogger()
     root.setLevel(level)
@@ -94,6 +106,20 @@ def init_logging(log_queue=None, level=DEFAULT_LOG_LEVEL):
         _logger_control = None
 
     return root
+
+
+def get_log_path() -> str | None:
+    """
+    The run log file of this run, for a module that wants to read it back.
+
+    The GUI tails it into its log panel. It is not a way to write to the log:
+    the Logger process owns the only open handle and is the single writer, so a
+    caller opens this path read-only or not at all.
+
+    Returns:
+      The path init_logging() was given, or None where it was given none.
+    """
+    return _log_file_path
 
 
 def set_stdout_logging_enabled(enabled: bool):

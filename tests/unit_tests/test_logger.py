@@ -101,6 +101,7 @@ def pristine_root_logger():
     saved_handlers = list(root.handlers)
     saved_level = root.level
     saved_control = log_module._logger_control
+    saved_path = log_module._log_file_path
 
     yield root
 
@@ -110,6 +111,7 @@ def pristine_root_logger():
         root.addHandler(handler)
     root.setLevel(saved_level)
     log_module._logger_control = saved_control
+    log_module._log_file_path = saved_path
 
 
 @pytest.fixture
@@ -463,3 +465,28 @@ def test_logger_drains_pending_records_on_stop(tmp_path):
 
     entries = parse_log(log_file)
     assert [entry["message"] for entry in entries] == ["trailing record"]
+
+
+# --------------------------------------------------------------------------
+# get_log_path
+# --------------------------------------------------------------------------
+
+
+def test_get_log_path_returns_what_init_logging_was_told(pristine_root_logger, tmp_path):
+    """The run log is remembered per process, for whoever wants to read it back.
+
+    Only the launcher decides the path, so a process that needs it - the GUI,
+    for its log panel - is handed it and asks the logger module for it later.
+    """
+    log_file = tmp_path / "run.log"
+
+    init_logging(None, logging.INFO, str(log_file))
+
+    assert log_module.get_log_path() == str(log_file)
+
+
+def test_get_log_path_is_none_when_no_log_file_was_given(pristine_root_logger):
+    """A standalone tool or a test logs to stdout and has no file to point at."""
+    init_logging()
+
+    assert log_module.get_log_path() is None

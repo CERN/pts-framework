@@ -27,11 +27,11 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 
 ### What is placeholder / not yet ported
 
-1. **The execution engine - nine of ten step types.** The skeleton is real now (§1.13): `recipe/` parses and validates, `step/` has the base lifecycle + `WaitStep` + the registry, `execute_sequence()` runs the requested sequence and emits every run event, and Core's `LoadRecipe`/`StartSequence` handlers work. Still in **`old_code/`**: `PythonModuleStep` (and the resource-based `test_package` module loading described in `architecture.rst`), the four interactive types, `SequenceStep`/`IndexedStep` (nesting), and the SSH pair - plus the continue_on_error policy.
+1. **The execution engine - nine of ten step types.** The skeleton is real now (§1.13): `recipe/` parses and validates, `step/` has the base lifecycle + `WaitStep` + the registry, `execute_sequence()` runs the requested sequence and emits every run event, and Core's `LoadRecipe`/`StartSequence` handlers work. Still in **`old_code/`**: the rest of `PythonModuleStep` (and the resource-based `test_package` module loading described in `architecture.rst`), the three interactive types that are being kept, and the SSH pair - plus the continue_on_error policy. `UserRunMethodStep`, `SequenceStep` and `IndexedStep` are dropped, and SSH moves out of the step layer: see `src/pypts/step/step.md`.
 2. **Report module** — **first real slice in (§1.19):** one folder per run, an incremental CSV growing step by step, a simple self-contained `report.html` on `RunFinished`, and the operator told where it is (`ReportReady`; the GUI's "Open report folder" button). Still missing against `old_code/report.py` and the spec: the serial-number column (nothing asks for one yet), TDMS plots, configurable templates/`report.type`/`report.theme` (Phase 4), `ExportReport` (stub at both ends).
 3. **HAL** — `hal.py` is a one-line comment.
 4. **Stream handler** — `src/pypts/stream_handler/` is an empty placeholder package. The `StreamContainer` singleton and the XYGraph widget spike were moved out of the shipping package to `spikes/stream_handler/` and `spikes/GUI/XYGraph/`: neither was imported by anything, `StreamContainer` executed and printed at import, and XYGraph has undefined names that raise if reached. Phase 3 promotes them from there.
-5. **GUI** — **visual parity with the master reference reached (§1.20).** The operator screen now has full light/dark theming, `LogPanel`, `InteractionPanel` (image + keyboard nav + prompted buttons), `ResultsPanel` (PASS/FAIL/TOTAL badges + flat `StepOutcome` tree), SVG-icon toolbar with pause, and browse/pause mode. What remains: `StepTable` badge delegate (still plain text), the File/About menus, XYGraph live plot, session persistence, and the `User*` step types that will exercise the prompt pages. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing and prints the report path (§1.19), but no exit-code features yet.
+5. **GUI** — **visual parity with the master reference reached (§1.20).** The operator screen now has full light/dark theming, `LogPanel`, `InteractionPanel` (image + keyboard nav + prompted buttons), `ResultsPanel` (PASS/FAIL/TOTAL badges + flat `StepOutcome` tree), SVG-icon toolbar with pause, and browse/pause mode. The `LogPanel` is live: it tails this run's log file, INFO and above, every 200 ms (§1.22). What remains: the `StepTable` badge delegate as *rounded pills* (the verdict colours themselves now render - a `QTableWidget::item` stylesheet rule had been cancelling them, see gui.md §9), the File/About menus, XYGraph live plot, session persistence, and the `User*` step types that will exercise the prompt pages. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing and prints the report path (§1.19), but no exit-code features yet.
 6. ~~**Step construction still uses `eval(...)`**~~ **Closed (§1.13):** the new `step/registry.py` is a plain dict lookup with a clear unknown-steptype error; the `eval()` stays behind in `old_code/` and dies with it.
 
 ### Defects worth fixing early (spotted while reading the branch)
@@ -985,9 +985,12 @@ carries the full send/recv trace including `UseRecipe` on `core->sequencer`.
       (worst verdict wins), as the old documentation claimed? One-line change in
       `process_outputs()` plus the pinning test; a behaviour change, so decide it, don't
       slip it in.
-- [ ] **TODO:** design the continue_on_error policy (per-recipe? per-step? `critical`
-      re-arming the stop?) before porting the step types that used it - one source of
-      truth this time.
+- [ ] **TODO:** implement continue_on_error **in recipe parsing, defaulting to True, with
+      no need for a recipe to mention it** (decided 2026-09-01). The parser resolves it so
+      no step type parses it itself - one source of truth this time. Note the behaviour
+      change: `Step.run_steps()` breaks on ERROR today, and a default of True inverts that.
+      Where the flag may be written (step / sequence / recipe) and what `critical` then
+      means are still open - see `src/pypts/step/step.md` §3.
 - [ ] **TODO:** `WaitStep`: sleep in slices and honour `should_stop()`, so a long wait
       does not hold up an abort.
 - [ ] **TODO:** stable step ids - the old code accepted arbitrary strings for `id:`; the
@@ -1341,10 +1344,15 @@ that had no effect without `preview = true`).
 **New TODOs this opened:**
 
 - [ ] **TODO:** `StepTable` badge delegate (rounded-pill status badges matching the master
-      reference) — still plain text verdicts; Phase 3 visual polish.
-- [ ] **TODO:** `LogPanel.load_lines` is called with an empty list at startup — wire it to
+      reference); Phase 3 visual polish. **The colours are no longer the missing part** — a
+      `QTableWidget::item` rule in the stylesheet had been suppressing the item background
+      brush, so PASS/FAIL painted as plain text. That rule is gone (gui.md §9) and the
+      verdicts render as coloured chips; what is left is the pill *shape*, which needs the
+      delegate — and a delegate is also what would let an `::item` rule come back.
+- [x] **TODO:** `LogPanel.load_lines` is called with an empty list at startup — wire it to
       replay the current run log once the GUI can read the log file (Phase 3, after the log
-      format is frozen).
+      format is frozen). — **done in §1.22**: the panel tails the run log every 200 ms
+      through `hmi/gui/log_tail.py`, filtered to INFO and above.
 - [ ] **TODO:** the `User*` step types are the next engine port; the interaction prompt
       pages are already built and tested, waiting for a sender.
 
@@ -1388,6 +1396,487 @@ in the left stack).
 **Verified:** 408 passed / 43 skipped, `ruff` and `mypy` clean.
 
 ---
+
+### 1.22 The LOG OUTPUT panel is live: the GUI tails the run log — **done**
+
+> **Status: implemented.** The bottom-right panel of the operator screen was built in §1.20
+> and never fed — nothing in the tree called `LogPanel.append_line()` or `.load_lines()`. It
+> now shows this run's log, refreshed every 200 ms. Closes the §1.20 TODO that parked it.
+
+**The problem with the obvious approach.** The old GUI attached `TextEditLoggerHandler` to
+the root logger and pushed records into the box through a Qt signal. In this architecture
+the root logger belongs to the *process*, so that handler would see GUI records only — and
+a run happens in CORE and the engine. Meanwhile the Logger process already writes one file
+containing everyone's records. So the panel reads that file back, from the outside, exactly
+as the Debug Monitor does.
+
+**How the GUI learns which file.** Only the launcher knows: `get_log_file_path()` mints a
+new timestamped name on every call, so it cannot be asked twice. `init_logging()` therefore
+takes an optional third argument, `log_file_path`, remembers it per process, and
+**`logger/log.py` gained `get_log_path()`** to hand it back. `startup.py` passes it to
+`gui_main`, which passes it on to `init_logging`. A process that never reads the log — CORE,
+today — is simply not told, and `get_log_path()` returns None there.
+
+**`hmi/gui/log_tail.py`** (new) owns reading and rendering:
+
+- `LogTail.open()` / `.new_lines()` / `.close()` — a plain read-only follower. The caller
+  owns the timer, so no thread and no waiting on a file. A record torn between the Logger's
+  `write()` and its flush is held back until the rest of it arrives.
+- `format_record()` — `LEVEL     HH:MM:SS  message`. Level first, because that is what
+  `LogPanel.append_line()` colours on; the process name and `file:func` are dropped.
+- `PANEL_LOG_LEVEL = INFO`. The file ships at DEBUG for the refactor (§1.6), so it carries
+  the full message trace — every message twice. The operator's panel would be nothing but
+  `QueueWrapper` lines. Traceback continuation lines are shown or dropped with the record
+  they hang under.
+
+**`gui.py`** gained `start_log_tail()`, `poll_log()` and `stop_log_tail()` on a second
+`QTimer` at `LOG_POLL_INTERVAL_MS = 200` — deliberately slower than the 50 ms message poll,
+because this one touches a file and the operator reads the panel rather than watches it.
+`poll_log()` carries `@catch_and_report_errors()`, and drops the follower on an `OSError`
+rather than reporting the same failure every 200 ms. A GUI with no log path (a test, or a
+frontend started by hand) shows `No run log to follow.` and starts no timer.
+
+**Deliberately not done:** nothing imports `helper_applications/debug_monitor/`, whose
+`LogFollower` is similar. The dependency rule is one-way and the Monitor is temporary, so
+the duplication is intended and dies with it. There is also no DEBUG toggle for the panel;
+if it is wanted it is `LogTail.min_level` plus a checkable View-menu item.
+
+**Verified:** 418 passed / 43 skipped, `ruff` and `mypy` clean. Six new tests in
+`test_hmi_gui.py` (format, level filter, semicolons in a message, torn record, traceback
+continuation, panel filled from a file) and two in `test_logger.py` for `get_log_path()`.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** the panel starts at the top of the log and shows it from the beginning. Fine
+      today (one file per run, and the GUI opens it seconds after it is created); if a
+      long-running session makes that slow, seek to the end and backfill the last N lines.
+- [ ] **TODO:** `LogPanel.load_lines()` is still unused — `append_line()` does everything the
+      panel needs. Drop it if nothing wants it by Phase 3.
+
+---
+
+### 1.23 `Indexed`: one authored step, N parameter sets, N real steps — **done**
+
+> **Status: implemented.** The old `IndexedStep`'s *requirement* survives - run the same
+> step many times with different parameters - but not its mechanism. `steptype: Indexed` is
+> expanded while the recipe loads; nothing loops at run time and no new message was needed.
+
+**The old one** wrapped a deep-copied template at run time, iterated to the length of the
+shortest of several parallel `indexed: true` lists (silently truncating), aggregated with
+`max()`, and then discarded its own `output_mapping` so what it aggregated could never be
+stored (F25).
+
+**The new one** is `src/pypts/step/indexed_step.py` - the only steptype that never reaches
+the registry:
+
+```yaml
+- steptype: Indexed
+  step_name: Add numbers
+  template:
+    steptype: PythonModule
+    module: example_tests.py
+    method_name: add
+  parameter_sets:
+    - inputs: {a: 1, b: 1}
+      expect: {sum: 2}
+    - inputs: {a: 6, b: 7}
+      expect: {sum: 12}     # 13 - a deliberate FAIL in the demo
+```
+
+- **Row-wise sets, not column-wise lists.** One set is one coherent case: its inputs *and*
+  its expected outputs travel together, which is what the old parallel lists could not do
+  and what makes the truncation bug impossible.
+- `inputs` are direct values, `expect` are `equals` checks. Terse deliberately - a set is a
+  test case and reads like a table row. A case needing `range`/`passfail`/`local`/`global`
+  puts it on the `template`, which takes the full mapping vocabulary; set entries merge
+  over it, key by key.
+- Generated steps are named after their parameters: `Add numbers [a=2, b=3]`.
+- **Each generated step is an ordinary `Step` with its own UUID**, so `RecipeLoaded`
+  pre-fills N table rows, the CSV gets N rows and every run event already carries it.
+  **No message type was added**, and neither frontend, the Sequencer nor CORE knows the
+  steptype exists.
+
+**Where each piece lives** - the format's existing division of labour, unchanged:
+
+| Piece | Where |
+|---|---|
+| the shape and the expansion | `step/indexed_step.py` (`check_indexed_step`, `expand_indexed_step`) |
+| what it requires | `rules.STEP_TYPE_REQUIRED["indexed"]`, plus the new `rules.EXPANDED_STEP_TYPES` |
+| the checks | `validator.validate_step()` - the wrapper's shape, then the `template` as the step it will become |
+| the expansion call | `recipe_parser._expand_indexed_steps()`, between defaults and build |
+
+`EXPANDED_STEP_TYPES` exists because `test_step.py` pins the registry against the rules;
+`Indexed` is in the rules and must **not** be in the registry, and the test now says so
+in both directions.
+
+**Refused rather than silently ignored:** `id`, `input_mapping` or `output_mapping` on the
+`Indexed` step itself; an `Indexed` step as its own `template`; an empty `parameter_sets`;
+an unknown key inside a set (the message names `inputs, expect`). `skip: true` on the
+wrapper skips every generated step.
+
+**Demo:** `resources/recipes/python_demo.yml` gained a ten-set `Add numbers` block - nine
+that pass and one whose `expect` is deliberately wrong, so the step table shows a single
+FAIL among nine PASS rows and the parameterized *expectation* is visible, not just the
+parameterized input. The recipe now builds 15 steps from 5 authored ones.
+
+**Deliberately not built:** N is fixed at load time - a count that depends on what an
+earlier step measured is not expressible, and would need a runtime construct. There is no
+group-level aggregate verdict any more; each generated step stands on its own and the
+sequence aggregates them like any other steps. A frontend cannot tell the ten rows were
+one authored item; if that is ever wanted it is a group id on `StepSummary`, not a change
+here.
+
+**Verified:** 438 passed / 43 skipped, `ruff` and `mypy` clean. 20 new tests - 13 in
+`test_step.py` for the module itself, 7 in `test_recipe.py` for parsing, validation,
+case-sensitivity and the summary rows.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** `recipe_verificator` still knows only the old steptype names and now also
+      does not know `Indexed`. It was left alone deliberately (it is on the
+      not-yet-refactored list); refresh it in one go when it is next touched.
+
+### 1.24 File -> Open Recent, and the first per-user *state* file — **done**
+
+> **Status: implemented.** The File menu offered one item, `Open Recipe`. It now also
+> offers `Open Recent`, a submenu of the last 10 recipes that loaded successfully. The
+> interesting half is not the menu: it is that pypts had nowhere to write state of its own,
+> and this is the decision about where that goes.
+
+**Config, data, state, cache — and why this is state.** A cache is a *disposable copy of
+something that can be recomputed*: delete it and the application only does the work again.
+Nothing can recompute which recipes an operator opened last week, so a recents list is not a
+cache however casually the word is used — it is **state**: app-owned, rewritten constantly,
+and losing it costs a convenience rather than information. That decided the location.
+`file_locations.py` gained `state_dir()` (`platformdirs.user_state_dir`) beside the existing
+`config_dir()` and `default_data_dir()`, and the module docstring now spells out the four
+buckets so the next piece of state — window geometry, a last-used folder — has an obvious
+home. On Windows all three collapse onto `%LOCALAPPDATA%\pypts`; on Linux they split
+properly (`~/.config`, `~/.local/share`, `~/.local/state`).
+
+**Why not `config.ini`.** §1.3's rule is that the config file is the *user's*: one writer,
+never modified, a version mismatch discards it whole. A list pypts rewrites on every recipe
+load is the exact inverse of that, so it gets its own file and its own module rather than a
+section in the INI.
+
+**`utilities/recent_recipes.py`** (new, ~200 lines) — `RecentEntry` (frozen, slotted) and
+`RecentRecipes`. Plain Python: no Qt, no messages, no ConfigHandler.
+
+- **References, not copies.** An entry is a path, the recipe name and a timestamp. Opening a
+  recent recipe re-reads the file, so the operator always runs the current version of it;
+  snapshotting the YAML here would go stale silently the moment somebody edited the original,
+  which is the one failure a test bench must not have.
+- Keyed by `Path.resolve()`, so `a.yml` and `./a.yml` are one entry. Most recent first,
+  capped at `MAX_ENTRIES = 10`, oldest falls off.
+- **Written atomically**: a temp file beside the real one, then `os.replace()`. A kill
+  mid-write leaves the previous list, never a truncated one.
+- **A file that cannot be used is discarded, never repaired** — §1.3's bargain, for the same
+  reason: the list is a convenience and must never stop the GUI from starting. Bad JSON,
+  wrong shape, or `version != 1` drops the whole file with a WARNING; a single unusable row
+  is dropped on its own and the other nine survive. Nothing in the module raises — a
+  read-only state directory costs the list, not the run.
+- Two pypts instances writing at once is last-writer-wins and one may lose an entry.
+  Accepted deliberately; it does not justify a lock.
+
+**The GUI side.** `RecipeLoaded` does not carry the file path, and it does not need to: the
+HMI is the side that sent `LoadRecipe`, so it already knows. `GUI.open_recipe()` is now the
+one funnel every open goes through (toolbar button, File -> Open Recipe, File -> Open
+Recent); it stashes the path, and `show_recipe_loaded()` records the entry only once CORE has
+confirmed the parse. **No new messages, no CORE change, `HmiClient` untouched** — the CLI is
+unaffected, and a recipe that fails to load never enters the list.
+
+`PtsMainWindow._build_menu()` owns the submenu widget (`recent_menu`, `setToolTipsVisible`);
+the assembler fills it on `aboutToShow`, the same way it already reaches for
+`dark_mode_action`. Filename as the label, full path as the tooltip, separator, `Clear list`;
+an empty store shows one disabled `No recent recipes` item rather than an empty menu the
+operator reads as broken.
+
+**One deliberate non-check.** The menu does *not* `stat()` the entries when it opens. Ten
+`stat()` calls against a dead `\\bench\recipes` share would freeze the window for seconds
+every time the File menu was touched. The check happens on the **click** instead — one
+`stat()`, on a file the operator explicitly asked for — and an entry whose file is gone is
+forgotten and reported as a WARNING through `report_problem()`.
+
+**Verified:** 463 passed / 43 skipped, `ruff` and `mypy` clean. 25 new tests — 17 in
+`test_recent_recipes.py` (round-trip, ordering, dedup, cap, forget/clear, four corruption
+cases, a failing write) and 8 in `test_hmi_gui.py` (recorded only on a confirmed load, menu
+contents and ordering, tooltip, empty state, opening one, the missing-file path, clear). An
+autouse fixture in `test_hmi_gui.py` points `recent_recipes_path` at `tmp_path`, so no test
+can touch the operator's real list.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** `MAX_ENTRIES = 10` is hardcoded. If anyone asks for it, it belongs in
+      `[gui]` in the config schema, not as a constructor argument.
+- [ ] **TODO:** the CLI has no equivalent. `RecentRecipes` is frontend-agnostic on purpose,
+      so `hmi/cli/` could offer a `recent` command whenever that is wanted.
+- [ ] **TODO:** the wider File menu (`Reload recipe`, `Open containing folder`, recipe-creator
+      launcher) was scoped out of this change deliberately. Revisit as its own task.
+
+---
+
+---
+
+### 1.24 Step table sizing, and one colour palette for the GUI — **done**
+
+> **Status: implemented.** Two GUI changes that turned out to be one: tightening
+> the step table exposed why its verdict colours had never rendered, and fixing
+> that made it obvious the colours were defined in four places. `gui.md` §9 and
+> §10 are the living record.
+
+**The step table** (`step_table.py`): cells and font tightened (12 px, header
+padding 9 → 4), `setStretchLastSection(False)` so the *description* stretches
+instead of the Result column, name `Interactive` 220 px, result `Fixed` 90 px, and
+rows that grow with their content — `ElideNone` plus a `ResizeToContents` vertical
+header, so a description re-wrapping on a window resize gets a taller row instead
+of being clipped.
+
+**The `::item` trap, and why the badge delegate TODO was misread.** A
+`QTableWidget::item` rule in the stylesheet hands item painting to
+`QStyleSheetStyle`, and the model's background brush is then never consulted — so
+every `setBackground()` in `step_table.py` was being discarded and PASS/FAIL
+painted as plain text on white. That is what "still plain text verdicts" in the
+§1.20 gap table had been describing: not a missing feature, a stylesheet rule
+cancelling an existing one. The rule is gone from both palettes (the step table is
+the only `QTableWidget` in the GUI; `ResultsPanel` is a `QTreeView`, which that
+selector does not match), the chips render, and `styles.py` says at the point
+where such a rule would go why there is none.
+
+**`palette.py`** (new): every colour the GUI uses, in one file, with
+`test_no_colour_literal_lives_outside_the_palette` enforcing that no other file in
+`hmi/gui/` contains a hex.
+
+- `Palette` — a frozen dataclass of ~35 themed tokens, instantiated twice
+  (`LIGHT`, `DARK`); a token added to one is a `TypeError` until the other has it.
+- `VERDICT_COLORS`, `LOG_LEVEL_COLORS`, `ICON_*`, `PLACEHOLDER_*` — deliberately
+  theme-independent: an operator reads a bench screen by colour, and a verdict
+  that changes shade with the theme is one you have to stop and read.
+- `python -m pypts.hmi.gui.palette` opens a two-tab showcase (Light / Dark) with
+  every token swatched, named and labelled with its hex, so a change can be judged
+  before it is committed. Nothing imports that code.
+
+**Three copies of one table are now one.** `styles.STATUS_COLORS`,
+`result_colors.py` (deleted) and `step_table.py`'s own `_PENDING_COLORS` /
+`_RUNNING_COLORS` all said the same thing in different shapes.
+
+**Verified:** the refactor is **pixel-identical** — the main window was rendered
+before and after in both themes and `ImageChops.difference().getbbox()` is `None`
+for each. 498 passed / 43 skipped, `ruff` and `mypy` clean.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** `LIGHT_QSS` and `DARK_QSS` are still two texts. They differ only in
+      a `QTabBar` block and a `selection-color`; unify them into one template
+      applied to both palettes, accepting the small look change to whichever theme
+      gains the missing rules.
+
+### 1.25 Edit -> Remove Cache: one action that clears the installation — **done**
+
+> **Status: implemented.** `Edit` offered one stub. It now also offers **Remove Cache**,
+> which deletes the recents list, `config.ini`, every report and every run log, behind a
+> dialog that names and sizes each one first.
+
+**The safety lives in the defaults, not in a warning.** Only the recents list is a cache by
+the §1.24 definition; reports and run logs are *test records* — a report is the evidence
+that a unit passed. Each category is a **checkbox**: `state` and `config` are ticked when the
+dialog opens, `reports` and `logs` are not (`DEFAULT_SELECTION`). Confirming the dialog
+untouched therefore clears pypts' own housekeeping and leaves every record alone; removing
+records is one deliberate extra click. A red caution banner was tried and removed at the
+operator's request — with the defaults doing the work it was a line to dismiss rather than
+information. `Cancel` is still the **default** button, so Return dismisses rather than
+deletes, and an empty category has a disabled box.
+
+The total and the confirm button track the ticks (`_selection_changed`); `selected_items()`
+is what both `remove()` and the result page act on, so the result never reports on a category
+that was not chosen. The boxes are connected to that handler only **after** the page is
+built: `setChecked()` during row construction would otherwise emit `toggled` before the total
+label and the button exist.
+
+**`utilities/data_removal.py`** (new) decides *what*, with no Qt: `survey()` returns four
+frozen `RemovableItem`s (label, detail, location, targets, size, count, `kept_note`) and
+`remove()` deletes **exactly** the targets the survey listed and nothing else. Nothing in it
+raises; a target that will not go is counted and named, and the rest carries on.
+
+**Three guards, because this deletes the user's files:**
+
+- **Named files and directory *contents*, never a directory.** On Windows `state_dir()`,
+  `config_dir()` and the default `base_dir` are all `%LOCALAPPDATA%\\pypts` — deleting a
+  *directory* would take all four categories at once, and on a bench whose `paths.base_dir`
+  points somewhere shared, a great deal more. Reports and logs keep their folder so the next
+  run has somewhere to write.
+- **Roots and home are refused.** `paths.reports_dir` is a value in an INI file somebody may
+  edit. If it resolves to a filesystem root or `Path.home()`, that category is dropped from
+  the survey with the reason shown in place of a size.
+- **The live log is never offered.** The Logger holds an open `FileHandler` on this run's log
+  (`logger/log.py`) for as long as pypts is up, so on Windows it cannot be deleted at all. It
+  is excluded from the survey rather than attempted and reported as a failure; both dialog
+  pages say why it is staying.
+
+**`hmi/gui/remove_cache_dialog.py`** (new) shows it and deletes nothing itself: it takes the
+survey and a `remover` callable, which is what lets the tests drive the entire dialog without
+a file being removed. Confirm view then result view (items deleted, bytes freed, anything
+that could not go, and the note that `config.ini` returns on the next start). One window, not
+two popups — a confirm-then-report action whose second box is a fresh popup is the one
+everybody dismisses unread. It is a **layout swap, not a `QStackedWidget`**: a stack's
+`sizeHint` is its tallest page whatever the size policies claim, which left the short result
+view floating in the confirm view's height.
+
+**Availability.** Greyed out while a recipe runs, with the reason on hover — emptying the
+reports folder under the Report thread would take the run down. `_set_remove_cache_enabled()`
+is driven from `show_run_started` / `show_run_finished`, and the Edit menu needed
+`setToolTipsVisible(True)` or the reason would never be seen. Afterwards the GUI rebuilds
+`RecentRecipes`: the old store still held the list in memory and would have written it
+straight back on the next load.
+
+**Styling.** Object names `cacheDialog*` in `styles.py`, both palettes, tokens only — no
+colour literal was added to that file. The confirm button uses the existing `danger` /
+`danger_background` / `danger_border` trio the stop button already uses, so it reads as a
+refusal in both themes rather than as a wall of red. The checkbox indicator is styled
+explicitly (`brand_accent` filled when ticked, `button_border` outline when not): under this
+stylesheet the native one is all but invisible, and an unticked box the operator cannot see
+is a category they will not know they can choose.
+
+**Verified:** 502 passed / 43 skipped, `ruff` and `mypy` clean. 34 new tests — 17 in
+`test_data_removal.py` (survey, sizes, the live-log exclusion, removal, per-target failure,
+and the three guards, including one that asserts a refused directory is left *completely*
+alone) and 17 in `test_hmi_gui.py` (menu gating both edges, dialog contents, the default
+ticks, the total following the selection, an empty category's disabled box, unticking
+everything, only-the-ticked-are-removed, cancel, confirm, failures, kept note,
+nothing-to-remove, the recents rebuild).
+Both dialog pages were rendered to PNG in light and dark and looked at.
+
+**Every test passes its paths in explicitly.** `survey()` resolves the real installation when
+it is not told, so a test that let it would delete the developer's own reports the first time
+it ran. The two GUI tests that call `_remove_cache()` stub `survey` as well as the dialog.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** "Remove Cache" is the operator's name for an action that also deletes test
+      records. If the wording is ever revisited, `Clear stored data...` says what it does.
+- [ ] **TODO:** the CLI has no equivalent. `data_removal` is frontend-agnostic on purpose.
+
+---
+
+---
+
+### 1.25 Dark mode legibility, and what it exposed — **done**
+
+> **Status: implemented.** Six operator complaints about the dark theme, fixed in
+> `palette.py` — plus two real bugs the fixing uncovered. The light theme is
+> **pixel-identical** to before (verified by rendering the main window both ways
+> and diffing). `gui.md` §10 carries the design.
+
+| Complaint | Fix |
+|---|---|
+| CERN logo too dark | `logo_tint` (dark `#9CC3F0`); `resources.tint_pixmap()` recolours the artwork through its own alpha |
+| Log window text too dark | `log_text` `#b0b0b0` → `#DEE4EB`, `log_text_muted` → `#D5DBE3` |
+| "LOG OUTPUT" label too dark | `section_label` `#666666` → `#AFBAC6` (and `text_muted` with it — same shade, same complaint) |
+| Table borders invisible | new `grid_line` token, separate from `border`; dark `#4d565f`, plus `border` `#3a3a3a` → `#4d565f` |
+| Verdict colours too bright | `DARK_VERDICTS`: the hue stays (green PASS, red FAIL) and the value inverts — dark fill, coloured text |
+| Start button too dark | `icon_start` `#1B5E20` → `#57C25E`; `icon_pause`/`icon_stop`/`icon_disabled` themed with it |
+
+**Two bugs found while fixing those, both the same shape** — *something coloured
+per item cannot be restyled by swapping the stylesheet*:
+
+- **The log panel kept its backlog in the old theme's colours.** A line already on
+  screen holds the `QTextCharFormat` it was written with, so a run that started in
+  light and switched to dark left every earlier line in `#555555` on `#1e1e1e`.
+  `LogPanel` now remembers its lines (bounded by the same rolling buffer) and
+  re-appends them on `set_dark()`. This is most of what "log text too dark"
+  actually was.
+- **The step table had no theme at all.** `_apply_theme()` never called it, so its
+  Result chips could only ever be the light set. It now has `set_dark()`, which
+  reads each cell's own text back (`Pending` / `Running...` / the verdict name —
+  each is a chip key) and rebuilds the item, tooltip included.
+
+`ResultsPanel` needed the same treatment: the model carries `dark`, and `set_dark()`
+recolours the badges and invalidates the viewport instead of waiting for the next
+run to rebuild the model.
+
+**Verified:** 506 passed / 43 skipped, `ruff` and `mypy` clean. New tests cover
+both themes' chip coverage, the repaint of verdict *and* pending cells on a theme
+switch, and the log backlog redraw.
+
+### 1.26 The toolbar explains itself, including when it cannot be used — **done**
+
+> **Status: implemented.** The five toolbar controls had tooltips already ("Start", "Stop"),
+> and the operator reported seeing none at all. Both halves of that were real: the text was
+> a label rather than a description, and the buttons that most needed one could not show it.
+
+**The bug.** Qt shows **no tooltip for a disabled widget** — a disabled widget receives no
+mouse events, so the `ToolTip` event never reaches it. `Start`, `Pause` and `Stop` are all
+disabled when the window opens, which is precisely when "why can I not press this?" is worth
+answering. The event falls through to the parent, so `TopBarContent.event()` now catches
+`QEvent.Type.ToolTip`, resolves the child under the cursor with `tooltip_at()` and shows that
+child's text on its behalf. An enabled child still handles its own and the toolbar never sees
+the event. `tooltip_at()` is a separate method because `event()` is not assertable: the base
+`QWidget` accepts a `ToolTip` event whichever branch ran, so the return value proves nothing —
+the first version of the test passed against both branches and was rewritten.
+
+**The descriptions.** `describe(widget, title, detail)` sets the tooltip as rich text (action
+name bold, description beneath) **and** `accessibleName` / `accessibleDescription` with the
+same words in plain text, so a screen reader is not told something different from the screen.
+`_refresh_descriptions()` is driven from `_refresh_controls()` — the renamed `_refresh_icons()`,
+now that icons and wording both follow the state — so a disabled control says why: `Start` is
+"Open a recipe first." before a recipe and "A run is already in progress." during one; the
+sequence combo says "Open a recipe first."; `Stop` and `Pause` say "Nothing is running."
+
+**Pause knows it is paused.** `TopBarContent.set_paused()` (called from `GUI._toggle_pause`)
+flips the description to **Resume** / "Continue the run from the step it was held at.", and
+`show_run_started` / `show_run_finished` clear the flag. Hovering a held run's Pause button
+and being told "Pause" was simply wrong.
+
+**Verified:** 513 passed / 43 skipped, `ruff` and `mypy` clean. 7 new tests in
+`test_hmi_gui.py`: every control carries all three strings, the disabled reasons, the
+rewording on load and during a run, the Pause/Resume flip and its reset, and the disabled-
+button tooltip path. The last one has to `show()` the window first — widgets in an unshown
+window have no laid-out geometry and `childAt()` needs real coordinates.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** the Pause button keeps the pause glyph while paused; only the words change.
+      A play glyph would say it without a hover.
+- [ ] **TODO:** the same disabled-tooltip trap applies anywhere else a disabled control needs
+      to explain itself. `Edit -> Remove Cache` (§1.25) is a `QAction` in a menu, which is not
+      affected, but a future disabled toolbar control will need this handler to already exist.
+
+---
+
+---
+
+## TODO — Step types: which of the ten are ported, and which are dropped
+
+> **Status: decided 2026-09-01; nothing implemented yet.** The catalogue, the per-type
+> notes and the open questions live in **`src/pypts/step/step.md`** — that file is the
+> authority on the step-type port, and this block only records the decisions so the phase
+> plan above reads correctly.
+
+The old engine had ten step classes. The plan is no longer "port the other nine":
+
+| Old class | Decision |
+|---|---|
+| `WaitStep` | ✅ ported |
+| `PythonModuleStep` | 🟡 ported for `action_type: method`; `read_attribute` / `write_attribute` still to do |
+| `UserInteractionStep`, `UserWriteStep`, `UserLoadingStep` | **to be implemented** — the three interactive types |
+| `UserRunMethodStep` | **deprecated, dropped** — a prompt step followed by a `PythonModule` step says the same thing |
+| `SSHConnectStep`, `SSHCloseStep` | **not step types** — SSH becomes part of the framework (HAL or a service; not decided), with credentials in the Config Handler |
+| `SequenceStep` | **dropped** |
+| `IndexedStep` | **kept as `Indexed`, reshaped** — expanded at load time into N ordinary steps, not looped at run time (done, §1.23) |
+
+Consequences worth carrying into the code when this is implemented:
+
+- **`StepResult.subresults` has no writer left.** It was kept for `SequenceStep` and
+  `IndexedStep`; `SequenceStep` is dropped and `Indexed` expands instead of nesting, so it
+  should go, or the next reader assumes nesting is coming. `run_sequence()` stays thread- and queue-free regardless — that is what makes the
+  step layer testable, not just what made nesting possible.
+- The `method` input type dies with `UserRunMethodStep`. The old per-input `indexed: true`
+  flag and the implicit `__result` / `passthrough` output are gone too - `Indexed` uses
+  row-wise `parameter_sets` and aggregates nothing (§1.23).
+- The three interactive types need a **third `Runtime` seam** (an `ask()` callable the
+  Sequencer fills in): the step layer reaches CORE through `emit` only and has no handle on
+  `PendingRequests`. Decide it once, before the first of the three.
+- `UserLoadingStep` is blocked on the "second value on the same queue" problem (§1.1 TODO):
+  each follow-up must become its own request/response pair.
 
 ## TODO — Recipe format: findings and decisions
 
@@ -1511,7 +2000,7 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 Recommended porting order (each step is one reviewable MR):
 
 1. **Recipe (data layer):** ~~move loading/parsing/validation from `old_code/recipe.py` into `recipe/recipe.py`, stripped of all execution logic~~ **done (§1.13)** - every load failure is a loud `RecipeError` and an invalid recipe never reaches the Sequencer. Still open here: the verificator integration (it has its own broken-import problem, Phase 0), and `test_package` handling, which lands with `PythonModuleStep`.
-2. **Step & Sequencer (execution):** **skeleton done (§1.13)** - the base `Step` lifecycle, `StepResult`, `Runtime` and `execute_sequence()` are in and all seven run events are produced on every run. What remains of this item is porting the other nine step types onto that base, one reviewable MR each, in dependency order: `PythonModuleStep` (module loading design) → the four `User*` types (the request/response prompt wiring) → `SequenceStep`/`IndexedStep` (nesting - `run_sequence()` and `StepResult.subresults` are already shaped for it) → the SSH pair (credentials move to the Config Handler first, F22).
+2. **Step & Sequencer (execution):** **skeleton done (§1.13)** - the base `Step` lifecycle, `StepResult`, `Runtime` and `execute_sequence()` are in and all seven run events are produced on every run. What remains of this item is **four** step types, not nine (decisions of 2026-09-01, catalogued in `src/pypts/step/step.md`), one reviewable MR each, in dependency order: finish `PythonModuleStep` (`read_attribute`/`write_attribute`) → `UserInteractionStep` → `UserWriteStep` → `UserLoadingStep` (needs the one-response-per-request fix first); `Indexed` is **done** (§1.23). `UserRunMethodStep` and `SequenceStep` are **dropped**; the SSH pair leaves the step layer altogether and becomes part of the framework, credentials in the Config Handler first (F22).
 3. **Core orchestration:** implement `LOAD_RECIPE`/`START_SEQUENCE` handlers, runtime metadata (recipe info, DUT serials, timing, machine info), result aggregation, and forwarding to HMI + Report.
 4. **Report:** ~~port incremental CSV writing + HTML generation behind `GENERATE`/`EXPORT`; intermediate result file (YAML/CSV) per spec; artifacts organized per run folder~~ **first slice done (§1.19)** - incremental CSV, HTML on `GenerateReport`, one folder per run. Still open: `ExportReport`, the serial-number column, TDMS plots, and the template/theme work of Phase 4.
 5. **HMI:** CLI first — recipe load/validate/run, sequence selection, prompts (serial number, user interaction now crossing a process boundary — see pickling risk in §4), report/log locations, exit codes `0/1/2/3`, `--version`. Then grow the GUI beyond the status window (recipe preview, runtime log, results table).

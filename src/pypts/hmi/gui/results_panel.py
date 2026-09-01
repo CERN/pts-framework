@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pypts.hmi.gui.styles import CERN_BLUE, STATUS_COLORS
+from pypts.hmi.gui.palette import get_palette
 from pypts.messages.common_messages import ResultType, StepOutcome
 
 
@@ -39,6 +39,15 @@ class SummaryBadge(QLabel):
 
     def update_count(self, count: int, label: str):
         self.setText(f"<b style='font-size:16px'>{count}</b>&nbsp;&nbsp;{label}")
+        self._apply_colors()
+
+    def set_colors(self, bg: str, fg: str) -> None:
+        """Recolour in place - the badges follow the theme like everything else."""
+        self._bg = bg
+        self._fg = fg
+        self._apply_colors()
+
+    def _apply_colors(self) -> None:
         self.setStyleSheet(
             f"background:{self._bg}; color:{self._fg}; border-radius:6px;"
             f" padding:6px 16px; font-size:11px; font-weight:600;"
@@ -50,9 +59,12 @@ class StepResultModel(QAbstractItemModel):
 
     COLUMNS: ClassVar[list[str]] = ["Step Name", "Result", "Info"]
 
-    def __init__(self, outcomes: tuple[StepOutcome, ...]):
+    def __init__(self, outcomes: tuple[StepOutcome, ...], dark: bool = False):
         super().__init__()
         self._outcomes = outcomes
+        #: Which theme's verdict chips data() hands out. Public, because the
+        #: panel flips it when the theme changes rather than rebuilding a model.
+        self.dark = dark
 
     def index(self, row, column, parent=None):
         if parent is None:
@@ -85,11 +97,12 @@ class StepResultModel(QAbstractItemModel):
         outcome: StepOutcome = index.internalPointer()
 
         if index.column() == 1:
-            colors = STATUS_COLORS.get(outcome.result.name, STATUS_COLORS["PENDING"])
+            verdicts = get_palette(self.dark).verdicts
+            chip = verdicts.get(outcome.result.name, verdicts["PENDING"])
             if role == Qt.BackgroundRole:
-                return QBrush(QColor(colors["bg"]))
+                return QBrush(QColor(chip.background))
             if role == Qt.ForegroundRole:
-                return QBrush(QColor(colors["text"]))
+                return QBrush(QColor(chip.text))
 
         if role == Qt.DisplayRole:
             if index.column() == 0:
@@ -115,11 +128,10 @@ class ResultsPanel(QWidget):
         summary_layout.setContentsMargins(0, 0, 0, 0)
         summary_layout.setSpacing(8)
 
-        pass_colors = STATUS_COLORS["PASS"]
-        fail_colors = STATUS_COLORS["FAIL"]
-        self._badge_pass = SummaryBadge(0, "PASS", pass_colors["bg"], pass_colors["text"])
-        self._badge_fail = SummaryBadge(0, "FAIL", fail_colors["bg"], fail_colors["text"])
-        self._badge_total = SummaryBadge(0, "TOTAL", "#E3ECF9", CERN_BLUE)
+        self._badge_pass = SummaryBadge(0, "PASS", "", "")
+        self._badge_fail = SummaryBadge(0, "FAIL", "", "")
+        self._badge_total = SummaryBadge(0, "TOTAL", "", "")
+        self._paint_badges()
         summary_layout.addWidget(self._badge_pass)
         summary_layout.addWidget(self._badge_fail)
         summary_layout.addWidget(self._badge_total)
@@ -138,8 +150,26 @@ class ResultsPanel(QWidget):
         self.tree_view.setColumnWidth(1, 110)
         root.addWidget(self.tree_view, stretch=1)
 
+        # An empty model from the start: set_dark() has something to flip before
+        # the first run, and the view has a header before there are results.
+        self._model = StepResultModel((), dark=self._dark)
+        self.tree_view.setModel(self._model)
+
     def set_dark(self, dark: bool):
         self._dark = dark
+        self._model.dark = dark
+        self._paint_badges()
+        self.tree_view.viewport().update()
+
+    def _paint_badges(self) -> None:
+        """The three summary badges, in the current theme's chip colours."""
+        palette = get_palette(self._dark)
+        passed = palette.verdicts["PASS"]
+        failed = palette.verdicts["FAIL"]
+        self._badge_pass.set_colors(passed.background, passed.text)
+        self._badge_fail.set_colors(failed.background, failed.text)
+        # TOTAL is not a verdict, so it wears the brand rather than a chip.
+        self._badge_total.set_colors(palette.menu_highlight, palette.brand)
 
     def set_results(self, outcomes: tuple[StepOutcome, ...]):
         pass_count = sum(1 for o in outcomes if o.result == ResultType.PASS)
@@ -148,6 +178,6 @@ class ResultsPanel(QWidget):
         self._badge_fail.update_count(fail_count, "FAIL")
         self._badge_total.update_count(len(outcomes), "TOTAL")
 
-        model = StepResultModel(outcomes)
-        self.tree_view.setModel(model)
+        self._model = StepResultModel(outcomes, dark=self._dark)
+        self.tree_view.setModel(self._model)
         self.tree_view.resizeColumnToContents(0)

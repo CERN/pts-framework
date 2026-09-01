@@ -18,19 +18,31 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QHeaderView,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from pypts.hmi.gui.result_colors import FALLBACK_COLORS, RESULT_COLORS
+from pypts.hmi.gui.palette import UNKNOWN_VERDICT, get_palette
 from pypts.logger.log import log
 from pypts.messages.common_messages import StepOutcome
 from pypts.messages.run_events import SequenceSummary, StepStarted
 
-_PENDING_COLORS = ("#E8EAF0", "#555555")
-_RUNNING_COLORS = ("#DBEAFE", "#1D4ED8")
+#: What the two pre-verdict states say in the cell. Upper-cased and stripped of
+#: the dots, each is its own key in the chip table - so the Result column is
+#: coloured from one place whatever state a row is in.
+_PENDING_TEXT = "Pending"
+_RUNNING_TEXT = "Running..."
+
+#: Step name: wide enough for a generated name like "Add numbers [a=100, b=250]",
+#: and draggable, because how much room a name needs is the operator's call.
+_NAME_WIDTH = 220
+
+#: Result: fixed and narrow. It only ever holds Pending / Running... / a verdict,
+#: so every pixel beyond that is taken from the description.
+_RESULT_WIDTH = 90
 
 
 def read_only(item: QTableWidgetItem) -> QTableWidgetItem:
@@ -39,18 +51,44 @@ def read_only(item: QTableWidgetItem) -> QTableWidgetItem:
 
 
 class StepTableContent(QWidget):
-    """Three columns: Step name (bold), Description, Result."""
+    """Three columns: Step name (bold), Description, Result.
+
+    Sizing: the name is draggable, the result is fixed and narrow, and the
+    description stretches into what is left - so the one column with real prose
+    in it gets the room. Rows are sized to their contents, so a description that
+    wraps onto three lines gets a row three lines tall instead of being clipped.
+    """
 
     def __init__(self) -> None:
         super().__init__()
+        self._dark = False
         self.table = QTableWidget()
+        self.table.setObjectName("stepTable")
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Step name", "Description", "Result"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+
+        # Long text wraps onto more lines instead of being cut off with an
+        # ellipsis - which is what makes the row heights below worth having.
         self.table.setWordWrap(True)
-        self.table.setColumnWidth(0, 220)
-        self.table.setColumnWidth(1, 300)
-        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.setTextElideMode(Qt.TextElideMode.ElideNone)
+
+        # Rows grow to fit what is in them, and keep doing so afterwards: the
+        # description rewraps whenever the window or a column is resized, and
+        # ResizeToContents is what re-measures the row when it does.
+        self.table.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+
+        # The description takes every pixel the other two do not: it is the
+        # column whose text actually wraps.
+        header = self.table.horizontalHeader()
+        header.setStretchLastSection(False)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
+        self.table.setColumnWidth(0, _NAME_WIDTH)
+        self.table.setColumnWidth(2, _RESULT_WIDTH)
 
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
@@ -71,6 +109,10 @@ class StepTableContent(QWidget):
 
             self.table.setItem(row, 1, read_only(QTableWidgetItem(step.description)))
             self.table.setItem(row, 2, self._pending_item())
+
+        # ResizeToContents keeps the heights right from here on; this one call
+        # is for right now, before the table has been laid out and while the
+        # stretch column still has its pre-layout width.
         self.table.resizeRowsToContents()
 
     def reset_to_pending(self) -> None:
@@ -84,13 +126,10 @@ class StepTableContent(QWidget):
         row = self._find_row(event.step_id)
         if row is None:
             return
-        item = read_only(QTableWidgetItem("Running..."))
+        item = self._state_item(_RUNNING_TEXT)
         font = item.font()
         font.setBold(True)
         item.setFont(font)
-        item.setBackground(QColor(_RUNNING_COLORS[0]))
-        item.setForeground(QColor(_RUNNING_COLORS[1]))
-        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, 2, item)
         self.table.scrollToItem(
             self.table.item(row, 0), QAbstractItemView.ScrollHint.EnsureVisible
@@ -100,21 +139,45 @@ class StepTableContent(QWidget):
         row = self._find_row(outcome.step_id)
         if row is None:
             return
-        background, text_color = RESULT_COLORS.get(outcome.result, FALLBACK_COLORS)
-        item = read_only(QTableWidgetItem(str(outcome.result)))
-        item.setBackground(QColor(background))
-        item.setForeground(QColor(text_color))
-        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        item = self._state_item(str(outcome.result))
         if outcome.error_info:
             item.setToolTip(outcome.error_info)
         self.table.setItem(row, 2, item)
 
-    def _pending_item(self) -> QTableWidgetItem:
-        item = read_only(QTableWidgetItem("Pending"))
-        item.setBackground(QColor(_PENDING_COLORS[0]))
-        item.setForeground(QColor(_PENDING_COLORS[1]))
+    # --- Theme -----------------------------------------------------------------
+
+    def set_dark(self, dark: bool) -> None:
+        """
+        Repaint the Result column for the new theme.
+
+        The chips are the one thing in this table the stylesheet cannot reach -
+        they are set per item - so a theme change has to come through here or the
+        verdicts keep the old theme's colours for the rest of the run. The state
+        each row is in is read back from the cell's own text: it is the verdict
+        name, or Pending / Running..., which is exactly the chip key.
+        """
+        self._dark = dark
+        for row in range(self.table.rowCount()):
+            cell = self.table.item(row, 2)
+            if cell is None:
+                continue
+            repainted = self._state_item(cell.text())
+            repainted.setToolTip(cell.toolTip())
+            self.table.setItem(row, 2, repainted)
+
+    def _state_item(self, text: str) -> QTableWidgetItem:
+        """One Result cell: the state's text on the current theme's chip."""
+        chip = get_palette(self._dark).verdicts.get(text.upper().rstrip("."), None)
+        if chip is None:
+            chip = UNKNOWN_VERDICT
+        item = read_only(QTableWidgetItem(text))
+        item.setBackground(QColor(chip.background))
+        item.setForeground(QColor(chip.text))
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
+
+    def _pending_item(self) -> QTableWidgetItem:
+        return self._state_item(_PENDING_TEXT)
 
     def _find_row(self, step_id: UUID) -> int | None:
         """The UserRole scan. A miss is logged, not raised - the run goes on."""
