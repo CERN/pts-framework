@@ -26,6 +26,9 @@ Who owns what in this package:
                            load_python_module()
     registry.py            steptype name -> class, and build_step(); the
                            replacement for the old eval() factory
+    indexed_step.py        `steptype: Indexed`: one authored step and N
+                           parameter sets expanded, at load time, into N
+                           ordinary steps. Never reaches the registry
     runtime.py             the execution context: globals, the locals stack,
                            and the two seams the Sequencer fills in (emit,
                            should_stop)
@@ -56,13 +59,15 @@ the traceback, never a silent continue - `run()` is the one place that
 catches broadly, because turning the exception into data is its job. Only
 ERROR stops a sequence; a FAIL (a failed measurement) never halts anything.
 
-Still in old_code/steps.py, ported as their dependencies land: the rest of
-PythonModuleStep (read_attribute/write_attribute, the rglob module search),
-the four User* types (the request/response prompt wiring in
-messages/run_events.py), SequenceStep and IndexedStep (nesting),
-SSHConnectStep/SSHCloseStep (credentials move to the Config Handler first).
-The continue_on_error policy machinery (F8: three disagreeing sources of
-truth in the old engine) is deliberately not ported yet - see the roadmap.
-Every type's YAML is documented in section 10 of
-resources/roadmap/recipe_guide.md.
+Which of the old engine's ten types are being ported, which are dropped, and
+what each port still needs is the catalogue in step.md beside this file - read
+it before starting one. In short: the rest of PythonModuleStep
+(read_attribute/write_attribute) and three interactive types
+(UserInteraction, UserWrite, UserLoading) are to come; UserRunMethodStep and
+SequenceStep are dropped; IndexedStep came back as `Indexed`, expanded at load
+time rather than looped at run time; and the SSH pair leaves the step layer to
+become part of the framework. The continue_on_error policy (F8:
+three disagreeing sources of truth in the old engine) is to be resolved in
+recipe parsing, defaulting to True. Every old type's YAML is documented in
+section 10 of resources/roadmap/recipe_guide.md.
 """
