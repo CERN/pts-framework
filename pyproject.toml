@@ -110,18 +110,18 @@ exclude = [
 # Qt model overrides. Before this section existed those suppressions named rules
 # that nothing enabled.
 select = [
-  "E",    # pycodestyle
-  "F",    # pyflakes - undefined names, unused imports, unused variables
-  "I",    # import sorting, so import order is mechanical rather than argued about
-  "N",    # pep8-naming
-  "UP",   # pyupgrade
-  "B",    # flake8-bugbear
-  "BLE",  # blind except
-  "DTZ",  # naive datetime
-  "SIM",  # simplifiable code
-  "PIE",  # misc lints
-  "G",    # logging format - keeps log calls %-style and lazily formatted
-  "RUF",  # ruff's own rules
+  "E",      # pycodestyle
+  "F",      # pyflakes - undefined names, unused imports, unused variables
+  "I",      # import sorting, so import order is mechanical rather than argued about
+  "N",      # pep8-naming
+  "UP",     # pyupgrade
+  "B",      # flake8-bugbear
+  "BLE",    # blind except
+  "DTZ",    # naive datetime
+  "SIM",    # simplifiable code
+  "PIE",    # misc lints
+  "G",      # logging format - keeps log calls %-style and lazily formatted
+  "RUF",    # ruff's own rules
 ]
 
 ignore = [
@@ -213,11 +213,3 @@ features = [
   {name = "core", version = 2},
   {name = "docs", version = 2},
 ]
-
-[tool.ruff]
-extend-exclude = ["src/pypts/old_code"]
-
-[tool.ruff.lint]
-# PLW1514: warn on open() without an explicit encoding — required for
-# cross-platform correctness (Windows defaults to cp1252, not utf-8).
-extend-select = ["PLW1514"]

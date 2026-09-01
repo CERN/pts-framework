@@ -5,7 +5,7 @@
 """
 Central logging for pypts.
 
-One dedicated process - the Logger - owns the only open handle of the log file 
+One dedicated process - the Logger - owns the only open handle of the log file
 and is the single writer. Every other process and thread pushes
 logging.LogRecord objects onto a shared queue (through logging's QueueHandler);
 the Logger drains that queue and writes the records out.
@@ -13,66 +13,11 @@ the Logger drains that queue and writes the records out.
 """
 
 import logging
-<<<<<<< HEAD
-import os
-=======
 import logging.handlers
->>>>>>> 04a05cd756975e2dc007fe919cc630e4191643db
 import sys
 from queue import Empty
 from typing import get_args
 
-<<<<<<< HEAD
-# Env var used to propagate the chosen log file path to all child processes
-# (multiprocessing spawn re-imports this module, so without a shared path each
-# subprocess would create its own timestamped log file).
-LOG_FILE_ENV_VAR = "PYPTS_LOG_FILE"
-
-
-class NullStream:
-    """A stream object that ignores all writes. Used to disable stdout logging."""
-    def write(self, msg):
-        pass
-    def flush(self):
-        pass
-
-
-_formatter = logging.Formatter(
-    "%(asctime)s.%(msecs)03d;%(levelname)s;%(filename)s:%(funcName)s;%(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-
-log = logging.getLogger()
-log.setLevel(logging.DEBUG)
-
-for _hdlr in list(log.handlers):
-    log.removeHandler(_hdlr)
-
-_log_file_path = os.environ.get(LOG_FILE_ENV_VAR)
-if _log_file_path is None:
-    _log_file_path = get_log_file_path()
-    os.environ[LOG_FILE_ENV_VAR] = _log_file_path
-
-_stream_handler = logging.StreamHandler(sys.stdout)
-_stream_handler.setFormatter(_formatter)
-log.addHandler(_stream_handler)
-
-_file_handler = logging.FileHandler(_log_file_path, encoding="utf-8")
-_file_handler.setFormatter(_formatter)
-log.addHandler(_file_handler)
-
-
-def set_stdout_logging_enabled(enabled: bool) -> None:
-    """Enable or disable logging to stdout by redirecting the stream handler."""
-    _stream_handler.stream = sys.stdout if enabled else NullStream()
-
-
-def info(msg, *args, **kwargs): log.info(msg, *args, **kwargs)
-def debug(msg, *args, **kwargs): log.debug(msg, *args, **kwargs)
-def warning(msg, *args, **kwargs): log.warning(msg, *args, **kwargs)
-def error(msg, *args, **kwargs): log.error(msg, *args, **kwargs)
-def critical(msg, *args, **kwargs): log.critical(msg, *args, **kwargs)
-=======
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.links import ANY_TO_LOGGER
 from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
@@ -85,7 +30,10 @@ CONTROL_MESSAGES = get_args(LoggerControl)
 
 # Log message format including timestamp with milliseconds, log level, originating
 # process, source file, function and message.
-LOG_FORMAT = "%(asctime)s.%(msecs)03d;%(levelname)s;%(processName)s;%(filename)s:%(funcName)s;%(message)s"
+LOG_FORMAT = (
+    "%(asctime)s.%(msecs)03d;%(levelname)s;%(processName)s"
+    ";%(filename)s:%(funcName)s;%(message)s"
+)
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
 # The root logger, exported so modules can keep doing `from ... import log`.
@@ -131,7 +79,7 @@ def init_logging(log_queue=None, level=DEFAULT_LOG_LEVEL):
     root = logging.getLogger()
     root.setLevel(level)
 
-    # Drop handlers if any are registered already 
+    # Drop handlers if any are registered already
     for handler in list(root.handlers):
         root.removeHandler(handler)
 
@@ -190,7 +138,7 @@ class Logger:
 
         # encoding is pinned so that a non-ASCII message does not raise
         # UnicodeEncodeError on a Windows machine with a non-UTF-8 locale.
-        # On linux we could use emojiiiiisss 
+        # On linux we could use emojiiiiisss
         self.file_handler = logging.FileHandler(log_file_path, mode="a", encoding="utf-8")
         self.file_handler.setFormatter(formatter)
 
@@ -200,7 +148,7 @@ class Logger:
     # --- Startup ---
     def start(self):
         """
-        Styarts Logger module execution by entering the main event loop, so we can communicate via queue.
+        Starts Logger module execution by entering the main event loop.
         """
         self._report(f"Logging to file: {self.log_file_path}")
         self.main_loop()
@@ -226,7 +174,7 @@ class Logger:
             # Nothing shall take the Logger down
             try:
                 self.handle_item(item)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - the logger must never die
                 self._report(f"Failed to handle queue item: {exc!r}")
 
         self.drain()
@@ -297,4 +245,3 @@ class Logger:
         Logger-internal diagnostics.
         """
         print(f"[logger] {message}", file=sys.stderr, flush=True)
->>>>>>> 04a05cd756975e2dc007fe919cc630e4191643db

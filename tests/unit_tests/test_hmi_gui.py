@@ -118,16 +118,13 @@ def result_column_texts(table):
     return [table.item(row, 2).text() for row in range(table.rowCount())]
 
 
-def test_the_gui_forces_light_mode(qapp):
-    """The GUI is designed light (the result colors are pale backgrounds with
-    dark text); until a dark palette is designed, the OS theme must not leak in."""
-    from PySide6.QtCore import Qt
+def test_theme_detection_returns_a_bool(qapp):
+    """detect_system_dark_mode is always callable and returns a bool."""
+    from pypts.hmi.gui.gui_theme import detect_system_dark_mode
 
-    from pypts.hmi.gui.gui import force_light_mode
+    result = detect_system_dark_mode(qapp)
 
-    force_light_mode(qapp)
-
-    assert qapp.styleHints().colorScheme() == Qt.ColorScheme.Light
+    assert isinstance(result, bool)
 
 
 # --------------------------------------------------------------------------
@@ -410,6 +407,7 @@ def test_run_finished_cancels_a_pending_prompt(gui):
     instance.poll_core()
 
     assert UserPromptResponse(request_id=request.request_id, choice=None) in drain(outbox)
+    # After run finishes the center returns to the idle interaction panel.
     assert instance.center.stack.currentWidget() is instance.center.idle_page
 
 

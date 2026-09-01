@@ -142,9 +142,7 @@ class Sequencer:
 
     @catch_and_report_errors()
     def run_sequence(self, sequence_name: str) -> None:
-        """
-        Start one named sequence, on a thread of its own, so it does not interfere with the main loop.
-        """
+        """Start one named sequence on a thread of its own, so the event loop keeps turning."""
         if self.sequence_is_running():
             report_problem(
                 self,
@@ -210,7 +208,7 @@ class Sequencer:
         step_results: list[StepResult] = []
         try:
             result, step_results = run_sequence_body(runtime, sequence)
-        except Exception as error:  
+        except Exception as error:  # noqa: BLE001 - step failures must not crash the sequencer
             report_error(self, error, operation="Sequencer.execute_sequence")
             result = ResultType.ERROR
         if self.stop_requested:

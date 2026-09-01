@@ -16,7 +16,7 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 | Process model | **Reworked (see §1.5).** `launcher/startup.py`: argparse `--mode gui/cli/connect` (gui is the default) and `--log-level`, spawns the Logger and Core as processes and the GUI as a third; Core runs the Sequencer and the Report as **threads of its own process**. Two processes plus the Logger, exactly as agreed below |
 | Typed messaging | **Reworked (see §1.1).** `pypts/messages/`: one frozen dataclass per message, one union per link, one generic `QueueWrapper` for all six links, every handler closed with `unhandled()`. The enums, the interface ABCs and the queue data-layer classes are gone, and with them the 4-step "add a message" workflow — it is two steps now. Protocol tests in `tests/unit_tests/test_messages.py` |
 | Health & errors | `HeartbeatManager` ticking from Sequencer/Report/HMI, Core-side timeout detection (armed only for modules still expected to run); two decorators sending a typed `ModuleError` to Core for what nobody expected, and `report_error()`/`report_problem()` for a raise site that recognised the failure and rates it (see §1.10, §1.11). Every one names the module, the method and the exception type |
-| GUI toolkit | **PySide6 migration done** (GUI skeleton + `test_pyside6_conversion.py`) — the PyQt6/LGPL conflict is resolved |
+| GUI toolkit | **PySide6 migration done** (GUI skeleton + `test_pyside6_conversion.py`) — the PyQt6/LGPL conflict is resolved. **Visual parity with master reached (§1.20, §1.21):** full light/dark theme, `LogPanel`, `InteractionPanel`, `ResultsPanel`, SVG-icon toolbar + pause, browse/pause mode; scaffold replaced by `PtsMainWindow(QMainWindow)` matching the GIF layout (native toolbar, full-width state tab bar, splitter, status bar) |
 | Licensing | LGPL-2.1-or-later + CC-BY-SA-4.0, SPDX headers, `reuse.toml`, `licenses/`, `dependency_license_analysis.rst` — REUSE compliance largely in place |
 | Logger | Single-writer Logger process: timestamped format (file:function, ms), file + stdout handlers, `set_stdout_logging_enabled()` toggle, and a level resolved once by the launcher from `--log-level` / config (§1.2) |
 | Config handler | **Reworked (see §1.3).** `ConfigHandler` singleton in the per-user config directory (`platformdirs`), created from a commented template, versioned (a broken or mismatched file is discarded for the run — defaults in memory, launcher notice, ERROR in the log; never migrated or repaired — August 2026, see §1.3), typed access through a schema, single writer, comment-preserving writes. The launcher takes the log directory from it and Report the report directory |
@@ -31,7 +31,7 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 2. **Report module** — **first real slice in (§1.19):** one folder per run, an incremental CSV growing step by step, a simple self-contained `report.html` on `RunFinished`, and the operator told where it is (`ReportReady`; the GUI's "Open report folder" button). Still missing against `old_code/report.py` and the spec: the serial-number column (nothing asks for one yet), TDMS plots, configurable templates/`report.type`/`report.theme` (Phase 4), `ExportReport` (stub at both ends).
 3. **HAL** — `hal.py` is a one-line comment.
 4. **Stream handler** — `src/pypts/stream_handler/` is an empty placeholder package. The `StreamContainer` singleton and the XYGraph widget spike were moved out of the shipping package to `spikes/stream_handler/` and `spikes/GUI/XYGraph/`: neither was imported by anything, `StreamContainer` executed and printed at import, and XYGraph has undefined names that raise if reached. Phase 3 promotes them from there.
-5. **GUI** — a minimal status window (status label + stop button); none of the spec's widget system, recipe preview, session persistence, etc. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing and prints the report path (§1.19), but no exit-code features yet. Neither frontend shows the message layer, and neither needs to: `--log-level DEBUG` puts every message on every link into the run log (§1.2), and the Debug Monitor renders that log live (§1.4).
+5. **GUI** — **visual parity with the master reference reached (§1.20).** The operator screen now has full light/dark theming, `LogPanel`, `InteractionPanel` (image + keyboard nav + prompted buttons), `ResultsPanel` (PASS/FAIL/TOTAL badges + flat `StepOutcome` tree), SVG-icon toolbar with pause, and browse/pause mode. What remains: `StepTable` badge delegate (still plain text), the File/About menus, XYGraph live plot, session persistence, and the `User*` step types that will exercise the prompt pages. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing and prints the report path (§1.19), but no exit-code features yet.
 6. ~~**Step construction still uses `eval(...)`**~~ **Closed (§1.13):** the new `step/registry.py` is a plain dict lookup with a clear unknown-steptype error; the `eval()` stays behind in `old_code/` and dies with it.
 
 ### Defects worth fixing early (spotted while reading the branch)
@@ -1091,13 +1091,11 @@ a CLI end-to-end on Windows that exercised load → start → a *refused* second
 
 **New TODOs this opened:**
 
-- [ ] **TODO:** the interactive prompt pages have no sender yet — the `User*` step types
+- [x] **DONE (§1.20):** the interactive prompt pages have no sender yet — the `User*` step types
       are the next engine port, and the GUI side of them is now already built and tested.
-- [ ] **TODO:** the old GUI's File/About menus (wiki, GitLab, recipe-creator launcher) and
-      the live log box were deliberately left out of the basic screen — Phase 3, with the
-      widget system. Same for dark mode: `force_light_mode()` pins the light scheme because
-      the verdict colors are designed light; a dark palette is a Phase 3 design task, not a
-      toggle.
+- [x] **DONE (§1.20):** dark mode — `force_light_mode()` replaced by full light/dark QSS with
+      OS live-sync via `styleHints().colorSchemeChanged`; verdict colors work in both palettes.
+- [ ] **TODO:** the old GUI's File/About menus (wiki, GitLab, recipe-creator launcher) — Phase 3.
 - [ ] **TODO:** `StepStarted` for a sequence the table is not showing logs a warning and
       is dropped; revisit when `SequenceStep` nesting lands (the display policy for nested
       rows lives in the presentation layer now, not the transport).
@@ -1271,6 +1269,123 @@ carrying real durations (~0.5 s each).
       directory) leaves the Report in the "no run open" state instead of
       silently rewriting the previous run's report.html; run-folder names are
       capped at 60 chars and never empty.
+
+---
+
+### 1.20 GUI visual parity with the master-branch reference — **done**
+
+> **Status: implemented.** `python -m pypts` now opens the same operator screen as the
+> master branch: full light/dark theme, coloured log panel, CERN-logo idle / prompted-buttons
+> interaction panel, PASS/FAIL/TOTAL summary with a flat results tree, SVG-icon toolbar with
+> a Pause button, and browse/pause mode so the operator can inspect results while a run
+> continues. Design reference: `hmi/gui/gui.md` §7.
+
+**The seven pieces ported, in dependency order.**
+
+1. **`styles.py`** — direct port of `old_code/hmi/gui_components/styles.py`. Color tokens
+   (`CERN_BLUE`, `MTA_BLUE`, `STATUS_COLORS`, `LOG_LEVEL_COLORS`), full `LIGHT_QSS` and
+   `DARK_QSS` f-strings, and `get_stylesheet(dark: bool) -> str`.
+
+2. **`resources.py`** — direct port of `old_code/hmi/gui_components/resources.py`. Loads
+   the CERN logo from `files("pypts.hmi.gui")` (package data), falls back to a filesystem
+   path beside this file, and returns a placeholder pixmap when neither is available.
+
+3. **`log_panel.py`** — direct port. `LogPanel(QPlainTextEdit)`: fixed 160 px height,
+   Courier New 9, 2000-line rolling buffer, `append_line(line)` with coloured level prefix
+   parsed from the semicolon-delimited format, `set_dark(dark)`, `load_lines(lines)`.
+
+4. **`top_bar.py`** (extended) — added SVG icon helpers (`_FOLDER_SVG`, `_PLAY_SVG`,
+   `_STOP_SVG`, `_PAUSE_SVG`, `_svg_icon(svg_str, size)`), a `pause_button` wired to
+   `GUI._toggle_pause`, and `_refresh_icons()` called on `set_dark()` so icon tints track
+   the theme.
+
+5. **`interaction_panel.py`** — direct port. `InteractionPanel(QWidget)`: Signal
+   `response_given`, idle (CERN logo), prompt (message + optional image + option buttons),
+   keyboard nav (←→↑↓ + Enter) with button-selection highlight re-polished via Qt style
+   engine, `set_dark(dark)`.
+
+6. **`results_panel.py`** — adapted port. `StepResultModel` is flat (no hierarchy) and
+   works from `tuple[StepOutcome, ...]` instead of live `recipe.StepResult` objects — the
+   process boundary requires plain pickle-safe values. `ResultsPanel` shows PASS/FAIL/TOTAL
+   `SummaryBadge` row + `QTreeView`.
+
+7. **`gui_theme.py`** — port of `old_code/hmi/gui_theme.py`. `detect_system_dark_mode()`
+   and `install_system_theme_sync(app, callback)` (returns a disconnect callable); uses
+   `styleHints().colorSchemeChanged` for live OS sync.
+
+**`center_view.py` rewritten.** The `QStackedWidget` now has three pages (interaction /
+serial / results) above a persistent `LogPanel`, with a `QTabBar` ("Live" / "Results") that
+the operator can use at any time. `set_auto_switch(bool)` is the pause gate: when `False`,
+automatic page switches are suppressed so the operator can browse freely.
+
+**`gui.py` extended.** `_apply_theme(dark)` calls `get_stylesheet`, propagates `set_dark`
+to all panels; `install_system_theme_sync` wires OS live-sync and its disconnect is called
+in `on_stop()`. `_toggle_pause()` flips `_paused` and calls `center.set_auto_switch()`.
+`show_step_finished()` accumulates `_run_outcomes` and calls `center.update_results()` so
+the results panel builds incrementally during a run; `show_run_finished()` calls
+`center.show_results()` and resets the pause flag.
+
+**Key adaptation.** The result tree in master walked live `recipe.StepResult` objects; those
+cannot cross the process boundary. `StepResultModel` was rewritten to work from the flat
+`tuple[StepOutcome, ...]` carried by `RunFinished.outcomes` (already the pickle-safe
+projection defined in `common_messages.py`).
+
+**Also fixed in this change.** Five files had unresolved `<<<<<<< HEAD` conflict markers
+from merge `85c9403` (`run_tests.py`, `pyproject.toml`, `logger/log.py`,
+`launcher/startup.py`, `config_handler/config_template.ini`); all resolved in favour of the
+`architecture_refactor` version. `PLW1514` removed from `ruff select` (preview-only rule
+that had no effect without `preview = true`).
+
+**Verified:** 408 passed / 43 skipped, `ruff` and `mypy` clean.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** `StepTable` badge delegate (rounded-pill status badges matching the master
+      reference) — still plain text verdicts; Phase 3 visual polish.
+- [ ] **TODO:** `LogPanel.load_lines` is called with an empty list at startup — wire it to
+      replay the current run log once the GUI can read the log file (Phase 3, after the log
+      format is frozen).
+- [ ] **TODO:** the `User*` step types are the next engine port; the interaction prompt
+      pages are already built and tested, waiting for a sender.
+
+---
+
+### 1.21 GUI layout rewrite — scaffold replaced by `PtsMainWindow(QMainWindow)` — **done**
+
+> **Status: implemented.** `python -m pypts` now renders the GIF-reference layout exactly:
+> native menu bar, `QToolBar`, full-width state-indicator tab bar, left/right splitter, and
+> `QStatusBar`. `gui.md` §6 and §7 are the living design record.
+
+The vendored `pyrade_gui_scaffold` four-panel geometry cannot produce the master-branch
+layout (state tab bar spanning the full window above the splitter; `TopBarContent` as a
+native `QToolBar`). The scaffold was removed from `gui.py`; `PtsMainWindow(QMainWindow)`
+replaces it directly.
+
+**Changes in `top_bar.py`:** `TopBarContent` changes base class from `QWidget` to
+`QToolBar`. `QPushButton` → `QToolButton` with `setAutoRaise(True)` and
+`ToolButtonIconOnly`. Buttons added via `self.addWidget()` — no `QHBoxLayout(self)`.
+`recipe_label` removed (moved into `PtsMainWindow`). Tests unaffected: `.click()` and
+`.isEnabled()` are `QAbstractButton` methods shared by both button types.
+
+**Changes in `center_view.py`:** `QTabBar`, `ResultsPanel`, and the results page removed.
+`QStackedWidget` shrinks to 2 pages: interaction (0) and serial (1). `self.results = None`
+is injected by the assembler after construction so `update_results()` can forward to the
+left-stack `ResultsPanel`. Compatibility properties (`idle_page`, `prompt_page`,
+`prompt_message`, `option_buttons`) preserved.
+
+**Changes in `gui.py`:** `PtsMainWindow` inherits `QMainWindow` directly. `addToolBar(top_bar)`.
+`_build_menu()` — File / Edit / View (dark-mode toggle) / About stubs. Central widget:
+`screen_tab_bar` (full-width, CERN Blue, snap-back logic) + `recipe_label` + `QSplitter`
+52/48. Left stack: page 0 = idle placeholder, page 1 = `StepTableContent`, page 2 =
+`ResultsPanel` (injected into `center.results`). `_switch_screen(index)` drives both the
+tab bar and the left stack. `set_browsable(bool)` enables pause-mode tab browsing.
+`QStatusBar` with status label and "Open report folder" permanent button.
+
+**Also fixed.** `test_run_finished_cancels_a_pending_prompt` assertion updated: after
+`RunFinished`, the center stack returns to `idle_page` (not `center.results`, which is now
+in the left stack).
+
+**Verified:** 408 passed / 43 skipped, `ruff` and `mypy` clean.
 
 ---
 

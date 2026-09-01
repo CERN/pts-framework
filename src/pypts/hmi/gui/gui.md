@@ -15,11 +15,17 @@ Read this before touching the module; the roadmap stays the authority on
 status and plan (GUI-to-spec is Phase 3; the basic recipe-execution GUI is
 groundwork laid before it).
 
-Status of the code beside this file: **the four-panel operator screen is
-built.** `gui.py` is the assembler; the panel contents are `top_bar.py`,
-`step_table.py`, `center_view.py` with `result_colors.py`, on the vendored
-scaffold in `scaffold/`. The protocol half it builds on, `hmi/hmi_client.py`,
-is complete and shared with the CLI. Roadmap section 1.15 records the rework.
+Status of the code beside this file: **the operator screen has visual parity
+with the master-branch GIF reference.** `gui.py` is the assembler;
+`PtsMainWindow(QMainWindow)` owns the native menu bar, `QToolBar`, full-width
+state-indicator tab bar, left/right `QSplitter`, and `QStatusBar`. Panel
+contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
+`step_table.py` (left stack page 1), `results_panel.py` (left stack page 2),
+`center_view.py` (`CenterContent` — interaction + serial stack, `LogPanel`).
+Styling: `styles.py` (CERN Blue tokens, full light/dark QSS) and `resources.py`
+(logo loaders). The vendored scaffold in `scaffold/` is no longer used by the
+main window (§6 below). The protocol half, `hmi/hmi_client.py`, is complete and
+shared with the CLI. Roadmap §1.15, §1.20, §1.21 record the rework.
 
 ---
 
@@ -236,57 +242,124 @@ not render yet, and the shared-protocol tests that pin all of it.
 5. **Colors — kept.** `result_colors.py`, the §2 table verbatim, keyed by
    `ResultType`.
 
-## 6. Fitting the pyrade scaffold
+## 6. The scaffold — why it was abandoned
 
-The new GUI's layout comes from `pyrade_gui_scaffold` (v1.3.0, CERN RADE,
-https://gitlab.cern.ch/rade/rade-core/utils/gui_template - the vendored port in
-`scaffold/` is the complete in-repo copy; the framework references the upstream
-repo nowhere): a
-`MainWindow(QMainWindow)` holding four `BasePanel(QFrame)` regions in nested
-drag-resizable `QSplitter`s — TopBar, LeftSidebar, CenterView, BottomBar —
-each filled once via `panel.set_content(widget)`. `BoxStyle` / `LayoutConfig`
-dataclasses configure borders and proportions. It is layout-only: no menus,
-toolbars, dialogs, threading or event plumbing, by design.
+The vendored `pyrade_gui_scaffold` (v1.3.0, PySide6 port in `scaffold/`) provided
+a four-panel `MainWindow` (TopBar / LeftSidebar / CenterView / BottomBar) via
+nested `QSplitter`s. It was the basis of §1.20 visual parity work.
 
-**The two review blockers, and how they were resolved:**
+**Why it was replaced (§1.21):** the scaffold's four-panel geometry cannot
+produce the master-branch layout: the state-indicator tab bar must span the full
+window width *above* the left/right splitter, and `TopBarContent` must be a
+native `QToolBar` (so the OS can render it correctly, add separators, etc.).
+Fitting those requirements inside the scaffold's fixed four-region grid would
+have required removing the scaffold anyway, so it was replaced outright with
+`PtsMainWindow(QMainWindow)`.
 
-- **It is PyQt6; pypts is PySide6** — deliberately (the PyQt6 GPL/LGPL
-  conflict is why the PySide6 migration happened). **Resolved: the scaffold
-  is vendored as a PySide6 port in `scaffold/` beside this file** — same
-  class names, same public API, upstream's test suite ported with it
-  (`tests/unit_tests/test_gui_scaffold.py`), full provenance in the package
-  docstring. The only structural change: upstream's five single-class
-  component files are one `panels.py`. No pip dependency on the PyQt6
-  package, ever.
-- **The template has no license** (no LICENSE, no SPDX, no pyproject license
-  field). The port went ahead on the user's decision, with attribution;
-  **clearance from the author is an open roadmap TODO** and must be settled
-  before a release.
+The scaffold code remains in `scaffold/` and its tests in
+`test_gui_scaffold.py` are preserved. The license question (no SPDX on the
+upstream template) is still an open roadmap TODO before v1.0.
 
-**The region mapping (cross-checked against §1-§2):**
+**Current `PtsMainWindow` layout:**
 
-| Panel | Content |
+| Qt element | Content |
 |---|---|
-| TopBar | recipe controls: Open, sequence dropdown, Start, Stop, recipe name label (the §2 toolbar state machine, event-driven per §5.4) |
-| LeftSidebar | the step table - UUID-keyed rows, §2 colors (`LayoutConfig` widens it; default 1:4 stretch is too narrow for it) |
-| CenterView | a `QStackedWidget` with three pages: idle (logo) → prompt (message + image + option buttons) → results |
-| BottomBar | status line (`StatusChanged`, errors) + the "Open report folder" button (dead until the first `ReportReady`, then opens `report_dir` via `QDesktopServices`); a log view later |
-| native `QMainWindow.setMenuBar()` | File/About menus - the scaffold leaves it free |
+| `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, brand label |
+| `setMenuBar` (built in `_build_menu()`) | File / Edit / View (dark mode toggle) / About stubs |
+| `screen_tab_bar` (`QTabBar`, CERN Blue bg) | Full-width state indicator: Idle \| Running \| Prompt \| Results; click snaps back unless `_browsable=True` (pause mode) |
+| `recipe_label` (`QLabel`) | "Loaded…" / "Running…" below the tab bar |
+| `QSplitter` 52/48 | left: `left_stack` (`QStackedWidget`, 3 pages); right: `CenterContent` |
+| `left_stack` page 0 | idle placeholder (CERN logo + "Open a YAML recipe…") |
+| `left_stack` page 1 | `StepTableContent` |
+| `left_stack` page 2 | `ResultsPanel` (badges + `QTreeView`) |
+| `QStatusBar` | status label (stretch=1) + "Open report folder" button (permanent) |
 
-**Integration shape:** the template's `GUIAssembler` example is exactly our
-architecture - `GUI(HmiClient)` plays the assembler: it builds the scaffold
-`MainWindow`, builds one pure-view content widget per panel (callbacks in via
-constructor, update methods out), calls `set_content()` once per panel, and
-the `show_*` hooks drive the update methods while button callbacks call
-`load_recipe()` / `start_sequence()`. The 50 ms `QTimer` poll is unchanged.
+---
 
-**The one trap:** `set_content()` *deletes* the previous widget
-(`deleteLater()`). It is an assembly-time hand-over, not a page switcher -
-page switching happens inside our own container (the `QStackedWidget`), never
-by repeated `set_content()` calls. Also keep, when porting: the `showEvent` +
-`QTimer.singleShot(0, ...)` initial-sizing pass, and
-`setChildrenCollapsible(False)` (all four regions always visible - the old
-"result tree appears at the end" becomes a CenterView page swap).
+## 7. The master-branch GUI — the visual reference for refining this module
+
+Between the old code (§1–§2) and the current `architecture_refactor` branch,
+a new GUI was built on the `master` branch that is **the visual design target**.
+A verbatim copy lives at **`src/pypts/old_code/hmi/`** (copied 2026-08-31).
+Read that code before touching any widget in this folder.
+
+### Layout (master, 1600×1000, splitter 52/48)
+
+```
+┌─ MenuBar: File · Edit · View (Toggle Dark Mode) · About ──────────────────┐
+├─ PtsToolBar: [Open] [Start] [Pause] [Stop]  ······················ pypts ─┤
+├─ Tab bar (state indicator): Idle | Running | Prompt | Results ────────────┤
+│  recipe label  ("Running XYZ..." / "Loaded recipe\nReady to start")       │
+├────────────────────────────────┬──────────────────────────────────────────┤
+│  LEFT (52%)  QStackedWidget    │  RIGHT (48%)                             │
+│   page 0 = idle placeholder    │  InteractionPanel (QFrame)               │
+│     CERN logo centred          │    image_label (≥220px, CERN logo idle)  │
+│     "Open a YAML recipe…"      │    message_label (word-wrap, hidden idle)│
+│   page 1 = StepTable           │    button_row (HBox, hidden idle)        │
+│     cols: Name(260)|Desc|Result│    keyboard nav: ←→↑↓ + Enter           │
+│     status badge delegate      ├──────────────────────────────────────────┤
+│     row highlight on Running   │  "Log Output" section label              │
+│   page 2 = ResultsPanel        │  LogPanel (Courier 9, 160px fixed height)│
+│     PASS/FAIL/TOTAL badges     │    coloured level prefixes               │
+│     QTreeView (StepResultModel)│    2000-line rolling buffer              │
+├────────────────────────────────┴──────────────────────────────────────────┤
+│  QStatusBar  ("Ready" / "Recipe running" / "Waiting for user input" / …)  │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Styling tokens (from `old_code/hmi/gui_components/styles.py`)
+
+- CERN Blue `#0033A0` — tab bar background, primary buttons
+- MTA Blue `#005BAC` — selected tab, header text
+- Full light QSS + full dark QSS; `detect_system_dark_mode()` + OS live-sync
+  (`install_system_theme_sync` via `styleHints().colorSchemeChanged`)
+- Toolbar icons: inline SVG, colour-coded (green play, red stop, orange pause)
+- Log level colours: INFO `#6abf69`, DEBUG `#6897bb`, WARNING `#FFCC80`, ERROR
+  `#F28B82`, CRITICAL `#ff7c9c`
+- StepTable status colours: same as §2 table, plus RUNNING `#DBEAFE`/`#1D4ED8`
+
+### Browse (pause) mode
+
+Pause locks the real screen index but lets the operator click tabs to browse
+the left stack (step table ↔ results) without disturbing the running recipe.
+Start resumes and restores the locked tab. `_paused` flag + tab click handler.
+
+### File layout in `old_code/hmi/` (master reference copy)
+
+| File | Owns |
+|---|---|
+| `gui.py` | `MainWindow` — assembler, screen FSM, all toolbar/menu wiring |
+| `gui_theme.py` | `detect_system_dark_mode`, `install_system_theme_sync`, `get_theme_colors`, `get_yamview_stylesheet` |
+| `gui_components/styles.py` | Color tokens, `LIGHT_QSS`, `DARK_QSS`, `get_stylesheet`, `STATUS_COLORS`, `LOG_LEVEL_COLORS` |
+| `gui_components/toolbar.py` | `PtsToolBar` — SVG icon helpers + state setters |
+| `gui_components/step_table.py` | `StepTable`, `StatusBadgeDelegate` — rounded pill badges |
+| `gui_components/log_panel.py` | `LogPanel` — coloured-prefix append, rolling buffer |
+| `gui_components/interaction_panel.py` | `InteractionPanel` — image/logo, message, button row, keyboard nav |
+| `gui_components/results_panel.py` | `ResultsPanel`, `SummaryBadge`, `StepResultModel` |
+| `gui_components/resources.py` | `load_cern_logo_pixmap`, `load_app_logo_pixmap`, `make_placeholder_pixmap` |
+| `XYGraph/XY_graph.py` | `PlotWindow`, `SignalSpawner` (pyqtgraph-based live plot) |
+| `XYGraph/StreamContainer.py` | `GlobalContainer`, `Stream` singleton registry |
+| `XYGraph/simulated_signals.py` | `Simulated_sine_wave` thread |
+
+### Gap analysis — master vs. current `hmi/gui/`
+
+| Feature | Current `hmi/gui/` | Master reference |
+|---|---|---|
+| `PtsMainWindow(QMainWindow)` GIF layout | ✓ (§1.21) | ✓ |
+| `PtsToolBar` with SVG icons + state | ✓ ported (§1.20) | ✓ full |
+| `StepTable` with badge delegate | partial port | ✓ full |
+| `LogPanel` (coloured prefixes) | ✓ ported (§1.20) | ✓ |
+| `InteractionPanel` (image/buttons/kbd) | ✓ ported (§1.20) | ✓ |
+| `ResultsPanel` (badges + tree) | ✓ ported (§1.20) | ✓ |
+| Light/dark QSS + OS theme sync | ✓ ported (§1.20) | ✓ |
+| `styles.py` colour tokens | ✓ ported (§1.20) | ✓ |
+| `resources.py` logo loader | ✓ ported (§1.20) | ✓ |
+| Browse/pause mode | ✓ ported (§1.20) | ✓ |
+| XYGraph live plot | **missing** | ✓ (spike) |
+
+Note: master's `StepResultModel` walked live `recipe.StepResult` objects —
+those can't cross the process boundary. The port adapted it to work from
+`StepOutcome` (plain values, pickle-safe) sent in `RunFinished`.
 
 ---
 

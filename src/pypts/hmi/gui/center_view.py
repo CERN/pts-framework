@@ -3,28 +3,20 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The CenterView content: the operator's focus during a run.
+The right-side content: InteractionPanel (idle / prompt / serial) + LogPanel.
 
-A QStackedWidget with three pages - idle (the logo), a prompt (message, image,
-one button per option) and a serial-number form. Page switching happens HERE,
-never through the scaffold's set_content(), which deletes what it replaces
-(gui.md section 6). The serial form is a page rather than the old modal
-dialog: a modal spins a nested event loop, which is the shape gui.md
-section 3 says not to reproduce - and a page is testable by driving widgets.
+The left side (idle placeholder / step table / results) is owned by
+PtsMainWindow and managed via _switch_screen(). This widget manages only the
+right column and the exact-once answer contract:
 
-The one invariant: **every request is answered exactly once.** A new request
-first declines the unanswered one; answering clears the pending pair *before*
-invoking the callback; and cancel_pending() (called on RunFinished) declines
-whatever is still open - so a blocked step is never stranded, whatever order
-things happen in.
+  - A new request first declines any unanswered one.
+  - Answering clears the pending pair *before* invoking the callback.
+  - cancel_pending() (called on RunFinished) declines whatever is still open.
 """
 
-import importlib.resources
 from collections.abc import Callable
-from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -35,77 +27,81 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pypts.logger.log import log
+from pypts.hmi.gui.interaction_panel import InteractionPanel
+from pypts.hmi.gui.log_panel import LogPanel
+from pypts.messages.common_messages import StepOutcome
 from pypts.messages.run_events import SerialNumberRequest, UserPromptRequest
 
-#: The logo never renders larger than this; smaller windows scale it down.
-LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT = 800, 500
-
-
-def load_logo() -> QPixmap:
-    """The CERN logo from package data, or a gray block if it is missing."""
-    try:
-        logo_file = importlib.resources.files("pypts.hmi.gui").joinpath("images/CERN_Logo.png")
-        pixmap = QPixmap()
-        pixmap.loadFromData(logo_file.read_bytes())
-        if not pixmap.isNull():
-            return pixmap.scaled(
-                LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT, Qt.AspectRatioMode.KeepAspectRatio
-            )
-    except OSError as error:
-        log.warning("CERN logo not found in package data: %s", error)
-    fallback = QPixmap(LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT)
-    fallback.fill(Qt.GlobalColor.lightGray)
-    return fallback
+_PAGE_INTERACTION = 0
+_PAGE_SERIAL = 1
 
 
 class CenterContent(QWidget):
-    """The three-page stack, and the exactly-once answer bookkeeping."""
+    """Right-side column: interaction stack (idle/prompt/serial) + log panel.
+
+    `results` is injected by the assembler (gui.py) after construction so that
+    update_results() can call set_results() on the ResultsPanel that lives in
+    the left stack.
+    """
 
     def __init__(self) -> None:
         super().__init__()
-        #: (request_id, answer_callable) of the question on screen, or None.
         self._pending: tuple[object, Callable[[str | None], None]] | None = None
-        self.option_buttons: list[QPushButton] = []
+        self._auto_switch = True
+
+        self.interaction = InteractionPanel()
+        self.interaction.response_given.connect(self._on_interaction_response)
+
+        self.serial_page = self._build_serial_page()
+
+        # results is set by gui.py after construction
+        self.results = None
 
         self.stack = QStackedWidget()
-        self.idle_page = self._build_idle_page()
-        self.prompt_page = self._build_prompt_page()
-        self.serial_page = self._build_serial_page()
-        self.stack.addWidget(self.idle_page)
-        self.stack.addWidget(self.prompt_page)
-        self.stack.addWidget(self.serial_page)
+        self.stack.addWidget(self.interaction)   # index 0
+        self.stack.addWidget(self.serial_page)   # index 1
+
+        log_label = QLabel("LOG OUTPUT")
+        log_label.setObjectName("sectionLabel")
+        self.log_panel = LogPanel()
 
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
-        column.addWidget(self.stack)
+        column.setSpacing(4)
+        column.addWidget(self.stack, stretch=1)
+        column.addWidget(log_label)
+        column.addWidget(self.log_panel)
 
-    # --- Page construction -----------------------------------------------------
+    # --- Compatibility properties for tests ------------------------------------
 
-    def _build_idle_page(self) -> QWidget:
-        page = QWidget()
-        logo = QLabel()
-        logo.setPixmap(load_logo())
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout = QVBoxLayout(page)
-        layout.addWidget(logo)
-        return page
+    @property
+    def idle_page(self):
+        return self.interaction
 
-    def _build_prompt_page(self) -> QWidget:
-        page = QWidget()
-        self.prompt_image = QLabel()
-        self.prompt_image.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prompt_message = QLabel()
-        self.prompt_message.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.prompt_message.setWordWrap(True)
-        self.button_row = QHBoxLayout()
-        layout = QVBoxLayout(page)
-        layout.addStretch()
-        layout.addWidget(self.prompt_image)
-        layout.addWidget(self.prompt_message)
-        layout.addLayout(self.button_row)
-        layout.addStretch()
-        return page
+    @property
+    def prompt_page(self):
+        return self.interaction
+
+    @property
+    def prompt_message(self):
+        return self.interaction.message_label
+
+    @property
+    def option_buttons(self):
+        return self.interaction._buttons
+
+    # --- Dark mode -------------------------------------------------------------
+
+    def set_dark(self, dark: bool) -> None:
+        self.interaction.set_dark(dark)
+        self.log_panel.set_dark(dark)
+
+    def set_auto_switch(self, auto: bool) -> None:
+        """Pause mode: False blocks interaction while operator browses freely."""
+        self._auto_switch = auto
+        self.interaction.set_interaction_blocked(not auto)
+
+    # --- Serial page -----------------------------------------------------------
 
     def _build_serial_page(self) -> QWidget:
         page = QWidget()
@@ -136,19 +132,14 @@ class CenterContent(QWidget):
     def show_prompt(
         self, request: UserPromptRequest, answer: Callable[[str | None], None]
     ) -> None:
-        """Put the question on screen; the clicked option goes to `answer`."""
-        self.cancel_pending()  # a new question declines the unanswered one
+        self.cancel_pending()
         self._pending = (request.request_id, answer)
-
-        self.prompt_message.setText(request.message)
-        self._show_prompt_image(request.image_path)
-        self._clear_option_buttons()
-        for option in request.options:
-            button = QPushButton(option)
-            button.clicked.connect(lambda checked=False, value=option: self._answer(value))
-            self.button_row.addWidget(button)
-            self.option_buttons.append(button)
-        self.stack.setCurrentWidget(self.prompt_page)
+        self.interaction.set_prompt(
+            request.message,
+            [{"label": opt, "value": opt} for opt in request.options],
+            request.image_path,
+        )
+        self.stack.setCurrentIndex(_PAGE_INTERACTION)
 
     def show_serial_request(
         self, request: SerialNumberRequest, answer: Callable[[str | None], None]
@@ -156,13 +147,25 @@ class CenterContent(QWidget):
         self.cancel_pending()
         self._pending = (request.request_id, answer)
         self.serial_input.clear()
-        self.stack.setCurrentWidget(self.serial_page)
+        self.stack.setCurrentIndex(_PAGE_SERIAL)
         self.serial_input.setFocus()
+
+    def show_idle(self) -> None:
+        self.interaction.set_idle()
+        self.stack.setCurrentIndex(_PAGE_INTERACTION)
+
+    def update_results(self, outcomes: tuple[StepOutcome, ...]) -> None:
+        """Incremental update during a run; forwarded to the left-stack ResultsPanel."""
+        if self.results is not None:
+            self.results.set_results(outcomes)
 
     def cancel_pending(self) -> None:
         """Decline whatever question is still open. Idempotent."""
         if self._pending is not None:
             self._answer(None)
+
+    def _on_interaction_response(self, value: str) -> None:
+        self._answer(value)
 
     def _serial_accepted(self) -> None:
         self._answer(self.serial_input.text().strip())
@@ -174,29 +177,5 @@ class CenterContent(QWidget):
         _request_id, answer = self._pending
         self._pending = None
         answer(value)
-        self._clear_option_buttons()
-        self.stack.setCurrentWidget(self.idle_page)
-
-    # --- Helpers ---------------------------------------------------------------
-
-    def _show_prompt_image(self, image_path: str | None) -> None:
-        if image_path and Path(image_path).is_file():
-            pixmap = QPixmap(image_path)
-            if not pixmap.isNull():
-                self.prompt_image.setPixmap(
-                    pixmap.scaled(
-                        LOGO_MAX_WIDTH, LOGO_MAX_HEIGHT, Qt.AspectRatioMode.KeepAspectRatio
-                    )
-                )
-                self.prompt_image.show()
-                return
-            log.warning("Cannot render the prompt image %s", image_path)
-        elif image_path:
-            log.warning("Prompt image not found: %s", image_path)
-        self.prompt_image.hide()
-
-    def _clear_option_buttons(self) -> None:
-        for button in self.option_buttons:
-            self.button_row.removeWidget(button)
-            button.deleteLater()
-        self.option_buttons.clear()
+        self.interaction.set_idle()
+        self.stack.setCurrentIndex(_PAGE_INTERACTION)

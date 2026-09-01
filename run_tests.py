@@ -23,16 +23,6 @@ TEST_PATHS = [
 ]
 
 if __name__ == "__main__":
-<<<<<<< HEAD
-    exit_code = pytest.main([
-        "-s",
-        "-v",
-        "--color=yes",
-        "unit_tests/unit_tests",
-        "unit_tests/functional_tests"
-    ])
-    exit(exit_code)
-=======
     missing = [path for path in TEST_PATHS if not path.is_dir()]
     if missing:
         print("Test directories not found:", file=sys.stderr)
@@ -44,4 +34,3 @@ if __name__ == "__main__":
     # suite runs the same way from anywhere.
     args = ["-s", "-v", "--color=yes", *(str(path) for path in TEST_PATHS), *sys.argv[1:]]
     sys.exit(pytest.main(args))
->>>>>>> 04a05cd756975e2dc007fe919cc630e4191643db

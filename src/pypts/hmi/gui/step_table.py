@@ -29,6 +29,9 @@ from pypts.logger.log import log
 from pypts.messages.common_messages import StepOutcome
 from pypts.messages.run_events import SequenceSummary, StepStarted
 
+_PENDING_COLORS = ("#E8EAF0", "#555555")
+_RUNNING_COLORS = ("#DBEAFE", "#1D4ED8")
+
 
 def read_only(item: QTableWidgetItem) -> QTableWidgetItem:
     item.setFlags(item.flags() ^ Qt.ItemFlag.ItemIsEditable)
@@ -85,6 +88,8 @@ class StepTableContent(QWidget):
         font = item.font()
         font.setBold(True)
         item.setFont(font)
+        item.setBackground(QColor(_RUNNING_COLORS[0]))
+        item.setForeground(QColor(_RUNNING_COLORS[1]))
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, 2, item)
         self.table.scrollToItem(
@@ -106,6 +111,8 @@ class StepTableContent(QWidget):
 
     def _pending_item(self) -> QTableWidgetItem:
         item = read_only(QTableWidgetItem("Pending"))
+        item.setBackground(QColor(_PENDING_COLORS[0]))
+        item.setForeground(QColor(_PENDING_COLORS[1]))
         item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         return item
 
