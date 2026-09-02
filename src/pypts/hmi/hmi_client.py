@@ -204,7 +204,7 @@ class HmiClient:
     # Every one of these is the *receiving* end of an event CORE, the Sequencer
     # or the Report has already written to the run log in the operator's words.
     # Logging them again at INFO would say the same thing three times in three
-    # registers, so they trace at DEBUG instead - logger.md section 5. The
+    # registers, so they trace at DEBUG instead - logging_rules.md section 5. The
     # operator loses nothing: the GUI panel is fed from the log file, not from
     # this process's own records.
 

@@ -52,6 +52,107 @@ if TYPE_CHECKING:
     from pypts.recipe.recipe import Sequence
 
 
+#: Longest one value may be where it is rendered into a failure reason. A step
+#: is free to return a 40 kB string, and the reason travels into the log, the
+#: step table's tooltip and a CSV cell - none of which is improved by it.
+MAX_VALUE_CHARS = 80
+
+
+def render_value(value: Any) -> str:
+    """
+    One value as the operator reads it in a failure reason.
+
+    Strings are quoted, so trailing whitespace and an empty answer are visible
+    rather than being mistaken for a missing value; everything else is written
+    plainly, because `4.2` is what the technician measured and `4.2` is what
+    they should see.
+    """
+    if isinstance(value, str):
+        text = "'" + value + "'"
+    else:
+        text = str(value)
+    if len(text) > MAX_VALUE_CHARS:
+        text = text[: MAX_VALUE_CHARS - 3] + "..."
+    return text
+
+
+def describe_failed_check(output_name: str, output_config: dict[str, Any], value: Any) -> str:
+    """
+    Why one output check did not pass: what was measured, and what was wanted.
+
+    Args:
+        output_name: the key in the step's `outputs` mapping.
+        output_config: that key's configuration, which carries the expectation.
+        value: what the step actually returned for it.
+
+    Returns:
+        A phrase like `voltage = 4.2, expected between 4.9 and 5.1`. No closing
+        full stop: the caller joins several of these.
+    """
+    measured = f"{output_name} = {render_value(value)}"
+    match output_config["type"]:
+        case "passfail":
+            return f"{measured}, expected a pass"
+        case "equals":
+            return f"{measured}, expected {render_value(output_config['value'])}"
+        case "range":
+            return f"{measured}, expected between {output_config['min']} and {output_config['max']}"
+        case _:
+            # Only the three judging types can fail, so nothing should reach
+            # here - but a reason that names the value is still better than
+            # one that raises while explaining a failure.
+            return measured
+
+
+def last_line(step_result: "StepResult") -> str:
+    """
+    The exception and its message, off the end of a stored traceback.
+
+    A traceback's last line is `ValueError: the instrument did not answer`,
+    which is the most useful thing that can be said about an unexpected
+    failure without showing the operator a stack.
+    """
+    text = step_result.error_info.strip()
+    if not text:
+        return "no reason was recorded"
+    return text.splitlines()[-1].strip()
+
+
+def describe_values(label: str, values: dict[str, Any]) -> str:
+    """`label: name = value, name = value`, or "" when there is nothing to show."""
+    if not values:
+        return ""
+    pairs = ", ".join(f"{name} = {render_value(value)}" for name, value in values.items())
+    return f"{label}: {pairs}"
+
+
+def build_fail_reason(
+    failures: list[str], step_input: dict[str, Any], step_output: dict[str, Any]
+) -> str:
+    """
+    The whole sentence after `FAIL (1.1 s) - `.
+
+    The failing checks first, because that is the question being answered, then
+    the inputs the step was given and the outputs it produced - the two things
+    a technician needs to tell a bad unit from a bad test setup, and the two
+    things they would otherwise have to open the report to find.
+
+    Returns:
+        `voltage = 4.2, expected between 4.9 and 5.1; inputs: channel = 1;
+        outputs: voltage = 4.2, temperature = 31.5.` Empty when there is
+        genuinely nothing to say, so the caller can leave the line at the
+        duration rather than printing a bare dash.
+    """
+    parts = [failure for failure in failures if failure]
+    for label, values in (("inputs", step_input), ("outputs", step_output)):
+        described = describe_values(label, values)
+        if described:
+            parts.append(described)
+    if not parts:
+        return ""
+    return "; ".join(parts) + "."
+
+
 class StepResult:
     """
     What one step execution produced: verdict, data, and the error if any.
@@ -74,12 +175,27 @@ class StepResult:
         self.subresults: list[StepResult] = []
 
     def set_result(
-        self, result_type: ResultType, inputs: dict[str, Any], outputs: dict[str, Any]
+        self,
+        result_type: ResultType,
+        inputs: dict[str, Any],
+        outputs: dict[str, Any],
+        reason: str = "",
     ) -> None:
-        """Normal completion: the judged verdict plus what went in and came out."""
+        """
+        Normal completion: the judged verdict plus what went in and came out.
+
+        `reason` is the operator's answer to "why does this say FAIL" - which
+        check failed, what was measured, what was expected, and the inputs and
+        outputs around it. It is written to `error_info` for the same reason
+        set_skip() writes its reason there: that is the field the step table's
+        tooltip, the CLI's step line and the report's CSV already read, so one
+        sentence reaches all four places and the log.
+        """
         self.result = result_type
         self.inputs = inputs
         self.outputs = outputs
+        if reason:
+            self.error_info = reason
 
     def set_error(self, error_info: str, inputs: dict[str, Any]) -> None:
         """The step raised: verdict ERROR, keep the traceback text."""
@@ -212,7 +328,12 @@ class Step:
 
     # --- output judging and storing --------------------------------------------
 
-    def process_outputs(self, runtime: Runtime, step_output: dict[str, Any]) -> ResultType:
+    def process_outputs(
+        self,
+        runtime: Runtime,
+        step_output: dict[str, Any],
+        failures: list[str] | None = None,
+    ) -> ResultType:
         """
         Judge and store the step's outputs; return the verdict.
 
@@ -225,23 +346,39 @@ class Step:
         When several entries judge, the last one wins - kept as-is from the
         old engine for parity during the port.
         TODO(roadmap): revisit last-wins vs "all checks must pass" (F6).
+
+        Args:
+            failures: if given, one sentence is appended for every check that
+                did not pass - `read_voltage = 4.2, expected between 4.9 and
+                5.1`. An out-parameter rather than a second return value
+                because the verdict is this method's contract and the callers
+                that only want the verdict, tests included, should not have to
+                unpack a tuple to get it. `run()` is the one caller that
+                passes a list.
+
+                Every failing check is described, even where last-wins leaves
+                the verdict PASS. `run()` only uses the list when the final
+                verdict is FAIL, so F6 shows through in the verdict and never
+                in a contradictory sentence beside it.
         """
         verdict = ResultType.DONE
         for output_name, output_config in self.outputs.items():
             output_type = output_config["type"]
+            passed = True
             match output_type:
                 case "pass":
                     verdict = ResultType.DONE
                 case "passfail":
-                    verdict = ResultType.PASS if step_output[output_name] else ResultType.FAIL
+                    passed = bool(step_output[output_name])
+                    verdict = ResultType.PASS if passed else ResultType.FAIL
                 case "equals":
-                    matches = step_output[output_name] == output_config["value"]
-                    verdict = ResultType.PASS if matches else ResultType.FAIL
+                    passed = step_output[output_name] == output_config["value"]
+                    verdict = ResultType.PASS if passed else ResultType.FAIL
                 case "range":
                     low = float(output_config["min"])
                     high = float(output_config["max"])
-                    in_range = low <= float(step_output[output_name]) <= high
-                    verdict = ResultType.PASS if in_range else ResultType.FAIL
+                    passed = low <= float(step_output[output_name]) <= high
+                    verdict = ResultType.PASS if passed else ResultType.FAIL
                 case "global":
                     runtime.set_global(output_config["global_name"], step_output[output_name])
                 case _:
@@ -249,6 +386,12 @@ class Step:
                         f"Step '{self.name}': unknown output type {output_type!r} "
                         f"for output '{output_name}'"
                     )
+            if failures is not None and not passed:
+                failures.append(
+                    describe_failed_check(
+                        output_name, output_config, step_output[output_name]
+                    )
+                )
         return verdict
 
     # --- the lifecycle ---------------------------------------------------------
@@ -290,8 +433,16 @@ class Step:
                     step_output = raw_output
                 else:
                     step_output = {"output": raw_output}
-                verdict = self.process_outputs(runtime, step_output)
-                step_result.set_result(verdict, step_input, step_output)
+                failures: list[str] = []
+                verdict = self.process_outputs(runtime, step_output, failures)
+                # Only on FAIL: on any other verdict a failing check either did
+                # not decide the outcome (F6, last-wins) or there is nothing to
+                # explain, and a reason beside a PASS would contradict it.
+                if verdict is ResultType.FAIL:
+                    reason = build_fail_reason(failures, step_input, step_output)
+                else:
+                    reason = ""
+                step_result.set_result(verdict, step_input, step_output, reason)
 
         duration_s = time.perf_counter() - work_began
         runtime.emit(StepFinished(outcome=step_result.to_outcome()))
@@ -439,7 +590,7 @@ def log_step_outcome(
     Write the operator's line for one finished step, and the developer's under it.
 
     Kept out of run_steps() so the policy loop there stays about policy. The
-    rules are logger.md sections 2.1 and 7: a FAIL is an ordinary test result
+    rules are logging_rules.md sections 2.1 and 7: a FAIL is an ordinary test result
     and logs at INFO, only a step that could not run at all is an ERROR, and
     its traceback stays at DEBUG.
 
@@ -460,11 +611,18 @@ def log_step_outcome(
         reason = step_result.error_info or "marked to skip in the recipe."
         log.info("%s SKIP - %s", where, reason)
     elif verdict is ResultType.ERROR:
-        log.error("%s could not run (%.1f s).", where, duration_s)
+        # error_info is the whole traceback here. Its last line is the
+        # exception and its message - the 'raw text' half of the operator's
+        # sentence - and the rest of it belongs at DEBUG and nowhere else.
+        log.error(
+            "%s could not run (%.1f s): %s", where, duration_s, last_line(step_result)
+        )
         if step_result.error_info:
             log.debug(
                 "Traceback for the failure in step '%s':\n%s", step.name, step_result.error_info
             )
+    elif verdict is ResultType.FAIL and step_result.error_info:
+        log.info("%s FAIL (%.1f s) - %s", where, duration_s, step_result.error_info)
     else:
         log.info("%s %s (%.1f s).", where, verdict.name, duration_s)
 

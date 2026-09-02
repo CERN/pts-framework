@@ -14,7 +14,7 @@ It is the authority on wording. A line anywhere in `src/pypts/` that disagrees w
 is a defect in the line, not in the file. The roadmap stays the authority on status and plan
 and wins where they overlap.
 
-Agreed 2026-09-02; the sweep that applied it across the code is roadmap §1.23.
+Agreed 2026-09-02; the sweep that applied it across the code is roadmap §1.35.
 
 ---
 
@@ -191,13 +191,37 @@ Notes on that shape:
 
 ### 6.1 The reason on a FAIL line
 
-There is none yet, and the line does not invent one. `StepResult` carries `error_info`, but
-that is only set when a step *raises* — so it appears on an `ERROR` verdict, not on a `FAIL`.
-Where it is present it is appended (`FAIL (1.1 s) - <error_info>`); where it is not, the line
-stops after the duration.
+A `FAIL` line says **which check failed, what was measured, what was expected, and the inputs
+and outputs around it** — the four things a technician needs to tell a bad unit from a bad test
+setup without opening the report:
 
-A proper operator-facing `reason` on `StepResult`, filled in by whatever judged the step, is
-the fix. It is a TODO in the roadmap, not part of this convention.
+```
+Step 4/12 'read_voltage' FAIL (1.1 s) - voltage = 4.2, expected between 4.9 and 5.1;
+    inputs: channel = 1; outputs: voltage = 4.2, temperature = 31.5.
+Step 5/12 'check_led'    FAIL (0.3 s) - led_on = False, expected a pass; outputs: led_on = False.
+Step 6/12 'check_serial' FAIL (0.1 s) - serial = 'ABC ', expected 'XYZ'; outputs: serial = 'ABC '.
+```
+
+Built by `build_fail_reason()` in `step/step.py` from the failing checks
+`process_outputs()` collected, and written to `StepResult.error_info` — the field
+`set_skip()` already used for the same purpose. So one sentence reaches the log, the step
+table's tooltip, the CLI's step line and the report's CSV, rather than four places inventing
+four wordings.
+
+Three rules it follows:
+
+- **Strings are quoted, everything else is not.** `'ABC '` and `'ABC'` are a support call
+  apart and identical unquoted; `4.2` is what the technician measured and what they should
+  read.
+- **A value is truncated at `MAX_VALUE_CHARS` (80).** A step may return 40 kB, and neither a
+  log line, a tooltip nor a CSV cell is improved by carrying it.
+- **A reason appears only on `FAIL`.** Where last-wins (F6) leaves a failing check beside a
+  `PASS` verdict, the check is still described into the list but the list is discarded — a
+  reason printed next to a PASS would contradict it.
+
+An `ERROR` verdict is different: `error_info` is the traceback, so the operator's line carries
+its **last line only** — `TimeoutError: the instrument did not answer` — and the stack stays at
+DEBUG.
 
 ---
 

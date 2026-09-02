@@ -78,7 +78,7 @@ STOPPED_TYPES = {
 #: Both are DEBUG lines, which costs nothing: the Monitor has only ever had
 #: something to show on a DEBUG run. CORE's operator-facing sentences about the
 #: same two events name the module in plain language ("The test engine has
-#: stopped responding") and cannot be parsed for a name - logger.md section 7.1.
+#: stopped responding") and cannot be parsed for a name - logging_rules.md section 7.1.
 TIMEOUT_PREFIX = "Heartbeat timeout for module: "
 RESPONDING_PREFIX = "Module is responding again: "
 

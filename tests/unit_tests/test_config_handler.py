@@ -623,7 +623,7 @@ def test_the_value_dump_is_debug_only(config, caplog):
     So is the "loaded from ... structure version N, M sections" line: every
     process that reads the configuration replays it, so at INFO the operator
     would be told it once per process, about a file they never open. An
-    ordinary load says nothing at INFO at all - logger.md section 1.
+    ordinary load says nothing at INFO at all - logging_rules.md section 1.
     """
     ConfigHandler.reset_for_testing()
     handler = _bootstrap_before_logging()

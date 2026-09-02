@@ -226,7 +226,7 @@ class Report:
         self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=list(self.columns))
         self.csv_writer.writeheader()
         self.csv_file.flush()
-        # One of the three paths logger.md keeps at INFO: the operator has to
+        # One of the three paths logging_rules.md keeps at INFO: the operator has to
         # be able to find the run's files without asking anyone.
         log.info("Results will be written to: %s", self.run_dir)
         log.debug("The run's CSV is %s with columns %s.", csv_path, ", ".join(self.columns))

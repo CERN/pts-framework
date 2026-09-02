@@ -476,7 +476,7 @@ class GUI(HmiClient):
 
     def show_status(self, text: str) -> None:
         # The status bar is a display, not a record. Whatever it is showing was
-        # already logged by the module the fact belongs to - logger.md section 5.
+        # already logged by the module the fact belongs to - logging_rules.md section 5.
         log.debug("Status line: %s", text)
         self.status_label.setText(f"Status: {text}")
 

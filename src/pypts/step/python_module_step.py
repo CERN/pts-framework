@@ -110,7 +110,7 @@ class PythonModuleStep(Step):
         method = getattr(module, str(self.method_name))
         # The call itself is the developer's business: the operator already has
         # the step's own started/finished lines around it, and the argument
-        # values are exactly the kind of internals logger.md keeps at DEBUG.
+        # values are exactly the kind of internals logging_rules.md keeps at DEBUG.
         log.debug("Calling %s.%s(%r).", self.module, self.method_name, step_input)
         result = method(**step_input)
         log.debug("%s.%s returned %r.", self.module, self.method_name, result)

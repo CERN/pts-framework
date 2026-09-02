@@ -102,7 +102,7 @@ from pypts.utilities.heartbeat_manager import (
 
 #: What the operator is told each module is. The names above are the protocol's
 #: own words and belong in the DEBUG trace; anything at INFO or above is read by
-#: a technician, who has no reason to know what a "sequencer" is. See logger.md.
+#: a technician, who has no reason to know what a "sequencer" is. See logging_rules.md.
 FRIENDLY_MODULE_NAME = {
     HMI: "operator interface",
     SEQUENCER: "test engine",
@@ -528,7 +528,7 @@ class Core:
             )
         )
         # The file name rather than the whole path: the operator picked the file
-        # and knows where it is, and logger.md keeps the paths at INFO down to
+        # and knows where it is, and logging_rules.md keeps the paths at INFO down to
         # the three they actually need - the run log, the run folder and the
         # report. The full path is on the DEBUG line at the top of this method.
         log.info(
@@ -591,7 +591,7 @@ class Core:
         operator. CORE deciding what reaches the frontend is what keeps the
         runtime log readable during a long run.
 
-        Two records, per logger.md section 7: one the operator can read, naming
+        Two records, per logging_rules.md section 7: one the operator can read, naming
         the part of the software that failed and what it said, and one at DEBUG
         naming the method and the exception type, with the traceback under it.
         The traceback never appears above DEBUG - in the operator's panel it
@@ -657,7 +657,7 @@ class Core:
                 continue
             if now - last_seen > HEARTBEAT_TIMEOUT_S and not self.heartbeat_lost[name]:
                 # The one liveness fact the operator is told, and it is told
-                # without the mechanism - logger.md section 7.1. Everything
+                # without the mechanism - logging_rules.md section 7.1. Everything
                 # measurable about it is on the DEBUG line under it.
                 log.warning("The %s has stopped responding.", FRIENDLY_MODULE_NAME[name])
                 # Machine-read: the Debug Monitor's liveness tab matches this

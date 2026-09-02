@@ -2354,8 +2354,8 @@ now an unknown key, and a recipe that writes it gets a `RecipeError` naming it.
 ### 1.35 Two registers in the log: the technician's and the developer's — **done**
 
 > **Status: implemented (2026-09-02).** A sweep over every logging call outside `old_code/`,
-> plus a new module context file, `src/pypts/logger/logger.md`, which is now the authority on
-> what a log line says and at which level.
+> plus a new module context file, `src/pypts/logger/logging_rules.md`, which is now the authority
+> on what a log line says and at which level.
 
 **The problem.** The run log had one register and it was the developer's. `Starting module.`
 did not say *which* module — and could not, because `LOG_FORMAT` uses `%(processName)s`, so
@@ -2374,7 +2374,7 @@ sentences for one step finishing, in four different wordings.
 > Everything developer-facing is DEBUG.**
 
 If a line needs the words queue, thread, message, handler, callback, `None`, a class name or a
-`repr()`, it is a DEBUG line. `logger.md` holds the whole convention; `CLAUDE.md` §Code style
+`repr()`, it is a DEBUG line. `logging_rules.md` holds the whole convention; `CLAUDE.md` §Code style
 now points at it.
 
 **What changed, by decision:**
@@ -2405,7 +2405,7 @@ now points at it.
   heartbeat emission. The log-tail exclusion is not taste: that timer reads the file the
   process writes to.
 
-**The run now reads as a story** (`logger.md` §6 holds the full sample):
+**The run now reads as a story** (`logging_rules.md` §6 holds the full sample):
 
 ```
 PyPTS 0.2.2 started in GUI mode.
@@ -2448,22 +2448,41 @@ takes the rest of the line as the module name. Rewording them for the operator b
 silently: the verdict column would have gone blank with nothing to say why. Both survive as
 **DEBUG** lines carrying nothing but the module name, with a comment in `core.py` saying why
 they are shaped that way and a note in `liveness.py` recording the near miss. They are the one
-sanctioned exception to the full-stop rule in `logger.md` §3.
+sanctioned exception to the full-stop rule in `logging_rules.md` §3.
 
-- [ ] **TODO:** `StepResult` has no operator-facing **reason** for a `FAIL`. `error_info` only
-      carries a traceback, and only when a step *raises*, so it appears on an `ERROR` verdict
-      and not on a `FAIL`. The log line therefore stops after the duration —
-      `Step 4/12 'read_voltage' FAIL (1.1 s).` — where it should be able to say
-      *measured 4.2 V, expected 5.0 V +/- 0.1 V*. The fix is a `reason` field set by whatever
-      judges the step in `Step.process_outputs()`, carried on `StepOutcome` so the report and
-      the step table can show it too. Deliberately out of the logging sweep: it is a change to
-      the execution layer's data, not to its wording.
+- [x] **DONE (2026-09-02, same session):** a `FAIL` now says **why**, with the inputs and the
+      outputs. `Step.process_outputs()` takes an optional `failures` list and appends one
+      sentence per check that did not pass; `build_fail_reason()` joins them with the step's
+      inputs and outputs; `set_result()` writes the result to `error_info`, the field
+      `set_skip()` already used for the same purpose — so one sentence reaches the log, the
+      step table's tooltip, the CLI's step line and the report's CSV instead of four places
+      inventing four wordings.
+
+      ```
+      Step 4/12 'read_voltage' FAIL (1.1 s) - voltage = 4.2, expected between 4.9 and 5.1;
+          inputs: channel = 1; outputs: voltage = 4.2, temperature = 31.5.
+      Step 6/12 'check_serial' FAIL (0.1 s) - serial = 'ABC ', expected 'XYZ'; outputs: serial = 'ABC '.
+      ```
+
+      Strings are quoted so a trailing space is visible; a value is truncated at
+      `MAX_VALUE_CHARS = 80` so a step returning 40 kB cannot fill a CSV cell with it. An
+      `ERROR` verdict takes the **last line** of its stored traceback instead —
+      `TimeoutError: the instrument did not answer` — and the stack stays at DEBUG.
+
+      **F6 is untouched.** Every failing check is described, including the ones last-wins
+      overrides, but the list is only used when the final verdict is `FAIL`, so a reason can
+      never be printed beside a `PASS` and contradict it. `test_step.py` pins both halves.
 - [ ] **TODO:** Nothing mechanically enforces the convention. `ruff`'s `G004` catches an
-      f-string in a log call and that is all there is; the rest is `logger.md` and reading it.
+      f-string in a log call and that is all there is; the rest is `logging_rules.md` and reading it.
       A lint rule or a test that greps INFO-and-above format strings for the banned vocabulary
       would close it, and would have caught the four duplicated event lines on its own.
 
-**Verified:** `pytest tests` green, `ruff check src tests` clean, `mypy` clean.
+**Naming.** The convention lives in `src/pypts/logger/logging_rules.md` — named for what it
+is rather than for the module it sits in, because it is read far more often than `log.py`
+is edited.
+
+**Verified:** `pytest tests` green, `ruff check src tests` clean, `mypy` clean, plus a real
+`--mode cli --log-level DEBUG` run read back from its log file: 205 lines, 27 of them INFO.
 
 ---
 

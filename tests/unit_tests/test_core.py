@@ -270,7 +270,7 @@ def test_a_module_error_is_logged_naming_the_method_and_shown_to_the_operator(ca
     The operator's line names the part of the software in plain words and says
     what it reported; the DEBUG line beside it names the *method*, because
     `source` alone says "pypts.sequencer.sequencer" and a module has twenty
-    methods. See logger.md section 7.
+    methods. See logging_rules.md section 7.
     """
     from pypts.messages.common_messages import ErrorSeverity, ModuleError
     from pypts.messages.core_hmi_communication import ModuleErrorReported

@@ -30,7 +30,15 @@ from pypts.messages.run_events import (
 from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
-from pypts.step.step import Step, StepResult, run_sequence
+from pypts.step.step import (
+    MAX_VALUE_CHARS,
+    Step,
+    StepResult,
+    build_fail_reason,
+    describe_failed_check,
+    render_value,
+    run_sequence,
+)
 from pypts.step.user_interaction_step import UserInteractionStep
 from pypts.step.user_write_step import UserWriteStep
 from pypts.step.wait_step import WaitStep
@@ -242,6 +250,121 @@ def test_the_last_judging_entry_wins():
 def test_an_unknown_output_type_is_refused():
     with pytest.raises(ValueError, match="telepathy"):
         judge({"x": {"type": "telepathy"}}, {"x": 1})
+
+
+# --------------------------------------------------------------------------
+# Why a step says FAIL
+# --------------------------------------------------------------------------
+
+
+def test_a_failed_check_says_what_was_measured_and_what_was_expected():
+    """The three judging types each explain themselves in the operator's words."""
+    assert describe_failed_check(
+        "voltage", {"type": "range", "min": "4.9", "max": "5.1"}, 4.2
+    ) == "voltage = 4.2, expected between 4.9 and 5.1"
+    assert describe_failed_check("led_on", {"type": "passfail"}, False) == (
+        "led_on = False, expected a pass"
+    )
+    assert describe_failed_check(
+        "serial", {"type": "equals", "value": "XYZ"}, "ABC"
+    ) == "serial = 'ABC', expected 'XYZ'"
+
+
+def test_a_string_value_is_quoted_so_whitespace_is_visible():
+    """'ABC ' and 'ABC' are a support call apart; unquoted they look identical."""
+    assert render_value("ABC ") == "'ABC '"
+    assert render_value("") == "''"
+    assert render_value(4.2) == "4.2"
+
+
+def test_a_huge_value_is_truncated():
+    """A step may return 40 kB. The log, a tooltip and a CSV cell are not
+    improved by carrying it."""
+    rendered = render_value("x" * 500)
+    assert len(rendered) == MAX_VALUE_CHARS
+    assert rendered.endswith("...")
+
+
+def test_the_reason_carries_the_failing_check_then_the_inputs_and_outputs():
+    reason = build_fail_reason(
+        ["voltage = 4.2, expected between 4.9 and 5.1"],
+        {"channel": 1},
+        {"voltage": 4.2, "temperature": 31.5},
+    )
+    assert reason == (
+        "voltage = 4.2, expected between 4.9 and 5.1; "
+        "inputs: channel = 1; "
+        "outputs: voltage = 4.2, temperature = 31.5."
+    )
+
+
+def test_a_step_with_no_inputs_says_nothing_about_them():
+    reason = build_fail_reason(["v = 1, expected a pass"], {}, {"v": 1})
+    assert reason == "v = 1, expected a pass; outputs: v = 1."
+
+
+def test_a_failing_step_records_the_reason_on_its_result():
+    """End to end through run(): the reason is on error_info, so it reaches the
+    step table's tooltip, the CLI's step line and the report's CSV as well as
+    the log."""
+    step = ReturnsDict(
+        step_name="read_voltage",
+        payload={"voltage": 4.2},
+        inputs={"channel": 1},
+        outputs={"voltage": {"type": "range", "min": "4.9", "max": "5.1"}},
+    )
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.FAIL
+    assert result.error_info == (
+        "voltage = 4.2, expected between 4.9 and 5.1; "
+        "inputs: channel = 1; outputs: voltage = 4.2."
+    )
+    # to_outcome() is the projection the frontend and the Report receive.
+    assert result.to_outcome().error_info == result.error_info
+
+
+def test_a_passing_step_records_no_reason():
+    """A reason beside a PASS would contradict it."""
+    step = ReturnsDict(
+        step_name="ok", payload={"v": 5.0},
+        outputs={"v": {"type": "range", "min": "4.9", "max": "5.1"}},
+    )
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.PASS
+    assert result.error_info == ""
+
+
+def test_last_wins_leaves_no_reason_beside_a_pass():
+    """F6 is unchanged: a fail-then-pass mapping still reports PASS. The point
+    here is that it does not report PASS with a failure written beside it."""
+    step = ReturnsDict(
+        step_name="mixed",
+        payload={"first": False, "second": True},
+        outputs={"first": {"type": "passfail"}, "second": {"type": "passfail"}},
+    )
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.PASS
+    assert result.error_info == ""
+
+
+def test_process_outputs_collects_every_failing_check():
+    """The out-parameter describes them all, even the ones last-wins overrode."""
+    failures = []
+    step = ReturnsDict(
+        step_name="mixed",
+        outputs={"first": {"type": "passfail"}, "second": {"type": "passfail"}},
+    )
+
+    verdict = step.process_outputs(Runtime(), {"first": False, "second": True}, failures)
+
+    assert verdict is ResultType.PASS
+    assert failures == ["first = False, expected a pass"]
 
 
 # --------------------------------------------------------------------------

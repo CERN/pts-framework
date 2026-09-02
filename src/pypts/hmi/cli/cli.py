@@ -141,7 +141,7 @@ class CLI(HmiClient):
     def show_error(self, error: ModuleError) -> None:
         # CORE has already written this failure to the run log in the
         # operator's words; the CLI's job here is the console, not a second
-        # copy of the record - logger.md section 5.
+        # copy of the record - logging_rules.md section 5.
         log.debug("Error received from %s: %s", error.source, error.message)
         print(f"ERROR [{error.source}] {error.message}")
 

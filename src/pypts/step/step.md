@@ -358,7 +358,14 @@ not details:
   word those lines start with, so a teardown step reads `Teardown step 1/2 'power_off'`
   rather than as a second step 1; it changes nothing about how a step is run. A `FAIL` logs
   at INFO - a failing DUT is a test result, not a software fault - and only a step that could
-  not run at all writes an `ERROR`. `logger/logger.md` is the authority on all of this.
+  not run at all writes an `ERROR`. `logger/logging_rules.md` is the authority on all of this.
+- **A `FAIL` says why.** `process_outputs()` takes an optional `failures` list and appends one
+  sentence per check that did not pass (`voltage = 4.2, expected between 4.9 and 5.1`);
+  `build_fail_reason()` joins those with the step's inputs and outputs, and `set_result()`
+  stores the sentence on `error_info` - the same field `set_skip()` uses, so it reaches the
+  step table's tooltip, the CLI and the report's CSV as well as the log. The list is only used
+  when the verdict is `FAIL`, so last-wins (F6) can never leave a failure written beside a
+  `PASS`.
 - **Per step and nowhere else.** No header field, no `globals.continue_on_error`. Those two
   were F1 (the header form was inert, and four of five example recipes used it) and F8 (the
   global form overrode everything and otherwise leaked forward from whichever step last

@@ -190,7 +190,7 @@ def main() -> None:
 
         # The first three lines of every run log: what this is, who ran it,
         # and where the file they are reading lives. A log taken out of context
-        # for a support ticket still answers all three - logger.md section 6.
+        # for a support ticket still answers all three - logging_rules.md section 6.
         log.info("PyPTS %s started in %s mode.", __version__, args.mode.upper())
         log.info("Started by %s on %s.", describe_operator(), platform.node() or "an unknown host")
         log.info("Run log: %s", log_file_path)

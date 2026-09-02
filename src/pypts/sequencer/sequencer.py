@@ -138,7 +138,7 @@ class Sequencer:
     def take_recipe(self, recipe: Recipe) -> None:
         """Store the validated recipe subsequent RunSequence commands run."""
         self.recipe = recipe
-        # CORE owns the operator's "Recipe ... loaded" line (logger.md section
+        # CORE owns the operator's "Recipe ... loaded" line (logging_rules.md section
         # 5); this is the receiving half of it and belongs at DEBUG.
         log.debug(
             "Sequencer received recipe '%s' v%s with sequences: %s.",
@@ -259,7 +259,7 @@ class Sequencer:
         Three records rather than one multi-line record: each then carries its
         own timestamp, and neither the GUI's log panel nor the Debug Monitor
         has to treat the second and third as continuations of a traceback.
-        See logger.md section 6.
+        See logging_rules.md section 6.
 
         Args:
             sequence_name: the sequence that was run.

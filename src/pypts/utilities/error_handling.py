@@ -56,7 +56,7 @@ one thing worth keeping: what actually went wrong.
 
 Nothing here writes the operator's line: the ModuleError goes to CORE, and CORE
 logs it as two records - one the operator can read, one at DEBUG with the
-traceback (logger.md section 7). The only exception is the fallback below, for
+traceback (logging_rules.md section 7). The only exception is the fallback below, for
 an object with no outbox, which has to write both records itself because there
 is nobody to send them to.
 
