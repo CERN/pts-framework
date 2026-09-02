@@ -114,6 +114,11 @@ Two globals are special:
 
 - `serial_number` — **injected by the engine** at run start (`recipe.py:482-485`), either from
   the caller or by prompting the operator. Do not declare it; do rely on it.
+  **Ported deliberately differently** (2026-09-02): the new engine injects nothing and asks
+  nothing. A recipe captures it with a `UserWrite` step named `get_serial_number` and stores
+  it in the `serial_number` global itself; the header's `report_metadata` is what makes the
+  Report pick it up. See `best_practices.md` §1 and `step/step.md` §2.4 — the convention is
+  kept, the injection is not.
 - `continue_on_error` — if present, it is re-read before every step-boundary decision and
   **overrides all step-level settings** (`recipe.py:777`). See §9.
 
@@ -532,6 +537,12 @@ Two modes, selected by the response key:
   `serial_ID`, `serialport`, `baudrate`, which the sequence must declare.
 
 Requires globals `cancel_key`, `wrt_key`, `ID_key`.
+
+**Ported as `UserWrite`** (2026-09-02), the `wrt` half only, and without the three key
+globals — the buttons are the GUI's. F14 cannot recur: there is no button whose label
+competes with the typed text. The `ID` half is **dropped**: identifying an instrument over
+RS-232 is a `PythonModule` step calling a driver, not a person typing. See `step/step.md`
+§2.4.
 
 ### 10.8 `SSHConnectStep` / `SSHCloseStep` — paramiko session · `continue_on_error` ✓
 

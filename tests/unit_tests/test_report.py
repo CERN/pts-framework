@@ -23,8 +23,14 @@ from pypts.messages.core_report_communication import (
     ReportStopped,
     StopReport,
 )
-from pypts.messages.run_events import RunFinished, RunStarted, SequenceStarted, StepExecuted
-from pypts.report.report import Report
+from pypts.messages.run_events import (
+    RunFinished,
+    RunMetadata,
+    RunStarted,
+    SequenceStarted,
+    StepExecuted,
+)
+from pypts.report.report import Report, rows_from_csv
 from pypts.step.wait_step import WaitStep
 
 A_RUN = RunStarted(recipe_name="Wait demo", recipe_description="Two short waits")
@@ -316,3 +322,170 @@ def test_report_output_path_comes_from_the_config_handler(tmp_path, monkeypatch)
     )
 
     assert report.output_dir == tmp_path
+
+
+# --------------------------------------------------------------------------
+# Run metadata: report.csv is the whole record of a run
+# --------------------------------------------------------------------------
+
+A_RUN_WITH_METADATA = RunStarted(
+    recipe_name="Wait demo",
+    recipe_description="Two short waits",
+    recipe_version="1.2",
+    pypts_version="0.2.2",
+    metadata_names=("serial_number",),
+)
+
+
+def test_the_metadata_names_become_columns_from_the_first_row(tmp_path):
+    """The names are known at run start even though the values are not."""
+    report = build_report(tmp_path)
+
+    drive(report, A_RUN_WITH_METADATA, a_step_executed())
+
+    run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
+    rows = csv_rows(run_dir)
+    assert "serial_number" in rows[0]
+    # Nothing has set it yet, so it is blank rather than absent.
+    assert rows[0]["serial_number"] == ""
+
+
+def test_the_run_level_facts_are_on_every_row(tmp_path):
+    """There is no second file, so a row carries everything about its run."""
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        RunMetadata(values=(("serial_number", "SN-0042"),)),
+        a_step_executed(step_name="First wait"),
+        a_step_executed(step_name="Second wait"),
+        RunFinished(result=ResultType.DONE),
+    )
+
+    run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
+    for row in csv_rows(run_dir):
+        assert row["recipe_name"] == "Wait demo"
+        assert row["recipe_description"] == "Two short waits"
+        assert row["recipe_version"] == "1.2"
+        assert row["pypts_version"] == "0.2.2"
+        assert row["serial_number"] == "SN-0042"
+        assert row["run_result"] == "DONE"
+        assert row["run_started_at"]
+
+
+def test_rows_written_before_the_serial_was_known_are_backfilled(tmp_path):
+    """The blanks are the price of writing as the run goes; this is the pass
+    that fills them, and why the CSV needs no companion file."""
+    report = build_report(tmp_path)
+
+    drive(report, A_RUN_WITH_METADATA, a_step_executed(step_name="get_serial_number"))
+    run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
+    assert csv_rows(run_dir)[0]["serial_number"] == ""
+
+    drive(
+        report,
+        RunMetadata(values=(("serial_number", "SN-0042"),)),
+        a_step_executed(step_name="Measure"),
+        RunFinished(result=ResultType.PASS),
+    )
+
+    rows = csv_rows(report.run_dir)
+    assert [row["serial_number"] for row in rows] == ["SN-0042", "SN-0042"]
+    assert [row["run_result"] for row in rows] == ["PASS", "PASS"]
+
+
+def test_a_metadata_name_the_recipe_never_sets_stays_blank(tmp_path):
+    """A convention, not a requirement: a run that ignores it is not an error."""
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+    )
+
+    rows = csv_rows(report.run_dir)
+    assert rows[0]["serial_number"] == ""
+    assert [m for m in sent_to_core(report) if isinstance(m, ModuleError)] == []
+
+
+def test_the_run_folder_is_renamed_with_the_metadata(tmp_path):
+    """The folder is made before any step runs, so the serial can only join it here."""
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        RunMetadata(values=(("serial_number", "SN-0042"),)),
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+    )
+
+    run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
+    assert run_dir.name.endswith("_SN_0042")
+    assert report.run_dir == run_dir
+    assert (run_dir / "report.csv").is_file()
+
+
+def test_a_run_folder_that_cannot_be_renamed_is_kept(tmp_path, monkeypatch):
+    """Losing a run over a cosmetic name would be a poor trade."""
+    report = build_report(tmp_path)
+    drive(report, A_RUN_WITH_METADATA, RunMetadata(values=(("serial_number", "SN-1"),)))
+    original = report.run_dir
+
+    def refuse(self, target):
+        raise OSError("the folder is open in another window")
+
+    monkeypatch.setattr("pathlib.Path.rename", refuse)
+    drive(report, a_step_executed(), RunFinished(result=ResultType.DONE))
+
+    assert report.run_dir == original
+    assert original.is_dir()
+    assert csv_rows(original)[0]["serial_number"] == "SN-1"
+
+
+def test_the_html_header_shows_the_metadata(tmp_path):
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        RunMetadata(values=(("serial_number", "SN-0042"),)),
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+        GenerateReport(),
+    )
+
+    html_text = (report.run_dir / "report.html").read_text(encoding="utf-8")
+    assert "serial_number" in html_text
+    assert "SN-0042" in html_text
+    assert "0.2.2" in html_text
+
+
+def test_the_html_can_be_rebuilt_from_the_csv_alone(tmp_path):
+    """One CSV, one report: no side-car file has to survive with it."""
+    report = build_report(tmp_path)
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        RunMetadata(values=(("serial_number", "SN-0042"),)),
+        a_step_executed(step_name="First wait"),
+        RunFinished(result=ResultType.DONE),
+        GenerateReport(),
+    )
+    csv_path = report.run_dir / "report.csv"
+
+    # A fresh Report, told nothing about that run but where its CSV is.
+    rebuilt = build_report(tmp_path)
+    rebuilt.rows = rows_from_csv(csv_path)
+    rebuilt.run_info = RunStarted(
+        recipe_name="", recipe_description="", metadata_names=("serial_number",)
+    )
+    html_text = rebuilt.render_html()
+
+    assert "Wait demo" in html_text
+    assert "SN-0042" in html_text
+    assert "First wait" in html_text
+    assert "DONE" in html_text

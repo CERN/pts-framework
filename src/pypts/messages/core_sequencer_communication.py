@@ -14,11 +14,10 @@ from dataclasses import dataclass
 from pypts.messages.common_messages import Heartbeat, ModuleError
 from pypts.messages.run_events import (
     RunFinished,
+    RunMetadata,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
-    SerialNumberRequest,
-    SerialNumberResponse,
     StepExecuted,
     StepFinished,
     StepStarted,
@@ -27,6 +26,8 @@ from pypts.messages.run_events import (
     StopSequence,
     UserPromptRequest,
     UserPromptResponse,
+    UserTextRequest,
+    UserTextResponse,
 )
 from pypts.recipe.recipe import Recipe
 
@@ -76,20 +77,21 @@ CoreToSequencer = (
     | StopSequencer
     # Answers to questions the Sequencer asked, relayed back by CORE.
     | UserPromptResponse
-    | SerialNumberResponse
+    | UserTextResponse
 )
 
 SequencerToCore = (
     SequencerStopped
     | RunStarted
     | RunFinished
+    | RunMetadata
     | SequenceStarted
     | SequenceFinished
     | StepStarted
     | StepFinished
     | StepExecuted
     | UserPromptRequest
-    | SerialNumberRequest
+    | UserTextRequest
     | Heartbeat
     | ModuleError
 )

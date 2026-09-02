@@ -111,6 +111,7 @@ class TopBarContent(QToolBar):
         self._on_open_report = on_open_report
         self._dark = False
         self._running = False
+        self._metadata: dict[str, str] = {}
         self._paused = False
 
         self.open_button = QToolButton()
@@ -139,6 +140,14 @@ class TopBarContent(QToolBar):
         self.stop_button.setIconSize(QSize(16, 16))
         self.stop_button.clicked.connect(self._on_stop)
 
+        # What the run has learned about the unit on the bench: the globals the
+        # recipe named in `report_metadata`, most often its serial number. Empty
+        # and invisible until a run sets one, so a recipe that names none costs
+        # no space in the bar.
+        self.metadata_label = QLabel("")
+        self.metadata_label.setObjectName("runMetadataLabel")
+        self.metadata_label.setVisible(False)
+
         self.sequence_combo = QComboBox()
         self.sequence_combo.currentTextChanged.connect(self._sequence_changed)
 
@@ -164,6 +173,7 @@ class TopBarContent(QToolBar):
         self.addWidget(self.stop_button)
         self.addWidget(combo_container)
         self.addWidget(spacer)
+        self.addWidget(self.metadata_label)
         self.addWidget(self.report_button)
 
         self.sequence_combo.setEnabled(False)
@@ -313,8 +323,22 @@ class TopBarContent(QToolBar):
 
     # --- State transitions, each caused by a message ---------------------------
 
+    def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
+        """Show the run's metadata beside the report button."""
+        self._metadata.update(dict(values))
+        shown = " | ".join(f"{name}: {value}" for name, value in self._metadata.items())
+        self.metadata_label.setText(shown)
+        self.metadata_label.setVisible(bool(shown))
+
+    def clear_run_metadata(self) -> None:
+        """A new recipe describes a different unit, so the old one stops showing."""
+        self._metadata = {}
+        self.metadata_label.setText("")
+        self.metadata_label.setVisible(False)
+
     def show_recipe_loaded(self, event: RecipeLoaded) -> None:
         """A recipe is in: offer its sequences, allow starting."""
+        self.clear_run_metadata()
         self.sequence_combo.blockSignals(True)
         self.sequence_combo.clear()
         for sequence in event.sequences:

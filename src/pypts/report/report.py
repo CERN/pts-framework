@@ -27,7 +27,13 @@ from pypts.messages.core_report_communication import (
     ReportToCore,
     StopReport,
 )
-from pypts.messages.run_events import RunFinished, RunStarted, SequenceStarted, StepExecuted
+from pypts.messages.run_events import (
+    RunFinished,
+    RunMetadata,
+    RunStarted,
+    SequenceStarted,
+    StepExecuted,
+)
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import REPORT, HeartbeatManager
 
@@ -35,9 +41,23 @@ from pypts.utilities.heartbeat_manager import REPORT, HeartbeatManager
 #: Imported rather than spelled again
 MODULE_NAME = REPORT
 
-#: One flat row per executed step
-CSV_COLUMNS = (
+#: One flat row per executed step. report.csv is the whole record of a run -
+#: there is no second file - so the run-level facts are repeated on every row
+#: rather than kept somewhere else. `recipe_name` always worked this way; the
+#: rest joined it when report.html stopped needing anything but the CSV.
+#:
+#: The recipe's `report_metadata` names are appended to these at run start,
+#: which is why the full set is computed per run rather than being a constant.
+RUN_COLUMNS = (
     "recipe_name",
+    "recipe_description",
+    "recipe_version",
+    "pypts_version",
+    "run_started_at",
+    "run_result",
+)
+
+STEP_COLUMNS = (
     "sequence_name",
     "step_name",
     "step_id",
@@ -49,6 +69,33 @@ CSV_COLUMNS = (
     "started_at",
     "duration_s",
 )
+
+#: The columns of a run that declares no metadata. Kept as a name because the
+#: tests and the HTML pass both read it.
+CSV_COLUMNS = RUN_COLUMNS + STEP_COLUMNS
+
+
+def columns_for(metadata_names: tuple[str, ...]) -> tuple[str, ...]:
+    """The header row of one run: the run-level columns, its metadata, the step ones."""
+    return RUN_COLUMNS + tuple(metadata_names) + STEP_COLUMNS
+
+
+def safe_name_part(value: str) -> str:
+    """One folder-name component: alphanumerics kept, everything else an underscore."""
+    return "".join(c if c.isalnum() else "_" for c in value)[:60]
+
+
+def rows_from_csv(csv_path: Path) -> list[dict[str, str]]:
+    """
+    Read a past run's report.csv back into rows.
+
+    What makes report.html regenerable from the CSV alone: every run-level
+    value the header block shows is on every row, so nothing else has to be
+    kept. A run in which no step executed writes a header and no rows, and
+    has nothing to regenerate from.
+    """
+    with open(csv_path, newline="", encoding="utf-8") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
 
 
 def report_main(
@@ -74,6 +121,9 @@ class Report:
         run_info: the RunStarted of the current run.`
         run_result: the RunFinished verdict, or None while the run is going.
         current_sequence: the sequence name stamped on the rows being written.
+        metadata: the run's metadata globals as they stand - what the recipe
+              named in `report_metadata`, filled in as the run learns them.
+        columns: this run's CSV header, the metadata names included.
     """
 
     def __init__(
@@ -98,6 +148,9 @@ class Report:
         self.run_info: RunStarted | None = None
         self.run_result: ResultType | None = None
         self.current_sequence = ""
+        self.metadata: dict[str, str] = {}
+        self.columns: tuple[str, ...] = CSV_COLUMNS
+        self.run_started_at = ""
 
     @catch_and_report_errors()
     def start(self) -> None:
@@ -127,6 +180,8 @@ class Report:
                 self.start_run(message)
             case SequenceStarted(sequence_name=sequence_name):
                 self.current_sequence = sequence_name
+            case RunMetadata(values=values):
+                self.record_metadata(values)
             case StepExecuted():
                 self.record_step(message)
             case RunFinished(result=result):
@@ -154,15 +209,20 @@ class Report:
         self.run_result = None
         self.rows = []
         self.current_sequence = ""
+        self.metadata = {}
+        self.run_started_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
         self.run_dir = self.make_run_dir(event.recipe_name)
         self.run_info = event
+        # The names are known now even though the values are not, which is what
+        # lets the header row be written once and stay correct for the run.
+        self.columns = columns_for(event.metadata_names)
 
         csv_path = self.run_dir / "report.csv"
         # SIM115 silenced because the file *must* outlive this method: it
         # grows for the whole run, and close_csv() owns the close.
         self.csv_file = open(csv_path, "w", newline="", encoding="utf-8")  # noqa: SIM115
-        self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=list(CSV_COLUMNS))
+        self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=list(self.columns))
         self.csv_writer.writeheader()
         self.csv_file.flush()
         log.info("Recording run results to: %s", csv_path)
@@ -171,7 +231,7 @@ class Report:
         """
         One folder per run: <reports_dir>/<timestamp>_<recipe name>.
         """
-        safe_name = "".join(c if c.isalnum() else "_" for c in recipe_name)[:60]
+        safe_name = safe_name_part(recipe_name)
         if not safe_name:
             safe_name = "recipe"
         base = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "_" + safe_name
@@ -193,34 +253,135 @@ class Report:
                 "Dropping a step record with no run open: %s", event.outcome.step_name
             )
             return
-        recipe_name = self.run_info.recipe_name if self.run_info is not None else ""
-        row = {
-            "recipe_name": recipe_name,
-            "sequence_name": self.current_sequence,
-            "step_name": event.outcome.step_name,
-            "step_id": str(event.outcome.step_id),
-            "step_type": event.step_type,
-            "result": str(event.outcome.result),
-            "inputs": json.dumps(event.inputs, default=str),
-            "outputs": json.dumps(event.outputs, default=str),
-            "error_info": event.outcome.error_info,
-            "started_at": time.strftime(
-                "%Y-%m-%d %H:%M:%S", time.localtime(event.started_at)
-            ),
-            "duration_s": str(event.duration_s),
-        }
+        row = self.run_level_cells()
+        row.update(
+            {
+                "sequence_name": self.current_sequence,
+                "step_name": event.outcome.step_name,
+                "step_id": str(event.outcome.step_id),
+                "step_type": event.step_type,
+                "result": str(event.outcome.result),
+                "inputs": json.dumps(event.inputs, default=str),
+                "outputs": json.dumps(event.outputs, default=str),
+                "error_info": event.outcome.error_info,
+                "started_at": time.strftime(
+                    "%Y-%m-%d %H:%M:%S", time.localtime(event.started_at)
+                ),
+                "duration_s": str(event.duration_s),
+            }
+        )
         self.csv_writer.writerow(row)
         self.csv_file.flush()
         self.rows.append(row)
 
+    def run_level_cells(self) -> dict[str, str]:
+        """
+        The run-level half of a row, as it stands right now.
+
+        `run_result` is empty until the run ends and a metadata value is empty
+        until the run learns it, so a row written early carries blanks.
+        finish_run() rewrites the file once, backfilled, so the CSV that is
+        left behind has them on every row - and a run that crashed keeps
+        whatever it had flushed, which is the point of writing as it goes.
+        """
+        info = self.run_info
+        cells = {
+            "recipe_name": info.recipe_name if info is not None else "",
+            "recipe_description": info.recipe_description if info is not None else "",
+            "recipe_version": info.recipe_version if info is not None else "",
+            "pypts_version": info.pypts_version if info is not None else "",
+            "run_started_at": self.run_started_at,
+            "run_result": str(self.run_result) if self.run_result is not None else "",
+        }
+        for name in self.metadata_names():
+            cells[name] = self.metadata.get(name, "")
+        return cells
+
+    def metadata_names(self) -> tuple[str, ...]:
+        """The metadata columns of this run, in the order the recipe named them."""
+        if self.run_info is None:
+            return ()
+        return self.run_info.metadata_names
+
+    @catch_and_report_errors()
+    def record_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
+        """
+        Take the run's metadata as the Sequencer reports it.
+
+        Only remembered here: the rows already written keep their blanks until
+        finish_run() backfills them, and the HTML is built at the end anyway.
+        """
+        for name, value in values:
+            self.metadata[name] = value
+        log.info("Run metadata recorded: %s", ", ".join(f"{n}={v}" for n, v in values))
+
     @catch_and_report_errors()
     def finish_run(self, result: ResultType) -> None:
-        """The run is over: keep its verdict, close its CSV."""
+        """The run is over: keep its verdict, settle its CSV, name its folder."""
         if self.run_dir is None:
             log.warning("RunFinished with no run open; nothing to close.")
             return
         self.run_result = result
         self.close_csv()
+        self.rewrite_csv()
+        self.rename_run_dir()
+
+    def rewrite_csv(self) -> None:
+        """
+        Write report.csv again, with every row carrying the run-level values.
+
+        The verdict is only known now, and a metadata global is learned
+        somewhere in the middle of the run, so the rows flushed as the run went
+        have blanks in those columns. This is the one pass that fills them, and
+        it is what lets report.html be built from the CSV alone.
+        """
+        if self.run_dir is None or not self.rows:
+            return
+        run_cells = self.run_level_cells()
+        for row in self.rows:
+            row.update(run_cells)
+        csv_path = self.run_dir / "report.csv"
+        with open(csv_path, "w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(self.columns))
+            writer.writeheader()
+            writer.writerows(self.rows)
+
+    def rename_run_dir(self) -> None:
+        """
+        Append the run's metadata to the folder name, so a season of runs is
+        browsable by eye: <timestamp>_<recipe>_<serial>.
+
+        It happens here because the folder is created on RunStarted, before any
+        step has run - the serial number simply does not exist yet at that
+        point. A rename that fails (the operator has the folder open, say) is a
+        WARNING and the original folder is kept: losing the run over a cosmetic
+        name would be a poor trade.
+        """
+        if self.run_dir is None:
+            return
+        suffix_parts = []
+        for name in self.metadata_names():
+            value = self.metadata.get(name, "")
+            if value:
+                suffix_parts.append(safe_name_part(value))
+        if not suffix_parts:
+            return
+        target = self.run_dir.with_name(self.run_dir.name + "_" + "_".join(suffix_parts))
+        if target.exists():
+            log.warning("Not renaming the run folder: %s already exists.", target)
+            return
+        try:
+            self.run_dir.rename(target)
+        except OSError as error:
+            log.warning(
+                "Could not rename the run folder to %s (%s); keeping %s.",
+                target.name,
+                error,
+                self.run_dir,
+            )
+            return
+        self.run_dir = target
+        log.info("Run folder is now: %s", self.run_dir)
 
     def close_csv(self) -> None:
         if self.csv_file is not None:
@@ -235,7 +396,7 @@ class Report:
         """
         Build report.html from the recorded rows
         """
-        if self.run_dir is None or self.run_info is None:
+        if self.run_dir is None:
             log.warning("Cannot generate: no run has been recorded.")
             return
         self.close_csv()
@@ -245,15 +406,39 @@ class Report:
         self.core.send(ReportGenerated(report_path=str(html_path)))
 
     def render_html(self) -> str:
-        """The whole report as one self-contained page: header, summary, table."""
-        assert self.run_info is not None  # guarded by generate_report()
-        title = html.escape(self.run_info.recipe_name)
-        description = html.escape(self.run_info.recipe_description)
-        if self.run_result is not None:
-            verdict = str(self.run_result)
+        """
+        The whole report as one self-contained page: header, summary, table.
+
+        Everything it shows comes from the rows, which is what makes
+        report.html regenerable from report.csv alone - point rows_from_csv()
+        at a past run and render it again. The run-level values are on every
+        row, so the first one answers for all of them.
+        """
+        # A run in which no step executed has no rows to read, so the live
+        # path falls back to what it holds. Regenerating from a CSV that has
+        # no rows finds nothing either way - there is nothing to regenerate.
+        if self.rows:
+            first_row = self.rows[0]
         else:
+            first_row = self.run_level_cells()
+        title = html.escape(first_row.get("recipe_name", ""))
+        description = html.escape(first_row.get("recipe_description", ""))
+        verdict = first_row.get("run_result", "")
+        if not verdict:
             verdict = "in progress"
+        version_line = first_row.get("recipe_version", "")
+        pypts_version = first_row.get("pypts_version", "")
+        started_at = first_row.get("run_started_at", "")
         generated_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+
+        metadata_lines = []
+        for name in self.metadata_names():
+            value = first_row.get(name, "")
+            if value:
+                metadata_lines.append(
+                    f"<strong>{html.escape(name)}:</strong> {html.escape(value)}<br>"
+                )
+        metadata_html = "".join(metadata_lines)
 
         counts: dict[str, int] = {}
         for row in self.rows:
@@ -300,10 +485,12 @@ tr.STOP td {{ background: #ece0f4; }}
 </head>
 <body>
 <h1>pypts Test Report</h1>
-<p><strong>Recipe:</strong> {title}<br>
+<p>{metadata_html}
+<strong>Recipe:</strong> {title} {version_line}<br>
 <strong>Description:</strong> {description}<br>
 <strong>Result:</strong> {verdict}<br>
-<strong>Generated:</strong> {generated_at}</p>
+<strong>Started:</strong> {started_at}<br>
+<strong>Generated:</strong> {generated_at} by pypts {pypts_version}</p>
 <h2>Summary</h2>
 <p>{len(self.rows)} steps ({summary})</p>
 <h2>Steps</h2>

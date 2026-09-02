@@ -212,7 +212,11 @@ def test_load_recipe_command_is_handled():
     loaded = to_hmi[0]
     assert isinstance(loaded, RecipeLoaded)
     assert loaded.recipe_name == "Wait demo"
-    assert loaded.recipe_version == "1.0.0"
+    # The fixture declares the pypts it was written for, and so does every
+    # recipe now - the header's `version` is the framework's, not the file's.
+    from pypts.recipe.recipe_parser import current_recipe_version
+
+    assert loaded.recipe_version == current_recipe_version()
     assert loaded.main_sequence == "Main"
     # The summary describes the very recipe CORE holds - step ids are random
     # per parse, so compare against the live object, never literals.

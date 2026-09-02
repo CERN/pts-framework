@@ -1,0 +1,75 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The UserWrite showcase - asking the operator to *type* something, and what
+# the framework then does with the answer.
+#
+# **GUI mode** (`python -m pypts`), for the same reason as
+# userinteractionstep_demo.yml: the CLI frontend declines every question, so
+# every step here would come back unanswered and be an ERROR.
+#
+# A UserWrite step carries its question directly on the step - `message` and
+# `image_path` are fields, not inputs entries. What the operator types
+# arrives as the step's `output`, so the ordinary vocabulary stores it in a
+# `global` or judges it (`equals`, `passfail`). There is no
+# `allow_empty`: the OK button stays disabled until something is typed, so the
+# only answers that exist are some text and Cancel, and Cancel is an ERROR.
+#
+# This recipe is also the worked example behind
+# resources/roadmap/best_practices.md: the first step is called
+# `get_serial_number`, it writes the `serial_number` global, and the header's
+# `report_metadata` is what puts that value in every row of report.csv, in the
+# header of report.html and in the run folder's name.
+name: UserWrite demo
+description: Capturing what only the operator knows - UserWrite end to end.
+version: 0.2
+
+# The default, spelled out here because this recipe is the example. A recipe
+# that says nothing gets exactly this; one testing something without a serial
+# number writes its own names, or [] for none.
+report_metadata: [serial_number]
+---
+sequence_name: Main
+description: Identify the unit, then use what was typed.
+steps:
+  # The convention: identify the unit under test first, in a step named
+  # get_serial_number, storing the answer in the serial_number global. Nothing
+  # in the framework requires it - which is the point. The recipe asks, the
+  # recipe names the variable, and report_metadata above is what makes the
+  # Report pick it up.
+  - steptype: UserWrite
+    step_name: get_serial_number
+    description: The operator scans or types the serial number of the unit.
+    message: Scan or type the serial number of the unit under test.
+    outputs:
+      output: {type: global, global_name: serial_number}
+
+  # A second free-text value, kept in a global that `report_metadata` does not
+  # name. Not every typed value is worth putting in the report.
+  - steptype: UserWrite
+    step_name: Read the meter
+    description: A measurement off an instrument with no interface.
+    message: Type the voltage shown on the bench meter, in volts.
+    outputs:
+      output: {type: global, global_name: measured_voltage}
+
+  # Typed text judged rather than stored: the step passes only if what was
+  # typed matches. Useful for a deliberate confirmation the operator has to
+  # spell out rather than click past.
+  - steptype: UserWrite
+    step_name: Confirm the fixture is closed
+    description: Typing the word is the confirmation.
+    message: Type CLOSED once the fixture lid is shut.
+    outputs:
+      output: {type: equals, value: CLOSED}
+
+  # And the answers used by a later step - which is why they were stored.
+  - steptype: PythonModule
+    step_name: Report the serial number
+    description: Reads back the global the first step wrote.
+    module: example_tests.py
+    method_name: greet
+    inputs:
+      name: {type: global, global_name: serial_number}
+

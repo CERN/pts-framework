@@ -59,9 +59,9 @@ from pypts.messages.common_messages import (
 from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore, ReportReady
 from pypts.messages.run_events import (
     RecipeLoaded,
-    SerialNumberRequest,
     StepStarted,
     UserPromptRequest,
+    UserTextRequest,
 )
 from pypts.recipe import step_source
 from pypts.utilities.data_removal import survey
@@ -499,6 +499,10 @@ class GUI(HmiClient):
             f"Loaded {event.recipe_name}\nReady to start"
         )
 
+    def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
+        super().show_run_metadata(values)
+        self.top_bar.show_run_metadata(values)
+
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
         self._set_remove_cache_enabled(False)
         self._run_outcomes = []
@@ -667,9 +671,9 @@ class GUI(HmiClient):
             request, lambda choice: self.answer_user_prompt(request, choice)
         )
 
-    def ask_serial_number(self, request: SerialNumberRequest) -> None:
-        self.center.show_serial_request(
-            request, lambda serial: self.answer_serial_number(request, serial)
+    def ask_user_text(self, request: UserTextRequest) -> None:
+        self.center.show_text_request(
+            request, lambda text: self.answer_user_text(request, text)
         )
 
     def on_stop(self) -> None:

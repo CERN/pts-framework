@@ -15,8 +15,10 @@ A sequence runs on a thread of its own, not on the event loop.
 
 import threading
 import time
+from collections.abc import Callable
 from typing import Any
 
+from pypts._version import __version__
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
@@ -32,9 +34,10 @@ from pypts.messages.core_sequencer_communication import (
 )
 from pypts.messages.run_events import (
     RunFinished,
+    RunMetadata,
     RunStarted,
-    SerialNumberResponse,
     UserPromptResponse,
+    UserTextResponse,
 )
 from pypts.recipe.recipe import Recipe
 from pypts.step.runtime import Runtime
@@ -123,7 +126,7 @@ class Sequencer:
                 self.stop_sequence()
             case StopSequencer():
                 self.stop()
-            case UserPromptResponse() | SerialNumberResponse():
+            case UserPromptResponse() | UserTextResponse():
                 self.deliver_response(message)
             case _:
                 unhandled(message)
@@ -202,11 +205,25 @@ class Sequencer:
             ask=self.ask_operator,
             base_dir=self.recipe.base_dir,
         )
+        # The Report cannot read globals - it is a thread fed by events - so
+        # the emit seam is wrapped to notice when one the recipe named in
+        # report_metadata changes, and to send it on. The step layer knows
+        # nothing about this: it emits what it always emitted.
+        metadata_names = self.recipe.report_metadata
+        reported_metadata: dict[str, str] = {}
+        runtime.emit = self.make_metadata_watcher(runtime, metadata_names, reported_metadata)
         self.core.send(
             RunStarted(
-                recipe_name=self.recipe.name, recipe_description=self.recipe.description
+                recipe_name=self.recipe.name,
+                recipe_description=self.recipe.description,
+                recipe_version=self.recipe.version,
+                pypts_version=__version__,
+                metadata_names=metadata_names,
             )
         )
+        # A metadata global may be set in the recipe's own header rather than
+        # by a step, so the first look happens before anything runs.
+        self.send_changed_metadata(runtime, metadata_names, reported_metadata)
         step_results: list[StepResult] = []
         try:
             result, step_results = run_sequence_body(runtime, sequence)
@@ -219,6 +236,52 @@ class Sequencer:
             RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in step_results))
         )
         log.info("Run finished: %s.", result)
+
+    def make_metadata_watcher(
+        self,
+        runtime: Runtime,
+        metadata_names: tuple[str, ...],
+        reported: dict[str, str],
+    ) -> Callable[[Any], None]:
+        """
+        The Runtime's emit seam, plus a look at the metadata globals.
+
+        Every event is forwarded first and unchanged, so nothing about the
+        run's reporting depends on this; the look happens afterwards, which
+        is why a run with no metadata names costs one `if` per event.
+        """
+
+        def emit(event: Any) -> None:
+            self.core.send(event)
+            if metadata_names:
+                self.send_changed_metadata(runtime, metadata_names, reported)
+
+        return emit
+
+    def send_changed_metadata(
+        self,
+        runtime: Runtime,
+        metadata_names: tuple[str, ...],
+        reported: dict[str, str],
+    ) -> None:
+        """
+        Send RunMetadata for every named global that appeared or changed.
+
+        A name the recipe never sets is simply absent - it is a convention,
+        not a requirement, and a run that ignores it is not an error. Values
+        are stringified because the Report writes them into a CSV cell.
+        """
+        changed = []
+        for name in metadata_names:
+            if name not in runtime.globals:
+                continue
+            value = str(runtime.globals[name])
+            if reported.get(name) != value:
+                reported[name] = value
+                changed.append((name, value))
+        if changed:
+            log.info("Run metadata: %s", ", ".join(f"{n}={v}" for n, v in changed))
+            self.core.send(RunMetadata(values=tuple(changed)))
 
     @catch_and_report_errors()
     def stop_sequence(self) -> None:
@@ -253,15 +316,15 @@ class Sequencer:
         self.core.send(request)
         return self.pending.wait(request_id, should_abort=lambda: self.stop_requested)
 
-    def deliver_response(self, message: UserPromptResponse | SerialNumberResponse) -> None:
+    def deliver_response(self, message: UserPromptResponse | UserTextResponse) -> None:
         """
         Hand an operator's answer to the step waiting for it.
         """
         match message:
             case UserPromptResponse():
                 value = message.choice
-            case SerialNumberResponse():
-                value = message.serial_number
+            case UserTextResponse():
+                value = message.text
             case _:
                 unhandled(message)
 

@@ -19,40 +19,40 @@
 # first sequence in the file is the one a frontend offers to run.
 name: PythonModule demo
 description: Four function calls - PythonModule end to end.
-version: 1.0.0
+version: 0.2
 ---
 # Sequence: only `sequence_name` and `steps` are mandatory.
 sequence_name: Main
 description: Adds, measures, checks and greets.
 steps:
-  # A PythonModule step requires `module` and `method_name`. `input_mapping`
-  # is omitted when the method takes no arguments, `output_mapping` when
+  # A PythonModule step requires `module` and `method_name`. `inputs`
+  # is omitted when the method takes no arguments, `outputs` when
   # there is nothing to judge.
   - steptype: PythonModule
     step_name: Add numbers
     description: 2 + 3 must equal 5.
     module: example_tests.py
     method_name: add
-    input_mapping:
-      a: {value: 2}
-      b: {value: 3}
-    output_mapping:
+    inputs:
+      a: 2
+      b: 3
+    outputs:
       sum: {type: equals, value: 5}
   - steptype: PythonModule
     step_name: Measure voltage
     description: The reading must sit between 11 and 13 volts.
     module: example_tests.py
     method_name: measure_voltage
-    output_mapping:
+    outputs:
       voltage: {type: range, min: '11', max: '13'}
   - steptype: PythonModule
     step_name: Even check (fails on purpose)
     description: 7 is not even - this one shows a FAIL verdict.
     module: example_tests.py
     method_name: is_even
-    input_mapping:
-      number: {value: 7}
-    output_mapping:
+    inputs:
+      number: 7
+    outputs:
       even: {type: passfail}
   # `module` needs no .py suffix, and a scalar return is wrapped as "output".
   - steptype: PythonModule
@@ -60,7 +60,7 @@ steps:
     description: A scalar return, wrapped as "output" and compared.
     module: example_tests
     method_name: greet
-    input_mapping:
-      name: {value: operator}
-    output_mapping:
+    inputs:
+      name: operator
+    outputs:
       output: {type: equals, value: 'Hello, operator!'}

@@ -29,9 +29,9 @@ Who owns what in this package:
     indexed_step.py        `steptype: Indexed`: one authored step and N
                            parameter sets expanded, at load time, into N
                            ordinary steps. Never reaches the registry
-    runtime.py             the execution context: globals, the locals stack,
-                           and the two seams the Sequencer fills in (emit,
-                           should_stop)
+    runtime.py             the execution context: the run's globals and the
+                           three seams the Sequencer fills in (emit,
+                           should_stop, ask)
 
 Each concrete step type gets a module of its own, named after the class
 (snake_case, keeping the class's Step suffix). A newly ported type follows
@@ -45,10 +45,11 @@ and owns the run-level pair, RunStarted/RunFinished. Nothing in this package
 imports a queue, a QueueWrapper or the Sequencer: a bare `Runtime()` is a
 complete fake context, which is what keeps every step testable stand-alone.
 
-`input_mapping` says where each argument comes from - `direct` (a literal
-from the YAML, the default), `local` or `global`. `output_mapping` says what
-to do with each key of the dict the step returned: judge it (`passfail`,
-`equals`, `range`, `passthrough`) or store it (`local`, `global`). A step
+`inputs` says where each argument comes from - a bare value is the
+literal itself, and a mapping reads a `global`. `outputs` says what to
+do with each key of the dict the step returned: judge it (`passfail`,
+`equals`, `range`), mark it not-a-measurement (`pass`) or store it in a
+`global`. A step
 that returns a non-dict has it wrapped as {"output": value}; None becomes
 {}. There is no type coercion anywhere - '45' is a string and 45 is an int.
 When several entries judge, the last one wins - kept from the old engine for

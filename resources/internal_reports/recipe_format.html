@@ -67,7 +67,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 <div class="note"><strong>One idea:</strong> a recipe states only what it needs.
 Every optional field left out is assumed empty — no <code>{}</code> or <code>[]</code>
 boilerplate is ever required. An optional key written with no value
-(a bare <code>locals:</code> line) counts as absent too.</div>
+(a bare <code>teardown_steps:</code> line) counts as absent too.</div>
 
 <div class="note"><strong>Case does not matter</strong> in the recipe's own language:
 keys (<code>NAME:</code>, <code>Step_Name:</code>), <code>steptype</code> values,
@@ -87,13 +87,19 @@ There must be at least one sequence.</p>
   <tr><th>Field</th><th>Rule</th><th>When absent</th></tr>
   <tr><td><code>name</code></td><td class="req">required</td><td>—</td></tr>
   <tr><td><code>description</code></td><td class="opt">optional</td><td><code>""</code></td></tr>
-  <tr><td><code>version</code></td><td class="opt">optional</td><td><code>""</code></td></tr>
-  <tr><td><code>format_version</code></td><td class="opt">optional</td>
-      <td>assumed written for the current format; a mismatch is logged as an ERROR
-      and the recipe still loads (hard refusal comes ~v1.0)</td></tr>
+  <tr><td><code>version</code></td><td class="req">required</td>
+      <td>— the <strong>pypts this recipe was written for</strong>, not a version of
+      the recipe itself. Compared <strong>major.minor only</strong> (the running
+      version carries a setuptools-scm suffix no recipe could match). A mismatch is
+      an ERROR in the log and a notice to the operator, and the recipe loads
+      unchanged — nothing edits the file. Hard refusal comes ~v1.0</td></tr>
   <tr><td><code>main_sequence</code></td><td class="opt">optional</td>
       <td>the <em>first sequence in the file</em></td></tr>
   <tr><td><code>globals</code></td><td class="opt">optional</td><td><code>{}</code></td></tr>
+  <tr><td><code>report_metadata</code></td><td class="opt">optional</td>
+      <td><code>[serial_number]</code> — the globals the Report stamps on every row
+      of <code>report.csv</code> and in <code>report.html</code>'s header.
+      <code>[]</code> means none</td></tr>
 </table></div>
 <p>Unknown header keys (e.g. the legacy <code>recipe_version</code>,
 <code>continue_on_error</code>) are tolerated and ignored, so old files still load.</p>
@@ -106,13 +112,19 @@ There must be at least one sequence.</p>
   <tr><td><code>steps</code></td><td class="req">required</td>
       <td>— (must contain <strong>at least one step</strong>)</td></tr>
   <tr><td><code>description</code></td><td class="opt">optional</td><td><code>""</code></td></tr>
-  <tr><td><code>setup_steps</code></td><td class="opt">optional</td>
-      <td><code>[]</code> — setup steps are ordinary steps that run first</td></tr>
   <tr><td><code>teardown_steps</code></td><td class="opt">optional</td>
       <td><code>[]</code> — teardown always runs, even after a failure or an abort</td></tr>
-  <tr><td><code>parameters</code>, <code>locals</code>, <code>outputs</code></td>
-      <td class="opt">optional</td><td><code>{}</code></td></tr>
 </table></div>
+<p><strong>There is no <code>setup_steps</code></strong>: it ran in front of
+<code>steps</code> and meant nothing else, so those steps belong at the front of
+<code>steps</code>. It is an unknown key now, ignored like any other.
+<code>parameters</code>
+and <code>outputs</code> are gone too (the declared interface of a subsequence, and
+<code>SequenceStep</code> is dropped), and so is <code>locals</code>: there is
+<strong>one variable scope</strong>, the header's <code>globals</code>, and it lasts
+the whole run. A per-sequence scope was global in reach and merely shorter-lived,
+which is two names for one idea. Anything narrower than the run is a step's own
+<code>inputs</code> and <code>outputs</code>.</p>
 
 <h2>Steps</h2>
 <p>Every step needs <code>steptype</code> and <code>step_name</code>;
@@ -129,18 +141,38 @@ case-insensitive and names one of the ported types — note the names carry
       <code>example_tests</code>) or a dotted import name</td></tr>
   <tr><td><code>method_name</code></td><td class="req">required</td>
       <td>the function to call</td></tr>
-  <tr><td><code>input_mapping</code></td><td class="opt">optional</td>
+  <tr><td><code>inputs</code></td><td class="opt">optional</td>
       <td>keyword arguments; absent = the function takes none</td></tr>
-  <tr><td><code>output_mapping</code></td><td class="opt">optional</td>
+  <tr><td><code>outputs</code></td><td class="opt">optional</td>
       <td>how to judge/store what came back; absent = nothing to judge, verdict DONE</td></tr>
 </table></div>
+<p><strong>A bare value under <code>inputs</code> is the value.</strong> A mapping
+is a configuration that says where the value comes from instead:</p>
+<pre><code>inputs:
+  a: 2                                  # a literal - the common case
+  b: {type: global, global_name: rig}   # from the run's globals
+outputs:
+  sum:     {type: equals, value: 5}
+  voltage: {type: range, min: 11, max: 13}
+  ok:      {type: passfail}
+  note:    {type: pass}                    # not a measurement - verdict DONE
+  reading: {type: global, global_name: last_reading}</code></pre>
+<p><strong>An input entry is a literal or a mapping, and a mapping can only be
+<code>global</code></strong> — so it must name its type; there is no default. The
+second spellings of a literal (<code>{value: 2}</code>,
+<code>{type: direct, value: 2}</code>) are gone. Note <code>value</code> is still an
+<code>equals</code> entry's key on the outputs side — a different thing.</p>
+<p>The cost of the short spelling: an argument whose value is genuinely a mapping
+cannot be written directly — you are told so rather than left to find out. With
+several judging entries the <strong>last one wins</strong>, kept from the old engine
+for parity.</p>
 
 <h2 style="border:none;font-size:17px;margin-top:24px"><code>steptype: Wait</code> — sleep</h2>
 <div class="tablewrap"><table>
   <tr><th>Field</th><th>Rule</th><th>Meaning</th></tr>
   <tr><td><code>wait_time</code></td><td class="req">required</td>
       <td>seconds, written <strong>directly on the step</strong> — no
-      <code>input_mapping</code> nesting, and no <code>output_mapping</code>:
+      <code>inputs</code> nesting, and no <code>outputs</code>:
       a fixed wait has nothing to resolve and nothing to judge</td></tr>
 </table></div>
 
@@ -159,7 +191,7 @@ run time.</p>
       <td>a non-empty list; one entry becomes one step</td></tr>
   <tr><td><code>inputs</code> <span class="muted">(in a set)</span></td><td class="opt">optional</td>
       <td>argument name → value. Direct values, merged over the template's
-      <code>input_mapping</code></td></tr>
+      <code>inputs</code></td></tr>
   <tr><td><code>expect</code> <span class="muted">(in a set)</span></td><td class="opt">optional</td>
       <td>output name → expected value, i.e. an <code>equals</code> check.
       A set must carry at least one of <code>inputs</code>/<code>expect</code></td></tr>
@@ -183,13 +215,14 @@ parameters to show and is named <code>Add numbers 1/2</code> instead.</p>
 case and reads like a row of a table. A case needing <code>range</code>,
 <code>passfail</code>, <code>local</code> or <code>global</code> puts it on the
 <code>template</code>, which takes the full vocabulary; set entries are merged
-over it key by key. An <code>Indexed</code> step carries no
-<code>input_mapping</code>, <code>output_mapping</code> or <code>id</code> of its
-own — all three are refused, because they would apply to nothing or to N steps at
-once. <code>skip: true</code> on it skips every generated step.</p>
+over it key by key. An <code>Indexed</code> step carries no <code>inputs</code>,
+<code>outputs</code> or <code>id</code> of its own — all three are refused, because
+they would apply to nothing or to N steps at once. <code>skip: true</code> on it
+skips every generated step.</p>
 
 <h2>The smallest valid recipe</h2>
 <pre><code>name: Wait demo
+version: 0.2
 ---
 sequence_name: Main
 steps:
@@ -197,12 +230,21 @@ steps:
     step_name: Only wait
     wait_time: '0.5'</code></pre>
 <p>A fuller example — four function calls and a wait, showing
-<code>input_mapping</code>/<code>output_mapping</code> in use — is
-<code>resources/recipes/pythonmodulestep_demo.yml</code>.</p>
+<code>inputs</code>/<code>outputs</code> in use — is
+<code>resources/recipes/Development_recipes/pythonmodulestep_demo.yml</code>;
+<code>all_steptypes_demo.yml</code> beside it runs every type in one recipe.</p>
+<p class="muted"><strong>Not yet on this page:</strong> the
+<code>UserInteraction</code> and <code>UserWrite</code> steptypes, which are
+implemented and have demo recipes of their own. Their fields are in
+<code>recipe/rules.py</code> and <code>step/step.md</code> until this page catches
+up.</p>
 
 <h2>Validation</h2>
 <p><code>validator.py</code> checks every mandatory field against
-<code>rules.py</code> before anything is built, and the parser raises
+<code>rules.py</code> — and every <code>inputs</code>/<code>outputs</code> entry against
+the vocabulary in <code>INPUT_TYPES</code>/<code>OUTPUT_TYPES</code>, so an unknown
+<code>type</code> or a <code>range</code> missing its <code>max</code> is caught here
+rather than on the bench — before anything is built, and the parser raises
 <strong>one <code>RecipeError</code> naming every problem at once</strong> —
 a bad file is fixed in one round trip. Loading a recipe
 (<code>Recipe.from_file(path)</code>) <em>is</em> the verification: if it returns,

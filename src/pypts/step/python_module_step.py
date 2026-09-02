@@ -5,11 +5,12 @@
 """
 PythonModuleStep - call one function of a Python module.
 
-Calling a method is the whole of this type, by decision (2026-09-01): the
-old `read_attribute`/`write_attribute` actions are dropped, not pending. A
-recipe that wants an attribute writes a one-line getter beside it and calls
-that. `module:` resolves against the recipe's own folder, or imports a dotted
-name - the old rglob search is gone too.
+Calling a method is the whole of this type: the old
+`read_attribute`/`write_attribute` actions are dropped, and so is the
+`action_type` key that selected between them - a recipe that wants an
+attribute writes a one-line getter beside it and calls that. `module:`
+resolves against the recipe's own folder, or imports a dotted name - the old
+rglob search is gone too.
 
 One concrete step type per module; the package docstring in __init__.py
 holds the map of the ported types and of what still lives in old_code.
@@ -92,20 +93,11 @@ class PythonModuleStep(Step):
         self,
         module: str,
         method_name: str | None = None,
-        # Accepted only so the recipes that still spell it keep loading; it has
-        # one legal value and selects nothing. New recipes omit it.
-        action_type: str = "method",
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.module = module
         self.method_name = method_name
-        if action_type != "method":
-            raise ValueError(
-                f"Step '{self.name}': action_type {action_type!r} does not exist - "
-                f"this step type calls methods and nothing else. To read or write an "
-                f"attribute, call a function beside the recipe that does it."
-            )
         if not method_name:
             raise ValueError(f"Step '{self.name}': method_name is required")
 

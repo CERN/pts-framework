@@ -16,11 +16,10 @@ from pypts.messages.common_messages import Heartbeat, ModuleError
 from pypts.messages.run_events import (
     RecipeLoaded,
     RunFinished,
+    RunMetadata,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
-    SerialNumberRequest,
-    SerialNumberResponse,
     StepFinished,
     StepStarted,
     # Defined in run_events because it rides two links: a frontend sends it
@@ -28,6 +27,8 @@ from pypts.messages.run_events import (
     StopSequence,
     UserPromptRequest,
     UserPromptResponse,
+    UserTextRequest,
+    UserTextResponse,
 )
 
 # --- HMI -> CORE: commands ----------------------------------------------------
@@ -132,7 +133,7 @@ HmiToCore = (
     | ShutdownRequested
     | HmiStopped
     | UserPromptResponse
-    | SerialNumberResponse
+    | UserTextResponse
     | Heartbeat
     | ModuleError
 )
@@ -145,10 +146,11 @@ CoreToHmi = (
     | RecipeLoaded
     | RunStarted
     | RunFinished
+    | RunMetadata
     | SequenceStarted
     | SequenceFinished
     | StepStarted
     | StepFinished
     | UserPromptRequest
-    | SerialNumberRequest
+    | UserTextRequest
 )

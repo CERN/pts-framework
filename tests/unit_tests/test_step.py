@@ -32,6 +32,7 @@ from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
 from pypts.step.step import Step, StepResult, run_sequence
 from pypts.step.user_interaction_step import UserInteractionStep
+from pypts.step.user_write_step import UserWriteStep
 from pypts.step.wait_step import WaitStep
 
 
@@ -68,7 +69,7 @@ class Notes(Step):
 class FakeSequence:
     """The four attributes run_sequence() reads off a Sequence, and nothing else."""
 
-    def __init__(self, name="Main", locals=None, steps=(), teardown_steps=()):
+    def __init__(self, name="Main", steps=(), teardown_steps=()):
         self.name = name
         self.locals = locals if locals is not None else {}
         self.steps = list(steps)
@@ -148,8 +149,8 @@ def test_mappings_are_not_shared_between_steps():
     """The old base had mutable-default mappings - one dict for every step (F12)."""
     one = ReturnsDict(step_name="a")
     two = ReturnsDict(step_name="b")
-    one.output_mapping["__result"] = {"type": "passthrough"}
-    assert two.output_mapping == {}
+    one.outputs["__result"] = {"type": "pass"}
+    assert two.outputs == {}
 
 
 # --------------------------------------------------------------------------
@@ -157,29 +158,31 @@ def test_mappings_are_not_shared_between_steps():
 # --------------------------------------------------------------------------
 
 
-def test_inputs_resolve_direct_local_and_global():
-    runtime = Runtime(globals={"limit": 9})
-    runtime.push_locals({"target": 45})
+def test_inputs_resolve_literals_and_globals():
+    runtime = Runtime(globals={"limit": 9, "target": 45})
     step = ReturnsDict(
         step_name="resolve",
-        input_mapping={
-            "value": {"type": "direct", "value": "3"},
-            "target": {"type": "local", "local_name": "target"},
+        inputs={
+            "value": "3",
+            "target": {"type": "global", "global_name": "target"},
             "limit": {"type": "global", "global_name": "limit"},
         },
     )
     assert step.process_inputs(runtime) == {"value": "3", "target": 45, "limit": 9}
 
 
-def test_an_input_without_a_type_defaults_to_direct():
-    """simple_recipe.yml writes wait_time with only a value key - no type."""
-    step = ReturnsDict(step_name="untyped", input_mapping={"wait_time": {"value": "3"}})
-    assert step.process_inputs(Runtime()) == {"wait_time": "3"}
+def test_a_mapping_input_without_a_type_is_refused():
+    """There is no default and no `direct` type any more: a mapping is a
+    configuration and says so, and a literal is written as itself. The old
+    `{value: 3}` spelling is one of the two ways to get here."""
+    step = ReturnsDict(step_name="untyped", inputs={"wait_time": {"value": "3"}})
+    with pytest.raises(ValueError, match="written as itself"):
+        step.process_inputs(Runtime())
 
 
 def test_an_unknown_input_type_is_refused():
     """The old code silently left the raw config dict in place."""
-    step = ReturnsDict(step_name="bad", input_mapping={"x": {"type": "telepathy"}})
+    step = ReturnsDict(step_name="bad", inputs={"x": {"type": "telepathy"}})
     with pytest.raises(ValueError, match="telepathy"):
         step.process_inputs(Runtime())
 
@@ -189,13 +192,13 @@ def test_an_unknown_input_type_is_refused():
 # --------------------------------------------------------------------------
 
 
-def judge(output_mapping, step_output, runtime=None):
+def judge(outputs, step_output, runtime=None):
     """Run one process_outputs() call with the least ceremony possible."""
-    step = ReturnsDict(step_name="judge", output_mapping=output_mapping)
+    step = ReturnsDict(step_name="judge", outputs=outputs)
     return step.process_outputs(runtime if runtime is not None else Runtime(), step_output)
 
 
-def test_an_empty_output_mapping_judges_done():
+def test_an_empty_outputs_judges_done():
     assert judge({}, {}) is ResultType.DONE
 
 
@@ -208,19 +211,18 @@ def test_passfail_equals_and_range_verdicts():
     assert judge({"v": {"type": "range", "min": "10", "max": "20"}}, {"v": "25"}) is ResultType.FAIL
 
 
-def test_passthrough_propagates_a_result():
-    assert judge({"r": {"type": "passthrough"}}, {"r": ResultType.STOP}) is ResultType.STOP
+def test_pass_is_done_whatever_came_back():
+    """`pass` says this output is not a measurement. It replaced
+    `passthrough`, which propagated a ResultType the step returned - a shape
+    only the dropped structural step types ever produced."""
+    assert judge({"r": {"type": "pass"}}, {"r": ResultType.FAIL}) is ResultType.DONE
+    assert judge({"r": {"type": "pass"}}, {"r": "anything at all"}) is ResultType.DONE
 
 
-def test_local_and_global_entries_store_without_judging():
+def test_a_global_entry_stores_without_judging():
     runtime = Runtime(globals={})
-    runtime.push_locals({})
-    mapping = {
-        "a": {"type": "local", "local_name": "kept_local"},
-        "b": {"type": "global", "global_name": "kept_global"},
-    }
-    assert judge(mapping, {"a": 1, "b": 2}, runtime) is ResultType.DONE
-    assert runtime.get_local("kept_local") == 1
+    mapping = {"b": {"type": "global", "global_name": "kept_global"}}
+    assert judge(mapping, {"b": 2}, runtime) is ResultType.DONE
     assert runtime.get_global("kept_global") == 2
 
 
@@ -251,7 +253,7 @@ def test_a_step_run_produces_a_result_and_both_events():
     events = []
     runtime = Runtime(emit=events.append)
     step = ReturnsDict(
-        step_name="works", payload={"ok": True}, output_mapping={"ok": {"type": "passfail"}}
+        step_name="works", payload={"ok": True}, outputs={"ok": {"type": "passfail"}}
     )
 
     result = step.run(runtime)
@@ -283,7 +285,7 @@ def test_a_step_run_emits_the_rich_record_for_the_report():
     assert events[-1] is record
     assert record.outcome == result.to_outcome()
     assert record.step_type == "WaitStep"
-    # A WaitStep has no input_mapping - wait_time sits on the step itself -
+    # A WaitStep has no inputs - wait_time sits on the step itself -
     # so its resolved inputs are legitimately empty.
     assert record.inputs == result.inputs == {}
     assert record.outputs == result.outputs
@@ -297,8 +299,8 @@ def test_the_rich_record_carries_the_resolved_inputs_and_outputs():
     step = ReturnsDict(
         step_name="works",
         payload={"ok": True},
-        input_mapping={"limit": {"type": "direct", "value": "9"}},
-        output_mapping={"ok": {"type": "passfail"}},
+        inputs={"limit": "9"},
+        outputs={"ok": {"type": "passfail"}},
     )
 
     step.run(runtime)
@@ -373,7 +375,7 @@ def fails(step_name="fails", **kwargs):
     return ReturnsDict(
         step_name=step_name,
         payload={"ok": False},
-        output_mapping={"ok": {"type": "passfail"}},
+        outputs={"ok": {"type": "passfail"}},
         **kwargs,
     )
 
@@ -436,7 +438,7 @@ def test_continue_on_error_false_halts_nothing_when_the_step_is_fine():
         ReturnsDict(
             step_name="passes",
             payload={"ok": True},
-            output_mapping={"ok": {"type": "passfail"}},
+            outputs={"ok": {"type": "passfail"}},
             continue_on_error=False,
         ),
         ReturnsDict(step_name="done", payload={}, continue_on_error=False),
@@ -519,7 +521,7 @@ def test_run_sequence_reports_and_aggregates():
     events = []
     runtime = Runtime(emit=events.append)
     step = ReturnsDict(
-        step_name="works", payload={"ok": True}, output_mapping={"ok": {"type": "passfail"}}
+        step_name="works", payload={"ok": True}, outputs={"ok": {"type": "passfail"}}
     )
 
     result, results = run_sequence(runtime, FakeSequence(steps=[step]))
@@ -568,23 +570,23 @@ def test_an_empty_sequence_aggregates_to_skip():
     assert StepResult.evaluate_multiple_step_results([]) is ResultType.SKIP
 
 
-def test_sequence_locals_do_not_leak_between_runs():
-    """The old engine pushed the parsed dict by reference (F16) - a re-run saw
-    the previous run's writes. run_sequence() pushes a copy."""
+def test_a_sequence_writes_the_runs_globals_and_nothing_else():
+    """There is one scope. A step storing a value writes the run's globals,
+    which outlive the sequence on purpose - the per-sequence frame that used
+    to exist was dropped."""
     sequence = FakeSequence(
-        locals={"counter": 0},
         steps=[
             ReturnsDict(
                 step_name="write",
                 payload={"out": 1},
-                output_mapping={"out": {"type": "local", "local_name": "counter"}},
+                outputs={"out": {"type": "global", "global_name": "counter"}},
             )
         ],
     )
     runtime = Runtime()
     run_sequence(runtime, sequence)
-    assert sequence.locals == {"counter": 0}
-    assert runtime.local_stack == []
+    assert runtime.globals == {"counter": 1}
+    assert not hasattr(runtime, "local_stack")
 
 
 # --------------------------------------------------------------------------
@@ -611,8 +613,8 @@ def test_python_module_step_calls_a_function_with_resolved_inputs(tmp_path):
         step_name="add",
         module="demo_tests.py",
         method_name="add",
-        input_mapping={"a": {"value": 2}, "b": {"value": 3}},
-        output_mapping={"sum": {"type": "equals", "value": 5}},
+        inputs={"a": 2, "b": 3},
+        outputs={"sum": {"type": "equals", "value": 5}},
     )
     result = step.run(Runtime(base_dir=str(tmp_path)))
     assert result.result is ResultType.PASS
@@ -658,14 +660,12 @@ def test_python_module_step_requires_a_method_name():
         PythonModuleStep(step_name="nameless", module="demo_tests.py")
 
 
-def test_python_module_step_refuses_any_action_type_but_method():
-    # Dropped, not pending: the type calls methods and nothing else. `method`
-    # itself is still accepted, because the unported recipes all spell it.
-    with pytest.raises(ValueError, match="calls methods and nothing else"):
-        PythonModuleStep(
-            step_name="attr", module="m", method_name="f", action_type="read_attribute"
-        )
-    PythonModuleStep(step_name="fine", module="m", method_name="f", action_type="method")
+def test_action_type_is_not_a_key_at_all():
+    """Dropped outright (2026-09-02), not tolerated: the type calls methods and
+    nothing else, so the key that used to select between three actions is now
+    an unknown key like any other - a TypeError the recipe layer names."""
+    with pytest.raises(TypeError, match="action_type"):
+        PythonModuleStep(step_name="old", module="m", method_name="f", action_type="method")
 
 
 # --------------------------------------------------------------------------
@@ -714,12 +714,11 @@ def test_a_set_parameterizes_the_inputs_and_the_expected_outputs():
 
     first, second = expand_indexed_step(an_indexed_step())
 
-    assert first["input_mapping"] == {
-        "a": {"type": "direct", "value": 1},
-        "b": {"type": "direct", "value": 1},
-    }
-    assert first["output_mapping"] == {"sum": {"type": "equals", "value": 2}}
-    assert second["output_mapping"] == {"sum": {"type": "equals", "value": 5}}
+    # A set's inputs are direct values, and a direct value is written as
+    # itself - the generated step reads as a hand-written one would.
+    assert first["inputs"] == {"a": 1, "b": 1}
+    assert first["outputs"] == {"sum": {"type": "equals", "value": 2}}
+    assert second["outputs"] == {"sum": {"type": "equals", "value": 5}}
 
 
 def test_generated_steps_are_named_after_their_parameters():
@@ -754,8 +753,8 @@ def test_a_set_is_merged_over_what_the_template_shares():
             "steptype": "PythonModule",
             "module": "example_tests.py",
             "method_name": "add",
-            "input_mapping": {
-                "a": {"type": "direct", "value": 999},
+            "inputs": {
+                "a": 999,
                 "shared": {"type": "global", "global_name": "rig"},
             },
         },
@@ -765,8 +764,8 @@ def test_a_set_is_merged_over_what_the_template_shares():
     generated = expand_indexed_step(step_data)[0]
 
     # The set wins where they collide, the template survives where they do not.
-    assert generated["input_mapping"]["a"] == {"type": "direct", "value": 1}
-    assert generated["input_mapping"]["shared"] == {"type": "global", "global_name": "rig"}
+    assert generated["inputs"]["a"] == 1
+    assert generated["inputs"]["shared"] == {"type": "global", "global_name": "rig"}
 
 
 def test_the_group_description_is_inherited_when_the_template_has_none():
@@ -798,7 +797,7 @@ def test_mappings_on_the_indexed_step_itself_are_refused():
     """They would apply to nothing; silently ignoring them would be worse."""
     from pypts.step.indexed_step import check_indexed_step
 
-    problems = check_indexed_step(an_indexed_step(input_mapping={"a": {"value": 1}}))
+    problems = check_indexed_step(an_indexed_step(inputs={"a": {"value": 1}}))
 
     assert any("template" in problem for problem in problems)
 
@@ -859,7 +858,7 @@ def test_user_interaction_step_asks_and_returns_the_choice():
         step_name="Check the LED",
         message="Is the red LED lit?",
         options=["Yes", "No"],
-        output_mapping={"output": {"type": "equals", "value": "Yes"}},
+        outputs={"output": {"type": "equals", "value": "Yes"}},
     )
     result = step.run(Runtime(ask=make_asker("Yes", seen)))
 
@@ -871,19 +870,18 @@ def test_user_interaction_step_asks_and_returns_the_choice():
     assert seen[0].image_path is None
 
 
-def test_user_interaction_step_stores_the_choice_in_a_local():
+def test_user_interaction_step_stores_the_choice_in_a_global():
     """The answer goes through the ordinary mapping vocabulary, not machinery
     of its own."""
     step = UserInteractionStep(
         step_name="Which port?",
         message="Which port is it on?",
         options=["COM1", "COM2"],
-        output_mapping={"output": {"type": "local", "local_name": "port"}},
+        outputs={"output": {"type": "global", "global_name": "port"}},
     )
     runtime = Runtime(ask=make_asker("COM2"))
-    runtime.push_locals({})
     step.run(runtime)
-    assert runtime.get_local("port") == "COM2"
+    assert runtime.get_global("port") == "COM2"
 
 
 def test_user_interaction_step_coerces_non_string_options():
@@ -964,3 +962,205 @@ def test_the_registry_builds_a_user_interaction_step():
     )
     assert isinstance(step, UserInteractionStep)
     assert step.options == ("Yes", "No")
+
+
+# --------------------------------------------------------------------------
+# UserWriteStep - the free-text half of the pair
+# --------------------------------------------------------------------------
+
+
+def test_user_write_step_asks_and_returns_the_text():
+    seen = []
+    step = UserWriteStep(
+        step_name="get_serial_number",
+        message="Type the serial number",
+    )
+    result = step.run(Runtime(ask=make_asker("SN-0042", seen)))
+
+    assert result.result is ResultType.DONE
+    assert result.outputs == {"output": "SN-0042"}
+    assert len(seen) == 1
+    assert seen[0].message == "Type the serial number"
+    assert seen[0].image_path is None
+
+
+def test_user_write_step_stores_the_text_in_a_global():
+    """The convention the best-practices guide documents: the answer is a global.
+
+    This is also the behaviour the old UserWriteStep got wrong - it overwrote
+    the typed text with the literal "wrt" (recipe_guide F14).
+    """
+    step = UserWriteStep(
+        step_name="get_serial_number",
+        message="Type the serial number",
+        outputs={"output": {"type": "global", "global_name": "serial_number"}},
+    )
+    runtime = Runtime(ask=make_asker("SN-0042"))
+    step.run(runtime)
+    assert runtime.get_global("serial_number") == "SN-0042"
+
+
+def test_user_write_step_judges_the_text_when_the_recipe_asks_it_to():
+    step = UserWriteStep(
+        step_name="confirm",
+        message="Type CONFIRM",
+        outputs={"output": {"type": "equals", "value": "CONFIRM"}},
+    )
+    assert step.run(Runtime(ask=make_asker("CONFIRM"))).result is ResultType.PASS
+    assert step.run(Runtime(ask=make_asker("nope"))).result is ResultType.FAIL
+
+
+def test_user_write_step_no_answer_is_a_step_error():
+    """Same one rule as UserInteraction - both go through ask_or_raise."""
+    step = UserWriteStep(step_name="ignored", message="Type something")
+    result = step.run(Runtime(ask=make_asker(None)))
+    assert result.result is ResultType.ERROR
+    assert "cancelled" in result.error_info
+
+
+def test_user_write_step_says_so_when_the_run_was_stopped():
+    step = UserWriteStep(step_name="aborted", message="Type something")
+    runtime = Runtime(ask=make_asker(None), should_stop=lambda: True)
+    result = step.run(runtime)
+    assert result.result is ResultType.ERROR
+    assert "stopped" in result.error_info
+
+
+def test_user_write_step_declines_when_nothing_can_ask():
+    step = UserWriteStep(step_name="alone", message="Type something")
+    assert step.run(Runtime()).result is ResultType.ERROR
+
+
+def test_user_write_step_resolves_the_image_beside_the_recipe(tmp_path):
+    image = tmp_path / "label.png"
+    image.write_bytes(b"not really a png")
+    seen = []
+    step = UserWriteStep(
+        step_name="get_serial_number",
+        message="Type what is on the label",
+        image_path="label.png",
+    )
+    step.run(Runtime(ask=make_asker("SN-1", seen), base_dir=str(tmp_path)))
+    assert seen[0].image_path == str(image.resolve())
+
+
+def test_user_write_step_missing_image_is_a_step_error(tmp_path):
+    seen = []
+    step = UserWriteStep(
+        step_name="get_serial_number",
+        message="Type what is on the label",
+        image_path="no_such_image.png",
+    )
+    result = step.run(Runtime(ask=make_asker("SN-1", seen), base_dir=str(tmp_path)))
+    assert result.result is ResultType.ERROR
+    assert "no_such_image.png" in result.error_info
+    assert seen == [], "nothing should be asked when the image is wrong"
+
+
+def test_the_registry_builds_a_user_write_step():
+    step = build_step(
+        {
+            "steptype": "UserWrite",
+            "step_name": "get_serial_number",
+            "message": "Type the serial number",
+        }
+    )
+    assert isinstance(step, UserWriteStep)
+    assert step.message == "Type the serial number"
+
+
+# --------------------------------------------------------------------------
+# `inputs` - a bare value is the value
+# --------------------------------------------------------------------------
+
+
+def test_a_bare_input_value_is_the_value():
+    """`a: 2` is the spelling for a literal, which is what most arguments are."""
+    step = Step(step_name="literals", inputs={"a": 2, "b": "COM3", "c": [1, 2]})
+
+    assert step.process_inputs(Runtime()) == {"a": 2, "b": "COM3", "c": [1, 2]}
+
+
+def test_a_literal_is_the_only_way_to_write_a_literal():
+    """`{value: 2}` and `{type: direct, value: 2}` were a second spelling of
+    `a: 2` and are both gone: a mapping is a configuration, and the only
+    configuration an input has is `global`."""
+    step = Step(step_name="explicit", inputs={"a": {"value": 2}})
+
+    with pytest.raises(ValueError, match="unknown input type"):
+        step.process_inputs(Runtime())
+
+
+def test_a_mapping_input_still_names_where_its_value_comes_from():
+    runtime = Runtime(globals={"rig": "bench-2", "port": "COM1"})
+    step = Step(
+        step_name="mixed",
+        inputs={
+            "literal": 45,
+            "from_global": {"type": "global", "global_name": "rig"},
+            "also_global": {"type": "global", "global_name": "port"},
+        },
+    )
+
+    assert step.process_inputs(runtime) == {
+        "literal": 45,
+        "from_global": "bench-2",
+        "also_global": "COM1",
+    }
+
+
+def test_a_mapping_that_configures_nothing_says_so():
+    """The cost of the short spelling: a mapping is always a configuration, so
+    an argument whose value is genuinely a dict cannot be written directly.
+    The error says so instead of failing obscurely."""
+    step = Step(step_name="ambiguous", inputs={"payload": {"foo": 1}})
+
+    with pytest.raises(ValueError, match="written as itself"):
+        step.process_inputs(Runtime())
+
+
+# --------------------------------------------------------------------------
+# What is NOT checked when the recipe loads - all of it fails on the bench
+# --------------------------------------------------------------------------
+
+
+def test_an_argument_name_the_function_does_not_take_is_a_step_error(tmp_path):
+    """The recipe names the arguments and nothing compares them with the
+    signature, so a typo is a TypeError from the call itself. Checking it at
+    load time is a roadmap TODO; this pins what happens until then."""
+    write_module(tmp_path)
+    step = PythonModuleStep(
+        step_name="typo",
+        module="demo_tests.py",
+        method_name="add",
+        inputs={"a": 1, "bb": 2},
+    )
+
+    result = step.run(Runtime(base_dir=str(tmp_path)))
+
+    assert result.result is ResultType.ERROR
+    assert "bb" in result.error_info
+
+
+def test_too_few_arguments_is_a_step_error(tmp_path):
+    """Same story from the other side: the call is what notices."""
+    write_module(tmp_path)
+    step = PythonModuleStep(
+        step_name="short", module="demo_tests.py", method_name="add", inputs={"a": 1}
+    )
+
+    result = step.run(Runtime(base_dir=str(tmp_path)))
+
+    assert result.result is ResultType.ERROR
+    assert "add()" in result.error_info
+
+
+def test_a_global_that_was_never_set_is_a_step_error():
+    """A typo in `global_name` fails mid-run, not at load time. Making an
+    undeclared variable a validation fault is a roadmap TODO (guide P4)."""
+    step = Step(step_name="ghost", inputs={"x": {"type": "global", "global_name": "nope"}})
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.ERROR
+    assert "nope" in result.error_info

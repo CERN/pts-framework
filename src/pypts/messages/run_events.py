@@ -15,8 +15,9 @@ whole set. The receivers were built first on purpose - the Sequencer, CORE, the
 CLI and the GUI all had to agree on the contract before the engine existed, and
 `mypy` plus `test_messages.py` keep every branch honest in the meantime. The
 seven progress events below carried the marker until the first slice of the
-engine port landed, and `UserPromptRequest` until the UserInteraction step type
-landed. `SerialNumberRequest` is the last one here still carrying it.
+engine port landed, `UserPromptRequest` until the UserInteraction step type
+landed and `UserTextRequest` until the UserWrite one did. Nothing in this module
+carries the marker any more.
 """
 
 from dataclasses import dataclass
@@ -85,10 +86,22 @@ class RecipeLoaded:
 # Sender: Sequencer.execute_sequence(). Receiver: hmi_client.py show_run_started()
 @dataclass(frozen=True, slots=True)
 class RunStarted:
-    """Execution of a recipe has begun."""
+    """
+    Execution of a recipe has begun.
+
+    Carries everything about the run that is knowable before the first step,
+    because the Report opens report.csv on this message and every one of
+    these becomes a column. `metadata_names` is the recipe's
+    `report_metadata` header - the *names* are known now even though the
+    values arrive later, as RunMetadata, which is what lets the header row
+    be written once and stay correct.
+    """
 
     recipe_name: str
     recipe_description: str
+    recipe_version: str = ""
+    pypts_version: str = ""
+    metadata_names: tuple[str, ...] = ()
 
 
 # Sender: Sequencer.execute_sequence(). Receiver: hmi_client.py show_run_finished()
@@ -98,6 +111,26 @@ class RunFinished:
 
     result: ResultType
     outcomes: tuple[StepOutcome, ...] = ()
+
+
+# Sender: Sequencer, from the emit seam it wraps. Receivers: report.py
+# record_metadata() and hmi_client.py show_run_metadata()
+@dataclass(frozen=True, slots=True)
+class RunMetadata:
+    """
+    The current value of one or more of the run's metadata globals.
+
+    The Report cannot see the Runtime - it is a thread of the Core process
+    fed by events, while the globals live on the sequence thread - so the
+    Sequencer sends them. Emitted whenever a global the recipe named in
+    `report_metadata` appears or changes, so a run that sets its serial
+    number in step 1 has it from step 1 on.
+
+    Pairs rather than a dict, so the message stays a frozen value that
+    compares and pickles like every other one.
+    """
+
+    values: tuple[tuple[str, str], ...] = ()
 
 
 # Sender: step.run_sequence(). Receiver: hmi_client.py show_sequence_started()
@@ -180,9 +213,15 @@ class StopSequence:
 # Joined by a `request_id` the asker generates, which is what lets these cross a
 # process boundary. The waiting side is in blocking_messages.py.
 #
-# The prompt pair is live end to end: UserInteractionStep asks through
-# Runtime.ask, and the frontends answer. The serial pair still has no asker -
-# UserWriteStep is the one that will, roadmap Phase 1 (see pypts/step).
+# Both pairs are live end to end: UserInteractionStep and UserWriteStep ask
+# through Runtime.ask, and the frontends answer.
+#
+# There is deliberately no message for a *particular* question. An earlier
+# SerialNumberRequest hard-coded one - the engine went and fetched the serial
+# number of the unit under test whether or not the recipe wanted one. Asking is
+# the recipe's job: a UserWrite step named `get_serial_number` puts the answer in
+# a global, and the framework supplies the prompt, not the policy. See
+# resources/roadmap/best_practices.md.
 
 
 # Sent by: step/user_interaction_step.py, via Runtime.ask -> Sequencer.ask_operator()
@@ -209,17 +248,26 @@ class UserPromptResponse:
     choice: str | None
 
 
-# NOT SENT YET - receiver: hmi_client.py ask_serial_number()
+# Sent by: step/user_write_step.py, via Runtime.ask -> Sequencer.ask_operator()
+# Receiver: hmi_client.py ask_user_text()
 @dataclass(frozen=True, slots=True)
-class SerialNumberRequest:
-    """Ask the operator for the serial number of the unit under test."""
+class UserTextRequest:
+    """
+    Show the operator a message and wait for a line of text to be typed.
+
+    The free-text counterpart of UserPromptRequest, and deliberately as
+    unopinionated: the recipe decides what is being asked for. `image_path`
+    is absolute, for the same reason - the HMI is a different process.
+    """
 
     request_id: UUID
+    message: str
+    image_path: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class SerialNumberResponse:
-    """The serial number, or None if the operator declined."""
+class UserTextResponse:
+    """What the operator typed. `text` is None if they cancelled or it timed out."""
 
     request_id: UUID
-    serial_number: str | None
+    text: str | None

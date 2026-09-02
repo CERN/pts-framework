@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -38,6 +39,7 @@ class InteractionPanel(QWidget):
         self._logo_pixmap = load_cern_logo_pixmap(get_palette(False).logo_tint)
         self._selected_button_index = -1
         self._current_image_path: str | None = None
+        self._mode = "idle"
         self._interaction_blocked = False
 
         layout = QVBoxLayout(self)
@@ -71,6 +73,32 @@ class InteractionPanel(QWidget):
         self._inner.addWidget(self._button_row)
 
         self._buttons: list[QPushButton] = []
+
+        # The text row is the free-text half of the panel, used by set_text_prompt()
+        # instead of the button row. It is built once and hidden, the way the button
+        # row is, so a prompt only ever toggles visibility.
+        self._text_row = QWidget()
+        text_layout = QHBoxLayout(self._text_row)
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(8)
+        self.text_input = QLineEdit()
+        self.text_input.setMaximumWidth(360)
+        self.text_input.textChanged.connect(self._refresh_text_ok_enabled)
+        self.text_input.returnPressed.connect(self._text_accepted)
+        self.text_ok_button = QPushButton("OK")
+        self.text_ok_button.setObjectName("primaryBtn")
+        self.text_ok_button.clicked.connect(self._text_accepted)
+        self.text_cancel_button = QPushButton(CANCEL_LABEL)
+        self.text_cancel_button.setObjectName("stopBtn")
+        self.text_cancel_button.clicked.connect(self.cancelled.emit)
+        text_layout.addStretch()
+        text_layout.addWidget(self.text_input)
+        text_layout.addWidget(self.text_ok_button)
+        text_layout.addWidget(self.text_cancel_button)
+        text_layout.addStretch()
+        self._text_row.setVisible(False)
+        self._inner.addWidget(self._text_row)
+
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.set_idle()
 
@@ -101,9 +129,19 @@ class InteractionPanel(QWidget):
         self.message_label.clear()
         self.message_label.setVisible(False)
         self._button_row.setVisible(False)
+        self._text_row.setVisible(False)
+        self.text_input.clear()
+        self._mode = "idle"
         self._refresh_idle_visual()
 
+    def is_idle(self) -> bool:
+        """No question on screen. Logical state, not Qt visibility: a child of
+        a window that has not been shown reports isVisible() False whatever was
+        asked of it."""
+        return self._mode == "idle"
+
     def set_prompt(self, message: str, buttons: list[dict], image_path: str | None = None):
+        self._text_row.setVisible(False)
         self._set_image_from_path(image_path)
         self.message_label.setText(message)
         self.message_label.setVisible(bool(message))
@@ -117,10 +155,44 @@ class InteractionPanel(QWidget):
         # the arrow keys reach it.
         self.add_button(CANCEL_LABEL, CANCEL_LABEL, on_click=self.cancelled.emit)
         self._button_row.setVisible(True)
+        self._mode = "prompt"
         if self._buttons:
             self._set_selected_button(0)
             self._buttons[0].setFocus(Qt.FocusReason.OtherFocusReason)
             self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def set_text_prompt(self, message: str, image_path: str | None = None):
+        """
+        The free-text prompt: same picture and message, a line edit instead of
+        buttons.
+
+        It answers through the same two signals a button prompt does -
+        `response_given` with the typed text, `cancelled` from Cancel - so
+        CenterContent's exactly-once gate, RunFinished and a superseding
+        request all reach it with no special case of their own.
+
+        OK stays disabled while the field is empty. That is the whole of the
+        "no empty answers" rule: the operator can type something or cancel,
+        and no recipe has to spell an `allow_empty` out.
+        """
+        self.clear_buttons()
+        self._button_row.setVisible(False)
+        self._set_image_from_path(image_path)
+        self.message_label.setText(message)
+        self.message_label.setVisible(bool(message))
+        self.text_input.clear()
+        self._refresh_text_ok_enabled()
+        self._text_row.setVisible(True)
+        self._mode = "text"
+        self.text_input.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _text_accepted(self):
+        text = self.text_input.text().strip()
+        if text:
+            self.response_given.emit(text)
+
+    def _refresh_text_ok_enabled(self):
+        self.text_ok_button.setEnabled(bool(self.text_input.text().strip()))
 
     def set_image(self, image_path: str | None):
         self._set_image_from_path(image_path)
@@ -128,6 +200,7 @@ class InteractionPanel(QWidget):
     def set_interaction_blocked(self, blocked: bool):
         self._interaction_blocked = blocked
         self._button_row.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
+        self._text_row.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
 
     def add_button(self, label: str, value: str, primary: bool = False, on_click=None):
         """One prompt button. `on_click` replaces the default answer-with-value

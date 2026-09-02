@@ -9,7 +9,7 @@
 # something real to load until they are portable.
 name: Wait demo
 description: Two short waits - the smallest recipe that runs end to end.
-version: 1.0.0
+version: 0.2
 ---
 sequence_name: Main
 description: Waits twice, briefly.

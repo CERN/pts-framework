@@ -8,7 +8,7 @@
 # Optional fields are deliberately left out - the parser assumes them empty.
 name: Wait demo
 description: Two short waits - the smallest recipe that runs end to end.
-version: 1.0.0
+version: 0.2
 main_sequence: Main
 ---
 sequence_name: Main

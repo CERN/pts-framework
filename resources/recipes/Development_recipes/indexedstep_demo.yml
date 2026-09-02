@@ -16,7 +16,7 @@
 # One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
 name: Indexed demo
 description: Two authored steps, thirteen real ones - Indexed end to end.
-version: 1.0.0
+version: 0.2
 ---
 sequence_name: Main
 description: The same call repeated over parameter sets, each with its own check.
@@ -62,7 +62,7 @@ steps:
         expect: {sum: 12}
 
   # Anything a set cannot say in its terse `expect` - `passfail`, `range`,
-  # `local`, `global` - goes on the template instead, where every generated
+  # `global` - goes on the template instead, where every generated
   # step inherits it. Here all three rows share one passfail check and differ
   # only in their input, so the last of them is the FAIL.
   - steptype: Indexed
@@ -72,7 +72,7 @@ steps:
       steptype: PythonModule
       module: example_tests.py
       method_name: is_even
-      output_mapping:
+      outputs:
         even: {type: passfail}
     parameter_sets:
       - inputs: {number: 2}

@@ -21,14 +21,25 @@ number, pypts version, ...). None of that came along:
 - The reporting metadata returns with the Report port (roadmap Phase 1
   step 4), stamped where it is known rather than carried everywhere.
 
-What is left is exactly what steps communicate through: the two variable
-scopes. `globals` is one flat dict for the whole recipe; locals live on a
-stack with one dict per running sequence, and only the top frame is ever
-read or written - a subsequence cannot see its caller's locals.
+What is left is exactly what steps communicate through: `globals`, one flat
+dict for the whole run. It is the only scope. A per-sequence `locals` frame
+existed and was dropped (2026-09-02): it was global in reach and merely
+shorter-lived, which is a distinction a recipe author had to think about for
+no gain. Anything narrower than the run is a step's own `inputs`/`outputs`.
 """
 
 from collections.abc import Callable
 from typing import Any
+
+
+class PromptUnanswered(Exception):
+    """
+    Nobody answered a question put through `ask`: timed out, cancelled, or
+    the run stopped.
+
+    It lives here rather than on one step type because it belongs to the
+    `ask` seam, which every step that blocks on a person shares.
+    """
 
 
 def _never_stop() -> bool:
@@ -45,7 +56,7 @@ def _cannot_ask(request: Any) -> Any:
 
 
 class Runtime:
-    """Variable scopes plus the three seams to the Sequencer, nothing else."""
+    """One variable scope plus the three seams to the Sequencer, nothing else."""
 
     def __init__(
         self,
@@ -60,7 +71,6 @@ class Runtime:
         #: relative `module:` path resolves against, so test code lives beside
         #: its recipe. Empty for a recipe parsed from text.
         self.base_dir = base_dir
-        self.local_stack: list[dict[str, Any]] = []
         #: Where progress events go. The Sequencer passes its outbox's send();
         #: typed Any because a Callable[[SequencerToCore], None] would drag the
         #: link union in here and fail contravariance against the no-op default.
@@ -76,21 +86,7 @@ class Runtime:
         #: MUST only be called from the sequence thread - see Sequencer.
         self.ask: Callable[[Any], Any] = ask if ask is not None else _cannot_ask
 
-    # --- locals: one frame per running sequence, top frame only ---------------
-
-    def push_locals(self, locals: dict[str, Any]) -> None:
-        self.local_stack.append(locals)
-
-    def pop_locals(self) -> dict[str, Any]:
-        return self.local_stack.pop()
-
-    def get_local(self, name: str) -> Any:
-        return self.local_stack[-1][name]
-
-    def set_local(self, name: str, value: Any) -> None:
-        self.local_stack[-1][name] = value
-
-    # --- globals: one flat dict for the whole recipe --------------------------
+    # --- globals: one flat dict for the whole run -----------------------------
 
     def get_global(self, name: str) -> Any:
         return self.globals[name]

@@ -21,14 +21,14 @@ recipe terms, and is worth reading before porting one.
 ## 1. The catalogue
 
 Ten classes existed in `old_code/steps.py` (the whole file is commented out — it is read,
-never run). Four are ported. Two more are wanted, four are not.
+never run). Five are ported. One more is wanted, four are not.
 
 | # | Old class | YAML today | Status | Decision |
 |---|---|---|---|---|
 | 1 | `WaitStep` | `Wait` | ✅ **done** | — |
 | 2 | `PythonModuleStep` | `PythonModule` | ✅ **done** | methods only; the attribute actions are dropped |
 | 3 | `UserInteractionStep` | `UserInteraction` | ✅ **done** | the first type that blocks on a person |
-| 4 | `UserWriteStep` | — | ❌ missing | **to be implemented** |
+| 4 | `UserWriteStep` | `UserWrite` | ✅ **done, one mode of two** | the `wrt` text dialog; the `ID` serial-port mode is dropped — §2.4 |
 | 5 | `UserLoadingStep` | — | ❌ missing | **to be implemented** |
 | 6 | `UserRunMethodStep` | — | ❌ missing | **deprecated — to be dropped** |
 | 7 | `SSHConnectStep` | — | ❌ missing | **not a step type — moves into the framework** |
@@ -36,7 +36,7 @@ never run). Four are ported. Two more are wanted, four are not.
 | 9 | `SequenceStep` | — | ❌ missing | **to be dropped** |
 | 10 | `IndexedStep` | `Indexed` | ✅ **done, reshaped** | replaced by load-time expansion — §2.9 |
 
-Decisions recorded 2026-09-01. Two types left to port, four that will never
+Decisions recorded 2026-09-01; `UserWrite` landed 2026-09-02. One type left to port, four that will never
 appear in `STEP_TYPES` — plus `Indexed`, which is in the rules but never in the registry
 because it is gone before anything is built.
 
@@ -47,7 +47,7 @@ because it is gone before anything is built.
 ### 2.1 `WaitStep` → `Wait` — done
 
 `wait_step.py`. Sleeps. The one deliberate change from the old type: `wait_time` is a
-**direct field on the step**, not an `input_mapping` entry — a fixed wait has no inputs to
+**direct field on the step**, not an `inputs` entry — a fixed wait has no inputs to
 resolve and no outputs to judge, so it carries neither mapping. Returns `{}`, so the
 verdict is always `DONE`.
 
@@ -57,18 +57,18 @@ courtesy, not a defect — but a 60 s wait delays an abort by up to 60 s.
 
 ### 2.2 `PythonModuleStep` → `PythonModule` — done
 
-`python_module_step.py`. The workhorse: load a module, call into it, `input_mapping`
+`python_module_step.py`. The workhorse: load a module, call into it, `inputs`
 passed as keyword arguments.
 
 - **Calling a method is the whole type.** `read_attribute` and `write_attribute` are
   **dropped** (decision 2026-09-01), not deferred: a recipe that needs an attribute writes
   a one-line getter or setter beside it and calls that, which keeps one way of reaching
   Python code instead of three.
-- `action_type` survives as a **tolerated no-op** — one legal value, `method`, selecting
-  nothing. It is accepted only because the unported example recipes still spell it on every
-  step; anything else is refused with an error saying so. It is in neither
-  `STEP_TYPE_REQUIRED` nor `STEP_TYPE_DEFAULTS`, so no new recipe needs it, and it goes when
-  those recipes are ported.
+- **`action_type` is gone** (2026-09-02). It selected between the three actions and two of
+  them no longer exist, so the key selected nothing. It was kept for a while as a tolerated
+  no-op so the unported example recipes would still load; that is not a reason to carry a
+  key. A recipe that still writes it now gets a `RecipeError` naming it, like any unknown
+  key.
 - **Also dropped:** the old project-wide `rglob` search for the module file — a heuristic
   with a bare `except` at its heart. Here the recipe says where its code is: a path
   resolved against the recipe's own folder, or a dotted import name.
@@ -81,7 +81,7 @@ list of buttons; the chosen key comes back as the step's output. Demo:
 question).
 
 **The question sits directly on the step**, the way a Wait's `wait_time` does and not the
-way a PythonModule's `input_mapping` does. Only the *answer* goes through a mapping:
+way a PythonModule's `inputs` entries do. Only the *answer* goes through a mapping:
 
 ```yaml
 - steptype: UserInteraction
@@ -89,7 +89,7 @@ way a PythonModule's `input_mapping` does. Only the *answer* goes through a mapp
   message: Is the red LED lit?
   options: [Yes, No]
   image_path: led.png        # optional, resolved against the recipe's folder
-  output_mapping:
+  outputs:
     output: {type: equals, value: Yes}
 ```
 
@@ -110,8 +110,8 @@ def ask_operator(self, request):            # sequencer.py
 A step just calls `runtime.ask(request)` and cannot get it wrong. The rule that stays
 load-bearing: **`ask` may only be called from the sequence thread.** The answer is
 delivered by `deliver_response()` on the *event loop* thread, so a caller on the event
-loop would block the very loop that has to wake it. `UserWriteStep` and `UserLoadingStep`
-use the same seam.
+loop would block the very loop that has to wake it. `UserWriteStep` uses the same seam,
+and `UserLoadingStep` will.
 
 **Waiting is a poll, not one long sleep.** `PendingRequests.wait()` surfaces every
 `POLL_INTERVAL_S` (100 ms) to look at `should_abort`. Without it, pressing Stop with a
@@ -148,20 +148,58 @@ Not carried over from the old type: `trigger_response` / `module` / `action_type
 `method_name` (that was `UserRunMethodStep` behaviour — §2.6), and the `cancel_key`
 global convention.
 
-### 2.4 `UserWriteStep` — to be implemented
+### 2.4 `UserWriteStep` → `UserWrite` — done
 
-Two modes in the old type, selected by which button the operator pressed:
+`user_write_step.py`. Ask the operator to type a line of text; what they typed is the
+step's output. The free-text half of the pair whose other half is `UserInteraction`,
+and it shares that type's shape exactly — `message` and `image_path` directly on the
+step, only the answer through a mapping. Demo:
+`resources/recipes/Development_recipes/userwritestep_demo.yml` (GUI mode — the CLI
+declines every question).
 
-- **`wrt`** — a text dialog; the typed string is stored in the variable named by
-  `output_mapping.output`. Broken in the old engine: the text was immediately overwritten
-  by the literal string `"wrt"` when `process_outputs` ran (recipe_guide §16 F14). The port
-  fixes this by construction — do not reproduce it.
-- **`ID`** — a serial-port dialog (port, baudrate, `*IDN?`), writing the hard-coded locals
-  `serial_ID`, `serialport`, `baudrate`.
+```yaml
+- steptype: UserWrite
+  step_name: get_serial_number
+  message: Scan or type the serial number of the unit under test.
+  image_path: label_location.png     # optional, resolved against the recipe's folder
+  outputs:
+    output: {type: global, global_name: serial_number}
+```
 
-`SerialNumberRequest` / `SerialNumberResponse` and the GUI's serial page already exist for
-the second mode. The old type also required the globals `cancel_key`, `wrt_key`, `ID_key`
-to name its own buttons — that convention is not worth keeping.
+**What the two prompting types share lives in `operator_prompt.py`**, as two plain
+functions rather than a base class, so §4's rule still holds — a step type subclasses
+`Step`, overrides `_step()` and nothing else. `resolve_image_path()` is the absolute-path
+rule of §2.3; `ask_or_raise()` is its "not answering is an ERROR" rule. Both types call
+both, so neither can drift.
+
+**There is no `allow_empty` field.** The GUI keeps OK disabled while the field is empty
+(`interaction_panel.set_text_prompt`), so the only answers that exist are some text and
+Cancel. One less key in every recipe that wants the obvious behaviour.
+
+**The old type's two modes, and what became of them:**
+
+- **`wrt`** — the text dialog. This is the port. The old engine's defect (the typed
+  text immediately overwritten by the literal string `"wrt"` when `process_outputs`
+  ran — recipe_guide §16 F14) cannot recur: there is no button whose label competes
+  with the answer, because there are no buttons.
+- **`ID`** — the serial-port dialog (port, baudrate, `*IDN?`). **Dropped**
+  (decision 2026-09-02). It is instrument identification over RS-232, not a person
+  typing, and it belongs where the rest of the instrument access is going: a
+  `PythonModule` step calling a driver that returns the IDN string, which the recipe
+  stores in a global exactly as it stores the serial number. The old type also
+  required the globals `cancel_key`, `wrt_key` and `ID_key` to name its own buttons —
+  a convention that goes with it.
+
+**The framework asks for nothing in particular.** `SerialNumberRequest` /
+`SerialNumberResponse` and the GUI's serial page are **deleted** (2026-09-02). They
+meant the engine itself believed every unit under test has a serial number and went
+and fetched it. Asking is the recipe's job; the framework supplies the prompt and the
+global scope. What is left of the coupling is one recipe-header field —
+`report_metadata`, defaulting to `("serial_number",)` — which names the globals the
+Report stamps on every row of `report.csv`, shows in `report.html`'s header, appends
+to the run folder's name and puts in the GUI's top bar. The convention itself lives in
+`resources/roadmap/best_practices.md`: a step named `get_serial_number` writing the
+`serial_number` global.
 
 ### 2.5 `UserLoadingStep` — to be implemented
 
@@ -174,7 +212,7 @@ response, joined by `request_id`. Each follow-up has to become **its own request
 pair** (recorded as a roadmap §1.1 TODO). Settle that before implementing.
 
 Also from the old type: `type: local` in `file_save_location` still wrote a **global**
-(§16 F15). Not a behaviour to port.
+(§16 F15). Moot now — `local` no longer exists (§3.5), there is one scope.
 
 ### 2.6 `UserRunMethodStep` — deprecated, to be dropped
 
@@ -188,7 +226,7 @@ Consequence: the `method` **input type** (identical to `direct`, used only to ca
 ### 2.7 `SSHConnectStep` / `SSHCloseStep` — not step types; move into the framework
 
 Open a paramiko session and close it. Both read **globals only** — `host`, `user`,
-`password`, `private_key`, `port` — never `input_mapping`, and `SSHConnectStep` published
+`password`, `private_key`, `port` — never the step's own arguments — and `SSHConnectStep` published
 the live client as the global `ssh_client` for later steps to take as an input.
 
 **Decision: SSH belongs to the framework, not to the recipe.** A connection is
@@ -262,7 +300,7 @@ parameter set, and everything downstream deals with plain steps:
 - Each generated step gets **its own UUID**, so the step table pre-fills with N rows, the
   CSV gets N rows, and **no new message type was needed** — nothing in the message layer,
   the Sequencer or either frontend knows the steptype exists.
-- Refused, rather than silently ignored: `id`, `input_mapping` and `output_mapping` on the
+- Refused, rather than silently ignored: `id`, `inputs` and `outputs` on the
   `Indexed` step itself (they would apply to nothing, or to N steps at once), an `Indexed`
   step as its own `template`, an empty `parameter_sets`, and an unknown key in a set.
   `skip: true` on it skips every generated step.
@@ -271,7 +309,7 @@ parameter set, and everything downstream deals with plain steps:
 device the previous step found" is not expressible and would need a runtime construct.
 Also gone with the old wrapper: the group-level aggregate verdict (`max()` over
 iterations) — each generated step now stands on its own, and the sequence verdict
-aggregates them like any other steps. F25 (the wrapper's `output_mapping` discarded) cannot
+aggregates them like any other steps. F25 (the wrapper's `outputs` discarded) cannot
 recur, because there is no wrapper.
 
 Where the rules live: `STEP_TYPE_REQUIRED["indexed"]` in `recipe/rules.py`, listed in
@@ -368,8 +406,83 @@ step and the key. Loud, and the fix is a rename.
 
 - **`method` input type** — went with `UserRunMethodStep` (§2.6).
 - **`indexed: true`** — the old per-input flag is gone; `parameter_sets` replaced it (§2.9).
-- **`__result` / implicit `passthrough`** — the structural types' aggregate output. Gone:
-  `SequenceStep` was dropped and `Indexed` no longer aggregates anything.
+- **`__result` and the `passthrough` output type** — the structural types' aggregate
+  output, propagated as the step's own verdict. Gone: `SequenceStep` was dropped and
+  `Indexed` no longer aggregates anything, so nothing produced a `ResultType` to
+  propagate. `pass` took its place in the vocabulary — same idea of an output that is
+  not a measurement, without the propagation (§3.4).
+
+### 3.4 `inputs` and `outputs` — done
+
+The two mappings every step type may carry. They were `input_mapping` and
+`output_mapping`; the names are now **`inputs` and `outputs`** (2026-09-02), because the
+`_mapping` suffix named the implementation and the shorter word names the thing.
+
+**A bare value under `inputs` is the value.** That is the whole of the second change:
+
+```yaml
+inputs:
+  a: 2                                  # a literal - the common case
+  b: {type: global, global_name: port}  # the only other place a value comes from
+outputs:
+  sum: {type: equals, value: 5}
+```
+
+**There is no `direct` type and no `value` key on an input** (dropped 2026-09-02, with
+the rest of the second spellings): `{value: 2}` and `{type: direct, value: 2}` said what
+`a: 2` says, and one way is enough. So an input entry is a literal or a mapping, and a
+mapping can only be `global` — which is why it must name its type: there is no default
+left to fall back to. `value` is still an `equals` entry's key on the **outputs** side;
+that is a different thing and it stays.
+
+The `outputs` vocabulary is `passfail`, `equals`, `range` (they judge), `pass` (this
+output is not a measurement — the verdict is DONE whatever came back) and `global`
+(store it, leave the verdict alone).
+
+Two consequences worth knowing:
+
+- **`Indexed` generates the short form.** `_generated_step()` writes `inputs: {a: 1}`
+  rather than a configuration mapping, so a generated step's YAML fragment in the hover
+  panel reads exactly like a hand-written one.
+- **A mapping is always a configuration**, so an argument whose value is genuinely a dict
+  cannot be written directly. Both the validator and `process_inputs()` say so in as many
+  words. It is the one thing the short spelling costs, and it is stated rather than
+  discovered.
+
+**Checked when the recipe loads** (§3.5's removal is why): every `inputs`/`outputs`
+entry names a `type` the engine knows, and carries the keys that type needs. A typo -
+or the dropped `local` - is a `RecipeError` naming the step and the entry, instead of
+a run that dies at step nine. The vocabulary is `rules.INPUT_TYPES` /
+`rules.OUTPUT_TYPES`.
+
+**What is still not checked when a recipe loads:** that `method_name` exists on the
+module, that the argument names match its signature, and that a `global_name` a step reads
+was ever written. All three fail as a `StepResult(ERROR)` on the bench, with tests in
+`test_step.py` pinning that. Moving them to load time is a roadmap TODO.
+
+### 3.5 One variable scope — done
+
+**`globals` is the only scope, and it lasts the whole run.** The per-sequence `locals`
+frame was dropped (2026-09-02) along with the `local` input and output types, the
+`locals:` sequence key, and `Runtime`'s `local_stack` / `push_locals` / `pop_locals` /
+`get_local` / `set_local`.
+
+The reason it went: a local was **global in reach and merely shorter-lived**. Every step
+in the running sequence could read and write it exactly as it could a global; all the
+scope bought was that the value vanished when the sequence ended. That is a distinction a
+recipe author had to think about on every stored value, for no protection — two names for
+one idea. With `SequenceStep` dropped (§2.8) the stack never held more than one frame
+either, so the machinery was carrying a case that could not arise.
+
+What is left is deliberately two things and not three: **`globals` for anything that
+outlives a step**, and a step's own **`inputs`/`outputs`** for everything else. A step
+that wants a value from an earlier one names a global; a step that only needs a value for
+itself takes it as an input.
+
+The cost, stated plainly: a global written by one sequence is visible to the next, and
+nothing clears it between sequences of the same run. Nothing in the old `locals` gave
+real isolation either — F16 was exactly a re-run seeing the previous run's writes — but
+if isolation is ever wanted it has to be designed, not inherited.
 
 ---
 
@@ -377,7 +490,9 @@ step and the key. Loud, and the fix is a rename.
 
 1. The class in `step/<name>_step.py`: subclass `Step`, override `_step()` and nothing else.
    A type that has to ask the operator something calls `runtime.ask(request)` from inside
-   `_step()` — never a queue, never `PendingRequests` directly (§2.3).
+   `_step()` — never a queue, never `PendingRequests` directly (§2.3) — and reaches for
+   `operator_prompt.ask_or_raise()` and `resolve_image_path()` rather than repeating them
+   (§2.4).
    The constructor arguments *are* the type's YAML keys, so an unknown key is a `TypeError`
    at load time.
 2. Its entry in `STEP_TYPES` (`step/registry.py`), keyed **lowercase** — the YAML spelling

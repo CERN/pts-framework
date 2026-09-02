@@ -37,16 +37,17 @@ from pypts.messages.core_hmi_communication import (
 from pypts.messages.run_events import (
     RecipeLoaded,
     RunFinished,
+    RunMetadata,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
-    SerialNumberRequest,
-    SerialNumberResponse,
     StepFinished,
     StepStarted,
     StopSequence,
     UserPromptRequest,
     UserPromptResponse,
+    UserTextRequest,
+    UserTextResponse,
 )
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import HMI, HeartbeatManager
@@ -102,15 +103,16 @@ class HmiClient:
             case ReportReady():
                 self.show_report_ready(message)
             # The progress events below are live: CORE and the engine send all
-            # of them on every run. UserPromptRequest is live too, as of the
-            # UserInteraction step type. Only SerialNumberRequest is still NOT
-            # SENT YET - its sender is UserWriteStep, roadmap Phase 1.
+            # of them on every run, and so are both questions - UserInteraction
+            # asks the first, UserWrite the second.
             case RecipeLoaded():
                 self.show_recipe_loaded(message)
             case RunStarted(recipe_name=name, recipe_description=description):
                 self.show_run_started(name, description)
             case RunFinished(result=result, outcomes=outcomes):
                 self.show_run_finished(result, outcomes)
+            case RunMetadata(values=values):
+                self.show_run_metadata(values)
             case SequenceStarted(sequence_name=name):
                 self.show_sequence_started(name)
             case SequenceFinished(sequence_name=name, result=result):
@@ -121,8 +123,8 @@ class HmiClient:
                 self.show_step_finished(outcome)
             case UserPromptRequest():
                 self.ask_user(message)
-            case SerialNumberRequest():
-                self.ask_serial_number(message)
+            case UserTextRequest():
+                self.ask_user_text(message)
             case _:
                 unhandled(message)
 
@@ -159,11 +161,9 @@ class HmiClient:
         """Answer a UserPromptRequest. `choice` is None if the operator cancelled."""
         self.core.send(UserPromptResponse(request_id=request.request_id, choice=choice))
 
-    def answer_serial_number(self, request: SerialNumberRequest, serial_number: str | None) -> None:
-        """Answer a SerialNumberRequest. `serial_number` is None if declined."""
-        self.core.send(
-            SerialNumberResponse(request_id=request.request_id, serial_number=serial_number)
-        )
+    def answer_user_text(self, request: UserTextRequest, text: str | None) -> None:
+        """Answer a UserTextRequest. `text` is None if the operator declined."""
+        self.core.send(UserTextResponse(request_id=request.request_id, text=text))
 
     # --- Shutdown -------------------------------------------------------------
 
@@ -234,6 +234,12 @@ class HmiClient:
         `report_path`."""
         log.info("report ready: %s", event.report_path)
 
+    def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
+        """What the run has learned about the unit on the bench - the globals
+        the recipe named in `report_metadata`, as they are set."""
+        for name, value in values:
+            log.info("%s: %s", name, value)
+
     def ask_user(self, request: UserPromptRequest) -> None:
         """
         Put the question to the operator and answer with answer_user_prompt().
@@ -244,10 +250,10 @@ class HmiClient:
         log.warning("Cannot prompt the operator: %s", request.message)
         self.answer_user_prompt(request, None)
 
-    def ask_serial_number(self, request: SerialNumberRequest) -> None:
+    def ask_user_text(self, request: UserTextRequest) -> None:
         """As ask_user(), and declines for the same reason."""
-        log.warning("Cannot ask for a serial number")
-        self.answer_serial_number(request, None)
+        log.warning("Cannot ask the operator to type anything: %s", request.message)
+        self.answer_user_text(request, None)
 
     def on_stop(self) -> None:
         """Frontend teardown - close the window, print a farewell. Optional."""

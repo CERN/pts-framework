@@ -18,7 +18,13 @@ The link never leaves the Core process, which is why it may carry StepExecuted
 from dataclasses import dataclass
 
 from pypts.messages.common_messages import Heartbeat, ModuleError
-from pypts.messages.run_events import RunFinished, RunStarted, SequenceStarted, StepExecuted
+from pypts.messages.run_events import (
+    RunFinished,
+    RunMetadata,
+    RunStarted,
+    SequenceStarted,
+    StepExecuted,
+)
 
 # --- CORE -> Report: commands -------------------------------------------------
 
@@ -71,6 +77,7 @@ class ReportExported:
 
 CoreToReport = (
     RunStarted
+    | RunMetadata
     | SequenceStarted
     | StepExecuted
     | RunFinished

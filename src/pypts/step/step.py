@@ -138,8 +138,8 @@ class Step:
         step_name: str,
         id: str = "",
         description: str = "",
-        input_mapping: dict[str, Any] | None = None,
-        output_mapping: dict[str, Any] | None = None,
+        inputs: dict[str, Any] | None = None,
+        outputs: dict[str, Any] | None = None,
         skip: bool = False,
         continue_on_error: bool = True,
     ) -> None:
@@ -147,8 +147,8 @@ class Step:
         self.description = description
         # A fresh dict per instance. The old base used mutable defaults, so
         # every step that omitted a mapping shared one dict (F12).
-        self.input_mapping: dict[str, Any] = dict(input_mapping) if input_mapping else {}
-        self.output_mapping: dict[str, Any] = dict(output_mapping) if output_mapping else {}
+        self.inputs: dict[str, Any] = dict(inputs) if inputs else {}
+        self.outputs: dict[str, Any] = dict(outputs) if outputs else {}
         self.skip = skip
         #: False means an ERROR or a FAIL on *this* step ends the run. The
         #: default carries on to the next step, so one bad step does not
@@ -170,7 +170,7 @@ class Step:
         Do the work. Overridden by every step type; the base has no work.
 
         Returns the step's raw output: a dict judged key by key against the
-        output_mapping, or any other value (wrapped as {"output": value};
+        `outputs` mapping, or any other value (wrapped as {"output": value};
         None becomes {}). Raise to fail the step - run() turns the exception
         into a StepResult with ResultType.ERROR.
         """
@@ -180,28 +180,33 @@ class Step:
 
     def process_inputs(self, runtime: Runtime) -> dict[str, Any]:
         """
-        Resolve the input_mapping into the dict of values _step() receives.
+        Resolve `inputs` into the dict of values _step() receives.
 
-        Each entry names where its value comes from: `direct` (a literal in
-        the recipe - the default when `type` is absent), `local` or `global`.
+        An entry that is not a mapping **is** the value: `a: 2`. That is the
+        spelling for a literal, which is what most arguments are. The only
+        other place a value can come from is `global`, the run's one variable
+        scope, and a mapping is how an entry says so.
+
         There is no type coercion anywhere: '45' stays a string, 45 an int.
         """
         resolved: dict[str, Any] = {}
-        for input_name, input_config in self.input_mapping.items():
-            input_type = input_config.get("type", "direct")
+        for input_name, input_config in self.inputs.items():
+            if not isinstance(input_config, dict):
+                resolved[input_name] = input_config
+                continue
+            input_type = input_config.get("type")
             match input_type:
-                case "direct":
-                    resolved[input_name] = input_config["value"]
-                case "local":
-                    resolved[input_name] = runtime.get_local(input_config["local_name"])
                 case "global":
                     resolved[input_name] = runtime.get_global(input_config["global_name"])
                 case _:
                     # The old code left the raw config dict in place. A typo'd
                     # type must be an ERROR on this step, not a weird argument.
+                    # A literal is written as itself, so a mapping here is
+                    # always a configuration and always names its type.
                     raise ValueError(
                         f"Step '{self.name}': unknown input type {input_type!r} "
-                        f"for input '{input_name}'"
+                        f"for input '{input_name}'. A literal value is written "
+                        f"as itself: `{input_name}: <the value>`."
                     )
         return resolved
 
@@ -211,20 +216,22 @@ class Step:
         """
         Judge and store the step's outputs; return the verdict.
 
-        Judging entries (`passthrough`, `passfail`, `equals`, `range`) assign
-        the verdict; storing entries (`local`, `global`) write a variable and
-        leave it alone. With no judging entry at all the verdict is DONE.
+        Judging entries (`passfail`, `equals`, `range`) assign the verdict;
+        `pass` says this output is not a measurement, so the verdict is DONE
+        whatever came back; a `global` entry writes the run's one variable
+        scope and leaves the verdict alone. With no entry that touches the
+        verdict at all, it is DONE.
 
         When several entries judge, the last one wins - kept as-is from the
         old engine for parity during the port.
         TODO(roadmap): revisit last-wins vs "all checks must pass" (F6).
         """
         verdict = ResultType.DONE
-        for output_name, output_config in self.output_mapping.items():
+        for output_name, output_config in self.outputs.items():
             output_type = output_config["type"]
             match output_type:
-                case "passthrough":
-                    verdict = step_output[output_name]
+                case "pass":
+                    verdict = ResultType.DONE
                 case "passfail":
                     verdict = ResultType.PASS if step_output[output_name] else ResultType.FAIL
                 case "equals":
@@ -235,8 +242,6 @@ class Step:
                     high = float(output_config["max"])
                     in_range = low <= float(step_output[output_name]) <= high
                     verdict = ResultType.PASS if in_range else ResultType.FAIL
-                case "local":
-                    runtime.set_local(output_config["local_name"], step_output[output_name])
                 case "global":
                     runtime.set_global(output_config["global_name"], step_output[output_name])
                 case _:
@@ -363,19 +368,13 @@ def run_sequence(runtime: Runtime, sequence: "Sequence") -> tuple[ResultType, li
     SequenceStep can call it for a nested sequence exactly as the Sequencer
     calls it for the top one. Emits SequenceStarted/SequenceFinished; the
     run-level pair (RunStarted/RunFinished) belongs to the Sequencer.
-
-    The sequence's parsed locals are pushed as a *copy*: the old engine
-    pushed the dict by reference, so a re-run started from the previous
-    run's writes (F16).
     """
     runtime.emit(SequenceStarted(sequence_name=sequence.name))
-    runtime.push_locals(dict(sequence.locals))
     step_results: list[StepResult] = []
     try:
         step_results.extend(Step.run_steps(runtime, sequence.steps))
     finally:
         step_results.extend(Step.run_steps(runtime, sequence.teardown_steps, run_to_end=True))
-        runtime.pop_locals()
 
     result = StepResult.evaluate_multiple_step_results(step_results)
     runtime.emit(SequenceFinished(sequence_name=sequence.name, result=result))

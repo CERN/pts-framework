@@ -25,9 +25,9 @@ class WaitStep(Step):
     It exists to pace a sequence around slow hardware, and here also as the
     first ported type: it exercises the whole base lifecycle with no
     dependencies at all. `wait_time` is written directly on the step - a
-    fixed wait has no inputs to resolve and no outputs to judge, so it
-    carries no input_mapping and no output_mapping. Returns {} - with no
-    output to judge, the verdict is DONE.
+    fixed wait has no arguments to resolve and no result to judge, so it
+    carries neither `inputs` nor `outputs`. Returns {} - with nothing to
+    judge, the verdict is DONE.
     """
 
     def __init__(self, wait_time: float | str, **kwargs: Any) -> None:

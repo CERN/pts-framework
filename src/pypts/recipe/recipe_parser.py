@@ -12,8 +12,9 @@ This module owns the whole loading pipeline, in order:
     normalize                  the recipe language is case-insensitive
     validate                   every mandatory field, via validator.py against
                                rules.py - all problems in one RecipeError
-    check format_version       warn-only for now: a mismatch is an ERROR in the
-                               log, the recipe still loads (hard refusal ~v1.0)
+    check version              warn-only: a recipe written for another pypts is
+                               an ERROR in the log and a notice to the operator,
+                               and still loads (hard refusal ~v1.0)
     apply the defaults         every absent optional field gets its rules.py value
     expand                     an Indexed step becomes one ordinary step mapping
                                per parameter set (pypts.step.indexed_step)
@@ -25,6 +26,8 @@ entry. The split keeps the object the Sequencer executes free of any parsing
 machinery.
 """
 
+import re
+from importlib import metadata
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +36,7 @@ import yaml
 from pypts.logger.log import log
 from pypts.recipe import validator
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
-from pypts.recipe.rules import HEADER_DEFAULTS, RECIPE_FORMAT_VERSION, SEQUENCE_DEFAULTS
+from pypts.recipe.rules import HEADER_DEFAULTS, SEQUENCE_DEFAULTS
 from pypts.step import indexed_step
 from pypts.step.registry import build_step
 from pypts.step.step import Step
@@ -81,7 +84,7 @@ def parse_recipe(text: str, file_name: str = "") -> Recipe:
         listed = "; ".join(problems)
         raise RecipeError(f"Recipe '{file_name}' is invalid: {listed}")
 
-    _check_format_version(header, file_name)
+    version_notice = _check_framework_version(header, file_name)
     header = apply_defaults(header, HEADER_DEFAULTS)
 
     # Sequence names keep their case but must be unique without it, so a
@@ -113,27 +116,115 @@ def parse_recipe(text: str, file_name: str = "") -> Recipe:
         version=str(header["version"]),
         globals=header["globals"],
         main_sequence=main_sequence,
+        report_metadata=_report_metadata(header, file_name),
+        version_notice=version_notice,
         sequences=sequences,
         file_name=file_name,
     )
 
 
-def _check_format_version(header: dict[str, Any], file_name: str) -> None:
+def _report_metadata(header: dict[str, Any], file_name: str) -> tuple[str, ...]:
     """
-    Warn-only for the duration of the refactor: a recipe declaring a format
-    this pypts does not read is an ERROR in the log, but it still loads. An
-    absent `format_version` means "written for the current format". The hard
-    refusal comes with the compatibility policy, ~v1.0 (roadmap).
+    The `report_metadata` header field: the globals the Report stamps on
+    every row of report.csv and in report.html's header.
+
+    A list of names, refused here rather than half-applied later: the
+    Report writes these as CSV columns and a column called `{}` or `3`
+    would be nonsense. An empty list is legal and means no metadata.
     """
-    declared = str(header.get("format_version") or "")
-    if declared and declared != RECIPE_FORMAT_VERSION:
+    declared = header["report_metadata"]
+    if isinstance(declared, str) or not isinstance(declared, (list, tuple)):
+        raise RecipeError(
+            f"Recipe '{file_name}': report_metadata must be a list of global "
+            f"names, not {type(declared).__name__}."
+        )
+    names = []
+    for name in declared:
+        if not isinstance(name, str) or not name.strip():
+            raise RecipeError(
+                f"Recipe '{file_name}': report_metadata entry {name!r} is not a "
+                f"global name."
+            )
+        names.append(name.strip())
+    return tuple(names)
+
+
+def _check_framework_version(header: dict[str, Any], file_name: str) -> str:
+    """
+    The header's `version` against the running pypts; the notice, or "".
+
+    `version` is the pypts a recipe was written for, and it is required - a
+    recipe says which framework it expects, and the framework says so when it
+    is not that one. **Major.minor only**, because the running version carries
+    a setuptools-scm suffix (`0.2.2.dev25+g27956b5f9`) no recipe could match.
+
+    Warn-only for the duration of the refactor: an ERROR in the log, a notice
+    for the operator, and the recipe loads unchanged. Nothing here edits the
+    file - the version is the author's statement, not ours. The hard refusal
+    comes with the compatibility policy, ~v1.0 (roadmap).
+
+    Returns:
+        The sentence for the operator, or "" when there is nothing to say.
+    """
+    declared = str(header.get("version") or "")
+    declared_pair = _major_minor(declared)
+    if not declared_pair:
         log.error(
-            "Recipe '%s' declares format_version %s but this pypts reads format %s "
-            "- loading anyway.",
+            "Recipe '%s' declares version %r, which is not a pypts version like "
+            "'0.2' - no compatibility check was made.",
             file_name,
             declared,
-            RECIPE_FORMAT_VERSION,
         )
+        return (
+            f"Recipe '{file_name}' declares version {declared!r}, which is not a "
+            f"pypts version like '0.2'. It was loaded without a compatibility check."
+        )
+
+    running_pair = _major_minor(_framework_version())
+    # Nothing to compare against in a tree with no distribution metadata: say
+    # nothing rather than cry wolf on every run.
+    if not running_pair or declared_pair == running_pair:
+        return ""
+
+    log.error(
+        "Recipe '%s' was written for pypts %s but this is pypts %s - loading anyway.",
+        file_name,
+        declared_pair,
+        running_pair,
+    )
+    return (
+        f"Recipe '{file_name}' was written for pypts {declared_pair}, but this is "
+        f"pypts {running_pair}. It was loaded unchanged - check that it still does "
+        f"what you expect."
+    )
+
+
+def current_recipe_version() -> str:
+    """
+    The `version` a recipe should declare to match the running pypts.
+
+    The major.minor the check below compares against, so a template, a recipe
+    generator or a test asks here rather than reconstructing the rule. Empty
+    when the running version cannot be determined - which is also when the
+    check says nothing.
+    """
+    return _major_minor(_framework_version())
+
+
+def _framework_version() -> str:
+    """The running pypts version, or "" when there is no package metadata."""
+    try:
+        return metadata.version("pts-framework")
+    except metadata.PackageNotFoundError:
+        return ""
+
+
+def _major_minor(version: str) -> str:
+    """The leading `major.minor` of a version string, "" if it has none."""
+    match = re.match(r"(\d+)\.(\d+)", str(version).strip())
+    if match is None:
+        return ""
+    return f"{match.group(1)}.{match.group(2)}"
 
 
 # --- normalization and defaults - what the parser does with the rules --------
@@ -149,7 +240,7 @@ def normalize_sequence(document: dict[str, Any]) -> dict[str, Any]:
     Lowercase everything that is the recipe's own language
     """
     document = _lowercase_keys(document)
-    for list_name in ("setup_steps", "steps", "teardown_steps"):
+    for list_name in ("steps", "teardown_steps"):
         steps = document.get(list_name)
         if isinstance(steps, list):
             document[list_name] = [_normalize_step(step_data) for step_data in steps]
@@ -161,9 +252,7 @@ def _normalize_step(step_data: Any) -> Any:
     if not isinstance(step_data, dict):
         return step_data
     step_data = _lowercase_keys(step_data)
-    if isinstance(step_data.get("action_type"), str):
-        step_data["action_type"] = step_data["action_type"].lower()
-    for mapping_name in ("input_mapping", "output_mapping"):
+    for mapping_name in ("inputs", "outputs"):
         mapping = step_data.get(mapping_name)
         if isinstance(mapping, dict):
             step_data[mapping_name] = {
@@ -217,9 +306,9 @@ def apply_defaults(document: dict[str, Any], defaults: dict[str, Any]) -> dict[s
     """
     Return a copy of `document` with every absent optional key filled in.
 
-    A key that is missing, or present with no value (YAML reads `locals:`
-    alone as None), gets its default. Mutable defaults are copied, so no
-    two recipes ever share a dict or a list.
+    A key that is missing, or present with no value (YAML reads a bare
+    `teardown_steps:` line as None), gets its default. Mutable defaults are
+    copied, so no two recipes ever share a dict or a list.
     """
     filled = dict(document)
     for key, default in defaults.items():
@@ -241,8 +330,7 @@ def _build_sequence(document: dict[str, Any]) -> Sequence:
     document = apply_defaults(document, SEQUENCE_DEFAULTS)
     name = document["sequence_name"]
 
-    # Setup steps are ordinary steps that run first - one flat list.
-    authored = list(document["setup_steps"]) + list(document["steps"])
+    authored = list(document["steps"])
     steps = [
         _build_step_or_refuse(name, position, step_data)
         for position, step_data in enumerate(_expand_indexed_steps(name, authored), start=1)
@@ -256,9 +344,6 @@ def _build_sequence(document: dict[str, Any]) -> Sequence:
     return Sequence(
         name=name,
         description=document["description"],
-        locals=document["locals"],
-        parameters=document["parameters"],
-        outputs=document["outputs"],
         steps=steps,
         teardown_steps=teardown_steps,
     )

@@ -8,7 +8,7 @@ The recipe data layer: what a recipe *is*, not what running one does.
 Data only. The objects the Sequencer executes:
 
     Recipe      one file: the header fields, plus the sequences it contains
-    Sequence    one named, ordered list of steps, plus its local variables
+    Sequence    one named, ordered list of steps
 
 A Step belongs to pypts.step; a Sequence only holds them. This module
 executes nothing, touches no queue and does not import the Sequencer.
@@ -32,23 +32,17 @@ class RecipeError(Exception):
 
 
 class Sequence:
-    """One named, ordered list of steps, plus its local variables. Data only."""
+    """One named, ordered list of steps. Data only."""
 
     def __init__(
         self,
         name: str,
         description: str,
-        locals: dict[str, Any],
-        parameters: dict[str, Any],
-        outputs: dict[str, Any],
         steps: list[Step],
         teardown_steps: list[Step],
     ) -> None:
         self.name = name
         self.description = description
-        self.locals = locals
-        self.parameters = parameters
-        self.outputs = outputs
         self.steps = steps
         self.teardown_steps = teardown_steps
 
@@ -79,6 +73,8 @@ class Recipe:
         globals: dict[str, Any],
         main_sequence: str,
         sequences: dict[str, Sequence],
+        report_metadata: tuple[str, ...] = (),
+        version_notice: str = "",
         file_name: str = "",
         base_dir: str = "",
     ) -> None:
@@ -88,6 +84,14 @@ class Recipe:
         self.globals = globals
         self.main_sequence = main_sequence
         self.sequences = sequences
+        #: The globals the Report stamps on every row and in the report
+        #: header. The recipe names them; the framework only carries them.
+        self.report_metadata = report_metadata
+        #: Empty when the recipe's `version` matches the running pypts.
+        #: Otherwise the sentence the operator should see: the parser
+        #: knows the format, CORE owns the channel to the frontend, so
+        #: the text is written here and reported there.
+        self.version_notice = version_notice
         self.file_name = file_name
         #: The folder the file came from - what a PythonModule step's relative
         #: `module:` path resolves against. Empty for a recipe parsed from text.

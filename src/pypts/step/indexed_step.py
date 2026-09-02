@@ -26,8 +26,8 @@ set, which it builds through `build_step()` like any other step.
 spelling, because a parameter set is a test case and should read like a row of
 a table. A set that needs `range`, `passfail`, `local` or `global` cannot say so;
 put the shared part on the `template`, which is an ordinary step mapping and
-takes the full `input_mapping` / `output_mapping` vocabulary. Set entries are
-merged **over** the template's, key by key.
+takes the full `inputs` / `outputs` vocabulary. Set entries are merged
+**over** the template's, key by key.
 
 Why expansion and not a loop: every generated step is a real `Step` with its own
 UUID, so the step table pre-fills with N rows, the report gets N rows and every
@@ -39,7 +39,7 @@ and would need a runtime construct instead.
 This replaces `old_code/steps.py`'s `IndexedStep`, which wrapped a deep-copied
 template at *run* time, iterated to the length of the shortest of several
 parallel `indexed: true` lists (silently truncating), and then discarded its own
-output_mapping so the results it aggregated could never be stored (F25).
+`outputs` mapping so the results it aggregated could never be stored (F25).
 Row-wise sets have neither problem: one set is one coherent case.
 """
 
@@ -87,7 +87,7 @@ def check_indexed_step(step_data: dict[str, Any]) -> list[str]:
 
     # Silently ignoring these would be worse: an author who writes them expects
     # them to apply, and they would apply to nothing.
-    for mapping_name in ("input_mapping", "output_mapping"):
+    for mapping_name in ("inputs", "outputs"):
         if step_data.get(mapping_name) is not None:
             problems.append(
                 f"'{mapping_name}' belongs on the '{TEMPLATE_KEY}', not on the "
@@ -204,24 +204,26 @@ def _build_one(
 
     # Set entries are merged over the template's, so the template can hold what
     # every case shares and a set only says what makes it different.
-    input_mapping = dict(template.get("input_mapping") or {})
+    # A set's inputs are direct values, and a direct value is written as
+    # itself, so a generated step reads exactly as a hand-written one would.
+    step_inputs = dict(template.get("inputs") or {})
     for name, value in inputs.items():
-        input_mapping[name] = {"type": "direct", "value": value}
+        step_inputs[name] = value
 
-    output_mapping = dict(template.get("output_mapping") or {})
+    step_outputs = dict(template.get("outputs") or {})
     for name, value in expect.items():
-        output_mapping[name] = {"type": "equals", "value": value}
+        step_outputs[name] = {"type": "equals", "value": value}
 
     # Left out entirely when empty: a step type that takes no mappings (Wait)
     # should not be handed two empty ones.
-    if input_mapping:
-        generated["input_mapping"] = input_mapping
+    if step_inputs:
+        generated["inputs"] = step_inputs
     else:
-        generated.pop("input_mapping", None)
-    if output_mapping:
-        generated["output_mapping"] = output_mapping
+        generated.pop("inputs", None)
+    if step_outputs:
+        generated["outputs"] = step_outputs
     else:
-        generated.pop("output_mapping", None)
+        generated.pop("outputs", None)
 
     return generated
 

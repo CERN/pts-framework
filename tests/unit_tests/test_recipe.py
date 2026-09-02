@@ -26,7 +26,7 @@ import yaml
 
 from pypts.recipe import step_source
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
-from pypts.recipe.rules import RECIPE_FORMAT_VERSION
+from pypts.recipe.recipe_parser import current_recipe_version
 from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.wait_step import WaitStep
 
@@ -35,14 +35,22 @@ DEMOS = Path(__file__).parents[2] / "resources" / "recipes" / "Development_recip
 PYTHONMODULE_DEMO = DEMOS / "pythonmodulestep_demo.yml"
 INDEXED_DEMO = DEMOS / "indexedstep_demo.yml"
 USER_INTERACTION_DEMO = DEMOS / "userinteractionstep_demo.yml"
+USER_WRITE_DEMO = DEMOS / "userwritestep_demo.yml"
 ALL_STEPTYPES_DEMO = DEMOS / "all_steptypes_demo.yml"
 
 PLACEHOLDER = "placeholder - test not implemented yet"
 
+#: The pypts this suite runs against, which is what a recipe declares to
+#: match it. Asked rather than written out, so the fixtures do not start
+#: warning the day the framework's minor version moves.
+CURRENT_VERSION = current_recipe_version() or "0.2"
+
 #: A minimal, valid recipe as text, so a test can break one thing at a time.
-#: Every optional field is left out - the parser assumes the defaults.
-VALID = """\
+#: Only the two required header fields and the two required sequence ones
+#: are here - every optional field is left out and the parser assumes it.
+VALID = f"""\
 name: Wait demo
+version: {CURRENT_VERSION}
 main_sequence: Main
 ---
 sequence_name: Main
@@ -57,7 +65,7 @@ def test_recipe_is_parsed_from_yaml():
     recipe = Recipe.from_file(str(WAIT_RECIPE))
 
     assert recipe.name == "Wait demo"
-    assert recipe.version == "1.0.0"
+    assert recipe.version == CURRENT_VERSION
     assert recipe.main_sequence == "Main"
     assert recipe.globals == {}
     assert recipe.file_name == "wait_recipe.yml"
@@ -70,8 +78,10 @@ def test_recipe_is_parsed_from_yaml():
     assert main.teardown_steps == []
 
 
-def test_setup_steps_are_ordinary_steps_that_run_first():
-    """Setup and steps are one flat list - only teardown genuinely differs."""
+def test_setup_steps_is_not_a_key_at_all():
+    """`setup_steps` ran in front of `steps` and meant nothing else. It is
+    gone, and it is an unknown sequence key like any other - ignored, not
+    honoured, and not a special case in the validator either."""
     text = VALID.replace(
         "steps:\n",
         """\
@@ -82,8 +92,8 @@ setup_steps:
 steps:
 """,
     )
-    recipe = Recipe.from_yaml_text(text)
-    assert [step.name for step in recipe.sequences["Main"].steps] == ["Warm up", "Only wait"]
+    main = Recipe.from_yaml_text(text).sequences["Main"]
+    assert [step.name for step in main.steps] == ["Only wait"]
 
 
 def test_recipe_is_data_only_and_carries_no_execution_logic():
@@ -118,27 +128,61 @@ def test_the_only_required_header_field_is_name():
 
 
 def test_optional_header_fields_get_their_defaults():
-    """VALID carries no description, version or globals - the rules fill them in."""
+    """VALID carries no description and no globals - the rules fill them in.
+    `version` is not among them: it is required, and has its own tests below."""
     recipe = Recipe.from_yaml_text(VALID)
     assert recipe.description == ""
-    assert recipe.version == ""
     assert recipe.globals == {}
+    # The convention the framework proposes, and the only place it is
+    # spelled: a recipe that says nothing reports its serial_number global.
+    assert recipe.report_metadata == ("serial_number",)
+
+
+def test_a_recipe_may_name_its_own_report_metadata():
+    """A convention, not a policy - a recipe testing cables names its own."""
+    recipe = Recipe.from_yaml_text(
+        VALID.replace("name: ", "report_metadata: [batch_id, operator]\nname: ", 1)
+    )
+    assert recipe.report_metadata == ("batch_id", "operator")
+
+
+def test_a_recipe_may_report_no_metadata_at_all():
+    recipe = Recipe.from_yaml_text(
+        VALID.replace("name: ", "report_metadata: []\nname: ", 1)
+    )
+    assert recipe.report_metadata == ()
+
+
+def test_report_metadata_must_be_a_list_of_names():
+    """They become CSV columns, so a column called `3` is refused at load time."""
+    with pytest.raises(RecipeError, match="report_metadata"):
+        Recipe.from_yaml_text(
+            VALID.replace("name: ", "report_metadata: 3\nname: ", 1)
+        )
+    with pytest.raises(RecipeError, match="report_metadata"):
+        Recipe.from_yaml_text(
+            VALID.replace("name: ", "report_metadata: [3]\nname: ", 1)
+        )
 
 
 def test_optional_sequence_fields_get_their_defaults():
     main = Recipe.from_yaml_text(VALID).sequences["Main"]
     assert main.description == ""
-    assert main.parameters == {}
-    assert main.locals == {}
-    assert main.outputs == {}
     assert main.teardown_steps == []
+    # `parameters` and `outputs` were the declared interface of a subsequence,
+    # and `locals` was a scope per sequence. All three are gone: a sequence is
+    # a name and an ordered list of steps.
+    assert not hasattr(main, "parameters")
+    assert not hasattr(main, "outputs")
+    assert not hasattr(main, "locals")
 
 
 def test_an_optional_key_written_without_a_value_counts_as_absent():
-    """YAML reads a bare `locals:` line as None - that means the default, not None."""
-    text = VALID.replace("sequence_name: Main", "sequence_name: Main\nlocals:")
+    """YAML reads a bare `teardown_steps:` line as None - that means the
+    default, not None."""
+    text = VALID.replace("sequence_name: Main", "sequence_name: Main\nteardown_steps:")
     main = Recipe.from_yaml_text(text).sequences["Main"]
-    assert main.locals == {}
+    assert main.teardown_steps == []
 
 
 def test_an_omitted_main_sequence_means_the_first_sequence_in_the_file():
@@ -151,8 +195,9 @@ def test_an_omitted_main_sequence_means_the_first_sequence_in_the_file():
 
 def test_the_recipe_language_is_case_insensitive():
     """Keys and structural values may be spelled in any case."""
-    text = """\
+    text = f"""\
 NAME: Wait demo
+Version: {CURRENT_VERSION}
 Main_Sequence: MAIN
 ---
 Sequence_Name: Main
@@ -170,8 +215,9 @@ STEPS:
 def test_mapping_configs_are_case_insensitive_but_entry_names_keep_theirs():
     """`Type: EQUALS` is fine; entry names become keyword arguments and output
     keys, so they are the user's case-sensitive namespace."""
-    text = """\
+    text = f"""\
 name: Demo
+version: {CURRENT_VERSION}
 ---
 sequence_name: Main
 steps:
@@ -179,15 +225,15 @@ steps:
     step_name: Add
     module: example_tests.py
     method_name: add
-    Input_Mapping:
-      a: {Value: 2}
-      B: {value: 3}
-    Output_Mapping:
-      sum: {Type: EQUALS, value: 5}
+    Inputs:
+      a: 2
+      B: {{Type: GLOBAL, Global_Name: rig}}
+    Outputs:
+      sum: {{Type: EQUALS, value: 5}}
 """
     step = Recipe.from_yaml_text(text).sequences["Main"].steps[0]
-    assert step.input_mapping == {"a": {"value": 2}, "B": {"value": 3}}
-    assert step.output_mapping == {"sum": {"type": "equals", "value": 5}}
+    assert step.inputs == {"a": 2, "B": {"type": "global", "global_name": "rig"}}
+    assert step.outputs == {"sum": {"type": "equals", "value": 5}}
 
 
 def test_sequence_names_differing_only_by_case_are_duplicates():
@@ -353,8 +399,8 @@ def test_the_indexed_demo_recipe_expands_every_parameter_set():
         "Even check [number=7]",
     ]
     assert all(isinstance(step, PythonModuleStep) for step in steps)
-    # The template's shared output_mapping reached every generated step.
-    assert steps[-1].output_mapping == {"even": {"type": "passfail"}}
+    # The template's shared outputs reached every generated step.
+    assert steps[-1].outputs == {"even": {"type": "passfail"}}
 
 
 def test_the_user_interaction_demo_recipe_parses():
@@ -369,8 +415,32 @@ def test_the_user_interaction_demo_recipe_parses():
         "Which port",
         "Report the port",
     ]
-    assert steps[2].output_mapping == {"output": {"type": "local", "local_name": "port"}}
-    assert steps[3].input_mapping == {"name": {"type": "local", "local_name": "port"}}
+    assert steps[2].outputs == {"output": {"type": "global", "global_name": "port"}}
+    assert steps[3].inputs == {"name": {"type": "global", "global_name": "port"}}
+
+
+def test_the_user_write_demo_recipe_parses():
+    """resources/recipes/Development_recipes/userwritestep_demo.yml is the UserWrite
+    showcase, and the worked example behind best_practices.md: the first step is
+    named get_serial_number and writes the global the header names."""
+    recipe = Recipe.from_file(str(USER_WRITE_DEMO))
+
+    assert recipe.report_metadata == ("serial_number",)
+    steps = recipe.sequences["Main"].steps
+    assert [step.name for step in steps] == [
+        "get_serial_number",
+        "Read the meter",
+        "Confirm the fixture is closed",
+        "Report the serial number",
+    ]
+    assert steps[0].outputs == {
+        "output": {"type": "global", "global_name": "serial_number"}
+    }
+    # The last step reads back what the first one wrote - the whole point of
+    # storing an answer.
+    assert steps[3].inputs == {
+        "name": {"type": "global", "global_name": "serial_number"}
+    }
 
 
 def test_the_all_steptypes_demo_recipe_builds_one_of_everything():
@@ -381,7 +451,12 @@ def test_the_all_steptypes_demo_recipe_builds_one_of_everything():
 
     sequence = recipe.sequences["Main"]
     built = {type(step).__name__ for step in sequence.steps}
-    assert built == {"UserInteractionStep", "WaitStep", "PythonModuleStep"}
+    assert built == {
+        "UserInteractionStep",
+        "UserWriteStep",
+        "WaitStep",
+        "PythonModuleStep",
+    }
     # Indexed is gone by build time: five sets became five ordinary steps.
     assert sum(step.name.startswith("Add numbers [") for step in sequence.steps) == 5
     assert [step.name for step in sequence.teardown_steps] == ["Power down"]
@@ -427,31 +502,52 @@ def test_every_example_recipe_in_resources_parses():
     ...
 
 
-def test_a_format_version_mismatch_is_logged_but_the_recipe_still_loads(caplog):
-    """Warn-only for the duration of the refactor: a recipe written for another
-    format is an ERROR in the log, not a refusal. The hard refusal comes with
-    the compatibility policy, ~v1.0 (roadmap)."""
-    text = VALID.replace("name: Wait demo", "name: Wait demo\nformat_version: 9.9.9")
+def test_the_header_version_is_required():
+    """A recipe says which pypts it was written for. There is no default:
+    an absent version is a file nobody can date."""
+    text = VALID.replace(f"version: {CURRENT_VERSION}\n", "")
+    with pytest.raises(RecipeError, match="version"):
+        Recipe.from_yaml_text(text)
+
+
+def test_a_version_written_for_another_pypts_is_reported_and_still_loads(caplog):
+    """Warn-only for the duration of the refactor: an ERROR in the log, a
+    notice for the operator, and the recipe loads unchanged. Nothing edits
+    the file. The hard refusal comes with the compatibility policy, ~v1.0.
+    """
+    text = VALID.replace(f"version: {CURRENT_VERSION}", "version: 9.9")
     with caplog.at_level(logging.ERROR):
         recipe = Recipe.from_yaml_text(text)
 
     assert recipe.name == "Wait demo"
-    complaints = [r.getMessage() for r in caplog.records if "format_version" in r.getMessage()]
+    assert "9.9" in recipe.version_notice
+    complaints = [r.getMessage() for r in caplog.records if "9.9" in r.getMessage()]
     assert len(complaints) == 1
-    assert "9.9.9" in complaints[0]
-    assert RECIPE_FORMAT_VERSION in complaints[0]
 
 
-def test_a_matching_or_absent_format_version_is_silent(caplog):
-    """Absent means "written for the current format" - nothing to say."""
-    matching = VALID.replace(
-        "name: Wait demo", f"name: Wait demo\nformat_version: {RECIPE_FORMAT_VERSION}"
-    )
+def test_only_major_and_minor_are_compared(caplog):
+    """The running version carries a setuptools-scm suffix
+    (`0.2.2.dev25+g27956b5f9`) that no recipe could ever match, so the patch
+    level and everything after it is not part of the comparison."""
+    text = VALID.replace(f"version: {CURRENT_VERSION}", f"version: {CURRENT_VERSION}.7")
     with caplog.at_level(logging.ERROR):
-        Recipe.from_yaml_text(VALID)
-        Recipe.from_yaml_text(matching)
+        recipe = Recipe.from_yaml_text(text)
+        matching = Recipe.from_yaml_text(VALID)
 
-    assert not [r for r in caplog.records if "format_version" in r.getMessage()]
+    assert recipe.version_notice == ""
+    assert matching.version_notice == ""
+    assert not caplog.records
+
+
+def test_a_version_that_is_not_a_version_is_reported(caplog):
+    """`version: my-recipe-v2` cannot be compared with anything. Saying so
+    beats checking nothing and saying nothing."""
+    text = VALID.replace(f"version: {CURRENT_VERSION}", "version: my-recipe-v2")
+    with caplog.at_level(logging.ERROR):
+        recipe = Recipe.from_yaml_text(text)
+
+    assert "my-recipe-v2" in recipe.version_notice
+    assert len(caplog.records) == 1
 
 
 # --------------------------------------------------------------------------
@@ -459,9 +555,10 @@ def test_a_matching_or_absent_format_version_is_silent(caplog):
 # --------------------------------------------------------------------------
 
 #: Two parameter sets, the terse spelling indexedstep_demo.yml uses.
-INDEXED = """\
+INDEXED = f"""\
 name: Indexed demo
----
+version: {CURRENT_VERSION}
+""" + """\n---
 sequence_name: Main
 steps:
   - steptype: Indexed
@@ -489,8 +586,9 @@ def test_an_indexed_step_is_expanded_into_real_steps_at_load_time():
         "Add numbers [a=1, b=1]",
         "Add numbers [a=2, b=3]",
     ]
-    assert [step.input_mapping["a"]["value"] for step in steps] == [1, 2]
-    assert [step.output_mapping["sum"]["value"] for step in steps] == [2, 5]
+    # A set's inputs are direct values, and a direct value is now the value.
+    assert [step.inputs["a"] for step in steps] == [1, 2]
+    assert [step.outputs["sum"]["value"] for step in steps] == [2, 5]
 
 
 def test_continue_on_error_on_the_wrapper_reaches_every_generated_step():
@@ -575,7 +673,7 @@ def test_the_indexed_keys_are_case_insensitive_but_parameter_names_are_not():
     recipe = Recipe.from_yaml_text(text)
 
     first = recipe.sequences["Main"].steps[0]
-    assert set(first.input_mapping) == {"a", "B"}
+    assert set(first.inputs) == {"a", "B"}
 
 
 # --- step_source.py: the YAML fragment behind each step table row -------------
@@ -608,29 +706,6 @@ teardown_steps:
     assert "Cool down" in fragments["Main"][1]
 
 
-def test_setup_steps_come_before_the_authored_steps(tmp_path):
-    """_build_sequence() runs setup_steps first; the fragments must agree."""
-    text = VALID.replace(
-        "steps:\n",
-        """\
-setup_steps:
-  - steptype: Wait
-    step_name: Warm up
-    wait_time: '0'
-steps:
-""",
-    )
-    path = tmp_path / "recipe.yml"
-    path.write_text(text, encoding="utf-8")
-
-    fragments = step_source.step_yaml_by_sequence(str(path))["Main"]
-    rows = Recipe.from_yaml_text(text).to_summary()[0].steps
-
-    assert [row.step_name for row in rows] == ["Warm up", "Only wait"]
-    assert "Warm up" in fragments[0]
-    assert "Only wait" in fragments[1]
-
-
 def test_each_expanded_indexed_row_gets_its_own_fragment(tmp_path):
     """The whole reason the fragment is the effective mapping and not a slice
     of the file: the generated steps exist in no file, and the ten rows of an
@@ -644,10 +719,12 @@ def test_each_expanded_indexed_row_gets_its_own_fragment(tmp_path):
     assert fragments[0] != fragments[1]
     first = yaml.safe_load(fragments[0])
     second = yaml.safe_load(fragments[1])
-    assert first["input_mapping"]["a"] == {"type": "direct", "value": 1}
-    assert second["input_mapping"]["a"] == {"type": "direct", "value": 2}
-    assert first["output_mapping"]["sum"] == {"type": "equals", "value": 2}
-    assert second["output_mapping"]["sum"] == {"type": "equals", "value": 5}
+    # A direct value is written as itself, so a generated step reads exactly
+    # as a hand-written one would.
+    assert first["inputs"]["a"] == 1
+    assert second["inputs"]["a"] == 2
+    assert first["outputs"]["sum"] == {"type": "equals", "value": 2}
+    assert second["outputs"]["sum"] == {"type": "equals", "value": 5}
 
     # `Indexed` itself never reaches a row: what is shown is what will run.
     # The steptype keeps the case the template wrote - only keys are lowercased.
@@ -689,3 +766,50 @@ def test_the_all_steptypes_demo_recipe_has_a_fragment_for_every_row():
         assert len(rendered) == len(summary.steps)
         for row, fragment in zip(summary.steps, rendered, strict=True):
             assert yaml.safe_load(fragment)["step_name"] == row.step_name
+
+
+def test_an_unknown_mapping_type_is_refused_when_the_recipe_loads():
+    """`Step.process_inputs` would only meet it while the step runs, which
+    means on the bench. `local` is the one that bites: it existed until the
+    scope was dropped, so a recipe may still spell it."""
+    text = VALID.replace(
+        "  - steptype: Wait\n    step_name: Only wait\n    wait_time: '0.01'\n",
+        "  - steptype: PythonModule\n"
+        "    step_name: Add\n"
+        "    module: m.py\n"
+        "    method_name: add\n"
+        "    inputs:\n"
+        "      a: {type: local, local_name: x}\n",
+    )
+    with pytest.raises(RecipeError, match="unknown type 'local'"):
+        Recipe.from_yaml_text(text)
+
+
+def test_a_mapping_entry_missing_the_key_its_type_needs_is_refused():
+    text = VALID.replace(
+        "  - steptype: Wait\n    step_name: Only wait\n    wait_time: '0.01'\n",
+        "  - steptype: PythonModule\n"
+        "    step_name: Add\n"
+        "    module: m.py\n"
+        "    method_name: add\n"
+        "    outputs:\n"
+        "      sum: {type: range, min: 1}\n",
+    )
+    with pytest.raises(RecipeError, match="needs 'max'"):
+        Recipe.from_yaml_text(text)
+
+
+def test_a_bare_input_value_names_no_type_and_is_accepted():
+    """The literal spelling must not be mistaken for a broken configuration."""
+    text = VALID.replace(
+        "  - steptype: Wait\n    step_name: Only wait\n    wait_time: '0.01'\n",
+        "  - steptype: PythonModule\n"
+        "    step_name: Add\n"
+        "    module: m.py\n"
+        "    method_name: add\n"
+        "    inputs:\n"
+        "      a: 2\n"
+        "      b: {type: global, global_name: rig}\n",
+    )
+    step = Recipe.from_yaml_text(text).sequences["Main"].steps[0]
+    assert step.inputs == {"a": 2, "b": {"type": "global", "global_name": "rig"}}

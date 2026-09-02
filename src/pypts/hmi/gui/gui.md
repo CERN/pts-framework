@@ -21,7 +21,7 @@ with the master-branch GIF reference.** `gui.py` is the assembler;
 state-indicator tab bar, left/right `QSplitter`, and `QStatusBar`. Panel
 contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
 `step_table.py` (left stack page 1), `results_panel.py` (left stack page 2),
-`center_view.py` (`CenterContent` — interaction + serial stack, `LogPanel`),
+`center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel`),
 `log_tail.py` (what fills that panel — §8).
 Styling: `palette.py` — **every colour the GUI uses, and the only file allowed a
 hex literal** (§10) — plus `styles.py` (the light/dark QSS built from those
@@ -206,7 +206,7 @@ has a typed, owned equivalent:
 | nine `*_signal = Signal(dict)` + `getattr(self, name + "_signal")` | the `match` in `HmiClient.handle_core_message()` closed with `unhandled()` → typed `show_*` / `ask_*` hooks the GUI overrides. mypy and `test_messages.py` replace "hope the dict has the key" |
 | ViewModel dicts built in the proxy | the messages *are* the view models: `StepStarted(step_id, step_name)`, `StepFinished(outcome: StepOutcome)`, `RunFinished(result, outcomes)` — plain values, already pickle-tested |
 | proxy suppressing `SequenceStep` rows | not needed yet (no nested steps); when `SequenceStep` lands, the same policy belongs in the presentation layer, not the transport |
-| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `SerialNumberRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_serial_number()`. The hooks **default to declining** so a blocked step is never stranded. The prompt half is live end to end since roadmap §1.28 — `UserInteractionStep` asks; the serial half still has no asker |
+| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `UserTextRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_user_text()`. The hooks **default to declining** so a blocked step is never stranded. Both halves are live end to end — `UserInteractionStep` asks the first (roadmap §1.28), `UserWriteStep` the second. The old GUI's dedicated serial-number dialog has no successor **on purpose**: asking for a serial number is a recipe's `get_serial_number` step, not something the framework does — see `resources/roadmap/best_practices.md` |
 | second value pushed on the same queue (`file`/`wrt`/`ID`) | **unsolved by design** — each follow-up must become its own request/response pair when those steps are ported (roadmap §1.1 TODO) |
 | `WAIT_FOR_TERMINATION` global + nested QEventLoop on abort | nothing blocks: Stop sends the command and the *events* drive the buttons — `RunFinished` (result STOP) is the "engine has stopped" confirmation the old global tried to be |
 | root-logger tap into the log box | the GUI logs normally; its records go to the Logger like everyone's. The log box is fed the other way round: `log_tail.py` reads the run log file the Logger writes, so the panel shows *every* process, not just the GUI's own records (§8) |
@@ -349,11 +349,30 @@ the request plus a closure that answers it. `CenterContent` holds **one** `_pend
 a time, and `_answer()` clears it *before* invoking the callback — so a step waiting on the
 other side is answered exactly once, however many times a button is clicked.
 
+**Two questions, one panel.** A `UserTextRequest` takes the same path through
+`ask_user_text()` → `show_text_request()` → `InteractionPanel.set_text_prompt()`, which shows
+the same picture and the same message with a `QLineEdit` + OK + Cancel where the button row
+would be. It answers through the same two signals — `response_given` with the typed text,
+`cancelled` from Cancel — so everything below applies to it unchanged and neither question
+needs a special case. `is_idle()` reports the panel's **logical** mode, not Qt visibility: a
+child of a window that has never been shown reports `isVisible()` False whatever was asked
+of it, which is exactly the case under test.
+
+**OK is disabled while the field is empty.** That is the whole of the "no empty answers"
+rule — the operator types something or cancels — and it is why no recipe has to spell an
+`allow_empty` out.
+
+There was a second page here until 2026-09-02: a serial-number form with its own
+`QLineEdit`, driven by a `SerialNumberRequest` nothing ever sent. It is gone, along with
+`CenterContent`'s `QStackedWidget`, because the framework does not ask for a serial number —
+a recipe does, with a `get_serial_number` `UserWrite` step
+(`resources/roadmap/best_practices.md`).
+
 Three things decline an open prompt, all through `cancel_pending()`, all answering `None`:
 
 | Trigger | Why |
 |---|---|
-| a superseding `show_prompt()` / `show_serial_request()` | the step waiting on the old request must be released, not stranded |
+| a superseding `show_prompt()` / `show_text_request()` | the step waiting on the old request must be released, not stranded |
 | `RunFinished` (`gui.py`) | the run is over; nothing is left to answer |
 | the operator's **Cancel** button | they chose not to answer |
 
@@ -677,6 +696,21 @@ confirm view's height.
 
 ---
 
+## 10b. The top bar's run metadata
+
+`TopBarContent.metadata_label` sits between the spacer and the report button, and shows
+what the run has learned about the unit on the bench — `serial_number: SN-0042` — so the
+operator can see which unit the bench believes is in front of them without opening a
+report.
+
+It is filled by `show_run_metadata()`, from the `RunMetadata` event CORE relays from the
+Sequencer, and emptied by `clear_run_metadata()` on `RecipeLoaded`: a different recipe
+describes a different unit. **Empty and invisible until a run sets something**, so a recipe
+that names no `report_metadata` costs no space in the bar.
+
+The label knows nothing about serial numbers. It renders whichever globals the recipe named
+in its `report_metadata` header, in that order.
+
 ## 11. Why the toolbar answers its own tooltips
 
 Every control in `TopBarContent` carries a description — `describe()` sets the
@@ -757,8 +791,8 @@ the LOG OUTPUT panel (§8), which reads the run log off disk rather than routing
 through messages.
 
 **The ordering contract** is what makes indexing safe: `step_source` builds its row
-list exactly as `recipe_parser._build_sequence()` does — setup_steps, then steps,
-then teardown_steps, each expanded — because that is the order `Sequence.to_summary()`
+list exactly as `recipe_parser._build_sequence()` does — steps, then
+teardown_steps, each expanded — because that is the order `Sequence.to_summary()`
 emits and therefore the order of the table's rows. `test_recipe.py` pins the two
 together against `all_steptypes_demo.yml`, whose rows include five from one Indexed
 step.

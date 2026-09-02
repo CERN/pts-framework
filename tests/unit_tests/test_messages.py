@@ -81,18 +81,19 @@ from pypts.messages.core_sequencer_communication import (
 from pypts.messages.run_events import (
     RecipeLoaded,
     RunFinished,
+    RunMetadata,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
     SequenceSummary,
-    SerialNumberRequest,
-    SerialNumberResponse,
     StepExecuted,
     StepFinished,
     StepStarted,
     StepSummary,
     UserPromptRequest,
     UserPromptResponse,
+    UserTextRequest,
+    UserTextResponse,
 )
 from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
 from pypts.recipe.recipe import Recipe, Sequence
@@ -125,9 +126,6 @@ A_RECIPE = Recipe(
         "Main": Sequence(
             name="Main",
             description="",
-            locals={},
-            parameters={},
-            outputs={},
             steps=[WaitStep(step_name="Pause", wait_time="0")],
             teardown_steps=[],
         )
@@ -163,8 +161,15 @@ EXAMPLES = {
             ),
         ),
     ),
-    RunStarted: RunStarted(recipe_name="DUT smoke test", recipe_description="Nightly"),
+    RunStarted: RunStarted(
+        recipe_name="DUT smoke test",
+        recipe_description="Nightly",
+        recipe_version="1.2",
+        pypts_version="0.2.2",
+        metadata_names=("serial_number",),
+    ),
     RunFinished: RunFinished(result=ResultType.PASS, outcomes=(AN_OUTCOME,)),
+    RunMetadata: RunMetadata(values=(("serial_number", "SN-0042"),)),
     SequenceStarted: SequenceStarted(sequence_name="Main"),
     SequenceFinished: SequenceFinished(sequence_name="Main", result=ResultType.FAIL),
     StepStarted: StepStarted(step_id=STEP_ID, step_name="Measure voltage"),
@@ -184,8 +189,12 @@ EXAMPLES = {
         image_path="/tmp/dut.png",
     ),
     UserPromptResponse: UserPromptResponse(request_id=REQUEST_ID, choice="OK"),
-    SerialNumberRequest: SerialNumberRequest(request_id=REQUEST_ID),
-    SerialNumberResponse: SerialNumberResponse(request_id=REQUEST_ID, serial_number="SN-42"),
+    UserTextRequest: UserTextRequest(
+        request_id=REQUEST_ID,
+        message="Type the serial number",
+        image_path="/tmp/label.png",
+    ),
+    UserTextResponse: UserTextResponse(request_id=REQUEST_ID, text="SN-42"),
     # core_hmi_communication
     LoadRecipe: LoadRecipe(recipe_path="resources/recipes/example.yaml"),
     StartSequence: StartSequence(sequence_name="Main"),
@@ -540,7 +549,7 @@ SHARED_PROTOCOL_METHODS = (
     "stop",
     "request_shutdown",
     "answer_user_prompt",
-    "answer_serial_number",
+    "answer_user_text",
 )
 
 

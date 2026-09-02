@@ -72,17 +72,18 @@ from pypts.messages.links import (
 from pypts.messages.run_events import (
     RecipeLoaded,
     RunFinished,
+    RunMetadata,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
-    SerialNumberRequest,
-    SerialNumberResponse,
     StepExecuted,
     StepFinished,
     StepStarted,
     StopSequence,
     UserPromptRequest,
     UserPromptResponse,
+    UserTextRequest,
+    UserTextResponse,
 )
 from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.report.report import report_main
@@ -330,7 +331,7 @@ class Core:
                 # The operator's abort. Relayed unchanged; the Sequencer answers
                 # with the run's own RunFinished(STOP).
                 self.to_sequencer.send(message)
-            case UserPromptResponse() | SerialNumberResponse():
+            case UserPromptResponse() | UserTextResponse():
                 # The operator's answer belongs to whoever asked the question.
                 self.to_sequencer.send(message)
             case SetConfigParameter(key=key, value=value):
@@ -375,6 +376,12 @@ class Core:
                 self.to_report.send(message)
                 self.to_report.send(GenerateReport())
                 self.to_hmi.send(message)
+            case RunMetadata():
+                # What the run has learned about the unit on the bench. The
+                # Report stamps it on every row; the HMI shows it beside the
+                # recipe name so the operator can see which unit this is.
+                self.to_report.send(message)
+                self.to_hmi.send(message)
             case SequenceFinished() | StepStarted() | StepFinished():
                 self.to_hmi.send(message)
             case StepExecuted():
@@ -382,12 +389,11 @@ class Core:
                 # flat StepFinished, and this one must not cross the process
                 # boundary (see its docstring).
                 self.to_report.send(message)
-            case UserPromptRequest() | SerialNumberRequest():
+            case UserPromptRequest() | UserTextRequest():
                 # A step is waiting on the sequence thread for the answer to
                 # this. Relayed unchanged; the answer comes back through
-                # handle_hmi_message. UserPromptRequest is live as of the
-                # UserInteraction step type; SerialNumberRequest has no sender
-                # yet - UserWriteStep is the one that will ask.
+                # handle_hmi_message. Both are live: UserInteraction asks the
+                # first, UserWrite the second.
                 self.to_hmi.send(message)
             case Heartbeat():
                 self.note_heartbeat(message)
@@ -437,6 +443,19 @@ class Core:
             self.report_own_error(error, operation="Core.load_recipe")
             return
         self.recipe = recipe
+        # The parser knows the format and has already logged its verdict;
+        # CORE owns the channel to the operator, so the sentence is shown
+        # from here. A version mismatch never stops a run - it is a warning
+        # that the recipe may expect a framework this is not.
+        if recipe.version_notice:
+            self.handle_module_error(
+                ModuleError(
+                    source="pypts.recipe.recipe_parser",
+                    severity=ErrorSeverity.ERROR,
+                    message=recipe.version_notice,
+                    operation="Recipe.from_file",
+                )
+            )
         self.to_sequencer.send(UseRecipe(recipe))
         self.to_hmi.send(
             RecipeLoaded(

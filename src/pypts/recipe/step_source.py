@@ -25,8 +25,8 @@ only defaults the header and the sequence - so a fragment is the author's
 mapping, lowercased and expanded, and nothing more.
 
 **The ordering contract.** The row list is built exactly as
-`recipe_parser._build_sequence()` builds it - setup_steps, then steps, then
-teardown_steps, each expanded - because that is the order `Sequence.to_summary()`
+`recipe_parser._build_sequence()` builds it - steps, then teardown_steps,
+each expanded - because that is the order `Sequence.to_summary()`
 emits and therefore the order of the rows in the step table. A test in
 tests/unit_tests/test_recipe.py pins the two together.
 """
@@ -78,8 +78,8 @@ def _one_sequence(document: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
     document = recipe_parser.apply_defaults(document, SEQUENCE_DEFAULTS)
     name = str(document.get("sequence_name") or "")
 
-    # The same two calls, in the same order, as _build_sequence().
-    authored = list(document["setup_steps"]) + list(document["steps"])
+    # The same call, on the same list, as _build_sequence().
+    authored = list(document["steps"])
     step_datas = recipe_parser._expand_indexed_steps(name, authored)
     step_datas += recipe_parser._expand_indexed_steps(
         name, list(document["teardown_steps"])

@@ -41,16 +41,17 @@ from pypts.messages.core_hmi_communication import (
 from pypts.messages.run_events import (
     RecipeLoaded,
     RunFinished,
+    RunMetadata,
     RunStarted,
     SequenceSummary,
-    SerialNumberRequest,
-    SerialNumberResponse,
     StepFinished,
     StepStarted,
     StepSummary,
     StopSequence,
     UserPromptRequest,
     UserPromptResponse,
+    UserTextRequest,
+    UserTextResponse,
 )
 
 PLACEHOLDER = "placeholder - test not implemented yet"
@@ -387,7 +388,7 @@ def test_ask_user_shows_the_prompt_and_answers_once(gui):
     instance.ask_user(request)
 
     center = instance.center
-    assert center.stack.currentWidget() is center.prompt_page
+    assert not center.interaction.is_idle()
     assert "Connect the DUT" in center.prompt_message.text()
     # Cancel is appended to every prompt, after the recipe's own options, so
     # the operator is never stuck in front of a question they cannot answer.
@@ -396,7 +397,7 @@ def test_ask_user_shows_the_prompt_and_answers_once(gui):
     center.option_buttons[0].click()
 
     assert UserPromptResponse(request_id=request.request_id, choice="yes") in drain(outbox)
-    assert center.stack.currentWidget() is center.idle_page
+    assert center.interaction.is_idle()
 
 
 def test_the_cancel_button_declines_the_prompt(gui):
@@ -410,7 +411,7 @@ def test_the_cancel_button_declines_the_prompt(gui):
     instance.center.option_buttons[-1].click()
 
     assert UserPromptResponse(request_id=request.request_id, choice=None) in drain(outbox)
-    assert instance.center.stack.currentWidget() is instance.center.idle_page
+    assert instance.center.interaction.is_idle()
 
 
 def test_a_second_cancel_click_answers_nothing(gui):
@@ -450,31 +451,48 @@ def test_run_finished_cancels_a_pending_prompt(gui):
 
     assert UserPromptResponse(request_id=request.request_id, choice=None) in drain(outbox)
     # After run finishes the center returns to the idle interaction panel.
-    assert instance.center.stack.currentWidget() is instance.center.idle_page
+    assert instance.center.interaction.is_idle()
 
 
-def test_ask_serial_number_round_trip(gui):
+def test_ask_user_text_round_trip(gui):
     instance, outbox, _inbox = gui
-    request = SerialNumberRequest(request_id=uuid4())
-
-    instance.ask_serial_number(request)
-    center = instance.center
-    assert center.stack.currentWidget() is center.serial_page
-    center.serial_input.setText("SN-0042")
-    center.serial_ok_button.click()
-
-    assert SerialNumberResponse(request_id=request.request_id, serial_number="SN-0042") in drain(
-        outbox
+    request = UserTextRequest(
+        request_id=uuid4(), message="Scan or type the serial number"
     )
-    assert center.stack.currentWidget() is center.idle_page
+
+    instance.ask_user_text(request)
+    center = instance.center
+    panel = center.interaction
+    assert not panel.is_idle()
+    assert "serial number" in center.prompt_message.text()
+    # No empty answers: OK stays disabled until something is typed, which is
+    # why no recipe has to spell an `allow_empty` out.
+    assert not panel.text_ok_button.isEnabled()
+    panel.text_input.setText("SN-0042")
+    assert panel.text_ok_button.isEnabled()
+    panel.text_ok_button.click()
+
+    assert UserTextResponse(request_id=request.request_id, text="SN-0042") in drain(outbox)
+    assert panel.is_idle()
 
     # And the cancel path answers None rather than leaving the step waiting.
-    request2 = SerialNumberRequest(request_id=uuid4())
-    instance.ask_serial_number(request2)
-    center.serial_cancel_button.click()
-    assert SerialNumberResponse(request_id=request2.request_id, serial_number=None) in drain(
-        outbox
-    )
+    request2 = UserTextRequest(request_id=uuid4(), message="Again?")
+    instance.ask_user_text(request2)
+    panel.text_cancel_button.click()
+    assert UserTextResponse(request_id=request2.request_id, text=None) in drain(outbox)
+
+
+def test_a_text_request_supersedes_an_unanswered_prompt(gui):
+    """The two questions share one panel, so the exactly-once gate spans both."""
+    instance, outbox, _inbox = gui
+    prompt = UserPromptRequest(request_id=uuid4(), message="Well?", options=("ok",))
+    text_request = UserTextRequest(request_id=uuid4(), message="Type it")
+
+    instance.ask_user(prompt)
+    instance.ask_user_text(text_request)
+
+    assert UserPromptResponse(request_id=prompt.request_id, choice=None) in drain(outbox)
+    assert "Type it" in instance.center.prompt_message.text()
 
 
 # --------------------------------------------------------------------------
@@ -1611,3 +1629,34 @@ def test_a_machine_with_no_browser_only_logs(qapp, monkeypatch, caplog):
         open_external_url("https://example.invalid/")
 
     assert "Could not open https://example.invalid/" in caplog.text
+
+
+def test_run_metadata_is_shown_in_the_top_bar(gui):
+    """The operator can see which unit is on the bench without opening anything."""
+    instance, _outbox, inbox = gui
+
+    inbox.send(RunMetadata(values=(("serial_number", "SN-0042"),)))
+    instance.poll_core()
+
+    label = instance.top_bar.metadata_label
+    assert "SN-0042" in label.text()
+    assert label.isVisibleTo(instance.top_bar)
+
+
+def test_a_new_recipe_clears_the_metadata_of_the_last_run(gui):
+    """A different recipe describes a different unit."""
+    instance, _outbox, inbox = gui
+    inbox.send(RunMetadata(values=(("serial_number", "SN-0042"),)))
+    instance.poll_core()
+
+    instance.top_bar.show_recipe_loaded(
+        RecipeLoaded(
+            recipe_name="Another",
+            recipe_version="1.0",
+            main_sequence="Main",
+            sequences=(),
+        )
+    )
+
+    assert instance.top_bar.metadata_label.text() == ""
+    assert not instance.top_bar.metadata_label.isVisibleTo(instance.top_bar)

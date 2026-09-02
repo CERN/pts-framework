@@ -29,6 +29,7 @@ from uuid import uuid4
 
 import pytest
 
+from pypts._version import __version__
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType
 from pypts.messages.core_sequencer_communication import (
@@ -40,23 +41,30 @@ from pypts.messages.core_sequencer_communication import (
 )
 from pypts.messages.run_events import (
     RunFinished,
+    RunMetadata,
     RunStarted,
     SequenceFinished,
-    SerialNumberResponse,
     StepFinished,
     StepStarted,
     UserPromptRequest,
     UserPromptResponse,
+    UserTextResponse,
 )
 from pypts.recipe.recipe import Recipe
+from pypts.recipe.recipe_parser import current_recipe_version
 from pypts.sequencer.sequencer import Sequencer
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
 
+#: The pypts a fixture recipe declares, asked rather than written out so
+#: none of them starts warning the day the framework's minor version moves.
+CURRENT_VERSION = current_recipe_version() or "0.2"
+
 #: A recipe whose first step errors (negative wait). The default lets the run
 #: carry on, so the second step still executes.
-FAILING_RECIPE = """\
+FAILING_RECIPE = f"""\
 name: Fails
+version: {CURRENT_VERSION}
 description: The error path.
 main_sequence: Main
 ---
@@ -234,7 +242,7 @@ def test_a_step_waiting_for_an_answer_is_woken_by_the_event_loop(sequencer):
     instance.poll_core()
     assert reached.wait(timeout=REACHED_TIMEOUT_S)
 
-    inbox.put(SerialNumberResponse(request_id=request_id, serial_number="SN-0001"))
+    inbox.put(UserTextResponse(request_id=request_id, text="SN-0001"))
     instance.poll_core()
 
     instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
@@ -619,3 +627,106 @@ def test_an_unknown_sequence_name_is_refused_listing_the_real_ones(sequencer):
     assert len(errors) == 1
     assert "Setup" in errors[0].message
     assert "Main" in errors[0].message
+
+
+# --------------------------------------------------------------------------
+# Run metadata - the globals the Report stamps on every row
+# --------------------------------------------------------------------------
+
+#: A recipe whose first step writes the serial number into a global, the way
+#: the best-practices guide proposes. UserWrite would ask the operator; a
+#: PythonModule step keeps this test free of a fake frontend, and what is under
+#: test is the watching, not the asking.
+METADATA_RECIPE = f"""\
+name: With a serial number
+version: {CURRENT_VERSION}
+""" + """\
+description: Captures the serial number, then waits.
+main_sequence: Main
+globals:
+  operator: A. Tester
+report_metadata: [serial_number, operator]
+---
+sequence_name: Main
+steps:
+  - steptype: Wait
+    step_name: Before
+    wait_time: '0'
+  - steptype: PythonModule
+    step_name: get_serial_number
+    module: metadata_module.py
+    method_name: read_serial
+    outputs:
+      output: {type: global, global_name: serial_number}
+  - steptype: Wait
+    step_name: After
+    wait_time: '0'
+"""
+
+
+def metadata_values(outbox):
+    """Every RunMetadata the Sequencer sent, flattened in order."""
+    return [m.values for m in drain(outbox) if isinstance(m, RunMetadata)]
+
+
+def test_run_started_carries_the_recipe_and_pypts_versions(sequencer):
+    """The Report opens its CSV on this message, so everything knowable goes on it."""
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Main")
+
+    started = next(m for m in drain(outbox) if isinstance(m, RunStarted))
+    assert started.recipe_version == CURRENT_VERSION
+    assert started.pypts_version == __version__
+    assert started.metadata_names == ("serial_number",)
+
+
+def test_a_metadata_global_is_reported_when_a_step_sets_it(sequencer, tmp_path):
+    instance, outbox, inbox = sequencer
+    (tmp_path / "metadata_module.py").write_text(
+        "def read_serial():\n    return 'SN-0042'\n", encoding="utf-8"
+    )
+    recipe = Recipe.from_yaml_text(METADATA_RECIPE)
+    recipe.base_dir = str(tmp_path)
+    inbox.put(UseRecipe(recipe))
+    instance.poll_core()
+
+    instance.execute_sequence("Main")
+
+    sent = metadata_values(outbox)
+    # `operator` is set in the recipe header, so it is reported before any step
+    # runs; `serial_number` only once the step that reads it has.
+    assert sent[0] == (("operator", "A. Tester"),)
+    assert (("serial_number", "SN-0042"),) in sent
+
+
+def test_a_metadata_global_is_reported_once_not_per_event(sequencer, tmp_path):
+    """Every event looks, but only a change is sent - the Report must not be
+    told the same serial number twenty times."""
+    instance, outbox, inbox = sequencer
+    (tmp_path / "metadata_module.py").write_text(
+        "def read_serial():\n    return 'SN-0042'\n", encoding="utf-8"
+    )
+    recipe = Recipe.from_yaml_text(METADATA_RECIPE)
+    recipe.base_dir = str(tmp_path)
+    inbox.put(UseRecipe(recipe))
+    instance.poll_core()
+
+    instance.execute_sequence("Main")
+
+    sent = metadata_values(outbox)
+    serials = [values for values in sent if values[0][0] == "serial_number"]
+    assert len(serials) == 1
+
+
+def test_a_recipe_that_names_no_metadata_sends_none(sequencer):
+    instance, outbox, inbox = sequencer
+    no_metadata = WAIT_RECIPE.read_text(encoding="utf-8").replace(
+        "main_sequence: Main", "main_sequence: Main\nreport_metadata: []"
+    )
+    load_wait_recipe(instance, inbox, recipe_text=no_metadata)
+
+    instance.execute_sequence("Main")
+
+    assert metadata_values(outbox) == []

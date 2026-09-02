@@ -1123,8 +1123,9 @@ a CLI end-to-end on Windows that exercised load → start → a *refused* second
 **What was ported and what deliberately was not.** Methods only —
 `read_attribute`/`write_attribute` are **dropped, not deferred** (decision 2026-09-01): a
 recipe needing an attribute calls a one-line getter beside it, so there stays one way of
-reaching Python code. `action_type` is kept as a tolerated no-op with one legal value,
-purely so the unported example recipes still load; anything else is refused. Module
+reaching Python code. `action_type` was kept as a tolerated no-op with one legal value,
+purely so the unported example recipes still load - **superseded by 1.33, which deletes
+the key outright**. Module
 resolution replaced the old project-wide rglob heuristic (bare `except` at its heart,
 `old_code/steps.py __load_module`): a recipe's `module:` is either **a file next to the
 recipe** (`example_tests.py` or `example_tests`; `Recipe.from_file` records `base_dir`,
@@ -1174,7 +1175,8 @@ name** (stdlib/installed code). File-loaded modules are executed without touchin
   a fixed wait has no inputs to resolve and nothing to judge.
 - **The recipe language is case-insensitive** (`recipe_parser.py`'s normalize functions,
   applied once in the parser so everything downstream stays strict): keys, `steptype`,
-  mapping `type`/`action_type` values, and the `main_sequence` lookup ignore case; sequence
+  mapping `type` values (and `action_type`, until 1.33 deleted it), and the
+  `main_sequence` lookup ignore case; sequence
   names must therefore be unique without case. `module`, `method_name`, variable names,
   mapping entry names and compared values keep their case — they name the user's code and
   data, which are case-sensitive.
@@ -2068,8 +2070,9 @@ tests were inverted to the new `run_steps` policy.
 | `pythonmodulestep_demo.yml` | `PythonModule` | 4 — equals, range, a deliberate passfail FAIL, a wrapped scalar |
 | `userinteractionstep_demo.yml` | `UserInteraction` | 4 — judged, unjudged, stored in a local, and the step that reads it back |
 | `indexedstep_demo.yml` | `Indexed` | 13 from 2 authored steps — the ten-set `Add numbers` block plus a template-level `passfail` |
+| `userwritestep_demo.yml` | `UserWrite` | 4 — stored in a global (the `get_serial_number` practice), stored in a local, judged with `equals`, and the step that reads the global back (added §1.31) |
 | `wait_recipe.yml` | `Wait` | 2 (unchanged; it was already the Wait showcase) |
-| `all_steptypes_demo.yml` | all four | 13 + 1 teardown, two deliberate FAILs |
+| `all_steptypes_demo.yml` | all five | 14 + 1 teardown, two deliberate FAILs |
 
 **What moved.** `python_demo.yml` → `pythonmodulestep_demo.yml`, with its `Wait` step and
 its ten-set `Indexed` block taken out — `wait_recipe.yml` already showed the first and
@@ -2171,10 +2174,187 @@ four rewritten ones — the rewrites are the interesting ones, because they had 
       "halted early". Today both aggregate the same way and only the SKIP rows and their
       reasons say which happened. Relevant once a run has more than one sequence.
 
+### 1.31 `UserWrite`, and the serial number stops being the framework's business — **done**
+
+> **Status: implemented.** A recipe can ask the operator to *type* something, and what the
+> run learns that way reaches the report. Per-type notes stay in `src/pypts/step/step.md`
+> §2.4; the convention itself is `resources/roadmap/best_practices.md`, a new living
+> document for the practices PyPTS proposes.
+
+**The step.** `UserWrite` (`step/user_write_step.py`) is the free-text half of the pair
+whose other half is `UserInteraction`: `message` and `image_path` directly on the step, the
+typed string as the step's `output`, so the ordinary `output_mapping` vocabulary stores or
+judges it. What the two share now lives in `step/operator_prompt.py` as two plain
+functions — `resolve_image_path()` and `ask_or_raise()` — rather than a base class, so
+step.md §4's rule still holds. No `allow_empty`: the GUI keeps OK disabled while the field
+is empty. The old type's `ID` serial-port mode is **dropped** — identifying an instrument
+over RS-232 is a `PythonModule` step calling a driver, not a person typing.
+
+**The deletion that is the point of the change.** `SerialNumberRequest` /
+`SerialNumberResponse` and the GUI's serial-number page are **gone**. They meant the engine
+itself believed every unit under test has a serial number and went and fetched it — the old
+engine literally injected the global at run start (`recipe_guide.md` §3.2). Asking is the
+recipe's job. `UserTextRequest` / `UserTextResponse` replace them: one general text
+question, no opinion about what it is for.
+
+**The convention, and the one place it is written in code.** A new recipe header field,
+`report_metadata`, names the globals the Report should stamp. Its default —
+`("serial_number",)` in `recipe/rules.py` — *is* the convention, and it is the whole of the
+coupling: a recipe that says nothing gets it, a recipe testing cables writes
+`[batch_id, operator]`, a recipe that identifies nothing writes `[]`. A named global that is
+never set is an empty column, not a complaint.
+
+**How the value reaches the Report.** The Report cannot see globals — it is a thread fed by
+events, while the globals live on the sequence thread — so the Sequencer wraps the Runtime's
+`emit` seam and sends `RunMetadata` whenever a named global appears or changes (once per
+change, not once per event). CORE relays it to the Report *and* to the HMI, whose top bar
+shows it beside the recipe name. The step layer knows nothing about any of it.
+
+**`report.csv` is now the whole record of a run.** The run-level facts — recipe name,
+description, version, `pypts_version`, start time, verdict, and the metadata columns — are
+repeated on every row, the way `recipe_name` always was. Two of them cannot be known when
+their row is written (the verdict, and a serial captured mid-run), so the CSV is written
+incrementally as before and **rewritten once on `RunFinished`, backfilled**; a crashed run
+keeps whatever it flushed. `report.html` is then built from the rows alone —
+`rows_from_csv()` regenerates a past run's report from its CSV — so there is **no
+`run_info.json` and no side-car file of any kind**. One CSV, one report.
+
+**And the run folder is renamed** at run end to `<timestamp>_<recipe>_<serial>`; it is made
+on `RunStarted`, before any step has run, so this is the only moment the serial can join it.
+A rename that fails is a WARNING that keeps the original folder — losing a run over a
+cosmetic name would be a poor trade.
+
+**Deliberately not done here:** the `ID` serial-port mode (dropped, above), and
+`UserLoadingStep`, which still needs the one-response-per-request decision of step.md §2.5.
+
+---
+
+### 1.32 The recipe format, shrunk: five keys fewer and a literal written as itself — **done**
+
+> **Status: implemented (2026-09-02).** A pass over the format with one question asked of
+> every key: does a recipe author gain anything by writing it? Five did not, and are gone.
+> The two that stayed were renamed and given a shorter spelling for the common case.
+> Rules: `recipe/rules.py`. Readable page: `resources/internal_reports/recipe_format.html`.
+
+**Removed.**
+
+- **`setup_steps`** — it ran in front of `steps` and meant nothing else, so the first steps
+  of `steps` say the same thing with one key fewer. It is **refused, not ignored**: a
+  sequence that still carries it gets a `RecipeError` naming the fix, because silently
+  ignoring the key would silently drop every step in it.
+- **`parameters` and `outputs` on a sequence** — the declared interface of a subsequence.
+  `SequenceStep` was dropped (step.md §2.8), so nothing had read them since; they were
+  parsed, stored on `Sequence` and never looked at. Closes the guide's F23 and the "dict
+  vs list" question (P9) by deleting the subject.
+- **`format_version`** — one version field is enough. The format only ever changes with
+  the framework that reads it, so a second number to keep in step was a second number to
+  get wrong. `RECIPE_FORMAT_VERSION` went with it.
+
+**Changed.**
+
+- **`version` is now the pypts a recipe was written for**, and it is **required**. It used
+  to be the recipe's own version, which nothing compared with anything (the guide's F2 —
+  "give it teeth or replace it"). The parser compares **major.minor only**, because the
+  running version carries a setuptools-scm suffix (`0.2.2.dev25+g27956b5f9`) no recipe
+  could match. A mismatch is **warn-only**: an ERROR in the log, a notice shown to the
+  operator through CORE, and the recipe loads unchanged. Nothing edits the file — a
+  version is the author's statement, not ours. `recipe_parser.current_recipe_version()` is
+  the one place to ask what a recipe should declare.
+- **`input_mapping` / `output_mapping` are `inputs` / `outputs`**, and **a bare value under
+  `inputs` is the value**: `a: 2` instead of `a: {value: 2}`. The mapping form is unchanged
+  and still needed for `local`, `global` and every output kind. See step.md §3.4.
+
+**Also in this change:** a mapping input with no `value` now explains itself instead of
+raising `KeyError('value')`, and three regression tests were added for what a recipe can
+get wrong that nothing catches until the bench — an argument name the function does not
+take, too few arguments, and an undeclared `local_name`.
+
+**Verified:** `pytest tests` green, `ruff check src tests` clean, `mypy` clean.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** check at load time what only fails on the bench today: that `module` and
+      `method_name` resolve, that the argument names match the function's signature
+      (`inspect.signature`), and that every `local_name` / `global_name` a step reads was
+      declared (the guide's P4). All three are possible at parse time — `base_dir` is
+      known — and all three currently cost an operator a run.
+- [ ] **TODO:** `PythonModuleStep._step()` re-imports and re-executes its module on
+      **every step run**, so an N-step recipe against one module imports it N times.
+- [ ] **TODO:** the version check is warn-only and the compatibility policy (what a
+      mismatch should actually do, and when a recipe is too old to run) is still open —
+      it lands with ~v1.0.
+- [ ] **TODO:** `docs/source/yaml_format.rst` now disagrees with the format in five more
+      places. It was already slated for replacement by `recipe_guide.md`.
+
+---
+
+### 1.33 One variable scope, and `action_type` deleted — **done**
+
+> **Status: implemented (2026-09-02), immediately after §1.32 and in the same spirit.**
+> Two more keys gone, and one of them took a whole mechanism with it.
+
+**`locals` is gone — there is one scope.** The per-sequence frame, the `local` input and
+output types, the `locals:` sequence key and `Runtime`'s `local_stack` / `push_locals` /
+`pop_locals` / `get_local` / `set_local` all went together.
+
+A local was **global in reach and merely shorter-lived**: every step of the running
+sequence could read and write it exactly as it could a global, and all the scope bought
+was that the value vanished when the sequence ended. That is a distinction a recipe author
+had to make on every stored value, for no protection — and with `SequenceStep` dropped the
+stack never held more than one frame anyway, so the machinery was carrying a case that
+could not arise.
+
+What is left is two things: **`globals` for anything that outlives a step**, and a step's
+own **`inputs`/`outputs`** for everything else. Stated cost: a global written by one
+sequence is visible to the next, and nothing clears it between sequences of one run. The
+old `locals` gave no real isolation either (F16 was a re-run seeing the previous run's
+writes); if isolation is wanted it has to be designed rather than inherited. Details in
+step.md §3.5.
+
+**The hole that removing a type opened, closed in the same change.** A recipe still
+spelling `{type: local, ...}` loaded without complaint and failed at *run* time, because
+`Step.process_inputs` is the only thing that ever looked at a `type`. The mapping
+vocabulary is now data (`rules.INPUT_TYPES` / `rules.OUTPUT_TYPES`) and the validator
+checks every entry against it, so an unknown type — or a `range` missing its `max` — is
+one more line in the same `RecipeError` as everything else. It catches every typo, not
+just the removed type, and is the first piece of the load-time-checking TODO §1.32 filed.
+
+**`action_type` is deleted, not tolerated.** §1.16 kept it as a no-op with one legal value
+so the unported example recipes would still load — the note at §1.16 is superseded by this
+one. Keeping a key alive for files nobody has ported is not worth the line it costs: it is
+now an unknown key, and a recipe that writes it gets a `RecipeError` naming it.
+
+**Verified:** `pytest tests` green, `ruff check src tests` clean, `mypy` clean.
+
+---
+
+### 1.34 The last three second-spellings — **done**
+
+> **Status: implemented (2026-09-02).** The tail of the same sweep: three things that were
+> each a second way to say something already sayable.
+
+- **`direct` and the input `value` key are gone.** `{value: 2}` and `{type: direct, value: 2}`
+  both said what `a: 2` says. An input entry is now a literal **or** a mapping, and a mapping
+  can only be `global` — so it must name its type, because there is no default left to fall
+  back to. `value` survives as an `equals` entry's key on the *outputs* side; different thing,
+  unaffected.
+- **`passthrough` became `pass`, and stopped propagating.** It set the step's verdict to
+  whatever `ResultType` the step returned — a shape only `SequenceStep` and the old `Indexed`
+  wrapper ever produced, and both are dropped. `pass` now means *this output is not a
+  measurement*: the verdict is `DONE` whatever came back.
+- **The `setup_steps` refusal is gone.** §1.32 refused the key rather than ignoring it, to stop
+  a recipe silently losing steps. Removed on request: it is an unknown sequence key like any
+  other and is ignored. Worth knowing, because it is the one place this sweep chose silence:
+  a recipe still carrying `setup_steps` loads, and those steps do not run.
+
+**Verified:** `pytest tests` green, `ruff check src tests` clean, `mypy` clean.
+
+---
+
 ## TODO — Step types: which of the ten are ported, and which are dropped
 
-> **Status: decided 2026-09-01; `PythonModule` finished and `UserInteraction` ported
-> since (§1.28).** The catalogue, the per-type notes and the open questions live in
+> **Status: decided 2026-09-01; `PythonModule` finished, `UserInteraction` ported (§1.28)
+> and `UserWrite` ported (§1.31) since.** The catalogue, the per-type notes and the open questions live in
 > **`src/pypts/step/step.md`** — that file is the authority on the step-type port, and this
 > block only records the decisions so the phase plan above reads correctly.
 
@@ -2185,7 +2365,8 @@ The old engine had ten step classes. The plan is no longer "port the other nine"
 | `WaitStep` | ✅ ported |
 | `PythonModuleStep` | ✅ ported — methods only; `read_attribute` / `write_attribute` **dropped** (2026-09-01) |
 | `UserInteractionStep` | ✅ ported — asks through `Runtime.ask`; Cancel / timeout / stop are all ERROR (done, §1.28) |
-| `UserWriteStep`, `UserLoadingStep` | **to be implemented** — the two interactive types left |
+| `UserWriteStep` | ✅ ported as `UserWrite` — the `wrt` text dialog only; the `ID` serial-port mode **dropped** (done, §1.31) |
+| `UserLoadingStep` | **to be implemented** — the one interactive type left; needs the one-response-per-request fix first |
 | `UserRunMethodStep` | **deprecated, dropped** — a prompt step followed by a `PythonModule` step says the same thing |
 | `SSHConnectStep`, `SSHCloseStep` | **not step types** — SSH becomes part of the framework (HAL or a service; not decided), with credentials in the Config Handler |
 | `SequenceStep` | **dropped** |
@@ -2334,9 +2515,9 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 Recommended porting order (each step is one reviewable MR):
 
 1. **Recipe (data layer):** ~~move loading/parsing/validation from `old_code/recipe.py` into `recipe/recipe.py`, stripped of all execution logic~~ **done (§1.13)** - every load failure is a loud `RecipeError` and an invalid recipe never reaches the Sequencer. Still open here: the verificator integration (it has its own broken-import problem, Phase 0), and `test_package` handling, which lands with `PythonModuleStep`.
-2. **Step & Sequencer (execution):** **skeleton done (§1.13)** - the base `Step` lifecycle, `StepResult`, `Runtime` and `execute_sequence()` are in and all seven run events are produced on every run. What remains of this item is **two** step types, not nine (decisions of 2026-09-01, catalogued in `src/pypts/step/step.md`), one reviewable MR each, in dependency order: `UserWriteStep` → `UserLoadingStep` (needs the one-response-per-request fix first). `Indexed`, `PythonModule` and `UserInteraction` are **done** (§1.23, §1.16, §1.28), and the `Runtime.ask` seam the last two need is in. `UserRunMethodStep` and `SequenceStep` are **dropped**; the SSH pair leaves the step layer altogether and becomes part of the framework, credentials in the Config Handler first (F22).
+2. **Step & Sequencer (execution):** **skeleton done (§1.13)** - the base `Step` lifecycle, `StepResult`, `Runtime` and `execute_sequence()` are in and all seven run events are produced on every run. What remains of this item is **one** step type, not nine (decisions of 2026-09-01, catalogued in `src/pypts/step/step.md`): `UserLoadingStep`, which needs the one-response-per-request fix first. `Indexed`, `PythonModule`, `UserInteraction` and `UserWrite` are **done** (§1.23, §1.16, §1.28, §1.31), and the `Runtime.ask` seam the last one needs is in. `UserRunMethodStep` and `SequenceStep` are **dropped**; the SSH pair leaves the step layer altogether and becomes part of the framework, credentials in the Config Handler first (F22).
 3. **Core orchestration:** implement `LOAD_RECIPE`/`START_SEQUENCE` handlers, runtime metadata (recipe info, DUT serials, timing, machine info), result aggregation, and forwarding to HMI + Report.
-4. **Report:** ~~port incremental CSV writing + HTML generation behind `GENERATE`/`EXPORT`; intermediate result file (YAML/CSV) per spec; artifacts organized per run folder~~ **first slice done (§1.19)** - incremental CSV, HTML on `GenerateReport`, one folder per run. Still open: `ExportReport`, the serial-number column, TDMS plots, and the template/theme work of Phase 4.
+4. **Report:** ~~port incremental CSV writing + HTML generation behind `GENERATE`/`EXPORT`; intermediate result file (YAML/CSV) per spec; artifacts organized per run folder~~ **first slice done (§1.19)** - incremental CSV, HTML on `GenerateReport`, one folder per run. Still open: `ExportReport`, TDMS plots, and the template/theme work of Phase 4. The serial-number column is **done and generalised** (§1.31): the recipe's `report_metadata` header names the globals the Report stamps, defaulting to `serial_number`.
 5. **HMI:** CLI first — recipe load/validate/run, sequence selection, prompts (serial number, user interaction now crossing a process boundary — see pickling risk in §4), report/log locations, exit codes `0/1/2/3`, `--version`. Then grow the GUI beyond the status window (recipe preview — first slice done, the per-step YAML hover panel, §1.27; runtime log — done, §1.22; results table — done, §1.20).
 6. **Delete `old_code/`** once parity is proven by the Phase 0 characterization tests. v0.3.0 is tagged here.
 
