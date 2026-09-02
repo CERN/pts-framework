@@ -174,6 +174,20 @@ class Palette:
     icon_stop: str
     icon_disabled: str
 
+    # The step table's hover panel, which shows one step's YAML syntax
+    # coloured (step_yaml_popup.py). Themed rather than shared with
+    # LOG_LEVEL_COLORS: these are six colours side by side on one small
+    # surface, and the light theme's greys for a comment or a null go muddy
+    # on charcoal. `yaml_punctuation` is the structural characters - the
+    # colons, dashes and braces - which are deliberately quiet.
+    yaml_key: str
+    yaml_string: str
+    yaml_number: str
+    yaml_boolean: str
+    yaml_null: str
+    yaml_comment: str
+    yaml_punctuation: str
+
     #: What the CERN logo is recoloured to, or None to draw the artwork as it
     #: is. The file is a dark blue line drawing: correct on white, nearly
     #: invisible on charcoal, so the dark theme tints it.
@@ -231,6 +245,13 @@ LIGHT = Palette(
     icon_pause="#E65100",
     icon_stop="#CC0000",
     icon_disabled="#BDBDBD",
+    yaml_key="#0B5394",
+    yaml_string="#1B7F4B",
+    yaml_number="#8C4A00",
+    yaml_boolean="#8B2E8B",
+    yaml_null="#7A7A7A",
+    yaml_comment="#6B7A8C",
+    yaml_punctuation="#94a3b8",
     logo_tint=None,
     verdicts=LIGHT_VERDICTS,
 )
@@ -284,6 +305,13 @@ DARK = Palette(
     icon_pause="#FFA726",
     icon_stop="#EF5350",
     icon_disabled="#6E7681",
+    yaml_key="#9CC3F0",
+    yaml_string="#6abf69",
+    yaml_number="#F0A868",
+    yaml_boolean="#D6A2E8",
+    yaml_null="#9AA5B1",
+    yaml_comment="#8894A3",
+    yaml_punctuation="#7D8894",
     logo_tint="#9CC3F0",
     verdicts=DARK_VERDICTS,
 )

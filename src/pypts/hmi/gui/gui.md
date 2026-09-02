@@ -206,7 +206,7 @@ has a typed, owned equivalent:
 | nine `*_signal = Signal(dict)` + `getattr(self, name + "_signal")` | the `match` in `HmiClient.handle_core_message()` closed with `unhandled()` → typed `show_*` / `ask_*` hooks the GUI overrides. mypy and `test_messages.py` replace "hope the dict has the key" |
 | ViewModel dicts built in the proxy | the messages *are* the view models: `StepStarted(step_id, step_name)`, `StepFinished(outcome: StepOutcome)`, `RunFinished(result, outcomes)` — plain values, already pickle-tested |
 | proxy suppressing `SequenceStep` rows | not needed yet (no nested steps); when `SequenceStep` lands, the same policy belongs in the presentation layer, not the transport |
-| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `SerialNumberRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_serial_number()`. The hooks exist and **default to declining** so a blocked step is never stranded |
+| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `SerialNumberRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_serial_number()`. The hooks **default to declining** so a blocked step is never stranded. The prompt half is live end to end since roadmap §1.28 — `UserInteractionStep` asks; the serial half still has no asker |
 | second value pushed on the same queue (`file`/`wrt`/`ID`) | **unsolved by design** — each follow-up must become its own request/response pair when those steps are ported (roadmap §1.1 TODO) |
 | `WAIT_FOR_TERMINATION` global + nested QEventLoop on abort | nothing blocks: Stop sends the command and the *events* drive the buttons — `RunFinished` (result STOP) is the "engine has stopped" confirmation the old global tried to be |
 | root-logger tap into the log box | the GUI logs normally; its records go to the Logger like everyone's. The log box is fed the other way round: `log_tail.py` reads the run log file the Logger writes, so the panel shows *every* process, not just the GUI's own records (§8) |
@@ -266,7 +266,7 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Exit) / Edit (Edit Recipe, Remove Cache → §10) / View (dark mode toggle) / About stubs |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Exit) / Edit (Edit Recipe, Remove Cache → §10) / View (dark mode toggle) / About (GitHub, Wiki - both open a URL, §12) |
 | `screen_tab_bar` (`QTabBar`, CERN Blue bg) | Full-width state indicator: Idle \| Running \| Prompt \| Results; click snaps back unless `_browsable=True` (pause mode) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" below the tab bar |
 | `QSplitter` 52/48 | left: `left_stack` (`QStackedWidget`, 3 pages); right: `CenterContent` |
@@ -335,12 +335,41 @@ Start resumes and restores the locked tab. `_paused` flag + tab click handler.
 | `gui_components/toolbar.py` | `PtsToolBar` — SVG icon helpers + state setters |
 | `gui_components/step_table.py` | `StepTable`, `StatusBadgeDelegate` — rounded pill badges |
 | `gui_components/log_panel.py` | `LogPanel` — coloured-prefix append, rolling buffer |
-| `gui_components/interaction_panel.py` | `InteractionPanel` — image/logo, message, button row, keyboard nav |
+| `gui_components/interaction_panel.py` | `InteractionPanel` — image/logo, message, button row (+ the always-present Cancel), keyboard nav |
 | `gui_components/results_panel.py` | `ResultsPanel`, `SummaryBadge`, `StepResultModel` |
 | `gui_components/resources.py` | `load_cern_logo_pixmap`, `load_app_logo_pixmap`, `make_placeholder_pixmap` |
 | `XYGraph/XY_graph.py` | `PlotWindow`, `SignalSpawner` (pyqtgraph-based live plot) |
 | `XYGraph/StreamContainer.py` | `GlobalContainer`, `Stream` singleton registry |
 | `XYGraph/simulated_signals.py` | `Simulated_sine_wave` thread |
+
+### Answering a prompt — the exactly-once contract, and the Cancel button
+
+A `UserPromptRequest` reaches `PtsGui.ask_user()`, which hands `CenterContent.show_prompt()`
+the request plus a closure that answers it. `CenterContent` holds **one** `_pending` pair at
+a time, and `_answer()` clears it *before* invoking the callback — so a step waiting on the
+other side is answered exactly once, however many times a button is clicked.
+
+Three things decline an open prompt, all through `cancel_pending()`, all answering `None`:
+
+| Trigger | Why |
+|---|---|
+| a superseding `show_prompt()` / `show_serial_request()` | the step waiting on the old request must be released, not stranded |
+| `RunFinished` (`gui.py`) | the run is over; nothing is left to answer |
+| the operator's **Cancel** button | they chose not to answer |
+
+**Cancel is the GUI's, not the recipe's** (roadmap §1.28). `set_prompt()` appends it after
+whatever `options` the recipe wrote, so an operator is never stuck in front of a question
+they cannot answer. It is deliberately **not** one of the options: it emits `cancelled`, not
+`response_given`, so a recipe that happens to offer its own "Cancel" option stays distinct
+from it. `add_button()` takes an `on_click` argument to make that possible.
+
+It is added last and never `primary`, so Enter on a freshly shown prompt answers rather than
+declines; it joins `_buttons` like any other, so the arrow keys reach it; and the existing
+`label.lower() in {"abort", "stop", "cancel"}` rule styles it as `stopBtn` for free.
+
+What the engine does with the `None` is not the GUI's business, but worth knowing while
+reading this: the step that asked turns it into an **ERROR**, the same as a timeout or a
+Stop, and the sequence carries on to the next step.
 
 ### Gap analysis — master vs. current `hmi/gui/`
 
@@ -515,7 +544,7 @@ What lives there, and why it is split three ways:
 
 | | What | Theme-dependent? |
 |---|---|---|
-| `Palette` (`LIGHT`, `DARK`) | ~40 named tokens: surfaces, text, lines, grid, interaction, scrollbars, brand, toolbar icons, `logo_tint` | **yes** — `get_palette(dark)` picks one |
+| `Palette` (`LIGHT`, `DARK`) | ~50 named tokens: surfaces, text, lines, grid, interaction, scrollbars, brand, toolbar icons, the seven `yaml_*` syntax colours (§12), `logo_tint` | **yes** — `get_palette(dark)` picks one |
 | `Palette.verdicts` (`LIGHT_VERDICTS` / `DARK_VERDICTS`) | the PASS/FAIL/DONE/SKIP/ERROR/STOP chips, plus PENDING and RUNNING | **yes**, but see below |
 | `LOG_LEVEL_COLORS`, `PLACEHOLDER_*` | log level prefixes, the image placeholder | **no** |
 
@@ -674,6 +703,150 @@ the toolbar never sees the event.
 `tooltip_at()` is split out because `event()` cannot be asserted on: the base
 `QWidget` implementation accepts a `ToolTip` event whichever branch ran, so its
 return value proves nothing.
+
+---
+
+## 12. The step table's YAML hover panel
+
+Between runs, resting the pointer on a step row pops up a small panel beside the
+cursor holding **that one step's YAML, syntax coloured**. It answers the question
+the three columns cannot — which module, which inputs, what the output is checked
+against — without the operator leaving the GUI for a text editor.
+
+Three files, each with one job:
+
+| File | Owns |
+|---|---|
+| `recipe/step_source.py` | `step_yaml_by_sequence(path)` — the file on disk to rendered text, keyed by sequence name, one fragment per row |
+| `yaml_highlighter.py` | `YamlHighlighter` — the colours, from `palette.py` |
+| `step_yaml_popup.py` | `StepYamlPopup` — the frame, its sizing and its placement |
+
+`step_table.py` is the trigger and `gui.py` the wiring: the GUI calls
+`step_yaml_by_sequence` **once**, when `RecipeLoaded` arrives, and hands the right
+sequence's tuple to `show_sequence()`. Each fragment is stored on its row's name
+cell under `_YAML_ROLE` (`UserRole + 1`), beside the step id — one place per row,
+nothing parallel to keep in step, and it survives `set_dark()`, which only rebuilds
+the Result column.
+
+### What the panel shows, and why it is not the file's own text
+
+**The effective step mapping**, re-rendered — not a slice of the recipe file.
+`steptype: Indexed` is expanded at load time into one ordinary step per parameter
+set (§1.23 in the roadmap, `step/indexed_step.py`), so the ten
+`Add numbers [a=…, b=…]` rows in `indexedstep_demo.yml` **exist in no file**: a text
+slice would show all ten of them the same thirty-line block. Rendering the mapping
+the engine actually built gives every row its own fragment and shows what will run
+rather than what was typed.
+
+The cost is fidelity — the keys have been lowercased by `normalize_sequence()` and
+the author's comments are gone. Values keep their case, so `steptype: PythonModule`
+still reads as written, and `default_flow_style=None` keeps a leaf mapping on one
+line, so an output check renders `voltage: {type: range, min: '11', max: '13'}`
+exactly as the recipe spells it.
+
+### Why the GUI reads the recipe file
+
+This is the one thing here that argues with §3, where "the old GUI parsed the
+recipe itself" is defect #1 — the reason `RecipeLoaded` was given the whole recipe
+summary in the first place (roadmap §1.15). The objection is answered by keeping it
+narrow: **the GUI does not learn the recipe format.** Every bit of that stays in
+`recipe/step_source.py`, which reuses the parser's own `normalize_sequence()`,
+`apply_defaults()` and `_expand_indexed_steps()` so the two can never disagree; the
+GUI receives pre-rendered strings and only indexes a tuple. It is the same shape as
+the LOG OUTPUT panel (§8), which reads the run log off disk rather than routing it
+through messages.
+
+**The ordering contract** is what makes indexing safe: `step_source` builds its row
+list exactly as `recipe_parser._build_sequence()` does — setup_steps, then steps,
+then teardown_steps, each expanded — because that is the order `Sequence.to_summary()`
+emits and therefore the order of the table's rows. `test_recipe.py` pins the two
+together against `all_steptypes_demo.yml`, whose rows include five from one Indexed
+step.
+
+Two limitations, accepted:
+
+- The file is read **once, at load**. Editing the `.yml` afterwards makes the panel
+  show the new file while the engine runs the old one.
+- It cannot work if CORE ever runs on another machine (`--mode connect`, not
+  implemented). The fix then is a `StepSummary.yaml_source` field — deliberately not
+  added now, because it would put a copy of the whole recipe text through the HMI
+  boundary to serve a hover.
+
+### The widget, and two decisions inside it
+
+**A `QFrame` borrowing the `Qt.ToolTip` window flag, not a `QToolTip`.** A real
+tooltip is Qt's to size, time and dismiss, and cannot hold a `QSyntaxHighlighter`.
+The flag alone gives what is wanted: a top level that takes no focus, never steals
+the click, and is not a dialog — nothing here blocks the GUI thread (§3).
+
+**The text is truncated, not scrolled.** The panel sits under the pointer and the
+pointer is over the table, so a wheel event goes to the table beneath and a scroll
+bar would be decoration. Past `_MAX_LINES` (30) the fragment is cut and given a
+final `# ... N more lines`, which the highlighter paints as the comment it is.
+Rendered mappings run five to fifteen lines, so this guards a pathological recipe
+rather than the normal case.
+
+Placement is `QCursor.pos()` plus a small offset, then clamped to
+`screenAt(cursor).availableGeometry()` — a row near the right or bottom edge flips
+the panel back over the cursor instead of hanging half off the display.
+
+### The gesture, and the idle gate
+
+`setMouseTracking(True)` on the table **and its viewport** is what makes
+`cellEntered` fire with no button held. That signal says which row was entered and
+never that the table was left, so the other half is an event filter on the viewport
+watching for `QEvent.Type.Leave`. The filter returns `False` throughout: it watches,
+it never consumes.
+
+**The panel opens on a rest, not on a crossing.** `_HOVER_DELAY_MS` (1000) sits on a
+single-shot `QTimer` restarted by every row change, so dragging the eye down the
+table shows nothing and the row that finally opens is the row the pointer stopped
+on. The delay is for *opening* only: once the panel is up the operator has asked for
+it, and another 1 s per row would turn reading down the table into a series of
+pauses, so `_hover_cell()` switches an already-visible panel immediately. Qt's own
+tooltips behave this way, for this reason.
+
+`_show_hovered_yaml()` is the single place that opens the panel, so it carries the
+idle gate as well as `_hover_cell()` does — a run can start during the 1 s the
+delay is running. `hide_yaml_popup()` stops the timer as well as hiding, or a wait
+left running would open the panel after the pointer had gone.
+
+`set_running(bool)` is the gate — `gui.py` drives it from `RunStarted` /
+`RunFinished`, and a hold counts as running, because `Pause` produces no
+`RunFinished`. During a run the table is being written to and read for verdicts, and
+the operator wants an unobstructed view of it.
+
+### Theming
+
+The frame and the monospace text are a runtime `setStyleSheet` in `set_dark()`,
+following `interaction_panel.py` rather than adding rules to `styles.py` — and here
+that is **required, not a preference**: the blanket `QMainWindow, QWidget` rule and
+the `QPlainTextEdit` rule in both sheets reach this widget and would otherwise paint
+it as a log panel.
+
+The syntax colours are per-character `QTextCharFormat`s, so they are the fourth
+member of the list in §10 that a stylesheet cannot reach at all —
+`YamlHighlighter.set_dark()` rebuilds every format and calls `rehighlight()`, the
+same contract that made `LogPanel` re-append its backlog. `StepTableContent.set_dark()`
+forwards to the popup, so the existing `gui.py::_apply_theme` fan-out already carries
+it; nothing was added there.
+
+The seven tokens are `yaml_key`, `yaml_string`, `yaml_number`, `yaml_boolean`,
+`yaml_null`, `yaml_comment` and `yaml_punctuation` — flat `str` fields on `Palette`
+rather than one `dict` field, so `token_names()` picks them up and
+`test_both_themes_define_every_token` and `test_every_token_is_a_hex_colour` cover
+them for free. A `dict` would have had to join `NON_COLOUR_FIELDS` next to `verdicts`
+and lose exactly that.
+
+The rules are ordered broadest first and a later one overwrites an earlier one —
+that is the whole precedence mechanism. `string` paints everything after a colon
+(an unquoted scalar *is* a string in YAML, so one rule covers
+`module: example_tests.py` and `value: 'Hello'` alike), then `key` and `punctuation`
+take back what is structure — including inside a flow mapping — then number, boolean
+and null repaint the scalars that are really those, and `comment` runs last so it
+wins over all of them. The class was **copied** from
+`helper_applications/recipe_creator/customGUIModules.py`, not imported: nothing in
+`hmi/` imports `helper_applications/`, and the dependency would run the wrong way.
 
 ---
 

@@ -21,10 +21,15 @@ must become data (`StepResult` with ResultType.ERROR and the traceback),
 never a silent continue. `run()` is the one place that catches broadly,
 because turning the exception into a result *is* its job.
 
-Deliberately absent, recorded in the roadmap: the continue_on_error policy
-(the old engine had three disagreeing sources of truth for it - F8), the
-`method` input type (returns with PythonModuleStep), and per-step `critical`
-handling (parsed and stored, not yet consulted).
+`continue_on_error` is a common field of every step, default True: an ERROR
+or a FAIL is recorded and the sequence carries on. A step that says False
+ends the run when it errors or fails, and every step after it is recorded
+SKIP - see run_steps(). Per step and nowhere else: the old engine had three
+disagreeing sources of truth for it (F8), and its per-step `critical`
+override is dropped with them (step.md 3.2).
+
+Deliberately absent, recorded in the roadmap: the `method` input type
+(returns with PythonModuleStep).
 """
 
 import time
@@ -32,6 +37,7 @@ import traceback
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from pypts.logger.log import log
 from pypts.messages.common_messages import ResultType, StepOutcome
 from pypts.messages.run_events import (
     SequenceFinished,
@@ -81,8 +87,18 @@ class StepResult:
         self.error_info = error_info
         self.inputs = inputs
 
-    def set_skip(self) -> None:
+    def set_skip(self, reason: str = "") -> None:
+        """
+        Verdict SKIP, with an optional reason.
+
+        Two things end up here: a step the author marked `skip: true`, which
+        gives no reason, and a step that never ran because the sequence ended
+        before it (run_steps), which says so. The reason travels on the
+        StepOutcome, so the operator reads it in the step table's tooltip and
+        in the report's CSV rather than wondering why a row says SKIP.
+        """
         self.result = ResultType.SKIP
+        self.error_info = reason
 
     def set_stop(self, reason: str = "Stopped by user") -> None:
         self.result = ResultType.STOP
@@ -125,7 +141,7 @@ class Step:
         input_mapping: dict[str, Any] | None = None,
         output_mapping: dict[str, Any] | None = None,
         skip: bool = False,
-        critical: bool = False,
+        continue_on_error: bool = True,
     ) -> None:
         self.name = step_name
         self.description = description
@@ -134,7 +150,11 @@ class Step:
         self.input_mapping: dict[str, Any] = dict(input_mapping) if input_mapping else {}
         self.output_mapping: dict[str, Any] = dict(output_mapping) if output_mapping else {}
         self.skip = skip
-        self.critical = critical
+        #: False means an ERROR or a FAIL on *this* step ends the run. The
+        #: default carries on to the next step, so one bad step does not
+        #: decide for the other nineteen. The old `critical` field said the
+        #: same thing and is dropped - step.md 3.2.
+        self.continue_on_error = continue_on_error
         # The typed events (StepStarted.step_id: UUID) force a real UUID here.
         # The old code accepted any string; a stable-string-id policy is a
         # recorded roadmap TODO for when the Report and the Creator need one.
@@ -228,7 +248,7 @@ class Step:
 
     # --- the lifecycle ---------------------------------------------------------
 
-    def run(self, runtime: Runtime) -> StepResult:
+    def run(self, runtime: Runtime, skip_reason: str = "") -> StepResult:
         """
         Run this step start to finish; always return a StepResult.
 
@@ -237,14 +257,20 @@ class Step:
         top of a sequence or (later) nested inside one. A StepExecuted with
         the rich record for the Report follows last, so the frontend's flat
         event is never held up by the record keeping.
+
+        A non-empty `skip_reason` forces the SKIP branch: the step's body is
+        not entered, but it still emits the full trio, so a step the sequence
+        never reached settles its row in the step table and gets its row in
+        the CSV instead of staying pending forever. run_steps() is the only
+        caller that passes it.
         """
         step_result = StepResult(self)
         runtime.emit(StepStarted(step_id=self.id, step_name=self.name))
         started_at = time.time()
         work_began = time.perf_counter()
 
-        if self.skip:
-            step_result.set_skip()
+        if self.skip or skip_reason:
+            step_result.set_skip(skip_reason)
         else:
             step_input: dict[str, Any] = {}
             try:
@@ -279,27 +305,53 @@ class Step:
 
     @staticmethod
     def run_steps(
-        runtime: Runtime, steps: list["Step"], honour_stop: bool = True
+        runtime: Runtime, steps: list["Step"], run_to_end: bool = False
     ) -> list[StepResult]:
         """
-        Run a list of steps in order; return their results.
+        Run a list of steps in order; return one result per step, always.
 
-        The policy, deliberately minimal for now:
-        - a step ERROR abandons the remaining steps (the old default;
-          continue_on_error is a recorded roadmap TODO),
+        The policy:
+        - an ERROR or a FAIL is recorded and the sequence carries on. This is
+          the `continue_on_error: True` default: one bad step does not decide
+          for the other nineteen,
+        - a step that says `continue_on_error: false` ends the run when it
+          errors *or* fails. Per step and nowhere else - there is no recipe-
+          level and no `globals` form of the flag, which is what F1 and F8
+          were,
         - the stop flag is checked *between* steps, never inside one, so a
-          step can leave its hardware in a known state,
-        - teardown callers pass honour_stop=False: cleanup runs even after
-          an abort - it is what returns the bench to a known state.
+          step can leave its hardware in a known state. It stays a separate
+          branch from the verdict, so Stop still ends a run at once even
+          though an ERROR on its own does not,
+        - **whichever of the two ends the list early, every remaining step is
+          run with a skip_reason** rather than dropped. It emits its events
+          and comes back SKIP, so the step table settles every row and the
+          report has a row per step no matter how the run ended. SKIP is the
+          lowest ResultType, so this cannot change what the sequence
+          aggregates to,
+        - `run_to_end=True` disables both early exits. Teardown callers pass
+          it: cleanup runs after an abort and after a halt, and one failing
+          cleanup step does not skip the rest of the cleanup - which is the
+          opposite of what teardown is for.
         """
         step_results: list[StepResult] = []
+        skip_reason = ""
         for step in steps:
-            if honour_stop and runtime.should_stop():
-                break
-            step_result = step.run(runtime)
+            if not skip_reason and not run_to_end and runtime.should_stop():
+                skip_reason = "Not run: the run was stopped by the operator."
+
+            step_result = step.run(runtime, skip_reason=skip_reason)
             step_results.append(step_result)
-            if step_result.result is ResultType.ERROR:
-                break
+            if skip_reason:
+                continue
+
+            halting_verdict = step_result.result in (ResultType.ERROR, ResultType.FAIL)
+            if not run_to_end and not step.continue_on_error and halting_verdict:
+                log.warning(
+                    "Step '%s' ended the run: %s, and it is marked continue_on_error: false.",
+                    step.name,
+                    step_result.result,
+                )
+                skip_reason = f"Not run: the sequence stopped at step '{step.name}'."
         return step_results
 
 
@@ -322,7 +374,7 @@ def run_sequence(runtime: Runtime, sequence: "Sequence") -> tuple[ResultType, li
     try:
         step_results.extend(Step.run_steps(runtime, sequence.steps))
     finally:
-        step_results.extend(Step.run_steps(runtime, sequence.teardown_steps, honour_stop=False))
+        step_results.extend(Step.run_steps(runtime, sequence.teardown_steps, run_to_end=True))
         runtime.pop_locals()
 
     result = StepResult.evaluate_multiple_step_results(step_results)

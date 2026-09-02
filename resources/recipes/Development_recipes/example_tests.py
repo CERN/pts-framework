@@ -3,7 +3,9 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The test functions python_demo.yml calls - the shape user test code takes.
+The test functions the demo recipes call - the shape user test code takes.
+Used by pythonmodulestep_demo.yml, indexedstep_demo.yml,
+userinteractionstep_demo.yml and all_steptypes_demo.yml.
 
 Framework-free on purpose: a PythonModuleStep calls a plain function with the
 recipe's resolved inputs as keyword arguments, and judges whatever comes back.

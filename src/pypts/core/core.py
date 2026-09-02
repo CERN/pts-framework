@@ -383,9 +383,11 @@ class Core:
                 # boundary (see its docstring).
                 self.to_report.send(message)
             case UserPromptRequest() | SerialNumberRequest():
-                # NOT SENT YET - no step asks a question yet. The *answers* do
-                # come back through here (handle_hmi_message), so only this
-                # direction is idle.
+                # A step is waiting on the sequence thread for the answer to
+                # this. Relayed unchanged; the answer comes back through
+                # handle_hmi_message. UserPromptRequest is live as of the
+                # UserInteraction step type; SerialNumberRequest has no sender
+                # yet - UserWriteStep is the one that will ask.
                 self.to_hmi.send(message)
             case Heartbeat():
                 self.note_heartbeat(message)

@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The Indexed showcase - run one authored step many times with different
+# parameters, and parameterize the *expected result* with them too.
+#
+# Indexed is the one steptype that never runs. It is expanded when the recipe
+# loads (recipe_parser._expand_indexed_steps) into one ordinary step per
+# parameter set, so everything downstream - the step table, the report, the
+# Sequencer - deals with plain steps and does not know the type exists. Ten
+# sets means ten rows in the table and ten rows in the CSV, decided at load
+# time: "run once per device the previous step found" is deliberately not
+# expressible, because nothing loops at run time.
+#
+# One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
+name: Indexed demo
+description: Two authored steps, thirteen real ones - Indexed end to end.
+version: 1.0.0
+---
+sequence_name: Main
+description: The same call repeated over parameter sets, each with its own check.
+steps:
+  # An Indexed step requires `template` and `parameter_sets`, and owns no
+  # mappings of its own: what every generated step shares goes on the
+  # `template`, what differs goes in a set. Sets are merged over the template
+  # key by key.
+  #
+  # A set is a test case and reads like a table row: `inputs` are direct
+  # values, `expect` are `equals` checks. Row-wise on purpose - the old
+  # column-wise `indexed: true` lists iterated to the length of the shortest
+  # one and silently truncated the rest.
+  - steptype: Indexed
+    step_name: Add numbers
+    description: Ten additions, each checked against its own expected sum.
+    template:
+      steptype: PythonModule
+      module: example_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {a: 1, b: 1}
+        expect: {sum: 2}
+      - inputs: {a: 2, b: 3}
+        expect: {sum: 5}
+      - inputs: {a: 10, b: 5}
+        expect: {sum: 15}
+      - inputs: {a: 0, b: 0}
+        expect: {sum: 0}
+      - inputs: {a: -4, b: 4}
+        expect: {sum: 0}
+      - inputs: {a: 100, b: 250}
+        expect: {sum: 350}
+      - inputs: {a: 7, b: 8}
+        expect: {sum: 15}
+      - inputs: {a: -6, b: -9}
+        expect: {sum: -15}
+      - inputs: {a: 1.5, b: 2.5}
+        expect: {sum: 4.0}
+      # The odd one out: 6 + 7 is 13, not 12, so this row shows a FAIL among
+      # nine passes - the point of parameterizing the expectation as well.
+      - inputs: {a: 6, b: 7}
+        expect: {sum: 12}
+
+  # Anything a set cannot say in its terse `expect` - `passfail`, `range`,
+  # `local`, `global` - goes on the template instead, where every generated
+  # step inherits it. Here all three rows share one passfail check and differ
+  # only in their input, so the last of them is the FAIL.
+  - steptype: Indexed
+    step_name: Even check
+    description: The same passfail check over three numbers.
+    template:
+      steptype: PythonModule
+      module: example_tests.py
+      method_name: is_even
+      output_mapping:
+        even: {type: passfail}
+    parameter_sets:
+      - inputs: {number: 2}
+      - inputs: {number: 4}
+      - inputs: {number: 7}

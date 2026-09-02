@@ -45,13 +45,16 @@ from pypts.messages.run_events import (
     SerialNumberResponse,
     StepFinished,
     StepStarted,
+    UserPromptRequest,
+    UserPromptResponse,
 )
 from pypts.recipe.recipe import Recipe
 from pypts.sequencer.sequencer import Sequencer
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
 
-#: A recipe whose first step errors (negative wait), so the second never runs.
+#: A recipe whose first step errors (negative wait). The default lets the run
+#: carry on, so the second step still executes.
 FAILING_RECIPE = """\
 name: Fails
 description: The error path.
@@ -66,6 +69,12 @@ steps:
     step_name: Never runs
     wait_time: '0'
 """
+
+#: The same, with the failing step marked continue_on_error: false - so the run
+#: ends there and the second step is recorded SKIP.
+HALTING_RECIPE = FAILING_RECIPE.replace(
+    "    wait_time: '-1'\n", "    wait_time: '-1'\n    continue_on_error: false\n"
+)
 
 PLACEHOLDER = "placeholder - test not implemented yet"
 
@@ -232,6 +241,75 @@ def test_a_step_waiting_for_an_answer_is_woken_by_the_event_loop(sequencer):
     assert answer["value"] == "SN-0001"
 
 
+def test_ask_operator_sends_the_question_and_returns_the_answer(sequencer):
+    """
+    The whole round trip, on the two threads it really uses.
+
+    ask_operator() runs on the sequence thread and blocks; the answer comes
+    back on the inbox and is handed over by the loop thread. This is the seam
+    Runtime.ask hands every step, so getting it right here is what makes
+    UserInteractionStep work.
+    """
+    instance, outbox, inbox = sequencer
+
+    request = UserPromptRequest(
+        request_id=uuid4(), message="Is the LED lit?", options=("Yes", "No")
+    )
+    asked = threading.Event()
+    answer = {}
+
+    def asks_the_operator(sequence_name: str) -> None:
+        asked.set()
+        answer["value"] = instance.ask_operator(request)
+
+    instance.execute_sequence = asks_the_operator
+    inbox.put(RunSequence("power_on"))
+    instance.poll_core()
+    assert asked.wait(timeout=REACHED_TIMEOUT_S)
+
+    # The question really went out to CORE, unchanged.
+    assert request in drain(outbox)
+
+    inbox.put(UserPromptResponse(request_id=request.request_id, choice="Yes"))
+    instance.poll_core()
+
+    instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
+    assert answer["value"] == "Yes"
+
+
+def test_ask_operator_gives_up_when_the_run_is_stopped(sequencer):
+    """
+    Stop must land while a question is on screen, not five minutes later.
+
+    The stop flag is only read between steps, so without the poll inside
+    PendingRequests.wait() the sequence thread would sit here for the whole
+    timeout: the GUI cancels open prompts on RunFinished, which cannot arrive
+    until this very step returns.
+    """
+    instance, _outbox, inbox = sequencer
+
+    request = UserPromptRequest(request_id=uuid4(), message="Well?", options=("ok",))
+    asked = threading.Event()
+    answer = {"value": "not set"}
+
+    def asks_the_operator(sequence_name: str) -> None:
+        asked.set()
+        answer["value"] = instance.ask_operator(request)
+
+    instance.execute_sequence = asks_the_operator
+    inbox.put(RunSequence("power_on"))
+    instance.poll_core()
+    assert asked.wait(timeout=REACHED_TIMEOUT_S)
+
+    inbox.put(StopSequence())
+    instance.poll_core()
+
+    # Well inside the 300 s timeout: the wait polls the flag every 100 ms.
+    instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
+    assert not instance.sequence_is_running()
+    assert answer["value"] is None
+
+
 def test_a_second_run_sequence_is_refused_rather_than_queued(sequencer):
     """
     Two sequences at once would interleave their progress events, so the second
@@ -388,6 +466,11 @@ def test_each_step_result_is_reported_to_core(sequencer):
 
 
 def test_a_failing_step_produces_a_step_result_not_a_silent_continue(sequencer):
+    """
+    The failure is reported as its own StepResult, and the sequence carries on
+    (the continue_on_error: True default, step.md 3.1) - so the run still ends
+    ERROR through the aggregate, not by abandoning the remaining steps.
+    """
     instance, outbox, inbox = sequencer
     load_wait_recipe(instance, inbox, FAILING_RECIPE)
 
@@ -395,15 +478,47 @@ def test_a_failing_step_produces_a_step_result_not_a_silent_continue(sequencer):
 
     messages = drain(outbox)
     finished = [m.outcome for m in messages if isinstance(m, StepFinished)]
-    assert [o.step_name for o in finished] == ["Bad wait"], "the error must stop the sequence"
+    assert [o.step_name for o in finished] == ["Bad wait", "Never runs"]
     assert finished[0].result is ResultType.ERROR
     assert "wait_time" in finished[0].error_info
     run_finished = [m for m in messages if isinstance(m, RunFinished)]
     assert [m.result for m in run_finished] == [ResultType.ERROR]
 
 
+def test_a_step_that_halts_the_run_reports_error_not_stop(sequencer):
+    """
+    A run the recipe ended itself must stay distinguishable from one the
+    operator stopped.
+
+    The halt deliberately does not touch `stop_requested`, so
+    execute_sequence()'s `if self.stop_requested: result = ResultType.STOP`
+    does not fire and RunFinished carries the real aggregate. Borrowing that
+    flag would leave the operator unable to tell "I pressed Stop" from "a step
+    marked continue_on_error: false failed".
+    """
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox, HALTING_RECIPE)
+
+    instance.execute_sequence("Main")
+
+    assert instance.stop_requested is False
+    messages = drain(outbox)
+    finished = [m.outcome for m in messages if isinstance(m, StepFinished)]
+    assert [o.result for o in finished] == [ResultType.ERROR, ResultType.SKIP]
+    assert "stopped at step 'Bad wait'" in finished[1].error_info
+    run_finished = [m for m in messages if isinstance(m, RunFinished)]
+    assert [m.result for m in run_finished] == [ResultType.ERROR]
+
+
 def test_stop_requested_is_checked_between_steps_not_inside_one(sequencer):
-    """A step must be allowed to leave its hardware in a known state."""
+    """
+    A step must be allowed to leave its hardware in a known state, so no step
+    body runs once the flag is set before the run.
+
+    Each step still *reports*, as SKIP: run_steps() records every step it did
+    not run rather than dropping it, so the frontend's pre-filled rows all
+    settle and the report has a row per step. The run itself is STOP.
+    """
     instance, outbox, inbox = sequencer
     load_wait_recipe(instance, inbox)
     instance.stop_requested = True
@@ -411,7 +526,10 @@ def test_stop_requested_is_checked_between_steps_not_inside_one(sequencer):
     instance.execute_sequence("Main")
 
     messages = drain(outbox)
-    assert not [m for m in messages if isinstance(m, StepStarted)]
+    finished = [m.outcome for m in messages if isinstance(m, StepFinished)]
+    assert [o.step_name for o in finished] == ["First wait", "Second wait"]
+    assert [o.result for o in finished] == [ResultType.SKIP, ResultType.SKIP]
+    assert "stopped by the operator" in finished[0].error_info
     run_finished = [m for m in messages if isinstance(m, RunFinished)]
     assert [m.result for m in run_finished] == [ResultType.STOP]
 
@@ -422,10 +540,10 @@ def test_an_abort_between_steps_reports_the_finished_steps(sequencer, monkeypatc
     about the bench and have to reach CORE, or the report of an aborted run
     would show nothing at all.
 
-    The sibling test above sets the flag before the run, so no step executes and
-    the outcome tuple is empty either way. Here the flag is set from *inside*
-    step 1, which is where the between-steps check in Step.run_steps() is the
-    only thing keeping step 2 from starting.
+    The sibling test above sets the flag before the run, so no step body runs at
+    all. Here it is set from *inside* step 1, which is where the between-steps
+    check in Step.run_steps() is the only thing keeping step 2 from starting -
+    step 2 still reports, as SKIP, but its body must never be entered.
     """
     from pypts.step.wait_step import WaitStep
 
@@ -451,12 +569,13 @@ def test_an_abort_between_steps_reports_the_finished_steps(sequencer, monkeypatc
     messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
     started = [m for m in messages if isinstance(m, StepStarted)]
     finished = [m for m in messages if isinstance(m, StepFinished)]
-    assert [m.step_name for m in started] == ["First wait"]
-    assert [m.outcome.step_name for m in finished] == ["First wait"]
+    assert [m.step_name for m in started] == ["First wait", "Second wait"]
+    assert [m.outcome.step_name for m in finished] == ["First wait", "Second wait"]
+    assert [m.outcome.result for m in finished] == [ResultType.DONE, ResultType.SKIP]
 
     assert isinstance(messages[-1], RunFinished)
     assert messages[-1].result is ResultType.STOP
-    assert [o.step_name for o in messages[-1].outcomes] == ["First wait"]
+    assert [o.step_name for o in messages[-1].outcomes] == ["First wait", "Second wait"]
 
 
 def test_sequence_result_is_sent_once_at_the_end(sequencer):

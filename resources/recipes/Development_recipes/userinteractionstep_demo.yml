@@ -1,0 +1,70 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The UserInteraction showcase - the first steptype that blocks on a person.
+#
+# **GUI mode** (`python -m pypts`), because a prompt needs somewhere to be
+# shown: the CLI frontend declines every question it is asked, so every prompt
+# here would come back unanswered and the step would be an ERROR.
+#
+# A UserInteraction step carries its question **directly on the step** -
+# `message`, `options` and `image_path` are fields, not input_mapping entries,
+# the way a Wait step's `wait_time` is. Only the answer goes through a mapping:
+# the chosen option arrives as the step's `output`, so the ordinary vocabulary
+# judges it (`equals`, `passfail`) or stores it (`local`, `global`).
+#
+# Every prompt also grows a **Cancel** button the recipe does not write. It is
+# not one of the options: pressing it answers nothing, and a step with no
+# answer is an ERROR - as is letting the five-minute timeout run out, or
+# pressing Stop. The sequence carries on to the next step either way.
+#
+# One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
+name: UserInteraction demo
+description: Asking the operator questions - UserInteraction end to end.
+version: 1.0.0
+---
+sequence_name: Main
+description: Three questions, and one of the answers used by a later step.
+steps:
+  # The simplest form: a message, two buttons, and a verdict from the choice.
+  # Answer "Yes" for a PASS, "No" for a FAIL, Cancel for an ERROR.
+  - steptype: UserInteraction
+    step_name: Check the indicator
+    description: The operator confirms the front-panel LED is lit.
+    message: Is the front-panel LED lit?
+    options: [Yes, No]
+    output_mapping:
+      output: {type: equals, value: Yes}
+
+  # No output_mapping at all, so there is nothing to judge and the verdict is
+  # DONE whichever button is pressed. An acknowledgement, not a test.
+  - steptype: UserInteraction
+    step_name: Connect the DUT
+    description: A step that only waits for the operator to be ready.
+    message: Connect the unit under test to J1, then continue.
+    options: [Continue]
+
+  # The answer stored in a local rather than judged, so a later step can read
+  # it. `locals` on the sequence is what declares the frame it is written to.
+  - steptype: UserInteraction
+    step_name: Which port
+    description: The chosen port is kept for the step that follows.
+    message: Which serial port is the unit on?
+    options: [COM1, COM2, COM3]
+    output_mapping:
+      output: {type: local, local_name: port}
+
+  # The one step here that is not a UserInteraction, and it earns its place:
+  # it reads back the port chosen above, which is the whole point of storing
+  # an answer - one question feeding the work that follows it.
+  - steptype: PythonModule
+    step_name: Report the port
+    description: Greets with whatever port the operator picked.
+    module: example_tests.py
+    method_name: greet
+    input_mapping:
+      name: {type: local, local_name: port}
+
+locals:
+  port: ''

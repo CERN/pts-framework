@@ -1,0 +1,136 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# Every steptype the new engine has, in one run - the recipe to reach for when
+# testing the whole thing rather than one type.
+#
+#   Wait            a fixed pause
+#   PythonModule    call a function of a module beside this file
+#   Indexed         one authored step, N real ones (expanded at load time)
+#   UserInteraction ask the operator, and use their answer
+#
+# Each of those has a demo of its own in this folder - pythonmodulestep_demo,
+# indexedstep_demo, userinteractionstep_demo, wait_recipe - and this file is
+# the four of them together, trimmed.
+#
+# **GUI mode** (`python -m pypts`), because of the UserInteraction steps: the
+# CLI frontend declines every question it is asked, so each prompt here would
+# come back unanswered and be an ERROR. Everything else runs headless.
+#
+# Expect a mixed verdict on purpose: two steps are written to FAIL so the
+# report and the step table have something other than green to show.
+name: All steptypes demo
+description: Wait, PythonModule, Indexed and UserInteraction in one run.
+version: 1.0.0
+---
+sequence_name: Main
+description: One of everything, in the order a real recipe would use them.
+steps:
+  # --- UserInteraction: get set up, and remember what was said -------------
+  # The question sits directly on the step (message/options/image_path are
+  # fields, not input_mapping entries). Only the answer goes through a
+  # mapping. Every prompt also grows a Cancel button the recipe does not
+  # write; pressing it - or letting the 300 s timeout run out, or pressing
+  # Stop - leaves the step with no answer, which is an ERROR.
+  - steptype: UserInteraction
+    step_name: Connect the DUT
+    description: A step that only waits for the operator to be ready.
+    message: Connect the unit under test to J1, then continue.
+    options: [Continue]
+
+  - steptype: UserInteraction
+    step_name: Which port
+    description: The chosen port is kept for a later step to read.
+    message: Which serial port is the unit on?
+    options: [COM1, COM2, COM3]
+    output_mapping:
+      output: {type: local, local_name: port}
+
+  # --- Wait: the one field, written directly on the step, no mappings -----
+  - steptype: Wait
+    step_name: Settle
+    description: Let the bench settle for two seconds.
+    wait_time: 2
+
+  # --- PythonModule: the workhorse ----------------------------------------
+  - steptype: PythonModule
+    step_name: Add numbers
+    description: 2 + 3 must equal 5.
+    module: example_tests.py
+    method_name: add
+    input_mapping:
+      a: {value: 2}
+      b: {value: 3}
+    output_mapping:
+      sum: {type: equals, value: 5}
+
+  - steptype: PythonModule
+    step_name: Measure voltage
+    description: The reading must sit between 11 and 13 volts.
+    module: example_tests.py
+    method_name: measure_voltage
+    output_mapping:
+      voltage: {type: range, min: '11', max: '13'}
+
+  - steptype: PythonModule
+    step_name: Even check (fails on purpose)
+    description: 7 is not even - this one shows a FAIL verdict.
+    module: example_tests.py
+    method_name: is_even
+    input_mapping:
+      number: {value: 7}
+    output_mapping:
+      even: {type: passfail}
+
+  # --- Indexed: five rows from one authored step --------------------------
+  # Expanded when the recipe loads, so the step table shows five rows here,
+  # each named after its own parameters. The last set expects the wrong sum,
+  # so it is the second deliberate FAIL.
+  - steptype: Indexed
+    step_name: Add numbers
+    description: Five additions, each checked against its own expected sum.
+    template:
+      steptype: PythonModule
+      module: example_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {a: 1, b: 1}
+        expect: {sum: 2}
+      - inputs: {a: 10, b: 5}
+        expect: {sum: 15}
+      - inputs: {a: -4, b: 4}
+        expect: {sum: 0}
+      - inputs: {a: 1.5, b: 2.5}
+        expect: {sum: 4.0}
+      - inputs: {a: 6, b: 7}
+        expect: {sum: 12}
+
+  # --- The answer from the top, read back out of the local frame ----------
+  - steptype: PythonModule
+    step_name: Report the port
+    description: Greets with whatever port the operator picked.
+    module: example_tests
+    method_name: greet
+    input_mapping:
+      name: {type: local, local_name: port}
+
+  # --- One last question, judged against what was answered ----------------
+  - steptype: UserInteraction
+    step_name: Check the indicator
+    description: The operator confirms the front-panel LED is lit.
+    message: Is the front-panel LED lit?
+    options: [Yes, No]
+    output_mapping:
+      output: {type: equals, value: Yes}
+
+teardown_steps:
+  # Teardown runs even after an abort - it is what returns the bench to a
+  # known state.
+  - steptype: Wait
+    step_name: Power down
+    description: Stand in for the shutdown a real bench would do.
+    wait_time: '0.5'
+
+locals:
+  port: ''

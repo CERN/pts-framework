@@ -21,13 +21,13 @@ recipe terms, and is worth reading before porting one.
 ## 1. The catalogue
 
 Ten classes existed in `old_code/steps.py` (the whole file is commented out — it is read,
-never run). Three are ported, one of those only partly. Three more are wanted, four are not.
+never run). Four are ported. Two more are wanted, four are not.
 
 | # | Old class | YAML today | Status | Decision |
 |---|---|---|---|---|
 | 1 | `WaitStep` | `Wait` | ✅ **done** | — |
-| 2 | `PythonModuleStep` | `PythonModule` | 🟡 **partial** | finish the two missing action types |
-| 3 | `UserInteractionStep` | — | ❌ missing | **to be implemented** |
+| 2 | `PythonModuleStep` | `PythonModule` | ✅ **done** | methods only; the attribute actions are dropped |
+| 3 | `UserInteractionStep` | `UserInteraction` | ✅ **done** | the first type that blocks on a person |
 | 4 | `UserWriteStep` | — | ❌ missing | **to be implemented** |
 | 5 | `UserLoadingStep` | — | ❌ missing | **to be implemented** |
 | 6 | `UserRunMethodStep` | — | ❌ missing | **deprecated — to be dropped** |
@@ -36,7 +36,7 @@ never run). Three are ported, one of those only partly. Three more are wanted, f
 | 9 | `SequenceStep` | — | ❌ missing | **to be dropped** |
 | 10 | `IndexedStep` | `Indexed` | ✅ **done, reshaped** | replaced by load-time expansion — §2.9 |
 
-Decisions recorded 2026-09-01. Three types to port, one to finish, four that will never
+Decisions recorded 2026-09-01. Two types left to port, four that will never
 appear in `STEP_TYPES` — plus `Indexed`, which is in the rules but never in the registry
 because it is gone before anything is built.
 
@@ -55,49 +55,98 @@ Known gap: the sleep is one `time.sleep()`, so it does not honour `runtime.shoul
 The framework contract only promises a stop at the next *step* boundary, so this is a
 courtesy, not a defect — but a 60 s wait delays an abort by up to 60 s.
 
-### 2.2 `PythonModuleStep` → `PythonModule` — partial
+### 2.2 `PythonModuleStep` → `PythonModule` — done
 
 `python_module_step.py`. The workhorse: load a module, call into it, `input_mapping`
 passed as keyword arguments.
 
-- **Ported:** `action_type: method`.
-- **Missing:** `read_attribute` (needs input `attribute_name`) and `write_attribute`
-  (needs `attribute_name` + `attribute_value`).
-- **Deliberately not ported:** the old project-wide `rglob` search for the module file — a
-  heuristic with a bare `except` at its heart. Here the recipe says where its code is:
-  a path resolved against the recipe's own folder, or a dotted import name.
+- **Calling a method is the whole type.** `read_attribute` and `write_attribute` are
+  **dropped** (decision 2026-09-01), not deferred: a recipe that needs an attribute writes
+  a one-line getter or setter beside it and calls that, which keeps one way of reaching
+  Python code instead of three.
+- `action_type` survives as a **tolerated no-op** — one legal value, `method`, selecting
+  nothing. It is accepted only because the unported example recipes still spell it on every
+  step; anything else is refused with an error saying so. It is in neither
+  `STEP_TYPE_REQUIRED` nor `STEP_TYPE_DEFAULTS`, so no new recipe needs it, and it goes when
+  those recipes are ported.
+- **Also dropped:** the old project-wide `rglob` search for the module file — a heuristic
+  with a bare `except` at its heart. Here the recipe says where its code is: a path
+  resolved against the recipe's own folder, or a dotted import name.
 
-### 2.3 `UserInteractionStep` — to be implemented
+### 2.3 `UserInteractionStep` → `UserInteraction` — done
 
-Prompt the operator with a message, an optional image and a list of buttons; the chosen
-key comes back as the step's output.
+`user_interaction_step.py`. Prompt the operator with a message, an optional image and a
+list of buttons; the chosen key comes back as the step's output. Demo:
+`resources/recipes/userinteractionstep_demo.yml` (GUI mode — the CLI declines every
+question).
 
-Most of this already exists — **what is missing is the sender**:
+**The question sits directly on the step**, the way a Wait's `wait_time` does and not the
+way a PythonModule's `input_mapping` does. Only the *answer* goes through a mapping:
 
-| Piece | State |
-|---|---|
-| `UserPromptRequest` / `UserPromptResponse` | ✅ in `messages/run_events.py`, joined by `request_id` |
-| CORE relay, both directions | ✅ `core.py` — request out, answer back to the Sequencer |
-| `HmiClient.ask_user()` / `answer_user_prompt()` | ✅ both frontends; the GUI has the prompt page, tested |
-| `Sequencer.deliver_response()` | ✅ wakes the waiter by `request_id` |
-| `PendingRequests` (`messages/blocking_messages.py`) | ✅ built, and **nothing calls `start()`/`wait()`** |
-| a step that asks | ❌ **this type** |
-
-The waiting shape is fixed and must be followed, or the engine deadlocks:
-
-```python
-self.pending.start(request_id)                  # register BEFORE sending
-runtime.emit(UserPromptRequest(request_id, ...)) # ask
-answer = self.pending.wait(request_id)           # blocks the *sequence* thread only
+```yaml
+- steptype: UserInteraction
+  step_name: Check the LED
+  message: Is the red LED lit?
+  options: [Yes, No]
+  image_path: led.png        # optional, resolved against the recipe's folder
+  output_mapping:
+    output: {type: equals, value: Yes}
 ```
 
-The sequence thread blocks; the Sequencer's event loop keeps turning and is what delivers
-the answer. A step that waits on the event-loop thread can never be answered.
+The step returns the chosen string, which `Step.run()` wraps as `{"output": choice}` — so
+`equals` judges it, `local`/`global` store it, and no output type was added for it.
 
-Open: the step layer reaches CORE through `Runtime.emit` alone and has no handle on
-`PendingRequests`. Asking needs a third seam on `Runtime` (an `ask()` callable the
-Sequencer fills in) — decide that before writing the first prompting type, because all
-three of them need it.
+**The `ask` seam.** The step layer reached CORE through `Runtime.emit` alone, which is
+one-way. `Runtime` now carries a third seam, `ask`, which the Sequencer fills with
+`ask_operator()` — the one place that knows the ordering:
+
+```python
+def ask_operator(self, request):            # sequencer.py
+    self.pending.start(request.request_id)  # register BEFORE sending
+    self.core.send(request)
+    return self.pending.wait(request.request_id, should_abort=lambda: self.stop_requested)
+```
+
+A step just calls `runtime.ask(request)` and cannot get it wrong. The rule that stays
+load-bearing: **`ask` may only be called from the sequence thread.** The answer is
+delivered by `deliver_response()` on the *event loop* thread, so a caller on the event
+loop would block the very loop that has to wake it. `UserWriteStep` and `UserLoadingStep`
+use the same seam.
+
+**Waiting is a poll, not one long sleep.** `PendingRequests.wait()` surfaces every
+`POLL_INTERVAL_S` (100 ms) to look at `should_abort`. Without it, pressing Stop with a
+question on screen would hang for the whole 300 s timeout: `should_stop` is only read
+*between* steps, and the GUI's own escape hatch — cancelling open prompts on
+`RunFinished` — cannot fire until the blocked step returns. The loop lives inside
+`wait()` because the slot is registered once and cancelled once; a caller looping on short
+waits of its own would cancel its own request on the first empty turn.
+
+**Not answering is an ERROR.** One rule, no special cases: the timeout ran out, the
+operator pressed Cancel, or the run was stopped. The exception text distinguishes them
+because that is worth reading; the verdict does not change. `Step.run_steps` carries on to
+the next step (§3.1), so one unanswered question does not throw the rest of the sequence
+away.
+
+**Two things the step refuses at load time**, rather than letting them fail quietly:
+
+- `options: []` — with no buttons the operator cannot answer, so the step could only ever
+  time out;
+- an `image_path` that does not exist — the GUI's handling of a bad path is to fall back
+  to the idle logo (`interaction_panel._refresh_visual`), which would leave the operator
+  looking at the wrong picture with nothing said about it. The check happens before the
+  request is sent, and the resolved path is made **absolute** because the HMI is another
+  process and resolves nothing.
+
+**The Cancel button is the GUI's, not the recipe's.** Every prompt grows one beyond the
+recipe's own options (`interaction_panel.CANCEL_LABEL`), so an operator is never stuck in
+front of a question they cannot answer. It emits `cancelled`, not `response_given`, so a
+recipe that happens to offer its own "Cancel" option stays distinct from it; the signal
+lands on `CenterContent.cancel_pending()`, which is the same decline path `RunFinished`
+and a superseding prompt already used.
+
+Not carried over from the old type: `trigger_response` / `module` / `action_type` /
+`method_name` (that was `UserRunMethodStep` behaviour — §2.6), and the `cancel_key`
+global convention.
 
 ### 2.4 `UserWriteStep` — to be implemented
 
@@ -233,33 +282,87 @@ which also validates the `template` as the step it will become; the expansion it
 
 ---
 
-## 3. Cross-cutting machinery the ported types need
+## 3. Cross-cutting machinery
 
-### 3.1 `continue_on_error` — to be implemented in recipe parsing
+### 3.1 `continue_on_error` — done
 
-**Decision: the parser owns it. Default `True`. A recipe need not mention it.**
+**Written on a step, and nowhere else. Default `True`. A recipe need not mention it.**
 
-So a recipe that says nothing gets "an ERROR in one step does not abandon the rest of the
-sequence", and a step or a recipe may say otherwise explicitly.
+```yaml
+- steptype: PythonModule
+  step_name: Power up the DUT
+  module: bench.py
+  method_name: power_on
+  continue_on_error: false     # if this errors or fails, the run ends here
+```
 
-What has to change, and what it costs:
+Two halves, landed in two changes:
 
-- `recipe/rules.py` grows the field and its default; `recipe_parser.py` fills it in, so
-  every `Step` arrives with the flag resolved and **no step type parses it itself**. The
-  old engine had three disagreeing sources of truth for this (§16 F8) — one is the point.
-- `Step.run_steps()` (`step.py`) currently **breaks the loop on `ResultType.ERROR`**, the
-  old default. Defaulting the flag to `True` inverts that: the loop continues past an
-  ERROR unless the step says not to. This is the behaviour change to be aware of — a bad
-  step no longer stops the run by itself.
-- The teardown loop already runs with `honour_stop=False` and is unaffected.
-- Where the flag lives — per step, per sequence, per recipe, or all three — is not settled
-  here. The old format accepted it on 8 of the 10 step types and put it on the step.
+**The default** (2026-09-01, with the `UserInteraction` port that needed it):
+`Step.run_steps()` does not end the sequence on `ResultType.ERROR`. A failing step is
+recorded and the sequence carries on, and the run still ends ERROR through the ordinary
+aggregate rather than by abandoning what was left. One bad step does not decide for the
+other nineteen — which is exactly what an unanswered prompt in the middle of a long recipe
+must not do.
 
-### 3.2 `critical` — parsed, stored, never consulted
+**The flag** (2026-09-01). `continue_on_error: false` on a step means: when *that* step
+comes back `ERROR` **or** `FAIL`, the run ends there. Four things about it are decisions,
+not details:
 
-`Step.__init__` takes `critical` and keeps it. Nothing reads it. Decide what it means when
-`continue_on_error` lands: the two are the same conversation, and a step that is `critical`
-in a recipe whose default is now "continue" is the obvious way to say "except this one".
+- **A `FAIL` halts too, not only an `ERROR`.** This is the answer to §16 **F7** — *"should a
+  FAIL stop a sequence? Today only ERROR does"* — which the old engine left open and
+  undocumented. The default is unchanged by it: a failing measurement still never halts
+  anything on its own, because a failing DUT should still be fully characterised. The flag
+  is the only thing that makes a FAIL matter to control flow.
+- **Per step and nowhere else.** No header field, no `globals.continue_on_error`. Those two
+  were F1 (the header form was inert, and four of five example recipes used it) and F8 (the
+  global form overrode everything and otherwise leaked forward from whichever step last
+  wrote it). One place to write it, one place to read it.
+- **Every step that never ran is recorded `SKIP`**, with a reason on its `error_info` —
+  `"Not run: the sequence stopped at step 'X'."`. `run_steps()` runs the remainder through
+  `Step.run(runtime, skip_reason=…)`, which takes the same branch `skip: true` takes: the
+  body is not entered, but the full `StepStarted`/`StepFinished`/`StepExecuted` trio is
+  emitted. So the step table settles every pre-filled row and the CSV has a row per step,
+  however the run ended. `SKIP` is the lowest `ResultType`, so this cannot change what the
+  sequence aggregates to. **The operator's Stop does the same**, for the same reason, with
+  its own reason text — before this, both simply dropped the remaining steps and left their
+  rows pending forever.
+- **Ignored in teardown.** `run_sequence()` passes `run_to_end=True`, which disables both
+  early exits: cleanup runs after an abort *and* after a halt, and one failing cleanup step
+  does not skip the rest of the cleanup. That parameter replaced `honour_stop` — one name
+  for one concept, rather than two booleans always set together.
+
+**A halt is not a Stop.** It deliberately never touches the Sequencer's `stop_requested`,
+so `execute_sequence()`'s `if self.stop_requested: result = ResultType.STOP` does not fire
+and `RunFinished` carries the real aggregate — `ERROR` or `FAIL`. Borrowing that flag would
+leave the operator unable to tell "I pressed Stop" from "a critical step failed".
+`test_a_step_that_halts_the_run_reports_error_not_stop` pins it.
+
+On an `Indexed` step the flag goes on the **wrapper**, where it carries to every generated
+row exactly as `skip` does (`indexed_step._generated_step`).
+
+### 3.2 `critical` — dropped
+
+`Step.__init__` took `critical` and kept it; nothing ever read it. It is **gone**
+(2026-09-01), removed in the change that implemented `continue_on_error`.
+
+It only made sense in the old engine's shape. There `continue_on_error` lived on the
+*runtime* — effectively run-wide — and `critical` was the per-step override of it:
+
+| old `continue_on_error` (run-wide) | old `critical` (per step) | on ERROR |
+|---|---|---|
+| false | false | stop |
+| false | true | stop |
+| true | false | continue |
+| true | true | **stop** |
+
+Two knobs because one was global and one was local. With `continue_on_error` itself per
+step there is no global setting left for `critical` to override, so `critical: true` and
+`continue_on_error: false` became one statement spelled two ways.
+
+A recipe that still writes `critical:` gets a `TypeError` from the constructor, which
+`recipe_parser._build_step_or_refuse()` turns into a `RecipeError` naming the sequence, the
+step and the key. Loud, and the fix is a rename.
 
 ### 3.3 Dropped with their types
 
@@ -273,6 +376,8 @@ in a recipe whose default is now "continue" is the obvious way to say "except th
 ## 4. Adding a step type — the three edits
 
 1. The class in `step/<name>_step.py`: subclass `Step`, override `_step()` and nothing else.
+   A type that has to ask the operator something calls `runtime.ask(request)` from inside
+   `_step()` — never a queue, never `PendingRequests` directly (§2.3).
    The constructor arguments *are* the type's YAML keys, so an unknown key is a `TypeError`
    at load time.
 2. Its entry in `STEP_TYPES` (`step/registry.py`), keyed **lowercase** — the YAML spelling
@@ -280,6 +385,13 @@ in a recipe whose default is now "continue" is the obvious way to say "except th
 3. Its required and optional fields in `STEP_TYPE_REQUIRED` / `STEP_TYPE_DEFAULTS`
    (`recipe/rules.py`). A unit test pins those keys against the registry's, so a type
    registered in only one of the two places fails the suite.
+
+**Only what is genuinely the type's own goes in `STEP_TYPE_DEFAULTS`.** The fields every
+step accepts whatever its type — `description`, `skip`, `continue_on_error` — are the
+common arguments of `Step.__init__` and are declared once, in `STEP_COMMON_DEFAULTS`. A new
+type gets them for free and must not repeat them; the old format's per-type
+`continue_on_error` is why putting it on the wrong one of the ten types was a load-time
+`TypeError` (§16 F9).
 
 Then document it in `recipe_guide.md` §10 and update the table in §1 above.
 

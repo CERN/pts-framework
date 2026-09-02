@@ -27,11 +27,11 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 
 ### What is placeholder / not yet ported
 
-1. **The execution engine - nine of ten step types.** The skeleton is real now (§1.13): `recipe/` parses and validates, `step/` has the base lifecycle + `WaitStep` + the registry, `execute_sequence()` runs the requested sequence and emits every run event, and Core's `LoadRecipe`/`StartSequence` handlers work. Still in **`old_code/`**: the rest of `PythonModuleStep` (and the resource-based `test_package` module loading described in `architecture.rst`), the three interactive types that are being kept, and the SSH pair - plus the continue_on_error policy. `UserRunMethodStep`, `SequenceStep` and `IndexedStep` are dropped, and SSH moves out of the step layer: see `src/pypts/step/step.md`.
+1. **The execution engine - two interactive step types.** The skeleton is real now (§1.13): `recipe/` parses and validates, `step/` has the base lifecycle + `WaitStep` + `PythonModuleStep` + `Indexed` + `UserInteraction` + the registry, `execute_sequence()` runs the requested sequence and emits every run event, and Core's `LoadRecipe`/`StartSequence` handlers work. Still in **`old_code/`**: `UserWriteStep` and `UserLoadingStep`, and the SSH pair - plus the per-step `continue_on_error` flag (its *default* landed with §1.28: an ERROR no longer abandons the sequence). (`PythonModuleStep` is finished as of 2026-09-01: methods only, the attribute actions dropped. The resource-based `test_package` module loading of `architecture.rst` is not carried over either.) `UserRunMethodStep`, `SequenceStep` and `IndexedStep` are dropped, and SSH moves out of the step layer: see `src/pypts/step/step.md`.
 2. **Report module** — **first real slice in (§1.19):** one folder per run, an incremental CSV growing step by step, a simple self-contained `report.html` on `RunFinished`, and the operator told where it is (`ReportReady`; the GUI's "Open report folder" button). Still missing against `old_code/report.py` and the spec: the serial-number column (nothing asks for one yet), TDMS plots, configurable templates/`report.type`/`report.theme` (Phase 4), `ExportReport` (stub at both ends).
 3. **HAL** — `hal.py` is a one-line comment.
 4. **Stream handler** — `src/pypts/stream_handler/` is an empty placeholder package. The `StreamContainer` singleton and the XYGraph widget spike were moved out of the shipping package to `spikes/stream_handler/` and `spikes/GUI/XYGraph/`: neither was imported by anything, `StreamContainer` executed and printed at import, and XYGraph has undefined names that raise if reached. Phase 3 promotes them from there.
-5. **GUI** — **visual parity with the master reference reached (§1.20).** The operator screen now has full light/dark theming, `LogPanel`, `InteractionPanel` (image + keyboard nav + prompted buttons), `ResultsPanel` (PASS/FAIL/TOTAL badges + flat `StepOutcome` tree), SVG-icon toolbar with pause, and browse/pause mode. The `LogPanel` is live: it tails this run's log file, INFO and above, every 200 ms (§1.22). What remains: the `StepTable` badge delegate as *rounded pills* (the verdict colours themselves now render - a `QTableWidget::item` stylesheet rule had been cancelling them, see gui.md §9), the File/About menus, XYGraph live plot, session persistence, and the `User*` step types that will exercise the prompt pages. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing and prints the report path (§1.19), but no exit-code features yet.
+5. **GUI** — **visual parity with the master reference reached (§1.20).** The operator screen now has full light/dark theming, `LogPanel`, `InteractionPanel` (image + keyboard nav + prompted buttons), `ResultsPanel` (PASS/FAIL/TOTAL badges + flat `StepOutcome` tree), SVG-icon toolbar with pause, and browse/pause mode. The `LogPanel` is live: it tails this run's log file, INFO and above, every 200 ms (§1.22). What remains: the `StepTable` badge delegate as *rounded pills* (the verdict colours themselves now render - a `QTableWidget::item` stylesheet rule had been cancelling them, see gui.md §9), the File menu's Edit Recipe, XYGraph live plot, session persistence, and the `User*` step types that will exercise the prompt pages. CLI has the interactive shell + `load_recipe`/`start_sequence` plumbing and prints the report path (§1.19), but no exit-code features yet.
 6. ~~**Step construction still uses `eval(...)`**~~ **Closed (§1.13):** the new `step/registry.py` is a plain dict lookup with a clear unknown-steptype error; the `eval()` stays behind in `old_code/` and dies with it.
 
 ### Defects worth fixing early (spotted while reading the branch)
@@ -966,6 +966,8 @@ answered by exactly one `RunFinished`**, whatever happens in between.
   setting onto the next). Current policy is minimal and explicit: a step ERROR stops the
   sequence, FAIL never does, `skip` is honoured, `critical` is parsed and stored but not
   consulted. The real policy design is a Phase 1 decision.
+  **Superseded 2026-09-01 — see §1.30.** It is ported: one per-step field, default `True`,
+  and `critical` is gone.
 - **WaitStep sleeps in one piece.** The framework contract is a stop at the *step
   boundary* (pinned by `test_stop_requested_is_checked_between_steps_not_inside_one`); a
   stop-aware sliced sleep is a courtesy for later.
@@ -985,12 +987,10 @@ carries the full send/recv trace including `UseRecipe` on `core->sequencer`.
       (worst verdict wins), as the old documentation claimed? One-line change in
       `process_outputs()` plus the pinning test; a behaviour change, so decide it, don't
       slip it in.
-- [ ] **TODO:** implement continue_on_error **in recipe parsing, defaulting to True, with
-      no need for a recipe to mention it** (decided 2026-09-01). The parser resolves it so
-      no step type parses it itself - one source of truth this time. Note the behaviour
-      change: `Step.run_steps()` breaks on ERROR today, and a default of True inverts that.
-      Where the flag may be written (step / sequence / recipe) and what `critical` then
-      means are still open - see `src/pypts/step/step.md` §3.
+- [x] **DONE (§1.30, 2026-09-01):** continue_on_error, **defaulting to True, with no need
+      for a recipe to mention it**. One place to write it (the step) and one to read it
+      (`Step.run_steps()`); `critical` dropped; a `FAIL` halts too when the flag says so,
+      which answers F7. Details in `src/pypts/step/step.md` §3.1.
 - [ ] **TODO:** `WaitStep`: sleep in slices and honour `should_stop()`, so a long wait
       does not hold up an abort.
 - [ ] **TODO:** stable step ids - the old code accepted arbitrary strings for `id:`; the
@@ -1098,7 +1098,12 @@ a CLI end-to-end on Windows that exercised load → start → a *refused* second
       are the next engine port, and the GUI side of them is now already built and tested.
 - [x] **DONE (§1.20):** dark mode — `force_light_mode()` replaced by full light/dark QSS with
       OS live-sync via `styleHints().colorSchemeChanged`; verdict colors work in both palettes.
-- [ ] **TODO:** the old GUI's File/About menus (wiki, GitLab, recipe-creator launcher) — Phase 3.
+- [x] **DONE (§1.27):** the About menu's two entries open the project's URLs — GitHub
+      (`https://github.com/CERN/pts-framework`) and the documentation site
+      (`https://cern.github.io/pts-framework/`). Both were dead `addAction` stubs, and the
+      first still said "GitLab" and named a repository the project has moved off.
+- [ ] **TODO:** the rest of the old GUI's File/About menus (Edit Recipe, the recipe-creator
+      launcher) — Phase 3.
 - [ ] **TODO:** `StepStarted` for a sequence the table is not showing logs a warning and
       is dropped; revisit when `SequenceStep` nesting lands (the display policy for nested
       rows lives in the presentation layer now, not the transport).
@@ -1109,12 +1114,17 @@ a CLI end-to-end on Windows that exercised load → start → a *refused* second
 
 > **Status: implemented.** The second step type: call one Python function with the
 > recipe's resolved inputs as keyword arguments and judge what comes back. Demo:
-> `resources/recipes/python_demo.yml` + `example_tests.py` beside it — four function tests
-> (equals, range, a deliberate passfail FAIL, a wrapped scalar) and a 2 s wait; verified
-> end to end in the CLI: PASS/PASS/DONE/FAIL/PASS → `Run finished: FAIL (5 steps)`.
+> `resources/recipes/pythonmodulestep_demo.yml` + `example_tests.py` beside it — four
+> function tests (equals, range, a deliberate passfail FAIL, a wrapped scalar); verified
+> end to end in the CLI: PASS/PASS/FAIL/PASS → `Run finished: FAIL`. (The demo was named
+> `python_demo.yml` and carried a Wait and an Indexed step until the per-steptype split of
+> §1.29.)
 
-**What was ported and what deliberately was not.** `action_type: method` only —
-`read_attribute`/`write_attribute` stay in old_code, refused with a clear error. Module
+**What was ported and what deliberately was not.** Methods only —
+`read_attribute`/`write_attribute` are **dropped, not deferred** (decision 2026-09-01): a
+recipe needing an attribute calls a one-line getter beside it, so there stays one way of
+reaching Python code. `action_type` is kept as a tolerated no-op with one legal value,
+purely so the unported example recipes still load; anything else is refused. Module
 resolution replaced the old project-wide rglob heuristic (bare `except` at its heart,
 `old_code/steps.py __load_module`): a recipe's `module:` is either **a file next to the
 recipe** (`example_tests.py` or `example_tests`; `Recipe.from_file` records `base_dir`,
@@ -1142,7 +1152,7 @@ name** (stdlib/installed code). File-loaded modules are executed without touchin
 > **Status: implemented.** The recipe format for the two ported step types is now defined in
 > one importable place and enforced by one validator, and a recipe states **only what it
 > needs**: every optional field left out is assumed empty. No `{}`/`[]` boilerplate ever again.
-> Reference recipe: `resources/recipes/python_demo.yml`; readable rules page:
+> Reference recipe: `resources/recipes/pythonmodulestep_demo.yml`; readable rules page:
 > `resources/internal_reports/recipe_format.html`.
 
 **The pieces.**
@@ -1168,7 +1178,8 @@ name** (stdlib/installed code). File-loaded modules are executed without touchin
   names must therefore be unique without case. `module`, `method_name`, variable names,
   mapping entry names and compared values keep their case — they name the user's code and
   data, which are case-sensitive.
-- The demo and fixture recipes (`python_demo.yml`, both `wait_recipe.yml`) were trimmed to the
+- The demo and fixture recipes (`python_demo.yml`, now `pythonmodulestep_demo.yml`, and both
+  `wait_recipe.yml`) were trimmed to the
   new format and double as its showcase.
 
 **Verified:** 358 passed / 31 skipped, `ruff` clean on everything touched, `mypy` clean.
@@ -1382,7 +1393,7 @@ left-stack `ResultsPanel`. Compatibility properties (`idle_page`, `prompt_page`,
 `prompt_message`, `option_buttons`) preserved.
 
 **Changes in `gui.py`:** `PtsMainWindow` inherits `QMainWindow` directly. `addToolBar(top_bar)`.
-`_build_menu()` — File / Edit / View (dark-mode toggle) / About stubs. Central widget:
+`_build_menu()` — File / Edit / View (dark-mode toggle) / About (GitHub, Wiki). Central widget:
 `screen_tab_bar` (full-width, CERN Blue, snap-back logic) + `recipe_label` + `QSplitter`
 52/48. Left stack: page 0 = idle placeholder, page 1 = `StepTableContent`, page 2 =
 `ResultsPanel` (injected into `center.results`). `_switch_screen(index)` drives both the
@@ -1514,7 +1525,7 @@ in both directions.
 an unknown key inside a set (the message names `inputs, expect`). `skip: true` on the
 wrapper skips every generated step.
 
-**Demo:** `resources/recipes/python_demo.yml` gained a ten-set `Add numbers` block - nine
+**Demo:** `resources/recipes/python_demo.yml` (the block moved to `indexedstep_demo.yml` in §1.29) gained a ten-set `Add numbers` block - nine
 that pass and one whose `expect` is deliberately wrong, so the step table shows a single
 FAIL among nine PASS rows and the parameterized *expectation* is visible, not just the
 parameterized input. The recipe now builds 15 steps from 5 authored ones.
@@ -1842,22 +1853,339 @@ window have no laid-out geometry and `childAt()` needs real coordinates.
 
 ---
 
+### 1.27 The step table's YAML hover panel — **done**
+
+> **Status: implemented.** Between runs, resting the pointer on a step row shows that one
+> step's YAML beside the cursor, syntax coloured. It is the first slice of the "recipe
+> preview" that Phase 1 step 5 has carried unclaimed, and it answers the question the three
+> columns cannot: which module, which inputs, what the output is checked against.
+
+**What it shows: the effective step mapping, not the file's own text.** This was the design
+fork, and it was settled by `steptype: Indexed` (§1.23). An indexed step is expanded at load
+time into one ordinary step per parameter set, so the ten `Add numbers [a=…, b=…]` rows in
+`python_demo.yml` (now `indexedstep_demo.yml`) **exist in no file** — a text slice would show all ten of them the same
+thirty-line block. Rendering the mapping the engine actually built gives every row its own
+fragment and shows what will run rather than what was typed. The cost is fidelity: keys have
+been lowercased by `normalize_sequence()` and comments are gone. Values keep their case, and
+`default_flow_style=None` keeps a leaf mapping on one line, so an output check renders
+`voltage: {type: range, min: '11', max: '13'}` exactly as the recipe spells it.
+
+**Where the text comes from, and the objection to it.** `recipe/step_source.py` is new:
+`step_yaml_by_sequence(path)` reads the file and returns rendered text keyed by sequence
+name. The GUI calls it once, on `RecipeLoaded`, using the path it asked CORE to open. That
+argues with `gui.md` §3, where "the old GUI parsed the recipe itself" is defect #1 and the
+reason `RecipeLoaded` was given the whole recipe summary (§1.15). It was kept narrow instead:
+**the GUI does not learn the recipe format** — all of it stays in the recipe package, reusing
+the parser's own `normalize_sequence()`, `apply_defaults()` and `_expand_indexed_steps()` so
+the two cannot disagree, and the GUI only indexes a tuple of strings. Same shape as the LOG
+OUTPUT panel (§1.22), which reads the run log off disk rather than through messages. The
+alternative — a `StepSummary.yaml_source` field — was declined for now: it puts a copy of the
+whole recipe text across the process boundary to serve a hover.
+
+**The ordering contract** is what makes indexing by row safe. `step_source` builds its list
+exactly as `recipe_parser._build_sequence()` does — setup_steps, then steps, then
+teardown_steps, each expanded — because that is the order `Sequence.to_summary()` emits and
+therefore the order of the table's rows. A test pins the two together against
+`python_demo.yml`, whose fifteen rows included ten from one Indexed step (the check now
+runs against `all_steptypes_demo.yml` — see §1.29).
+
+**Three new files plus the trigger.** `hmi/gui/yaml_highlighter.py` holds `YamlHighlighter`,
+**copied** from `helper_applications/recipe_creator/customGUIModules.py` rather than imported
+(nothing in `hmi/` imports `helper_applications/`, and that dependency runs the wrong way),
+with its six hard-coded hexes replaced by seven new themed `Palette` tokens and its rules
+retightened — the original coloured the key and left every unquoted value plain, which is
+most of what a step mapping is. `hmi/gui/step_yaml_popup.py` holds `StepYamlPopup`: a
+`QFrame` borrowing the `Qt.ToolTip` **window flag**, which gives a top level that takes no
+focus and is not a dialog, without a real tooltip's inability to hold a `QSyntaxHighlighter`.
+`step_table.py` stores each fragment on its row's name cell under `_YAML_ROLE`
+(`UserRole + 1`), beside the step id — one place per row, and it survives the theme repaint,
+which only rebuilds the Result column.
+
+**Truncated, not scrolled.** The panel sits under the pointer and the pointer is over the
+table, so a wheel event goes to the table beneath and a scroll bar would be decoration. Past
+30 lines the fragment is cut and given a final `# ... N more lines`, which the highlighter
+paints as the comment it is. Placement is the cursor plus an offset, clamped to
+`screenAt(cursor).availableGeometry()` so a row near an edge flips the panel back over the
+cursor instead of hanging off the display.
+
+**The idle gate.** `StepTableContent.set_running()` is driven from `RunStarted` /
+`RunFinished`, and a hold counts as running because `Pause` produces no `RunFinished`. During
+a run the table is being written to and read for verdicts and must not be covered. The
+gesture is `setMouseTracking(True)` on the table *and* its viewport, which is what makes
+`cellEntered` fire with no button held; that signal never says the table was *left*, so a
+viewport event filter watching `QEvent.Type.Leave` is the other half.
+
+**It opens on a rest, not on a crossing.** A single-shot `QTimer` of 1 s, restarted by
+every row change, so dragging the eye down the table shows nothing. The delay is for
+*opening* only — an already-visible panel follows the pointer immediately, because once it
+is up the operator has asked for it and another wait per row would make reading down the
+table a series of pauses. `_show_hovered_yaml()` is the single place that opens it and
+therefore carries the idle gate too: a run can start while the delay is running.
+
+**Verified:** 536 passed / 43 skipped, `ruff` and `mypy` clean. 6 new tests in
+`test_recipe.py` (row count and order against `to_summary()` including teardown and setup
+steps, a distinct fragment per expanded indexed row, YAML round-trip, an unreadable file
+costing only the fragments, and `python_demo.yml` end to end) and 15 in `test_hmi_gui.py`
+(the role, the optional argument, the hover, the four delay tests, the idle gate, Leave,
+truncation, the empty fragment, the theme flip reaching the per-character formats, and the
+assembler wiring), plus 2 for the About menu (both URLs opened, and the no-browser path).
+The delay is asserted two ways: armed-and-not-yet-open without waiting,
+and once end to end through `qtbot.waitUntil` with the interval turned down to 10 ms, which
+proves the timer is wired to the show rather than merely started. The
+palette tests needed no edit and are the real gate on the two new `hmi/gui/` files: flat
+`yaml_*` fields are picked up by `token_names()` automatically.
+
+**The About menu, in the same change.** Its two entries were dead `addAction` stubs with no
+connection at all, and the first still said **GitLab** and named a repository the project has
+moved off. They are now wired: **GitHub** → `https://github.com/CERN/pts-framework`, **Wiki**
+→ `https://cern.github.io/pts-framework/`, both through one `open_external_url()` that logs a
+WARNING instead of raising when `QDesktopServices.openUrl` returns False - a bench machine
+with no default browser must not lose its window to the About menu. Each entry carries its URL
+as its tooltip. Note `pyproject.toml`'s `[project.urls] Repository` still names the CERN
+GitLab path; changing packaging metadata was left out of a GUI change.
+
+**Not done, deliberately:** no message changed, so `messages/` and `test_messages.py` are
+untouched and the CLI is unaffected. `styles.py` gained no rule — the popup styles itself at
+runtime like `interaction_panel.py`, which here is required rather than preferred, because
+the blanket `QWidget` rule and the `QPlainTextEdit` rule in both sheets reach it and would
+paint it as a log panel.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** the recipe file is read **once, at load**. Editing the `.yml` afterwards makes
+      the panel show the new file while the engine runs the old one. Re-reading on every hover
+      would cost a `stat()` per row; a `mtime` check on the first hover after a run would not.
+- [ ] **TODO:** `--mode connect` (a CORE on another machine) cannot work with a GUI-side file
+      read. That is when `StepSummary` gains a `yaml_source: str` and this switches over — the
+      2-step message procedure in `src/pypts/README.md`, plus an `EXAMPLES` entry.
+- [ ] **TODO:** the panel is suppressed for the whole run, a hold included. If operators ask
+      for it while paused, the gate is one flag: `set_running(False)` on pause rather than only
+      on `RunFinished`.
+- [ ] **TODO:** the same panel would serve the Results tree (§1.20) and the recipe chooser.
+      Neither has a row keyed to a step mapping yet.
+
 ---
+
+### 1.28 `UserInteraction`: the first step type that blocks on a person — **done**
+
+> **Status: implemented.** A recipe can now stop and ask the operator a question, and go on
+> with their answer. Demo: `resources/recipes/userinteractionstep_demo.yml` — GUI mode,
+> because the CLI
+> frontend declines every question it is asked. The catalogue entry and the per-type notes
+> are in `src/pypts/step/step.md` §2.3, which stays the authority.
+
+**Everything around it already existed** — `UserPromptRequest`/`Response`, CORE's relay both
+ways, `HmiClient.ask_user()`, the GUI prompt page, `Sequencer.deliver_response()`,
+`PendingRequests` — and the only missing piece was a step that asks. Three of those had
+carried a `NOT SENT YET` marker since the messages were written; the markers are gone, and
+`SerialNumberRequest` is now the last one in `run_events.py` still wearing one.
+
+**`Runtime` gained a third seam: `ask`.** The step layer reached CORE through `emit` alone,
+which is one-way. The Sequencer fills `ask` with `ask_operator()`, the one place that knows
+the ordering — register with `PendingRequests` *before* sending, or an answer that beats the
+registration is dropped. A step calls `runtime.ask(request)` and cannot get it wrong;
+`UserWriteStep` and `UserLoadingStep` will use the same seam. A bare `Runtime()` defaults it
+to a decline, so steps stay testable stand-alone: the tests hand it a callable that answers.
+
+**The hard rule, unchanged and now load-bearing:** `ask` may only be called from the
+*sequence* thread. The answer is delivered by `deliver_response()` on the event-loop thread,
+so a caller on the event loop would block the very loop that has to wake it (§1.8).
+
+**Waiting became a poll.** `PendingRequests.wait()` now takes `should_abort` and surfaces
+every `POLL_INTERVAL_S` (100 ms). Without it, pressing Stop with a question on screen hung
+for the whole 300 s timeout: `should_stop` is only read *between* steps, and the GUI's own
+escape hatch — cancelling open prompts on `RunFinished` — cannot fire until the blocked step
+returns, which is circular. The loop lives inside `wait()` rather than in the caller because
+the slot is registered once and cancelled once; a caller looping on short waits of its own
+would cancel its own request on the first empty turn.
+
+**The recipe shape: the question sits directly on the step.** `message`, `options` and
+`image_path` are fields, the way a Wait's `wait_time` is, not `input_mapping` entries the way
+a PythonModule's arguments are. Only the answer goes through a mapping — the chosen string
+becomes `{"output": choice}` through the existing wrapping in `Step.run()`, so `equals` judges
+it and `local`/`global` store it with no output type added. The cost, accepted: a message is a
+fixed literal and cannot yet interpolate a value an earlier step produced.
+
+**Not answering is an ERROR** — one rule, no special cases: the timeout ran out, Cancel was
+pressed, or the run was stopped. The exception text distinguishes them because that is worth
+reading; the verdict does not.
+
+**Two refusals at load time**, rather than a quiet wrong result: `options: []` (no buttons
+means the operator cannot answer, so the step could only ever time out) and an `image_path`
+that does not exist. The second is checked in the step, before the request is sent, because
+the GUI's handling of a bad path is to fall back to the idle logo
+(`interaction_panel._refresh_visual`) — the operator would look at the wrong picture with
+nothing said about it. The resolved path is made absolute: the HMI is another process and
+resolves nothing.
+
+**A Cancel button on every prompt** (`interaction_panel.CANCEL_LABEL`), beyond whatever
+options the recipe wrote, so an operator is never stuck in front of a question they cannot
+answer. It emits `cancelled`, not `response_given`, so a recipe offering its own "Cancel"
+option stays distinct; the signal lands on `CenterContent.cancel_pending()`, the same decline
+path `RunFinished` and a superseding prompt already used. `add_button()` grew an `on_click`
+argument to make that possible. It is added last and never primary, so Enter on a freshly
+shown prompt answers rather than declines, and it joins `_buttons` so the arrow keys reach it.
+
+**The behaviour change to know about: an ERROR no longer abandons the sequence.**
+`Step.run_steps()` used to break the loop on `ResultType.ERROR`. It does not any more — this
+is the `continue_on_error: True` default that `step.md` §3.1 had already settled on, landing
+ahead of the per-step flag because an unanswered prompt in the middle of a long recipe must
+not throw the rest of it away. The run still ends ERROR through the ordinary aggregate. The
+stop check is a separate branch at the top of the same loop, so **Stop still ends a run at
+once**; a test pins that pair. Saying "except this one" in a recipe is still a TODO (§3.1).
+
+**Verified:** 551 passed / 43 skipped, `ruff` and `mypy` clean. 11 new tests in `test_step.py`
+(the ask-and-return round trip through a fake `ask`, storing in a local, option coercion, the
+two load-time refusals, no-answer and stopped wording, the bare-Runtime decline, image
+resolution, and the registry build), 2 in `test_sequencer.py` (`ask_operator` end to end on
+the two real threads, and Stop unblocking a waiting step well inside the timeout), 2 in
+`test_hmi_gui.py` (Cancel declines; a second Cancel click answers nothing). Three existing
+tests were inverted to the new `run_steps` policy.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** in `--mode cli` the base `HmiClient.ask_user()` auto-declines, so any recipe
+      with a prompt now fails instantly there. The CLI needs a real prompt (an `input()` over
+      the options) before a bench without a display can run one.
+- [ ] **TODO:** `message` cannot interpolate a variable — "Connect unit {serial}" is not
+      expressible. Either the field accepts an `input_mapping`-style entry, or it grows
+      placeholder substitution from locals/globals. Decide when `UserWriteStep` lands, since
+      a serial number is the obvious first thing anyone will want in a prompt.
+- [ ] **TODO:** the 300 s timeout is `PendingRequests`' own constant. A per-step `timeout:`
+      field is the natural next thing to want, and the roadmap already lists "timeouts for
+      predefined types" as a Phase 2 item.
+
+---
+
+### 1.29 One demo recipe per steptype, plus one that runs them all — **done**
+
+> **Status: implemented.** `resources/recipes/` now has a recipe per steptype and a single
+> recipe that exercises every one of them, so "show me what a Wait step looks like" and
+> "run the whole engine once" are two different files instead of one crowded one.
+
+| File | Steptype | Rows |
+|---|---|---|
+| `pythonmodulestep_demo.yml` | `PythonModule` | 4 — equals, range, a deliberate passfail FAIL, a wrapped scalar |
+| `userinteractionstep_demo.yml` | `UserInteraction` | 4 — judged, unjudged, stored in a local, and the step that reads it back |
+| `indexedstep_demo.yml` | `Indexed` | 13 from 2 authored steps — the ten-set `Add numbers` block plus a template-level `passfail` |
+| `wait_recipe.yml` | `Wait` | 2 (unchanged; it was already the Wait showcase) |
+| `all_steptypes_demo.yml` | all four | 13 + 1 teardown, two deliberate FAILs |
+
+**What moved.** `python_demo.yml` → `pythonmodulestep_demo.yml`, with its `Wait` step and
+its ten-set `Indexed` block taken out — `wait_recipe.yml` already showed the first and
+`indexedstep_demo.yml` now owns the second. `prompt_demo.yml` → `userinteractionstep_demo.yml`
+(§1.28 created it hours earlier under the old name; nothing else referenced it yet).
+
+**`all_steptypes_demo.yml` is the one to reach for when testing the engine rather than a
+type.** One sequence, in the order a real recipe would use them: two prompts to get set up,
+a Wait, three PythonModule calls, a five-set Indexed block, a PythonModule step reading back
+the port the operator chose at the top, a final judged prompt, and a Wait in `teardown_steps`
+so the teardown path is exercised too. **GUI mode** — the CLI declines every question, so
+each prompt there would be an ERROR.
+
+**Every demo header now carries the folder index**, so opening any one of them says where
+the other four are. `example_tests.py` is shared by all of them and its `module:` entries
+resolve against `base_dir`, which is why they all have to stay in that one folder.
+
+**Verified:** 562 passed / 43 skipped, `ruff` and `mypy` clean. `test_recipe.py` gained four
+tests — one per new or renamed demo — asserting what each one builds: the PythonModule demo's
+four steps and its `base_dir`, the Indexed demo's thirteen expanded names plus the template's
+shared `output_mapping` reaching the last of them, the UserInteraction demo's local written by
+one step and read by another, and the all-steptypes demo building one of every class with
+Indexed already gone. The YAML-fragment ordering test moved from `python_demo.yml` to
+`all_steptypes_demo.yml`, which is now the recipe whose rows include some that exist in no
+file.
+
+---
+
+---
+
+### 1.30 `continue_on_error`: one field, on the step, and `critical` dropped — **done**
+
+> **Status: implemented.** A recipe can say "carry on past this step's failure" — which it
+> already did by default — and now also "except this one". Per-type notes stay in
+> `src/pypts/step/step.md` §3.1, which is the authority.
+
+The default landed with §1.28: `Step.run_steps()` records an ERROR and carries on, so one
+unanswered prompt in the middle of a long recipe does not throw the remaining nineteen
+steps away. What was missing was the opt-out, and the shape it should take.
+
+**One field, written on a step and nowhere else.** `continue_on_error: false` means: when
+*this* step comes back `ERROR` **or** `FAIL`, the run ends there. Default `True`, so a
+recipe need not mention it. There is no header form and no `globals.continue_on_error` —
+those two were exactly F1 (the header form was inert, and four of five example recipes used
+it believing otherwise) and F8 (the global form overrode everything, and otherwise held
+whatever the last executed step had assigned to the runtime, leaking one step's setting
+onto the next). Three disagreeing sources of truth became one.
+
+**F7 is answered: a `FAIL` halts too, when the step says so.** The old engine stopped on
+`ERROR` only, undocumented, and `recipe_guide.md` §16 F7 parked the question. The default
+is unchanged by this — a failing measurement still never halts anything on its own, because
+a failing DUT should still be fully characterised — but the flag now covers both verdicts,
+which is what an operator means by "if this one fails, don't bother with the rest".
+
+**`critical` is dropped.** It was the old per-step override of a run-wide
+`continue_on_error` (the matrix in `recipe_guide.md` §9.2); with the flag itself per step
+there is nothing left for it to override, and `critical: true` and `continue_on_error:
+false` became one statement spelled two ways. It had been parsed and stored on every `Step`
+since the port and read by nothing. A recipe still spelling it now gets a `RecipeError`
+naming the sequence, the step and the key, rather than being silently ignored.
+
+**Every step that never ran is now recorded, not dropped** — and this is the part that
+shows on screen. `run_steps()` puts the remainder through `Step.run(runtime,
+skip_reason=…)`, which takes the same branch `skip: true` takes: the body is not entered,
+but the full `StepStarted`/`StepFinished`/`StepExecuted` trio is emitted, carrying a reason
+on the outcome. So the step table settles every pre-filled row instead of leaving some
+"pending" forever, and the report's CSV has a row per step. **The operator's Stop does the
+same**, with its own reason text; before this, both simply abandoned what was left.
+`ResultType.SKIP` is the lowest member, so none of this changes what a sequence aggregates
+to.
+
+**A halt is not a Stop.** It deliberately never touches the Sequencer's `stop_requested`,
+so `execute_sequence()`'s `if self.stop_requested: result = ResultType.STOP` does not fire
+and `RunFinished` carries the real aggregate — `ERROR` or `FAIL`. Borrowing that flag would
+have left the operator unable to tell "I pressed Stop" from "a critical step failed";
+`test_a_step_that_halts_the_run_reports_error_not_stop` pins it.
+
+**Two smaller changes it pulled in.** `Step.run_steps()`'s `honour_stop` became
+`run_to_end`, one name for the one thing teardown callers actually mean — "this list runs
+to the end whatever happens" — instead of two booleans that would always have been set
+together; teardown therefore ignores the new flag too, since one failing cleanup step
+skipping the rest of the cleanup is the opposite of what teardown is for. And
+`rules.py` grew `STEP_COMMON_DEFAULTS` for the fields every step accepts whatever its type
+(`description`, `skip`, `continue_on_error`), so a new step type gets them for free rather
+than repeating them in a fifth per-type dict — the old format's per-type
+`continue_on_error` is why writing it on the wrong one of the ten types was a load-time
+`TypeError` (F9).
+
+On an `Indexed` step the flag goes on the wrapper and carries to every generated row,
+exactly as `skip` does.
+
+**Verified:** the step, sequencer and recipe suites green, including nine new tests and
+four rewritten ones — the rewrites are the interesting ones, because they had encoded
+"abandoned steps emit nothing" as the contract.
+
+**New TODO this opened:**
+
+- [ ] **TODO:** decide whether a *sequence* verdict should distinguish "ran to the end" from
+      "halted early". Today both aggregate the same way and only the SKIP rows and their
+      reasons say which happened. Relevant once a run has more than one sequence.
 
 ## TODO — Step types: which of the ten are ported, and which are dropped
 
-> **Status: decided 2026-09-01; nothing implemented yet.** The catalogue, the per-type
-> notes and the open questions live in **`src/pypts/step/step.md`** — that file is the
-> authority on the step-type port, and this block only records the decisions so the phase
-> plan above reads correctly.
+> **Status: decided 2026-09-01; `PythonModule` finished and `UserInteraction` ported
+> since (§1.28).** The catalogue, the per-type notes and the open questions live in
+> **`src/pypts/step/step.md`** — that file is the authority on the step-type port, and this
+> block only records the decisions so the phase plan above reads correctly.
 
 The old engine had ten step classes. The plan is no longer "port the other nine":
 
 | Old class | Decision |
 |---|---|
 | `WaitStep` | ✅ ported |
-| `PythonModuleStep` | 🟡 ported for `action_type: method`; `read_attribute` / `write_attribute` still to do |
-| `UserInteractionStep`, `UserWriteStep`, `UserLoadingStep` | **to be implemented** — the three interactive types |
+| `PythonModuleStep` | ✅ ported — methods only; `read_attribute` / `write_attribute` **dropped** (2026-09-01) |
+| `UserInteractionStep` | ✅ ported — asks through `Runtime.ask`; Cancel / timeout / stop are all ERROR (done, §1.28) |
+| `UserWriteStep`, `UserLoadingStep` | **to be implemented** — the two interactive types left |
 | `UserRunMethodStep` | **deprecated, dropped** — a prompt step followed by a `PythonModule` step says the same thing |
 | `SSHConnectStep`, `SSHCloseStep` | **not step types** — SSH becomes part of the framework (HAL or a service; not decided), with credentials in the Config Handler |
 | `SequenceStep` | **dropped** |
@@ -1900,8 +2228,14 @@ Recipe-format work items surfaced by that study (IDs refer to `recipe_guide.md` 
   (`UserInteractionStep` swallows its own Cancel), F14 (`UserWriteStep` overwrites the typed
   value with the button key), F15 (`file_save_location: local` writes a global), F18 (teardown
   clears the abort flag), F25 (`IndexedStep` discards its output mapping).
-- [ ] **TODO:** Decide and document whether `FAIL` (not just `ERROR`) stops a sequence — F7.
-  Today only `ERROR` does, and it is documented nowhere.
+  **F1 and F8 closed (§1.30):** the flag is written on a step and read in one place, so
+  there is no header form to be inert and nothing to leak forward. F12 closed with the
+  base-class port; F25 cannot recur (`Indexed` has no wrapper — §1.23).
+- [x] **DONE (§1.30, 2026-09-01):** whether `FAIL` (not just `ERROR`) stops a sequence — F7.
+  **Neither does, by itself.** A failing DUT is still fully characterised, which is what the
+  old engine intended and never wrote down. A step marked `continue_on_error: false` halts
+  the run on *either* verdict — that flag is the only thing that makes a FAIL matter to
+  control flow. Documented in `step.md` §3.1 and pinned by tests in `test_step.py`.
 - [ ] **TODO:** Collapse the **three** disagreeing rule sets (`recipe_rules.py`,
   `recipe_creator.py:795-800`, `yaml_format.rst`) into the one per-steptype schema described in
   §3.2 — this is the concrete form of the Phase 0 "schema module" item and closes F9/F19/F21/F23.
@@ -2000,10 +2334,10 @@ Anchors follow the wiki milestones: **v0.3.0 = structure matches the architectur
 Recommended porting order (each step is one reviewable MR):
 
 1. **Recipe (data layer):** ~~move loading/parsing/validation from `old_code/recipe.py` into `recipe/recipe.py`, stripped of all execution logic~~ **done (§1.13)** - every load failure is a loud `RecipeError` and an invalid recipe never reaches the Sequencer. Still open here: the verificator integration (it has its own broken-import problem, Phase 0), and `test_package` handling, which lands with `PythonModuleStep`.
-2. **Step & Sequencer (execution):** **skeleton done (§1.13)** - the base `Step` lifecycle, `StepResult`, `Runtime` and `execute_sequence()` are in and all seven run events are produced on every run. What remains of this item is **four** step types, not nine (decisions of 2026-09-01, catalogued in `src/pypts/step/step.md`), one reviewable MR each, in dependency order: finish `PythonModuleStep` (`read_attribute`/`write_attribute`) → `UserInteractionStep` → `UserWriteStep` → `UserLoadingStep` (needs the one-response-per-request fix first); `Indexed` is **done** (§1.23). `UserRunMethodStep` and `SequenceStep` are **dropped**; the SSH pair leaves the step layer altogether and becomes part of the framework, credentials in the Config Handler first (F22).
+2. **Step & Sequencer (execution):** **skeleton done (§1.13)** - the base `Step` lifecycle, `StepResult`, `Runtime` and `execute_sequence()` are in and all seven run events are produced on every run. What remains of this item is **two** step types, not nine (decisions of 2026-09-01, catalogued in `src/pypts/step/step.md`), one reviewable MR each, in dependency order: `UserWriteStep` → `UserLoadingStep` (needs the one-response-per-request fix first). `Indexed`, `PythonModule` and `UserInteraction` are **done** (§1.23, §1.16, §1.28), and the `Runtime.ask` seam the last two need is in. `UserRunMethodStep` and `SequenceStep` are **dropped**; the SSH pair leaves the step layer altogether and becomes part of the framework, credentials in the Config Handler first (F22).
 3. **Core orchestration:** implement `LOAD_RECIPE`/`START_SEQUENCE` handlers, runtime metadata (recipe info, DUT serials, timing, machine info), result aggregation, and forwarding to HMI + Report.
 4. **Report:** ~~port incremental CSV writing + HTML generation behind `GENERATE`/`EXPORT`; intermediate result file (YAML/CSV) per spec; artifacts organized per run folder~~ **first slice done (§1.19)** - incremental CSV, HTML on `GenerateReport`, one folder per run. Still open: `ExportReport`, the serial-number column, TDMS plots, and the template/theme work of Phase 4.
-5. **HMI:** CLI first — recipe load/validate/run, sequence selection, prompts (serial number, user interaction now crossing a process boundary — see pickling risk in §4), report/log locations, exit codes `0/1/2/3`, `--version`. Then grow the GUI beyond the status window (recipe preview, runtime log, results table).
+5. **HMI:** CLI first — recipe load/validate/run, sequence selection, prompts (serial number, user interaction now crossing a process boundary — see pickling risk in §4), report/log locations, exit codes `0/1/2/3`, `--version`. Then grow the GUI beyond the status window (recipe preview — first slice done, the per-step YAML hover panel, §1.27; runtime log — done, §1.22; results table — done, §1.20).
 6. **Delete `old_code/`** once parity is proven by the Phase 0 characterization tests. v0.3.0 is tagged here.
 
 The design decision this phase used to carry — defining the step / user-interaction / result **payload contracts** — was taken up front instead (§1.1). The dataclasses exist and are pickle-tested; what remains is producing and consuming them.

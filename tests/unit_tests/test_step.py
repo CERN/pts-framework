@@ -8,9 +8,11 @@ Unit tests for the Step module (src/pypts/step/).
 The layer under test is the execution unit: the base Step lifecycle
 (resolve inputs -> _step() -> judge outputs -> StepResult), the Runtime it
 runs against, the registry that replaced the old eval() factory, and the
-one ported step type (WaitStep). Everything here drives the code with a
-bare Runtime() - no queues, no Sequencer, no threads - because "steps are
-testable stand-alone" is a spec requirement, not a convenience.
+ported step types. Everything here drives the code with a bare Runtime() -
+no queues, no Sequencer, no threads - because "steps are testable
+stand-alone" is a spec requirement, not a convenience. That extends to the
+step type that blocks on a person: UserInteractionStep asks through
+Runtime.ask, so a test hands it a callable that answers.
 """
 
 import uuid
@@ -29,6 +31,7 @@ from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
 from pypts.step.step import Step, StepResult, run_sequence
+from pypts.step.user_interaction_step import UserInteractionStep
 from pypts.step.wait_step import WaitStep
 
 
@@ -365,10 +368,101 @@ def test_run_steps_runs_in_order():
     assert len(results) == 3
 
 
-def test_an_error_stops_the_remaining_steps():
-    steps = [Raises(step_name="fails"), ReturnsDict(step_name="never", payload={})]
+def fails(step_name="fails", **kwargs):
+    """A step that comes back FAIL - a failed measurement, not an exception."""
+    return ReturnsDict(
+        step_name=step_name,
+        payload={"ok": False},
+        output_mapping={"ok": {"type": "passfail"}},
+        **kwargs,
+    )
+
+
+def test_an_error_does_not_stop_the_remaining_steps():
+    """The continue_on_error: True default (step.md 3.1): one bad step is
+    recorded and the sequence carries on, rather than deciding for the rest."""
+    steps = [Raises(step_name="fails"), ReturnsDict(step_name="runs anyway", payload={})]
     results = Step.run_steps(Runtime(), steps)
-    assert [r.result for r in results] == [ResultType.ERROR]
+    assert [r.result for r in results] == [ResultType.ERROR, ResultType.DONE]
+
+
+def test_a_fail_does_not_stop_the_remaining_steps_either():
+    """A failed measurement never halts anything by itself - a failing DUT is
+    still fully characterised. Only continue_on_error: false changes that."""
+    ran = []
+    results = Step.run_steps(Runtime(), [fails(), Notes(ran, step_name="two")])
+    assert ran == ["two"]
+    assert [r.result for r in results] == [ResultType.FAIL, ResultType.DONE]
+
+
+def test_continue_on_error_false_halts_the_run_on_an_error():
+    """"Except this one": the step says so, and the sequence ends there."""
+    ran = []
+    steps = [
+        Raises(step_name="critical", continue_on_error=False),
+        Notes(ran, step_name="two"),
+        Notes(ran, step_name="three"),
+    ]
+    results = Step.run_steps(Runtime(), steps)
+
+    assert ran == []
+    assert [r.result for r in results] == [ResultType.ERROR, ResultType.SKIP, ResultType.SKIP]
+
+
+def test_continue_on_error_false_halts_the_run_on_a_fail_too():
+    """The decision this change took on F7: with the flag off, either verdict
+    halts. The old engine stopped on ERROR only."""
+    ran = []
+    steps = [fails(step_name="critical", continue_on_error=False), Notes(ran, step_name="two")]
+    results = Step.run_steps(Runtime(), steps)
+
+    assert ran == []
+    assert [r.result for r in results] == [ResultType.FAIL, ResultType.SKIP]
+
+
+def test_a_halted_run_says_why_every_remaining_step_was_skipped():
+    """The reason rides on the StepOutcome, so the operator reads it in the
+    step table's tooltip and in the CSV instead of wondering."""
+    steps = [Raises(step_name="critical", continue_on_error=False), Notes([], step_name="two")]
+    results = Step.run_steps(Runtime(), steps)
+    assert "stopped at step 'critical'" in results[1].error_info
+
+
+def test_continue_on_error_false_halts_nothing_when_the_step_is_fine():
+    """The flag is about ERROR and FAIL. A PASS, a DONE and an author-written
+    skip: true all carry on."""
+    ran = []
+    steps = [
+        ReturnsDict(
+            step_name="passes",
+            payload={"ok": True},
+            output_mapping={"ok": {"type": "passfail"}},
+            continue_on_error=False,
+        ),
+        ReturnsDict(step_name="done", payload={}, continue_on_error=False),
+        Notes(ran, step_name="skipped", skip=True, continue_on_error=False),
+        Notes(ran, step_name="last"),
+    ]
+    results = Step.run_steps(Runtime(), steps)
+
+    assert ran == ["last"]
+    assert [r.result for r in results] == [
+        ResultType.PASS,
+        ResultType.DONE,
+        ResultType.SKIP,
+        ResultType.DONE,
+    ]
+
+
+def test_a_stop_still_ends_a_run_even_though_an_error_does_not():
+    """The two are separate branches: continuing past ERROR must not make the
+    loop deaf to the operator's Stop. The unrun step is recorded, not dropped."""
+    ran = []
+    stop_after_first = iter([False, True])
+    runtime = Runtime(should_stop=lambda: next(stop_after_first))
+    results = Step.run_steps(runtime, [Raises(step_name="fails"), Notes(ran, step_name="two")])
+    assert ran == []
+    assert [r.result for r in results] == [ResultType.ERROR, ResultType.SKIP]
 
 
 def test_a_stop_request_is_honoured_between_steps():
@@ -377,15 +471,43 @@ def test_a_stop_request_is_honoured_between_steps():
     runtime = Runtime(should_stop=lambda: next(stop_after_first))
     results = Step.run_steps(runtime, [Notes(ran, step_name="one"), Notes(ran, step_name="two")])
     assert ran == ["one"]
-    assert len(results) == 1
+    assert [r.result for r in results] == [ResultType.DONE, ResultType.SKIP]
+    assert "stopped by the operator" in results[1].error_info
+
+
+def test_every_step_settles_a_row_however_the_list_ended():
+    """The point of recording the remainder rather than dropping it: a frontend
+    pre-fills one row per step, so every step must emit its events or a row
+    stays pending forever."""
+    events = []
+    runtime = Runtime(emit=events.append)
+    steps = [Raises(step_name="critical", continue_on_error=False), Notes([], step_name="two")]
+    Step.run_steps(runtime, steps)
+
+    finished = [event for event in events if isinstance(event, StepFinished)]
+    assert [event.outcome.step_name for event in finished] == ["critical", "two"]
+    assert [event.outcome.result for event in finished] == [ResultType.ERROR, ResultType.SKIP]
 
 
 def test_teardown_ignores_a_stop_request():
     """Teardown must run after an abort - it returns the bench to a known state."""
     ran = []
     runtime = Runtime(should_stop=lambda: True)
-    Step.run_steps(runtime, [Notes(ran, step_name="cleanup")], honour_stop=False)
+    Step.run_steps(runtime, [Notes(ran, step_name="cleanup")], run_to_end=True)
     assert ran == ["cleanup"]
+
+
+def test_teardown_ignores_continue_on_error_too():
+    """One failing cleanup step must not skip the rest of the cleanup - that is
+    the opposite of what teardown is for."""
+    ran = []
+    steps = [
+        Raises(step_name="bad cleanup", continue_on_error=False),
+        Notes(ran, step_name="cleanup"),
+    ]
+    results = Step.run_steps(Runtime(), steps, run_to_end=True)
+    assert ran == ["cleanup"]
+    assert [r.result for r in results] == [ResultType.ERROR, ResultType.DONE]
 
 
 # --------------------------------------------------------------------------
@@ -418,6 +540,24 @@ def test_teardown_runs_even_when_a_step_errors():
     assert ran == ["cleanup"]
     assert result is ResultType.ERROR
     assert len(results) == 2
+
+
+def test_teardown_runs_after_a_step_halts_the_run():
+    """A halt ends the *steps*, never the cleanup: teardown is the only block
+    guaranteed to run, exactly as it is after an operator Stop."""
+    ran = []
+    sequence = FakeSequence(
+        steps=[
+            Raises(step_name="critical", continue_on_error=False),
+            Notes(ran, step_name="never"),
+        ],
+        teardown_steps=[Notes(ran, step_name="cleanup")],
+    )
+    result, results = run_sequence(Runtime(), sequence)
+
+    assert ran == ["cleanup"]
+    assert result is ResultType.ERROR
+    assert [r.result for r in results] == [ResultType.ERROR, ResultType.SKIP, ResultType.DONE]
 
 
 def test_an_empty_sequence_aggregates_to_skip():
@@ -518,11 +658,14 @@ def test_python_module_step_requires_a_method_name():
         PythonModuleStep(step_name="nameless", module="demo_tests.py")
 
 
-def test_python_module_step_refuses_unported_action_types():
-    with pytest.raises(ValueError, match="read_attribute"):
+def test_python_module_step_refuses_any_action_type_but_method():
+    # Dropped, not pending: the type calls methods and nothing else. `method`
+    # itself is still accepted, because the unported recipes all spell it.
+    with pytest.raises(ValueError, match="calls methods and nothing else"):
         PythonModuleStep(
             step_name="attr", module="m", method_name="f", action_type="read_attribute"
         )
+    PythonModuleStep(step_name="fine", module="m", method_name="f", action_type="method")
 
 
 # --------------------------------------------------------------------------
@@ -531,7 +674,7 @@ def test_python_module_step_refuses_unported_action_types():
 
 
 def an_indexed_step(**overrides):
-    """The shape python_demo.yml uses, as the parser hands it over."""
+    """The shape pythonmodulestep_demo.yml uses, as the parser hands it over."""
     step_data = {
         "steptype": "indexed",
         "step_name": "Add numbers",
@@ -692,3 +835,132 @@ def test_expanding_a_broken_indexed_step_raises_rather_than_guessing():
 
     with pytest.raises(ValueError):
         expand_indexed_step(an_indexed_step(parameter_sets=[]))
+
+
+# --------------------------------------------------------------------------
+# UserInteractionStep - the first type that blocks on a person
+# --------------------------------------------------------------------------
+
+
+def make_asker(answer, seen=None):
+    """A fake Runtime.ask: records the request it was given, returns `answer`."""
+
+    def ask(request):
+        if seen is not None:
+            seen.append(request)
+        return answer
+
+    return ask
+
+
+def test_user_interaction_step_asks_and_returns_the_choice():
+    seen = []
+    step = UserInteractionStep(
+        step_name="Check the LED",
+        message="Is the red LED lit?",
+        options=["Yes", "No"],
+        output_mapping={"output": {"type": "equals", "value": "Yes"}},
+    )
+    result = step.run(Runtime(ask=make_asker("Yes", seen)))
+
+    assert result.result is ResultType.PASS
+    assert result.outputs == {"output": "Yes"}
+    assert len(seen) == 1
+    assert seen[0].message == "Is the red LED lit?"
+    assert seen[0].options == ("Yes", "No")
+    assert seen[0].image_path is None
+
+
+def test_user_interaction_step_stores_the_choice_in_a_local():
+    """The answer goes through the ordinary mapping vocabulary, not machinery
+    of its own."""
+    step = UserInteractionStep(
+        step_name="Which port?",
+        message="Which port is it on?",
+        options=["COM1", "COM2"],
+        output_mapping={"output": {"type": "local", "local_name": "port"}},
+    )
+    runtime = Runtime(ask=make_asker("COM2"))
+    runtime.push_locals({})
+    step.run(runtime)
+    assert runtime.get_local("port") == "COM2"
+
+
+def test_user_interaction_step_coerces_non_string_options():
+    """`options: [1, 2]` is legal YAML; the message carries strings."""
+    seen = []
+    step = UserInteractionStep(step_name="pick", message="Pick", options=[1, 2])
+    step.run(Runtime(ask=make_asker("1", seen)))
+    assert seen[0].options == ("1", "2")
+
+
+def test_user_interaction_step_refuses_a_prompt_with_no_buttons():
+    """With no buttons the operator cannot answer, so it could only time out."""
+    with pytest.raises(ValueError, match="at least one button"):
+        UserInteractionStep(step_name="unanswerable", message="Well?", options=[])
+
+
+def test_user_interaction_step_no_answer_is_a_step_error():
+    """Timed out or cancelled - one rule, no special cases."""
+    step = UserInteractionStep(step_name="ignored", message="Well?", options=["ok"])
+    result = step.run(Runtime(ask=make_asker(None)))
+    assert result.result is ResultType.ERROR
+    assert "cancelled" in result.error_info
+
+
+def test_user_interaction_step_says_so_when_the_run_was_stopped():
+    """Same ERROR verdict, but the text has to be true."""
+    step = UserInteractionStep(step_name="aborted", message="Well?", options=["ok"])
+    runtime = Runtime(ask=make_asker(None), should_stop=lambda: True)
+    result = step.run(runtime)
+    assert result.result is ResultType.ERROR
+    assert "stopped" in result.error_info
+
+
+def test_user_interaction_step_declines_when_nothing_can_ask():
+    """A bare Runtime has no engine behind it, so ask() returns None."""
+    step = UserInteractionStep(step_name="alone", message="Well?", options=["ok"])
+    assert step.run(Runtime()).result is ResultType.ERROR
+
+
+def test_user_interaction_step_resolves_the_image_beside_the_recipe(tmp_path):
+    """Absolute, because the HMI is another process and resolves nothing."""
+    image = tmp_path / "led.png"
+    image.write_bytes(b"not really a png")
+    seen = []
+    step = UserInteractionStep(
+        step_name="Check the LED",
+        message="Lit?",
+        options=["Yes"],
+        image_path="led.png",
+    )
+    step.run(Runtime(ask=make_asker("Yes", seen), base_dir=str(tmp_path)))
+    assert seen[0].image_path == str(image.resolve())
+
+
+def test_user_interaction_step_missing_image_is_a_step_error(tmp_path):
+    """The GUI would silently fall back to the logo, so the step refuses first."""
+    seen = []
+    step = UserInteractionStep(
+        step_name="Check the LED",
+        message="Lit?",
+        options=["Yes"],
+        image_path="no_such_image.png",
+    )
+    result = step.run(Runtime(ask=make_asker("Yes", seen), base_dir=str(tmp_path)))
+    assert result.result is ResultType.ERROR
+    assert "no_such_image.png" in result.error_info
+    assert seen == [], "nothing should be asked when the image is wrong"
+
+
+def test_the_registry_builds_a_user_interaction_step():
+    step = build_step(
+        {
+            "steptype": "UserInteraction",
+            "step_name": "Check the LED",
+            "message": "Lit?",
+            "options": ["Yes", "No"],
+        }
+    )
+    assert isinstance(step, UserInteractionStep)
+    assert step.options == ("Yes", "No")

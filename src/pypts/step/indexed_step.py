@@ -195,9 +195,12 @@ def _build_one(
         generated["description"] = step_data.get("description", "")
 
     # `skip` on the wrapper skips every generated step - the obvious meaning of
-    # skipping an indexed step, and the only way to say it.
-    if step_data.get("skip") is not None and generated.get("skip") is None:
-        generated["skip"] = step_data["skip"]
+    # skipping an indexed step, and the only way to say it. `continue_on_error`
+    # carries the same way: "do not continue past this indexed step" can only be
+    # said on the wrapper, and it means it of whichever row halts.
+    for wrapper_field in ("skip", "continue_on_error"):
+        if step_data.get(wrapper_field) is not None and generated.get(wrapper_field) is None:
+            generated[wrapper_field] = step_data[wrapper_field]
 
     # Set entries are merged over the template's, so the template can hold what
     # every case shares and a set only says what makes it different.

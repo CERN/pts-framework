@@ -61,19 +61,37 @@ EXPANDED_STEP_TYPES: tuple[str, ...] = ("indexed",)
 #: These are the only steptypes a recipe may name.
 STEP_TYPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "pythonmodule": ("module", "method_name"),
+    "userinteraction": ("message", "options"),
     "wait": ("wait_time",),
     "indexed": ("template", "parameter_sets"),
 }
 
-#: Optional step fields per steptype. An absent `input_mapping` means the
-#: method takes no arguments; an absent `output_mapping` means there is
-#: nothing to judge (the verdict is DONE). A Wait has neither: its one
-#: value is `wait_time`, written directly on the step.
+#: Optional fields every step accepts whatever its type, and what an absent one
+#: means. They are the common arguments of pypts.step.step.Step, so a new step
+#: type gets them for free and must not repeat them below.
+#: `continue_on_error: false` means an ERROR or a FAIL on that step ends the
+#: run and every step after it is recorded SKIP; the default carries on to the
+#: next step. It is written on a step and nowhere else - a recipe-level or
+#: `globals` form is exactly what F1 and F8 were.
+STEP_COMMON_DEFAULTS: dict[str, Any] = {
+    "description": "",
+    "skip": False,
+    "continue_on_error": True,
+}
+
+#: Optional step fields per steptype, on top of STEP_COMMON_DEFAULTS. An absent
+#: `input_mapping` means the method takes no arguments; an absent
+#: `output_mapping` means there is nothing to judge (the verdict is DONE). A
+#: Wait has neither: its one value is `wait_time`, written directly on the step.
 STEP_TYPE_DEFAULTS: dict[str, dict[str, Any]] = {
-    "pythonmodule": {"description": "", "input_mapping": {}, "output_mapping": {}},
-    "wait": {"description": ""},
+    "pythonmodule": {"input_mapping": {}, "output_mapping": {}},
+    # A UserInteraction carries its question directly - message/options/
+    # image_path are fields, not input_mapping entries - so only the answer
+    # goes through a mapping. An absent image_path means no picture.
+    "userinteraction": {"image_path": None, "output_mapping": {}},
+    "wait": {},
     # An Indexed step owns no mappings of its own: what every generated step
     # shares goes on the `template`, what differs goes in a `parameter_sets`
     # entry. It is gone before anything is built.
-    "indexed": {"description": ""},
+    "indexed": {},
 }

@@ -21,6 +21,7 @@ from typing import Any
 
 from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.step import Step
+from pypts.step.user_interaction_step import UserInteractionStep
 from pypts.step.wait_step import WaitStep
 
 #: Every steptype a recipe may name, keyed lowercase - the YAML spelling is
@@ -30,6 +31,7 @@ from pypts.step.wait_step import WaitStep
 #: must match pypts.recipe.rules.STEP_TYPE_REQUIRED - a unit test pins that.
 STEP_TYPES: dict[str, type[Step]] = {
     "pythonmodule": PythonModuleStep,
+    "userinteraction": UserInteractionStep,
     "wait": WaitStep,
 }
 

@@ -4,7 +4,7 @@
 
 # The smallest recipe that actually runs: two Wait steps and nothing else.
 # It is the unit-test fixture for the recipe data layer and the sequencer;
-# resources/recipes/wait_recipe.yml is its runnable twin for a manual run.
+# resources/recipes/Development_recipes/wait_recipe.yml is its runnable twin for a manual run.
 # Optional fields are deliberately left out - the parser assumes them empty.
 name: Wait demo
 description: Two short waits - the smallest recipe that runs end to end.

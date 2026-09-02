@@ -21,6 +21,7 @@ cover the presentation half - the four panel contents and the assembler wiring
 between them.
 """
 
+import logging
 import queue
 from uuid import uuid4
 
@@ -388,12 +389,42 @@ def test_ask_user_shows_the_prompt_and_answers_once(gui):
     center = instance.center
     assert center.stack.currentWidget() is center.prompt_page
     assert "Connect the DUT" in center.prompt_message.text()
-    assert [b.text() for b in center.option_buttons] == ["yes", "no"]
+    # Cancel is appended to every prompt, after the recipe's own options, so
+    # the operator is never stuck in front of a question they cannot answer.
+    assert [b.text() for b in center.option_buttons] == ["yes", "no", "Cancel"]
 
     center.option_buttons[0].click()
 
     assert UserPromptResponse(request_id=request.request_id, choice="yes") in drain(outbox)
     assert center.stack.currentWidget() is center.idle_page
+
+
+def test_the_cancel_button_declines_the_prompt(gui):
+    """Cancel answers None, which the step that asked turns into an ERROR."""
+    instance, outbox, _inbox = gui
+    request = UserPromptRequest(
+        request_id=uuid4(), message="Connect the DUT", options=("yes", "no")
+    )
+
+    instance.ask_user(request)
+    instance.center.option_buttons[-1].click()
+
+    assert UserPromptResponse(request_id=request.request_id, choice=None) in drain(outbox)
+    assert instance.center.stack.currentWidget() is instance.center.idle_page
+
+
+def test_a_second_cancel_click_answers_nothing(gui):
+    """The exactly-once gate covers Cancel like any other answer."""
+    instance, outbox, _inbox = gui
+    request = UserPromptRequest(request_id=uuid4(), message="Well?", options=("ok",))
+
+    instance.ask_user(request)
+    cancel = instance.center.option_buttons[-1]
+    cancel.click()
+    drain(outbox)
+    cancel.click()
+
+    assert drain(outbox) == []
 
 
 def test_a_new_prompt_declines_the_unanswered_one(gui):
@@ -1296,3 +1327,287 @@ def test_the_toolbar_answers_tooltips_for_disabled_buttons(gui, qapp):
     # And the handler itself runs without raising on a real event.
     top.setToolTip("")
     top.event(QHelpEvent(QEvent.Type.ToolTip, centre, top.mapToGlobal(centre)))
+
+
+# --- The step table's YAML hover panel ----------------------------------------
+#
+# What the operator gets between runs: the pointer on a row, and that step's
+# YAML beside it. The fragments themselves are the recipe layer's
+# (step_source.py, covered in test_recipe.py); these tests own the wiring, the
+# idle gate and the theme.
+
+
+A_FRAGMENT = "steptype: Wait\nstep_name: First wait\nwait_time: '0.01'"
+
+
+def a_table_with_yaml(qapp):
+    """A step table filled from a sequence, every row carrying a fragment."""
+    from pypts.hmi.gui.step_table import StepTableContent
+
+    content = StepTableContent()
+    sequence = a_recipe_loaded().sequences[0]
+    sources = tuple(f"{A_FRAGMENT}\n# row {row}" for row in range(len(sequence.steps)))
+    content.show_sequence(sequence, sources)
+    return content, sources
+
+
+def test_each_row_carries_its_own_yaml(qapp):
+    from pypts.hmi.gui.step_table import _YAML_ROLE
+
+    content, sources = a_table_with_yaml(qapp)
+
+    stored = [
+        content.table.item(row, 0).data(_YAML_ROLE)
+        for row in range(content.table.rowCount())
+    ]
+    assert stored == list(sources)
+
+
+def test_a_sequence_without_fragments_still_fills_the_table(qapp):
+    """A recipe the GUI could not read back off disk costs the panel, not the
+    table - show_sequence's second argument is optional on purpose."""
+    from pypts.hmi.gui.step_table import _YAML_ROLE, StepTableContent
+
+    content = StepTableContent()
+    content.show_sequence(a_recipe_loaded().sequences[0])
+
+    assert content.table.rowCount() == 2
+    assert content.table.item(0, 0).data(_YAML_ROLE) is None
+
+    content._hover_cell(0, 0)
+    content._show_hovered_yaml()
+    assert content.yaml_popup.isVisible() is False
+
+
+def test_hovering_a_row_shows_that_row_s_yaml(qapp):
+    content, sources = a_table_with_yaml(qapp)
+
+    content._hover_cell(1, 0)
+    content._show_hovered_yaml()
+
+    assert content.yaml_popup.isVisible() is True
+    assert content.yaml_popup.text_view.toPlainText() == sources[1]
+
+
+def test_the_panel_waits_for_the_pointer_to_rest(qapp):
+    """Dragging the eye down the table must show nothing: the panel opens on a
+    rest, not on a crossing."""
+    from pypts.hmi.gui.step_table import _HOVER_DELAY_MS
+
+    content, _sources = a_table_with_yaml(qapp)
+
+    content._hover_cell(0, 0)
+
+    assert content.yaml_popup.isVisible() is False
+    assert content._hover_timer.isActive() is True
+    assert content._hover_timer.interval() == _HOVER_DELAY_MS
+
+    # Crossing to another row restarts the wait rather than opening on the first.
+    content._hover_cell(1, 0)
+    assert content.yaml_popup.isVisible() is False
+    assert content._hovered_row == 1
+
+
+def test_the_delay_really_opens_the_panel(qapp, qtbot):
+    """The timer is wired to the show, not merely armed. Run at 10 ms rather
+    than the real 1.5 s - the wiring is the same, the wait is not."""
+    content, sources = a_table_with_yaml(qapp)
+    content._hover_timer.setInterval(10)
+
+    content._hover_cell(1, 0)
+    qtbot.waitUntil(content.yaml_popup.isVisible, timeout=1000)
+
+    assert content.yaml_popup.text_view.toPlainText() == sources[1]
+
+
+def test_an_open_panel_follows_the_pointer_without_waiting_again(qapp):
+    """Once it is up the operator has asked for it; another 1.5 s per row would
+    turn reading down the table into a series of pauses."""
+    content, sources = a_table_with_yaml(qapp)
+    content._hover_cell(0, 0)
+    content._show_hovered_yaml()
+
+    content._hover_cell(1, 0)
+
+    assert content.yaml_popup.isVisible() is True
+    assert content.yaml_popup.text_view.toPlainText() == sources[1]
+    assert content._hover_timer.isActive() is False
+
+
+def test_hiding_the_panel_disarms_the_delay(qapp):
+    """A wait left running would open the panel after the pointer had gone."""
+    content, _sources = a_table_with_yaml(qapp)
+    content._hover_cell(0, 0)
+    assert content._hover_timer.isActive() is True
+
+    content.hide_yaml_popup()
+
+    assert content._hover_timer.isActive() is False
+
+
+def test_the_panel_is_suppressed_while_a_recipe_runs(qapp):
+    """The operator asked for it between runs: during one the table is being
+    written to and read for verdicts, and must not be covered. A hold counts
+    as running - set_running(False) only comes with RunFinished."""
+    content, _sources = a_table_with_yaml(qapp)
+    content._hover_cell(0, 0)
+    content._show_hovered_yaml()
+    assert content.yaml_popup.isVisible() is True
+
+    content.set_running(True)
+    assert content.yaml_popup.isVisible() is False
+
+    content._hover_cell(1, 0)
+    assert content._hover_timer.isActive() is False
+    content._show_hovered_yaml()
+    assert content.yaml_popup.isVisible() is False
+
+    content.set_running(False)
+    content._hover_cell(1, 0)
+    content._show_hovered_yaml()
+    assert content.yaml_popup.isVisible() is True
+
+
+def test_leaving_the_table_hides_the_panel(qapp):
+    from PySide6.QtCore import QEvent
+
+    content, _sources = a_table_with_yaml(qapp)
+    content._hover_cell(0, 0)
+    content._show_hovered_yaml()
+    assert content.yaml_popup.isVisible() is True
+
+    content.eventFilter(content.table.viewport(), QEvent(QEvent.Type.Leave))
+
+    assert content.yaml_popup.isVisible() is False
+
+
+def test_a_long_fragment_is_cut_and_says_so(qapp):
+    """A Qt.ToolTip window sits under the pointer, so it cannot be scrolled -
+    truncation is honest where a scroll bar would be decoration."""
+    from pypts.hmi.gui.step_yaml_popup import _MAX_LINES, StepYamlPopup
+
+    popup = StepYamlPopup()
+    popup.show_for("\n".join(f"key_{n}: {n}" for n in range(_MAX_LINES + 5)), 10, 10)
+
+    shown = popup.text_view.toPlainText().split("\n")
+    assert len(shown) == _MAX_LINES + 1
+    assert shown[-1] == "# ... 5 more lines"
+    popup.hide()
+
+
+def test_an_empty_fragment_shows_nothing(qapp):
+    from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
+
+    popup = StepYamlPopup()
+    popup.show_for("   \n  ", 10, 10)
+
+    assert popup.isVisible() is False
+
+
+def test_switching_theme_recolours_the_yaml(qapp):
+    """Syntax colours are per-character QTextCharFormats, which no stylesheet
+    can reach - the same contract the log panel's backlog has."""
+    from pypts.hmi.gui.palette import DARK, LIGHT
+    from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
+
+    popup = StepYamlPopup()
+    popup.show_for(A_FRAGMENT, 10, 10)
+
+    def key_colour():
+        # Every step held in a local: a highlighter's formats hang off the
+        # block's layout, and reading through a chain of temporaries lets
+        # PySide free the QTextCharFormat before the colour is read off it.
+        block = popup.text_view.document().firstBlock()
+        layout = block.layout()
+        ranges = layout.formats()
+        return ranges[0].format.foreground().color().name()
+
+    assert key_colour().lower() == LIGHT.yaml_key.lower()
+
+    popup.set_dark(True)
+    assert key_colour().lower() == DARK.yaml_key.lower()
+    popup.hide()
+
+
+def test_the_step_table_carries_the_theme_into_the_panel(qapp):
+    content, _sources = a_table_with_yaml(qapp)
+
+    content.set_dark(True)
+
+    assert content.yaml_popup._dark is True
+
+
+def test_the_gui_reads_the_recipe_back_for_the_hover_panel(gui, tmp_path, monkeypatch):
+    """The assembler's half: the path it asked CORE to open is the path it
+    reads the fragments from, once, when the recipe loads."""
+    from pypts.hmi.gui import gui as gui_module
+    from pypts.hmi.gui.step_table import _YAML_ROLE
+
+    asked = []
+
+    def fake_sources(path):
+        asked.append(path)
+        return {"Main": ("steptype: Wait\nstep_name: First wait", "steptype: Wait")}
+
+    monkeypatch.setattr(gui_module.step_source, "step_yaml_by_sequence", fake_sources)
+
+    instance, _outbox, inbox = gui
+    instance._requested_recipe_path = str(tmp_path / "demo.yml")
+    load_demo_recipe(instance, inbox)
+
+    assert asked == [str(tmp_path / "demo.yml")]
+    table = instance.step_table.table
+    assert table.item(0, 0).data(_YAML_ROLE) == "steptype: Wait\nstep_name: First wait"
+
+
+def test_a_run_turns_the_hover_panel_off_and_the_end_of_it_back_on(gui):
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    assert instance.step_table._running is False
+
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    instance.poll_core()
+    assert instance.step_table._running is True
+
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    instance.poll_core()
+    assert instance.step_table._running is False
+
+
+# --- The About menu -----------------------------------------------------------
+
+
+def test_the_about_menu_opens_the_project_urls(gui, monkeypatch):
+    """Both entries were dead stubs with no connection at all; the GitLab one
+    also named a repository the project has moved off."""
+    from pypts.hmi.gui import gui as gui_module
+
+    opened = []
+    monkeypatch.setattr(gui_module, "open_external_url", opened.append)
+
+    instance, _outbox, _inbox = gui
+    window = instance.window
+
+    assert window.repository_action.text() == "GitHub"
+    window.repository_action.trigger()
+    window.documentation_action.trigger()
+
+    assert opened == [
+        "https://github.com/CERN/pts-framework",
+        "https://cern.github.io/pts-framework/",
+    ]
+
+
+def test_a_machine_with_no_browser_only_logs(qapp, monkeypatch, caplog):
+    """openUrl returns False rather than raising, and the About menu is not
+    part of running a recipe."""
+    from PySide6.QtGui import QDesktopServices
+
+    from pypts.hmi.gui.gui import open_external_url
+
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda _url: False)
+
+    with caplog.at_level(logging.WARNING):
+        open_external_url("https://example.invalid/")
+
+    assert "Could not open https://example.invalid/" in caplog.text

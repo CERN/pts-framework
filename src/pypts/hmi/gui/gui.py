@@ -63,6 +63,7 @@ from pypts.messages.run_events import (
     StepStarted,
     UserPromptRequest,
 )
+from pypts.recipe import step_source
 from pypts.utilities.data_removal import survey
 from pypts.utilities.error_handling import (
     catch_and_report_errors,
@@ -81,6 +82,24 @@ LOG_POLL_INTERVAL_MS = 200
 _PAGE_LEFT_IDLE = 0
 _PAGE_LEFT_TABLE = 1
 _PAGE_LEFT_RESULTS = 2
+
+#: Where the About menu sends the operator. The project moved off CERN GitLab;
+#: `pyproject.toml`'s `[project.urls]` still names the old repository.
+_REPOSITORY_URL = "https://github.com/CERN/pts-framework"
+_DOCUMENTATION_URL = "https://cern.github.io/pts-framework/"
+
+
+def open_external_url(url: str) -> None:
+    """
+    Hand a URL to the operator's browser, and never take the window with it.
+
+    `openUrl` returns False rather than raising when there is no browser to
+    hand it to - a bench machine with no default set, or none installed at all.
+    That is worth a line in the log and nothing more: the About menu is not
+    part of running a recipe.
+    """
+    if not QDesktopServices.openUrl(QUrl(url)):
+        log.warning("Could not open %s - no handler for it on this machine.", url)
 
 
 def gui_main(
@@ -204,8 +223,17 @@ class PtsMainWindow(QMainWindow):
         self.dark_mode_action = view_menu.addAction("Toggle Dark Mode")
 
         about_menu = menu_bar.addMenu("About")
-        about_menu.addAction("GitLab")
-        about_menu.addAction("Wiki")
+        about_menu.setToolTipsVisible(True)
+        self.repository_action = about_menu.addAction("GitHub")
+        self.repository_action.setToolTip(_REPOSITORY_URL)
+        self.repository_action.triggered.connect(
+            lambda: open_external_url(_REPOSITORY_URL)
+        )
+        self.documentation_action = about_menu.addAction("Wiki")
+        self.documentation_action.setToolTip(_DOCUMENTATION_URL)
+        self.documentation_action.triggered.connect(
+            lambda: open_external_url(_DOCUMENTATION_URL)
+        )
 
     # --- Idle placeholder ------------------------------------------------------
 
@@ -277,6 +305,10 @@ class GUI(HmiClient):
         # Build content widgets
         self.recent_recipes = RecentRecipes()
         self._requested_recipe_path: str | None = None
+
+        #: Sequence name -> one rendered YAML fragment per step table row, read
+        #: back off disk once per load for the step table's hover panel.
+        self._recipe_yaml: dict[str, tuple[str, ...]] = {}
 
         self.top_bar = TopBarContent(
             on_open=self.open_recipe,
@@ -433,7 +465,9 @@ class GUI(HmiClient):
             return
         for sequence in self.current_recipe.sequences:
             if sequence.sequence_name == sequence_name:
-                self.step_table.show_sequence(sequence)
+                self.step_table.show_sequence(
+                    sequence, self._recipe_yaml.get(sequence_name, ())
+                )
                 self.window.left_stack.setCurrentIndex(_PAGE_LEFT_TABLE)
                 return
 
@@ -449,11 +483,16 @@ class GUI(HmiClient):
 
     def show_recipe_loaded(self, event: RecipeLoaded) -> None:
         self.current_recipe = event
+        self._recipe_yaml = {}
         if self._requested_recipe_path is not None:
             # Only now, with CORE's confirmation that the file parsed: a path
             # that does not load is not one to offer again.
             self.recent_recipes.remember(self._requested_recipe_path, event.recipe_name)
+            self._recipe_yaml = step_source.step_yaml_by_sequence(
+                self._requested_recipe_path
+            )
             self._requested_recipe_path = None
+        self.step_table.set_running(False)
         self.top_bar.show_recipe_loaded(event)
         self.show_selected_sequence(event.main_sequence)
         self.window.recipe_label.setText(
@@ -466,6 +505,7 @@ class GUI(HmiClient):
         self._paused = False
         self.center.set_auto_switch(True)
         self.top_bar.show_run_started()
+        self.step_table.set_running(True)
         self.step_table.reset_to_pending()
         self.center.show_idle()
         self.window.left_stack.setCurrentIndex(_PAGE_LEFT_TABLE)
@@ -475,6 +515,7 @@ class GUI(HmiClient):
         self._set_remove_cache_enabled(True)
         self._paused = False
         self.center.set_auto_switch(True)
+        self.step_table.set_running(False)
         self.top_bar.show_run_finished()
         self.center.cancel_pending()
         self.center.show_idle()

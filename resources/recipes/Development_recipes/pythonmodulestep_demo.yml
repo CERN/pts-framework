@@ -1,0 +1,66 @@
+# SPDX-FileCopyrightText: 2025 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The PythonModule showcase - one steptype, four calls into the module beside
+# this file. It is also the reference for the simplified recipe format: a
+# recipe states only what it needs, every optional field left out is assumed
+# empty. The rules live in src/pypts/recipe/rules.py; the readable page is
+# resources/internal_reports/recipe_format.html.
+#
+# One steptype per demo recipe in this folder:
+#   pythonmodulestep_demo.yml    this file
+#   userinteractionstep_demo.yml asking the operator
+#   indexedstep_demo.yml         one authored step, N real ones
+#   wait_recipe.yml              the Wait step
+#   all_steptypes_demo.yml       all four together, for a single test run
+#
+# Header: only `name` is mandatory. `main_sequence` is omitted here, so the
+# first sequence in the file is the one a frontend offers to run.
+name: PythonModule demo
+description: Four function calls - PythonModule end to end.
+version: 1.0.0
+---
+# Sequence: only `sequence_name` and `steps` are mandatory.
+sequence_name: Main
+description: Adds, measures, checks and greets.
+steps:
+  # A PythonModule step requires `module` and `method_name`. `input_mapping`
+  # is omitted when the method takes no arguments, `output_mapping` when
+  # there is nothing to judge.
+  - steptype: PythonModule
+    step_name: Add numbers
+    description: 2 + 3 must equal 5.
+    module: example_tests.py
+    method_name: add
+    input_mapping:
+      a: {value: 2}
+      b: {value: 3}
+    output_mapping:
+      sum: {type: equals, value: 5}
+  - steptype: PythonModule
+    step_name: Measure voltage
+    description: The reading must sit between 11 and 13 volts.
+    module: example_tests.py
+    method_name: measure_voltage
+    output_mapping:
+      voltage: {type: range, min: '11', max: '13'}
+  - steptype: PythonModule
+    step_name: Even check (fails on purpose)
+    description: 7 is not even - this one shows a FAIL verdict.
+    module: example_tests.py
+    method_name: is_even
+    input_mapping:
+      number: {value: 7}
+    output_mapping:
+      even: {type: passfail}
+  # `module` needs no .py suffix, and a scalar return is wrapped as "output".
+  - steptype: PythonModule
+    step_name: Greet the operator
+    description: A scalar return, wrapped as "output" and compared.
+    module: example_tests
+    method_name: greet
+    input_mapping:
+      name: {value: operator}
+    output_mapping:
+      output: {type: equals, value: 'Hello, operator!'}

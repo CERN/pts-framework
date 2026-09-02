@@ -11,7 +11,9 @@ right column and the exact-once answer contract:
 
   - A new request first declines any unanswered one.
   - Answering clears the pending pair *before* invoking the callback.
-  - cancel_pending() (called on RunFinished) declines whatever is still open.
+  - cancel_pending() declines whatever is still open. Three things call it:
+    RunFinished, a superseding request, and the operator's own Cancel button.
+    All three answer None, and the step that asked turns that into an ERROR.
 """
 
 from collections.abc import Callable
@@ -51,6 +53,7 @@ class CenterContent(QWidget):
 
         self.interaction = InteractionPanel()
         self.interaction.response_given.connect(self._on_interaction_response)
+        self.interaction.cancelled.connect(self.cancel_pending)
 
         self.serial_page = self._build_serial_page()
 

@@ -11,11 +11,11 @@ process, the event and report queues, and the reporting metadata (serial
 number, pypts version, ...). None of that came along:
 
 - Qt and the queues belong to the Sequencer and the frontends - a Runtime
-  that imports neither is what keeps steps testable stand-alone. The two
+  that imports neither is what keeps steps testable stand-alone. The three
   seams the engine needs are plain callables the Sequencer fills in:
-  `emit` (progress events out) and `should_stop` (abort flag in). A bare
-  Runtime() defaults both to no-ops, and *is* the fake context the step
-  tests use.
+  `emit` (progress events out), `should_stop` (abort flag in) and `ask` (a
+  question out, the operator's answer back). A bare Runtime() defaults all
+  three to no-ops, and *is* the fake context the step tests use.
 - The class-level stop event meant one abort flag for every run the process
   would ever do. `should_stop` is per-instance, so it is per-run.
 - The reporting metadata returns with the Report port (roadmap Phase 1
@@ -39,14 +39,20 @@ def _discard(event: Any) -> None:
     pass
 
 
+def _cannot_ask(request: Any) -> Any:
+    """No engine behind this Runtime, so nobody can be asked. Declines."""
+    return None
+
+
 class Runtime:
-    """Variable scopes plus the two seams to the Sequencer, nothing else."""
+    """Variable scopes plus the three seams to the Sequencer, nothing else."""
 
     def __init__(
         self,
         globals: dict[str, Any] | None = None,
         emit: Callable[[Any], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
+        ask: Callable[[Any], Any] | None = None,
         base_dir: str = "",
     ) -> None:
         self.globals: dict[str, Any] = globals if globals is not None else {}
@@ -63,6 +69,12 @@ class Runtime:
         if should_stop is None:
             should_stop = _never_stop
         self.should_stop: Callable[[], bool] = should_stop
+        #: Put one request to the operator and block until it is answered;
+        #: None means nobody answered. The Sequencer passes ask_operator(),
+        #: which owns the register-before-send ordering so no step can get it
+        #: wrong. Typed Any for the same reason as emit.
+        #: MUST only be called from the sequence thread - see Sequencer.
+        self.ask: Callable[[Any], Any] = ask if ask is not None else _cannot_ask
 
     # --- locals: one frame per running sequence, top frame only ---------------
 

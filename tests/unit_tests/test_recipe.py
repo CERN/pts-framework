@@ -22,12 +22,20 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
+from pypts.recipe import step_source
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
 from pypts.recipe.rules import RECIPE_FORMAT_VERSION
+from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.wait_step import WaitStep
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
+DEMOS = Path(__file__).parents[2] / "resources" / "recipes" / "Development_recipes"
+PYTHONMODULE_DEMO = DEMOS / "pythonmodulestep_demo.yml"
+INDEXED_DEMO = DEMOS / "indexedstep_demo.yml"
+USER_INTERACTION_DEMO = DEMOS / "userinteractionstep_demo.yml"
+ALL_STEPTYPES_DEMO = DEMOS / "all_steptypes_demo.yml"
 
 PLACEHOLDER = "placeholder - test not implemented yet"
 
@@ -303,26 +311,33 @@ teardown_steps:
     assert [s.step_id for s in steps] == [step.id for step in real.steps + real.teardown_steps]
 
 
-def test_the_python_demo_recipe_parses_and_knows_its_folder():
-    """resources/recipes/python_demo.yml is the PythonModule showcase and the
-    reference for the simplified format; its `module:` entries resolve
-    against base_dir, which from_file must set."""
-    demo = Path(__file__).parents[2] / "resources" / "recipes" / "python_demo.yml"
-    recipe = Recipe.from_file(str(demo))
+def test_the_pythonmodule_demo_recipe_parses_and_knows_its_folder():
+    """resources/recipes/Development_recipes/pythonmodulestep_demo.yml is the PythonModule
+    showcase and the reference for the simplified format; its `module:`
+    entries resolve against base_dir, which from_file must set."""
+    recipe = Recipe.from_file(str(PYTHONMODULE_DEMO))
 
-    assert recipe.name == "Python demo"
+    assert recipe.name == "PythonModule demo"
     # The demo omits main_sequence - the first sequence is the one.
     assert recipe.main_sequence == "Main"
     names = [step.name for step in recipe.sequences["Main"].steps]
-    # Five authored steps, one of which is an Indexed step carrying ten
-    # parameter sets - so fourteen steps reach the Sequencer.
-    assert names[:4] == [
+    assert names == [
         "Add numbers",
         "Measure voltage",
-        "Settle",
         "Even check (fails on purpose)",
+        "Greet the operator",
     ]
-    assert names[4:14] == [
+    assert recipe.base_dir == str(PYTHONMODULE_DEMO.resolve().parent)
+
+
+def test_the_indexed_demo_recipe_expands_every_parameter_set():
+    """resources/recipes/Development_recipes/indexedstep_demo.yml is the Indexed showcase: two
+    authored steps, thirteen real ones, each named after its own parameters
+    and none of them an Indexed step by the time the Sequencer sees it."""
+    recipe = Recipe.from_file(str(INDEXED_DEMO))
+
+    steps = recipe.sequences["Main"].steps
+    assert [step.name for step in steps] == [
         "Add numbers [a=1, b=1]",
         "Add numbers [a=2, b=3]",
         "Add numbers [a=10, b=5]",
@@ -333,27 +348,43 @@ def test_the_python_demo_recipe_parses_and_knows_its_folder():
         "Add numbers [a=-6, b=-9]",
         "Add numbers [a=1.5, b=2.5]",
         "Add numbers [a=6, b=7]",
+        "Even check [number=2]",
+        "Even check [number=4]",
+        "Even check [number=7]",
     ]
-    assert names[14] == "Greet the operator"
-    assert recipe.base_dir == str(demo.resolve().parent)
+    assert all(isinstance(step, PythonModuleStep) for step in steps)
+    # The template's shared output_mapping reached every generated step.
+    assert steps[-1].output_mapping == {"even": {"type": "passfail"}}
 
 
-def test_the_basic_scenario_recipe_parses():
-    """resources/recipes/basic_scenario.yml is the all-green showcase: a setup
-    step, a step-to-step local, a wait, and a teardown that always runs."""
-    demo = Path(__file__).parents[2] / "resources" / "recipes" / "basic_scenario.yml"
-    recipe = Recipe.from_file(str(demo))
+def test_the_user_interaction_demo_recipe_parses():
+    """resources/recipes/Development_recipes/userinteractionstep_demo.yml is the UserInteraction
+    showcase; the last step reads back the answer the third one stored."""
+    recipe = Recipe.from_file(str(USER_INTERACTION_DEMO))
 
-    main = recipe.sequences["Main"]
-    assert [step.name for step in main.steps] == [
-        "Greet the operator",
-        "Measure voltage",
-        "Add numbers",
-        "Settle",
-        "Check the sum is even",
+    steps = recipe.sequences["Main"].steps
+    assert [step.name for step in steps] == [
+        "Check the indicator",
+        "Connect the DUT",
+        "Which port",
+        "Report the port",
     ]
-    assert [step.name for step in main.teardown_steps] == ["Cool down"]
-    assert recipe.globals == {"operator_name": "operator"}
+    assert steps[2].output_mapping == {"output": {"type": "local", "local_name": "port"}}
+    assert steps[3].input_mapping == {"name": {"type": "local", "local_name": "port"}}
+
+
+def test_the_all_steptypes_demo_recipe_builds_one_of_everything():
+    """resources/recipes/Development_recipes/all_steptypes_demo.yml is the single run that
+    exercises every steptype - the one to reach for when testing the engine
+    rather than one type."""
+    recipe = Recipe.from_file(str(ALL_STEPTYPES_DEMO))
+
+    sequence = recipe.sequences["Main"]
+    built = {type(step).__name__ for step in sequence.steps}
+    assert built == {"UserInteractionStep", "WaitStep", "PythonModuleStep"}
+    # Indexed is gone by build time: five sets became five ordinary steps.
+    assert sum(step.name.startswith("Add numbers [") for step in sequence.steps) == 5
+    assert [step.name for step in sequence.teardown_steps] == ["Power down"]
 
 
 def test_unknown_header_keys_are_tolerated():
@@ -427,7 +458,7 @@ def test_a_matching_or_absent_format_version_is_silent(caplog):
 # Indexed steps - expanded while the recipe loads
 # --------------------------------------------------------------------------
 
-#: Two parameter sets, the terse spelling python_demo.yml uses.
+#: Two parameter sets, the terse spelling indexedstep_demo.yml uses.
 INDEXED = """\
 name: Indexed demo
 ---
@@ -460,6 +491,39 @@ def test_an_indexed_step_is_expanded_into_real_steps_at_load_time():
     ]
     assert [step.input_mapping["a"]["value"] for step in steps] == [1, 2]
     assert [step.output_mapping["sum"]["value"] for step in steps] == [2, 5]
+
+
+def test_continue_on_error_on_the_wrapper_reaches_every_generated_step():
+    """"Do not continue past this indexed step" can only be said on the wrapper,
+    so it carries to every row - the same way `skip` does."""
+    text = INDEXED.replace(
+        "    step_name: Add numbers\n", "    step_name: Add numbers\n    continue_on_error: false\n"
+    )
+    steps = Recipe.from_yaml_text(text).sequences["Main"].steps
+
+    assert len(steps) == 2
+    assert [step.continue_on_error for step in steps] == [False, False]
+
+
+def test_a_step_defaults_to_continuing_past_its_own_error():
+    """Unstated in the recipe means True: one bad step does not decide for the
+    other nineteen."""
+    step = Recipe.from_yaml_text(VALID).sequences["Main"].steps[0]
+    assert step.continue_on_error is True
+
+
+def test_the_dropped_critical_field_is_refused_by_name():
+    """`critical` was the old per-step override of a run-wide continue_on_error
+    (recipe_guide 9.2). With the flag itself per-step it says the same thing
+    twice, so it is gone - and a recipe still spelling it must be told, not
+    silently ignored the way the old engine ignored header-level settings."""
+    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n    critical: true\n")
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "critical" in str(error.value)
+    assert "Only wait" in str(error.value)
 
 
 def test_generated_steps_have_ids_of_their_own():
@@ -512,3 +576,116 @@ def test_the_indexed_keys_are_case_insensitive_but_parameter_names_are_not():
 
     first = recipe.sequences["Main"].steps[0]
     assert set(first.input_mapping) == {"a", "B"}
+
+
+# --- step_source.py: the YAML fragment behind each step table row -------------
+#
+# What the GUI's hover panel shows. The contract that matters is the *order*:
+# one fragment per row of the step table, which is `steps + teardown_steps`
+# with every Indexed step already expanded - exactly what to_summary() emits.
+
+
+def test_one_yaml_fragment_per_step_table_row(tmp_path):
+    """The fragments line up with to_summary(), teardown steps included."""
+    text = (
+        VALID
+        + """\
+teardown_steps:
+  - steptype: Wait
+    step_name: Cool down
+    wait_time: '0'
+"""
+    )
+    path = tmp_path / "recipe.yml"
+    path.write_text(text, encoding="utf-8")
+
+    fragments = step_source.step_yaml_by_sequence(str(path))
+    rows = Recipe.from_yaml_text(text).to_summary()[0].steps
+
+    assert list(fragments) == ["Main"]
+    assert len(fragments["Main"]) == len(rows)
+    assert "Only wait" in fragments["Main"][0]
+    assert "Cool down" in fragments["Main"][1]
+
+
+def test_setup_steps_come_before_the_authored_steps(tmp_path):
+    """_build_sequence() runs setup_steps first; the fragments must agree."""
+    text = VALID.replace(
+        "steps:\n",
+        """\
+setup_steps:
+  - steptype: Wait
+    step_name: Warm up
+    wait_time: '0'
+steps:
+""",
+    )
+    path = tmp_path / "recipe.yml"
+    path.write_text(text, encoding="utf-8")
+
+    fragments = step_source.step_yaml_by_sequence(str(path))["Main"]
+    rows = Recipe.from_yaml_text(text).to_summary()[0].steps
+
+    assert [row.step_name for row in rows] == ["Warm up", "Only wait"]
+    assert "Warm up" in fragments[0]
+    assert "Only wait" in fragments[1]
+
+
+def test_each_expanded_indexed_row_gets_its_own_fragment(tmp_path):
+    """The whole reason the fragment is the effective mapping and not a slice
+    of the file: the generated steps exist in no file, and the ten rows of an
+    Indexed step must not all show the same block."""
+    path = tmp_path / "recipe.yml"
+    path.write_text(INDEXED, encoding="utf-8")
+
+    fragments = step_source.step_yaml_by_sequence(str(path))["Main"]
+
+    assert len(fragments) == 2
+    assert fragments[0] != fragments[1]
+    first = yaml.safe_load(fragments[0])
+    second = yaml.safe_load(fragments[1])
+    assert first["input_mapping"]["a"] == {"type": "direct", "value": 1}
+    assert second["input_mapping"]["a"] == {"type": "direct", "value": 2}
+    assert first["output_mapping"]["sum"] == {"type": "equals", "value": 2}
+    assert second["output_mapping"]["sum"] == {"type": "equals", "value": 5}
+
+    # `Indexed` itself never reaches a row: what is shown is what will run.
+    # The steptype keeps the case the template wrote - only keys are lowercased.
+    assert first["steptype"] == "PythonModule"
+
+
+def test_a_fragment_is_valid_yaml_that_round_trips(tmp_path):
+    path = tmp_path / "recipe.yml"
+    path.write_text(VALID, encoding="utf-8")
+
+    fragment = step_source.step_yaml_by_sequence(str(path))["Main"][0]
+
+    assert yaml.safe_load(fragment) == {
+        "steptype": "Wait",
+        "step_name": "Only wait",
+        "wait_time": "0.01",
+    }
+
+
+def test_a_recipe_that_cannot_be_read_costs_only_the_fragments(tmp_path):
+    """A convenience view is never a reason a recipe fails to display."""
+    missing = tmp_path / "not_here.yml"
+    broken = tmp_path / "broken.yml"
+    broken.write_text("name: Broken\n---\n  - this: is not a mapping\n", encoding="utf-8")
+
+    assert step_source.step_yaml_by_sequence(str(missing)) == {}
+    assert step_source.step_yaml_by_sequence(str(broken)) == {}
+
+
+def test_the_all_steptypes_demo_recipe_has_a_fragment_for_every_row():
+    """The everything recipe end to end - five of its rows come from one
+    Indexed step and exist in no file, so this is the real test of the
+    ordering contract."""
+    fragments = step_source.step_yaml_by_sequence(str(ALL_STEPTYPES_DEMO))
+    recipe = Recipe.from_file(str(ALL_STEPTYPES_DEMO))
+
+    for summary in recipe.to_summary():
+        rendered = fragments[summary.sequence_name]
+        assert len(rendered) == len(summary.steps)
+        for row, fragment in zip(summary.steps, rendered, strict=True):
+            assert yaml.safe_load(fragment)["step_name"] == row.step_name

@@ -102,9 +102,9 @@ class HmiClient:
             case ReportReady():
                 self.show_report_ready(message)
             # The progress events below are live: CORE and the engine send all
-            # of them on every run. Only the two prompt *requests* at the end
-            # are still NOT SENT YET - their senders are the interactive step
-            # types, roadmap Phase 1.
+            # of them on every run. UserPromptRequest is live too, as of the
+            # UserInteraction step type. Only SerialNumberRequest is still NOT
+            # SENT YET - its sender is UserWriteStep, roadmap Phase 1.
             case RecipeLoaded():
                 self.show_recipe_loaded(message)
             case RunStarted(recipe_name=name, recipe_description=description):

@@ -15,6 +15,7 @@ A sequence runs on a thread of its own, not on the event loop.
 
 import threading
 import time
+from typing import Any
 
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
@@ -198,6 +199,7 @@ class Sequencer:
             globals=dict(self.recipe.globals),
             emit=self.core.send,
             should_stop=lambda: self.stop_requested,
+            ask=self.ask_operator,
             base_dir=self.recipe.base_dir,
         )
         self.core.send(
@@ -229,6 +231,27 @@ class Sequencer:
         """
         log.info("Sequence stop requested.")
         self.stop_requested = True
+
+    def ask_operator(self, request: Any) -> Any:
+        """
+        Put one question to the operator and block until it is answered.
+
+        Handed to every Runtime as its `ask` seam, so this is the only place
+        that knows the ordering - register before sending, or an answer that
+        beats the registration is dropped. A step just calls runtime.ask().
+
+        MUST be called from the sequence thread. The answer is delivered by
+        deliver_response() on the *event loop* thread; a caller on the event
+        loop would block the very loop that has to wake it.
+
+        Returns None when nobody answered - the timeout ran out, the operator
+        declined, or the run was stopped. The three are deliberately not told
+        apart here: what to do about it belongs to the step that asked.
+        """
+        request_id = request.request_id
+        self.pending.start(request_id)
+        self.core.send(request)
+        return self.pending.wait(request_id, should_abort=lambda: self.stop_requested)
 
     def deliver_response(self, message: UserPromptResponse | SerialNumberResponse) -> None:
         """

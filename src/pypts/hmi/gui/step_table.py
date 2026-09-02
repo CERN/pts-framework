@@ -10,12 +10,17 @@ section 2): **rows are keyed by step id, not by index.** Each name cell
 carries its step's UUID in the UserRole, and every update finds its row by
 that id - so the table tolerates any event order, and a step is updated twice
 (Running... then the verdict) without anyone tracking a cursor.
+
+The second thing a name cell carries is that step's rendered YAML, which the
+hover panel shows (`step_yaml_popup.py`). It rides the same item as the id for
+the same reason: one place per row, nothing parallel to keep in step with the
+rows, and it survives the theme repaint, which only rebuilds the Result column.
 """
 
 from uuid import UUID
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QHeaderView,
@@ -26,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from pypts.hmi.gui.palette import UNKNOWN_VERDICT, get_palette
+from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
 from pypts.logger.log import log
 from pypts.messages.common_messages import StepOutcome
 from pypts.messages.run_events import SequenceSummary, StepStarted
@@ -43,6 +49,16 @@ _NAME_WIDTH = 220
 #: Result: fixed and narrow. It only ever holds Pending / Running... / a verdict,
 #: so every pixel beyond that is taken from the description.
 _RESULT_WIDTH = 90
+
+#: Where a row's rendered YAML lives, beside the step id in UserRole. Both are
+#: on the name cell (column 0) - see the module docstring.
+_YAML_ROLE = Qt.ItemDataRole.UserRole + 1
+
+#: How long the pointer has to rest on a row before its YAML appears. Long
+#: enough that dragging the eye down the table shows nothing, which is the
+#: point: a panel that opened on every row crossed would be in the way rather
+#: than in reach.
+_HOVER_DELAY_MS = 1000
 
 
 def read_only(item: QTableWidgetItem) -> QTableWidgetItem:
@@ -62,6 +78,7 @@ class StepTableContent(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._dark = False
+        self._running = False
         self.table = QTableWidget()
         self.table.setObjectName("stepTable")
         self.table.setColumnCount(3)
@@ -94,14 +111,43 @@ class StepTableContent(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.addWidget(self.table)
 
+        # The hover panel. Mouse tracking is what makes cellEntered fire without
+        # a button held down; the event filter is only for leaving the table,
+        # which cellEntered cannot tell us about.
+        self.yaml_popup = StepYamlPopup(self)
+        self.table.setMouseTracking(True)
+        self.table.viewport().setMouseTracking(True)
+        self.table.cellEntered.connect(self._hover_cell)
+        self.table.viewport().installEventFilter(self)
+
+        # The rest delay. Single-shot and restarted on every row change, so the
+        # row that finally shows is the row the pointer stopped on.
+        self._hovered_row = -1
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(_HOVER_DELAY_MS)
+        self._hover_timer.timeout.connect(self._show_hovered_yaml)
+
     # --- Filling ---------------------------------------------------------------
 
-    def show_sequence(self, sequence: SequenceSummary) -> None:
-        """One row per step, Result 'Pending', the step id stored in the row."""
+    def show_sequence(
+        self, sequence: SequenceSummary, yaml_sources: tuple[str, ...] = ()
+    ) -> None:
+        """
+        One row per step, Result 'Pending', the step id stored in the row.
+
+        `yaml_sources` is one rendered fragment per row, in the same order, from
+        `recipe.step_source`. It is optional and may be short: a row without one
+        simply has no hover panel, which is what a recipe the GUI could not read
+        back off disk gets.
+        """
+        self.hide_yaml_popup()
         self.table.setRowCount(len(sequence.steps))
         for row, step in enumerate(sequence.steps):
             name_item = read_only(QTableWidgetItem(step.step_name))
             name_item.setData(Qt.ItemDataRole.UserRole, str(step.step_id))
+            if row < len(yaml_sources):
+                name_item.setData(_YAML_ROLE, yaml_sources[row])
             name_font = name_item.font()
             name_font.setBold(True)
             name_item.setFont(name_font)
@@ -117,8 +163,88 @@ class StepTableContent(QWidget):
 
     def reset_to_pending(self) -> None:
         """Back to 'Pending' everywhere - a re-run starts from a clean table."""
+        self.hide_yaml_popup()
         for row in range(self.table.rowCount()):
             self.table.setItem(row, 2, self._pending_item())
+
+    # --- The hover panel -------------------------------------------------------
+
+    def set_running(self, running: bool) -> None:
+        """
+        Whether a recipe is executing. The hover panel is an idle-time affordance.
+
+        A run is when the table is being written to and read for verdicts, and
+        the operator wants an unobstructed view of it - so the panel is
+        suppressed for the whole run, a hold included: paused is still running.
+        """
+        self._running = running
+        if running:
+            self.hide_yaml_popup()
+
+    def hide_yaml_popup(self) -> None:
+        """Close the panel and disarm the delay - one is not much use without."""
+        self._hover_timer.stop()
+        self.yaml_popup.hide()
+
+    def _hover_cell(self, row: int, column: int) -> None:
+        """
+        A row came under the pointer: arm the delay, or switch straight to it.
+
+        The delay is for *opening*. Once the panel is already up the operator
+        has asked for it, and making them wait another 1 s for each next row
+        would turn reading down the table into a series of pauses - so an open
+        panel follows the pointer immediately. This is how Qt's own tooltips
+        behave, and for the same reason.
+
+        `column` is unused - the whole row is one step, so the panel is the same
+        wherever in it the pointer is - but cellEntered sends both and the slot
+        has to take both.
+        """
+        if self._running:
+            self.hide_yaml_popup()
+            return
+        self._hovered_row = row
+        if self.yaml_popup.isVisible():
+            self._show_hovered_yaml()
+        else:
+            self._hover_timer.start()
+
+    def _show_hovered_yaml(self) -> None:
+        """
+        The delay elapsed, or the panel was already open: show the row.
+
+        The one place that opens the panel, so it carries the idle gate too
+        rather than trusting every caller to have checked - a run can start in
+        the 1 s the delay is running.
+        """
+        self._hover_timer.stop()
+        if self._running:
+            self.yaml_popup.hide()
+            return
+        item = self.table.item(self._hovered_row, 0)
+        if item is None:
+            self.yaml_popup.hide()
+            return
+        source = item.data(_YAML_ROLE)
+        if not isinstance(source, str) or not source:
+            self.yaml_popup.hide()
+            return
+        # The cursor's position now, not where it was when the row was entered:
+        # the pointer may have travelled along the row while the delay ran.
+        at = QCursor.pos()
+        self.yaml_popup.show_for(source, at.x(), at.y())
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt
+        """
+        Hide the panel when the pointer leaves the table.
+
+        `cellEntered` says which row was entered and never that the table was
+        left, so the viewport's Leave event is the other half of the gesture.
+        Returns False throughout: this only watches, it never consumes.
+        """
+        if event.type() == QEvent.Type.Leave:
+            self.hide_yaml_popup()
+        return super().eventFilter(watched, event)
 
     # --- Updating, by step id --------------------------------------------------
 
@@ -157,6 +283,7 @@ class StepTableContent(QWidget):
         name, or Pending / Running..., which is exactly the chip key.
         """
         self._dark = dark
+        self.yaml_popup.set_dark(dark)
         for row in range(self.table.rowCount()):
             cell = self.table.item(row, 2)
             if cell is None:

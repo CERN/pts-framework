@@ -21,9 +21,16 @@ from PySide6.QtWidgets import (
 from pypts.hmi.gui.palette import get_palette
 from pypts.hmi.gui.resources import load_cern_logo_pixmap, make_placeholder_pixmap
 
+#: The button every prompt carries beyond the recipe's own options, so the
+#: operator is never trapped in front of a question they cannot answer. It is
+#: not one of the options: it emits `cancelled`, not `response_given`, so a
+#: recipe that happens to offer its own "Cancel" option keeps it distinct.
+CANCEL_LABEL = "Cancel"
+
 
 class InteractionPanel(QWidget):
     response_given = Signal(str)
+    cancelled = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -105,7 +112,11 @@ class InteractionPanel(QWidget):
             label = button_def.get("label", "")
             value = button_def.get("value", label)
             self.add_button(label, value, primary=index == 0)
-        self._button_row.setVisible(bool(buttons))
+        # Always last, and never primary, so Enter on a freshly shown prompt
+        # answers rather than declines. It joins _buttons like any other, so
+        # the arrow keys reach it.
+        self.add_button(CANCEL_LABEL, CANCEL_LABEL, on_click=self.cancelled.emit)
+        self._button_row.setVisible(True)
         if self._buttons:
             self._set_selected_button(0)
             self._buttons[0].setFocus(Qt.FocusReason.OtherFocusReason)
@@ -118,16 +129,21 @@ class InteractionPanel(QWidget):
         self._interaction_blocked = blocked
         self._button_row.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
 
-    def add_button(self, label: str, value: str, primary: bool = False):
+    def add_button(self, label: str, value: str, primary: bool = False, on_click=None):
+        """One prompt button. `on_click` replaces the default answer-with-value
+        wiring - it is what makes Cancel decline instead of answering."""
         button = QPushButton(label)
         button.setProperty("promptSelected", False)
         if primary:
             button.setObjectName("primaryBtn")
         elif label.lower() in {"abort", "stop", "cancel"}:
             button.setObjectName("stopBtn")
-        button.clicked.connect(
-            lambda _checked=False, response=value: self.response_given.emit(response)
-        )
+        if on_click is None:
+            button.clicked.connect(
+                lambda _checked=False, response=value: self.response_given.emit(response)
+            )
+        else:
+            button.clicked.connect(lambda _checked=False: on_click())
         button.installEventFilter(self)
         self._button_layout.insertWidget(self._button_layout.count() - 1, button)
         self._buttons.append(button)

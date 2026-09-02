@@ -9,14 +9,14 @@ Emitted by the Sequencer, forwarded unchanged by CORE to the HMI, so each one
 belongs to two unions and is defined once here. A message says what happened,
 never how to draw it.
 
-The two prompt *requests* are marked `NOT SENT YET`. That marker means one
-thing throughout `messages/`: **the receiving end is written and works;
-nothing constructs the message.** Grep for it to find the whole set. The
-receivers were built first on purpose - the Sequencer, CORE, the CLI and the
-GUI all had to agree on the contract before the engine existed, and `mypy`
-plus `test_messages.py` keep every branch honest in the meantime. The seven
-progress events below carried the marker until the first slice of the engine
-port landed; now the Sequencer and the step layer send them on every run.
+`NOT SENT YET` means one thing throughout `messages/`: **the receiving end is
+written and works; nothing constructs the message.** Grep for it to find the
+whole set. The receivers were built first on purpose - the Sequencer, CORE, the
+CLI and the GUI all had to agree on the contract before the engine existed, and
+`mypy` plus `test_messages.py` keep every branch honest in the meantime. The
+seven progress events below carried the marker until the first slice of the
+engine port landed, and `UserPromptRequest` until the UserInteraction step type
+landed. `SerialNumberRequest` is the last one here still carrying it.
 """
 
 from dataclasses import dataclass
@@ -180,13 +180,13 @@ class StopSequence:
 # Joined by a `request_id` the asker generates, which is what lets these cross a
 # process boundary. The waiting side is in blocking_messages.py.
 #
-# Only half of this pair is asymmetric: the two *responses* are live - the
-# frontends send them and the Sequencer receives them - while nothing has yet
-# asked a question for them to answer. Both requests are therefore NOT SENT YET;
-# their sender is an interactive step type, roadmap Phase 1 (see pypts/step).
+# The prompt pair is live end to end: UserInteractionStep asks through
+# Runtime.ask, and the frontends answer. The serial pair still has no asker -
+# UserWriteStep is the one that will, roadmap Phase 1 (see pypts/step).
 
 
-# NOT SENT YET - receiver: hmi_client.py ask_user()
+# Sent by: step/user_interaction_step.py, via Runtime.ask -> Sequencer.ask_operator()
+# Receiver: hmi_client.py ask_user()
 @dataclass(frozen=True, slots=True)
 class UserPromptRequest:
     """
