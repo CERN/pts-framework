@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codebase Depth Survey — pts-framework</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --ink: #1c2330;
+    --muted: #5b6575;
+    --line: #d9dee6;
+    --accent: #0b62a4;
+    --iface: #cfe3f2;
+    --iface-ink: #0b3a5c;
+    --impl: #e9eef4;
+    --impl-ink: #33404f;
+    --bad: #b3423a;
+    --bad-bg: #f7e3e1;
+    --good: #2e7d4f;
+    --good-bg: #e0f0e6;
+    --warn: #9a6b0a;
+    --warn-bg: #f7ecd2;
+    --code-bg: #eef1f5;
+    --badge-deep: #2e7d4f;
+    --badge-deep-bg: #e0f0e6;
+    --badge-fix: #b3423a;
+    --badge-fix-bg: #f7e3e1;
+    --badge-worth: #9a6b0a;
+    --badge-worth-bg: #f7ecd2;
+    --badge-spec: #5b6575;
+    --badge-spec-bg: #e7eaef;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14181f;
+      --card: #1d232d;
+      --ink: #e4e8ee;
+      --muted: #9aa4b2;
+      --line: #333c49;
+      --accent: #5aa5d8;
+      --iface: #1d3a52;
+      --iface-ink: #a8cfec;
+      --impl: #263041;
+      --impl-ink: #b9c4d2;
+      --bad: #e08078;
+      --bad-bg: #3a2523;
+      --good: #6dbb8e;
+      --good-bg: #1f3428;
+      --warn: #d8b25e;
+      --warn-bg: #37301c;
+      --code-bg: #12161d;
+      --badge-deep: #6dbb8e;
+      --badge-deep-bg: #1f3428;
+      --badge-fix: #e08078;
+      --badge-fix-bg: #3a2523;
+      --badge-worth: #d8b25e;
+      --badge-worth-bg: #37301c;
+      --badge-spec: #9aa4b2;
+      --badge-spec-bg: #2a323e;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font: 16px/1.55 Georgia, "Times New Roman", serif;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; padding: 32px 20px 80px; }
+  h1 { font-size: 1.9em; margin: 0 0 4px; }
+  h2 { font-size: 1.35em; margin: 46px 0 10px; border-bottom: 2px solid var(--line); padding-bottom: 6px; }
+  h3 { font-size: 1.1em; margin: 0; }
+  p { margin: 10px 0; }
+  .sub { color: var(--muted); margin-bottom: 26px; }
+  code, .mono {
+    font-family: Consolas, "Cascadia Mono", Menlo, monospace;
+    font-size: 0.86em;
+    background: var(--code-bg);
+    padding: 1px 5px;
+    border-radius: 4px;
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: Consolas, "Cascadia Mono", Menlo, monospace;
+    font-size: 0.82em;
+    line-height: 1.45;
+  }
+  pre code { background: transparent; padding: 0; font-size: 1em; }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 22px 26px;
+    margin: 22px 0;
+  }
+  .card-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .num { color: var(--accent); font-weight: bold; font-size: 1.1em; }
+  .badge {
+    font-family: Consolas, Menlo, monospace; font-size: 0.72em;
+    padding: 3px 10px; border-radius: 999px; white-space: nowrap;
+    letter-spacing: 0.03em;
+  }
+  .b-deep  { color: var(--badge-deep);  background: var(--badge-deep-bg);  border: 1px solid var(--badge-deep); }
+  .b-fix   { color: var(--badge-fix);   background: var(--badge-fix-bg);   border: 1px solid var(--badge-fix); }
+  .b-worth { color: var(--badge-worth); background: var(--badge-worth-bg); border: 1px solid var(--badge-worth); }
+  .b-spec  { color: var(--badge-spec);  background: var(--badge-spec-bg);  border: 1px solid var(--badge-spec); }
+  .files { color: var(--muted); font-size: 0.85em; margin: 2px 0 12px; }
+  .files code { background: transparent; padding: 0; }
+  .callout {
+    border-left: 4px solid var(--warn);
+    background: var(--warn-bg);
+    padding: 10px 14px;
+    border-radius: 0 8px 8px 0;
+    margin: 14px 0;
+    font-size: 0.95em;
+  }
+  .callout.good { border-left-color: var(--good); background: var(--good-bg); }
+  .callout.bad  { border-left-color: var(--bad);  background: var(--bad-bg); }
+  .lede {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    border-radius: 0 10px 10px 0;
+    padding: 18px 24px;
+    margin: 24px 0 8px;
+  }
+  .lede p:first-child { margin-top: 0; }
+  .lede p:last-child { margin-bottom: 0; }
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 0.92em; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-size: 0.82em; text-transform: uppercase; letter-spacing: 0.05em; font-weight: normal; }
+  tbody tr:last-child td { border-bottom: none; }
+  .table-scroll { overflow-x: auto; }
+  /* ---------- depth diagram ---------- */
+  .depth { margin: 16px 0 8px; max-width: 480px; }
+  .depth .iface {
+    background: var(--iface); color: var(--iface-ink);
+    border: 1px solid var(--iface-ink); border-radius: 8px 8px 0 0;
+    padding: 8px 14px; font-family: Consolas, Menlo, monospace; font-size: 0.78em;
+    text-align: center;
+  }
+  .depth .impl {
+    background: var(--impl); color: var(--impl-ink);
+    border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px;
+    padding: 26px 14px; font-family: Consolas, Menlo, monospace; font-size: 0.78em;
+    text-align: center; line-height: 1.8;
+  }
+  .depth .cap { color: var(--muted); font-size: 0.8em; text-align: center; margin-top: 6px; font-family: Georgia, serif; }
+  .glossary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 18px 0; }
+  .term {
+    border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+    background: var(--card); font-size: 0.9em;
+  }
+  .term b { color: var(--accent); }
+  ol.steps { padding-left: 22px; }
+  ol.steps li { margin: 10px 0; }
+  .foot { color: var(--muted); font-size: 0.85em; margin-top: 60px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .verdict { font-family: Consolas, Menlo, monospace; font-size: 0.8em; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Codebase Depth Survey</h1>
+<p class="sub">
+  <code>src/pypts/</code> excluding <code>old_code/</code> &middot; branch <code>architecture_refactor</code> &middot; 2&nbsp;September&nbsp;2026<br>
+  Read: <code>messages/</code> (all), <code>core/core.py</code>, <code>sequencer/sequencer.py</code>,
+  <code>step/</code> (all), <code>recipe/</code> (all), <code>report/report.py</code>,
+  <code>hmi/hmi_client.py</code>, <code>hmi/gui/*</code>, <code>config_handler/</code>,
+  <code>utilities/</code>, <code>hardware_layer/hal.py</code> &mdash; about 16,300 lines.
+  Analysis only; no files were changed.
+</p>
+
+<div class="lede">
+  <p><b>This tree is unusually deep already.</b> A survey like this normally turns up a layer of
+  pass-throughs. This one does not &mdash; the depth is deliberate, and in several places the
+  reasoning is written down in the docstring beside the code.</p>
+  <p>So what follows is a short list of <i>specific seams in the wrong place</i>, not a general
+  indictment. Four findings are worth acting on; two are recorded so they are not rediscovered
+  later as surprises.</p>
+</div>
+
+<h2>The vocabulary this uses</h2>
+
+<div class="glossary">
+  <div class="term"><b>Interface</b> &mdash; everything a caller must know to use a module correctly: the signature, but also invariants, ordering constraints, error modes and required configuration.</div>
+  <div class="term"><b>Depth</b> &mdash; leverage at the interface. How much behaviour a caller or a test can exercise per unit of interface they have to learn.</div>
+  <div class="term"><b>Seam</b> &mdash; a place where behaviour can be altered without editing in that place. Where the seam goes is its own decision, separate from what sits behind it.</div>
+  <div class="term"><b>Adapter</b> &mdash; a concrete thing satisfying an interface at a seam. One adapter is a hypothetical seam; two adapters is a real one.</div>
+  <div class="term"><b>Deletion test</b> &mdash; imagine deleting the module. If complexity vanishes it was a pass-through. If it reappears across N callers, it was earning its keep.</div>
+  <div class="term"><b>Locality</b> &mdash; what maintainers get from depth: change, bugs and verification concentrate in one place instead of spreading across callers.</div>
+</div>
+
+<h2>Where the depth already is &mdash; do not "fix" these</h2>
+
+<div class="card">
+  <div class="card-head">
+    <h3><code>QueueWrapper</code></h3>
+    <span class="badge b-deep">DEEPEST IN THE TREE</span>
+  </div>
+  <p class="files"><code>messages/queue_wrapper.py</code></p>
+
+  <div class="depth">
+    <div class="iface">send(msg) &nbsp;|&nbsp; receive(limit) &nbsp;|&nbsp; link=</div>
+    <div class="impl">transport-agnosticism &middot; DEBUG trace on both sides<br>batch cap &middot; per-holder counters &middot; generator semantics</div>
+    <div class="cap">two methods over seven links and two transports</div>
+  </div>
+
+  <p>Behind two methods: transport-agnosticism, the DEBUG trace on <i>both</i> send and receive,
+  the batch cap that stopped one busy link starving the other inboxes, per-holder counters, and
+  generator semantics so a caller that stops early leaves the rest queued.</p>
+  <p>Two genuine adapters &mdash; <code>multiprocessing.Queue</code> across the HMI seam,
+  <code>queue.Queue</code> inside the engine &mdash; so this is a <b>real seam, not a hypothetical
+  one</b>. Deletion test: seven links re-implement tracing and batching. It replaced 612 lines with
+  about 200 and the leverage went <i>up</i>.</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3><code>Step</code></h3>
+    <span class="badge b-deep">DEEP</span>
+  </div>
+  <p class="files"><code>step/step.py</code></p>
+
+  <div class="depth">
+    <div class="iface">_step(runtime, step_input) -&gt; Any</div>
+    <div class="impl">resolve inputs &middot; five output-judging types &middot; verdict aggregation<br>exception &rarr; StepResult &middot; three emitted events<br>timing &middot; skip / continue_on_error</div>
+    <div class="cap">WaitStep's whole body is twelve lines</div>
+  </div>
+
+  <p>A step author learns one method plus the fact that the YAML keys become constructor
+  arguments. That ratio is the point.</p>
+  <p><code>run()</code> catching broadly is correct <i>here</i> precisely because turning the
+  exception into data is its job &mdash; which is the distinction that makes it not a swallow.</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3><code>Runtime</code></h3>
+    <span class="badge b-deep">BEST TESTABILITY DESIGN HERE</span>
+  </div>
+  <p class="files"><code>step/runtime.py</code></p>
+  <p>Four things to know &mdash; <code>globals</code>, <code>emit</code>, <code>should_stop</code>,
+  <code>ask</code> &mdash; all injected, and a bare <code>Runtime()</code> <i>is</i> the fake
+  context. Nothing in <code>step/</code> imports a queue or the Sequencer.
+  <b>The interface is the test surface</b>, exactly.</p>
+  <div class="callout good">
+    Note <i>what was removed</i> to get there: the class-level stop <code>Event</code> (one abort
+    flag for every run the process would ever do) and the Qt thread. Both were interface, not
+    implementation &mdash; callers had to know about them.
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3><code>HmiClient</code></h3>
+    <span class="badge b-deep">DEEP &middot; REAL SEAM</span>
+  </div>
+  <p class="files"><code>hmi/hmi_client.py</code></p>
+  <p>Override the <code>show_*</code> hooks you can draw; call the command methods. Behind it: the
+  whole <code>CoreToHmi</code> routing table, the stop handshake, heartbeats. Two adapters
+  (GUI, CLI), so again a real seam.</p>
+  <p>The defaults-that-log make adding a message unable to break a frontend that has not caught up
+  &mdash; and <code>ask_user</code>'s default <i>declines</i> rather than ignoring, because a
+  blocked step must hear something. That is an error mode handled at the interface, which is where
+  it belongs.</p>
+  <p class="verdict">This module is why the CLI/GUI handshake drift is now structurally impossible rather than merely fixed.</p>
+</div>
+
+<div class="table-scroll">
+<table>
+  <thead><tr><th>Module</th><th>Interface</th><th>Why it is deep</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>Recipe.from_file()</code><br><span class="files"><code>recipe/recipe.py</code></span></td>
+      <td>two classmethods, one exception type</td>
+      <td>Covers a 392-line parser, a 166-line validator and the rules table. CORE learns three things in total.</td>
+    </tr>
+    <tr>
+      <td><code>build_step()</code><br><span class="files"><code>step/registry.py</code></span></td>
+      <td>one function, dict lookup</td>
+      <td>The docstring is explicit that Phase 2 swaps the dict for entry-point discovery <i>without changing the signature</i>. Seam placed once, deliberately, ahead of the change it will absorb.</td>
+    </tr>
+    <tr>
+      <td><code>ConfigHandler</code><br><span class="files"><code>config_handler/</code></span></td>
+      <td><code>bootstrap()</code> once, then <code>get_parameter(key)</code></td>
+      <td>Hides platform dirs, template creation, versioning, the discard-whole policy, typed parsing. The schema/template agreement test pins two views of one structure rather than letting them drift.</td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<h2>Correctly shaped, at its size limit</h2>
+
+<div class="card">
+  <div class="card-head">
+    <h3><code>Core</code></h3>
+    <span class="badge b-spec">WATCH, DO NOT SPLIT</span>
+  </div>
+  <p class="files"><code>core/core.py</code> &mdash; 751 lines, 23 methods</p>
+  <p>Its <i>interface</i> is <code>core_main(...)</code> plus the three link unions; the 23 methods
+  are implementation. A mediator's complexity has to live somewhere, and concentrating it is
+  locality, not a smell.</p>
+  <div class="callout">
+    The thing to watch: <code>load_recipe</code> and <code>start_sequence</code> are
+    <b>policy</b>, not routing, and they are what will grow as Phase&nbsp;1 lands. When Core
+    crosses roughly 900 lines, that policy pair is the natural thing to lift out &mdash; not the
+    handlers.
+  </div>
+</div>
+
+<h2>Findings</h2>
+
+<div class="card">
+  <div class="card-head">
+    <span class="num">1</span>
+    <h3><code>error_handling</code>'s undeclared <code>self.core</code> invariant</h3>
+    <span class="badge b-fix">FIX FIRST</span>
+  </div>
+  <p class="files"><code>utilities/error_handling.py</code></p>
+
+  <p><code>send_module_error</code> reaches its outbox with
+  <code>getattr(instance, "core", None)</code>. So the interface of both decorators and of
+  <code>report_error</code> / <code>report_problem</code> includes a fact no signature states:
+  <b>the instance must carry an attribute literally named <code>core</code></b>.</p>
+
+  <p>The tell that this is interface rather than implementation is that it has leaked into its
+  callers' documentation. Three unrelated classes each carry a line explaining why their
+  attribute is named <code>core</code>:</p>
+
+<pre><code>Sequencer:  "Named `core` because @catch_and_report_errors() reports failures through it."
+HmiClient:  the same sentence, verbatim.
+Report:     the same again.</code></pre>
+
+  <p>When three modules have to document <i>your</i> invariant, it is in the wrong place.</p>
+
+  <div class="callout bad">
+    <b>The failure mode is silent in the direction that matters.</b> Rename the attribute and the
+    object keeps working, keeps passing tests, and quietly stops reporting to CORE &mdash; the
+    fallback logs and returns. <code>mypy</code>'s scope is <code>messages/</code> and the
+    handler modules, so nothing catches it.
+  </div>
+
+  <p><b>Two candidate shapes, both cheap:</b></p>
+  <ul>
+    <li>A <code>Reporter</code> Protocol (<code>core: QueueWrapper[...]</code>) the three modules
+    declare they satisfy. Keeps the current call style; makes the invariant checkable the day
+    mypy's scope widens.</li>
+    <li>Pass the outbox into the decorator factory. Explicit, but noisier at every use site and
+    awkward for bound methods.</li>
+  </ul>
+  <p><b>Recommendation: the Protocol.</b> The <code>getattr</code> fallback stays &mdash; it is
+  genuinely wanted for a driver or a half-built object with no CORE behind it &mdash; but it stops
+  being the only thing holding the contract together.</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="num">2</span>
+    <h3><code>Report.render_html()</code> &mdash; the internal seam that is almost there</h3>
+    <span class="badge b-fix">HIGHEST VALUE</span>
+  </div>
+  <p class="files"><code>report/report.py</code> &mdash; 533 lines, 22 methods</p>
+
+  <p>Three distinct concerns share one class: run-directory lifecycle
+  (<code>make_run_dir</code> / <code>rename_run_dir</code> / <code>close_csv</code>), CSV
+  accumulation (<code>record_step</code> / <code>rewrite_csv</code>), and HTML rendering
+  (<code>render_html</code>, about 100 lines inline). The external interface is small and fine.</p>
+
+  <p>The rendering is already <i>nearly</i> a pure function &mdash; <code>rows_from_csv()</code>
+  exists at module level, and <code>render_html</code> reads from accumulated state. Roadmap
+  Phase&nbsp;4 wants configurable templates, <code>report.type</code> and
+  <code>report.theme</code>. That is <b>two adapters, so a real seam</b>, and it is not there yet.</p>
+
+  <p><b>Recommendation:</b> pull rendering out to a pure
+  <code>render(rows, run_metadata) -&gt; str</code> at module level, with <code>Report</code>
+  calling it. Dependency category 1 (in-process, pure computation) &mdash; no port, no injection,
+  just a function.</p>
+
+  <div class="callout good">
+    It becomes testable on a list of dicts with no <code>Report</code> instance, no config and no
+    filesystem, and Phase&nbsp;4's template adapter drops in behind an interface that already
+    exists. Low risk, because it moves no behaviour.
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="num">3</span>
+    <h3><code>recipe/step_source.py</code> duplicates the parser's traversal</h3>
+    <span class="badge b-fix">DRIFT RISK</span>
+  </div>
+  <p class="files"><code>recipe/step_source.py</code>, <code>recipe/recipe_parser.py</code></p>
+
+  <p><code>_one_sequence()</code> calls <code>normalize_sequence()</code>,
+  <code>apply_defaults()</code>, and then <code>recipe_parser._expand_indexed_steps()</code>
+  &mdash; a <b>private</b> function &mdash; twice, reconstructing what <code>_build_sequence()</code>
+  does. The module's own docstring names the problem:</p>
+
+<pre><code>The row list is built exactly as `recipe_parser._build_sequence()` builds it -
+steps, then teardown_steps, each expanded - because that is the order
+`Sequence.to_summary()` emits ... A test in tests/unit_tests/test_recipe.py
+pins the two together.</code></pre>
+
+  <p>A test pinning two implementations together is the signature of a <b>seam in the wrong
+  place</b>. The ordering contract exists only because there are two traversals; it can drift the
+  moment <code>_build_sequence</code> changes and someone does not read the docstring.</p>
+
+  <p class="verdict">Verified: step_source.py:84-85 are the only external callers of _expand_indexed_steps.</p>
+
+  <p><b>Recommendation:</b> record the effective mapping during the build &mdash; on the
+  <code>Step</code>, or as a parallel tuple on <code>Sequence</code> &mdash; and make
+  <code>step_yaml_by_sequence</code> a projection over what the parser already produced. One
+  traversal, so the ordering contract <i>disappears</i> rather than being enforced. The
+  never-raises convenience-view policy stays as it is.</p>
+  <p>This also removes the GUI's dependence on re-parsing the recipe file, which is the reason
+  the module exists at all.</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="num">4</span>
+    <h3><code>utilities/common.py</code> fails the deletion test</h3>
+    <span class="badge b-worth">REPEAT FINDING</span>
+  </div>
+  <p class="files"><code>utilities/common.py</code></p>
+
+  <p><code>convert_string_to_int</code> has <b>zero production callers</b>. A grep across
+  <code>src/</code> and <code>tests/</code> finds only its own definition and its own test. It
+  exists to reword <code>int()</code>'s exception. Delete it and no complexity reappears
+  anywhere; delete it and one test goes with it.</p>
+
+  <div class="callout">
+    This was <b>already flagged in <code>architecture_deepening_review.html</code> (21 August)</b>
+    as a fold-in, and it is still here on 2 September. Not urgent &mdash; but it is the only module
+    in the tree that is pure overhead, and <code>utilities/</code> is exactly where such things
+    accumulate quietly.
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="num">5</span>
+    <h3>The GUI <code>set_dark(bool)</code> chain</h3>
+    <span class="badge b-worth">CLEANUP, LOW PRIORITY</span>
+  </div>
+  <p class="files"><code>hmi/gui/gui.py</code>, and eight widget modules</p>
+
+  <p>Eight widgets implement <code>set_dark</code>; <code>GUI._apply_theme</code> fans out to five
+  by hand, two of which fan out further.</p>
+
+  <div class="callout good">
+    The layer beneath is exemplary and I would hold it up as a model: <code>palette.py</code> is
+    the single token source, no hex literal is allowed anywhere else, and
+    <code>python -m pypts.hmi.gui.palette</code> renders every token on screen for review before a
+    change is committed.
+  </div>
+
+  <p>The weakness is only the manual wiring: one method, N implementers, a hand-maintained call
+  list. Add a themed widget, forget the line in <code>_apply_theme</code>, and it silently keeps
+  its old colours &mdash; no error, just wrong pixels in one theme.</p>
+  <p>A Qt signal widgets connect to, or a registry walked once, would make forgetting impossible.
+  <code>gui.md</code> documents the current design and it works, so this is a cleanup, not a
+  defect.</p>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <span class="num">6</span>
+    <h3><code>Runtime.emit</code> / <code>ask</code> typed <code>Any</code></h3>
+    <span class="badge b-spec">RECORDED &middot; NO ACTION</span>
+  </div>
+  <p class="files"><code>step/runtime.py</code></p>
+  <p>The largest seam in the step layer is untyped, and the docstring gives the reason: a
+  <code>Callable[[SequencerToCore], None]</code> drags the link union into <code>step/</code> and
+  fails contravariance against the no-op default.</p>
+  <p>That is a real constraint, honestly stated, and the alternative costs more than it buys.
+  Leaving it alone &mdash; noted here so it is not rediscovered as a surprise.</p>
+</div>
+
+<h2>What I would do, in order</h2>
+
+<ol class="steps">
+  <li><b><code>Report.render_html</code> &rarr; pure function.</b> Best leverage per unit of effort;
+  unblocks Phase&nbsp;4's two adapters; moves no behaviour.</li>
+  <li><b><code>step_source</code> &rarr; projection over the build.</b> Deletes a drift risk and a
+  private-function reach in one change.</li>
+  <li><b><code>Reporter</code> Protocol for <code>error_handling</code>.</b> Closes a
+  silent-failure class. Do it <i>before</i> mypy's scope widens, not after.</li>
+  <li><b>Delete <code>utilities/common.py</code>.</b> One grep confirms it is dead; second time of
+  asking.</li>
+  <li>GUI theme fanout and <code>Runtime.emit</code> typing &mdash; leave. Both are documented
+  trades.</li>
+</ol>
+
+<h2>On the HAL</h2>
+
+<div class="card">
+  <p class="files"><code>hardware_layer/hal.py</code> &mdash; empty, Phase 5</p>
+  <p>Nothing to assess, but the design already recorded in the docstring is the right one. A plain
+  library with <code>Device</code> / family bases / concrete drivers, called with ordinary function
+  calls, keeps the specification's "usable standalone" true <b>by construction</b> rather than
+  by discipline.</p>
+  <p>The open question it names &mdash; how a bench is described in the configuration &mdash; is
+  correctly identified as the thing that must be settled before any of it is written.</p>
+  <div class="callout good">
+    Removing the placeholder <code>[hardware.example_device]</code> section rather than leaving a
+    shape to inherit was right. <b>No adapter is better than one hypothetical adapter.</b>
+  </div>
+</div>
+
+<h2>Relation to the August review</h2>
+
+<p><code>architecture_deepening_review.html</code> (21&nbsp;August) surveyed an earlier state of the
+branch, and several of its findings have since landed &mdash; most visibly "the Runtime seam has
+two hooks; the Phase&nbsp;1 port needs four", which is now the three-seam
+<code>emit</code> / <code>should_stop</code> / <code>ask</code> shape plus <code>base_dir</code>.</p>
+<p>The findings above are otherwise distinct from it, with one exception:
+<code>utilities/common.py</code> appeared there as a fold-in and is unchanged.</p>
+
+<p class="foot">
+  Generated 2&nbsp;September&nbsp;2026 from branch <code>architecture_refactor</code>.
+  Read-only survey &mdash; no source files were modified.
+  Vocabulary follows <code>.claude/skills/codebase-design/</code>.
+</p>
+
+</div>
+</body>
+</html>

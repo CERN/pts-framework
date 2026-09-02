@@ -1,0 +1,334 @@
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code review &mdash; "a FAIL says why" (commit 1acf7a7)</title>
+<style>
+  :root{
+    --bg:#fbfaf8; --fg:#22201d; --muted:#6b665f; --line:#e2ded7;
+    --card:#ffffff; --accent:#8a5a2b; --code-bg:#f3f0ea;
+    --ok-bg:#eef5ee; --ok-line:#8fb08f;
+    --warn-bg:#fdf3ea; --warn-line:#e0a76a;
+    --med-bg:#fbeee9; --med-line:#c8735c; --med-fg:#a34b3c;
+    --low-bg:#f4f1ea; --low-line:#b39a6a; --low-fg:#8a6f3d;
+    --good:#5a7a54;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --bg:#1b1a18; --fg:#e8e4dd; --muted:#a09a91; --line:#332f2b;
+      --card:#232120; --accent:#d8a06a; --code-bg:#2a2724;
+      --ok-bg:#1f2a20; --ok-line:#4d6b4d;
+      --warn-bg:#33261a; --warn-line:#8a6236;
+      --med-bg:#2e1f1b; --med-line:#8c4d3c; --med-fg:#e08a7a;
+      --low-bg:#2a2620; --low-line:#6b5a34; --low-fg:#c7a866;
+      --good:#9dbd95;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
+  .wrap{max-width:920px;margin:0 auto;padding:32px 20px 80px}
+  header{border-bottom:2px solid var(--line);padding-bottom:16px;margin-bottom:8px}
+  h1{font-size:26px;margin:0 0 6px}
+  .sub{color:var(--muted);font-size:14px}
+  h2{font-size:20px;margin:38px 0 10px;padding-top:10px;border-top:1px solid var(--line)}
+  h3{font-size:16px;margin:22px 0 6px}
+  p{margin:8px 0}
+  ul{margin:8px 0 8px 0;padding-left:22px}
+  li{margin:4px 0}
+  code{background:var(--code-bg);padding:1px 5px;border-radius:4px;
+    font:13px/1.5 "SF Mono",Consolas,"Courier New",monospace}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;
+    padding:12px 14px;overflow-x:auto;margin:10px 0}
+  pre code{background:none;padding:0;font-size:12.5px;white-space:pre}
+  .tablewrap{overflow-x:auto;margin:10px 0}
+  table{border-collapse:collapse;width:100%;font-size:14px;min-width:560px}
+  th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--code-bg);font-weight:600;white-space:nowrap}
+  .note{background:var(--ok-bg);border-left:3px solid var(--ok-line);
+    padding:10px 14px;border-radius:0 6px 6px 0;margin:12px 0;font-size:14.5px}
+  .note strong{color:var(--accent)}
+
+  .finding{background:var(--card);border:1px solid var(--line);border-radius:8px;
+    padding:14px 18px;margin:16px 0}
+  .finding.med{border-left:4px solid var(--med-line)}
+  .finding.low{border-left:4px solid var(--low-line)}
+  .fhead{display:flex;flex-wrap:wrap;align-items:baseline;gap:10px;margin-bottom:6px}
+  .fhead h3{margin:0;flex:1 1 320px}
+  .badge{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+    padding:3px 9px;border-radius:20px;white-space:nowrap}
+  .badge.med{background:var(--med-bg);color:var(--med-fg);border:1px solid var(--med-line)}
+  .badge.low{background:var(--low-bg);color:var(--low-fg);border:1px solid var(--low-line)}
+  .loc{font:12.5px/1.4 "SF Mono",Consolas,"Courier New",monospace;color:var(--muted);
+    margin:0 0 10px;word-break:break-all}
+  .lbl{font-weight:700;color:var(--accent)}
+  .gates{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+  .gate{background:var(--ok-bg);border:1px solid var(--ok-line);border-radius:6px;
+    padding:6px 12px;font-size:13.5px}
+  .gate b{color:var(--good)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Code review &mdash; "a FAIL says why"</h1>
+  <div class="sub">Commit <code>1acf7a7</code> &mdash; <em>bugfixing, small logging fixes</em> &middot;
+  branch <code>architecture_refactor</code> &middot; reviewed 2026-09-02</div>
+</header>
+
+<h2>Scope</h2>
+<p>The range against <code>origin/architecture_refactor</code> was empty at the start of the
+review; the work was committed as <code>1acf7a7</code> while it ran, so that commit
+<em>is</em> the review scope. 19 files, +388/&minus;57.</p>
+
+<div class="tablewrap">
+<table>
+  <tr><th>What</th><th>Files</th><th>Nature</th></tr>
+  <tr>
+    <td>The FAIL-reason feature</td>
+    <td><code>src/pypts/step/step.py</code>, <code>tests/unit_tests/test_step.py</code></td>
+    <td>The only substantive code. +182 / +125.</td>
+  </tr>
+  <tr>
+    <td>Doc rename <code>logger.md</code> &rarr; <code>logging_rules.md</code></td>
+    <td><code>core.py</code>, <code>sequencer.py</code>, <code>cli.py</code>, <code>gui.py</code>,
+        <code>hmi_client.py</code>, <code>startup.py</code>, <code>report.py</code>,
+        <code>error_handling.py</code>, <code>python_module_step.py</code>,
+        <code>liveness.py</code>, 2 test files</td>
+    <td><strong>Comment text only.</strong> Every hunk verified: no executable line changed.</td>
+  </tr>
+  <tr>
+    <td>Documentation</td>
+    <td><code>CLAUDE.md</code>, <code>pypts_roadmap.md</code> &sect;1.35,
+        <code>step.md</code>, new <code>logging_rules.md</code></td>
+    <td>Rename + the new &sect;6.1 "The reason on a FAIL line".</td>
+  </tr>
+</table>
+</div>
+
+<h2>Quality gates &mdash; re-run, all green</h2>
+<div class="gates">
+  <div class="gate"><b>pytest tests</b> &mdash; 616 passed, 43 skipped</div>
+  <div class="gate"><b>ruff check src tests</b> &mdash; All checks passed</div>
+  <div class="gate"><b>mypy</b> &mdash; no issues in 26 source files</div>
+  <div class="gate"><b>grep logger.md</b> &mdash; no stale reference anywhere</div>
+</div>
+
+<h2>Findings</h2>
+<p class="sub">Four. Ordered by severity. Every one has a concrete scenario; each was reproduced
+or traced through the real call chain.</p>
+
+<!-- ---------------------------------------------------------------- -->
+<div class="finding med">
+  <div class="fhead">
+    <h3>1. Output judging runs outside <code>run()</code>'s <code>try</code>, so a bad
+    output entry kills the whole sequence</h3>
+    <span class="badge med">Medium</span>
+  </div>
+  <p class="loc">C:\Git\pts-framework\src\pypts\step\step.py:437</p>
+
+  <p><span class="lbl">The code.</span> <code>process_outputs()</code> and the new
+  reason-building sit in <code>run()</code>'s <code>else:</code> clause &mdash; which is
+  <em>outside</em> the <code>try/except Exception</code>, not inside it:</p>
+<pre><code>try:
+    step_input = self.process_inputs(runtime)
+    raw_output = self._step(runtime, step_input)
+except Exception:                      # &lt;- only covers the two lines above
+    step_result.set_error(traceback.format_exc(), step_input)
+else:                                  # &lt;- unprotected
+    ...
+    verdict = self.process_outputs(runtime, step_output, failures)
+    ...
+    step_result.set_result(verdict, step_input, step_output, reason)</code></pre>
+
+  <p><span class="lbl">Why it is a defect.</span> The module docstring states the opposite
+  contract: <em>"a step failure must become data (StepResult with ResultType.ERROR and the
+  traceback), never a silent continue. <code>run()</code> is the one place that catches
+  broadly, because turning the exception into a result <strong>is</strong> its job."</em>
+  It does not, for anything raised after <code>_step()</code> returns.</p>
+
+  <p><span class="lbl">Concrete scenario.</span> A recipe declares
+  <code>outputs: {voltage: {type: range, min: 4.9, max: 5.1}}</code> and</p>
+  <ul>
+    <li>the step returns <code>{"volts": 4.2}</code> (a typo in the recipe) &rarr;
+        <code>KeyError('voltage')</code>, or</li>
+    <li>the step returns <code>{"voltage": "n/a"}</code> &rarr;
+        <code>float("n/a")</code> raises <code>ValueError</code>, or</li>
+    <li>the entry names an unknown type &rarr; the deliberate
+        <code>ValueError</code> at <code>step.py:385</code>.</li>
+  </ul>
+
+  <p><span class="lbl">What actually happens.</span> The exception unwinds
+  <code>run()</code> &rarr; <code>run_steps()</code> &rarr; <code>run_sequence()</code>
+  (whose <code>try/finally</code> runs teardown and re-raises) and is caught only in
+  <code>Sequencer.execute_sequence</code>. Four consequences:</p>
+  <ul>
+    <li><code>SequenceFinished</code> is never emitted &mdash; the frontend never learns the
+        sequence ended.</li>
+    <li><code>result, step_results = run_sequence_body(...)</code> never completes, so
+        <code>step_results</code> is still <code>[]</code>: <strong>RunFinished carries an
+        empty outcomes tuple</strong> and <code>log_run_summary</code> reports "no steps"
+        for a run that ran eleven of them.</li>
+    <li>Every step after the bad one is abandoned with no <code>skip_reason</code> pass, so
+        the GUI step table leaves those rows <em>Pending</em> forever &mdash; precisely the
+        outcome <code>run_steps()</code>'s skip-reason design exists to prevent
+        (<code>step.py:485-491</code>).</li>
+    <li>Teardown does still run (the <code>finally</code>), so the bench is left safe.</li>
+  </ul>
+
+  <div class="note"><strong>Pre-existing, but in the hunk.</strong> The
+  <code>else:</code> placement predates this commit; the diff rewrites these exact lines and
+  adds more raise surface to them (<code>describe_failed_check()</code>,
+  <code>build_fail_reason()</code>, <code>render_value()</code> all call into user data).
+  Worth deciding now: move the <code>else:</code> body inside the <code>try</code>, or record
+  the "unknown output type is fatal to the run" policy as deliberate in the roadmap. Note that
+  <code>test_an_unknown_output_type_is_refused</code> currently pins the raising behaviour at
+  the <code>process_outputs()</code> level only, not at the <code>run()</code> level.</div>
+</div>
+
+<!-- ---------------------------------------------------------------- -->
+<div class="finding med">
+  <div class="fhead">
+    <h3>2. <code>last_line()</code> drops the exception type on a multi-line message</h3>
+    <span class="badge med">Low&ndash;Medium</span>
+  </div>
+  <p class="loc">C:\Git\pts-framework\src\pypts\step\step.py:118</p>
+
+  <p><span class="lbl">The code.</span>
+  <code>text.splitlines()[-1].strip()</code> returns the last <em>physical</em> line of the
+  stored traceback, not the exception line. The docstring assumes the two are the same
+  ("A traceback's last line is <code>ValueError: the instrument did not answer</code>") &mdash;
+  which is only true for single-line messages.</p>
+
+  <p><span class="lbl">Concrete scenario &mdash; reproduced.</span> A step raises
+  <code>ValueError("the instrument did not answer\nGPIB timeout after 5 s")</code>. The new
+  operator-facing ERROR line reads:</p>
+<pre><code>ERROR  Step 4/12 'read_voltage' could not run (1.1 s): GPIB timeout after 5 s</code></pre>
+  <p>No <code>ValueError</code>, and the half of the message that said what went wrong is
+  gone. Multi-line <code>str(exc)</code> is routine for
+  <code>subprocess.CalledProcessError</code>, YAML/schema errors and wrapped instrument-driver
+  errors &mdash; exactly the failures a bench hits.</p>
+
+  <p><span class="lbl">Fix.</span>
+  <code>"".join(traceback.format_exception_only(...)).strip()</code> gives the intended
+  <code>Type: message</code>; if only the stored text is available, take everything from the
+  last line that matches <code>^\S</code> onward instead of the last line.</p>
+</div>
+
+<!-- ---------------------------------------------------------------- -->
+<div class="finding low">
+  <div class="fhead">
+    <h3>3. Truncating a quoted string drops its closing quote</h3>
+    <span class="badge low">Low</span>
+  </div>
+  <p class="loc">C:\Git\pts-framework\src\pypts\step\step.py:74</p>
+
+  <p><span class="lbl">The code.</span> <code>render_value()</code> adds the quotes
+  <em>first</em> and truncates <em>after</em>, so a long string loses its closing quote.
+  Reproduced:</p>
+<pre><code>&gt;&gt;&gt; render_value("ABC-" + "x"*100)
+"'ABC-xxxxxxxx&hellip;xxxx..."          # opening quote, no closing quote</code></pre>
+
+  <p><span class="lbl">Why it matters.</span> It defeats the function's own stated contract
+  and <code>logging_rules.md</code> &sect;6.1's first rule &mdash; <em>"strings are quoted, so
+  trailing whitespace and an empty answer are visible rather than being mistaken for a missing
+  value"</em>. Once truncated, the reader can no longer tell the value was a string, and any
+  trailing whitespace at the cut is invisible again.</p>
+
+  <p><span class="lbl">Fix.</span> Truncate the inner text to
+  <code>MAX_VALUE_CHARS - 5</code>, then wrap: <code>'ABC-xxx&hellip;'</code>. Note
+  <code>test_a_huge_value_is_truncated</code> asserts
+  <code>len(rendered) == MAX_VALUE_CHARS</code>, so it needs adjusting with the fix.</p>
+</div>
+
+<!-- ---------------------------------------------------------------- -->
+<div class="finding low">
+  <div class="fhead">
+    <h3>4. The per-value cap is bounded; the reason as a whole is not</h3>
+    <span class="badge low">Low</span>
+  </div>
+  <p class="loc">C:\Git\pts-framework\src\pypts\step\step.py:146</p>
+
+  <p><span class="lbl">The code.</span> <code>MAX_VALUE_CHARS</code> bounds one value, but
+  <code>build_fail_reason()</code> appends every failing check plus every input and every
+  output with no cap on their <em>number</em>.</p>
+
+  <p><span class="lbl">Concrete scenario &mdash; measured.</span> A step with 200 outputs of
+  40 characters each produces a <strong>10,503-character reason</strong>. That single string
+  becomes:</p>
+  <ul>
+    <li>one 10 kB INFO log line &mdash; and INFO is what the GUI's LOG OUTPUT panel shows the
+        technician,</li>
+    <li>one 10 kB <code>QToolTip</code> on the step table cell (<code>step_table.py:270</code>),</li>
+    <li>one 10 kB "Info" cell in the results panel (<code>results_panel.py:113</code>),</li>
+    <li>one 10 kB <code>error_info</code> cell in the CSV and the HTML report
+        (<code>report.py:271</code>).</li>
+  </ul>
+  <p>Which is the exact failure mode <code>MAX_VALUE_CHARS</code> was introduced to prevent
+  &mdash; its own comment says <em>"none of which is improved by it"</em>. A cap on the number
+  of pairs (or a total-length cap with an <code>&hellip; and 180 more</code> tail) closes it.</p>
+</div>
+
+<h2>Checked and clear</h2>
+<ul>
+  <li><strong>The doc rename is complete.</strong> A tree-wide grep for
+      <code>logger.md</code> outside <code>.git/</code> returns nothing.</li>
+  <li><strong>No caller was broken by the signature changes.</strong>
+      <code>process_outputs()</code> has exactly one production caller
+      (<code>run()</code>) and <code>set_result()</code> one; both were updated. The new
+      third/fourth parameters default to <code>None</code>/<code>""</code>, so the test
+      helper <code>judge()</code> and any future subclass keep working.</li>
+  <li><strong>The four <code>error_info</code> consumers all treat it as opaque text</strong>
+      (<code>cli.py:170</code>, <code>step_table.py:269</code>,
+      <code>results_panel.py:113</code>, <code>report.py:271</code>). Nothing branches on
+      "error_info is non-empty" in a way the new FAIL reason breaks, and the results panel's
+      column is neutrally titled <em>Info</em>, not <em>Error</em>.</li>
+  <li><strong>The CSV survives the new punctuation.</strong> The reason contains
+      <code>;</code> and <code>,</code>; <code>report.py</code> writes through
+      <code>csv.DictWriter</code>, which quotes them, and the HTML report escapes through
+      <code>html.escape()</code>.</li>
+  <li><strong>Pickle-safety holds.</strong> The reason reaches the HMI process only as
+      <code>StepOutcome.error_info</code>, a plain <code>str</code>.</li>
+  <li><strong>The FAIL branch cannot fall through with an empty reason.</strong> A
+      <code>FAIL</code> verdict implies <code>passed is False</code> on some check, which
+      implies a non-empty entry in <code>failures</code>, which implies a non-empty
+      <code>build_fail_reason()</code> &mdash; so <code>set_result()</code>'s
+      <code>if reason:</code> guard is never the difference between a reason and none.</li>
+  <li><strong><code>describe_failed_check()</code> cannot <code>KeyError</code>.</strong>
+      It reads <code>value</code> / <code>min</code> / <code>max</code>, each of which
+      <code>process_outputs()</code> has already read successfully on the same
+      <code>output_config</code> before the check could be marked failed.</li>
+</ul>
+
+<h2>Two notes, not findings</h2>
+<p><span class="lbl">The F6 docstring is looser than it reads.</span>
+<code>process_outputs()</code> claims the list "never" yields a contradictory sentence beside
+a PASS. That is true for PASS. What it does allow is a <code>FAIL</code> reason naming a check
+that last-wins had already overridden &mdash; e.g.
+<code>{a: passfail(False), b: passfail(True), c: passfail(False)}</code> reports FAIL and names
+both <em>a</em> and <em>c</em>. Every check named did genuinely fail, so the operator is not
+misled; only the docstring is stricter than the behaviour.</p>
+
+<p><span class="lbl">Resolved inputs are now technician-visible.</span> Before this change,
+input and output values reached the log only through the DEBUG line in
+<code>log_step_outcome()</code>. On a FAIL they are now on an <strong>INFO</strong> line, which
+is what the GUI panel shows and what gets pasted into support tickets. That is the documented
+intent of <code>logging_rules.md</code> &sect;6.1, so it is called out rather than filed &mdash;
+but a <code>global</code> input holding a serial number or a credential now has one more place
+to appear.</p>
+
+<div class="note"><strong>Overall.</strong> The feature is well shaped: one sentence, one
+field, four consumers, and <code>test_step.py</code> pins both halves of the F6 contract.
+Finding&nbsp;1 is the only one worth blocking on, and it is a pre-existing structural issue the
+commit inherits rather than creates.</div>
+
+</div>
+</body>
+</html>
