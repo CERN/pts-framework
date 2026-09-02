@@ -100,6 +100,44 @@ from pypts.utilities.heartbeat_manager import (
     SEQUENCER,
 )
 
+#: What the operator is told each module is. The names above are the protocol's
+#: own words and belong in the DEBUG trace; anything at INFO or above is read by
+#: a technician, who has no reason to know what a "sequencer" is. See logger.md.
+FRIENDLY_MODULE_NAME = {
+    HMI: "operator interface",
+    SEQUENCER: "test engine",
+    REPORT: "report writer",
+}
+
+#: The same, for a ModuleError, which names its sender by dotted module. A
+#: module missing here is described as "the software" rather than by its import
+#: path - an unknown sender is still a failure worth showing the operator.
+FRIENDLY_SOURCE_NAME = {
+    "pypts.core.core": "the engine",
+    "pypts.sequencer.sequencer": "the test engine",
+    "pypts.report.report": "the report writer",
+    "pypts.recipe.recipe": "the recipe reader",
+    "pypts.recipe.recipe_parser": "the recipe reader",
+    "pypts.recipe.validator": "the recipe checker",
+    "pypts.hmi.hmi_client": "the operator interface",
+    "pypts.hmi.gui.gui": "the operator interface",
+    "pypts.hmi.cli.cli": "the operator interface",
+    "pypts.config_handler.config_handler": "the settings file reader",
+}
+
+
+def describe_source(source: str) -> str:
+    """
+    The operator's name for the module a ModuleError came from.
+
+    Args:
+        source: the dotted module name carried by the ModuleError.
+
+    Returns:
+        A phrase that fits into "A problem occurred in ...".
+    """
+    return FRIENDLY_SOURCE_NAME.get(source, "the software")
+
 
 def core_main(
     to_hmi: QueueWrapper[CoreToHmi],
@@ -223,11 +261,16 @@ class Core:
     # --- Startup --------------------------------------------------------------
 
     def start(self) -> None:
-        log.info("Starting module.")
+        log.debug("CORE module starting.")
+        # Before start_submodules(), not after: CORE is up once its links are
+        # built, and the Sequencer and the Report announce themselves from the
+        # threads it is about to start. Logging it afterwards put the children
+        # above the parent in the operator's log.
+        log.info("CORE module started.")
         self.start_submodules()
         self.main_loop()
         self.join_submodules()
-        log.info("Module stopped.")
+        log.info("CORE module stopped.")
 
     def start_submodules(self) -> None:
         """
@@ -249,6 +292,7 @@ class Core:
             daemon=True,
         )
         self.sequencer_thread.start()
+        log.debug("Sequencer thread started.")
 
         self.report_thread = threading.Thread(
             target=report_main,
@@ -257,6 +301,7 @@ class Core:
             daemon=True,
         )
         self.report_thread.start()
+        log.debug("Report thread started.")
 
     def join_submodules(self) -> None:
         """
@@ -273,19 +318,29 @@ class Core:
         ):
             if thread is None:
                 continue
+            log.debug("Waiting up to %.1f s for the %s thread.", self.THREAD_JOIN_TIMEOUT_S, name)
             thread.join(timeout=self.THREAD_JOIN_TIMEOUT_S)
             if thread.is_alive():
-                log.warning("Module thread did not finish in time: %s", name)
+                log.warning(
+                    "The %s did not shut down in time and was left running.",
+                    FRIENDLY_MODULE_NAME[name],
+                )
+                log.debug(
+                    "Thread '%s' was still alive after %.1f s.", name, self.THREAD_JOIN_TIMEOUT_S
+                )
+            else:
+                log.debug("The %s thread finished.", name)
 
     # --- Main event loop ------------------------------------------------------
 
     def main_loop(self) -> None:
-        log.info("Starting main event loop.")
+        log.debug("CORE entered its main event loop.")
         while self.running:
             self.poll_all_sources()
             self.do_periodic_tasks()
             self.check_stop_status()
             time.sleep(0.01)
+        log.debug("CORE left its main event loop.")
 
     def poll_all_sources(self) -> None:
         self.poll(self.from_hmi, self.handle_hmi_message)
@@ -311,9 +366,11 @@ class Core:
             for message in inbox.receive():
                 handler(message)
         except UnhandledMessage as exc:
-            log.error(str(exc))
-        except Exception:
-            log.exception("Failure while receiving a message")
+            log.error("The engine received an internal update it does not understand.")
+            log.debug("Unhandled message on link '%s': %s", inbox.link, exc)
+        except Exception as exc:
+            log.error("The engine failed while handling an internal update: %s", exc)
+            log.debug("Traceback for the failure on link '%s':", inbox.link, exc_info=True)
 
     # --- Routing --------------------------------------------------------------
 
@@ -342,11 +399,11 @@ class Core:
                 # a change would have to reach the processes already running,
                 # each holding what it read at startup, and that is unsolved.
                 log.warning(
-                    "Ignoring a request to set %s to %r: changing the configuration "
-                    "while the application runs is not implemented.",
+                    "The setting '%s' was not changed: settings cannot be changed "
+                    "while the application is running.",
                     key,
-                    value,
                 )
+                log.debug("The refused change was %s = %r.", key, value)
             case Heartbeat():
                 self.note_heartbeat(message)
             case ModuleError():
@@ -367,12 +424,16 @@ class Core:
                 # CSV, SequenceStarted names the rows that follow. The same
                 # object is relayed rather than repacked, so nothing is lost
                 # on the way.
+                log.debug(
+                    "CORE relaying %s to the Report and the HMI.", type(message).__name__
+                )
                 self.to_report.send(message)
                 self.to_hmi.send(message)
             case RunFinished():
                 # The Report closes the CSV on RunFinished, then builds the
                 # HTML on the GenerateReport sent right behind it - one queue,
                 # so the order is guaranteed.
+                log.debug("CORE relaying RunFinished and asking for the report.")
                 self.to_report.send(message)
                 self.to_report.send(GenerateReport())
                 self.to_hmi.send(message)
@@ -383,6 +444,7 @@ class Core:
                 self.to_report.send(message)
                 self.to_hmi.send(message)
             case SequenceFinished() | StepStarted() | StepFinished():
+                log.debug("CORE relaying %s to the HMI.", type(message).__name__)
                 self.to_hmi.send(message)
             case StepExecuted():
                 # The rich step record. Report only - the HMI already got the
@@ -407,7 +469,7 @@ class Core:
             case ReportStopped():
                 self.module_running[REPORT] = False
             case ReportGenerated(report_path=path):
-                log.info("Report generated: %s", path)
+                log.debug("CORE relaying the generated report at %s.", path)
                 self.to_hmi.send(StatusChanged(f"Report generated: {path}"))
                 # The structured sibling of the status line: the paths a
                 # frontend can wire an "open report folder" control to.
@@ -436,7 +498,7 @@ class Core:
         all - an invalid recipe never reaches it - and the operator sees the
         error through the ModuleError path.
         """
-        log.info("Loading recipe '%s'.", recipe_path)
+        log.debug("Loading a recipe from '%s'.", recipe_path)
         try:
             recipe = Recipe.from_file(recipe_path)
         except RecipeError as error:
@@ -465,7 +527,20 @@ class Core:
                 sequences=recipe.to_summary(),
             )
         )
-        log.info("Recipe loaded: '%s' (version %s).", recipe.name, recipe.version)
+        # The file name rather than the whole path: the operator picked the file
+        # and knows where it is, and logger.md keeps the paths at INFO down to
+        # the three they actually need - the run log, the run folder and the
+        # report. The full path is on the DEBUG line at the top of this method.
+        log.info(
+            "Recipe '%s' loaded: \"%s\" v%s, %d sequences.",
+            Path(recipe_path).name,
+            recipe.name,
+            recipe.version,
+            len(recipe.sequences),
+        )
+        if recipe.sequences:
+            names = ", ".join("'" + name + "'" for name in recipe.sequences)
+            log.info("Sequences available: %s.", names)
 
     def start_sequence(self, sequence_name: str) -> None:
         """
@@ -475,7 +550,7 @@ class Core:
         its run_sequence() took no arguments, so the operator's choice stopped at
         CORE. Execution itself is still a stub inside the Sequencer.
         """
-        log.info("Starting sequence '%s'.", sequence_name)
+        log.debug("CORE asking the Sequencer to run sequence '%s'.", sequence_name)
         self.to_sequencer.send(RunSequence(sequence_name))
 
     #: What CORE logs a reported failure at. The sender rates its own failure -
@@ -516,36 +591,44 @@ class Core:
         operator. CORE deciding what reaches the frontend is what keeps the
         runtime log readable during a long run.
 
-        The line names the method and the exception type as well as the module,
-        so the log says which of a module's twenty methods failed, and how,
-        without anyone having to read the traceback under it.
+        Two records, per logger.md section 7: one the operator can read, naming
+        the part of the software that failed and what it said, and one at DEBUG
+        naming the method and the exception type, with the traceback under it.
+        The traceback never appears above DEBUG - in the operator's panel it
+        hides the line that matters.
         """
         where = error.operation or error.source
-        if error.error_type:
-            what = error.error_type + ": " + error.message
-        else:
-            what = error.message
 
         log.log(
             self.LOG_LEVEL_FOR_SEVERITY[error.severity],
-            "%s: %s\n%s",
-            where,
-            what,
-            error.traceback or "",
+            "A problem occurred in %s: %s",
+            describe_source(error.source),
+            error.message,
         )
+        log.debug(
+            "Reported by '%s' in '%s' (%s), severity %s.",
+            error.source,
+            error.operation or "an unnamed operation",
+            error.error_type or "no exception",
+            error.severity.name,
+        )
+        if error.traceback:
+            log.debug("Traceback for the failure in '%s':\n%s", where, error.traceback)
 
         if error.severity is not ErrorSeverity.WARNING:
             self.to_hmi.send(ModuleErrorReported(error))
 
     def note_heartbeat(self, beat: Heartbeat) -> None:
         if beat.source not in self.last_heartbeat:
-            log.warning("Heartbeat from an unknown module: %s", beat.source)
+            log.debug("Heartbeat from an unknown module: '%s'.", beat.source)
             return
 
         # A module that was reported late and is now answering again is worth
         # one line, so the log says the outage ended instead of just going quiet.
         if self.heartbeat_lost[beat.source]:
-            log.info("Module is responding again: %s", beat.source)
+            log.info("The %s is responding again.", FRIENDLY_MODULE_NAME[beat.source])
+            # The Monitor's other machine-read line - see do_periodic_tasks().
+            log.debug("Module is responding again: %s", beat.source)
             self.heartbeat_lost[beat.source] = False
 
         self.last_heartbeat[beat.source] = beat.timestamp
@@ -573,7 +656,20 @@ class Core:
             if not self.module_running[name]:
                 continue
             if now - last_seen > HEARTBEAT_TIMEOUT_S and not self.heartbeat_lost[name]:
-                log.warning("Heartbeat timeout for module: %s", name)
+                # The one liveness fact the operator is told, and it is told
+                # without the mechanism - logger.md section 7.1. Everything
+                # measurable about it is on the DEBUG line under it.
+                log.warning("The %s has stopped responding.", FRIENDLY_MODULE_NAME[name])
+                # Machine-read: the Debug Monitor's liveness tab matches this
+                # line on its prefix and takes the rest as the module name, so
+                # it carries nothing else and ends without a full stop. See
+                # helper_applications/debug_monitor/liveness.py.
+                log.debug("Heartbeat timeout for module: %s", name)
+                log.debug(
+                    "It had been silent for %.1f s; the timeout is %.1f s.",
+                    now - last_seen,
+                    HEARTBEAT_TIMEOUT_S,
+                )
                 self.heartbeat_lost[name] = True
 
     # --- Shutdown -------------------------------------------------------------
@@ -595,7 +691,10 @@ class Core:
         # the budget covers the whole shutdown and not just the tail of it.
         self.shutdown_deadline = time.time() + self.SHUTDOWN_TIMEOUT_S
 
-        log.info("Shutdown requested, stopping all modules.")
+        log.info("Shutting down.")
+        log.debug(
+            "Stopping every module; the shutdown budget is %.1f s.", self.SHUTDOWN_TIMEOUT_S
+        )
         self.to_sequencer.send(StopSequencer())
         self.to_hmi.send(StopHmi())
         # StopReport is held back: the Sequencer may still be finishing an
@@ -608,6 +707,7 @@ class Core:
         if not self.stop_report_pending:
             return
         self.stop_report_pending = False
+        log.debug("Releasing the held StopReport.")
         self.to_report.send(StopReport())
 
     def check_stop_status(self) -> None:
@@ -630,7 +730,7 @@ class Core:
         other reason this reports rather than acts.
         """
         if not any(self.module_running.values()):
-            log.info("All modules stopped cleanly")
+            log.debug("Every module has reported itself stopped.")
             self.running = False
             return
 
@@ -644,8 +744,8 @@ class Core:
         # this does not come back round to log the same sentence again.
         late = sorted(name for name, running in self.module_running.items() if running)
         log.error(
-            "Modules did not stop within %.0fs and are being abandoned: %s",
-            self.SHUTDOWN_TIMEOUT_S,
-            ", ".join(late),
+            "Parts of the software did not stop in time and were left behind: %s.",
+            ", ".join(FRIENDLY_MODULE_NAME[name] for name in late),
         )
+        log.debug("Abandoned after %.1f s: %s.", self.SHUTDOWN_TIMEOUT_S, ", ".join(late))
         self.running = False

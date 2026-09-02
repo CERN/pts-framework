@@ -313,5 +313,5 @@ class StepTableContent(QWidget):
             item = self.table.item(row, 0)
             if item is not None and item.data(Qt.ItemDataRole.UserRole) == wanted:
                 return row
-        log.warning("No table row for step %s - a different sequence is displayed?", step_id)
+        log.debug("No table row for step %s; a different sequence is displayed.", step_id)
         return None

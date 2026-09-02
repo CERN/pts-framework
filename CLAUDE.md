@@ -80,7 +80,7 @@ A module may carry a `<module>.md` beside its code holding the whole context of 
 what each file owns, the rules and decisions behind them, how to extend it, its known gaps.
 **Read it before touching that module** — it knows more about it than this file or the
 roadmap does. Present: `config_handler/config_handler.md`, `messages/messages.md`,
-`hmi/gui/gui.md`, `step/step.md`.
+`hmi/gui/gui.md`, `step/step.md`, `logger/logger.md`.
 
 It explains *how the module works*; the roadmap stays the authority on *status and plan*, and
 wins where they overlap. Update it in the same change, the way the roadmap is updated.
@@ -265,8 +265,14 @@ comprehensions. `SIM108` and `N818` are disabled in ruff for exactly this reason
 
 - **Logging is `%`-style**, never f-strings: `log.info("Starting %s", name)`. Lazy formatting
   is why the DEBUG trace costs nothing when the level is higher. `G004` enforces it.
-- **Lifecycle log wording is fixed**: `Starting module.` / `Starting main event loop.` /
-  `Left main event loop.` / `Stopping module.` / `Module stopped.`
+- **`logger/logger.md` is the authority on what a log line says and at which level.** Read it
+  before adding one. In one sentence: **INFO and above are written for the technician** — that
+  is exactly what the GUI's log panel shows them — and **everything developer-facing is DEBUG**.
+- **Lifecycle log wording is fixed**, and names its module: `<NAME> module starting.` (DEBUG) /
+  `<NAME> module started.` (INFO) / `<NAME> entered its main event loop.` (DEBUG) /
+  `<NAME> left its main event loop.` (DEBUG) / `<NAME> module stopping.` (DEBUG) /
+  `<NAME> module stopped.` (INFO). `<NAME>` is one of `LAUNCHER LOGGER CORE SEQUENCER REPORT
+  GUI CLI`. Ordinary event lines carry no such prefix — see `logger.md` §4.
 - **Some "modern" constructs are load-bearing and must not be simplified away**: the
   `match`/`case` handlers closed with `unhandled()`, the frozen slotted dataclasses, the link
   union types, `Never`/`NoReturn`, and `QueueWrapper[Msg]`. They are what makes a forgotten

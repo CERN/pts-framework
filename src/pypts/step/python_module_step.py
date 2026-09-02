@@ -108,5 +108,10 @@ class PythonModuleStep(Step):
                 f"Module '{self.module}' has no function '{self.method_name}'"
             )
         method = getattr(module, str(self.method_name))
-        log.info("Calling %s.%s(%s)", self.module, self.method_name, step_input)
-        return method(**step_input)
+        # The call itself is the developer's business: the operator already has
+        # the step's own started/finished lines around it, and the argument
+        # values are exactly the kind of internals logger.md keeps at DEBUG.
+        log.debug("Calling %s.%s(%r).", self.module, self.method_name, step_input)
+        result = method(**step_input)
+        log.debug("%s.%s returned %r.", self.module, self.method_name, result)
+        return result

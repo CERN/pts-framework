@@ -143,20 +143,19 @@ class RecentRecipes:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
-            log.warning("Discarding the recent-recipes list, it cannot be read: %s", exc)
+            log.warning("The list of recent recipes could not be read and was reset.")
+            log.debug("Reading %s failed: %s", path, exc)
             return []
 
         if not isinstance(payload, dict) or payload.get("version") != STORE_VERSION:
-            log.warning(
-                "Discarding the recent-recipes list, it is not a version %d store: %s",
-                STORE_VERSION,
-                path,
-            )
+            log.warning("The list of recent recipes was written by another version and was reset.")
+            log.debug("%s is not a version %d store.", path, STORE_VERSION)
             return []
 
         raw_entries = payload.get("entries")
         if not isinstance(raw_entries, list):
-            log.warning("Discarding the recent-recipes list, its entries are not a list.")
+            log.warning("The list of recent recipes was not readable and was reset.")
+            log.debug("The 'entries' key in %s is not a list.", path)
             return []
 
         entries = []
@@ -209,4 +208,4 @@ class RecentRecipes:
             temporary.write_text(json.dumps(payload, indent=2), encoding="utf-8")
             os.replace(temporary, path)
         except OSError as exc:
-            log.warning("Could not save the recent-recipes list: %s", exc)
+            log.warning("The list of recent recipes could not be saved: %s", exc)

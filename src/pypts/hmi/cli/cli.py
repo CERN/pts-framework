@@ -54,7 +54,8 @@ class CLI(HmiClient):
     # --- Shell ----------------------------------------------------------------
 
     def run(self) -> None:
-        log.info("Starting module.")
+        log.debug("CLI module starting.")
+        log.info("CLI module started.")
         polling_thread = threading.Thread(target=self._poll_loop, name="cli-poll", daemon=True)
         polling_thread.start()
 
@@ -75,7 +76,7 @@ class CLI(HmiClient):
         # ends. Bounded, so a wedged CORE cannot hang the exit.
         self.wait_until_stopped()
         polling_thread.join(timeout=1.0)
-        log.info("Module stopped.")
+        log.info("CLI module stopped.")
 
     def _command_loop(self) -> None:
         """
@@ -134,11 +135,14 @@ class CLI(HmiClient):
     def show_status(self, text: str) -> None:
         with self._lock:
             self.status = text
-        log.info("status update: %s", text)
+        log.debug("Status line: %s", text)
         print(f"Status updated: {text}")
 
     def show_error(self, error: ModuleError) -> None:
-        log.error("%s: %s", error.source, error.message)
+        # CORE has already written this failure to the run log in the
+        # operator's words; the CLI's job here is the console, not a second
+        # copy of the record - logger.md section 5.
+        log.debug("Error received from %s: %s", error.source, error.message)
         print(f"ERROR [{error.source}] {error.message}")
 
     def show_recipe_loaded(self, event: RecipeLoaded) -> None:
@@ -168,7 +172,7 @@ class CLI(HmiClient):
         print(line)
 
     def show_report_ready(self, event: ReportReady) -> None:
-        log.info("report ready: %s", event.report_path)
+        log.debug("ReportReady received: %s", event.report_path)
         print(f"Report: {event.report_path}")
 
     def on_stop(self) -> None:

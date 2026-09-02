@@ -178,7 +178,7 @@ def _directory_item(
     location = str(directory)
     refusal = _refuse_reason(directory)
     if refusal:
-        log.warning("Remove Cache refuses %s: %s", directory, refusal)
+        log.debug("Remove Cache refuses %s: %s", directory, refusal)
         return RemovableItem(key, label, detail, location, (), 0, 0, refusal)
 
     if not directory.is_dir():
@@ -238,7 +238,7 @@ def remove(items: Iterable[RemovableItem]) -> RemovalOutcome:
             removed_count += 1
 
     log.info(
-        "Remove Cache: %d item(s) removed, %d byte(s) freed, %d failure(s).",
+        "Remove Cache: %d item(s) deleted, %d byte(s) freed, %d could not be deleted.",
         removed_count,
         removed_bytes,
         len(failures),
@@ -292,7 +292,7 @@ def _configured_dir_or_none(key: str) -> Path | None:
     try:
         return _configured_dir(key)
     except Exception as exc:  # noqa: BLE001 - any config failure means "unknown"
-        log.warning("Remove Cache cannot resolve %s: %s", key, exc)
+        log.debug("Remove Cache cannot resolve the location of %s: %s", key, exc)
         return None
 
 

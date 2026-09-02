@@ -104,7 +104,7 @@ every hop.
 | `CoreToHmi` (14) | Kind | Meaning |
 |---|---|---|
 | `StopHmi()` | CMD | Close the frontend. It answers `HmiStopped`. |
-| `StatusChanged(text)` | EVT | One line of free text for the runtime log. Anything with structure has its own message now. |
+| `StatusChanged(text)` | EVT | One line of free text for the frontend's status bar. Anything with structure has its own message now. **Not logged above DEBUG**: the fact behind it was already written to the run log by whichever module owns it, so logging the status text too would say it twice - see `logger/logger.md` section 5. |
 | `ModuleErrorReported(error)` | EVT | An error CORE decided the operator should see (severity above WARNING). |
 | `ReportReady(report_path, report_dir)` | EVT | The run's report is on disk. Sent by CORE when the Report answers `ReportGenerated`; the structured sibling of the `StatusChanged` sent beside it. `report_dir` is what a frontend's "open report folder" control opens. |
 | the 7 progress events + `RunMetadata` + the 2 requests | EVT | Forwarded from the Sequencer, unchanged. `RunMetadata` is what the GUI's top bar shows beside the recipe name, so the operator can see which unit the bench believes is in front of them. |

@@ -310,7 +310,10 @@ class Step:
 
     @staticmethod
     def run_steps(
-        runtime: Runtime, steps: list["Step"], run_to_end: bool = False
+        runtime: Runtime,
+        steps: list["Step"],
+        run_to_end: bool = False,
+        phase: str = "Step",
     ) -> list[StepResult]:
         """
         Run a list of steps in order; return one result per step, always.
@@ -337,14 +340,37 @@ class Step:
           it: cleanup runs after an abort and after a halt, and one failing
           cleanup step does not skip the rest of the cleanup - which is the
           opposite of what teardown is for.
+
+        `phase` is only the word the operator's log lines start with, so that a
+        teardown step reads as "Teardown step 1/2 'power_off'" rather than as a
+        second step 1. It changes nothing about how a step is run.
         """
         step_results: list[StepResult] = []
         skip_reason = ""
-        for step in steps:
+        total = len(steps)
+        for position, step in enumerate(steps, start=1):
             if not skip_reason and not run_to_end and runtime.should_stop():
                 skip_reason = "Not run: the run was stopped by the operator."
+                log.debug("The stop flag is set; the remaining steps will be skipped.")
 
+            where = f"{phase} {position}/{total} '{step.name}'"
+            # No "started" line for a step that is not going to run: it would
+            # promise the operator work that never happens, and the SKIP line
+            # right behind it says everything there is to say.
+            if not skip_reason and not step.skip:
+                log.info("%s started.", where)
+            log.debug(
+                "Running step '%s' (%s): skip=%s, continue_on_error=%s, skip_reason=%r.",
+                step.name,
+                type(step).__name__,
+                step.skip,
+                step.continue_on_error,
+                skip_reason,
+            )
+
+            began = time.perf_counter()
             step_result = step.run(runtime, skip_reason=skip_reason)
+            log_step_outcome(where, step, step_result, time.perf_counter() - began)
             step_results.append(step_result)
             if skip_reason:
                 continue
@@ -352,12 +378,105 @@ class Step:
             halting_verdict = step_result.result in (ResultType.ERROR, ResultType.FAIL)
             if not run_to_end and not step.continue_on_error and halting_verdict:
                 log.warning(
-                    "Step '%s' ended the run: %s, and it is marked continue_on_error: false.",
+                    "The sequence stops here: step '%s' came back %s and the recipe "
+                    "says not to carry on past it.",
                     step.name,
-                    step_result.result,
+                    step_result.result.name if step_result.result else "ERROR",
                 )
+                log.debug("Step '%s' has continue_on_error: false.", step.name)
                 skip_reason = f"Not run: the sequence stopped at step '{step.name}'."
         return step_results
+
+
+#: Verdict -> the word the summary counts it under. Ordered as the operator
+#: reads it: what passed first, what went wrong next, what never ran last.
+VERDICT_WORDS = (
+    (ResultType.PASS, "passed"),
+    (ResultType.DONE, "completed"),
+    (ResultType.FAIL, "failed"),
+    (ResultType.ERROR, "errored"),
+    (ResultType.STOP, "stopped"),
+    (ResultType.SKIP, "skipped"),
+)
+
+
+def count_verdicts(step_results: list[StepResult]) -> dict[ResultType, int]:
+    """
+    How many steps ended with each verdict.
+
+    A result that was never set counts as ERROR, the same way to_outcome()
+    reads it: a step that finished without a verdict did not work.
+    """
+    counts = {verdict: 0 for verdict, _word in VERDICT_WORDS}
+    for step_result in step_results:
+        if step_result.result is None:
+            counts[ResultType.ERROR] += 1
+        else:
+            counts[step_result.result] += 1
+    return counts
+
+
+def describe_counts(counts: dict[ResultType, int]) -> str:
+    """
+    The counts as the operator reads them: "10 passed, 1 failed, 1 skipped".
+
+    Verdicts nothing ended with are left out - a run with no errors should not
+    have to say "0 errored" for the reader to work out that there were none.
+    """
+    parts = []
+    for verdict, word in VERDICT_WORDS:
+        if counts[verdict]:
+            parts.append(f"{counts[verdict]} {word}")
+    if not parts:
+        return "no steps"
+    return ", ".join(parts)
+
+
+def log_step_outcome(
+    where: str, step: "Step", step_result: StepResult, duration_s: float
+) -> None:
+    """
+    Write the operator's line for one finished step, and the developer's under it.
+
+    Kept out of run_steps() so the policy loop there stays about policy. The
+    rules are logger.md sections 2.1 and 7: a FAIL is an ordinary test result
+    and logs at INFO, only a step that could not run at all is an ERROR, and
+    its traceback stays at DEBUG.
+
+    Args:
+        where: the operator's name for the step, e.g. "Step 4/12 'read_voltage'".
+        step: the step that ran, for the DEBUG line.
+        step_result: what it produced.
+        duration_s: how long it took, measured around the whole step.
+    """
+    if step_result.result is None:
+        verdict = ResultType.ERROR
+    else:
+        verdict = step_result.result
+
+    if verdict is ResultType.SKIP:
+        # set_skip() puts the reason in error_info; a step the author marked
+        # `skip: true` gives none, and that case has its own sentence.
+        reason = step_result.error_info or "marked to skip in the recipe."
+        log.info("%s SKIP - %s", where, reason)
+    elif verdict is ResultType.ERROR:
+        log.error("%s could not run (%.1f s).", where, duration_s)
+        if step_result.error_info:
+            log.debug(
+                "Traceback for the failure in step '%s':\n%s", step.name, step_result.error_info
+            )
+    else:
+        log.info("%s %s (%.1f s).", where, verdict.name, duration_s)
+
+    log.debug(
+        "Step '%s' (%s) finished as %s in %.3f s; inputs %r, outputs %r.",
+        step.name,
+        type(step).__name__,
+        verdict.name,
+        duration_s,
+        step_result.inputs,
+        step_result.outputs,
+    )
 
 
 def run_sequence(runtime: Runtime, sequence: "Sequence") -> tuple[ResultType, list[StepResult]]:
@@ -368,14 +487,37 @@ def run_sequence(runtime: Runtime, sequence: "Sequence") -> tuple[ResultType, li
     SequenceStep can call it for a nested sequence exactly as the Sequencer
     calls it for the top one. Emits SequenceStarted/SequenceFinished; the
     run-level pair (RunStarted/RunFinished) belongs to the Sequencer.
+
+    It is also where the operator's sequence lines are written, because this is
+    the only place that knows the step count, the aggregate verdict and the
+    wall clock across both lists.
     """
+    log.info("Sequence '%s' started: %d steps.", sequence.name, len(sequence.steps))
+    log.debug(
+        "Sequence '%s' has %d steps and %d teardown steps.",
+        sequence.name,
+        len(sequence.steps),
+        len(sequence.teardown_steps),
+    )
+    began = time.perf_counter()
     runtime.emit(SequenceStarted(sequence_name=sequence.name))
     step_results: list[StepResult] = []
     try:
         step_results.extend(Step.run_steps(runtime, sequence.steps))
     finally:
-        step_results.extend(Step.run_steps(runtime, sequence.teardown_steps, run_to_end=True))
+        step_results.extend(
+            Step.run_steps(
+                runtime, sequence.teardown_steps, run_to_end=True, phase="Teardown step"
+            )
+        )
 
     result = StepResult.evaluate_multiple_step_results(step_results)
+    log.info(
+        "Sequence '%s' finished: %s - %s, %.1f s.",
+        sequence.name,
+        result.name,
+        describe_counts(count_verdicts(step_results)),
+        time.perf_counter() - began,
+    )
     runtime.emit(SequenceFinished(sequence_name=sequence.name, result=result))
     return result, step_results

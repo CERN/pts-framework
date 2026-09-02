@@ -236,7 +236,11 @@ class ConfigHandler:
             self._write(raw)
             self._note(
                 logging.INFO,
-                f"Configuration created at {self._path} (structure version {CONFIG_VERSION}).",
+                f"A new settings file was created at {self._path}.",
+            )
+            self._note(
+                logging.DEBUG,
+                f"It declares structure version {CONFIG_VERSION}.",
             )
             self.bootstrap_outcome = BootstrapOutcome.CREATED
             values = self._validate(raw)
@@ -253,12 +257,15 @@ class ConfigHandler:
         if self.bootstrap_outcome is BootstrapOutcome.DISCARDED:
             self._note(
                 logging.INFO,
-                f"Configuration defaults in force ({len(self._values)} sections); "
-                f"{self._path} was discarded and left untouched.",
+                f"The settings file at {self._path} could not be used, so the standard "
+                f"settings are in force for this run. The file was left untouched.",
             )
         else:
+            # DEBUG, not INFO: every process that reads the configuration
+            # replays this, so at INFO the operator would be told the same
+            # thing once per process, in words about a file they never open.
             self._note(
-                logging.INFO,
+                logging.DEBUG,
                 f"Configuration loaded from {self._path} (structure version "
                 f"{self.config_version}, {len(self._values)} sections).",
             )
@@ -405,7 +412,8 @@ class ConfigHandler:
         self._raw[section][option] = text
         self._values = self._validate(self._raw)
         self._write(self._raw)
-        log.info("Configuration key %s set to %r in %s", key, text, self._path)
+        log.info("Setting '%s' changed to '%s'.", key, text)
+        log.debug("Written to %s.", self._path)
 
     def restore_default(self) -> None:
         """
@@ -424,7 +432,8 @@ class ConfigHandler:
         # was discarded at startup is discarded no longer.
         self.bootstrap_outcome = BootstrapOutcome.LOADED
         self.bootstrap_problem = None
-        log.warning("Configuration restored to defaults in %s", self._path)
+        log.warning("All settings were restored to their defaults.")
+        log.debug("Rewrote %s from the template.", self._path)
 
     def _require_writer(self, action: str) -> None:
         if self.role is not Role.WRITER:

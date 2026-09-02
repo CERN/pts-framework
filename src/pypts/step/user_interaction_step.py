@@ -75,7 +75,13 @@ class UserInteractionStep(Step):
             options=self.options,
             image_path=resolve_image_path(self.name, self.image_path, runtime.base_dir),
         )
-        log.info("Step '%s': asking the operator: %s", self.name, self.message)
+        log.info("Waiting for the operator: '%s'", self.message)
+        log.debug(
+            "Step '%s' asked request %s with options %s.",
+            self.name,
+            request.request_id,
+            self.options,
+        )
         answer = ask_or_raise(self.name, runtime, request)
-        log.info("Step '%s': the operator answered %r.", self.name, answer)
+        log.info("The operator answered: '%s'.", answer)
         return answer

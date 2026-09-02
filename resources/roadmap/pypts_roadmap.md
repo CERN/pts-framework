@@ -2351,6 +2351,122 @@ now an unknown key, and a recipe that writes it gets a `RecipeError` naming it.
 
 ---
 
+### 1.35 Two registers in the log: the technician's and the developer's — **done**
+
+> **Status: implemented (2026-09-02).** A sweep over every logging call outside `old_code/`,
+> plus a new module context file, `src/pypts/logger/logger.md`, which is now the authority on
+> what a log line says and at which level.
+
+**The problem.** The run log had one register and it was the developer's. `Starting module.`
+did not say *which* module — and could not, because `LOG_FORMAT` uses `%(processName)s`, so
+the Sequencer and the Report both read `Core` (§1.5). Beside it sat `status update: %s`,
+`Calling %s.%s(%s)`, `Nobody was waiting for response %s` and `run finished: %s (%d steps)`.
+The GUI's LOG OUTPUT panel shows the operator INFO and above, so all of that was going to a
+technician who knows the device under test and nothing about the software testing it.
+
+Worse, **the same run event was logged up to three times**: the Sequencer wrote it, CORE
+relayed and wrote it, then `hmi_client` wrote it and the GUI or CLI wrote it again — four
+sentences for one step finishing, in four different wordings.
+
+**The rule that settles every case.** The GUI panel's floor is `PANEL_LOG_LEVEL = INFO`, so:
+
+> **INFO and above are written for the technician — WARNING, ERROR and CRITICAL included.
+> Everything developer-facing is DEBUG.**
+
+If a line needs the words queue, thread, message, handler, callback, `None`, a class name or a
+`repr()`, it is a DEBUG line. `logger.md` holds the whole convention; `CLAUDE.md` §Code style
+now points at it.
+
+**What changed, by decision:**
+
+- **`LOG_FORMAT` is untouched.** No new column, so the Debug Monitor's parser and
+  `test_logger.py`'s `LOG_LINE` regex keep working and the §1.5 TODO stays open as it was.
+  Module identity moved into the **message text**, and only on lifecycle lines.
+- **The lifecycle phrases now name their module** and split across two levels:
+  `CORE module started.` / `CORE module stopped.` at INFO, and `... module starting.`,
+  `... entered its main event loop.`, `... left its main event loop.`, `... module stopping.`
+  at DEBUG. Names: `LAUNCHER LOGGER CORE SEQUENCER REPORT GUI CLI`.
+- **One fact, one INFO line.** The module that owns a fact logs it; every module that merely
+  *receives* the event logs one DEBUG hop instead. All fourteen `show_*` hooks in
+  `hmi_client.py` dropped to DEBUG, and so did the GUI's and the CLI's overrides. This is safe
+  because `log_tail.py` feeds the panel from the **log file**, not from the GUI process's own
+  records — a frontend that stops logging does not stop the operator seeing anything.
+- **A `FAIL` is INFO.** A failing measurement is the normal output of testing, not a software
+  fault. Only `ResultType.ERROR` — the step itself blew up — writes an ERROR line.
+- **Errors are two records**: one operator-facing sentence naming the part of the software that
+  failed and what it said, and one DEBUG line with the method, the exception type and the
+  traceback. `Core.handle_module_error()` writes both; `send_module_error()` writes both in the
+  no-outbox fallback. The traceback never appears above DEBUG.
+- **The heartbeat vocabulary is DEBUG**, with one exception so the application cannot go quiet
+  unexplained: `The test engine has stopped responding.` (WARNING) and
+  `The test engine is responding again.` (INFO).
+- **DEBUG is heavy** — arguments, return values, branch decisions, state transitions — except
+  on hot paths: event-loop polling, the GUI's 200 ms log-tail timer, Qt paint, and per-beat
+  heartbeat emission. The log-tail exclusion is not taste: that timer reads the file the
+  process writes to.
+
+**The run now reads as a story** (`logger.md` §6 holds the full sample):
+
+```
+PyPTS 0.2.2 started in GUI mode.
+Started by <user> on <host>.
+Run log: ...\pypts_20260902_141201.log
+CORE module started.
+Recipe 'thermal_cycle.yml' loaded: "Thermal cycle" v1.2, 3 sequences.
+Sequences available: 'warmup', 'soak', 'teardown'.
+Results will be written to: ...\20260902_141233_warmup
+Sequence 'warmup' started: 12 steps.
+Step 1/12 'power_on' started.
+Step 1/12 'power_on' PASS (0.8 s).
+Waiting for the operator: 'Is the status LED lit?'
+The operator answered: 'Yes'.
+Step 5/12 'calibrate' SKIP - marked to skip in the recipe.
+Sequence 'warmup' finished: FAIL - 10 passed, 1 failed, 1 skipped, 42.3 s.
+Run summary: FAIL.
+Run summary: 10 passed, 1 failed, 1 skipped of 12 steps in 42.3 s.
+Run summary: recipe 'thermal_cycle.yml', sequence 'warmup'.
+Report generated: ...\20260902_141233_warmup\report.html
+```
+
+**Code the sweep added, not just reworded:**
+
+- `step/step.py`: `count_verdicts()`, `describe_counts()` and `log_step_outcome()`, plus a
+  `phase` argument on `run_steps()` so a teardown step reads as `Teardown step 1/2 'power_off'`
+  rather than as a second step 1. It changes nothing about how a step is run.
+- `sequencer/sequencer.py`: `log_run_summary()`, three records rather than one multi-line one
+  so each carries its own timestamp and neither `log_tail` nor the Monitor mistakes the second
+  and third for traceback continuations.
+- `core/core.py`: `FRIENDLY_MODULE_NAME`, `FRIENDLY_SOURCE_NAME` and `describe_source()` — the
+  operator's name for a module, since the protocol's own words ("sequencer") are not English.
+- `launcher/startup.py`: `describe_operator()`, and the first three lines of every run log —
+  what this is, who ran it, where the file is. A log pulled out of context for a support
+  ticket now answers all three on its own.
+
+**The near miss worth recording.** The Debug Monitor's liveness tab parses two of CORE's own
+log lines by prefix — `Heartbeat timeout for module: ` and `Module is responding again: ` — and
+takes the rest of the line as the module name. Rewording them for the operator broke it
+silently: the verdict column would have gone blank with nothing to say why. Both survive as
+**DEBUG** lines carrying nothing but the module name, with a comment in `core.py` saying why
+they are shaped that way and a note in `liveness.py` recording the near miss. They are the one
+sanctioned exception to the full-stop rule in `logger.md` §3.
+
+- [ ] **TODO:** `StepResult` has no operator-facing **reason** for a `FAIL`. `error_info` only
+      carries a traceback, and only when a step *raises*, so it appears on an `ERROR` verdict
+      and not on a `FAIL`. The log line therefore stops after the duration —
+      `Step 4/12 'read_voltage' FAIL (1.1 s).` — where it should be able to say
+      *measured 4.2 V, expected 5.0 V +/- 0.1 V*. The fix is a `reason` field set by whatever
+      judges the step in `Step.process_outputs()`, carried on `StepOutcome` so the report and
+      the step table can show it too. Deliberately out of the logging sweep: it is a change to
+      the execution layer's data, not to its wording.
+- [ ] **TODO:** Nothing mechanically enforces the convention. `ruff`'s `G004` catches an
+      f-string in a log call and that is all there is; the rest is `logger.md` and reading it.
+      A lint rule or a test that greps INFO-and-above format strings for the banned vocabulary
+      would close it, and would have caught the four duplicated event lines on its own.
+
+**Verified:** `pytest tests` green, `ruff check src tests` clean, `mypy` clean.
+
+---
+
 ## TODO — Step types: which of the ten are ported, and which are dropped
 
 > **Status: decided 2026-09-01; `PythonModule` finished, `UserInteraction` ported (§1.28)

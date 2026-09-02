@@ -51,6 +51,20 @@ All four need the decorated method to belong to a class with a `core` attribute
 - that module's outbox to CORE - and all four survive it being absent, because
 an error handler that raises AttributeError while handling an error destroys the
 one thing worth keeping: what actually went wrong.
+
+## What reaches the log, and at which level
+
+Nothing here writes the operator's line: the ModuleError goes to CORE, and CORE
+logs it as two records - one the operator can read, one at DEBUG with the
+traceback (logger.md section 7). The only exception is the fallback below, for
+an object with no outbox, which has to write both records itself because there
+is nobody to send them to.
+
+`message` is therefore operator-facing text. `report_error()` fills it from
+`str(exc)`, which is as friendly as an arbitrary exception gets; CORE frames it
+with the name of the module that failed. `report_problem()` writes it by hand,
+so a refusal should be phrased for the technician reading the panel, not for the
+developer who wrote the check.
 """
 
 import traceback
@@ -220,13 +234,18 @@ def send_module_error(instance, error: ModuleError) -> None:
     """
     outbox = getattr(instance, "core", None)
     if outbox is None:
-        log.error(
-            "%s: %s (not reported to CORE: %s has no outbox)\n%s",
-            error.operation or error.source,
-            error.message,
+        # Nobody to report to, so this is the one place in the module that has
+        # to write the operator's record itself - and the DEBUG one under it,
+        # the same two CORE would have written.
+        log.error("A problem occurred in the software: %s", error.message)
+        log.debug(
+            "Not reported to CORE: %s has no outbox. Raised in '%s' (%s).",
             type(instance).__name__,
-            error.traceback or "",
+            error.operation or error.source,
+            error.error_type or "no exception",
         )
+        if error.traceback:
+            log.debug("Traceback:\n%s", error.traceback)
         return
 
     outbox.send(error)

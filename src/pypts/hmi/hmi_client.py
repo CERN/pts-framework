@@ -154,7 +154,7 @@ class HmiClient:
         StopHmi back, and this frontend answers HmiStopped from stop() - so CORE
         learns that all three modules are down and can exit on its own.
         """
-        log.info("Requesting application shutdown.")
+        log.debug("The frontend is asking CORE to shut the application down.")
         self.core.send(ShutdownRequested())
 
     def answer_user_prompt(self, request: UserPromptRequest, choice: str | None) -> None:
@@ -176,7 +176,7 @@ class HmiClient:
         to leave calls request_shutdown() and lets CORE bring everything down in
         order.
         """
-        log.info("Stopping module.")
+        log.debug("The frontend is stopping.")
         self.running = False
         self.on_stop()
         self.core.send(HmiStopped())
@@ -193,52 +193,67 @@ class HmiClient:
         while self.running and time.time() < deadline:
             time.sleep(0.05)
         if self.running:
-            log.warning("CORE did not acknowledge the shutdown request; stopping anyway.")
+            log.warning("The engine did not confirm the shutdown; closing anyway.")
+            log.debug("No StopHmi arrived within %.1f s of the request.", grace_s)
             self.stop()
 
     # --- Presentation hooks ---------------------------------------------------
     #
     # Defaults log and nothing else. Override the ones a frontend can draw.
+    #
+    # Every one of these is the *receiving* end of an event CORE, the Sequencer
+    # or the Report has already written to the run log in the operator's words.
+    # Logging them again at INFO would say the same thing three times in three
+    # registers, so they trace at DEBUG instead - logger.md section 5. The
+    # operator loses nothing: the GUI panel is fed from the log file, not from
+    # this process's own records.
 
     def show_status(self, text: str) -> None:
-        log.info("status: %s", text)
+        log.debug("Status line: %s", text)
 
     def show_error(self, error: ModuleError) -> None:
-        log.error("%s: %s", error.source, error.message)
+        log.debug("Error received from %s: %s", error.source, error.message)
 
     def show_recipe_loaded(self, event: RecipeLoaded) -> None:
         """Passed whole: the summary is what fills a table or a sequence chooser."""
-        log.info("recipe loaded: %s %s", event.recipe_name, event.recipe_version)
+        log.debug(
+            "RecipeLoaded received: '%s' v%s with %d sequences.",
+            event.recipe_name,
+            event.recipe_version,
+            len(event.sequences),
+        )
 
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
-        log.info("run started: %s", recipe_name)
+        log.debug("RunStarted received for recipe '%s'.", recipe_name)
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
-        log.info("run finished: %s (%d steps)", result, len(outcomes))
+        log.debug("RunFinished received: %s over %d steps.", result.name, len(outcomes))
 
     def show_sequence_started(self, sequence_name: str) -> None:
-        log.info("sequence started: %s", sequence_name)
+        log.debug("SequenceStarted received for '%s'.", sequence_name)
 
     def show_sequence_finished(self, sequence_name: str, result: ResultType) -> None:
-        log.info("sequence finished: %s -> %s", sequence_name, result)
+        log.debug("SequenceFinished received for '%s': %s.", sequence_name, result.name)
 
     def show_step_started(self, event: StepStarted) -> None:
-        log.info("step started: %s", event.step_name)
+        log.debug("StepStarted received for '%s'.", event.step_name)
 
     def show_step_finished(self, outcome: StepOutcome) -> None:
-        log.info("step finished: %s -> %s", outcome.step_name, outcome.result)
+        log.debug("StepFinished received for '%s': %s.", outcome.step_name, outcome.result.name)
 
     def show_report_ready(self, event: ReportReady) -> None:
         """The run's report is on disk. Passed whole: a frontend that offers
         "open the folder" needs `report_dir`, one that names the file needs
         `report_path`."""
-        log.info("report ready: %s", event.report_path)
+        log.debug("ReportReady received: %s", event.report_path)
 
     def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
         """What the run has learned about the unit on the bench - the globals
         the recipe named in `report_metadata`, as they are set."""
-        for name, value in values:
-            log.info("%s: %s", name, value)
+        log.debug(
+            "RunMetadata received: %s.",
+            ", ".join(f"{name} = {value}" for name, value in values),
+        )
 
     def ask_user(self, request: UserPromptRequest) -> None:
         """
@@ -247,12 +262,20 @@ class HmiClient:
         The default declines, because a frontend that cannot ask must still
         answer: the step on the other side is blocked until it hears something.
         """
-        log.warning("Cannot prompt the operator: %s", request.message)
+        log.warning(
+            "This interface cannot ask the operator anything, so the question "
+            "'%s' was declined.",
+            request.message,
+        )
         self.answer_user_prompt(request, None)
 
     def ask_user_text(self, request: UserTextRequest) -> None:
         """As ask_user(), and declines for the same reason."""
-        log.warning("Cannot ask the operator to type anything: %s", request.message)
+        log.warning(
+            "This interface cannot ask the operator to type anything, so the "
+            "request '%s' was declined.",
+            request.message,
+        )
         self.answer_user_text(request, None)
 
     def on_stop(self) -> None:

@@ -32,13 +32,16 @@ imports the tool and the tool still cannot affect the run. See
 """
 
 import argparse
+import getpass
 import logging
+import platform
 import subprocess
 import sys
 import time
 from multiprocessing import Process, Queue, get_start_method, set_start_method
 from pathlib import Path
 
+from pypts._version import __version__
 from pypts.config_handler import BootstrapOutcome, ConfigHandler
 from pypts.core.core import core_main
 from pypts.hmi.cli.cli import cli_main
@@ -185,13 +188,22 @@ def main() -> None:
         # logged now.
         config.replay_bootstrap_log()
 
-        # Basic information about the runtime
+        # The first three lines of every run log: what this is, who ran it,
+        # and where the file they are reading lives. A log taken out of context
+        # for a support ticket still answers all three - logger.md section 6.
+        log.info("PyPTS %s started in %s mode.", __version__, args.mode.upper())
+        log.info("Started by %s on %s.", describe_operator(), platform.node() or "an unknown host")
         log.info("Run log: %s", log_file_path)
-        log.info("Log level: %s", logging.getLevelName(log_level))
+
+        log.debug("Logging at %s.", logging.getLevelName(log_level))
         if not level_was_understood:
-            log.warning("Unknown log level: %r. Using the default.", configured_level)
-        log.info(
-            "Operating system: %s %s (%s)",
+            log.warning(
+                "The logging level in the settings file is not one this software "
+                "knows, so the usual level is being used instead."
+            )
+            log.debug("The unrecognised level was %r.", configured_level)
+        log.debug(
+            "Operating system: %s %s (%s).",
             config.get_parameter("operating_system.name"),
             config.get_parameter("operating_system.version"),
             config.get_parameter("operating_system.architecture"),
@@ -209,6 +221,7 @@ def main() -> None:
             args=(to_hmi, to_core, log_queue, log_level),
         )
         core_process.start()
+        log.debug("Core process started (pid %s).", core_process.pid)
 
         if args.mode == "gui":
             # The GUI is given the log path as well as the queue: it tails the
@@ -220,10 +233,13 @@ def main() -> None:
                 args=(to_core, to_hmi, log_queue, log_level, log_file_path),
             )
             ui_process.start()
+            log.debug("GUI process started (pid %s).", ui_process.pid)
             ui_process.join()
+            log.debug("The GUI process has ended.")
         else:
             # The CLI runs here in the launcher's own process, so there is no
             # third process in CLI mode.
+            log.debug("Running the CLI in the launcher process.")
             cli_main(to_core, to_hmi)
     finally:
         # In case of shutdown of the launcher (instead of clean exit from the UI)
@@ -232,18 +248,36 @@ def main() -> None:
         # Deliberately not stopped with the rest - for debugging purposes.
         # To be removed after reaching stable build.
         if monitor_process is not None and monitor_process.poll() is None:
-            log.info(
+            log.debug(
                 "Debug Monitor (pid %d) left running; close its window when you are done.",
                 monitor_process.pid,
             )
 
-        log.info("Stopping logger...")
+        log.info("PyPTS has finished.")
+        log.debug("Stopping the Logger.")
         # A queued message, so the Logger acts on it only after writing
         # everything already in flight.
         logger_control.send(StopLogger())
         logger_process.join(timeout=LOGGER_SHUTDOWN_TIMEOUT_S)
         if logger_process.is_alive():
             logger_process.terminate()
+
+
+def describe_operator() -> str:
+    """
+    Who is running this, for the second line of the run log.
+
+    getpass.getuser() reads the environment before it asks the system, and on a
+    machine where none of the usual variables is set it raises rather than
+    returning anything: OSError where there is no password database entry, and
+    KeyError from the pwd lookup underneath it. A run log that cannot name its
+    operator is still a perfectly good run log, so the failure is worth a word
+    and nothing more.
+    """
+    try:
+        return getpass.getuser()
+    except (OSError, KeyError):
+        return "an unknown user"
 
 
 def show_config_popup(mode: str, title: str, text: str, *, warning: bool) -> None:
@@ -307,8 +341,8 @@ def start_debug_monitor(log_file_path: str, log_level: int) -> subprocess.Popen 
     """
     if log_level > logging.DEBUG:
         log.warning(
-            "Debug Monitor asked for, but this run logs at %s: the message trace is "
-            "written at DEBUG only, so its Trace tab will stay empty. Use --log-level DEBUG.",
+            "The Debug Monitor was asked for, but this run records at %s: its Trace "
+            "tab will stay empty. Start with --log-level DEBUG to fill it.",
             logging.getLevelName(log_level),
         )
 
@@ -316,11 +350,8 @@ def start_debug_monitor(log_file_path: str, log_level: int) -> subprocess.Popen 
     deadline = time.monotonic() + MONITOR_LOG_WAIT_S
     while not path.is_file():
         if time.monotonic() >= deadline:
-            log.warning(
-                "Debug Monitor not started: the Logger did not create %s within %.0f s.",
-                path,
-                MONITOR_LOG_WAIT_S,
-            )
+            log.warning("The Debug Monitor did not start: the run log was not created in time.")
+            log.debug("Waited %.1f s for %s.", MONITOR_LOG_WAIT_S, path)
             return None
         time.sleep(MONITOR_LOG_POLL_S)
 
@@ -329,10 +360,10 @@ def start_debug_monitor(log_file_path: str, log_level: int) -> subprocess.Popen 
             [sys.executable, "-m", DEBUG_MONITOR_MODULE, str(path)]
         )
     except OSError as error:
-        log.warning("Debug Monitor could not be started: %s", error)
+        log.warning("The Debug Monitor could not be started: %s", error)
         return None
 
-    log.info("Debug Monitor started (pid %d), reading %s", monitor_process.pid, path)
+    log.debug("Debug Monitor started (pid %d), reading %s.", monitor_process.pid, path)
     return monitor_process
 
 
@@ -347,14 +378,18 @@ def stop_core(core_process: Process | None, to_core: QueueWrapper[HmiToCore]) ->
     if core_process is None:
         return
 
+    log.debug("Asking the Core process to shut down.")
     to_core.send(HmiStopped())
     to_core.send(ShutdownRequested())
     core_process.join(timeout=CORE_SHUTDOWN_TIMEOUT_S)
 
     if core_process.is_alive():
-        log.warning("Core did not shut down in time; terminating it.")
+        log.warning("The engine did not shut down in time and was closed by force.")
+        log.debug("Terminating the Core process after %.1f s.", CORE_SHUTDOWN_TIMEOUT_S)
         core_process.terminate()
         core_process.join(timeout=CORE_SHUTDOWN_TIMEOUT_S)
+    else:
+        log.debug("The Core process has ended.")
 
 
 if __name__ == "__main__":

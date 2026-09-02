@@ -170,8 +170,8 @@ def _check_framework_version(header: dict[str, Any], file_name: str) -> str:
     declared_pair = _major_minor(declared)
     if not declared_pair:
         log.error(
-            "Recipe '%s' declares version %r, which is not a pypts version like "
-            "'0.2' - no compatibility check was made.",
+            "Recipe '%s' gives its version as '%s', which is not a version this "
+            "software recognises, so it could not be checked. It was loaded anyway.",
             file_name,
             declared,
         )
@@ -187,7 +187,8 @@ def _check_framework_version(header: dict[str, Any], file_name: str) -> str:
         return ""
 
     log.error(
-        "Recipe '%s' was written for pypts %s but this is pypts %s - loading anyway.",
+        "Recipe '%s' was written for PyPTS %s but this is PyPTS %s. It was loaded "
+        "anyway - check that it still does what you expect.",
         file_name,
         declared_pair,
         running_pair,

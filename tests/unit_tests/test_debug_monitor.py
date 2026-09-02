@@ -335,7 +335,7 @@ def test_cores_own_verdict_is_recorded_beside_the_derived_one():
         tracker,
         [
             heartbeat_line("09:32:58.000", "sequencer"),
-            "2026-08-12 09:33:05.000;WARNING;Core;core.py:do_periodic_tasks;Heartbeat timeout for module: sequencer",
+            "2026-08-12 09:33:05.000;DEBUG;Core;core.py:do_periodic_tasks;Heartbeat timeout for module: sequencer",
         ],
     )
 
@@ -343,7 +343,7 @@ def test_cores_own_verdict_is_recorded_beside_the_derived_one():
 
     feed(
         tracker,
-        ["2026-08-12 09:33:06.000;INFO;Core;core.py:note_heartbeat;Module is responding again: sequencer"],
+        ["2026-08-12 09:33:06.000;DEBUG;Core;core.py:note_heartbeat;Module is responding again: sequencer"],
     )
 
     assert tracker.core_verdict("sequencer") == "responding"

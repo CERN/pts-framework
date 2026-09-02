@@ -571,7 +571,7 @@ def test_creating_the_file_is_narrated(config_path, caplog):
 
     assert "No configuration file at" in caplog.text
     assert "creating one from the template" in caplog.text
-    assert "Configuration created at" in caplog.text
+    assert "A new settings file was created at" in caplog.text
     assert str(config_path) in caplog.text
 
 
@@ -617,7 +617,14 @@ def test_every_value_in_force_is_logged_at_debug(config, caplog):
 
 
 def test_the_value_dump_is_debug_only(config, caplog):
-    """One line per key is right for a trace and wrong for a normal run."""
+    """
+    One line per key is right for a trace and wrong for a normal run.
+
+    So is the "loaded from ... structure version N, M sections" line: every
+    process that reads the configuration replays it, so at INFO the operator
+    would be told it once per process, about a file they never open. An
+    ordinary load says nothing at INFO at all - logger.md section 1.
+    """
     ConfigHandler.reset_for_testing()
     handler = _bootstrap_before_logging()
 
@@ -625,6 +632,15 @@ def test_the_value_dump_is_debug_only(config, caplog):
         handler.replay_bootstrap_log()
 
     assert "Configuration value" not in caplog.text
+    assert "Configuration loaded from" not in caplog.text
+
+    caplog.clear()
+    ConfigHandler.reset_for_testing()
+    handler = _bootstrap_before_logging()
+    with caplog.at_level(logging.DEBUG):
+        handler.replay_bootstrap_log()
+
+    assert "Configuration value" in caplog.text
     assert "Configuration loaded from" in caplog.text
 
 

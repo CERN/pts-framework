@@ -1628,7 +1628,7 @@ def test_a_machine_with_no_browser_only_logs(qapp, monkeypatch, caplog):
     with caplog.at_level(logging.WARNING):
         open_external_url("https://example.invalid/")
 
-    assert "Could not open https://example.invalid/" in caplog.text
+    assert "no application set up to open https://example.invalid/" in caplog.text
 
 
 def test_run_metadata_is_shown_in_the_top_bar(gui):

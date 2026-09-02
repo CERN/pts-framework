@@ -352,6 +352,13 @@ not details:
   undocumented. The default is unchanged by it: a failing measurement still never halts
   anything on its own, because a failing DUT should still be fully characterised. The flag
   is the only thing that makes a FAIL matter to control flow.
+- **The operator's step lines are written here**, in `run_steps()` and `log_step_outcome()`,
+  because this is the only place that knows a step's position in its list, its verdict and
+  how long it took: `Step 4/12 'read_voltage' FAIL (1.1 s).` The `phase` argument is only the
+  word those lines start with, so a teardown step reads `Teardown step 1/2 'power_off'`
+  rather than as a second step 1; it changes nothing about how a step is run. A `FAIL` logs
+  at INFO - a failing DUT is a test result, not a software fault - and only a step that could
+  not run at all writes an `ERROR`. `logger/logger.md` is the authority on all of this.
 - **Per step and nowhere else.** No header field, no `globals.continue_on_error`. Those two
   were F1 (the header form was inert, and four of five example recipes used it) and F8 (the
   global form overrode everything and otherwise leaked forward from whichever step last

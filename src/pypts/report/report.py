@@ -154,19 +154,20 @@ class Report:
 
     @catch_and_report_errors()
     def start(self) -> None:
-        log.info("Starting module.")
-        log.info("Reports will be written to: %s", self.output_dir)
+        log.debug("REPORT module starting.")
+        log.debug("Reports will be written under %s.", self.output_dir)
+        log.info("REPORT module started.")
         self.main_loop()
-        log.info("Module stopped.")
+        log.info("REPORT module stopped.")
 
     @catch_and_report_errors()
     def main_loop(self) -> None:
-        log.info("Starting main event loop.")
+        log.debug("REPORT entered its main event loop.")
         while self.running:
             self.poll_core()
             self.do_periodic_tasks()
             time.sleep(0.01)
-        log.info("Left main event loop.")
+        log.debug("REPORT left its main event loop.")
 
     @catch_and_report_errors()
     def poll_core(self) -> None:
@@ -225,7 +226,10 @@ class Report:
         self.csv_writer = csv.DictWriter(self.csv_file, fieldnames=list(self.columns))
         self.csv_writer.writeheader()
         self.csv_file.flush()
-        log.info("Recording run results to: %s", csv_path)
+        # One of the three paths logger.md keeps at INFO: the operator has to
+        # be able to find the run's files without asking anyone.
+        log.info("Results will be written to: %s", self.run_dir)
+        log.debug("The run's CSV is %s with columns %s.", csv_path, ", ".join(self.columns))
 
     def make_run_dir(self, recipe_name: str) -> Path:
         """
@@ -250,8 +254,9 @@ class Report:
         """
         if self.csv_writer is None or self.csv_file is None:
             log.warning(
-                "Dropping a step record with no run open: %s", event.outcome.step_name
+                "Step '%s' could not be added to the results file.", event.outcome.step_name
             )
+            log.debug("No run is open, so there is no CSV writer to append to.")
             return
         row = self.run_level_cells()
         row.update(
@@ -313,13 +318,16 @@ class Report:
         """
         for name, value in values:
             self.metadata[name] = value
-        log.info("Run metadata recorded: %s", ", ".join(f"{n}={v}" for n, v in values))
+        log.debug(
+            "Report stored the run metadata: %s.",
+            ", ".join(f"{name} = {value}" for name, value in values),
+        )
 
     @catch_and_report_errors()
     def finish_run(self, result: ResultType) -> None:
         """The run is over: keep its verdict, settle its CSV, name its folder."""
         if self.run_dir is None:
-            log.warning("RunFinished with no run open; nothing to close.")
+            log.debug("RunFinished arrived with no run open; there is nothing to close.")
             return
         self.run_result = result
         self.close_csv()
@@ -368,20 +376,19 @@ class Report:
             return
         target = self.run_dir.with_name(self.run_dir.name + "_" + "_".join(suffix_parts))
         if target.exists():
-            log.warning("Not renaming the run folder: %s already exists.", target)
+            log.warning("The results folder kept its name: '%s' already exists.", target.name)
+            log.debug("Wanted to rename %s to %s.", self.run_dir, target)
             return
         try:
             self.run_dir.rename(target)
         except OSError as error:
             log.warning(
-                "Could not rename the run folder to %s (%s); keeping %s.",
-                target.name,
-                error,
-                self.run_dir,
+                "The results folder could not be renamed to '%s': %s", target.name, error
             )
+            log.debug("Keeping the results in %s.", self.run_dir)
             return
         self.run_dir = target
-        log.info("Run folder is now: %s", self.run_dir)
+        log.info("Results are in: %s", self.run_dir)
 
     def close_csv(self) -> None:
         if self.csv_file is not None:
@@ -397,12 +404,13 @@ class Report:
         Build report.html from the recorded rows
         """
         if self.run_dir is None:
-            log.warning("Cannot generate: no run has been recorded.")
+            log.warning("No report was generated: no test run has been recorded yet.")
             return
         self.close_csv()
         html_path = self.run_dir / "report.html"
         html_path.write_text(self.render_html(), encoding="utf-8")
         log.info("Report generated: %s", html_path)
+        log.debug("The report covers %d recorded step rows.", len(self.rows))
         self.core.send(ReportGenerated(report_path=str(html_path)))
 
     def render_html(self) -> str:
@@ -509,7 +517,7 @@ tr.STOP td {{ background: #ece0f4; }}
         Write the generated report out in another format.
         Not implemented yet
         """
-        log.warning("Cannot export: report export is not implemented.")
+        log.warning("The report could not be exported: exporting is not available yet.")
 
     # --- Housekeeping ---------------------------------------------------------
 
@@ -521,5 +529,5 @@ tr.STOP td {{ background: #ece0f4; }}
     def stop(self) -> None:
         self.running = False
         self.close_csv()
-        log.info("Stopping module.")
+        log.debug("REPORT module stopping.")
         self.core.send(ReportStopped())

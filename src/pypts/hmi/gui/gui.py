@@ -99,7 +99,7 @@ def open_external_url(url: str) -> None:
     part of running a recipe.
     """
     if not QDesktopServices.openUrl(QUrl(url)):
-        log.warning("Could not open %s - no handler for it on this machine.", url)
+        log.warning("This machine has no application set up to open %s.", url)
 
 
 def gui_main(
@@ -296,7 +296,7 @@ class GUI(HmiClient):
         self, to_core: QueueWrapper[HmiToCore], from_core: QueueWrapper[CoreToHmi]
     ) -> None:
         super().__init__(to_core, from_core)
-        log.info("Starting module.")
+        log.debug("GUI module starting.")
 
         self.current_recipe: RecipeLoaded | None = None
         self._run_outcomes: list[StepOutcome] = []
@@ -357,7 +357,8 @@ class GUI(HmiClient):
         self.log_timer.timeout.connect(self.poll_log)
         self.start_log_tail()
 
-        log.info("Starting main event loop.")
+        log.info("GUI module started.")
+        log.debug("GUI entered its main event loop.")
         self.timer = QTimer()
         self.timer.timeout.connect(self.poll_core)
         self.timer.timeout.connect(self.do_periodic_tasks)
@@ -378,7 +379,7 @@ class GUI(HmiClient):
         """
         log_path = get_log_path()
         if log_path is None:
-            log.debug("No run log path was given; the log panel stays empty.")
+            log.debug("No run log path was given, so the log panel stays empty.")
             self.center.log_panel.append_line("No run log to follow.")
             return
 
@@ -396,7 +397,7 @@ class GUI(HmiClient):
             self.center.log_panel.append_line(f"Could not open the run log: {log_path}")
             return
 
-        log.debug("Log panel is following the run log: %s", log_path)
+        log.debug("The log panel is following the run log at %s.", log_path)
         self.log_tail = tail
         self.log_timer.start(LOG_POLL_INTERVAL_MS)
 
@@ -474,11 +475,13 @@ class GUI(HmiClient):
     # --- Presentation hooks -----------------------------------------------------
 
     def show_status(self, text: str) -> None:
-        log.info("status update: %s", text)
+        # The status bar is a display, not a record. Whatever it is showing was
+        # already logged by the module the fact belongs to - logger.md section 5.
+        log.debug("Status line: %s", text)
         self.status_label.setText(f"Status: {text}")
 
     def show_error(self, error: ModuleError) -> None:
-        log.error("%s: %s", error.source, error.message)
+        log.debug("Error received from %s: %s", error.source, error.message)
         self.status_label.setText(f"Error: {error.message}")
 
     def show_recipe_loaded(self, event: RecipeLoaded) -> None:
@@ -526,10 +529,10 @@ class GUI(HmiClient):
         self.window.results_panel.set_results(outcomes)
 
     def show_sequence_started(self, sequence_name: str) -> None:
-        log.info("sequence started: %s", sequence_name)
+        log.debug("SequenceStarted received for '%s'.", sequence_name)
 
     def show_sequence_finished(self, sequence_name: str, result: ResultType) -> None:
-        log.info("sequence finished: %s %s", sequence_name, result)
+        log.debug("SequenceFinished received for '%s': %s.", sequence_name, result.name)
 
     def show_step_started(self, event: StepStarted) -> None:
         self.step_table.mark_running(event)
@@ -568,7 +571,7 @@ class GUI(HmiClient):
         """
         outcome = show_remove_cache_dialog(survey(), parent=self.window)
         if outcome is None:
-            log.info("Remove Cache: cancelled by the operator.")
+            log.info("The operator cancelled Remove Cache.")
             return
 
         # The store still holds the list it read at start-up and would write it
@@ -642,7 +645,7 @@ class GUI(HmiClient):
     @catch_and_report_errors()
     def _clear_recent_recipes(self) -> None:
         self.recent_recipes.clear()
-        log.info("Recent recipes list cleared.")
+        log.info("The operator cleared the recent recipes list.")
 
     @catch_and_report_errors()
     def open_report_folder(self) -> None:
@@ -678,9 +681,12 @@ class GUI(HmiClient):
 
     def on_stop(self) -> None:
         """Tear the window down. Called from stop(), once CORE has sent StopHmi."""
+        log.debug("GUI module stopping.")
         self._theme_disconnect()
         self.timer.stop()
         self.stop_log_tail()
         self.window.allow_close = True
         self.window.close()
+        log.debug("GUI left its main event loop.")
+        log.info("GUI module stopped.")
         QTimer.singleShot(0, QApplication.quit)

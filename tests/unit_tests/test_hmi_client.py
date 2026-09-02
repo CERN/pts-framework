@@ -75,7 +75,7 @@ def test_wait_until_stopped_returns_as_soon_as_stop_arrives(client, caplog):
 
     assert elapsed < PROMPT_S, f"waited {elapsed:.2f}s for a stop that had already arrived"
     assert instance.running is False
-    assert not [r for r in caplog.records if "did not acknowledge" in r.getMessage()]
+    assert not [r for r in caplog.records if "did not confirm the shutdown" in r.getMessage()]
 
 
 def test_wait_until_stopped_gives_up_after_the_grace_period(client, caplog):
@@ -91,7 +91,7 @@ def test_wait_until_stopped_gives_up_after_the_grace_period(client, caplog):
 
     assert instance.running is False
 
-    warnings = [r for r in caplog.records if "did not acknowledge" in r.getMessage()]
+    warnings = [r for r in caplog.records if "did not confirm the shutdown" in r.getMessage()]
     assert len(warnings) == 1, f"expected one warning, got {len(warnings)}"
 
     # stop() still runs in full, so CORE - if it is listening after all - is

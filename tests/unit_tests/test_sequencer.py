@@ -611,7 +611,7 @@ def test_running_without_a_recipe_is_refused_with_an_error(sequencer):
     messages = drain(outbox)
     errors = [m for m in messages if isinstance(m, ModuleError)]
     assert len(errors) == 1
-    assert "No recipe" in errors[0].message
+    assert "no recipe is loaded" in errors[0].message
     assert not [m for m in messages if isinstance(m, RunStarted)], (
         "a refused run must not start reporting one"
     )

@@ -58,12 +58,17 @@ def test_heartbeat_timeout_warns_once_per_outage(caplog):
     # Pretend the Sequencer was last heard from well past the timeout.
     core.last_heartbeat[SEQUENCER] = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         for _ in range(50):
             core.do_periodic_tasks()
 
+    # The operator's sentence, and the machine-readable line the Debug Monitor
+    # parses, are both written once per outage.
+    spoken = [r for r in caplog.records if "has stopped responding" in r.message]
+    assert len(spoken) == 1, f"expected one warning, got {len(spoken)}"
+
     timeouts = [r for r in caplog.records if "Heartbeat timeout" in r.message]
-    assert len(timeouts) == 1, f"expected one warning, got {len(timeouts)}"
+    assert len(timeouts) == 1, f"expected one traced timeout, got {len(timeouts)}"
     assert SEQUENCER in timeouts[0].message
 
 
@@ -75,7 +80,7 @@ def test_heartbeat_timeout_is_reported_again_after_the_module_recovers(caplog):
     core = build_core_that_spawns_nothing()
     stale = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         core.last_heartbeat[SEQUENCER] = stale
         core.do_periodic_tasks()
         core.do_periodic_tasks()
@@ -100,7 +105,7 @@ def test_a_stopped_module_does_not_produce_timeout_warnings(caplog):
     with caplog.at_level(logging.WARNING):
         core.do_periodic_tasks()
 
-    assert not [r for r in caplog.records if "Heartbeat timeout" in r.message]
+    assert not [r for r in caplog.records if "has stopped responding" in r.message]
 
 
 def test_core_records_heartbeats_from_each_module():
@@ -147,7 +152,7 @@ def test_a_poisoned_message_does_not_stop_the_mediator(caplog):
     core.from_report.send("not a message")
     core.from_report.send(Heartbeat(source=REPORT, timestamp=1_700_000_003.0))
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.DEBUG):
         # The first poll trips over the poison and abandons the rest of the
         # batch; the second one finds the good message still queued.
         core.poll_all_sources()
@@ -156,7 +161,9 @@ def test_a_poisoned_message_does_not_stop_the_mediator(caplog):
     assert core.running is True
     errors = [r for r in caplog.records if r.levelno >= logging.ERROR]
     assert len(errors) == 1, f"expected one error, got {len(errors)}"
-    assert "No handler for message" in errors[0].getMessage()
+    assert "does not understand" in errors[0].getMessage()
+    # What it was stays at DEBUG, where the message repr belongs.
+    assert any("No handler for message" in r.getMessage() for r in caplog.records)
     assert core.last_heartbeat[REPORT] == 1_700_000_003.0
 
 
@@ -260,8 +267,10 @@ def test_a_module_error_is_logged_naming_the_method_and_shown_to_the_operator(ca
     The whole error path, through the real routing: reported by a module, logged
     by CORE, forwarded to the frontend.
 
-    The line has to name the *method*, not just the module - `source` alone says
-    "pypts.sequencer.sequencer", and a module has twenty methods.
+    The operator's line names the part of the software in plain words and says
+    what it reported; the DEBUG line beside it names the *method*, because
+    `source` alone says "pypts.sequencer.sequencer" and a module has twenty
+    methods. See logger.md section 7.
     """
     from pypts.messages.common_messages import ErrorSeverity, ModuleError
     from pypts.messages.core_hmi_communication import ModuleErrorReported
@@ -276,14 +285,20 @@ def test_a_module_error_is_logged_naming_the_method_and_shown_to_the_operator(ca
     )
 
     core.from_sequencer.send(error)
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         core.poll_all_sources()
 
     assert list(core.to_hmi.receive()) == [ModuleErrorReported(error)]
 
+    spoken = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert len(spoken) == 1
+    assert spoken[0].getMessage() == (
+        "A problem occurred in the test engine: the DUT did not answer"
+    )
+
     logged = "\n".join(record.getMessage() for record in caplog.records)
     assert "Sequencer.execute_sequence" in logged
-    assert "TimeoutError: the DUT did not answer" in logged
+    assert "TimeoutError" in logged
 
 
 def test_the_log_level_and_the_operator_both_follow_the_severity(caplog):
@@ -318,14 +333,16 @@ def test_core_stops_when_all_modules_have_exited(caplog):
     """The clean path: everyone answered, so CORE leaves and says so."""
     core = build_core_that_spawns_nothing()
 
-    with caplog.at_level(logging.INFO):
+    with caplog.at_level(logging.DEBUG):
         core.stop_all_modules()
         for name in core.module_running:
             core.module_running[name] = False
         core.check_stop_status()
 
     assert core.running is False
-    assert any("All modules stopped cleanly" in r.message for r in caplog.records)
+    assert any(
+        "Every module has reported itself stopped" in r.message for r in caplog.records
+    )
     assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
 
 
@@ -351,7 +368,7 @@ def test_a_module_that_never_answers_does_not_hold_core_forever(caplog):
     reporting left CORE in its loop until the launcher terminated the process -
     which took the log with it, losing the one fact worth keeping.
     """
-    from pypts.core.core import REPORT, SEQUENCER
+    from pypts.core.core import FRIENDLY_MODULE_NAME, REPORT, SEQUENCER
 
     core = build_core_that_spawns_nothing()
 
@@ -364,16 +381,23 @@ def test_a_module_that_never_answers_does_not_hold_core_forever(caplog):
     # Pretend the budget has already run out, rather than sleeping through it.
     core.shutdown_deadline = time.time() - 1
 
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.DEBUG):
         core.check_stop_status()
 
     assert core.running is False
 
-    abandoned = [r for r in caplog.records if "abandoned" in r.message]
+    abandoned = [r for r in caplog.records if "were left behind" in r.message]
     assert len(abandoned) == 1, f"expected one error, got {len(abandoned)}"
     # Naming them is most of the value: "something hung" is not actionable.
-    assert SEQUENCER in abandoned[0].message
-    assert REPORT in abandoned[0].message
+    # The operator is told which part of the software it was, in the words
+    # they know it by; the DEBUG line beside it names the modules.
+    assert FRIENDLY_MODULE_NAME[SEQUENCER] in abandoned[0].getMessage()
+    assert FRIENDLY_MODULE_NAME[REPORT] in abandoned[0].getMessage()
+
+    traced = [r for r in caplog.records if "Abandoned after" in r.message]
+    assert len(traced) == 1
+    assert SEQUENCER in traced[0].getMessage()
+    assert REPORT in traced[0].getMessage()
 
 
 def test_the_shutdown_budget_starts_when_the_stop_is_requested():
@@ -478,7 +502,7 @@ def test_shutdown_deadline_releases_the_held_stop_report(caplog):
         core.check_stop_status()
 
     assert list(core.to_report.receive()) == [StopReport()]
-    assert [r for r in caplog.records if "abandoned" in r.message]
+    assert [r for r in caplog.records if "were left behind" in r.message]
 
 
 def test_core_routes_hmi_exit_to_every_submodule():

@@ -38,7 +38,7 @@ class WaitStep(Step):
         wait_time = float(self.wait_time)
         if wait_time < 0:
             raise ValueError(f"wait_time must not be negative, got {wait_time}")
-        log.info("Waiting %s s.", wait_time)
+        log.info("Waiting %.1f s.", wait_time)
         # TODO(roadmap): sleep in slices and honour runtime.should_stop(), so a
         # long wait does not hold up an abort. The framework contract only
         # promises a stop at the next step boundary, so this is a courtesy.

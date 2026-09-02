@@ -21,6 +21,7 @@ poll_queue is gone. Reading a queue is wrapper.receive now, and it is covered in
 test_messages.py alongside the rest of the transport.
 """
 
+import logging
 import queue
 import traceback
 
@@ -167,7 +168,7 @@ def test_an_object_with_no_outbox_is_logged_rather_than_masked(decorator, caplog
         def run(self):
             raise ValueError("boom")
 
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("DEBUG"):
         if decorator is report_and_reraise:
             with pytest.raises(ValueError, match="boom"):
                 NoOutbox().run()
@@ -175,7 +176,12 @@ def test_an_object_with_no_outbox_is_logged_rather_than_masked(decorator, caplog
             NoOutbox().run()
 
     assert any("boom" in record.getMessage() for record in caplog.records)
+    # The operator's line at ERROR, the reason it could not be reported at DEBUG.
     assert any("has no outbox" in record.getMessage() for record in caplog.records)
+    assert any(
+        record.levelno == logging.ERROR and "A problem occurred" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 def test_a_reported_error_names_the_method_and_the_exception_type():
@@ -279,7 +285,7 @@ def test_a_raise_site_with_no_outbox_is_logged_rather_than_masked(report, caplog
     else:
         argument = "boom"
 
-    with caplog.at_level("ERROR"):
+    with caplog.at_level("DEBUG"):
         report(NoOutbox(), argument)
 
     assert any("boom" in record.getMessage() for record in caplog.records)

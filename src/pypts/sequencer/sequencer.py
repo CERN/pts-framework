@@ -44,7 +44,7 @@ from pypts.step.runtime import Runtime
 
 # Aliased: run_sequence() here is the loop-thread method that *starts* a run;
 # the step layer's run_sequence() is the sequence body itself.
-from pypts.step.step import StepResult
+from pypts.step.step import StepResult, count_verdicts, describe_counts
 from pypts.step.step import run_sequence as run_sequence_body
 from pypts.utilities.error_handling import catch_and_report_errors, report_error, report_problem
 from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
@@ -97,18 +97,19 @@ class Sequencer:
         self.recipe: Recipe | None = None
 
     def start(self) -> None:
-        log.info("Starting module.")
+        log.debug("SEQUENCER module starting.")
+        log.info("SEQUENCER module started.")
         self.main_loop()
-        log.info("Module stopped.")
+        log.info("SEQUENCER module stopped.")
 
     @catch_and_report_errors()
     def main_loop(self) -> None:
-        log.info("Starting main event loop.")
+        log.debug("SEQUENCER entered its main event loop.")
         while self.running:
             self.poll_core()
             self.do_periodic_tasks()
             time.sleep(0.01)
-        log.info("Left main event loop.")
+        log.debug("SEQUENCER left its main event loop.")
 
     @catch_and_report_errors()
     def poll_core(self) -> None:
@@ -137,8 +138,10 @@ class Sequencer:
     def take_recipe(self, recipe: Recipe) -> None:
         """Store the validated recipe subsequent RunSequence commands run."""
         self.recipe = recipe
-        log.info(
-            "Recipe '%s' (version %s) received. Sequences: %s",
+        # CORE owns the operator's "Recipe ... loaded" line (logger.md section
+        # 5); this is the receiving half of it and belongs at DEBUG.
+        log.debug(
+            "Sequencer received recipe '%s' v%s with sequences: %s.",
             recipe.name,
             recipe.version,
             ", ".join(recipe.sequences),
@@ -150,8 +153,8 @@ class Sequencer:
         if self.sequence_is_running():
             report_problem(
                 self,
-                f"Cannot start '{sequence_name}': a sequence is already running. "
-                f"Send StopSequence first.",
+                f"Cannot start '{sequence_name}': a test is already running. "
+                f"Stop the running test first.",
                 operation="Sequencer.run_sequence",
             )
             return
@@ -159,6 +162,7 @@ class Sequencer:
         # Cleared here rather than at the end of a run
         self.stop_requested = False
 
+        log.debug("Starting the sequence thread for '%s'.", sequence_name)
         self.sequence_thread = threading.Thread(
             target=self.execute_sequence,
             name="Sequence",
@@ -183,7 +187,7 @@ class Sequencer:
         if self.recipe is None:
             report_problem(
                 self,
-                f"No recipe loaded - cannot run '{sequence_name}'. Send LoadRecipe first.",
+                f"Cannot run '{sequence_name}': no recipe is loaded. Open a recipe first.",
                 operation="Sequencer.execute_sequence",
             )
             return
@@ -191,13 +195,18 @@ class Sequencer:
         if sequence is None:
             report_problem(
                 self,
-                f"Recipe '{self.recipe.name}' has no sequence '{sequence_name}'. "
-                f"Sequences: {', '.join(self.recipe.sequences)}",
+                f"Recipe '{self.recipe.name}' has no sequence called '{sequence_name}'. "
+                f"It has: {', '.join(self.recipe.sequences)}.",
                 operation="Sequencer.execute_sequence",
             )
             return
 
-        log.info("Run started: sequence '%s' of recipe '%s'.", sequence_name, self.recipe.name)
+        log.debug(
+            "Running sequence '%s' of recipe '%s' on the sequence thread.",
+            sequence_name,
+            self.recipe.name,
+        )
+        run_began = time.perf_counter()
         runtime = Runtime(
             globals=dict(self.recipe.globals),
             emit=self.core.send,
@@ -235,7 +244,40 @@ class Sequencer:
         self.core.send(
             RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in step_results))
         )
-        log.info("Run finished: %s.", result)
+        self.log_run_summary(sequence_name, result, step_results, time.perf_counter() - run_began)
+
+    def log_run_summary(
+        self,
+        sequence_name: str,
+        result: ResultType,
+        step_results: list[StepResult],
+        elapsed_s: float,
+    ) -> None:
+        """
+        The three lines that close the operator's account of the run.
+
+        Three records rather than one multi-line record: each then carries its
+        own timestamp, and neither the GUI's log panel nor the Debug Monitor
+        has to treat the second and third as continuations of a traceback.
+        See logger.md section 6.
+
+        Args:
+            sequence_name: the sequence that was run.
+            result: the verdict the whole run aggregated to.
+            step_results: every step that produced one, in order.
+            elapsed_s: wall clock across the whole run.
+        """
+        recipe_name = self.recipe.name if self.recipe is not None else "unknown"
+        log.info("Run summary: %s.", result.name)
+        log.info(
+            "Run summary: %s of %d steps in %.1f s.",
+            describe_counts(count_verdicts(step_results)),
+            len(step_results),
+            elapsed_s,
+        )
+        log.info(
+            "Run summary: recipe '%s', sequence '%s'.", recipe_name, sequence_name
+        )
 
     def make_metadata_watcher(
         self,
@@ -280,7 +322,9 @@ class Sequencer:
                 reported[name] = value
                 changed.append((name, value))
         if changed:
-            log.info("Run metadata: %s", ", ".join(f"{n}={v}" for n, v in changed))
+            log.info(
+                "Unit under test: %s.", ", ".join(f"{name} = {value}" for name, value in changed)
+            )
             self.core.send(RunMetadata(values=tuple(changed)))
 
     @catch_and_report_errors()
@@ -292,7 +336,8 @@ class Sequencer:
         `stop_requested` between steps, so the abort takes effect at the next
         step boundary rather than in the middle of one 
         """
-        log.info("Sequence stop requested.")
+        log.info("The operator asked to stop the run.")
+        log.debug("The stop flag is set; the run ends at the next step boundary.")
         self.stop_requested = True
 
     def ask_operator(self, request: Any) -> Any:
@@ -329,7 +374,10 @@ class Sequencer:
                 unhandled(message)
 
         if not self.pending.return_caller(message.request_id, value):
-            log.warning("Nobody was waiting for response %s", message.request_id)
+            # Late, or answered twice. Nothing is broken and nothing is lost -
+            # the step that asked has already moved on - so this is the
+            # developer's business, not the operator's.
+            log.debug("No step was waiting for the answer to request %s.", message.request_id)
 
     # --- Housekeeping ---------------------------------------------------------
 
@@ -343,7 +391,7 @@ class Sequencer:
         Shut the module down, bringing a running sequence with it.
         """
         self.running = False
-        log.info("Stopping module.")
+        log.debug("SEQUENCER module stopping.")
         self.stop_running_sequence()
         self.core.send(SequencerStopped())
 
@@ -355,7 +403,8 @@ class Sequencer:
         if thread is None or not thread.is_alive():
             return
 
-        log.info("Waiting for the running sequence to stop.")
+        log.info("Waiting for the running test to stop.")
+        log.debug("Joining the sequence thread, up to %.1f s.", SEQUENCE_JOIN_TIMEOUT_S)
         self.stop_requested = True
         thread.join(timeout=SEQUENCE_JOIN_TIMEOUT_S)
 

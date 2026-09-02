@@ -74,6 +74,11 @@ STOPPED_TYPES = {
 
 #: CORE's own two opinions, as it writes them in core.py. Matched on the prefix
 #: because the module name is appended to each.
+#:
+#: Both are DEBUG lines, which costs nothing: the Monitor has only ever had
+#: something to show on a DEBUG run. CORE's operator-facing sentences about the
+#: same two events name the module in plain language ("The test engine has
+#: stopped responding") and cannot be parsed for a name - logger.md section 7.1.
 TIMEOUT_PREFIX = "Heartbeat timeout for module: "
 RESPONDING_PREFIX = "Module is responding again: "
 
@@ -212,6 +217,10 @@ class LivenessTracker:
         it anyway, because CORE's opinion is the one thing here that cannot be
         derived - and if the text drifts, the verdict column goes blank rather
         than wrong.
+
+        The logging sweep of September 2026 came within one edit of drifting
+        them. They survive as DEBUG lines carrying nothing but the module name,
+        with a comment in `core.py` saying why they are shaped that way.
         """
         if line.continuation or line.process != "Core":
             return

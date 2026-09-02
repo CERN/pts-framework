@@ -190,7 +190,9 @@ def test_stop_core_terminates_a_wedged_core(monkeypatch, caplog):
     assert core_process.terminated is True
     # Once waiting for the clean exit, once for the terminated process to go.
     assert len(core_process.joined) == 2
-    assert [r for r in caplog.records if "terminating it" in r.getMessage()]
+    assert [
+        r for r in caplog.records if "did not shut down in time" in r.getMessage()
+    ]
 
 
 def test_stop_core_with_no_process_is_a_no_op():
@@ -227,4 +229,8 @@ def test_start_debug_monitor_gives_up_when_the_log_never_appears(
         monitor_process = startup.start_debug_monitor(str(missing_log), logging.DEBUG)
 
     assert monitor_process is None
-    assert [r for r in caplog.records if "Debug Monitor not started" in r.getMessage()]
+    assert [
+        r
+        for r in caplog.records
+        if "Debug Monitor did not start" in r.getMessage()
+    ]

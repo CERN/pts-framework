@@ -48,13 +48,14 @@ def step_yaml_by_sequence(path: str) -> dict[str, tuple[str, ...]]:
     Never raises. This is a convenience view, so a file that cannot be read or
     makes no sense costs the panel and nothing else: the recipe itself has
     already been loaded by CORE, which is what decides whether a run is
-    possible. A failure is an INFO line and an empty result.
+    possible. A failure is a DEBUG line and an empty result: the operator is
+    not missing anything they can act on, only a syntax-coloured panel.
     """
     try:
         text = Path(path).read_text(encoding="utf-8")
         documents = list(yaml.safe_load_all(text))
     except (OSError, yaml.YAMLError) as error:
-        log.info("No step YAML for '%s': %s", path, error)
+        log.debug("No step YAML available for '%s': %s", path, error)
         return {}
 
     fragments: dict[str, tuple[str, ...]] = {}
@@ -65,7 +66,7 @@ def step_yaml_by_sequence(path: str) -> dict[str, tuple[str, ...]]:
         try:
             name, rendered = _one_sequence(document)
         except (ValueError, TypeError, yaml.YAMLError) as error:
-            log.info("No step YAML for a sequence of '%s': %s", path, error)
+            log.debug("No step YAML for one sequence of '%s': %s", path, error)
             continue
         if name:
             fragments[name] = rendered

@@ -68,7 +68,8 @@ class UserWriteStep(Step):
             message=self.message,
             image_path=resolve_image_path(self.name, self.image_path, runtime.base_dir),
         )
-        log.info("Step '%s': asking the operator to type: %s", self.name, self.message)
+        log.info("Waiting for the operator to type: '%s'", self.message)
+        log.debug("Step '%s' asked request %s.", self.name, request.request_id)
         answer = ask_or_raise(self.name, runtime, request)
-        log.info("Step '%s': the operator typed %r.", self.name, answer)
+        log.info("The operator typed: '%s'.", answer)
         return answer
