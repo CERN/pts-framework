@@ -71,6 +71,19 @@ missing description, or the removed sequence ``serial_number`` field. See
 :ref:`yaml_format` for migration guidance and the generated
 :doc:`_generated/recipe_language_reference` for exact fields.
 
+**Validating a recipe without launching the GUI**
+
+Run the recipe through the production parser from the command line to get the
+same diagnostics the GUI would report, without opening it:
+
+.. code-block:: bash
+
+   python -m pypts.validate_recipe my_recipe.yml
+
+The command prints one line per diagnostic (``[code] file:line:col (field.path): message``),
+a final ``OK``/``FAILED`` summary, and exits with a non-zero status code if any
+errors were found — convenient for pre-commit hooks or CI.
+
 **ModuleNotFoundError**
 
 Ensure test_package is properly named in the recipe and that the method_name properly name the specific function to run.

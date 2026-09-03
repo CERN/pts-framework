@@ -40,6 +40,10 @@ unsafe YAML tags, missing required fields, invalid sequence references, and
 unsupported versions produce diagnostics. PyPTS does not repair or silently
 normalize legacy syntax.
 
+Run ``python -m pypts.validate_recipe my_recipe.yml`` to check a recipe file
+against these rules from the command line, without launching the GUI. See
+:ref:`troubleshooting` for details and exit codes.
+
 Variables and mappings
 ----------------------
 
