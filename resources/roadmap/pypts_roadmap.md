@@ -2486,6 +2486,89 @@ is edited.
 
 ---
 
+### 1.36 A judging failure cannot escape `run()` — **done**
+
+**Why.** The code review of `1acf7a7` found four defects in `step.py`, all in the
+failure-reporting path that commit had just reworked. One of them was structural.
+
+`run()` was a `try`/`except`/`else`: the `try` covered `process_inputs()` and `_step()`, and
+everything after it — shaping what the step returned, `process_outputs()`,
+`build_fail_reason()`, `set_result()` — sat in the `else`, **outside the net**. But that is
+exactly where a *recipe* mistake lands. A recipe declaring `outputs: {voltage: …}` against a
+step that returns `{"volts": 4.2}` raised `KeyError('voltage')`; a `range` check over `'n/a'`
+raised `ValueError` out of `float()`. Neither became a `StepResult`.
+
+The damage was not local. The exception unwound `run()` → `run_steps()` → `run_sequence()`
+(whose `try`/`finally` ran teardown and re-raised) up to `Sequencer.execute_sequence`, where
+`@catch_and_report_errors()` finally swallowed it. So `SequenceFinished` never fired,
+`RunFinished` carried an **empty** outcomes tuple — the run summary said *"no steps"* — and
+every step after the bad one was abandoned with no `skip_reason` pass, leaving its row in the
+GUI step table *Pending* forever. That is precisely the outcome `run_steps()`' skip-reason
+design (§1.30) exists to prevent, defeated by one misplaced `else`. It also contradicted the
+module's own docstring: *"`run()` is the one place that catches broadly, because turning the
+exception into a result **is** its job."*
+
+**What changed.**
+
+- **The judging block gets a `try` of its own**, catching `(KeyError, ValueError, TypeError)`
+  and calling `set_error()`. Deliberately narrow rather than a widened broad `except`: these
+  three are what a recipe mistake actually raises here, and the raise sites are countable —
+  `float()`, `==`, `bool()`, a dict lookup, and `Runtime.set_global()`, which is one
+  assignment into a dict.
+- **A declared output the step never returned names itself.** `process_outputs()` checks
+  membership before the `match`, for the four types that read a value (`passfail`, `equals`,
+  `range`, `global`; not `pass`), and raises an explanatory `ValueError` naming the step, the
+  missing output and what the step *did* return. The operator's line reads
+  *"the recipe declares output 'voltag' but the step did not return it. It returned:
+  voltage."* instead of `KeyError: 'voltag'` — which is the typo, spelled out. It mirrors how
+  `process_inputs()` already refuses an unknown input type.
+- **An ERROR keeps the outputs the step had already produced.** `set_error()` takes them and
+  stores them. Judging can fail *after* a measurement was taken, and the measurement is
+  exactly what explains the failure; it used to be dropped, so the report's outputs cell for
+  the errored step was empty.
+- **The operator's ERROR line comes from the exception, not from the traceback text.**
+  `last_line()` returned the last *physical* line of the stored traceback, so an exception
+  whose message spans lines — a `CalledProcessError`, a YAML error, a wrapped driver error —
+  lost its type and everything above the last line: `ValueError("the instrument did not
+  answer\nGPIB timeout after 5 s")` logged only `GPIB timeout after 5 s`. `StepResult` now
+  carries `error_summary` beside `error_info`, built by `exception_headline()` with
+  `traceback.format_exception_only()`, and a multi-line message is joined with `; ` so the
+  log line stays one line. `error_info` is unchanged — still the whole traceback, still what
+  the CSV, the tooltip and the DEBUG line read.
+- **A truncated string keeps its closing quote.** `render_value()` quoted *then* truncated,
+  so a long value came back as `'xxx...` — defeating the quoting, whose whole job is to make
+  trailing whitespace and an empty answer visible. It now shortens the inner text and quotes
+  afterwards, with the quotes counted against `MAX_VALUE_CHARS`, so the budget still means
+  "longest one value may be" and `'xxx...'` is visibly a cut *string*.
+- **The reason as a whole is bounded.** `MAX_VALUE_CHARS` bounded one value; nothing bounded
+  the count, and 200 outputs produced a measured 10,503-character reason that landed verbatim
+  in an INFO log line, a tooltip, the results panel and a CSV cell. `MAX_LISTED_ITEMS` (8)
+  now caps each of the three groups — failing checks, inputs, outputs — with `and 192 more`
+  where it cut. Whole items, never characters: a reason that ends mid-value is worse than one
+  that says how much it is not showing.
+
+- [ ] **TODO:** the narrow catch is a deliberate choice and leaves a residual: an exception
+      from the judging block outside `(KeyError, ValueError, TypeError)` still escapes
+      `run()` and costs the run its remaining steps. Nothing in the block can raise anything
+      else today. If that ever stops being checkable at a glance — a `global` output writing
+      through something richer than a dict, say — widen it to `except Exception` and let
+      `run()`'s docstring be literally true.
+- [ ] **TODO:** the CLI and the GUI still show the operator the whole traceback, because both
+      read `error_info`. `error_summary` now exists and is the line they want, with the stack
+      a click away rather than in the way. Pre-existing, unchanged here.
+- [ ] **TODO:** an INFO line now lists a step's resolved inputs, so a `global` carrying a
+      credential would be readable in the technician's log. No step type produces one today.
+
+**Verified:** `pytest tests` — 626 passed, 43 skipped (10 new tests, one existing assertion
+updated: `render_value` now ends in a quote); `ruff check src tests` clean; `mypy` clean. Plus
+a real `--mode cli --log-level DEBUG` run of a three-step bench recipe — a typo'd output name,
+a `range` over `'xy'`, then a good step — read back from its log file: both bad steps `ERROR`
+with the explanatory line, the third step `PASS`, `Sequence 'Main' finished: ERROR - 1 passed,
+2 errored`, and `Run summary: 1 passed, 2 errored of 3 steps`. Before the change that run
+ended after step 1 with an empty `RunFinished`.
+
+---
+
 ## TODO — Step types: which of the ten are ported, and which are dropped
 
 > **Status: decided 2026-09-01; `PythonModule` finished, `UserInteraction` ported (§1.28)

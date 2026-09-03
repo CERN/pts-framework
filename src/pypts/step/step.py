@@ -19,7 +19,10 @@ already holds.
 This layer is `@report_and_reraise()` territory in spirit: a step failure
 must become data (`StepResult` with ResultType.ERROR and the traceback),
 never a silent continue. `run()` is the one place that catches broadly,
-because turning the exception into a result *is* its job.
+because turning the exception into a result *is* its job - and it nets the
+output judging too, not only `_step()`: a recipe that declares an output the
+step never returns is a failure of that step, not a reason to abandon the
+rest of the sequence.
 
 `continue_on_error` is a common field of every step, default True: an ERROR
 or a FAIL is recorded and the sequence carries on. A step that says False
@@ -57,6 +60,39 @@ if TYPE_CHECKING:
 #: step table's tooltip and a CSV cell - none of which is improved by it.
 MAX_VALUE_CHARS = 80
 
+#: How many failing checks, inputs or outputs one reason lists before it stops
+#: and counts the rest. MAX_VALUE_CHARS bounds a single value; this bounds the
+#: count, so a step with two hundred outputs cannot turn one INFO line into a
+#: ten-kilobyte paragraph in the log, the tooltip, the results panel and a CSV
+#: cell all at once.
+MAX_LISTED_ITEMS = 8
+
+#: The output types that read a value out of what the step returned. `pass`
+#: does not, so a step may declare one without producing anything for it.
+READS_A_VALUE = ("passfail", "equals", "range", "global")
+
+
+def shorten(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters, the last three of them `...` when it was."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def cap_list(items: list[str]) -> list[str]:
+    """
+    `items`, cut to MAX_LISTED_ITEMS with a final phrase counting what was left.
+
+    Cutting whole items rather than characters: a reason that ends mid-value is
+    worse than one that says how much it is not showing.
+    """
+    if len(items) <= MAX_LISTED_ITEMS:
+        return items
+    remaining = len(items) - MAX_LISTED_ITEMS
+    capped = items[:MAX_LISTED_ITEMS]
+    capped.append(f"and {remaining} more")
+    return capped
+
 
 def render_value(value: Any) -> str:
     """
@@ -66,14 +102,15 @@ def render_value(value: Any) -> str:
     rather than being mistaken for a missing value; everything else is written
     plainly, because `4.2` is what the technician measured and `4.2` is what
     they should see.
+
+    A string is shortened *before* it is quoted, and its two quotes count
+    against the budget, so a value that was cut still ends in a quote and the
+    result is never longer than MAX_VALUE_CHARS. Quoting first would end a long
+    string at `...`, which reads as a cut number rather than as a cut string.
     """
     if isinstance(value, str):
-        text = "'" + value + "'"
-    else:
-        text = str(value)
-    if len(text) > MAX_VALUE_CHARS:
-        text = text[: MAX_VALUE_CHARS - 3] + "..."
-    return text
+        return "'" + shorten(value, MAX_VALUE_CHARS - 2) + "'"
+    return shorten(str(value), MAX_VALUE_CHARS)
 
 
 def describe_failed_check(output_name: str, output_config: dict[str, Any], value: Any) -> str:
@@ -104,26 +141,29 @@ def describe_failed_check(output_name: str, output_config: dict[str, Any], value
             return measured
 
 
-def last_line(step_result: "StepResult") -> str:
+def exception_headline(exc: BaseException) -> str:
     """
-    The exception and its message, off the end of a stored traceback.
+    The exception and its message on one line: `ValueError: no answer`.
 
-    A traceback's last line is `ValueError: the instrument did not answer`,
-    which is the most useful thing that can be said about an unexpected
-    failure without showing the operator a stack.
+    This is the most useful thing that can be said about an unexpected failure
+    without showing the operator a stack. It is taken from the exception rather
+    than off the end of a formatted traceback, because the last *line* of a
+    traceback is only the last line of the message: an exception whose text
+    spans lines would lose its type and everything above the last one.
+
+    A message that does span lines is joined with `; ` rather than left to
+    break the operator's log line in two.
     """
-    text = step_result.error_info.strip()
-    if not text:
-        return "no reason was recorded"
-    return text.splitlines()[-1].strip()
+    lines = "".join(traceback.format_exception_only(exc)).strip().splitlines()
+    return "; ".join(line.strip() for line in lines if line.strip())
 
 
 def describe_values(label: str, values: dict[str, Any]) -> str:
     """`label: name = value, name = value`, or "" when there is nothing to show."""
     if not values:
         return ""
-    pairs = ", ".join(f"{name} = {render_value(value)}" for name, value in values.items())
-    return f"{label}: {pairs}"
+    rendered = [f"{name} = {render_value(value)}" for name, value in values.items()]
+    return f"{label}: " + ", ".join(cap_list(rendered))
 
 
 def build_fail_reason(
@@ -142,8 +182,11 @@ def build_fail_reason(
         outputs: voltage = 4.2, temperature = 31.5.` Empty when there is
         genuinely nothing to say, so the caller can leave the line at the
         duration rather than printing a bare dash.
+
+        Each of the three groups is capped at MAX_LISTED_ITEMS, so the whole
+        sentence stays a sentence however many outputs the step declared.
     """
-    parts = [failure for failure in failures if failure]
+    parts = cap_list([failure for failure in failures if failure])
     for label, values in (("inputs", step_input), ("outputs", step_output)):
         described = describe_values(label, values)
         if described:
@@ -171,6 +214,10 @@ class StepResult:
         self.inputs: dict[str, Any] = {}
         self.outputs: dict[str, Any] = {}
         self.error_info: str = ""
+        #: The exception and its message on one line, for the operator's ERROR
+        #: log line. `error_info` keeps the whole traceback, which belongs at
+        #: DEBUG; only set_error() writes this one.
+        self.error_summary: str = ""
         self.uuid: uuid.UUID = uuid.uuid4()
         self.subresults: list[StepResult] = []
 
@@ -197,11 +244,32 @@ class StepResult:
         if reason:
             self.error_info = reason
 
-    def set_error(self, error_info: str, inputs: dict[str, Any]) -> None:
-        """The step raised: verdict ERROR, keep the traceback text."""
+    def set_error(
+        self,
+        exc: BaseException,
+        inputs: dict[str, Any],
+        outputs: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        The step raised: verdict ERROR, the traceback, and the line above it.
+
+        `error_info` keeps the whole traceback, because that is the field the
+        step table's tooltip, the CLI's step line and the report's CSV already
+        read. `error_summary` is the one sentence the operator gets in the log,
+        and it is built from the live exception - see exception_headline().
+
+        `outputs` is what the step had already returned when the failure
+        happened, which is empty when `_step()` itself raised and is not when
+        the judging did. Judging can fail after a measurement was taken, and
+        that measurement is exactly what explains the failure, so it is kept
+        rather than dropped.
+        """
         self.result = ResultType.ERROR
-        self.error_info = error_info
+        self.error_info = "".join(traceback.format_exception(exc))
+        self.error_summary = exception_headline(exc)
         self.inputs = inputs
+        if outputs:
+            self.outputs = dict(outputs)
 
     def set_skip(self, reason: str = "") -> None:
         """
@@ -364,6 +432,17 @@ class Step:
         verdict = ResultType.DONE
         for output_name, output_config in self.outputs.items():
             output_type = output_config["type"]
+            if output_type in READS_A_VALUE and output_name not in step_output:
+                # A bare KeyError here would reach the operator as
+                # `KeyError: 'voltage'`, which does not say whose fault it is.
+                returned = ", ".join(step_output)
+                if not returned:
+                    returned = "nothing"
+                raise ValueError(
+                    f"Step '{self.name}': the recipe declares output "
+                    f"'{output_name}' but the step did not return it. "
+                    f"It returned: {returned}."
+                )
             passed = True
             match output_type:
                 case "pass":
@@ -424,25 +503,38 @@ class Step:
             try:
                 step_input = self.process_inputs(runtime)
                 raw_output = self._step(runtime, step_input)
-            except Exception:  # noqa: BLE001 - a step failure must become a StepResult
-                step_result.set_error(traceback.format_exc(), step_input)
+            except Exception as exc:  # noqa: BLE001 - a failure must become a StepResult
+                step_result.set_error(exc, step_input)
             else:
-                if raw_output is None:
-                    step_output: dict[str, Any] = {}
-                elif isinstance(raw_output, dict):
-                    step_output = raw_output
+                step_output: dict[str, Any] = {}
+                # Judging gets a net of its own. A recipe can declare an output
+                # the step never returns, or a `range` over something that is
+                # not a number, and neither may leave run(): an exception out
+                # of here unwinds run_steps() and run_sequence() all the way to
+                # the Sequencer, so SequenceFinished never fires and every
+                # later step is abandoned without even the SKIP row that
+                # run_steps() exists to give it.
+                try:
+                    if raw_output is None:
+                        step_output = {}
+                    elif isinstance(raw_output, dict):
+                        step_output = raw_output
+                    else:
+                        step_output = {"output": raw_output}
+                    failures: list[str] = []
+                    verdict = self.process_outputs(runtime, step_output, failures)
+                    # Only on FAIL: on any other verdict a failing check either
+                    # did not decide the outcome (F6, last-wins) or there is
+                    # nothing to explain, and a reason beside a PASS would
+                    # contradict it.
+                    if verdict is ResultType.FAIL:
+                        reason = build_fail_reason(failures, step_input, step_output)
+                    else:
+                        reason = ""
+                except (KeyError, ValueError, TypeError) as exc:
+                    step_result.set_error(exc, step_input, step_output)
                 else:
-                    step_output = {"output": raw_output}
-                failures: list[str] = []
-                verdict = self.process_outputs(runtime, step_output, failures)
-                # Only on FAIL: on any other verdict a failing check either did
-                # not decide the outcome (F6, last-wins) or there is nothing to
-                # explain, and a reason beside a PASS would contradict it.
-                if verdict is ResultType.FAIL:
-                    reason = build_fail_reason(failures, step_input, step_output)
-                else:
-                    reason = ""
-                step_result.set_result(verdict, step_input, step_output, reason)
+                    step_result.set_result(verdict, step_input, step_output, reason)
 
         duration_s = time.perf_counter() - work_began
         runtime.emit(StepFinished(outcome=step_result.to_outcome()))
@@ -611,11 +703,15 @@ def log_step_outcome(
         reason = step_result.error_info or "marked to skip in the recipe."
         log.info("%s SKIP - %s", where, reason)
     elif verdict is ResultType.ERROR:
-        # error_info is the whole traceback here. Its last line is the
-        # exception and its message - the 'raw text' half of the operator's
-        # sentence - and the rest of it belongs at DEBUG and nowhere else.
+        # error_summary is the exception and its message - the 'raw text' half
+        # of the operator's sentence. error_info is the whole traceback, and
+        # that belongs at DEBUG and nowhere else. A step that finished with no
+        # verdict at all is counted ERROR here and has neither.
         log.error(
-            "%s could not run (%.1f s): %s", where, duration_s, last_line(step_result)
+            "%s could not run (%.1f s): %s",
+            where,
+            duration_s,
+            step_result.error_summary or "no reason was recorded",
         )
         if step_result.error_info:
             log.debug(

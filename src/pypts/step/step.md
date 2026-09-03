@@ -366,6 +366,32 @@ not details:
   step table's tooltip, the CLI and the report's CSV as well as the log. The list is only used
   when the verdict is `FAIL`, so last-wins (F6) can never leave a failure written beside a
   `PASS`.
+
+  **Two budgets bound that sentence**, because all four of the places it lands are one line,
+  one cell or one tooltip. `MAX_VALUE_CHARS` (80) bounds a single value - a step is free to
+  return 40 kB and none of those four readers is improved by it - and `MAX_LISTED_ITEMS` (8)
+  bounds the *count*, separately for the failing checks, the inputs and the outputs, each
+  group ending `and 192 more` when it was cut. A string is shortened before it is quoted, so
+  a value that was cut still ends in its closing quote: `'xxx...'` is a cut string, `4.2...`
+  is a cut number, and the reader can tell them apart.
+- **Judging failures are this step's `ERROR`, not an escape from `run()`.** The judging block
+  - shaping what `_step()` returned, `process_outputs()`, `build_fail_reason()` - sits inside
+  a `try` of its own, catching `KeyError`, `ValueError` and `TypeError`. It has to: those are
+  raised by a *recipe* mistake, not a framework one - an output the step never returns, a
+  `range` over `'n/a'`, an output type nobody defined - and an exception leaving `run()`
+  unwinds `run_steps()` and `run_sequence()` all the way to `Sequencer.execute_sequence`.
+  `SequenceFinished` would never fire, `RunFinished` would carry no outcomes at all, and
+  every later step would be abandoned without even the `SKIP` row the rule below promises it.
+  A declared output the step did not return names itself rather than surfacing as
+  `KeyError: 'voltage'`, and the `StepResult` keeps the outputs the step *had* produced -
+  judging can fail after the measurement was taken, and that measurement is what explains it.
+- **The operator's ERROR line comes from the exception, not from the traceback text.**
+  `set_error()` stores both: the whole traceback on `error_info`, which is what the CSV and
+  the tooltip read and what the DEBUG line prints, and one line on `error_summary`, built
+  with `traceback.format_exception_only()`. Reading the last *line* of a formatted traceback
+  instead loses the exception type whenever the message itself spans lines, which a driver's
+  often does; a message that does span lines is joined with `; ` so the log line stays one
+  line.
 - **Per step and nowhere else.** No header field, no `globals.continue_on_error`. Those two
   were F1 (the header form was inert, and four of five example recipes used it) and F8 (the
   global form overrode everything and otherwise leaked forward from whichever step last

@@ -31,6 +31,7 @@ from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
 from pypts.step.step import (
+    MAX_LISTED_ITEMS,
     MAX_VALUE_CHARS,
     Step,
     StepResult,
@@ -60,6 +61,13 @@ class Raises(Step):
 
     def _step(self, runtime, step_input):
         raise RuntimeError("the hardware is on fire")
+
+
+class RaisesMultiline(Step):
+    """A step whose exception message spans lines, as a driver's often does."""
+
+    def _step(self, runtime, step_input):
+        raise ValueError("the instrument did not answer\nGPIB timeout after 5 s")
 
 
 class Notes(Step):
@@ -282,7 +290,15 @@ def test_a_huge_value_is_truncated():
     improved by carrying it."""
     rendered = render_value("x" * 500)
     assert len(rendered) == MAX_VALUE_CHARS
-    assert rendered.endswith("...")
+    # Quoted at both ends. The closing quote is what tells the reader the value
+    # was a string that was cut rather than a number that was; quoting before
+    # truncating used to eat it.
+    assert rendered.startswith("'")
+    assert rendered.endswith("...'")
+
+    plain = render_value(10**500)
+    assert len(plain) == MAX_VALUE_CHARS
+    assert plain.endswith("...")
 
 
 def test_the_reason_carries_the_failing_check_then_the_inputs_and_outputs():
@@ -296,6 +312,28 @@ def test_the_reason_carries_the_failing_check_then_the_inputs_and_outputs():
         "inputs: channel = 1; "
         "outputs: voltage = 4.2, temperature = 31.5."
     )
+
+
+def test_a_reason_stops_listing_values_and_counts_the_rest():
+    """MAX_VALUE_CHARS bounds one value; nothing bounded the count, so a step
+    with two hundred outputs produced a ten-kilobyte INFO line, tooltip and CSV
+    cell."""
+    outputs = {f"o{number}": number for number in range(200)}
+
+    reason = build_fail_reason(["o0 = 0, expected a pass"], {}, outputs)
+
+    assert f"and {200 - MAX_LISTED_ITEMS} more" in reason
+    assert "o7 = 7" in reason
+    assert "o8 = 8" not in reason
+    assert len(reason) < 1000
+
+
+def test_the_failing_checks_are_capped_the_same_way():
+    failures = [f"o{number} = 0, expected a pass" for number in range(50)]
+
+    reason = build_fail_reason(failures, {}, {})
+
+    assert f"and {50 - MAX_LISTED_ITEMS} more" in reason
 
 
 def test_a_step_with_no_inputs_says_nothing_about_them():
@@ -474,6 +512,114 @@ def test_a_negative_wait_time_is_an_error():
     step = WaitStep(step_name="pause", wait_time="-1")
     result = step.run(Runtime())
     assert result.result is ResultType.ERROR
+
+
+# --------------------------------------------------------------------------
+# A judging failure is this step's ERROR, never an escape from run()
+# --------------------------------------------------------------------------
+
+
+def test_a_declared_output_the_step_never_returned_is_a_step_error():
+    """A typo in the recipe used to raise KeyError straight out of run(). It is
+    an ERROR on this step, and the message says whose fault it is."""
+    step = ReturnsDict(
+        step_name="read_voltage",
+        payload={"volts": 4.2},
+        outputs={"voltage": {"type": "range", "min": "4.9", "max": "5.1"}},
+    )
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.ERROR
+    assert "voltage" in result.error_summary
+    assert "did not return it" in result.error_summary
+    # ...and it names what the step did return, which is where the typo shows.
+    assert "volts" in result.error_summary
+
+
+def test_a_step_that_returned_nothing_at_all_says_so():
+    step = ReturnsDict(
+        step_name="silent", payload=None, outputs={"voltage": {"type": "passfail"}}
+    )
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.ERROR
+    assert "returned: nothing" in result.error_summary
+
+
+def test_a_range_check_over_something_that_is_not_a_number_is_a_step_error():
+    """float('n/a') raises where the judging runs, not where the step does."""
+    step = ReturnsDict(
+        step_name="read_voltage",
+        payload={"voltage": "n/a"},
+        outputs={"voltage": {"type": "range", "min": "4.9", "max": "5.1"}},
+    )
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.ERROR
+    assert "ValueError" in result.error_summary
+
+
+def test_an_unknown_output_type_reaches_the_operator_as_a_step_error():
+    """process_outputs() raises it; run() has to turn it into a result."""
+    step = ReturnsDict(
+        step_name="odd", payload={"x": 1}, outputs={"x": {"type": "telepathy"}}
+    )
+
+    assert step.run(Runtime()).result is ResultType.ERROR
+
+
+def test_a_judging_failure_does_not_abandon_the_rest_of_the_sequence():
+    """The whole point of the fix. An exception out of the judging unwound
+    run_steps() and run_sequence() up to the Sequencer, so SequenceFinished
+    never fired and every later step was dropped without even a SKIP row."""
+    ran = []
+    typo = ReturnsDict(
+        step_name="typo", payload={"volts": 4.2}, outputs={"voltage": {"type": "passfail"}}
+    )
+    after = Notes(step_name="after", ran=ran)
+
+    results = Step.run_steps(Runtime(), [typo, after])
+
+    assert [result.result for result in results] == [ResultType.ERROR, ResultType.DONE]
+    assert ran == ["after"]
+
+
+def test_an_errored_step_keeps_the_outputs_it_had_already_produced():
+    """Judging can fail after the measurement was taken, and the measurement is
+    exactly what explains the failure."""
+    step = ReturnsDict(
+        step_name="half_judged",
+        payload={"voltage": 4.2, "temperature": "n/a"},
+        outputs={
+            "voltage": {"type": "range", "min": "4.9", "max": "5.1"},
+            "temperature": {"type": "range", "min": "10", "max": "40"},
+        },
+    )
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.ERROR
+    assert result.outputs == {"voltage": 4.2, "temperature": "n/a"}
+
+
+def test_a_step_whose_own_work_raised_has_no_outputs_to_keep():
+    assert Raises(step_name="burns").run(Runtime()).outputs == {}
+
+
+def test_the_error_line_keeps_the_exception_type_and_the_whole_message():
+    """The operator's line came off the end of the formatted traceback, so a
+    message spanning lines lost its type and everything above the last line."""
+    result = RaisesMultiline(step_name="gpib").run(Runtime())
+
+    assert result.result is ResultType.ERROR
+    assert result.error_summary == (
+        "ValueError: the instrument did not answer; GPIB timeout after 5 s"
+    )
+    # The stack itself is still there, for DEBUG and for the report.
+    assert "Traceback" in result.error_info
 
 
 # --------------------------------------------------------------------------
