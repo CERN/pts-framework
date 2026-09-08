@@ -3066,6 +3066,32 @@ tests removed above; `ruff check src tests` clean; `mypy` clean.
 
 ---
 
+### 1.44 File -> Open Config: the settings file, one click away — **done**
+
+`File` gained **Open Config** between `Open Recent` and `Exit`, with the full path of the
+file on hover. It hands `config.ini` to whatever the machine opens an `.ini` with — Notepad
+on Windows, the desktop's text editor on Linux — through the same
+`QDesktopServices.openUrl(QUrl.fromLocalFile(...))` the report button already uses.
+
+**Why.** §1.3 made the configuration file the *user's*: pypts reads it at startup and never
+rewrites it, and the fix for a broken or version-mismatched file is "edit it, or delete it".
+Until now the GUI never said where that file is, so acting on that advice meant knowing about
+`%LOCALAPPDATA%\pypts`. The entry does not change the rule — pypts still opens no editor of
+its own and reloads nothing afterwards; an edit applies to the next run.
+
+**Where.** `PtsMainWindow._build_menu()` builds the action, and turns `setToolTipsVisible` on
+for the File menu, or the path on hover would be invisible. `GUI.open_config_file()` opens it,
+decorated `@catch_and_report_errors()` — an editor that will not open must not take the
+window with it. The path comes from `file_locations.config_file_path()` rather than
+`ConfigHandler().config_path`, so the menu can be built, and the file's absence *reported*, in
+a process whose configuration was never bootstrapped; a missing file, or a machine with no
+application registered for it, is a WARNING `ModuleError` to CORE and nothing more.
+
+**Verified:** `pytest tests` — 747 passed, 42 skipped, up by the two new tests in
+`test_hmi_gui.py`; `ruff check src tests` clean; `mypy` clean.
+
+---
+
 ## TODO — Step types: which of the ten are ported, and which are dropped
 
 > **Status: decided 2026-09-01; `PythonModule` finished, `UserInteraction` ported (§1.28)
