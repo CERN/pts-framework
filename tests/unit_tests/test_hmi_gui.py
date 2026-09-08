@@ -23,6 +23,7 @@ between them.
 
 import logging
 import queue
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -1590,6 +1591,55 @@ def test_a_run_turns_the_hover_panel_off_and_the_end_of_it_back_on(gui):
     inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
     instance.poll_core()
     assert instance.step_table._running is False
+
+
+# --- File > Open Config -------------------------------------------------------
+
+
+def test_open_config_hands_the_file_to_the_default_editor(gui, tmp_path, monkeypatch):
+    """The operator edits config.ini in whatever this machine opens an .ini with;
+    pypts never opens an editor itself."""
+    from PySide6.QtGui import QDesktopServices
+
+    config_file = tmp_path / "config.ini"
+    config_file.write_text("[meta]
+", encoding="utf-8")
+    monkeypatch.setattr(file_locations, "config_file_path", lambda: config_file)
+
+    opened = []
+
+    def record(url):
+        opened.append(url)
+        return True
+
+    monkeypatch.setattr(QDesktopServices, "openUrl", record)
+
+    instance, outbox, _inbox = gui
+    instance.window.open_config_action.trigger()
+
+    assert [Path(url.toLocalFile()) for url in opened] == [config_file]
+    assert drain(outbox) == []
+
+
+def test_open_config_reports_a_missing_file_instead_of_failing(gui, tmp_path, monkeypatch):
+    """Nothing to open is a warning to the operator, not a dead menu entry and
+    not a window that goes down with it."""
+    from PySide6.QtGui import QDesktopServices
+
+    missing = tmp_path / "config.ini"
+    monkeypatch.setattr(file_locations, "config_file_path", lambda: missing)
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", lambda _url: pytest.fail("nothing to open")
+    )
+
+    instance, outbox, _inbox = gui
+    instance.window.open_config_action.trigger()
+
+    errors = [message for message in drain(outbox) if isinstance(message, ModuleError)]
+    assert len(errors) == 1
+    assert errors[0].severity is ErrorSeverity.WARNING
+    assert errors[0].operation == "open_config_file"
+    assert str(missing) in errors[0].message
 
 
 # --- The About menu -----------------------------------------------------------
