@@ -814,3 +814,100 @@ def test_core_keeps_beating_while_it_shuts_down():
     core.do_periodic_tasks()
 
     assert any(isinstance(m, Heartbeat) for m in core.to_hmi.receive())
+
+
+# --------------------------------------------------------------------------
+# Never heard from is not the same as gone
+# --------------------------------------------------------------------------
+
+
+def test_a_module_that_has_not_spoken_yet_does_not_end_the_run():
+    """
+    The startup race, and why `last_heartbeat` starts at None.
+
+    Seeded with time.time() it asserted every module had been heard from when
+    CORE was built - at which point the HMI has not been spawned. The 15 s
+    countdown was therefore already running against a frontend that was still
+    importing PySide6, which on a Linux bench with a network home directory is
+    seconds of entirely normal startup.
+    """
+    from pypts.core.core import HEARTBEAT_FATAL_S
+
+    core = build_core_that_spawns_nothing()
+    # Well past the fatal threshold, and nobody has ever said anything.
+    core.started_at = time.time() - (HEARTBEAT_FATAL_S + 100)
+
+    core.do_periodic_tasks()
+
+    assert not core.shutting_down
+    assert core.running
+
+
+def test_a_module_that_has_not_spoken_yet_is_said_to_be_starting_not_gone(caplog):
+    """
+    A different sentence, because it is a different fact: a module that has
+    never spoken was never responding, and telling a technician it "stopped
+    responding" during a normal startup would be a lie.
+    """
+    from pypts.core.core import HEARTBEAT_TIMEOUT_S
+
+    core = build_core_that_spawns_nothing()
+    core.started_at = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
+
+    with caplog.at_level(logging.DEBUG):
+        core.do_periodic_tasks()
+
+    spoken = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("has not started yet" in message for message in spoken)
+    assert not any("stopped responding" in message for message in spoken)
+
+
+def test_the_not_started_notice_is_given_once_per_module(caplog):
+    """The loop turns every 10 ms; the module stays unstarted."""
+    from pypts.core.core import HEARTBEAT_TIMEOUT_S
+
+    core = build_core_that_spawns_nothing()
+    core.started_at = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(30):
+            core.do_periodic_tasks()
+
+    spoken = [r for r in caplog.records if "has not started yet" in r.getMessage()]
+    # One per module, and no more: three modules, none of which has spoken.
+    assert len(spoken) == 3, f"expected three notices, got {len(spoken)}"
+
+
+def test_nothing_is_said_about_a_module_during_normal_startup(caplog):
+    """
+    The first seconds of every run are exactly this state. Saying anything about
+    it then would put a warning in the log of every healthy run.
+    """
+    core = build_core_that_spawns_nothing()
+
+    with caplog.at_level(logging.DEBUG):
+        core.do_periodic_tasks()
+
+    assert not [r for r in caplog.records if "has not started" in r.getMessage()]
+
+
+def test_the_fatal_countdown_starts_when_the_module_first_speaks():
+    """
+    Once a module has proved it was alive, silence means what the watchdog says
+    it means - and the clock runs from its last heartbeat, not from CORE's birth.
+    """
+    from pypts.core.core import HEARTBEAT_FATAL_S, SEQUENCER
+    from pypts.messages.common_messages import Heartbeat
+
+    core = build_core_that_spawns_nothing()
+    core.started_at = time.time() - (HEARTBEAT_FATAL_S + 100)
+
+    # It speaks once, long after CORE was built...
+    core.note_heartbeat(Heartbeat(source=SEQUENCER, timestamp=time.time()))
+    core.do_periodic_tasks()
+    assert not core.shutting_down
+
+    # ...and then goes quiet for good.
+    core.last_heartbeat[SEQUENCER] = time.time() - (HEARTBEAT_FATAL_S + 1)
+    core.do_periodic_tasks()
+    assert core.shutting_down

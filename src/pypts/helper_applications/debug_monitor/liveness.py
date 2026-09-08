@@ -9,7 +9,7 @@ None of CORE's liveness state ever leaves CORE. `module_running`,
 `last_heartbeat` and `heartbeat_lost` are dicts in `core.py`, and no message on
 the `core->hmi` link carries any of them. A frontend cannot ask.
 
-What CORE *does* about silence changed in roadmap 1.21 - past the fatal
+What CORE *does* about silence changed in roadmap 1.38 - past the fatal
 threshold it ends the run - but that did not change the sentence above. The
 state is still private; only the consequence is new, and it reaches this module
 the same way the timeout always did, as a line in the log.

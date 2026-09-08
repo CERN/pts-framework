@@ -277,12 +277,32 @@ class Core:
 
         # Which modules CORE is still waiting for before it may exit.
         self.module_running = {HMI: True, SEQUENCER: True, REPORT: True}
-        self.last_heartbeat = {name: time.time() for name in self.module_running}
+
+        #: When CORE was built, which is the only clock a module that has never
+        #: spoken can be measured against.
+        self.started_at = time.time()
+
+        #: When each module was last heard from. **None means never**, which is
+        #: not the same as "a long time ago" and is the distinction the fatal
+        #: threshold rests on.
+        #:
+        #: This used to be seeded with time.time(), asserting that every module
+        #: had been heard from when CORE was built - at which point the HMI has
+        #: not even been spawned. Harmless while a timeout only warned; once it
+        #: could end the run it meant the countdown was already running against a
+        #: frontend that was still starting. A cold PySide6 import over a network
+        #: home directory is seconds of perfectly normal startup, and it is
+        #: slower on Linux than on Windows, where all the development happens.
+        self.last_heartbeat: dict[str, float | None] = dict.fromkeys(self.module_running)
 
         # Which modules have already been reported late. The main loop turns
         # every 10 ms, so without this the timeout below would log the same
         # warning about a hundred times a second for the rest of the run.
         self.heartbeat_lost = {name: False for name in self.module_running}
+
+        # The same latch for the other sentence - a module that has not started
+        # yet, which is a different thing to say and must not be said twice.
+        self.start_reported = {name: False for name in self.module_running}
 
         #: CORE's own heartbeat, towards the HMI and nowhere else. The Sequencer
         #: and the Report are threads of this process and cannot outlive it, so
@@ -724,6 +744,13 @@ class Core:
             if not self.module_running[name]:
                 continue
 
+            if last_seen is None:
+                self.note_a_module_has_not_started(name)
+                # Never heard from is not the same as gone: it may still be
+                # starting, and a module that has never spoken cannot be said to
+                # have stopped responding. Nothing below applies until it does.
+                continue
+
             silent_for = now - last_seen
 
             if silent_for > HEARTBEAT_TIMEOUT_S and not self.heartbeat_lost[name]:
@@ -758,6 +785,35 @@ class Core:
                         name,
                         HEARTBEAT_FATAL_S,
                     )
+
+    def note_a_module_has_not_started(self, name: str) -> None:
+        """
+        Say once that a module has yet to say anything at all.
+
+        A separate sentence from "has stopped responding", because it is a
+        separate fact and the other one would be a lie: a module that has never
+        spoken was never responding. On a bench where a frontend takes a while to
+        come up this is the normal state of affairs for the first few seconds, so
+        it waits out the same reporting threshold the timeout uses and is said
+        once, not once per tick.
+
+        It does not end the run. A module that never starts at all is caught
+        where it can be caught properly: the launcher's `ui_process.join()`
+        returns at once if the frontend dies on import, and join_submodules()
+        reports a thread that failed to start.
+        """
+        if self.start_reported[name]:
+            return
+        if time.time() - self.started_at < HEARTBEAT_TIMEOUT_S:
+            return
+
+        self.start_reported[name] = True
+        log.warning("The %s has not started yet.", FRIENDLY_MODULE_NAME[name])
+        log.debug(
+            "No heartbeat from %s in the %.1f s since CORE was built.",
+            name,
+            HEARTBEAT_TIMEOUT_S,
+        )
 
     def end_run_for_silent_module(self, name: str, silent_for: float) -> None:
         """

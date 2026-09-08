@@ -186,7 +186,7 @@ produces zero trace lines.
       old file is not read at all. (The handler migrated old files for a while; migration
       and repair were removed again in August 2026 — see §1.3.) The stale file under
       `%TEMP%` is harmless and may be deleted by hand.
-- [x] **DONE (§1.20):** `--mode cli` no longer imports PySide6. The import moved into the
+- [x] **DONE (§1.37):** `--mode cli` no longer imports PySide6. The import moved into the
       `gui` branch of `main()`, which was indeed the one-line change — plus a plain message
       and a non-zero exit when Qt cannot be loaded, instead of a traceback.
       `test_importing_the_launcher_does_not_import_qt` pins it in a fresh interpreter.
@@ -2568,7 +2568,7 @@ with the explanatory line, the third step `PASS`, `Sequence 'Main' finished: ERR
 2 errored`, and `Run summary: 1 passed, 2 errored of 3 steps`. Before the change that run
 ended after step 1 with an empty `RunFinished`.
 
-### 1.20 Linux compatibility pass — **done (static); no Linux run yet**
+### 1.37 Linux compatibility pass — **done (static); no Linux run yet**
 
 A read of the whole branch for anything that would behave differently on Linux, prompted by
 the question "is this code Linux compatible?". The answer was **yes, by design** — the
@@ -2629,7 +2629,7 @@ the change; `ruff check src tests` clean; `mypy` clean.
 
 **New TODOs this opened:**
 
-- [x] **DONE (1.21):** the watchdog acts. Both halves landed; see below.
+- [x] **DONE (1.38):** the watchdog acts. Both halves landed; see below.
 
 - [ ] **TODO:** `test_console_output.py` excludes `helper_applications/`, the line ruff and
       mypy already draw. `recipe_verificator/verify_recipe.py` prints emoji from its
@@ -2645,9 +2645,9 @@ the change; `ruff check src tests` clean; `mypy` clean.
 
 ---
 
-### 1.21 The watchdog acts — **done**
+### 1.38 The watchdog acts — **done**
 
-Closes the open decision 1.11 recorded and the TODO 1.20 opened. Until now `Heartbeat`
+Closes the open decision 1.11 recorded and the TODO 1.37 opened. Until now `Heartbeat`
 travelled one way only — HMI, Sequencer and Report each ticking one at CORE — and
 `do_periodic_tasks()` answered a timeout with a WARNING and nothing else. A dead module was
 noticed and then tolerated for the rest of the run.
@@ -2704,7 +2704,7 @@ have created a config.ini and the handler refuses to invent one, so the two test
 that build a Core directly pass the value.
 
 **Verified:** `pytest tests` — 729 passed, 43 skipped (14 new tests, up from the 715/43 that
-1.20 left behind); `ruff check src tests` clean; `mypy` clean.
+1.37 left behind); `ruff check src tests` clean; `mypy` clean.
 
 The message layer enforced its own half of this exactly as `src/pypts/README.md` promises:
 adding `Heartbeat` to `CoreToHmi` made mypy fail with *"Argument 1 to unhandled has
@@ -2758,12 +2758,12 @@ and the `[watchdog]` section.
       overnight may want a different answer for the Report specifically, whose death costs
       the records but not the test.
 
-- [x] **DONE (1.22):** the Debug Monitor shows the fatal verdict. See below.
+- [x] **DONE (1.39):** the Debug Monitor shows the fatal verdict. See below.
 
 - [ ] **TODO:** in CLI mode *any* stop CORE initiates is deferred until the operator presses
       Enter. The polling thread sets `running` False correctly - from `StopHmi` or from
       `check_core_is_alive()` - but the shell is parked in `input()` and only looks at the flag
-      when it comes back. This is the pre-existing limitation recorded in 1.1, and **1.21 is
+      when it comes back. This is the pre-existing limitation recorded in 1.1, and **1.38 is
       what made it reachable**: before it, `stop_all_modules()` was only ever called from
       `ShutdownRequested`, so every shutdown began with the operator typing `exit` and the main
       thread was never blocked when it mattered. Now there are two ways for the CLI to be told
@@ -2781,9 +2781,9 @@ and the `[watchdog]` section.
 
 ---
 
-### 1.22 The Debug Monitor shows the fatal verdict — **done**
+### 1.39 The Debug Monitor shows the fatal verdict — **done**
 
-1.21 gave CORE a second heartbeat threshold and a new DEBUG line to go with it. The Monitor's
+1.38 gave CORE a second heartbeat threshold and a new DEBUG line to go with it. The Monitor's
 liveness tab parses CORE's opinions out of the log by prefix, and knew only the two that
 existed before, so the most important thing CORE can now say was the one thing the tab did not
 show.
@@ -2799,7 +2799,7 @@ somebody reading the tab for the first time.
 **CORE's fatal line was reshaped to the convention it had broken.** The prefix match takes
 everything after the prefix as the module name, so a line reading
 `Heartbeat fatal for module: sequencer (silent 16.0 s, limit 15.0 s).` parses to a name that
-is in no module table and is silently dropped — which is exactly what it did when 1.21 landed.
+is in no module table and is silently dropped — which is exactly what it did when 1.38 landed.
 It now carries the name and nothing else, with the measurements on their own record below,
 the shape `Heartbeat timeout for module: ` has always had.
 
@@ -2830,12 +2830,12 @@ CRITICAL A problem occurred in the test engine: It stopped responding for 16 sec
 
 **New TODOs this opened:**
 
-- [x] **DONE (1.23):** the Monitor has a row for CORE — and for anything else that ever
+- [x] **DONE (1.40):** the Monitor has a row for CORE — and for anything else that ever
       sends. `MODULES` is gone rather than extended; see below.
 
 ---
 
-### 1.23 The Debug Monitor discovers instead of recognising — **done**
+### 1.40 The Debug Monitor discovers instead of recognising — **done**
 
 The Monitor knew three modules and seven links, by name, in two hardcoded lists. Anything
 else was parsed and thrown away. That is the wrong shape for a troubleshooting tool: the run
@@ -2845,7 +2845,7 @@ watches is under active construction.
 **There is no list of modules any more.** A name becomes a module the first time it is seen
 *sending* on a link, and the liveness tab has as many rows as the log has shown modules, in
 the order the run introduced them. `MODULES` is deleted rather than extended, so CORE gets its
-row from the `core->hmi` heartbeat 1.21 added — answering the one question the tab could not:
+row from the `core->hmi` heartbeat 1.38 added — answering the one question the tab could not:
 whether the engine's own loop is turning — and a module added to the framework next year gets
 one the same way, with no edit here.
 
@@ -2908,6 +2908,53 @@ correctly not a module; all eight messages in the trace table.
       `Heartbeat` message rather than in a constant both ends have to agree on out of band.
 
 ---
+
+### 1.41 The watchdog no longer races its own startup — **done**
+
+Found by asking whether 1.38-1.40 would behave on Linux, which is worth recording as much as
+the fix: nothing in the diff was platform-specific, and the defect was in the semantics rather
+than in any API.
+
+`Core.__init__` seeded `last_heartbeat` with `time.time()` for all three modules - asserting
+that every one of them had been heard from at the moment CORE was built. At that moment the
+HMI has not been spawned. That was harmless while a timeout only produced a WARNING; once
+1.38 let it end the run, it meant **the fatal countdown was already running against a frontend
+that was still starting**.
+
+Measured on the development machine, warm: `import pypts.hmi.gui.gui` costs 319 ms, and CORE's
+construction to the frontend's first heartbeat is about 2 s against a 15 s limit. Comfortable
+here, and not the case that matters. Every child is spawned rather than forked (1.4.1), spawn
+is slower on Linux, and a CERN bench with an AFS or NFS home directory pays a cold PySide6
+import off the network. Ten seconds of entirely normal startup is not far-fetched, and the
+consequence of being wrong is a killed run.
+
+**None means never, and never is not the same as gone.** `last_heartbeat` starts as None per
+module. The fatal threshold applies only once a module has proved it was alive - a module that
+has never spoken cannot be "not coming back", it may simply be starting - and the clock then
+runs from its last heartbeat rather than from CORE's birth.
+
+**A module that has not started gets its own sentence.** "has stopped responding" would be a
+lie about something that was never responding, so `note_a_module_has_not_started()` says *"The
+operator interface has not started yet."* once, after the same 5 s reporting threshold. It
+does not end the run: a module that never starts at all is caught where it can be caught
+properly - the launcher's `ui_process.join()` returns at once if the frontend dies on import,
+and `join_submodules()` reports a thread that failed to start.
+
+**Verified:** `pytest tests` — 747 passed, 43 skipped (5 new); `ruff check src tests` clean;
+`mypy` clean.
+
+A healthy `--mode cli --log-level DEBUG` run logs **zero** warnings or errors, so the new
+sentence does not appear in the log of a normal startup. The kill-CORE end-to-end test still
+passes unchanged: the application closed itself 15.3 s after `taskkill /F`, both thresholds
+firing in order.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** the "has not started yet" notice is measured from `Core.started_at`, so it is
+      really "not started within 5 s of CORE". That is the right clock for the HMI, which the
+      launcher spawns immediately afterwards, and slightly generous for the Sequencer and the
+      Report, which are threads CORE starts itself and which beat within milliseconds. Not
+      worth two clocks today.
 
 ---
 
