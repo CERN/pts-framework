@@ -1602,8 +1602,7 @@ def test_open_config_hands_the_file_to_the_default_editor(gui, tmp_path, monkeyp
     from PySide6.QtGui import QDesktopServices
 
     config_file = tmp_path / "config.ini"
-    config_file.write_text("[meta]
-", encoding="utf-8")
+    config_file.write_text("[meta]\n", encoding="utf-8")
     monkeypatch.setattr(file_locations, "config_file_path", lambda: config_file)
 
     opened = []
