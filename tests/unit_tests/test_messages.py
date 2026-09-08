@@ -254,6 +254,18 @@ def ids(message_types_):
 BOUNDARY_TYPES = message_types(*BOUNDARY_LINKS)
 ALL_TYPES = message_types(*LINKS)
 
+#: The whole of the other half: types that live in messages/ but are only ever
+#: a field of a message. Listed by hand because there is nothing to derive it
+#: from - that is the point of test_no_payload_is_on_a_union below. Add a new
+#: payload here when you add one.
+PAYLOADS = (
+    ErrorSeverity,
+    ResultType,
+    StepOutcome,
+    StepSummary,
+    SequenceSummary,
+)
+
 
 # --------------------------------------------------------------------------
 # The table itself
@@ -276,6 +288,22 @@ def test_no_example_is_left_over():
         message_type.__name__ for message_type in EXAMPLES if message_type not in ALL_TYPES
     ]
     assert not orphaned, f"EXAMPLES has entries in no union: {sorted(orphaned)}"
+
+
+def test_no_payload_is_on_a_union():
+    """
+    A payload is a field of a message, never a message itself.
+
+    Nothing in the syntax separates the two - both are plain dataclasses in
+    the same files - so the banners in common_messages.py and run_events.py
+    and the first line of each payload's docstring carry the distinction.
+    This is what keeps those comments honest: put a payload on a union and it
+    is a message now, and the banner, the docstring and messages.md all lie.
+    Either move it out of PAYLOADS and document it as a message, or take it
+    back off the union.
+    """
+    promoted = [payload.__name__ for payload in PAYLOADS if payload in ALL_TYPES]
+    assert not promoted, f"PAYLOADS reached a union: {sorted(promoted)}"
 
 
 @pytest.mark.parametrize("message_type", ALL_TYPES, ids=ids(ALL_TYPES))

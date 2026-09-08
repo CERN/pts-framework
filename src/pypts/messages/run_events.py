@@ -26,19 +26,18 @@ from uuid import UUID
 
 from pypts.messages.common_messages import ResultType, StepOutcome
 
-# --- Progress -----------------------------------------------------------------
+# --- Payloads: carried inside a message, never sent alone ---------------------
 #
-# All seven are live. CORE relays them unchanged
-# (`core.py: handle_sequencer_message()`) and both frontends render them
-# through the presentation hooks in `hmi/hmi_client.py`. The senders:
-# `Sequencer.execute_sequence()` for the run-level pair, the step layer
-# (through `Runtime.emit`) for the sequence and step events, and
-# `Core.load_recipe()` for `RecipeLoaded`.
+# Neither reaches a union or a handler; both exist only to give RecipeLoaded
+# its shape. See common_messages.py for the distinction, and
+# `test_messages.py: test_no_payload_is_on_a_union` for what enforces it.
 
 
 @dataclass
 class StepSummary:
     """
+    Payload of SequenceSummary.steps. Never sent alone.
+
     One step, as a frontend needs to draw its table row before the run.
 
     `step_id` is the same UUID the step's StepStarted/StepFinished will carry,
@@ -54,6 +53,8 @@ class StepSummary:
 @dataclass
 class SequenceSummary:
     """
+    Payload of RecipeLoaded.sequences. Never sent alone.
+
     One sequence's rows, in the order they will run.
 
     Includes the teardown steps at the end: they run through the same
@@ -62,6 +63,16 @@ class SequenceSummary:
 
     sequence_name: str
     steps: tuple[StepSummary, ...]
+
+
+# --- Progress: messages, on a link union and sent on their own ----------------
+#
+# All seven are live. CORE relays them unchanged
+# (`core.py: handle_sequencer_message()`) and both frontends render them
+# through the presentation hooks in `hmi/hmi_client.py`. The senders:
+# `Sequencer.execute_sequence()` for the run-level pair, the step layer
+# (through `Runtime.emit`) for the sequence and step events, and
+# `Core.load_recipe()` for `RecipeLoaded`.
 
 
 # Sender: Core.load_recipe(). Receiver: hmi_client.py show_recipe_loaded()

@@ -84,11 +84,30 @@ A type lives here when more than one link uses it: either every module sends it,
 rather than repacking it into a dict, which is how the old code lost the severity enum on
 every hop.
 
+### Messages and payloads
+
+Both files hold two kinds of type, and the **Kind** column below is where they part:
+
+- **`CMD` / `EVT` — a message.** A member of a link union. `QueueWrapper.send()` takes it,
+  a handler answers it with a `case`, `mypy` counts it towards exhaustiveness, and
+  `EXAMPLES` in `test_messages.py` must have one.
+- **`—` — a payload.** Only ever a *field* of a message. It reaches no union, no handler
+  and no `EXAMPLES` entry. `StepOutcome` is the clearest case: it is not a message, it is
+  what `StepFinished`, `StepExecuted` and `RunFinished` are made of.
+
+Nothing in the syntax separates them — both are plain dataclasses sitting in the same file
+— so each file carries a `# --- Payloads: … ---` banner over its payload block and each
+payload's docstring opens by naming the messages that carry it. Five types are payloads:
+`ErrorSeverity`, `ResultType`, `StepOutcome` (`common_messages.py`) and `StepSummary`,
+`SequenceSummary` (`run_events.py`). `test_no_payload_is_on_a_union` fails if one ever
+reaches a union, which is what stops those comments from quietly going stale.
+
 | Type | Kind | Meaning |
 |---|---|---|
 | `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all three links. It also travels **one way back**, CORE→HMI, which is why it is on four unions and not three: the HMI is the only module in a process of its own, so it is the only one that can still be running with nothing at the other end of its link. The Sequencer and the Report are threads of CORE's process and die with it, so neither is sent one — a second and third reverse direction would watch for something that cannot happen and double the trace traffic doing it. |
 | `ModuleError(source, severity, message, exception, traceback, operation, error_type)` | EVT | A failure the sender wants CORE to know about. Sent by the two decorators in `utilities/error_handling.py` for what nobody expected, and by `report_error()` / `report_problem()` from a raise site that recognised the failure itself and rated it. `operation` names the method (`"Sequencer.poll_core"`), `error_type` the exception class — strings, because this crosses the pickled link. |
-| `ErrorSeverity` · `ResultType` · `StepOutcome` | — | Enums and the pickle-safe summary of one executed step. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
+| `ErrorSeverity` · `ResultType` · `StepOutcome` | — | **Payloads.** Enums and the pickle-safe summary of one executed step. `ErrorSeverity` is a field of `ModuleError`; `ResultType` of `RunFinished`, `SequenceFinished` and `StepOutcome`; `StepOutcome` of `StepFinished`, `StepExecuted` and `RunFinished`. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
+| `StepSummary(step_id, step_name, description)` · `SequenceSummary(sequence_name, steps)` | — | **Payloads**, in `run_events.py`. The rows a frontend draws before a run: `StepSummary` is a field of `SequenceSummary`, which is a field of `RecipeLoaded`. Summaries, not the live `Step` and `Sequence` — those must never cross the HMI boundary. |
 | `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. CORE also forwards `RunStarted` and `SequenceStarted` to the Report, which needs the run brackets for its folder and its rows. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
 | `StepExecuted(outcome, step_type, inputs, outputs, started_at, duration_s)` | EVT | The rich sibling of `StepFinished`, emitted by `Step.run()` right after it: everything the Report writes about one executed step, including the resolved inputs, the judged outputs and the measured duration. **Engine-internal**: it rides Sequencer→CORE and CORE→Report only, two links that never leave the Core process — it must never join the HMI unions, whose flat `StepOutcome` is the projection that crosses the boundary. |
 | `UserPromptRequest/Response`, `UserTextRequest/Response` | EVT | The two questions the engine asks the operator, joined by a `request_id` the asker generates. Both are live end to end: `UserInteractionStep` asks the first (a choice between the recipe's buttons), `UserWriteStep` the second (a line of typed text). There is deliberately **no message for a particular question** — an earlier `SerialNumberRequest` hard-coded one, so the engine fetched the serial number of the unit under test whether or not the recipe wanted one. Asking is the recipe's job. |

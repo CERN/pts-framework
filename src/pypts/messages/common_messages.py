@@ -7,19 +7,77 @@ Vocabulary shared by more than one link.
 
 A type belongs here when at least two link modules use it - because every
 module sends it, or because CORE forwards it from one link to another.
+
+The file has two halves, and the difference matters more than it looks.
+A **message** is a member of a link union: something `QueueWrapper.send()`
+takes, that a handler answers with a `case`. A **payload** is only ever a
+field of a message; it reaches no union and no handler. Both are plain
+dataclasses, so nothing in the syntax tells them apart - the banners below
+and the first line of each docstring do, and
+`test_messages.py: test_no_payload_is_on_a_union` keeps it true.
 """
 
 from dataclasses import dataclass
 from enum import Enum, IntEnum, auto
 from uuid import UUID
 
+# --- Payloads: carried inside a message, never sent alone ---------------------
+
 
 class ErrorSeverity(Enum):
-    """How bad a ModuleError is. CORE decides what to do about it."""
+    """
+    Payload of ModuleError.severity. Never sent alone.
+
+    How bad a ModuleError is. CORE decides what to do about it.
+    """
 
     WARNING = auto()
     ERROR = auto()
     CRITICAL = auto()
+
+
+class ResultType(IntEnum):
+    """
+    Payload of RunFinished.result, SequenceFinished.result and
+    StepOutcome.result. Never sent alone.
+
+    Outcome of a step, a sequence, or a whole run.
+
+    The integer order is load-bearing: a group aggregates to its highest
+    member, so one FAIL among PASSes makes the group FAIL. Keep the order if
+    you add a member.
+    """
+
+    SKIP = 0
+    DONE = 1
+    PASS = 2
+    FAIL = 3
+    ERROR = 4
+    STOP = 5
+
+    def __str__(self) -> str:
+        return self.name
+
+
+@dataclass
+class StepOutcome:
+    """
+    Payload of StepFinished.outcome, StepExecuted.outcome and
+    RunFinished.outcomes. Never sent alone.
+
+    The pickle-safe summary of one executed step.
+
+    Not a StepResult - that holds the live Step and must not cross the HMI
+    process boundary. The Report gets the rich object in-engine.
+    """
+
+    step_id: UUID
+    step_name: str
+    result: ResultType
+    error_info: str = ""
+
+
+# --- Messages: on a link union, sent on their own -----------------------------
 
 
 @dataclass
@@ -57,38 +115,3 @@ class Heartbeat:
 
     source: str
     timestamp: float
-
-
-class ResultType(IntEnum):
-    """
-    Outcome of a step, a sequence, or a whole run.
-
-    The integer order is load-bearing: a group aggregates to its highest
-    member, so one FAIL among PASSes makes the group FAIL. Keep the order if
-    you add a member.
-    """
-
-    SKIP = 0
-    DONE = 1
-    PASS = 2
-    FAIL = 3
-    ERROR = 4
-    STOP = 5
-
-    def __str__(self) -> str:
-        return self.name
-
-
-@dataclass
-class StepOutcome:
-    """
-    The pickle-safe summary of one executed step.
-
-    Not a StepResult - that holds the live Step and must not cross the HMI
-    process boundary. The Report gets the rich object in-engine.
-    """
-
-    step_id: UUID
-    step_name: str
-    result: ResultType
-    error_info: str = ""
