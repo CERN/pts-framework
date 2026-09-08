@@ -266,7 +266,7 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Exit) / Edit (Edit Recipe, Remove Cache → §10) / View (dark mode toggle) / About (GitHub, Wiki - both open a URL, §12) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe, Remove Cache → §10) / View (dark mode toggle) / About (GitHub, Wiki - both open a URL, §12) |
 | `screen_tab_bar` (`QTabBar`, CERN Blue bg) | Full-width state indicator: Idle \| Running \| Prompt \| Results; click snaps back unless `_browsable=True` (pause mode) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" below the tab bar |
 | `QSplitter` 52/48 | left: `left_stack` (`QStackedWidget`, 3 pages); right: `CenterContent` |

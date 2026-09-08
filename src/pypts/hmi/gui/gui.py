@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pypts.config_handler import ConfigHandler
+from pypts.config_handler import ConfigHandler, file_locations
 from pypts.hmi.gui.center_view import CenterContent
 from pypts.hmi.gui.gui_theme import install_system_theme_sync
 from pypts.hmi.gui.log_tail import LogTail
@@ -208,6 +208,7 @@ class PtsMainWindow(QMainWindow):
         menu_bar = self.menuBar()
 
         file_menu = menu_bar.addMenu("File")
+        file_menu.setToolTipsVisible(True)  # or Open Config's path is invisible
         open_action = file_menu.addAction("Open Recipe")
         open_action.triggered.connect(self.top_bar.choose_recipe_file)
 
@@ -216,6 +217,10 @@ class PtsMainWindow(QMainWindow):
         # entries carry would never be shown.
         self.recent_menu = file_menu.addMenu("Open Recent")
         self.recent_menu.setToolTipsVisible(True)
+
+        file_menu.addSeparator()
+        self.open_config_action = file_menu.addAction("Open Config")
+        self.open_config_action.setToolTip(str(file_locations.config_file_path()))
 
         file_menu.addSeparator()
         exit_action = file_menu.addAction("Exit")
@@ -354,6 +359,7 @@ class GUI(HmiClient):
         self.window.dark_mode_action.triggered.connect(self._toggle_dark_mode)
         self.window.remove_cache_action.triggered.connect(self._remove_cache)
         self._set_remove_cache_enabled(True)
+        self.window.open_config_action.triggered.connect(self.open_config_file)
 
         # Rebuilt every time it opens rather than kept in step with the store,
         # so it can never show a stale list.
@@ -676,6 +682,34 @@ class GUI(HmiClient):
             )
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    @catch_and_report_errors()
+    def open_config_file(self) -> None:
+        """
+        File > Open Config: hand config.ini to whatever this machine opens an
+        .ini with - Notepad on Windows, the desktop's text editor on Linux.
+
+        The file is the user's to edit; pypts reads it once at startup and never
+        rewrites it, so nothing here reloads afterwards - the change applies to
+        the next run. Decorated to report and continue: an editor that will not
+        open must not take the window with it.
+        """
+        config_file = file_locations.config_file_path()
+        if not config_file.is_file():
+            report_problem(
+                self,
+                f"There is no configuration file to open: {config_file}",
+                severity=ErrorSeverity.WARNING,
+                operation="open_config_file",
+            )
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_file))):
+            report_problem(
+                self,
+                f"This machine has no application set up to open {config_file}",
+                severity=ErrorSeverity.WARNING,
+                operation="open_config_file",
+            )
 
     def ask_user(self, request: UserPromptRequest) -> None:
         self.center.show_prompt(
