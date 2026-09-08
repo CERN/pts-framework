@@ -25,7 +25,15 @@ class LogPanel(QPlainTextEdit):
         self.setMaximumBlockCount(2000)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.setFixedHeight(160)
-        self.setFont(QFont("Courier New", 9))
+        # The style hint is what makes this work off Windows. Courier New is a
+        # Microsoft font: on a Linux bench without msttcorefonts Qt finds no such
+        # family and falls back to the default *proportional* face, which loses
+        # the column alignment the log format depends on. Told the family is
+        # meant to be monospace, Qt substitutes a real fixed-pitch one instead.
+        font = QFont("Courier New", 9)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFixedPitch(True)
+        self.setFont(font)
         self._dark = False
 
     def set_dark(self, dark: bool):

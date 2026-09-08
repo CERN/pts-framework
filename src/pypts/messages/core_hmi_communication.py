@@ -153,4 +153,10 @@ CoreToHmi = (
     | StepFinished
     | UserPromptRequest
     | UserTextRequest
+    # The one heartbeat that travels away from CORE. The HMI is the only module
+    # in a process of its own, so it is the only one that can still be running
+    # with nothing on the other end of its link - CORE killed outright, or its
+    # event loop wedged while the process stays up. The Sequencer and the Report
+    # are threads of CORE's process and die with it, so neither is sent one.
+    | Heartbeat
 )

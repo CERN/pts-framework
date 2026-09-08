@@ -119,7 +119,7 @@ def survey(
         _file_item(
             key="state",
             label="Recent recipes",
-            detail="The File → Open Recent list.",
+            detail="The File > Open Recent list.",
             path=state_file,
         ),
         _file_item(

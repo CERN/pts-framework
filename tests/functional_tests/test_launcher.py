@@ -9,9 +9,12 @@ Functional tests for booting and shutting the application down
 SKELETON ONLY - placeholders declaring intended coverage. These drive the real
 entry point, `python -m pypts`, rather than importing modules.
 
-Both platforms matter here. Windows spawns its child processes and Linux forks
-them, which is where most of the platform differences in this project come
-from, so anything asserted below should be asserted on both.
+Both platforms matter here, so anything asserted below should be asserted on
+both. They no longer differ in *how* the children start: `main()` pins the
+spawn start method on every platform, so Linux spawns exactly as Windows does
+rather than forking (roadmap 1.4.1). What still differs is the console - Ctrl+C
+reaches every process in the group, which is why each child entry point ignores
+SIGINT and the launcher alone acts on it.
 """
 
 import pytest

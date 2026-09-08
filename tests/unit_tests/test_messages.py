@@ -460,6 +460,10 @@ def core():
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
         log_queue=queue.Queue(),
+        # Passed, not read from the configuration: outside a real run there is
+        # no launcher to have created a config.ini. Same reason the Report
+        # fixture below is told its output_dir.
+        watchdog_enabled=True,
     )
 
 

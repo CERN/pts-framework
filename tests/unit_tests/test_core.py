@@ -19,6 +19,8 @@ import time
 
 import pytest
 
+from pypts.messages.common_messages import ErrorSeverity
+
 PLACEHOLDER = "placeholder - test not implemented yet"
 
 
@@ -35,6 +37,12 @@ def build_core_that_spawns_nothing():
     the Sequencer and the Report threads. So a test can construct a Core, put a
     message on one of its links by hand and drive a single handler, with no
     thread running behind it.
+
+    `watchdog_enabled` is passed rather than left to the configuration, for the
+    same reason the Report fixture passes `output_dir`: outside a real run there
+    is no launcher to have created a config.ini, and the handler refuses to
+    invent one. True, because on it is what a bench does - a test wanting the
+    switch off says so.
     """
     from pypts.core.core import Core
     from pypts.messages import QueueWrapper
@@ -43,6 +51,7 @@ def build_core_that_spawns_nothing():
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
         log_queue=queue.Queue(),
+        watchdog_enabled=True,
     )
 
 
@@ -637,3 +646,171 @@ def test_report_generated_is_relayed_as_report_ready():
     ready = to_hmi[1]
     assert ready.report_path == report_path
     assert ready.report_dir == str(Path("reports") / "run_1")
+
+
+# --------------------------------------------------------------------------
+# The watchdog acts: prolonged silence ends the run
+# --------------------------------------------------------------------------
+
+
+def silence(core, name, seconds):
+    """Backdate a module's last heartbeat so it reads as silent for `seconds`."""
+    core.last_heartbeat[name] = time.time() - seconds
+
+
+def test_a_warned_module_does_not_end_the_run_on_its_own(caplog):
+    """
+    The two thresholds do different jobs, and the gap between them is the point.
+    Five seconds of quiet is as likely to be a stall as a death, and a warning
+    that is wrong costs nothing - so the run must still be going after one.
+    """
+    from pypts.core.core import HEARTBEAT_TIMEOUT_S, SEQUENCER
+
+    core = build_core_that_spawns_nothing()
+    silence(core, SEQUENCER, HEARTBEAT_TIMEOUT_S + 1)
+
+    with caplog.at_level("DEBUG"):
+        core.do_periodic_tasks()
+
+    assert core.heartbeat_lost[SEQUENCER] is True
+    assert not core.shutting_down
+    assert core.running
+
+
+def test_prolonged_silence_stops_every_module():
+    """
+    Past the fatal threshold the module is not coming back, and a run whose
+    engine has gone is not a run. It goes through the ordinary shutdown -
+    nothing new is invented for this case.
+    """
+    from pypts.core.core import HEARTBEAT_FATAL_S, SEQUENCER
+    from pypts.messages.core_sequencer_communication import StopSequencer
+
+    core = build_core_that_spawns_nothing()
+    silence(core, SEQUENCER, HEARTBEAT_FATAL_S + 1)
+
+    core.do_periodic_tasks()
+
+    assert core.shutting_down
+    sent = list(core.to_sequencer.receive())
+    assert any(isinstance(message, StopSequencer) for message in sent)
+
+
+def test_the_operator_is_told_before_the_window_closes():
+    """
+    A window that simply vanishes leaves a technician with a half-finished test
+    and no reason for it. The error goes out *before* StopHmi, which is what
+    closes their window, and it names the module in the operator's words.
+    """
+    from pypts.core.core import HEARTBEAT_FATAL_S, HMI
+    from pypts.messages.core_hmi_communication import ModuleErrorReported, StopHmi
+
+    core = build_core_that_spawns_nothing()
+    silence(core, HMI, HEARTBEAT_FATAL_S + 1)
+
+    core.do_periodic_tasks()
+
+    sent = list(core.to_hmi.receive())
+    kinds = [type(message) for message in sent]
+    assert ModuleErrorReported in kinds
+    assert StopHmi in kinds
+    assert kinds.index(ModuleErrorReported) < kinds.index(StopHmi)
+
+    reported = next(m for m in sent if isinstance(m, ModuleErrorReported))
+    assert reported.error.severity is ErrorSeverity.CRITICAL
+    assert reported.error.source == "pypts.hmi.hmi_client"
+
+
+def test_the_watchdog_does_not_re_report_a_module_it_has_already_acted_on(caplog):
+    """
+    The loop turns every 10 ms and the dead module stays dead. Without the
+    shutting_down guard this logged the same ERROR - and re-sent the same
+    ModuleErrorReported - a hundred times a second for the rest of the shutdown.
+    """
+    from pypts.core.core import HEARTBEAT_FATAL_S, SEQUENCER
+
+    core = build_core_that_spawns_nothing()
+    silence(core, SEQUENCER, HEARTBEAT_FATAL_S + 1)
+
+    with caplog.at_level("ERROR"):
+        for _ in range(20):
+            core.do_periodic_tasks()
+
+    stopping = [r for r in caplog.records if "so the run was stopped" in r.getMessage()]
+    assert len(stopping) == 1, f"expected one report, got {len(stopping)}"
+
+
+def test_the_watchdog_can_be_switched_off():
+    """
+    Off is for a developer with a debugger attached: a breakpoint in an event
+    loop is indistinguishable from an event loop that has died. The *reporting*
+    half is not gated - only the acting.
+    """
+    from pypts.core.core import HEARTBEAT_FATAL_S, SEQUENCER, Core
+    from pypts.messages import QueueWrapper
+
+    core = Core(
+        to_hmi=QueueWrapper(queue.Queue()),
+        from_hmi=QueueWrapper(queue.Queue()),
+        log_queue=queue.Queue(),
+        watchdog_enabled=False,
+    )
+    silence(core, SEQUENCER, HEARTBEAT_FATAL_S + 1)
+
+    core.do_periodic_tasks()
+
+    assert not core.shutting_down
+    assert core.running
+    # Reported all the same.
+    assert core.heartbeat_lost[SEQUENCER] is True
+
+
+def test_a_module_that_has_reported_itself_stopped_is_not_watched():
+    """
+    A module that has already said it is done is quiet for a known reason.
+    Watching it would end every clean shutdown with a fabricated failure.
+    """
+    from pypts.core.core import HEARTBEAT_FATAL_S, REPORT
+
+    core = build_core_that_spawns_nothing()
+    core.module_running[REPORT] = False
+    silence(core, REPORT, HEARTBEAT_FATAL_S + 100)
+
+    core.do_periodic_tasks()
+
+    assert not core.shutting_down
+
+
+def test_core_beats_towards_the_hmi():
+    """
+    The reverse direction, and the only one there is. Without it an orphaned
+    frontend - CORE killed outright, or its loop wedged - has nothing to notice.
+    """
+    from pypts.core.core import CORE
+    from pypts.messages.common_messages import Heartbeat
+
+    core = build_core_that_spawns_nothing()
+
+    core.do_periodic_tasks()
+
+    beats = [m for m in core.to_hmi.receive() if isinstance(m, Heartbeat)]
+    assert len(beats) == 1
+    assert beats[0].source == CORE
+
+
+def test_core_keeps_beating_while_it_shuts_down():
+    """
+    The HMI is being stopped during a shutdown and must not conclude from the
+    silence that the engine died under it. The tick happens before the
+    shutting_down guard for exactly this reason.
+    """
+    from pypts.messages.common_messages import Heartbeat
+
+    core = build_core_that_spawns_nothing()
+    core.stop_all_modules()
+    list(core.to_hmi.receive())  # drain the stop traffic
+
+    core.hmi_heartbeat.last_sent = 0.0  # a beat is due
+    core.do_periodic_tasks()
+
+    assert any(isinstance(m, Heartbeat) for m in core.to_hmi.receive())

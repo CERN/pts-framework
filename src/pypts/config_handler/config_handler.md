@@ -101,6 +101,7 @@ Sections currently in the schema:
 | `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
 | `report` | `type` (`html`/`csv`), `theme` |
 | `gui` | `theme` (`default`/`light`/`dark`), `window_width`, `window_height` |
+| `watchdog` | `enabled` (bool) - whether prolonged heartbeat silence *ends the run* or is only reported. Off is for a developer with a debugger attached to CORE, where a breakpoint in an event loop is indistinguishable from an event loop that has died. It gates the acting half only: a module that goes quiet is reported at WARNING either way |
 
 That is the whole schema — a flat list of named sections, nothing generated or matched by
 pattern. One idea explains the rest of the shape of the file:
@@ -166,8 +167,9 @@ it into place, so an interrupted write cannot leave a half-written config behind
 
 ## Structure version — no migration, no repair, discard instead
 
-`CONFIG_VERSION` (in `configuration_schema.py`, currently **1**) is bumped whenever a
-section or key is added, removed or renamed.
+`CONFIG_VERSION` (in `configuration_schema.py`, currently **2**) is bumped whenever a
+section or key is added, removed or renamed. Version 2 added `[watchdog]`; every file
+written before it is discarded for the run, which is the whole point of having the number.
 
 There used to be a migration/repair pass in `bootstrap()` (renamed keys moved via a
 `DEPRECATED` map, new keys added, `config.ini.v<n>.bak` backups, newer files refused). It was

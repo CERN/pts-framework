@@ -21,6 +21,7 @@ from typing import get_args
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.links import ANY_TO_LOGGER
 from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
+from pypts.utilities.common import ignore_keyboard_interrupt, pin_ascii_console
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
@@ -144,6 +145,13 @@ def logger_main(log_queue, log_file_path: str, stdout_enabled: bool = True) -> N
     Entry point for the launcher. Responsible for instantiating the Logger singleton object
     and starting its execution.
     """
+    # The Logger must outlive every module it writes for, so it is the process
+    # that can least afford to die to a stray Ctrl+C: the records explaining the
+    # shutdown are written after the rest of the application has stopped. The
+    # launcher ends it with StopLogger, and only that.
+    ignore_keyboard_interrupt()
+    pin_ascii_console()
+
     logger = Logger(log_queue, log_file_path, stdout_enabled)
     logger.start()
 
@@ -193,8 +201,10 @@ class Logger:
                 # The queue died - nothing left to serve.
                 break
             except KeyboardInterrupt:
-                # Ctrl+C reaches every process in the group; the launcher decides
-                # when we stop, so keep writing until it says otherwise.
+                # Belt and braces. logger_main() ignores SIGINT outright, so this
+                # is unreachable by Ctrl+C; it stays because the rule it enforces
+                # - the launcher decides when we stop, so keep writing until it
+                # says otherwise - has to hold however the interrupt arrived.
                 continue
 
             # Nothing shall take the Logger down

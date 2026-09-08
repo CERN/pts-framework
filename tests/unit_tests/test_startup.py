@@ -20,6 +20,7 @@ bench, not for a test suite.
 
 import logging
 import queue
+import subprocess
 import sys
 
 import pytest
@@ -234,3 +235,82 @@ def test_start_debug_monitor_gives_up_when_the_log_never_appears(
         for r in caplog.records
         if "Debug Monitor did not start" in r.getMessage()
     ]
+
+
+# --------------------------------------------------------------------------
+# The GUI is imported only when there is going to be one
+# --------------------------------------------------------------------------
+
+
+def test_importing_the_launcher_does_not_import_qt():
+    """
+    PySide6 is the one heavy dependency in the tree, and `pypts.hmi.gui.gui` is
+    the only door to it. As a module-level import that door made `--mode cli`
+    fail outright on a headless bench with no Qt system libraries, for a
+    frontend that run was never going to open.
+
+    A fresh interpreter, because this suite has long since imported everything.
+    """
+    check = (
+        "import sys, pypts.launcher.startup; "
+        "sys.exit(any(m.startswith('PySide6') for m in sys.modules))"
+    )
+
+    subprocess.run([sys.executable, "-c", check], check=True)
+
+
+def test_the_cli_frontend_does_not_import_qt():
+    """The other half of the same claim: CLI mode reaches no Qt of its own."""
+    check = (
+        "import sys, pypts.hmi.cli.cli; "
+        "sys.exit(any(m.startswith('PySide6') for m in sys.modules))"
+    )
+
+    subprocess.run([sys.executable, "-c", check], check=True)
+
+
+def test_gui_mode_says_what_is_missing_when_qt_cannot_be_loaded(capsys, monkeypatch):
+    """
+    A bench without Qt asking for the GUI gets one sentence naming PySide6 and
+    pointing at --mode cli, not an ImportError traceback. It exits non-zero, and
+    it does so before the configuration is touched, so there is nothing
+    half-built to clean up.
+
+    `sys.modules[name] = None` is what makes the import fail: CPython treats a
+    None entry as "this module is known not to be importable" and raises
+    ImportError, which is the shape a missing Qt system library takes.
+    """
+
+    def bootstrap_must_not_run():
+        raise AssertionError("the GUI import is checked before anything is created")
+
+    monkeypatch.setattr(sys, "argv", ["pypts", "--mode", "gui"])
+    monkeypatch.setattr(startup.ConfigHandler, "bootstrap", bootstrap_must_not_run)
+    monkeypatch.setitem(sys.modules, "pypts.hmi.gui.gui", None)
+
+    with pytest.raises(SystemExit) as exit_info:
+        startup.main()
+
+    assert exit_info.value.code == 1
+
+    printed = capsys.readouterr().err
+    assert "PySide6" in printed
+    assert "--mode cli" in printed
+
+
+def test_cli_mode_never_reaches_the_gui_import(monkeypatch):
+    """
+    The import is inside the gui branch, so a CLI run does not even attempt it -
+    which is the whole point on a machine where the attempt would fail.
+    """
+    def abort():
+        raise Abort
+
+    monkeypatch.setattr(sys, "argv", ["pypts", "--mode", "cli"])
+    monkeypatch.setattr(startup.ConfigHandler, "bootstrap", abort)
+    monkeypatch.setitem(sys.modules, "pypts.hmi.gui.gui", None)
+
+    # Abort comes from bootstrap, which is *after* the gui branch: reaching it
+    # at all proves the branch was skipped rather than raising ImportError.
+    with pytest.raises(Abort):
+        startup.main()

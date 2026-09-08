@@ -186,9 +186,10 @@ produces zero trace lines.
       old file is not read at all. (The handler migrated old files for a while; migration
       and repair were removed again in August 2026 — see §1.3.) The stale file under
       `%TEMP%` is harmless and may be deleted by hand.
-- [ ] **TODO:** `--mode cli` still imports PySide6, through `startup.py → hmi/gui/gui.py`.
-      Removing the debug console did not fix this — deferring the GUI import into the `gui`
-      branch is a one-line change nobody has made.
+- [x] **DONE (§1.20):** `--mode cli` no longer imports PySide6. The import moved into the
+      `gui` branch of `main()`, which was indeed the one-line change — plus a plain message
+      and a non-zero exit when Qt cannot be loaded, instead of a traceback.
+      `test_importing_the_launcher_does_not_import_qt` pins it in a fresh interpreter.
 - [ ] **TODO:** Message-type introspection is no longer asserted anywhere. The deleted
       `test_every_message_type_can_be_built_from_the_form` was the only test proving every
       message has plain, introspectable fields. `test_messages.py` still pickles every message
@@ -2566,6 +2567,347 @@ a `range` over `'xy'`, then a good step — read back from its log file: both ba
 with the explanatory line, the third step `PASS`, `Sequence 'Main' finished: ERROR - 1 passed,
 2 errored`, and `Run summary: 1 passed, 2 errored of 3 steps`. Before the change that run
 ended after step 1 with an empty `RunFinished`.
+
+### 1.20 Linux compatibility pass — **done (static); no Linux run yet**
+
+A read of the whole branch for anything that would behave differently on Linux, prompted by
+the question "is this code Linux compatible?". The answer was **yes, by design** — the
+framework was written with Linux in mind and nothing found was a blocker. `platformdirs`
+owns every location, `spawn` is pinned on both platforms (§1.4.1), every production `open()`
+pins an encoding, the tailers strip `\r` explicitly, `describe_operator()` already catches the
+`pwd` lookup Linux raises, and `data_removal.py` sorts `iterdir()` rather than trusting
+directory order. The only Windows API in the tree, `os.startfile`, is guarded by
+`sys.platform` with an `xdg-open` branch beside it. Every `pypts.*` import was checked
+case-sensitively against the tree: clean, apart from stale paths inside `old_code/`.
+
+Four things were wrong, all small, and are fixed here.
+
+- **`--mode cli` imported PySide6.** The §1.2 TODO, now closed. `pypts.hmi.gui.gui` was the
+  *only* door to Qt in the whole reachable tree — CORE, the Logger, the messages and the
+  engine import none — so moving that one import into the `gui` branch of `main()` makes CLI
+  mode entirely Qt-free. On a headless bench with no `libGL`/`xcb`, `--mode cli` used to fail
+  at import for a frontend it was never going to start. That bench is exactly what
+  `--no-debug-monitor` exists for, so it has to be able to run. A missing PySide6 in `gui`
+  mode is now one sentence naming it and pointing at `--mode cli`, exited before the
+  configuration is touched, rather than a traceback over a half-built run.
+
+- **The log panel's font was not guaranteed monospace.** `QFont("Courier New", 9)` with no
+  style hint: Courier New is a Microsoft font, and a Linux box without msttcorefonts falls
+  back to the default *proportional* face, losing the column alignment the log format
+  depends on. `setStyleHint(Monospace)` + `setFixedPitch(True)` in `hmi/gui/log_panel.py` and
+  in `recipe_creator/customGUIModules.py` — the pattern `recipe_creator.py` already used.
+
+- **Ctrl+C killed CORE instead of shutting it down.** SIGINT reaches every process in the
+  foreground group, so CORE raised `KeyboardInterrupt` inside `main_loop` and died while the
+  CLI was still running the orderly shutdown it does correctly (`cli.py`) — orphaning the
+  Sequencer and Report threads. `ignore_keyboard_interrupt()` (`utilities/common.py`) is now
+  the first statement of `core_main`, `logger_main` and `gui_main`, restoring the rule the
+  Logger's loop already stated: **the launcher decides when we stop**, and it asks with
+  `ShutdownRequested`. `SIG_IGN` rather than a handler that logs, because a Python signal
+  handler runs in the main thread between bytecodes and `logging` takes locks — a logging
+  handler could deadlock against a log call that thread was already making. The launcher
+  deliberately does not call it: it is the process that must still hear Ctrl+C. Nothing
+  becomes unkillable — `stop_core()` still terminates after its timeout.
+
+- **Non-ASCII on stdout could raise under `LANG=C`.** The Logger's `StreamHandler` encodes
+  with the locale, so on a systemd unit or a minimal container one stray character raised
+  `UnicodeEncodeError` inside the handler. `pin_ascii_console()` reconfigures `sys.stdout`
+  and `sys.stderr` to `encoding="ascii", errors="backslashreplace"` in the launcher and in
+  every child entry point. **ASCII rather than UTF-8 on purpose**: two machines running the
+  same recipe then print the same bytes instead of one showing a character and the other
+  mojibake. Nothing is lost — an unexpected character arrives as `\uXXXX`, and the run log
+  file is untouched, since the Logger pins UTF-8 on its `FileHandler`.
+  `tests/unit_tests/test_console_output.py` keeps the strings *we* write ASCII, so the
+  escape hatch is only ever used by values arriving at runtime. Exactly one string in the
+  framework had to change: `data_removal.py`'s `"File → Open Recent"`.
+
+Also corrected: the docstring of `tests/functional_tests/test_launcher.py` still said Linux
+forks its children. It has not since §1.4.1 pinned `spawn` on every platform.
+
+**Verified:** `pytest tests` — 715 passed, 43 skipped, up from a 626/43 baseline taken before
+the change; `ruff check src tests` clean; `mypy` clean.
+
+**New TODOs this opened:**
+
+- [x] **DONE (1.21):** the watchdog acts. Both halves landed; see below.
+
+- [ ] **TODO:** `test_console_output.py` excludes `helper_applications/`, the line ruff and
+      mypy already draw. `recipe_verificator/verify_recipe.py` prints emoji from its
+      `__main__` and would fail the rule today; the Debug Monitor's em-dashes and arrows are
+      Qt widget text and are correctly out of scope, since they never reach a byte stream.
+      Fold the helpers in when Phase 6 ports them.
+
+- [ ] **TODO:** still **no Linux run**. Everything above is static analysis plus the suite on
+      Windows; there is no WSL distribution on the development machine. This is the same debt
+      the §1.4.1 verification note records, and the `QT_QPA_PLATFORM=offscreen` CI job in §1.2
+      would close the GUI half of it — CI currently passes `--ignore=tests/unit_tests/test_hmi_gui.py`,
+      so the GUI is the part Linux has never exercised.
+
+---
+
+### 1.21 The watchdog acts — **done**
+
+Closes the open decision 1.11 recorded and the TODO 1.20 opened. Until now `Heartbeat`
+travelled one way only — HMI, Sequencer and Report each ticking one at CORE — and
+`do_periodic_tasks()` answered a timeout with a WARNING and nothing else. A dead module was
+noticed and then tolerated for the rest of the run.
+
+**Two thresholds now, doing two different jobs.** `HEARTBEAT_TIMEOUT_S` (5 s) is unchanged
+and still only *reports*: five seconds of quiet is as likely to be a stall — a large recipe
+parsed inline in CORE's loop, a machine that swapped — as a death, and a warning that is
+wrong costs nothing. `HEARTBEAT_FATAL_S` (15 s) *acts*: it ends the run, so it waits three
+times as long before it believes itself. Keeping the old threshold where it was means the
+diagnostic that existed before this change behaves exactly as it did.
+
+**CORE, on prolonged silence**, tells the operator and then runs the ordinary shutdown.
+`end_run_for_silent_module()` sends a `ModuleErrorReported` through `handle_module_error()`
+— the same path any reported failure takes — *before* `stop_all_modules()`, because
+`stop_all_modules()` is what closes the operator's window and a window that simply vanishes
+leaves a technician with a half-finished test and no reason for it. Then nothing new:
+`StopSequencer` and `StopHmi` go out, `StopReport` is held back so the Report can drain the
+aborted run's tail, the five-second budget applies. A watchdog that shut down differently
+from every other exit would be a second shutdown path to keep working.
+
+**The reverse heartbeat, CORE → HMI, and only there.** The HMI is the one module in a
+process of its own, so it is the only one that can still be running with nothing at the
+other end of its link — CORE killed outright, or its event loop wedged while the process
+stays up. The Sequencer and the Report are threads of CORE's process and die with it, so
+neither is sent one: a second and third reverse direction would watch for something that
+cannot happen, and double the trace traffic doing it (the heartbeat-noise TODO in 1.2 is
+still open, and this change adds ~2 lines a second to it rather than ~6).
+`HmiClient.check_core_is_alive()` warns at 5 s and closes the window at 15 s.
+
+Two guards that are the whole difference between this working and this being a nuisance:
+
+- **CORE keeps beating all through a shutdown.** The tick happens before the `shutting_down`
+  return, because during a shutdown the HMI is being stopped and must not read CORE's
+  silence as an engine that died under it.
+- **Neither side watches while it is stopping.** CORE returns early once `shutting_down` is
+  set — every module has been asked to stop and is *expected* to go quiet, `check_stop_status()`
+  already has its own budget and already names whoever fails to answer, and without the guard
+  the fatal branch re-reported the same dead module, and re-sent its `ModuleErrorReported`,
+  a hundred times a second for the rest of the shutdown. The HMI returns early once `running`
+  is False, because the GUI's `QTimer` goes on firing after that and would otherwise end every
+  clean exit with a fabricated failure.
+
+**`[watchdog] enabled`, new in config structure version 2.** It gates the *acting* half only
+— a module that goes quiet is reported at WARNING either way. Off is for a developer stepping
+through the engine: a breakpoint in an event loop is indistinguishable from an event loop
+that has died, and without the switch a debugging session ends itself every fifteen seconds.
+With it off, CORE writes one DEBUG line per module saying the threshold passed and was
+ignored. `CONFIG_VERSION` goes to 2, so every existing `config.ini` is discarded for the run
+and recreated — which is what the version is for.
+
+`Core.__init__` takes `watchdog_enabled: bool | None`, None meaning "ask the configuration",
+mirroring how the Report takes its `output_dir`: outside a real run there is no launcher to
+have created a config.ini and the handler refuses to invent one, so the two test fixtures
+that build a Core directly pass the value.
+
+**Verified:** `pytest tests` — 729 passed, 43 skipped (14 new tests, up from the 715/43 that
+1.20 left behind); `ruff check src tests` clean; `mypy` clean.
+
+The message layer enforced its own half of this exactly as `src/pypts/README.md` promises:
+adding `Heartbeat` to `CoreToHmi` made mypy fail with *"Argument 1 to unhandled has
+incompatible type Heartbeat; expected Never"* and made
+`test_every_message_in_a_link_is_handled_by_its_recipient[CoreToHmi]` fail, both before a
+line of the handler existed.
+
+**Verified end to end, twice, on a real run.**
+
+*The direction exists.* A `--mode cli --log-level DEBUG` run traces it on both ends:
+`send core->hmi Heartbeat(source='core', timestamp=...)` from `Core`, and the matching
+`recv core->hmi Heartbeat(...)` in the frontend process.
+
+*The acting half works.* GUI mode started, CORE killed outright with `taskkill /F` — as
+close to SIGKILL as Windows gets, so nothing had a chance to shut anything down — and the
+application closed itself, from its own log:
+
+```
+12:21:31 WARNING GUI  The engine has stopped responding.
+12:21:31 DEBUG   GUI  No CORE heartbeat for 5.0 s; the timeout is 5.0 s.
+12:21:41 ERROR   GUI  The engine has stopped responding, so pypts is closing.
+12:21:41 DEBUG   GUI  No CORE heartbeat for 15.0 s; the limit is 15.0 s.
+12:21:41 INFO    GUI  GUI module stopped.
+12:21:41 DEBUG   MainProcess  The GUI process has ended.
+12:21:41 INFO    MainProcess  PyPTS has finished.
+```
+
+15.4 s from the kill to the launcher's own exit: both thresholds fired, in order, and the
+existing exit path did the rest. Before this change that window stayed open indefinitely and
+the launcher sat behind it in `ui_process.join()`.
+
+The version bump was exercised on the way: the first run after the change found the old file
+and said so — *"It declares structure version 1, but this pypts expects 2. Running on the
+default template in memory"* — and a run with it deleted recreated it with `config_version = 2`
+and the `[watchdog]` section.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** the heartbeat-noise TODO in 1.2 now has one more contributor. Still ~2 lines
+      a second rather than ~6, because only one reverse direction was added, but the
+      `pypts.trace.heartbeat` child logger it proposes is worth more than it was.
+
+- [ ] **TODO:** the fatal path spends the full five-second shutdown budget waiting for the
+      module it has just declared dead, since that module is the one that will not answer.
+      Accepted deliberately — five seconds at the end of a dead run is not worth a special
+      case in `stop_all_modules()` — but it is the obvious thing to tighten if a bench ever
+      cares how fast a failed run releases its hardware.
+
+- [ ] **TODO:** nothing yet *restarts* a module. The decision taken here is "report, then
+      stop", which is right while the engine is being ported; a bench that runs unattended
+      overnight may want a different answer for the Report specifically, whose death costs
+      the records but not the test.
+
+- [x] **DONE (1.22):** the Debug Monitor shows the fatal verdict. See below.
+
+- [ ] **TODO:** in CLI mode *any* stop CORE initiates is deferred until the operator presses
+      Enter. The polling thread sets `running` False correctly - from `StopHmi` or from
+      `check_core_is_alive()` - but the shell is parked in `input()` and only looks at the flag
+      when it comes back. This is the pre-existing limitation recorded in 1.1, and **1.21 is
+      what made it reachable**: before it, `stop_all_modules()` was only ever called from
+      `ShutdownRequested`, so every shutdown began with the operator typing `exit` and the main
+      thread was never blocked when it mattered. Now there are two ways for the CLI to be told
+      to stop while it sits at a prompt - CORE gone, and CORE alive but ending the run because
+      the Sequencer or the Report went silent. GUI mode has neither problem, because it polls
+      from a `QTimer`. The fix is the one 1.1 already names: a reader thread feeding a queue,
+      so the shell can wait on input *and* on `running`.
+
+- [ ] **TODO:** the launcher is still watched by nobody. If it is killed outright in GUI
+      mode, CORE and the GUI go on talking to each other quite happily — orphaned but
+      working, and closing the window still shuts everything down cleanly. In CLI mode the
+      launcher *is* the frontend, so killing it stops the HMI heartbeat and CORE now ends the
+      run on its own, which is the case that used to leave an orphan. Worth a note rather
+      than a fix.
+
+---
+
+### 1.22 The Debug Monitor shows the fatal verdict — **done**
+
+1.21 gave CORE a second heartbeat threshold and a new DEBUG line to go with it. The Monitor's
+liveness tab parses CORE's opinions out of the log by prefix, and knew only the two that
+existed before, so the most important thing CORE can now say was the one thing the tab did not
+show.
+
+**`fatal` is a verdict of its own, not a louder `timeout`.** A timeout is CORE reporting a
+module late and carrying on; a fatal is CORE ending the run over it. Collapsing them would
+hide the single most important event in the log, so `VERDICT_FATAL` sits beside
+`VERDICT_TIMEOUT` and `VERDICT_RESPONDING`, and the "CORE says" column is now coloured: red
+and bold for `fatal`, amber for `timeout`, green for `responding`. The panel's explanatory
+label says which is which, because "fatal" and "timeout" are not self-evidently different to
+somebody reading the tab for the first time.
+
+**CORE's fatal line was reshaped to the convention it had broken.** The prefix match takes
+everything after the prefix as the module name, so a line reading
+`Heartbeat fatal for module: sequencer (silent 16.0 s, limit 15.0 s).` parses to a name that
+is in no module table and is silently dropped — which is exactly what it did when 1.21 landed.
+It now carries the name and nothing else, with the measurements on their own record below,
+the shape `Heartbeat timeout for module: ` has always had.
+
+**Two guards, because matching on log text is fragile and known to be.**
+`test_the_fatal_prefix_matches_what_core_actually_writes` reads `core.py`'s source with
+`inspect.getsource` and fails if the format string stops being the bare prefix plus `%s` —
+it catches precisely the mistake above, including somebody folding the measurements back onto
+one line. `test_the_fatal_line_carries_nothing_but_the_module_name` pins the consequence from
+the other side: given the folded line, the tracker records no verdict rather than inventing a
+wrong one.
+
+**Verified:** `pytest tests` — 733 passed, 43 skipped (4 new); `ruff check src tests` clean;
+`mypy` clean.
+
+Plus a round trip through the real code rather than a fixture: a real `Core` driven past the
+fatal threshold, its records formatted through the Logger's own `build_formatter()`, and the
+resulting text fed to a real `LivenessTracker` via `parse_line()` — verdict `'fatal'`. What
+CORE writes at that moment, in order:
+
+```
+WARNING  The test engine has stopped responding.
+DEBUG    Heartbeat timeout for module: sequencer
+DEBUG    It had been silent for 16.0 s; the timeout is 5.0 s.
+DEBUG    Heartbeat fatal for module: sequencer
+DEBUG    It had been silent for 16.0 s; the limit is 15.0 s.
+CRITICAL A problem occurred in the test engine: It stopped responding for 16 seconds, so the run was stopped.
+```
+
+**New TODOs this opened:**
+
+- [x] **DONE (1.23):** the Monitor has a row for CORE — and for anything else that ever
+      sends. `MODULES` is gone rather than extended; see below.
+
+---
+
+### 1.23 The Debug Monitor discovers instead of recognising — **done**
+
+The Monitor knew three modules and seven links, by name, in two hardcoded lists. Anything
+else was parsed and thrown away. That is the wrong shape for a troubleshooting tool: the run
+you most need it for is the one containing something you did not expect, and the framework it
+watches is under active construction.
+
+**There is no list of modules any more.** A name becomes a module the first time it is seen
+*sending* on a link, and the liveness tab has as many rows as the log has shown modules, in
+the order the run introduced them. `MODULES` is deleted rather than extended, so CORE gets its
+row from the `core->hmi` heartbeat 1.21 added — answering the one question the tab could not:
+whether the engine's own loop is turning — and a module added to the framework next year gets
+one the same way, with no edit here.
+
+Sending, specifically, because only a sender can prove it is alive. Two names are refused, and
+neither for being unfamiliar:
+
+- `any`, the wildcard half of `any->logger` — the link is named for the fact that its sender is
+  *not* one particular module, since every process logs. The only name refused by name.
+- anything on a link with no `->` in it. An anonymous `QueueWrapper` traces as `?`, which names
+  no sender at all. It keeps its trace rows and gets a checkbox of its own, because an unnamed
+  wrapper is a defect worth isolating — but it is not a module. **Found by checking the real
+  window rather than the tracker**: `?` had a row in it, since `"?".split("->")[0]` is `"?"`.
+
+`logger` follows from the same rule without being named anywhere: it only ever receives, so it
+has no pulse, and a row for it could say nothing but "unknown" for a whole run.
+
+**A goodbye is a convention, not a table.** `STOPPED_TYPES` is gone; a type ending in `Stopped`
+names its own module, so a new module's clean shutdown reads as STOPPED rather than DEAD with
+nothing to register. Guarded by what the log has already shown: the name is accepted only if
+something by that name has been seen sending, which is what stops `RunStopped` or
+`SequenceStopped` — both perfectly good matches for the suffix — conjuring a module called
+"run" out of an event that has nothing to do with liveness. A real module has always spoken
+before it says goodbye.
+
+**CORE naming a module is also discovery.** Its three liveness lines are matched by a
+prefix/verdict table now rather than a chain of `elif`s, and a module CORE names gets a row
+even if it never managed a heartbeat — which is precisely the run where you want one.
+
+**Link checkboxes are discovered too.** `FILTERABLE_LINKS` and the `links.py` import are gone;
+a checkbox is created the first time a link appears, starting checked, because a link nobody
+has an opinion about yet is one whose messages you want to see. `?` becomes filterable, which
+it never was.
+
+**Verified:** `pytest tests` — 742 passed, 43 skipped (9 new); `ruff check src tests` clean;
+`mypy` clean.
+
+And against a real window rendered offscreen, on a log containing a module (`hal`), two links
+(`hal->core`, `core->hal`) and a message type (`CalibrateProbe`) that exist nowhere in this
+framework:
+
+```
+Module     State     CORE says          Links with a checkbox
+sequencer  dead      -                    sequencer->core
+report     dead      -                    report->core
+hmi        dead      -                    hmi->core
+core       dead      -                    core->hmi
+hal        dead      fatal                hal->core, core->hal
+                                          any->logger, ?
+```
+
+Five rows, none of them registered; `logger` and `any` correctly absent; `?` filterable and
+correctly not a module; all eight messages in the trace table.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** `HEARTBEAT_TIMEOUT_S` is applied to every discovered module, including CORE.
+      That is right today — everything that beats, beats at 1 Hz — but a module that
+      deliberately beat more slowly would read as permanently dead, and nothing in the log
+      says what interval a sender intended. If that ever happens, the interval belongs on the
+      `Heartbeat` message rather than in a constant both ends have to agree on out of band.
+
+---
 
 ---
 

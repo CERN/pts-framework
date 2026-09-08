@@ -89,7 +89,12 @@ class ScintillaYamlEditor(QPlainTextEdit):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.dark_mode = False
+        # Courier New is a Microsoft font: without the style hint, a Linux box
+        # that does not have it falls back to a proportional face and the YAML
+        # stops lining up. Same fix as hmi/gui/log_panel.py.
         font = QFont("Courier New", 10)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setFixedPitch(True)
         self.setFont(font)
         self.highlighter = YamlHighlighter(self.document())
 

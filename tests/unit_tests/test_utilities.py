@@ -21,15 +21,23 @@ poll_queue is gone. Reading a queue is wrapper.receive now, and it is covered in
 test_messages.py alongside the rest of the transport.
 """
 
+import io
 import logging
 import queue
+import signal
+import sys
+import threading
 import traceback
 
 import pytest
 
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
-from pypts.utilities.common import convert_string_to_int
+from pypts.utilities.common import (
+    convert_string_to_int,
+    ignore_keyboard_interrupt,
+    pin_ascii_console,
+)
 from pypts.utilities.error_handling import (
     catch_and_report_errors,
     report_and_reraise,
@@ -350,3 +358,107 @@ def test_catch_and_report_errors_works_without_a_core_attribute():
 @pytest.mark.skip(reason=PLACEHOLDER)
 def test_local_storage_paths_are_platform_neutral():
     ...
+
+
+# --------------------------------------------------------------------------
+# Process entry-point hygiene: signals and the console
+# --------------------------------------------------------------------------
+
+
+def test_ignore_keyboard_interrupt_takes_the_process_out_of_ctrl_c_s_reach():
+    """
+    Ctrl+C raises SIGINT in every process of the foreground group, not only the
+    one the operator is looking at. A child that dies to it kills the orderly
+    shutdown the launcher owns - CORE went before it could pass StopSequencer
+    and StopReport on, orphaning its two submodule threads.
+
+    SIG_IGN specifically, not a handler: a Python signal handler runs in the
+    main thread between bytecodes and `logging` takes locks, so a handler that
+    logged could deadlock against a log call that thread was already making.
+    """
+    previous = signal.getsignal(signal.SIGINT)
+    try:
+        ignore_keyboard_interrupt()
+
+        assert signal.getsignal(signal.SIGINT) is signal.SIG_IGN
+    finally:
+        signal.signal(signal.SIGINT, previous)
+
+
+def test_ignore_keyboard_interrupt_is_harmless_off_the_main_thread():
+    """
+    `signal.signal()` raises ValueError anywhere but the main thread. Every real
+    caller is a process entry point, but a helper that can take a run down when
+    called from the wrong place is not a helper.
+    """
+    failures = []
+
+    def call_it():
+        try:
+            ignore_keyboard_interrupt()
+        except BaseException as error:  # noqa: BLE001 - the assertion is that there is none
+            failures.append(error)
+
+    worker = threading.Thread(target=call_it)
+    worker.start()
+    worker.join()
+
+    assert failures == []
+
+
+def make_text_stream():
+    """A stdout-shaped stream whose encoding can be inspected and changed."""
+    return io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+
+
+def test_pin_ascii_console_makes_the_console_ascii(monkeypatch):
+    """
+    print() and the Logger's stdout handler encode with whatever the locale
+    says. Under LANG=C - a systemd unit, a minimal container, a bench with no
+    locale set - that is ASCII, and one stray character raises
+    UnicodeEncodeError inside the handler. A run must not fail on the shape of
+    a message.
+    """
+    out, err = make_text_stream(), make_text_stream()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+
+    pin_ascii_console()
+
+    assert out.encoding == "ascii"
+    assert err.encoding == "ascii"
+
+
+def test_pin_ascii_console_escapes_rather_than_raising(monkeypatch):
+    """
+    `backslashreplace`, so nothing is lost and nothing raises: a character the
+    console cannot show arrives as \\uXXXX and is still readable. The run log
+    file is untouched - the Logger pins UTF-8 on its FileHandler, so the file
+    keeps the real characters and only the console is narrowed.
+    """
+    out = make_text_stream()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", make_text_stream())
+
+    pin_ascii_console()
+    print("File → Open Recent", file=sys.stdout)
+    sys.stdout.flush()
+
+    # Decoding as ASCII is half the assertion: nothing but ASCII was written.
+    # splitlines() rather than a literal newline - a TextIOWrapper translates
+    # "\n" to os.linesep, and the line ending is not what this is about.
+    written = sys.stdout.buffer.getvalue().decode("ascii").splitlines()
+    assert written == ["File \\u2192 Open Recent"]
+
+
+def test_pin_ascii_console_survives_a_stream_it_cannot_reconfigure(monkeypatch):
+    """
+    A stream may be None (a windowed interpreter), may be something without
+    reconfigure() (a test harness's capture), or may already be detached. None
+    of that can happen on the console this exists for, and none of it is worth
+    failing a run over.
+    """
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", object())
+
+    pin_ascii_console()  # must not raise

@@ -45,7 +45,6 @@ from pypts._version import __version__
 from pypts.config_handler import BootstrapOutcome, ConfigHandler
 from pypts.core.core import core_main
 from pypts.hmi.cli.cli import cli_main
-from pypts.hmi.gui.gui import gui_main
 from pypts.logger.log import init_logging, log, logger_main, parse_log_level
 from pypts.messages import QueueWrapper
 from pypts.messages.core_hmi_communication import (
@@ -56,6 +55,7 @@ from pypts.messages.core_hmi_communication import (
 )
 from pypts.messages.links import ANY_TO_LOGGER, CORE_TO_HMI, HMI_TO_CORE
 from pypts.messages.to_logger_communication import LoggerControl, StopLogger
+from pypts.utilities.common import pin_ascii_console
 from pypts.utilities.local_storage import get_log_file_path
 
 #: How long CORE gets to shut itself down cleanly before it is killed.
@@ -79,6 +79,11 @@ MONITOR_LOG_POLL_S = 0.05
 
 
 def main() -> None:
+    # Before the first print(): the console is ASCII on every platform and in
+    # every locale, so nothing this process writes can raise on the encoding.
+    # See pin_ascii_console(); the run log file keeps its UTF-8.
+    pin_ascii_console()
+
     # Children are always spawned, never forked - on every platform. Two
     # reasons. The bootstrap notice below can create a QApplication in this
     # process, and forking a process that holds live Qt state is unsupported
@@ -122,6 +127,30 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    # The GUI is imported only when one is going to be started. PySide6 is the
+    # one heavy dependency in the tree and `pypts.hmi.gui.gui` is the only door
+    # to it - nothing in CORE, the Logger, the messages or the engine imports Qt
+    # at all. As a module-level import this line made `--mode cli` fail outright
+    # on a headless bench with no Qt system libraries, for a frontend that run
+    # was never going to open. That bench is exactly what --no-debug-monitor
+    # exists for, so it has to be able to run.
+    #
+    # Nothing has been created yet at this point, so a missing PySide6 is a
+    # plain message and an exit rather than a traceback over a half-built run.
+    if args.mode == "gui":
+        try:
+            from pypts.hmi.gui.gui import gui_main
+        except ImportError as error:
+            # There is no logger yet, which is why this prints - the same reason
+            # _print_config_banner() does.
+            print(
+                "GUI mode needs PySide6, which cannot be loaded on this machine:\n"
+                f"  {error}\n"
+                "Install it, or start pypts with --mode cli instead.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     # Before anything else, including logging: the configuration.
     # This is the one call that either open config.ini or creates it.

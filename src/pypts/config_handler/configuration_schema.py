@@ -38,7 +38,10 @@ from dataclasses import dataclass
 #: ERROR in the log) - pypts never modifies an existing file. Bringing it up to
 #: date is the user's job: edit it by hand, or delete it to have it recreated
 #: from the template.
-CONFIG_VERSION = 1
+#: Version 2 added [watchdog]. Every config.ini written before it is discarded
+#: for the run and the user is told to delete it - which is the whole point of
+#: the version, and cheap on a refactor branch.
+CONFIG_VERSION = 2
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
 #: that a file written by hand behaves the way an INI file is expected to.
@@ -103,6 +106,13 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "theme": Field("str", "default", choices=("default", "light", "dark")),
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
+    },
+    "watchdog": {
+        # Gates the *acting* half only. A module that goes quiet is reported at
+        # WARNING either way; this decides whether prolonged silence also ends
+        # the run. Off is for a developer with a debugger attached to CORE,
+        # where a breakpoint is indistinguishable from a dead event loop.
+        "enabled": Field("bool", "true"),
     },
 }
 

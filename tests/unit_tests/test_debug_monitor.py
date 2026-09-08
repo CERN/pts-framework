@@ -349,6 +349,256 @@ def test_cores_own_verdict_is_recorded_beside_the_derived_one():
     assert tracker.core_verdict("sequencer") == "responding"
 
 
+def test_a_module_nobody_registered_gets_a_row():
+    """
+    The point of the whole discovery rewrite. There is no list of modules in the
+    Monitor, so a module added to the framework long after this file was written
+    shows up on its own, with no edit here and none in liveness.py.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            "2026-08-12 09:32:58.000;DEBUG;Core;queue_wrapper.py:send;send hal->core "
+            "Heartbeat(source='hal', timestamp=1.0)",
+        ],
+    )
+
+    assert "hal" in tracker.modules()
+    assert tracker.state("hal") == ALIVE
+
+
+def test_core_itself_gets_a_row():
+    """
+    CORE sends its own heartbeat since roadmap 1.21, so it is discovered like
+    anything else - and whether the engine's own loop is turning is the one
+    question this tab could not previously answer.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            "2026-08-12 09:32:58.000;DEBUG;Core;queue_wrapper.py:send;send core->hmi "
+            "Heartbeat(source='core', timestamp=1.0)",
+        ],
+    )
+
+    assert "core" in tracker.modules()
+    assert tracker.state("core") == ALIVE
+
+
+def test_modules_are_listed_in_the_order_the_run_introduced_them():
+    """First-seen order, which is roughly startup order and is itself readable."""
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            heartbeat_line("09:32:58.000", "sequencer"),
+            heartbeat_line("09:32:58.100", "report"),
+            heartbeat_line("09:32:58.200", "hmi"),
+        ],
+    )
+
+    assert tracker.modules() == ("sequencer", "report", "hmi")
+
+
+def test_a_name_that_only_ever_receives_is_not_a_module():
+    """
+    Only a sender can prove it is alive. The Logger never answers anybody, so a
+    row for it could say nothing but "unknown" for the whole run.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            "2026-08-12 09:32:58.000;DEBUG;Core;queue_wrapper.py:send;send any->logger "
+            "LogRecord(msg='hello')",
+        ],
+    )
+
+    assert "logger" not in tracker.modules()
+
+
+def test_the_any_wildcard_is_not_a_module():
+    """
+    `any->logger` is named for the fact that its sender is *not* one particular
+    module - every process logs. It is the one name refused, and refused for
+    being a wildcard rather than for being unfamiliar.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            "2026-08-12 09:32:58.000;DEBUG;Core;queue_wrapper.py:send;send any->logger "
+            "LogRecord(msg='hello')",
+        ],
+    )
+
+    assert "any" not in tracker.modules()
+
+
+def test_an_anonymous_link_is_traced_but_is_not_a_module():
+    """
+    A QueueWrapper built without a link name traces as `?`. That is a defect
+    worth seeing, and it keeps its row in the trace table and a checkbox of its
+    own - but `?` names no sender, so it must not become a module. Caught when
+    the discovery rewrite was checked against a real window: it had a row.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            "2026-08-12 09:32:58.000;DEBUG;Core;queue_wrapper.py:send;send ? "
+            "SomethingNobodyNamed()",
+        ],
+    )
+
+    assert tracker.modules() == ()
+
+
+def test_a_goodbye_is_recognised_by_its_suffix_not_by_a_table():
+    """
+    `<Name>Stopped` names its own module, so a module added tomorrow needs no
+    entry anywhere for its clean shutdown to read as STOPPED rather than DEAD.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            "2026-08-12 09:32:58.000;DEBUG;Core;queue_wrapper.py:send;send hal->core "
+            "Heartbeat(source='hal', timestamp=1.0)",
+            "2026-08-12 09:32:59.000;DEBUG;Core;queue_wrapper.py:receive;recv hal->core "
+            "HalStopped()",
+        ],
+    )
+
+    assert tracker.state("hal") == STOPPED
+
+
+def test_a_run_level_stopped_event_does_not_invent_a_module():
+    """
+    The guard on the suffix rule. `RunStopped` and `SequenceStopped` match the
+    convention perfectly well and have nothing to do with liveness; a real module
+    has always spoken before it says goodbye, so nothing that has not been heard
+    from can be stopped.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            heartbeat_line("09:32:58.000", "sequencer"),
+            "2026-08-12 09:32:59.000;DEBUG;Core;queue_wrapper.py:receive;recv sequencer->core "
+            "RunStopped()",
+        ],
+    )
+
+    assert "run" not in tracker.modules()
+    assert tracker.state("sequencer") == ALIVE
+
+
+def test_core_naming_a_module_is_enough_to_give_it_a_row():
+    """
+    A module that died before it ever managed a heartbeat is the run where you
+    most want a row for it. CORE writes those lines only about modules it
+    watches, so its word is as good as the module's own.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            "2026-08-12 09:33:05.000;DEBUG;Core;core.py:do_periodic_tasks;"
+            "Heartbeat timeout for module: hal",
+        ],
+    )
+
+    assert "hal" in tracker.modules()
+    assert tracker.core_verdict("hal") == "timeout"
+
+
+def test_core_ending_the_run_is_a_verdict_of_its_own():
+    """
+    `fatal` is not a louder `timeout`. A timeout is CORE reporting a module late
+    and carrying on; a fatal is CORE ending the run over it. Collapsing the two
+    would hide the single most important thing that happened in the log.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            heartbeat_line("09:32:58.000", "sequencer"),
+            "2026-08-12 09:33:05.000;DEBUG;Core;core.py:do_periodic_tasks;"
+            "Heartbeat timeout for module: sequencer",
+        ],
+    )
+    assert tracker.core_verdict("sequencer") == "timeout"
+
+    feed(
+        tracker,
+        [
+            "2026-08-12 09:33:15.000;DEBUG;Core;core.py:end_run_for_silent_module;"
+            "Heartbeat fatal for module: sequencer",
+        ],
+    )
+
+    assert tracker.core_verdict("sequencer") == "fatal"
+
+
+def test_the_fatal_line_carries_nothing_but_the_module_name():
+    """
+    The prefix match takes everything after it as the name, so the measurements
+    belong on the record below - the shape the timeout line has always had. This
+    is the test that fails if somebody folds them back onto one line.
+    """
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            heartbeat_line("09:32:58.000", "report"),
+            "2026-08-12 09:33:15.000;DEBUG;Core;core.py:end_run_for_silent_module;"
+            "Heartbeat fatal for module: report (silent 16.0 s, limit 15.0 s).",
+        ],
+    )
+
+    # The trailing detail makes the name unparseable, so no verdict is recorded
+    # rather than a wrong one being invented.
+    assert tracker.core_verdict("report") == ""
+
+
+def test_a_fatal_verdict_does_not_leak_onto_another_module():
+    """One module's death says nothing about the other two."""
+    tracker = LivenessTracker()
+    feed(
+        tracker,
+        [
+            heartbeat_line("09:32:58.000", "hmi"),
+            heartbeat_line("09:32:58.000", "sequencer"),
+            "2026-08-12 09:33:15.000;DEBUG;Core;core.py:end_run_for_silent_module;"
+            "Heartbeat fatal for module: hmi",
+        ],
+    )
+
+    assert tracker.core_verdict("hmi") == "fatal"
+    assert tracker.core_verdict("sequencer") == ""
+
+
+def test_the_fatal_prefix_matches_what_core_actually_writes():
+    """
+    Matching on log text is fragile and known to be. This is the guard: the
+    prefix here and the format string in core.py are one fact in two files, and
+    nothing but this test says so.
+    """
+    import inspect
+
+    from pypts.core.core import Core
+    from pypts.helper_applications.debug_monitor.liveness import FATAL_PREFIX
+
+    source = inspect.getsource(Core.end_run_for_silent_module)
+
+    assert f'"{FATAL_PREFIX}%s"' in source, (
+        f"core.py no longer writes {FATAL_PREFIX!r} as a bare prefix + module name"
+    )
+
+
 def test_the_last_error_is_kept_per_module():
     """ModuleError crosses a QueueWrapper, so its whole repr is on one trace line."""
     tracker = LivenessTracker()

@@ -21,7 +21,7 @@ import time
 
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
-from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
+from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType, StepOutcome
 from pypts.messages.core_hmi_communication import (
     CoreToHmi,
     HmiStopped,
@@ -50,7 +50,7 @@ from pypts.messages.run_events import (
     UserTextResponse,
 )
 from pypts.utilities.error_handling import catch_and_report_errors
-from pypts.utilities.heartbeat_manager import HMI, HeartbeatManager
+from pypts.utilities.heartbeat_manager import HMI, HeartbeatManager, HeartbeatWatch
 
 #: The name CORE knows a frontend by, and the `source` on its heartbeats. Both
 #: frontends use it because only one of them ever runs. Imported rather than
@@ -79,6 +79,12 @@ class HmiClient:
         self.running = True
         self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
 
+        #: The other half of the same protocol: CORE beats back at this frontend
+        #: and this watches for it. Only the HMI does - the Sequencer and the
+        #: Report are threads of CORE's process and cannot outlive it, so this
+        #: is the one link where the far end can go away while this end runs on.
+        self.core_watch = HeartbeatWatch()
+
     # --- Event loop -----------------------------------------------------------
 
     @catch_and_report_errors()
@@ -89,6 +95,53 @@ class HmiClient:
     @catch_and_report_errors()
     def do_periodic_tasks(self) -> None:
         self.heartbeat_manager.tick()
+        self.check_core_is_alive()
+
+    def check_core_is_alive(self) -> None:
+        """
+        Close this frontend if CORE has stopped answering.
+
+        The orphan case, and the only reason the reverse heartbeat exists. If
+        CORE is killed outright - SIGKILL, a closed terminal, a launcher that
+        went with it - or if its event loop wedges while the process stays up,
+        nothing else would ever tell this frontend to leave. It would sit there
+        showing a run that has already stopped, with a window the operator can
+        still click.
+
+        Two thresholds, doing two different jobs. The first is a warning and
+        costs nothing if it is wrong; the second ends the session, so it waits
+        three times as long - see HEARTBEAT_FATAL_S. Not gated by
+        [watchdog] enabled: that flag is about CORE ending a *run*, and a
+        frontend with no engine behind it has nothing left to do either way.
+
+        Silent while stopping. A normal shutdown ends with CORE leaving its
+        event loop, so its heartbeats stop by design - and the GUI's QTimer goes
+        on firing after `running` is False, which without this guard would
+        report the engine as lost every time the application closed cleanly.
+        """
+        if not self.running:
+            return
+
+        if self.core_watch.is_lost():
+            # Neutral about which frontend this is: the CLI has no window, and
+            # this line is written for the technician - logging_rules.md 4.
+            log.error("The engine has stopped responding, so pypts is closing.")
+            log.debug(
+                "No CORE heartbeat for %.1f s; the limit is %.1f s.",
+                self.core_watch.silent_for(),
+                self.core_watch.fatal_s,
+            )
+            self.stop()
+            return
+
+        if self.core_watch.is_silent() and not self.core_watch.reported:
+            self.core_watch.reported = True
+            log.warning("The engine has stopped responding.")
+            log.debug(
+                "No CORE heartbeat for %.1f s; the timeout is %.1f s.",
+                self.core_watch.silent_for(),
+                self.core_watch.timeout_s,
+            )
 
     @catch_and_report_errors()
     def handle_core_message(self, message: CoreToHmi) -> None:
@@ -125,6 +178,8 @@ class HmiClient:
                 self.ask_user(message)
             case UserTextRequest():
                 self.ask_user_text(message)
+            case Heartbeat():
+                self.core_watch.note()
             case _:
                 unhandled(message)
 
@@ -172,9 +227,15 @@ class HmiClient:
         """
         Stop this frontend and tell CORE it has stopped.
 
-        Called on StopHmi, never directly by a subclass - a frontend that wants
-        to leave calls request_shutdown() and lets CORE bring everything down in
-        order.
+        Two callers, and neither is a subclass: `StopHmi`, which is the normal
+        way this happens, and `check_core_is_alive()` when CORE has gone quiet
+        for good. A frontend that wants to leave of its own accord still calls
+        request_shutdown() and lets CORE bring everything down in order.
+
+        `HmiStopped` is sent in both cases even though the orphan case has
+        nobody to receive it. Putting a message on a queue whose far end is dead
+        costs nothing, and the alternative - this method knowing which of its
+        two callers it has - buys nothing back.
         """
         log.debug("The frontend is stopping.")
         self.running = False

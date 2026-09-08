@@ -80,7 +80,7 @@ every hop.
 
 | Type | Kind | Meaning |
 |---|---|---|
-| `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all three links. |
+| `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all three links. It also travels **one way back**, CORE→HMI, which is why it is on four unions and not three: the HMI is the only module in a process of its own, so it is the only one that can still be running with nothing at the other end of its link. The Sequencer and the Report are threads of CORE's process and die with it, so neither is sent one — a second and third reverse direction would watch for something that cannot happen and double the trace traffic doing it. |
 | `ModuleError(source, severity, message, exception, traceback, operation, error_type)` | EVT | A failure the sender wants CORE to know about. Sent by the two decorators in `utilities/error_handling.py` for what nobody expected, and by `report_error()` / `report_problem()` from a raise site that recognised the failure itself and rated it. `operation` names the method (`"Sequencer.poll_core"`), `error_type` the exception class — strings, because this crosses the pickled link. |
 | `ErrorSeverity` · `ResultType` · `StepOutcome` | — | Enums and the pickle-safe summary of one executed step. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
 | `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. CORE also forwards `RunStarted` and `SequenceStarted` to the Report, which needs the run brackets for its folder and its rows. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
@@ -101,13 +101,14 @@ every hop.
 | `UserPromptResponse`, `UserTextResponse` | EVT | The operator's answers; CORE relays them to the Sequencer. |
 | `Heartbeat`, `ModuleError` | EVT | Shared vocabulary, as above. |
 
-| `CoreToHmi` (14) | Kind | Meaning |
+| `CoreToHmi` (15) | Kind | Meaning |
 |---|---|---|
 | `StopHmi()` | CMD | Close the frontend. It answers `HmiStopped`. |
 | `StatusChanged(text)` | EVT | One line of free text for the frontend's status bar. Anything with structure has its own message now. **Not logged above DEBUG**: the fact behind it was already written to the run log by whichever module owns it, so logging the status text too would say it twice - see `logger/logging_rules.md` section 5. |
 | `ModuleErrorReported(error)` | EVT | An error CORE decided the operator should see (severity above WARNING). |
 | `ReportReady(report_path, report_dir)` | EVT | The run's report is on disk. Sent by CORE when the Report answers `ReportGenerated`; the structured sibling of the `StatusChanged` sent beside it. `report_dir` is what a frontend's "open report folder" control opens. |
 | the 7 progress events + `RunMetadata` + the 2 requests | EVT | Forwarded from the Sequencer, unchanged. `RunMetadata` is what the GUI's top bar shows beside the recipe name, so the operator can see which unit the bench believes is in front of them. |
+| `Heartbeat` | EVT | CORE's own, at 1 Hz, and the only message that travels this way for the frontend's benefit rather than the operator's. `HmiClient.check_core_is_alive()` watches it: quiet for 5 s is a WARNING, quiet for 15 s closes the window. Without it a CORE killed outright — or one whose event loop has wedged while the process stays up — leaves the frontend showing a run that stopped long ago, with nobody left to send it `StopHmi`. CORE keeps beating all through a shutdown for the same reason: the HMI is being stopped then, and must not read the silence as an engine that died under it. |
 
 Everything on this link is **pickled**: it is the one link that still crosses a process
 boundary. No live queues, no Qt objects, no device handles.

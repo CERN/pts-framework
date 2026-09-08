@@ -6,6 +6,84 @@
 Small helpers with no home of their own.
 """
 
+import contextlib
+import signal
+import sys
+
+
+def ignore_keyboard_interrupt() -> None:
+    """
+    Take this child process out of Ctrl+C's reach.
+
+    Ctrl+C at a terminal raises SIGINT in *every* process of the foreground
+    group, not just the one the operator is looking at. Each child therefore
+    used to die on its own, at the moment the launcher was starting the orderly
+    shutdown it owns - so CORE was gone before it could pass StopSequencer and
+    StopReport on, and its submodule threads were orphaned. The CLI's own Ctrl+C
+    handling (`cli.py`) was already correct and was simply beaten to it.
+
+    The rule this restores is the one already written into the Logger's event
+    loop: *the launcher decides when we stop*. It asks through
+    `ShutdownRequested`, every module answers, and that handshake stays the only
+    way the application ends. A child that cannot hear Ctrl+C cannot short-cut
+    it.
+
+    `SIG_IGN` rather than a handler that logs: a Python signal handler runs in
+    the main thread between bytecodes, and `logging` takes locks, so a handler
+    that logged could deadlock against a log call the same thread was already
+    making. Ignoring is the only async-signal-safe answer.
+
+    The launcher itself deliberately does **not** call this - it is the process
+    that must still hear Ctrl+C. Nor does this leave a wedged child
+    unkillable: `stop_core()` terminates after its timeout, and SIGTERM and
+    SIGKILL are untouched.
+
+    Best effort: `signal.signal()` only works on the main thread of the main
+    interpreter, and every caller is a process entry point. A caller that is not
+    keeps the default handling rather than failing.
+    """
+    # ValueError means this is not the main thread, so there is no handler to
+    # install. Nothing to do, and nothing worth failing a run over.
+    with contextlib.suppress(ValueError):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+
+def pin_ascii_console() -> None:
+    """
+    Make the console ASCII, on every platform and in every locale.
+
+    `print()` and the Logger's stdout handler both encode with whatever the
+    locale says. On Windows that is a code page; on Linux under `LANG=C` - a
+    systemd unit, a minimal container, a bench with no locale configured - it is
+    plain ASCII, and one non-ASCII character then raises UnicodeEncodeError
+    inside the handler. A run must not be able to fail on the *shape* of a
+    message.
+
+    Pinning ASCII rather than UTF-8 is the stronger choice on purpose: two
+    machines running the same recipe print the same bytes, instead of one
+    showing a character and the other mojibake. `backslashreplace` means nothing
+    is lost either way - an unexpected character arrives as `\\uXXXX` and is
+    still readable. **The run log file is unaffected**: the Logger pins UTF-8 on
+    its FileHandler, so the file keeps the real characters and the console is
+    the only thing narrowed.
+
+    Called first thing by the launcher and by every child process entry point,
+    because each one has its own `sys.stdout`.
+
+    Best effort by design. A stream may be None (a windowed interpreter), may
+    have been replaced by something without `reconfigure()` (pytest's capture),
+    or may already be detached. None of that is worth failing a run over, and
+    none of it can happen on the console this exists for.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None or not hasattr(stream, "reconfigure"):
+            continue
+        try:
+            stream.reconfigure(encoding="ascii", errors="backslashreplace")
+        except (OSError, ValueError):
+            # Detached, closed, or not a text stream. Leave it as it was.
+            continue
+
 
 def convert_string_to_int(value: str) -> int:
     try:

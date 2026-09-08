@@ -30,6 +30,7 @@ from pathlib import Path
 from queue import Queue
 from typing import ClassVar
 
+from pypts.config_handler import ConfigHandler
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import QueueWrapper, UnhandledMessage, unhandled
 from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
@@ -88,16 +89,20 @@ from pypts.messages.run_events import (
 from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.report.report import report_main
 from pypts.sequencer.sequencer import sequencer_main
+from pypts.utilities.common import ignore_keyboard_interrupt, pin_ascii_console
 
 # The heartbeat protocol - the timeout CORE applies and the names it knows the
 # modules by - is declared with the sender's half in heartbeat_manager.py, so
 # that the two cannot drift and so that a tool needing only the names does not
 # have to import the engine to get them.
 from pypts.utilities.heartbeat_manager import (
+    CORE,
+    HEARTBEAT_FATAL_S,
     HEARTBEAT_TIMEOUT_S,
     HMI,
     REPORT,
     SEQUENCER,
+    HeartbeatManager,
 )
 
 #: What the operator is told each module is. The names above are the protocol's
@@ -107,6 +112,15 @@ FRIENDLY_MODULE_NAME = {
     HMI: "operator interface",
     SEQUENCER: "test engine",
     REPORT: "report writer",
+}
+
+#: The protocol's name for a module written as its ModuleError would spell it.
+#: The watchdog reports a *silence* rather than a caught exception, so there is
+#: no `self` to take a module path from - only the heartbeat's `source`.
+MODULE_SOURCE = {
+    HMI: "pypts.hmi.hmi_client",
+    SEQUENCER: "pypts.sequencer.sequencer",
+    REPORT: "pypts.report.report",
 }
 
 #: The same, for a ModuleError, which names its sender by dotted module. A
@@ -160,6 +174,13 @@ def core_main(
             the config for one run and a child process has no way to know that.
             Everything else CORE needs it reads from the config itself.
     """
+    # Before anything else in this process. Ctrl+C reaches every process in the
+    # group, and CORE dying to it takes the orderly shutdown - and the Sequencer
+    # and Report threads - with it. The launcher asks through ShutdownRequested;
+    # that stays the only way CORE stops.
+    ignore_keyboard_interrupt()
+    pin_ascii_console()
+
     init_logging(log_queue, log_level)
     Core(to_hmi, from_hmi, log_queue, log_level=log_level).start()
 
@@ -197,6 +218,7 @@ class Core:
         from_hmi: QueueWrapper[HmiToCore],
         log_queue,
         log_level: int = DEFAULT_LOG_LEVEL,
+        watchdog_enabled: bool | None = None,
     ) -> None:
         """
         Args:
@@ -205,6 +227,10 @@ class Core:
                 this process's root logger, which core_main() has already
                 pointed at the Logger.
             log_level: kept for the same reason.
+            watchdog_enabled: whether prolonged silence ends the run. None asks
+                the configuration, which is what a real run does; a test passes
+                the value, the way the Report is passed its output_dir, because
+                outside a run there is no launcher to have created a config.
         """
         self.to_hmi = to_hmi
         self.from_hmi = from_hmi
@@ -257,6 +283,25 @@ class Core:
         # every 10 ms, so without this the timeout below would log the same
         # warning about a hundred times a second for the rest of the run.
         self.heartbeat_lost = {name: False for name in self.module_running}
+
+        #: CORE's own heartbeat, towards the HMI and nowhere else. The Sequencer
+        #: and the Report are threads of this process and cannot outlive it, so
+        #: watching for a CORE that has gone would be watching for something
+        #: that cannot happen - and would double the trace traffic doing it.
+        self.hmi_heartbeat = HeartbeatManager(self.to_hmi, CORE)
+
+        # Which modules have already had the *fatal* threshold pass with the
+        # watchdog switched off. Same reason as heartbeat_lost above: without it
+        # a debugging session logs the same DEBUG line a hundred times a second.
+        self.watchdog_suppressed = {name: False for name in self.module_running}
+
+        #: Whether prolonged silence ends the run, or is only reported. Off is
+        #: for a developer with a debugger attached: a breakpoint in an event
+        #: loop is indistinguishable from an event loop that has died.
+        if watchdog_enabled is None:
+            self.watchdog_enabled = ConfigHandler().get_parameter("watchdog.enabled")
+        else:
+            self.watchdog_enabled = watchdog_enabled
 
     # --- Startup --------------------------------------------------------------
 
@@ -630,6 +675,7 @@ class Core:
             # The Monitor's other machine-read line - see do_periodic_tasks().
             log.debug("Module is responding again: %s", beat.source)
             self.heartbeat_lost[beat.source] = False
+            self.watchdog_suppressed[beat.source] = False
 
         self.last_heartbeat[beat.source] = beat.timestamp
 
@@ -637,13 +683,20 @@ class Core:
 
     def do_periodic_tasks(self) -> None:
         """
-        Watch the heartbeats.
+        Beat once towards the HMI, and watch the three beats coming back.
 
         Only modules still expected to be running are checked, so a module that
         has already reported itself stopped does not produce a timeout warning
-        for the rest of the run. What CORE should *do* about a timeout - restart
-        the module, abort the run, tell the operator - is still an open decision
-        recorded in the roadmap; for now it warns.
+        for the rest of the run.
+
+        **Two thresholds, doing two different jobs.** Silence past
+        HEARTBEAT_TIMEOUT_S is *reported*: one WARNING, and the run carries on,
+        because five seconds of quiet is as likely to be a stall as a death - a
+        large recipe parsed inline, a machine that swapped - and a warning that
+        is wrong costs nothing. Silence past HEARTBEAT_FATAL_S is *acted on*:
+        the module is not coming back, and a run whose engine or whose operator
+        interface has gone is not a run any more. That one ends the session, so
+        it waits three times as long before it believes itself.
 
         One warning per outage, not one per tick. The loop calling this turns
         every 10 ms and a timed-out module stays timed out, so logging on every
@@ -651,11 +704,29 @@ class Core:
         copies of the same sentence. note_heartbeat() clears the flag when the
         module answers again, so a second outage is reported afresh.
         """
+        # CORE's half of the protocol. Before everything below, so that a CORE
+        # which is looping is always saying so - including all through a
+        # shutdown, when the HMI is being stopped and must not conclude from the
+        # silence that the engine died under it.
+        self.hmi_heartbeat.tick()
+
+        # Nothing to watch for once the shutdown is under way. Every module has
+        # been asked to stop and is expected to go quiet, check_stop_status()
+        # already has its own budget and already names whoever fails to answer,
+        # and without this the fatal branch below would re-report the same dead
+        # module - and re-send its ModuleErrorReported - a hundred times a
+        # second for the rest of the shutdown.
+        if self.shutting_down:
+            return
+
         now = time.time()
         for name, last_seen in self.last_heartbeat.items():
             if not self.module_running[name]:
                 continue
-            if now - last_seen > HEARTBEAT_TIMEOUT_S and not self.heartbeat_lost[name]:
+
+            silent_for = now - last_seen
+
+            if silent_for > HEARTBEAT_TIMEOUT_S and not self.heartbeat_lost[name]:
                 # The one liveness fact the operator is told, and it is told
                 # without the mechanism - logging_rules.md section 7.1. Everything
                 # measurable about it is on the DEBUG line under it.
@@ -667,10 +738,78 @@ class Core:
                 log.debug("Heartbeat timeout for module: %s", name)
                 log.debug(
                     "It had been silent for %.1f s; the timeout is %.1f s.",
-                    now - last_seen,
+                    silent_for,
                     HEARTBEAT_TIMEOUT_S,
                 )
                 self.heartbeat_lost[name] = True
+
+            if silent_for > HEARTBEAT_FATAL_S:
+                if self.watchdog_enabled:
+                    self.end_run_for_silent_module(name, silent_for)
+                    # Every module has just been asked to stop; there is nothing
+                    # to be learned by measuring the other two against a clock
+                    # they were never going to answer.
+                    return
+                if not self.watchdog_suppressed[name]:
+                    self.watchdog_suppressed[name] = True
+                    log.debug(
+                        "The %s passed the fatal threshold of %.1f s, but "
+                        "[watchdog] enabled is off, so the run continues.",
+                        name,
+                        HEARTBEAT_FATAL_S,
+                    )
+
+    def end_run_for_silent_module(self, name: str, silent_for: float) -> None:
+        """
+        Bring the application down because a module is not coming back.
+
+        The operator is told *before* anything stops. A window that simply
+        vanishes leaves a technician with a half-finished test and no reason for
+        it, so this goes through handle_module_error() - the same path a
+        reported failure takes - which logs it at the severity's level and sends
+        it on as ModuleErrorReported. Sending it first matters: stop_all_modules()
+        is what closes their window. Nothing here writes an operator-facing line
+        of its own; that would say the same thing twice.
+
+        Then the ordinary shutdown, unchanged. StopSequencer and StopHmi go out,
+        StopReport is held back so the Report can drain the aborted run's tail,
+        the five-second budget applies, and CORE leaves when every module has
+        answered or the budget runs out. Nothing new is invented for this case,
+        which is the point: a watchdog that shut down differently from every
+        other exit would be a second shutdown path to keep working.
+
+        The silent module will not answer - it is why we are here - so the
+        budget is spent waiting for it. That is the honest cost of reusing the
+        one path, and five seconds at the end of a dead run is not worth a
+        special case.
+        """
+        # The mechanism only. The operator's sentence is written by
+        # handle_module_error() below, from the ModuleError - saying it here as
+        # well would tell them the same thing twice, which logging_rules.md
+        # section 5 is explicit about.
+        # Machine-read, and shaped the way the timeout line above is shaped: the
+        # prefix, then nothing but the module name. The Debug Monitor takes
+        # everything after the prefix as the name, so the measurements go on
+        # their own line below. See helper_applications/debug_monitor/liveness.py.
+        log.debug("Heartbeat fatal for module: %s", name)
+        log.debug(
+            "It had been silent for %.1f s; the limit is %.1f s.",
+            silent_for,
+            HEARTBEAT_FATAL_S,
+        )
+
+        self.handle_module_error(
+            ModuleError(
+                source=MODULE_SOURCE[name],
+                severity=ErrorSeverity.CRITICAL,
+                message=(
+                    f"It stopped responding for {silent_for:.0f} seconds, "
+                    f"so the run was stopped."
+                ),
+                operation="heartbeat",
+            )
+        )
+        self.stop_all_modules()
 
     # --- Shutdown -------------------------------------------------------------
 
