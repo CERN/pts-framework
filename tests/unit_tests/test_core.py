@@ -204,17 +204,16 @@ def test_a_sequencer_event_is_routed_to_the_hmi():
 
 def test_load_recipe_command_is_handled():
     """
-    LoadRecipe -> CORE parses and validates -> RecipeLoaded to the HMI, and the
-    *live* Recipe object to the Sequencer.
+    LoadRecipe -> CORE parses, validates and *keeps* the recipe -> RecipeLoaded
+    to the HMI, and nothing at all to the Sequencer.
 
-    Identity, not equality, on the handoff: the Sequencer runs the very object
-    CORE holds - one process, nothing pickled, which is the sanctioned way the
-    engine gets rich objects (see core.py's module docstring).
+    Loading is not starting. CORE owns the loaded recipe and hands it over only
+    when a run is asked for, so the Sequencer holds no recipe between runs
+    (roadmap section 1.40).
     """
     from pathlib import Path
 
     from pypts.messages.core_hmi_communication import LoadRecipe
-    from pypts.messages.core_sequencer_communication import UseRecipe
     from pypts.messages.run_events import RecipeLoaded
 
     recipe_path = Path(__file__).parent / "data" / "wait_recipe.yml"
@@ -241,22 +240,66 @@ def test_load_recipe_command_is_handled():
     real_steps = core.recipe.sequences["Main"].steps
     assert [s.step_name for s in summary_steps] == ["First wait", "Second wait"]
     assert [s.step_id for s in summary_steps] == [step.id for step in real_steps]
+    assert list(core.to_sequencer.receive()) == []
+
+
+def load_a_recipe(core):
+    """Drive a real LoadRecipe through CORE and drain what it answered."""
+    from pathlib import Path
+
+    from pypts.messages.core_hmi_communication import LoadRecipe
+
+    recipe_path = Path(__file__).parent / "data" / "wait_recipe.yml"
+    core.from_hmi.send(LoadRecipe(recipe_path=str(recipe_path)))
+    core.poll_all_sources()
+    list(core.to_hmi.receive())
+    list(core.to_sequencer.receive())
+
+
+def test_start_sequence_hands_the_recipe_over_with_the_command():
+    """
+    StartSequence -> RunSequence carrying both the name and the live Recipe.
+
+    Identity, not equality, on the handoff: the Sequencer runs the very object
+    CORE holds - one process, nothing pickled, which is the sanctioned way the
+    engine gets rich objects (see core.py's module docstring).
+    """
+    from pypts.messages.core_hmi_communication import StartSequence
+    from pypts.messages.core_sequencer_communication import RunSequence
+
+    core = build_core_that_spawns_nothing()
+    load_a_recipe(core)
+
+    core.from_hmi.send(StartSequence(sequence_name="Main"))
+    core.poll_all_sources()
+
     handoff = list(core.to_sequencer.receive())
     assert len(handoff) == 1
-    assert isinstance(handoff[0], UseRecipe)
+    assert isinstance(handoff[0], RunSequence)
+    assert handoff[0].sequence_name == "Main"
     assert handoff[0].recipe is core.recipe
 
 
-def test_start_sequence_command_is_handled():
-    from pypts.messages.core_hmi_communication import StartSequence
-    from pypts.messages.core_sequencer_communication import RunSequence
+def test_start_sequence_without_a_recipe_is_refused_by_core():
+    """
+    CORE owns the recipe, so CORE is the one that can refuse the run.
+
+    The Sequencer must not be asked to run something it has no recipe for: the
+    command stops here and the operator is told why.
+    """
+    from pypts.messages.core_hmi_communication import ModuleErrorReported, StartSequence
 
     core = build_core_that_spawns_nothing()
 
     core.from_hmi.send(StartSequence(sequence_name="Main"))
     core.poll_all_sources()
 
-    assert list(core.to_sequencer.receive()) == [RunSequence(sequence_name="Main")]
+    assert list(core.to_sequencer.receive()) == []
+    shown = list(core.to_hmi.receive())
+    assert len(shown) == 1
+    assert isinstance(shown[0], ModuleErrorReported)
+    assert shown[0].error.operation == "Core.start_sequence"
+    assert "no recipe" in shown[0].error.message.lower()
 
 
 def test_stop_sequence_from_hmi_is_forwarded_to_the_sequencer():

@@ -35,9 +35,14 @@ from pypts.recipe.recipe import Recipe
 
 
 @dataclass(frozen=True, slots=True)
-class UseRecipe:
+class RunSequence:
     """
-    The live, validated Recipe that subsequent RunSequence commands run.
+    Run one named sequence of the recipe carried with the command.
+
+    CORE owns the loaded recipe: it is loaded and validated once, kept there,
+    and handed over here per run. So the Sequencer holds no recipe between
+    runs, and cannot be asked to run one it was never given - loading a recipe
+    reaches the engine only when the operator starts something.
 
     The one message in the system that carries a rich object rather than
     plain values - allowed because this link never leaves the Core process,
@@ -46,12 +51,6 @@ class UseRecipe:
     """
 
     recipe: Recipe
-
-
-@dataclass(frozen=True, slots=True)
-class RunSequence:
-    """Run one named sequence of the recipe CORE has loaded."""
-
     sequence_name: str
 
 
@@ -71,8 +70,7 @@ class SequencerStopped:
 # --- The link ------------------------------------------------------------------
 
 CoreToSequencer = (
-    UseRecipe
-    | RunSequence
+    RunSequence
     | StopSequence
     | StopSequencer
     # Answers to questions the Sequencer asked, relayed back by CORE.

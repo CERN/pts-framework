@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS - Architecture of the new code</title>
+<style>
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --surface-2: #f0f0ee;
+  --text: #1c1c1a;
+  --text-dim: #5c5c58;
+  --border: #d8d8d2;
+  --border-strong: #b6b6ae;
+  --accent: #0b5fa5;
+  --accent-soft: #e4eff8;
+  --core: #0b5fa5;
+  --core-soft: #e4eff8;
+  --engine: #6a3fa0;
+  --engine-soft: #efe7f8;
+  --hmi: #1d7a4d;
+  --hmi-soft: #e2f2e9;
+  --logger: #8a5a00;
+  --logger-soft: #f9efdc;
+  --tool: #6f6f66;
+  --tool-soft: #eeeeea;
+  --warn: #a33;
+  --warn-soft: #fbe9e9;
+  --code-bg: #f2f2ef;
+  --shadow: 0 1px 2px rgba(0,0,0,.06), 0 4px 12px rgba(0,0,0,.04);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16171a;
+    --surface: #1e1f23;
+    --surface-2: #26272c;
+    --text: #e6e6e2;
+    --text-dim: #a0a099;
+    --border: #33343a;
+    --border-strong: #4a4b53;
+    --accent: #6db3f0;
+    --accent-soft: #1b2c3c;
+    --core: #6db3f0;
+    --core-soft: #17293a;
+    --engine: #b899e8;
+    --engine-soft: #2a2138;
+    --hmi: #6ecb99;
+    --hmi-soft: #162c20;
+    --logger: #e0b060;
+    --logger-soft: #322613;
+    --tool: #9c9c94;
+    --tool-soft: #26272c;
+    --warn: #f08a8a;
+    --warn-soft: #3a1e1e;
+    --code-bg: #24252a;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 12px rgba(0,0,0,.3);
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 15px;
+  line-height: 1.62;
+}
+.layout { display: flex; align-items: flex-start; max-width: 1520px; margin: 0 auto; }
+nav.toc {
+  position: sticky; top: 0; flex: 0 0 268px; height: 100vh; overflow-y: auto;
+  padding: 28px 18px 40px 24px; border-right: 1px solid var(--border);
+  font-size: 13.5px; background: var(--bg);
+}
+nav.toc .brand { font-weight: 700; font-size: 15px; letter-spacing: .01em; margin-bottom: 2px; }
+nav.toc .sub { color: var(--text-dim); font-size: 12px; margin-bottom: 18px; }
+nav.toc a { display: block; color: var(--text-dim); text-decoration: none; padding: 3px 8px; border-radius: 5px; }
+nav.toc a:hover { color: var(--text); background: var(--surface-2); }
+nav.toc a.lvl2 { padding-left: 22px; font-size: 12.8px; }
+nav.toc .grp { margin-top: 14px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--border-strong); padding: 0 8px; }
+main { flex: 1 1 auto; min-width: 0; padding: 34px 44px 120px; }
+h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -.01em; }
+.lede { color: var(--text-dim); font-size: 15.5px; max-width: 76ch; margin: 0 0 8px; }
+h2 { font-size: 22px; margin: 52px 0 4px; padding-top: 14px; border-top: 1px solid var(--border); letter-spacing: -.01em; }
+h2:first-of-type { margin-top: 30px; }
+h3 { font-size: 17px; margin: 30px 0 6px; }
+h4 { font-size: 13.5px; margin: 20px 0 4px; color: var(--text-dim); text-transform: uppercase; letter-spacing: .05em; }
+p { max-width: 84ch; }
+ul, ol { max-width: 84ch; padding-left: 22px; }
+li { margin: 3px 0; }
+code, kbd { font-family: "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace; font-size: .88em; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; border: 1px solid var(--border); }
+pre { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; overflow-x: auto; font-size: 12.8px; line-height: 1.55; }
+pre code { background: none; border: none; padding: 0; font-size: inherit; }
+a { color: var(--accent); }
+.meta { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0 8px; }
+.pill { font-size: 12px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-dim); background: var(--surface); }
+.tablewrap { overflow-x: auto; margin: 14px 0; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
+table { border-collapse: collapse; width: 100%; font-size: 13.2px; }
+th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+tbody tr:last-child td { border-bottom: none; }
+.note, .warnbox {
+  border-left: 3px solid var(--accent); background: var(--accent-soft);
+  padding: 10px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; max-width: 84ch; font-size: 14px;
+}
+.warnbox { border-left-color: var(--warn); background: var(--warn-soft); }
+.note p:last-child, .warnbox p:last-child { margin-bottom: 0; }
+.note p:first-child, .warnbox p:first-child { margin-top: 0; }
+
+.diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 22px; margin: 18px 0; box-shadow: var(--shadow); overflow-x: auto; }
+.diagram .caption { font-size: 12.5px; color: var(--text-dim); margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--border); max-width: 90ch; }
+.proc { border: 2px solid var(--border-strong); border-radius: 10px; padding: 12px; min-width: 190px; background: var(--surface-2); }
+.proc > .title { font-weight: 700; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; margin-bottom: 2px; }
+.proc > .kind { font-size: 11.5px; color: var(--text-dim); margin-bottom: 10px; }
+.thread { border: 1px dashed var(--border-strong); border-radius: 7px; padding: 7px 10px; margin: 6px 0; font-size: 12.6px; background: var(--surface); }
+.thread b { font-weight: 650; }
+.thread .d { display: block; color: var(--text-dim); font-size: 11.6px; }
+.p-core { border-color: var(--core); } .p-core > .title { color: var(--core); }
+.p-hmi  { border-color: var(--hmi); }  .p-hmi  > .title { color: var(--hmi); }
+.p-log  { border-color: var(--logger); } .p-log > .title { color: var(--logger); }
+.p-tool { border-color: var(--tool); border-style: dashed; } .p-tool > .title { color: var(--tool); }
+.row { display: flex; gap: 16px; align-items: stretch; flex-wrap: wrap; }
+.arrowcol { display: flex; flex-direction: column; justify-content: center; align-items: center; min-width: 132px; color: var(--text-dim); font-size: 11.5px; text-align: center; }
+.arrowcol .a { font-family: monospace; font-size: 15px; color: var(--accent); letter-spacing: -1px; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12px; color: var(--text-dim); margin-top: 14px; }
+.legend span::before { content: ""; display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; border: 2px solid; }
+.lg-core::before { border-color: var(--core); } .lg-hmi::before { border-color: var(--hmi); }
+.lg-log::before { border-color: var(--logger); } .lg-tool::before { border-color: var(--tool); border-style: dashed; }
+
+.flow { display: flex; flex-direction: column; max-width: 940px; }
+.flow .fstep { display: flex; gap: 14px; align-items: flex-start; }
+.flow .fnum { flex: 0 0 26px; height: 26px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; }
+.flow .fbody { padding-bottom: 16px; border-left: 2px solid var(--border); margin-left: -14px; padding-left: 27px; }
+.flow .fstep:last-child .fbody { border-left-color: transparent; }
+.flow .fbody b { display: block; font-size: 14px; }
+.flow .fbody span { color: var(--text-dim); font-size: 13.2px; }
+.flow .fbody code { font-size: 12.3px; }
+
+.layers { display: flex; flex-direction: column; gap: 8px; max-width: 900px; }
+.layer { border: 1px solid var(--border-strong); border-radius: 8px; padding: 10px 14px; background: var(--surface-2); }
+.layer .lname { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--text-dim); }
+.layer .lmods { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.6px; margin-top: 3px; }
+.layer .lnote { font-size: 12.2px; color: var(--text-dim); margin-top: 4px; }
+.down { text-align: center; color: var(--border-strong); font-size: 14px; line-height: 1; }
+
+.badge { display: inline-block; font-size: 11px; font-weight: 650; padding: 1px 7px; border-radius: 4px; border: 1px solid; letter-spacing: .02em; white-space: nowrap; }
+.b-live { color: var(--hmi); border-color: var(--hmi); background: var(--hmi-soft); }
+.b-stub { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+.b-part { color: var(--logger); border-color: var(--logger); background: var(--logger-soft); }
+.b-proc { color: var(--core); border-color: var(--core); background: var(--core-soft); }
+.b-thread { color: var(--engine); border-color: var(--engine); background: var(--engine-soft); }
+.b-lib { color: var(--tool); border-color: var(--tool); background: var(--tool-soft); }
+
+.cols2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); gap: 16px; margin: 16px 0; }
+.card { border: 1px solid var(--border); border-radius: 9px; padding: 14px 16px; background: var(--surface); box-shadow: var(--shadow); }
+.card h4 { margin-top: 0; color: var(--text); text-transform: none; letter-spacing: 0; font-size: 14.5px; }
+.card p { font-size: 13.3px; margin: 6px 0 0; }
+.card ul { font-size: 13.2px; margin: 6px 0 0; }
+
+hr.soft { border: none; border-top: 1px dashed var(--border); margin: 26px 0; }
+.small { font-size: 12.6px; color: var(--text-dim); }
+footer { margin-top: 60px; padding-top: 18px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text-dim); }
+@media (max-width: 1020px) {
+  nav.toc { display: none; }
+  main { padding: 24px 20px 90px; }
+}
+</style>
+</head>
+<body>
+<div class="layout">
+
+<nav class="toc">
+  <div class="brand">PyPTS architecture</div>
+  <div class="sub">branch <code>architecture_refactor</code></div>
+  <a href="#overview">Overview</a>
+  <div class="grp">Runtime shape</div>
+  <a href="#topology">1. Process &amp; thread topology</a>
+  <a href="#spawning">2. Spawning &amp; startup</a>
+  <a href="#shutdown">3. Shutdown</a>
+  <div class="grp">Communication</div>
+  <a href="#messaging">4. The messaging model</a>
+  <a href="#transport" class="lvl2">QueueWrapper</a>
+  <a href="#links" class="lvl2">The seven directions</a>
+  <a href="#catalogue" class="lvl2">Message catalogue</a>
+  <a href="#addmsg" class="lvl2">Adding a message</a>
+  <a href="#blocking" class="lvl2">Blocking request/response</a>
+  <div class="grp">Health</div>
+  <a href="#watchdog">5. Heartbeats &amp; watchdog</a>
+  <a href="#errors">6. Error handling</a>
+  <a href="#logging">7. Logging</a>
+  <div class="grp">Execution</div>
+  <a href="#pipeline">8. Recipe to report</a>
+  <a href="#steplife" class="lvl2">The step lifecycle</a>
+  <a href="#steptypes" class="lvl2">Step types</a>
+  <div class="grp">Code map</div>
+  <a href="#modules">9. Module reference</a>
+  <a href="#deps">10. Dependencies</a>
+  <a href="#classes">11. Class inventory</a>
+  <a href="#gaps">12. Stubs &amp; known gaps</a>
+</nav>
+
+<main>
+
+<h1>PyPTS &mdash; architecture of the new code</h1>
+<p class="lede">How the framework is put together on the <code>architecture_refactor</code> branch:
+which processes and threads exist, who spawns them, how modules talk, how the watchdog decides a
+module is gone, how a recipe becomes a report &mdash; and what imports what.</p>
+
+<div class="meta">
+  <span class="pill">Scope: <code>src/pypts/**</code> excluding <code>old_code/</code></span>
+  <span class="pill">95 modules &middot; ~17 000 lines</span>
+  <span class="pill">Python &ge; 3.11</span>
+  <span class="pill">import name <code>pypts</code> &middot; distribution <code>pts-framework</code></span>
+</div>
+
+<h2 id="overview">Overview</h2>
+
+<p>PyPTS runs YAML <em>recipes</em> &mdash; ordered sequences of steps &mdash; against hardware on a
+test bench, and writes a report. The refactor rebuilt the framework around three rules that
+everything else follows from:</p>
+
+<div class="cols2">
+  <div class="card">
+    <h4>Modules never touch each other</h4>
+    <p>No module holds a reference to another, and no module owns a queue it did not receive.
+    Everything goes through <strong>CORE</strong>, the mediator &mdash; with exactly one exception:
+    log records, which go straight to the Logger so that logging survives a dead CORE.</p>
+  </div>
+  <div class="card">
+    <h4>A message is a frozen value</h4>
+    <p>Every message is a <code>@dataclass(frozen=True, slots=True)</code> of plain values, declared in
+    the module that owns its <em>link</em>, and a member of that link's union type. Every handler is a
+    <code>match</code> closed with <code>unhandled()</code>, so a forgotten message raises instead of
+    vanishing.</p>
+  </div>
+  <div class="card">
+    <h4>One process boundary, not four</h4>
+    <p>Only HMI&harr;CORE crosses processes, so only its messages are pickled. The Sequencer and the
+    Report are <em>threads</em> of the Core process, and their links are plain
+    <code>queue.Queue</code> &mdash; which is why they may carry live objects such as a parsed
+    <code>Recipe</code>.</p>
+  </div>
+</div>
+
+<p>Three consequences are worth carrying into everything below:</p>
+<ul>
+  <li>The framework is <strong>polling, not blocking</strong>. Every event loop drains its inbox with
+      <code>get_nowait()</code>, does its periodic work, and sleeps 10&nbsp;ms. Nothing waits on a
+      queue except the Logger, which has only one job.</li>
+  <li>A <strong>sequence runs on a worker thread of its own</strong>, so the Sequencer's event loop
+      keeps turning while a step is executing &mdash; otherwise heartbeats stop,
+      <code>StopSequence</code> is never read, and a step waiting for an operator's answer
+      deadlocks.</li>
+  <li>The <strong>run log is the system's only shared observability surface</strong>. Every
+      <code>QueueWrapper</code> traces itself at DEBUG, so at <code>--log-level DEBUG</code> the log
+      contains every message twice &mdash; once from the sender, once from the receiver. The Debug
+      Monitor is a reader of that file and nothing more.</li>
+</ul>
+
+<h2 id="topology">1. Process &amp; thread topology</h2>
+
+<p>GUI mode is four operating-system processes plus an optional fifth; CLI mode is three, because the
+CLI runs inside the launcher's own process.</p>
+
+<div class="diagram">
+  <div class="row">
+
+    <div class="proc p-tool">
+      <div class="title">Launcher</div>
+      <div class="kind">process &middot; parent of all the others</div>
+      <div class="thread"><b>main()</b><span class="d">argparse &middot; ConfigHandler.bootstrap() &middot; creates 3 mp.Queues &middot; spawns &middot; joins the frontend</span></div>
+      <div class="thread"><b>CLI shell</b><span class="d">in CLI mode only &mdash; <code>cli_main()</code> runs here</span></div>
+      <div class="thread"><b>cli-poll</b><span class="d">daemon thread draining the CORE inbox (CLI mode)</span></div>
+    </div>
+
+    <div class="arrowcol">
+      <div class="a">&#9472;&#9472;&#9654;</div>
+      <div>spawn</div>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:16px;">
+      <div class="proc p-log">
+        <div class="title">Logger</div>
+        <div class="kind">process &middot; single writer of the run log</div>
+        <div class="thread"><b>main_loop()</b><span class="d">blocking <code>log_queue.get()</code>; writes the FileHandler and, if enabled, stdout</span></div>
+      </div>
+
+      <div class="proc p-core">
+        <div class="title">Core</div>
+        <div class="kind">process &middot; the engine</div>
+        <div class="thread"><b>Core.main_loop()</b><span class="d">main thread: routes 3 inboxes, beats, watches, checks stop status &mdash; every 10 ms</span></div>
+        <div class="thread"><b>Sequencer</b> <span class="badge b-thread">daemon thread</span><span class="d">event loop; owns the recipe and the run</span></div>
+        <div class="thread" style="margin-left:18px"><b>Sequence</b> <span class="badge b-thread">daemon thread</span><span class="d">started per run by <code>run_sequence()</code>; executes the steps</span></div>
+        <div class="thread"><b>Report</b> <span class="badge b-thread">daemon thread</span><span class="d">event loop; incremental CSV + HTML</span></div>
+      </div>
+
+      <div class="proc p-hmi">
+        <div class="title">GUI</div>
+        <div class="kind">process &middot; GUI mode only</div>
+        <div class="thread"><b>Qt event loop</b><span class="d">QTimer 50 ms &rarr; <code>poll_core()</code> + <code>do_periodic_tasks()</code>; QTimer 200 ms &rarr; tail the run log</span></div>
+      </div>
+
+      <div class="proc p-tool">
+        <div class="title">Debug Monitor</div>
+        <div class="kind">subprocess &middot; on by default during the refactor</div>
+        <div class="thread"><b>Qt event loop</b><span class="d">reads the run log file only &mdash; never imported by the framework</span></div>
+      </div>
+    </div>
+
+  </div>
+  <div class="legend">
+    <span class="lg-core">Core process (engine)</span>
+    <span class="lg-hmi">Frontend process</span>
+    <span class="lg-log">Logger process</span>
+    <span class="lg-tool">Launcher / developer tool</span>
+  </div>
+  <div class="caption">The Sequencer and the Report are threads, not processes. That is what makes
+  their links plain <code>queue.Queue</code> and lets <code>UseRecipe</code> carry a live
+  <code>Recipe</code> object. The cost, recorded in the roadmap: a fault in either thread takes CORE
+  with it, and both are named <code>Core</code> in the log, because the log format names the
+  <em>process</em>.</div>
+</div>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Unit</th><th>Kind</th><th>Entry point</th><th>Started by</th><th>Ends when</th></tr></thead>
+<tbody>
+<tr><td>Launcher</td><td><span class="badge b-proc">process</span></td><td><code>launcher/startup.py: main()</code></td><td><code>python -m pypts</code></td><td>The frontend returns; <code>finally</code> stops CORE, then the Logger</td></tr>
+<tr><td>Logger</td><td><span class="badge b-proc">process</span></td><td><code>logger/log.py: logger_main()</code></td><td>Launcher, first &mdash; before anything is logged</td><td><code>StopLogger</code> is dequeued; then it drains</td></tr>
+<tr><td>Core</td><td><span class="badge b-proc">process</span></td><td><code>core/core.py: core_main()</code></td><td>Launcher, after the config and the Logger</td><td>Every module reported stopped, or the 5 s budget expired</td></tr>
+<tr><td>GUI</td><td><span class="badge b-proc">process</span></td><td><code>hmi/gui/gui.py: gui_main()</code></td><td>Launcher, in <code>--mode gui</code></td><td>Qt loop returns after <code>StopHmi</code> or the window closes</td></tr>
+<tr><td>CLI</td><td><span class="badge b-lib">in-process</span></td><td><code>hmi/cli/cli.py: cli_main()</code></td><td>Launcher, in <code>--mode cli</code> &mdash; no new process</td><td><code>exit</code>, Ctrl+C or EOF, then <code>wait_until_stopped()</code></td></tr>
+<tr><td>Sequencer</td><td><span class="badge b-thread">thread of Core</span></td><td><code>sequencer/sequencer.py: sequencer_main()</code></td><td><code>Core.start_submodules()</code></td><td><code>StopSequencer</code> &rarr; answers <code>SequencerStopped</code></td></tr>
+<tr><td>Report</td><td><span class="badge b-thread">thread of Core</span></td><td><code>report/report.py: report_main()</code></td><td><code>Core.start_submodules()</code></td><td><code>StopReport</code> &rarr; answers <code>ReportStopped</code></td></tr>
+<tr><td>Sequence</td><td><span class="badge b-thread">thread of Core</span></td><td><code>Sequencer.execute_sequence()</code></td><td><code>Sequencer.run_sequence()</code>, per run</td><td>The sequence body returns, or the stop flag ends it at a step boundary</td></tr>
+<tr><td>Debug Monitor</td><td><span class="badge b-proc">subprocess</span></td><td><code>python -m pypts.helper_applications.debug_monitor</code></td><td>Launcher, via <code>subprocess.Popen</code></td><td>Never &mdash; deliberately left open when the run ends</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Why <code>spawn</code>, always</h3>
+<p><code>startup.main()</code> pins <code>set_start_method("spawn")</code> on every platform, before
+the first <code>Queue()</code> is built. Two reasons: the configuration notice may have created a
+<code>QApplication</code> in the launcher process and forking a process holding live Qt state is
+unsupported; and Windows &mdash; where development happens &mdash; always spawns, so pinning it makes
+Linux exercise the same code paths rather than quietly different ones.</p>
+
+<h3>Signals and console encoding</h3>
+<p>Ctrl+C at a terminal raises SIGINT in <em>every</em> process of the foreground group. Each child
+entry point therefore calls <code>utilities/common.py: ignore_keyboard_interrupt()</code>
+(<code>SIG_IGN</code>, never a handler that logs &mdash; a Python signal handler runs between
+bytecodes and <code>logging</code> takes locks, so a logging handler could deadlock against a log call
+the same thread was already making). The launcher deliberately does <strong>not</strong>: it is the
+one process that must still hear Ctrl+C, and it then runs the orderly shutdown it owns. Every entry
+point also calls <code>pin_ascii_console()</code>, so no message can fail a run on its encoding; the
+log <em>file</em> keeps its UTF-8.</p>
+
+<h2 id="spawning">2. Spawning &amp; startup, in order</h2>
+
+<div class="flow">
+  <div class="fstep"><div class="fnum">1</div><div class="fbody"><b>Console and start method are pinned</b>
+    <span><code>pin_ascii_console()</code> before the first <code>print()</code>; <code>set_start_method("spawn")</code> before the first <code>Queue()</code>.</span></div></div>
+  <div class="fstep"><div class="fnum">2</div><div class="fbody"><b>Arguments are parsed</b>
+    <span><code>--mode gui|cli|connect</code> (gui default), <code>--log-level</code>, <code>--debug-monitor / --no-debug-monitor</code> (on by default).</span></div></div>
+  <div class="fstep"><div class="fnum">3</div><div class="fbody"><b>PySide6 is imported &mdash; only in GUI mode</b>
+    <span>The GUI import sits inside <code>if args.mode == "gui"</code>. Qt is the one heavy dependency and <code>hmi/gui/gui.py</code> is the only door to it: nothing in CORE, the Logger, the messages or the engine imports Qt. A missing PySide6 is a plain message and <code>exit(1)</code>, not a traceback over a half-built run.</span></div></div>
+  <div class="fstep"><div class="fnum">4</div><div class="fbody"><b>Configuration bootstraps</b>
+    <span><code>ConfigHandler.bootstrap()</code> &mdash; the one call that may create <code>config.ini</code>. It runs <em>before</em> logging exists, because it decides where the log goes, so it buffers its own records for <code>replay_bootstrap_log()</code> later. Outcome <code>CREATED</code> or <code>DISCARDED</code> raises an operator notice (a QMessageBox in GUI mode, a framed console banner otherwise).</span></div></div>
+  <div class="fstep"><div class="fnum">5</div><div class="fbody"><b>Three multiprocessing queues are created</b>
+    <span><code>log_queue</code>, <code>to_core</code>, <code>to_hmi</code>. The log file path is decided here, exactly once, by <code>get_log_file_path(paths.logs_dir)</code>.</span></div></div>
+  <div class="fstep"><div class="fnum">6</div><div class="fbody"><b>The Logger process starts</b>
+    <span>It must exist before anything is logged. The launcher then calls <code>init_logging(log_queue, level, path)</code> on itself, which puts a <code>QueueHandler</code> on the root logger.</span></div></div>
+  <div class="fstep"><div class="fnum">7</div><div class="fbody"><b>The bootstrap log is replayed, then the three header lines</b>
+    <span>What PyPTS is and its version, who ran it and on which host, and the path of the run log &mdash; so a log taken out of context for a support ticket still answers all three.</span></div></div>
+  <div class="fstep"><div class="fnum">8</div><div class="fbody"><b>The Debug Monitor is started</b>
+    <span><code>subprocess.Popen([sys.executable, "-m", DEBUG_MONITOR_MODULE, log_path])</code> &mdash; a module <em>string</em>, never an import. It waits up to 5 s for the Logger to create the file, and warns if the level is above DEBUG, since the trace exists at DEBUG and nowhere else.</span></div></div>
+  <div class="fstep"><div class="fnum">9</div><div class="fbody"><b>The Core process starts</b>
+    <span><code>Process(target=core_main, name="Core", args=(to_hmi, to_core, log_queue, log_level))</code>. The level is passed rather than re-read, because <code>--log-level</code> overrides the config for one run and a child process has no way to know that.</span></div></div>
+  <div class="fstep"><div class="fnum">10</div><div class="fbody"><b>The frontend starts, and the launcher joins it</b>
+    <span>GUI: a fourth process, handed the queues, the log queue, the level <em>and the log path</em> (it tails the file into its LOG OUTPUT panel). CLI: <code>cli_main()</code> is simply called here. The launcher then blocks on the frontend for the whole run.</span></div></div>
+  <div class="fstep"><div class="fnum">11</div><div class="fbody"><b>Inside Core: submodules</b>
+    <span><code>core_main()</code> calls <code>init_logging()</code> first and <em>only</em> here for this process &mdash; the two threads inherit the root logger rather than configuring one of their own. <code>Core.__init__</code> builds the four thread-side queues; <code>start_submodules()</code> starts the Sequencer and Report daemon threads, handing each exactly its two link halves.</span></div></div>
+</div>
+
+<div class="warnbox">
+<p><strong><code>--mode connect</code> is accepted by argparse but has no branch.</strong> It falls
+through the <code>if args.mode == "gui"</code> and silently starts the CLI. It is not implemented.</p>
+</div>
+
+<h4>Who creates which queue</h4>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Queue</th><th>Type</th><th>Created by</th><th>Handed to</th></tr></thead>
+<tbody>
+<tr><td><code>log_queue</code></td><td><code>multiprocessing.Queue</code></td><td>Launcher</td><td>Every process &mdash; carries <code>LogRecord</code>s <em>and</em> <code>LoggerControl</code> messages</td></tr>
+<tr><td><code>to_core</code> / <code>to_hmi</code></td><td><code>multiprocessing.Queue</code></td><td>Launcher</td><td>CORE and the frontend &mdash; the one pickled pair</td></tr>
+<tr><td>4 engine queues</td><td><code>queue.Queue</code></td><td><code>Core.__init__</code></td><td>The Sequencer and Report threads. CORE builds <em>both</em> halves of its own links, so a module cannot construct a link to anyone it has no business talking to.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="shutdown">3. Shutdown</h2>
+
+<p>There is exactly one way the application ends, and every path funnels into it. A frontend never
+leaves of its own accord: it asks.</p>
+
+<div class="flow">
+  <div class="fstep"><div class="fnum">1</div><div class="fbody"><b>Somebody asks</b>
+    <span>The operator closes the window or types <code>exit</code> &rarr; <code>HmiClient.request_shutdown()</code> sends <code>ShutdownRequested</code>. The launcher sends the same message in its <code>finally</code>, because it cannot assume the frontend got the chance. CORE's <code>stop_all_modules()</code> is idempotent for exactly this reason.</span></div></div>
+  <div class="fstep"><div class="fnum">2</div><div class="fbody"><b>CORE asks everyone to stop, and starts a 5 s clock</b>
+    <span><code>StopSequencer</code> &rarr; Sequencer, <code>StopHmi</code> &rarr; frontend. <code>StopReport</code> is <strong>held back</strong>: the Sequencer may still be finishing an aborted sequence whose <code>StepExecuted</code> / <code>RunFinished</code> / <code>GenerateReport</code> must reach the Report first.</span></div></div>
+  <div class="fstep"><div class="fnum">3</div><div class="fbody"><b>The Sequencer stops its run, then itself</b>
+    <span><code>stop_running_sequence()</code> sets the flag and joins the sequence thread for 2 s. A sequence that will not stop is reported as CRITICAL &mdash; teardown has not run and the bench state is unknown &mdash; and abandoned. Then <code>SequencerStopped</code>.</span></div></div>
+  <div class="fstep"><div class="fnum">4</div><div class="fbody"><b><code>SequencerStopped</code> releases the held <code>StopReport</code></b>
+    <span><code>release_stop_report()</code>, exactly once. The shutdown deadline releases it too, if the Sequencer never answers.</span></div></div>
+  <div class="fstep"><div class="fnum">5</div><div class="fbody"><b>CORE leaves when all three have answered &mdash; or names those that did not</b>
+    <span><code>check_stop_status()</code>: all of <code>module_running</code> false &rarr; leave. Past the deadline &rarr; one ERROR naming the late modules by their operator-facing names, then leave anyway. There is nothing to kill: both submodules are daemon threads, and the HMI is a process the launcher owns.</span></div></div>
+  <div class="fstep"><div class="fnum">6</div><div class="fbody"><b>The launcher terminates what is left, then stops the Logger last</b>
+    <span><code>stop_core()</code> joins CORE for 5 s and <code>terminate()</code>s it if needed. Then <code>StopLogger</code> &mdash; a <em>queued</em> message, so the Logger acts on it only after writing everything already in flight &mdash; and a 5 s join. The Debug Monitor is deliberately left running.</span></div></div>
+</div>
+
+<div class="note">
+<p><strong>Two orderly-exit budgets, five seconds each.</strong> CORE's
+<code>SHUTDOWN_TIMEOUT_S</code> covers every module noticing the request, finishing what it is doing
+and reporting itself stopped; the launcher's <code>CORE_SHUTDOWN_TIMEOUT_S</code> and
+<code>LOGGER_SHUTDOWN_TIMEOUT_S</code> bound the joins. <code>Core.THREAD_JOIN_TIMEOUT_S</code> (also
+5 s) is <em>not</em> a shutdown budget &mdash; the thread has already reported itself stopped, so it
+only covers the return from the loop.</p>
+</div>
+
+<h2 id="messaging">4. The messaging model</h2>
+
+<h3 id="transport">One transport: <code>QueueWrapper</code></h3>
+
+<p><code>messages/queue_wrapper.py</code> holds a single generic class, and it is the transport for
+every link in the system. It wraps <em>anything with <code>put()</code> and
+<code>get_nowait()</code></em> &mdash; which is precisely what lets one class serve a process boundary
+(<code>multiprocessing.Queue</code>) and a thread boundary (<code>queue.Queue</code>).</p>
+
+<pre><code>class QueueWrapper(Generic[Msg]):
+    DEFAULT_BATCH = 64                 # one receive() cannot starve the other inboxes
+
+    def send(self, message: Msg) -&gt; None:
+        _trace.debug("send %s %r", self.link, message)   # traced BEFORE the put,
+        self._queue.put(message)                         # so a message that fails to
+        self.sent += 1                                   # pickle is still recorded
+
+    def receive(self, limit=DEFAULT_BATCH) -&gt; Iterator[Msg]:
+        ...                                              # get_nowait(); a generator, so a
+        self.received += 1                               # caller that stops early leaves
+        _trace.debug("recv %s %r", self.link, message)   # the rest queued
+        yield message</code></pre>
+
+<p>Four properties fall out of those twenty lines:</p>
+<ul>
+  <li><strong>It never blocks.</strong> <code>receive()</code> yields what is waiting <em>right
+      now</em> and returns on <code>Empty</code>. Every event loop in the framework is built on
+      that.</li>
+  <li><strong>The type parameter is the link's union.</strong> <code>QueueWrapper[HmiToCore]</code> is
+      what makes <code>mypy</code> able to prove a <code>match</code> is exhaustive.</li>
+  <li><strong>Every wrapper traces itself</strong> on its own logger, <code>pypts.trace</code>, at
+      DEBUG &mdash; which is why each carries a <code>link</code> name, and why it imports
+      <code>logging</code> directly rather than <code>pypts.logger.log</code> (that module imports
+      this one). It is also the only way to see the Core&harr;Sequencer and Core&harr;Report traffic,
+      which never leaves the engine process.</li>
+  <li><strong>Counters are per holder, not per link.</strong> A wrapper pickled into a child process
+      gives the child its own <code>sent</code> / <code>received</code>.</li>
+</ul>
+
+<p>Beside it, two names that carry the exhaustiveness contract:</p>
+<pre><code>def unhandled(message: Never) -&gt; NoReturn:
+    raise UnhandledMessage(f"No handler for message: {message!r}")</code></pre>
+<p>Typed <code>Never</code>: if a union member is not matched, the value reaching
+<code>unhandled()</code> is not <code>Never</code> and <strong>mypy fails the build</strong>. At
+runtime it raises rather than dropping the message.</p>
+
+<h3 id="links">The seven directions</h3>
+
+<p><code>messages/links.py</code> names each direction and imports nothing, so <code>messages</code>
+and <code>logger</code> can both use it freely. Six of the seven are module-to-module links through
+CORE; the seventh bypasses CORE entirely.</p>
+
+<div class="diagram">
+  <div class="row" style="align-items:center">
+    <div class="proc p-hmi" style="min-width:170px">
+      <div class="title">HMI</div>
+      <div class="kind">GUI or CLI &middot; own process</div>
+      <div class="thread"><code>HmiClient</code><span class="d">the protocol half both frontends share</span></div>
+    </div>
+    <div class="arrowcol">
+      <div class="a">&#9472;&#9472;&#9654;</div><div><code>hmi-&gt;core</code></div>
+      <div class="a">&#9664;&#9472;&#9472;</div><div><code>core-&gt;hmi</code></div>
+      <div style="margin-top:6px"><strong>pickled</strong></div>
+    </div>
+    <div class="proc p-core" style="min-width:190px">
+      <div class="title">CORE</div>
+      <div class="kind">mediator &middot; 3 handlers, 3 inboxes</div>
+      <div class="thread"><code>handle_hmi_message</code><span class="d">&rarr; Sequencer / config refusal / errors</span></div>
+      <div class="thread"><code>handle_sequencer_message</code><span class="d">&rarr; Report and/or HMI</span></div>
+      <div class="thread"><code>handle_report_message</code><span class="d">&rarr; HMI</span></div>
+    </div>
+    <div class="arrowcol">
+      <div class="a">&#9472;&#9472;&#9654;</div><div><code>core-&gt;sequencer</code></div>
+      <div class="a">&#9664;&#9472;&#9472;</div><div><code>sequencer-&gt;core</code></div>
+      <div class="a" style="margin-top:10px">&#9472;&#9472;&#9654;</div><div><code>core-&gt;report</code></div>
+      <div class="a">&#9664;&#9472;&#9472;</div><div><code>report-&gt;core</code></div>
+      <div style="margin-top:6px"><strong>in-process</strong></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:14px;">
+      <div class="proc p-core" style="min-width:170px;border-style:dashed">
+        <div class="title">Sequencer</div><div class="kind">thread of Core</div>
+      </div>
+      <div class="proc p-core" style="min-width:170px;border-style:dashed">
+        <div class="title">Report</div><div class="kind">thread of Core</div>
+      </div>
+    </div>
+  </div>
+
+  <hr class="soft">
+
+  <div class="row" style="align-items:center">
+    <div class="small" style="min-width:220px">Every module, including the launcher &mdash;<br>and <em>not</em> through CORE:</div>
+    <div class="arrowcol"><div class="a">&#9472;&#9472;&#9654;</div><div><code>any-&gt;logger</code></div></div>
+    <div class="proc p-log" style="min-width:240px">
+      <div class="title">Logger</div>
+      <div class="kind">process &middot; the one queue with two kinds of item</div>
+      <div class="thread"><code>logging.LogRecord</code><span class="d">put there by logging's own QueueHandler</span></div>
+      <div class="thread"><code>SetStdoutEnabled</code> / <code>StopLogger</code><span class="d">told apart by <code>isinstance</code></span></div>
+    </div>
+  </div>
+  <div class="caption">A log record does not depend on CORE being alive &mdash; which is the whole
+  reason this one link exists outside the mediator.</div>
+</div>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Constant</th><th>Value</th><th>Module owning both directions</th><th>Boundary</th></tr></thead>
+<tbody>
+<tr><td><code>HMI_TO_CORE</code> / <code>CORE_TO_HMI</code></td><td><code>hmi-&gt;core</code> / <code>core-&gt;hmi</code></td><td><code>core_hmi_communication.py</code></td><td><span class="badge b-proc">process &mdash; pickled</span></td></tr>
+<tr><td><code>CORE_TO_SEQUENCER</code> / <code>SEQUENCER_TO_CORE</code></td><td><code>core-&gt;sequencer</code> / <code>sequencer-&gt;core</code></td><td><code>core_sequencer_communication.py</code></td><td><span class="badge b-thread">thread</span></td></tr>
+<tr><td><code>CORE_TO_REPORT</code> / <code>REPORT_TO_CORE</code></td><td><code>core-&gt;report</code> / <code>report-&gt;core</code></td><td><code>core_report_communication.py</code></td><td><span class="badge b-thread">thread</span></td></tr>
+<tr><td><code>ANY_TO_LOGGER</code></td><td><code>any-&gt;logger</code></td><td><code>to_logger_communication.py</code> &mdash; named for its one direction, because nothing is sent back</td><td><span class="badge b-proc">process</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>Shared vocabulary</h4>
+<p>A type lives in a shared module when at least two link modules use it &mdash; because every module
+sends it, or because CORE forwards it from one link to another.</p>
+<div class="tablewrap">
+<table>
+<thead><tr><th>File</th><th>Holds</th></tr></thead>
+<tbody>
+<tr><td><code>common_messages.py</code></td><td><code>ErrorSeverity</code>, <code>ModuleError</code>, <code>Heartbeat</code>, <code>ResultType</code>, <code>StepOutcome</code></td></tr>
+<tr><td><code>run_events.py</code></td><td>Everything the engine reports while a recipe runs, plus the two question/answer pairs and <code>StopSequence</code> &mdash; each rides two links, so each is defined once here</td></tr>
+<tr><td><code>links.py</code></td><td>The seven direction names. Imports nothing.</td></tr>
+<tr><td><code>blocking_messages.py</code></td><td><code>PendingRequests</code> &mdash; the waiting half of a request/response pair</td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note">
+<p><strong><code>ResultType</code>'s integer order is load-bearing.</strong>
+<code>SKIP 0 &lt; DONE 1 &lt; PASS 2 &lt; FAIL 3 &lt; ERROR 4 &lt; STOP 5</code>. A group aggregates to
+its <em>highest</em> member, so one FAIL among PASSes makes the group FAIL, and a run of nothing but
+SKIPs aggregates to SKIP. Adding a member means placing it in that order deliberately.</p>
+</div>
+
+<h3 id="catalogue">Message catalogue</h3>
+
+<h4>HMI &harr; CORE &mdash; the pickled link</h4>
+<p>Everything here must stay a frozen dataclass of plain values: no live queues, no Qt objects, no
+device handles. <code>tests/unit_tests/test_messages.py</code> round-trips every member of both unions
+and fails if one stops being pickle-safe.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Message</th><th>Fields</th><th>What it means</th></tr></thead>
+<tbody>
+<tr><td colspan="3" style="background:var(--surface-2);font-weight:600">HmiToCore</td></tr>
+<tr><td><code>LoadRecipe</code></td><td><code>recipe_path</code></td><td>Load and validate. CORE answers <code>RecipeLoaded</code> or a <code>ModuleError</code>.</td></tr>
+<tr><td><code>StartSequence</code></td><td><code>sequence_name</code></td><td>Run one named sequence of the loaded recipe.</td></tr>
+<tr><td><code>StopSequence</code></td><td>&mdash;</td><td>Abort the run, keep the application up. Relayed unchanged to the Sequencer.</td></tr>
+<tr><td><code>SetConfigParameter</code></td><td><code>key</code>, <code>value</code></td><td><span class="badge b-stub">dead at both ends</span> No frontend constructs it, and CORE's branch deliberately refuses it: a change would have to reach processes that each read the file at startup, and that is unsolved.</td></tr>
+<tr><td><code>ShutdownRequested</code></td><td>&mdash;</td><td>Shut the whole application down. The launcher sends it too.</td></tr>
+<tr><td><code>HmiStopped</code></td><td>&mdash;</td><td>The frontend's loop has ended. CORE waits for this before it may exit.</td></tr>
+<tr><td><code>UserPromptResponse</code> / <code>UserTextResponse</code></td><td><code>request_id</code>, <code>choice</code>/<code>text</code></td><td>The operator's answer. <code>None</code> means cancelled or timed out.</td></tr>
+<tr><td><code>Heartbeat</code>, <code>ModuleError</code></td><td>see below</td><td>Liveness and failures.</td></tr>
+<tr><td colspan="3" style="background:var(--surface-2);font-weight:600">CoreToHmi</td></tr>
+<tr><td><code>StopHmi</code></td><td>&mdash;</td><td>Close the frontend; it answers <code>HmiStopped</code>.</td></tr>
+<tr><td><code>StatusChanged</code></td><td><code>text</code></td><td>One line of free text. Anything with structure gets its own message.</td></tr>
+<tr><td><code>ModuleErrorReported</code></td><td><code>error</code></td><td>An error CORE decided the operator should see &mdash; <em>not</em> every <code>ModuleError</code>.</td></tr>
+<tr><td><code>ReportReady</code></td><td><code>report_path</code>, <code>report_dir</code></td><td>The structured sibling of the status line: what an "open report folder" control opens.</td></tr>
+<tr><td><code>RecipeLoaded</code></td><td><code>recipe_name</code>, <code>recipe_version</code>, <code>main_sequence</code>, <code>sequences</code></td><td>Emitted by CORE, not the Sequencer. Carries the whole pickle-safe summary &mdash; every sequence and every step row &mdash; because it is all the HMI will ever know about the file.</td></tr>
+<tr><td><code>RunStarted</code></td><td><code>recipe_name</code>, <code>recipe_description</code>, <code>recipe_version</code>, <code>pypts_version</code>, <code>metadata_names</code></td><td>Everything knowable before the first step &mdash; the Report opens <code>report.csv</code> on it and every field becomes a column.</td></tr>
+<tr><td><code>RunFinished</code></td><td><code>result</code>, <code>outcomes</code></td><td>Finished for any reason; <code>outcomes</code> is flat, in execution order.</td></tr>
+<tr><td><code>RunMetadata</code></td><td><code>values</code> (name/value pairs)</td><td>The globals the recipe named in <code>report_metadata</code>, as the run learns them.</td></tr>
+<tr><td><code>SequenceStarted</code> / <code>SequenceFinished</code></td><td><code>sequence_name</code> (+ <code>result</code>)</td><td>One named sequence within the recipe.</td></tr>
+<tr><td><code>StepStarted</code> / <code>StepFinished</code></td><td><code>step_id</code>, <code>step_name</code> / <code>outcome</code></td><td><code>step_id</code> is how a frontend finds the table row.</td></tr>
+<tr><td><code>UserPromptRequest</code></td><td><code>request_id</code>, <code>message</code>, <code>options</code>, <code>image_path</code></td><td>Show a message and buttons; wait. <code>image_path</code> is absolute &mdash; the HMI is a different process.</td></tr>
+<tr><td><code>UserTextRequest</code></td><td><code>request_id</code>, <code>message</code>, <code>image_path</code></td><td>Show a message and a text field; wait.</td></tr>
+<tr><td><code>Heartbeat</code></td><td><code>source</code>, <code>timestamp</code></td><td>The one heartbeat that travels <em>away</em> from CORE. See &sect;5.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>CORE &harr; Sequencer</h4>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Direction</th><th>Message</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>CORE &rarr;</td><td><code>UseRecipe(recipe)</code></td><td><strong>The one message carrying a rich object.</strong> Allowed because this link never leaves the Core process. CORE only ever sends a recipe that passed validation.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>RunSequence(sequence_name)</code></td><td>The operator's choice now reaches the Sequencer &mdash; the old interface's <code>run_sequence()</code> took no arguments, so the choice stopped at CORE.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>StopSequence</code>, <code>StopSequencer</code></td><td>Abort the run vs. shut the module down.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>UserPromptResponse</code>, <code>UserTextResponse</code></td><td>Answers relayed back from the operator.</td></tr>
+<tr><td>&rarr; CORE</td><td><code>SequencerStopped</code></td><td>Also what releases the held <code>StopReport</code>.</td></tr>
+<tr><td>&rarr; CORE</td><td>the seven run events</td><td><code>RunStarted</code>, <code>RunFinished</code>, <code>RunMetadata</code>, <code>SequenceStarted</code>, <code>SequenceFinished</code>, <code>StepStarted</code>, <code>StepFinished</code></td></tr>
+<tr><td>&rarr; CORE</td><td><code>StepExecuted</code></td><td><strong>Engine-internal.</strong> The rich step record: outcome, step type, inputs, outputs, <code>started_at</code>, <code>duration_s</code>. It rides Sequencer&rarr;CORE and CORE&rarr;Report only, and must never join an HMI union.</td></tr>
+<tr><td>&rarr; CORE</td><td><code>UserPromptRequest</code>, <code>UserTextRequest</code></td><td>A step is blocked on the sequence thread waiting for the answer.</td></tr>
+<tr><td>&rarr; CORE</td><td><code>Heartbeat</code>, <code>ModuleError</code></td><td></td></tr>
+</tbody>
+</table>
+</div>
+
+<h4>CORE &harr; Report</h4>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Direction</th><th>Message</th><th>Note</th></tr></thead>
+<tbody>
+<tr><td>CORE &rarr;</td><td><code>RunStarted</code></td><td>Opens the run folder and writes the CSV header.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>SequenceStarted</code></td><td>Names the rows that follow.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>RunMetadata</code></td><td>Stamped on every row, and backfilled at the end.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>StepExecuted</code></td><td>One appended, flushed CSV row.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>RunFinished</code>, then <code>GenerateReport</code></td><td>Sent back to back on one queue, so the order is guaranteed: close the CSV, then build the HTML.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>ExportReport</code></td><td><span class="badge b-stub">not sent</span> The receiver is a stub and no operator command asks for it.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>StopReport</code></td><td>Held back until <code>SequencerStopped</code> or the shutdown deadline.</td></tr>
+<tr><td>&rarr; CORE</td><td><code>ReportGenerated(report_path)</code></td><td>CORE relays it as a <code>StatusChanged</code> <em>and</em> a <code>ReportReady</code>.</td></tr>
+<tr><td>&rarr; CORE</td><td><code>ReportExported</code></td><td><span class="badge b-stub">not sent</span></td></tr>
+<tr><td>&rarr; CORE</td><td><code>ReportStopped</code>, <code>Heartbeat</code>, <code>ModuleError</code></td><td></td></tr>
+</tbody>
+</table>
+</div>
+
+<div class="note">
+<p><strong><code>NOT SENT YET</code> means one thing throughout <code>messages/</code>:</strong> the
+receiving end is written and works; nothing constructs the message. The receivers were built first on
+purpose &mdash; the Sequencer, CORE, the CLI and the GUI all had to agree on the contract before the
+engine existed, and mypy plus <code>test_messages.py</code> keep every branch honest in the meantime.
+Grep for the marker to find the whole set; today it is <code>SetConfigParameter</code>,
+<code>ExportReport</code> and <code>ReportExported</code>.</p>
+</div>
+
+<h3 id="addmsg">Adding a message &mdash; two steps</h3>
+<ol>
+  <li>Declare the frozen dataclass in the link module, and add it to that link's union.</li>
+  <li>Handle it with a <code>case</code> in the recipient's handler.</li>
+</ol>
+<p>Everything else finds you: <code>mypy</code> flags every <code>match</code> that is now incomplete
+(because <code>unhandled(message: Never)</code> stops type-checking), and
+<code>tests/unit_tests/test_messages.py</code> drives every member of every union through the real
+handler and fails until the message has an example and a branch.</p>
+
+<h3 id="blocking">Blocking request/response across a process boundary</h3>
+
+<p>A step that asks the operator a question has to block; the event loop that will deliver the answer
+must not. <code>PendingRequests</code> is how those two facts coexist.</p>
+
+<pre><code># asker - on the SEQUENCE thread                 # event loop - draining the inbox
+pending.start(request_id)                        ...
+core.send(UserPromptRequest(request_id, ...))    pending.return_caller(request_id, choice)
+answer = pending.wait(request_id, ...)</code></pre>
+
+<ul>
+  <li><strong>Register before sending</strong>, or a fast responder wins the race and the answer is
+      dropped. <code>Sequencer.ask_operator()</code> is the only place that knows this ordering, which
+      is why a step just calls <code>runtime.ask()</code> and cannot get it wrong.</li>
+  <li><strong>The waiter polls; it does not sleep once.</strong> <code>wait()</code> loops on
+      <code>slot.get(timeout=min(0.1, remaining))</code> so <code>should_abort</code> is looked at
+      every 100 ms &mdash; without which an operator pressing Stop while a question is on screen would
+      wait out the full 300 s timeout. The loop lives in <code>PendingRequests</code> rather than in
+      the caller because the slot is registered once and cancelled once: a caller looping on short
+      waits of its own would cancel its own request on the first empty turn.</li>
+  <li><strong>A returned <code>None</code> is indistinguishable from a timeout, on purpose.</strong>
+      The asker treats "declined", "timed out" and "run stopped" the same;
+      <code>ask_or_raise()</code> turns all three into <code>PromptUnanswered</code>, and the step
+      becomes ERROR.</li>
+  <li><strong>The thread that calls <code>wait()</code> must not be the one draining the
+      inbox</strong>, or the module deadlocks. This is the single reason a sequence runs on a worker
+      thread.</li>
+</ul>
+
+<h2 id="watchdog">5. Heartbeats &amp; the watchdog</h2>
+
+<p>Both halves of the protocol &mdash; the interval, the two thresholds and the module names &mdash;
+are declared together in <code>utilities/heartbeat_manager.py</code>, because they only mean anything
+as a set: a timeout shorter than the interval declares every module dead, and a module name that does
+not match the key in CORE's tables is a heartbeat CORE cannot place. The names used to be spelled four
+times, with nothing checking that they agreed.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Constant</th><th>Value</th><th>Job</th></tr></thead>
+<tbody>
+<tr><td><code>DEFAULT_INTERVAL_S</code></td><td>1.0 s</td><td>How often a module beats. <code>tick()</code> is cheap enough to call every loop iteration and decides for itself when one is due.</td></tr>
+<tr><td><code>HEARTBEAT_TIMEOUT_S</code></td><td>5.0 s</td><td><strong>Reported.</strong> One WARNING, and the run carries on. Five seconds of quiet is as likely to be a stall as a death &mdash; a large recipe parsed inline, a native dialog starving a timer, a machine that swapped &mdash; and a warning that is wrong costs nothing.</td></tr>
+<tr><td><code>HEARTBEAT_FATAL_S</code></td><td>15.0 s</td><td><strong>Acted on.</strong> Three times the timeout, deliberately: the two thresholds do different jobs and must not share a number. This one aborts a technician's test, so it must not be wrong.</td></tr>
+<tr><td><code>HMI</code>, <code>SEQUENCER</code>, <code>REPORT</code></td><td>the three CORE watches</td><td>Each module puts its own name on every <code>Heartbeat</code> as <code>source</code>, which is what lets one CORE handler serve all three links instead of three that differ only in which dict key they write.</td></tr>
+<tr><td><code>CORE</code></td><td>the one that beats back</td><td>Not in the three above: those are the modules CORE <em>watches</em>, and it does not watch itself.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Who watches whom</h3>
+
+<div class="diagram">
+  <div class="row" style="align-items:center">
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="proc p-hmi" style="min-width:160px"><div class="title">HMI</div><div class="kind">own process</div></div>
+      <div class="proc p-core" style="min-width:160px;border-style:dashed"><div class="title">Sequencer</div><div class="kind">thread of Core</div></div>
+      <div class="proc p-core" style="min-width:160px;border-style:dashed"><div class="title">Report</div><div class="kind">thread of Core</div></div>
+    </div>
+    <div class="arrowcol" style="min-width:190px">
+      <div class="a">&#9552;&#9552;&#9654;</div><div><code>Heartbeat(source, timestamp)</code><br>every 1 s, from all three</div>
+      <div class="a" style="margin-top:18px">&#9664;&#9472;&#9472;</div><div><code>Heartbeat("core", ...)</code><br><strong>to the HMI only</strong></div>
+    </div>
+    <div class="proc p-core" style="min-width:250px">
+      <div class="title">CORE</div>
+      <div class="kind"><code>HeartbeatManager</code> out &middot; 3 timers in</div>
+      <div class="thread"><b>last_heartbeat</b><span class="d"><code>None</code> means <em>never</em> &mdash; not "a long time ago"</span></div>
+      <div class="thread"><b>heartbeat_lost</b><span class="d">one warning per outage, not one per 10 ms tick</span></div>
+      <div class="thread"><b>start_reported</b><span class="d">"has not started yet" is a different sentence</span></div>
+      <div class="thread"><b>watchdog_suppressed</b><span class="d">one DEBUG line when the gate is off</span></div>
+    </div>
+  </div>
+  <div class="caption"><strong>Only the HMI watches CORE.</strong> The Sequencer and the Report are
+  threads of CORE's process &mdash; they cannot outlive it, so a heartbeat towards them would watch
+  for something that cannot happen and double the trace traffic doing it. The HMI is the one module in
+  a process of its own, and so the one that can be left running with nothing on the other end of its
+  link: a CORE killed outright, or one whose event loop wedged while the process stayed up.</div>
+</div>
+
+<h3>What CORE does about silence</h3>
+
+<p><code>Core.do_periodic_tasks()</code>, every 10 ms:</p>
+<ol>
+  <li><strong>Beat first.</strong> <code>hmi_heartbeat.tick()</code> before everything else, so a
+      looping CORE is always saying so &mdash; including all through a shutdown, when the HMI is being
+      stopped and must not conclude from the silence that the engine died under it.</li>
+  <li><strong>Nothing to watch once shutting down.</strong> An early return: every module has been
+      asked to stop and is expected to go quiet, <code>check_stop_status()</code> already has its own
+      budget and already names whoever fails to answer, and without this the fatal branch would
+      re-report the same dead module &mdash; and re-send its <code>ModuleErrorReported</code> &mdash; a
+      hundred times a second.</li>
+  <li><strong><code>last_seen is None</code> &rarr; <code>note_a_module_has_not_started()</code>.</strong>
+      Never-heard-from is not the same as gone; a module that has never spoken cannot be said to have
+      <em>stopped</em> responding. It waits out the same 5 s threshold, says so once, and does not end
+      the run &mdash; a module that never starts at all is caught where it can be caught properly (the
+      launcher's <code>ui_process.join()</code> returns at once if the frontend dies on import, and
+      <code>join_submodules()</code> reports a thread that failed to start).</li>
+  <li><strong>Past 5 s &rarr; one WARNING</strong> in the operator's words ("The test engine has
+      stopped responding."), plus two DEBUG lines carrying the measurements. The latch is cleared by
+      <code>note_heartbeat()</code>, which also logs that the outage ended &mdash; so the log says an
+      outage finished instead of just going quiet.</li>
+  <li><strong>Past 15 s &rarr; <code>end_run_for_silent_module()</code></strong>, if the watchdog is
+      armed.</li>
+</ol>
+
+<h4>The fatal path, and why it reuses the ordinary shutdown</h4>
+<p><code>end_run_for_silent_module()</code> tells the operator <em>before</em> anything stops &mdash; a
+window that simply vanishes leaves a technician with a half-finished test and no reason for it. It
+does so through <code>handle_module_error()</code>, the same path a reported failure takes, with a
+synthesised <code>ModuleError(severity=CRITICAL, operation="heartbeat")</code>. Then the ordinary
+<code>stop_all_modules()</code>, unchanged. Nothing new is invented for this case, which is the point:
+a watchdog that shut down differently from every other exit would be a second shutdown path to keep
+working. The honest cost is that the five-second budget is spent waiting for a module that will not
+answer &mdash; it is why we are there.</p>
+
+<h4>The gate</h4>
+<p><code>[watchdog] enabled</code> in <code>config.ini</code> (default <code>true</code>) gates the
+<em>acting</em> half only. A silent module is reported at WARNING either way. Off is for a developer
+with a debugger attached to CORE, where a breakpoint in an event loop is indistinguishable from an
+event loop that has died. <code>Core.__init__(watchdog_enabled=None)</code> asks the configuration
+&mdash; which is what a real run does; a test passes the value explicitly, the way the Report is
+passed its <code>output_dir</code>, because outside a run there is no launcher to have created a
+config.</p>
+
+<h4>The HMI's side</h4>
+<p><code>HmiClient.check_core_is_alive()</code> is the orphan case, and the only reason the reverse
+heartbeat exists. It uses <code>HeartbeatWatch</code> with the same two thresholds:
+<code>is_silent()</code> &rarr; one WARNING; <code>is_lost()</code> &rarr; <code>log.error("The engine
+has stopped responding, so pypts is closing.")</code> and <code>stop()</code>. It is deliberately
+<strong>not</strong> gated by <code>[watchdog] enabled</code>: that flag is about CORE ending a
+<em>run</em>, and a frontend with no engine behind it has nothing left to do either way. It is silent
+once <code>running</code> is False &mdash; a normal shutdown ends with CORE leaving its loop, so its
+heartbeats stop by design, and the GUI's QTimer goes on firing.</p>
+
+<div class="note">
+<p><strong>A watch starts at construction time, not at the epoch.</strong>
+<code>HeartbeatWatch.last_seen</code> is seeded with <code>time.time()</code> because a watch starting
+at zero reads as silent for fifty-odd years and fires before the first beat can arrive. CORE's table
+does the opposite for the same reason: it seeds <code>None</code>, because seeding a timestamp
+asserted that every module had been heard from when CORE was built &mdash; at which point the HMI has
+not even been spawned, and a cold PySide6 import over a network home directory is seconds of
+perfectly normal startup.</p>
+</div>
+
+<h4>How the Debug Monitor sees liveness</h4>
+<p>None of CORE's liveness state ever leaves CORE &mdash; <code>module_running</code>,
+<code>last_heartbeat</code> and <code>heartbeat_lost</code> are dicts in <code>core.py</code>, and no
+message on the <code>core-&gt;hmi</code> link carries any of them. It does not have to: every
+<code>Heartbeat</code> is a message, every message crosses a <code>QueueWrapper</code>, and every
+wrapper traces itself &mdash; so the run log already contains each module's pulse at 1 Hz.
+<code>debug_monitor/liveness.py</code> folds that stream back into the same state from three sources:
+heartbeat traces, the <code>*Stopped</code> messages (a module that said goodbye is not one that
+vanished), and three machine-read DEBUG lines CORE writes on purpose:</p>
+<pre><code>log.debug("Heartbeat timeout for module: %s", name)   # prefix, then nothing but the name
+log.debug("Heartbeat fatal for module: %s", name)
+log.debug("Module is responding again: %s", beat.source)</code></pre>
+<p>The derived state and CORE's verdict are computed from the same evidence by different code, so a
+disagreement between them is a defect worth seeing rather than a display glitch. <strong>Modules are
+discovered, never registered</strong>: a name becomes a module the first time it is seen sending on a
+link, or the first time CORE names it in a liveness line &mdash; which is what lets the tool be useful
+about a part of the system that did not exist when the tool was written.</p>
+
+<h2 id="errors">6. Error handling</h2>
+
+<p>Four tools in <code>utilities/error_handling.py</code>, and the split between them is the design:
+<strong>the decorators are the net for what nobody expected; the functions are how a method handles a
+failure it recognised.</strong> The split is deliberately explicit rather than a flag, because which
+of the two a piece of code needs is a property of where it sits.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Tool</th><th>Behaviour</th><th>Where it belongs</th></tr></thead>
+<tbody>
+<tr><td><code>@catch_and_report_errors()</code></td><td>Reports and <strong>continues</strong>; the caller gets <code>None</code> and the loop comes round again.</td><td>Event loops. A module that dies on one bad message stops answering CORE, stops sending heartbeats, and takes the run with it.</td></tr>
+<tr><td><code>@report_and_reraise()</code></td><td>Reports and <strong>re-raises</strong> (bare <code>raise</code>, so the original traceback &mdash; the thing a step's result has to carry &mdash; survives).</td><td>The execution layer. A step whose failure is only a log line and a <code>None</code> return is a step the report will call PASS.</td></tr>
+<tr><td><code>report_error(self, exc, severity=...)</code></td><td>One <code>ModuleError</code> for a live exception, taken from <code>traceback.format_exc()</code>. Never raises.</td><td>Inside an <code>except</code> for a failure the method <em>recognised</em> &mdash; a slow DUT is not a broken one.</td></tr>
+<tr><td><code>report_problem(self, message, severity=...)</code></td><td>One <code>ModuleError</code> for a refusal with no exception behind it.</td><td>A refused command, an instrument answering nonsense. Raising only to catch it one frame later would attach a traceback through the framework's own guard, which tells the reader nothing.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>Neither function raises, so the raise site keeps control of what happens next. All four need the
+object to have a <code>core</code> attribute &mdash; that module's outbox &mdash; and all four survive
+it being absent, because an error handler that raises <code>AttributeError</code> while handling an
+error destroys the one thing worth keeping. <code>send_module_error()</code> then writes both records
+itself.</p>
+
+<h3>What CORE does with a <code>ModuleError</code></h3>
+<p><code>Core.handle_module_error()</code> writes two records: one the operator can read, naming the
+part of the software that failed and what it said, and one at DEBUG naming the method and the
+exception type with the traceback under it. The traceback never appears above DEBUG &mdash; in the
+operator's panel it hides the line that matters. Then, <strong>unless the severity is only
+WARNING</strong>, it sends <code>ModuleErrorReported</code> to the frontend.</p>
+<p>The sender rates its own failure &mdash; it is the only one who can &mdash; and CORE takes it at its
+word: <code>LOG_LEVEL_FOR_SEVERITY</code> maps WARNING/ERROR/CRITICAL straight onto logging levels.
+Logging it and showing it is <em>all</em> CORE does about an error today; what else to do is Phase 1's
+to settle. Two lookup tables translate protocol names into operator language on the way out:
+<code>FRIENDLY_MODULE_NAME</code> ("test engine", "report writer", "operator interface") and
+<code>FRIENDLY_SOURCE_NAME</code> (dotted module &rarr; "the recipe reader", "the settings file
+reader"); an unrecognised source is described as "the software" rather than by its import path.</p>
+
+<h3>CORE's own two exceptions to the rules</h3>
+<ul>
+  <li><strong>CORE cannot use the decorators.</strong> It is the module errors are reported <em>to</em>.
+      <code>Core.poll()</code> wraps the whole drain of one inbox in a <code>try</code>: an
+      <code>UnhandledMessage</code> or anything else is logged and dropped, because letting it escape
+      takes the mediator down and with it every other module's only way of being heard. The cost is
+      that one bad message abandons the rest of that batch &mdash; the exception leaves the
+      <code>receive()</code> generator and the remainder stays queued for the next tick. They are
+      delayed, not lost.</li>
+  <li><strong>CORE has no outbox to itself</strong>, so <code>report_own_error()</code> builds the same
+      <code>ModuleError</code> by hand and feeds its own handler.</li>
+</ul>
+
+<h2 id="logging">7. Logging</h2>
+
+<p>One dedicated process owns the only open handle on the log file and is the single writer. Every
+other process and thread pushes <code>logging.LogRecord</code> objects onto the shared queue through
+logging's own <code>QueueHandler</code>; the Logger drains it and writes them out. That queue is what
+guarantees no parallel writes.</p>
+
+<pre><code>LOG_FORMAT = "%(asctime)s.%(msecs)03d;%(levelname)s;%(processName)s"
+             ";%(filename)s:%(funcName)s;%(message)s"
+
+2026-08-12 09:32:58.056;DEBUG;Core;queue_wrapper.py:send;send core-&gt;sequencer StopSequencer()
+2026-08-12 09:32:58.101;DEBUG;Sequencer;queue_wrapper.py:receive;recv core-&gt;sequencer StopSequencer()</code></pre>
+
+<ul>
+  <li><code>init_logging()</code> is called <strong>once per process, first thing in every entry
+      point</strong>. A <em>thread</em> entry point must never call it &mdash; the root logger belongs
+      to the process, which is why <code>core_main()</code> configures it and the Sequencer and Report
+      inherit it. With no queue it falls back to a stdout handler, which is what standalone tools and
+      tests get.</li>
+  <li>Logging is <strong>%-style, never f-strings</strong> (ruff's <code>G004</code> enforces it). Lazy
+      formatting is why the DEBUG trace costs nothing when the level is higher.</li>
+  <li><code>logger/logging_rules.md</code> is the authority on what a line says and at which level. In
+      one sentence: <strong>INFO and above are written for the technician</strong> &mdash; exactly what
+      the GUI's log panel shows them &mdash; and everything developer-facing is DEBUG.</li>
+  <li>Lifecycle wording is fixed and names its module:
+      <code>&lt;NAME&gt; module starting.</code> (DEBUG) / <code>started.</code> (INFO) /
+      <code>entered its main event loop.</code> / <code>left its main event loop.</code> /
+      <code>stopping.</code> / <code>stopped.</code> (INFO), where <code>&lt;NAME&gt;</code> is one of
+      <code>LAUNCHER LOGGER CORE SEQUENCER REPORT GUI CLI</code>.</li>
+  <li>The Logger's queue is the one queue in the framework carrying two kinds of item, so it is the one
+      place where "anything else" is a meaningful answer: not a <code>LoggerControl</code> &rarr; it is
+      a LogRecord. A late <code>StopLogger</code> from another module cannot cut the final drain
+      short.</li>
+  <li>Nothing may take the Logger down: <code>handle_item()</code> and <code>write_record()</code> both
+      swallow and report to stderr, and the loop ignores <code>KeyboardInterrupt</code>.</li>
+</ul>
+
+<p><strong>Two temporary decisions</strong>, both with revert TODOs in the roadmap: the shipped
+<code>[logging] level</code> is <code>DEBUG</code> for the duration of the refactor (so every run
+carries the message trace and the Monitor always has something to read), and the Debug Monitor is on
+by default. Both go back to opt-in before v1.0.</p>
+
+<h2 id="pipeline">8. From recipe file to report</h2>
+
+<div class="flow">
+  <div class="fstep"><div class="fnum">1</div><div class="fbody"><b>The operator opens a file</b>
+    <span>GUI toolbar or <code>load_recipe &lt;path&gt;</code> &rarr; <code>HmiClient.load_recipe()</code> &rarr; <code>LoadRecipe</code>.</span></div></div>
+  <div class="fstep"><div class="fnum">2</div><div class="fbody"><b>CORE parses and validates &mdash; validation gates execution</b>
+    <span><code>Recipe.from_file()</code> &rarr; <code>recipe_parser.load_recipe()</code>. On failure the Sequencer gets <strong>nothing at all</strong>; the operator sees it through the <code>ModuleError</code> path. On success: <code>UseRecipe(recipe)</code> to the Sequencer &mdash; the live object, one process, nothing copied &mdash; and <code>RecipeLoaded(summary)</code> to the HMI.</span></div></div>
+  <div class="fstep"><div class="fnum">3</div><div class="fbody"><b>The parsing pipeline, in order</b>
+    <span>read &rarr; parse YAML (document 1 is the header, the rest are sequences) &rarr; normalize (the recipe language is case-insensitive; keys and structural values are lowercased once, so everything downstream stays strict) &rarr; validate (<em>every</em> problem in one <code>RecipeError</code>, so the author fixes the file in one round trip) &rarr; check the framework version (warn-only) &rarr; apply defaults &rarr; expand <code>Indexed</code> steps &rarr; build <code>Recipe</code> &rarr; <code>Sequence</code> &rarr; <code>Step</code> through the registry.</span></div></div>
+  <div class="fstep"><div class="fnum">4</div><div class="fbody"><b>The operator presses Start</b>
+    <span><code>StartSequence(name)</code> &rarr; CORE &rarr; <code>RunSequence(name)</code> &rarr; <code>Sequencer.run_sequence()</code>, which refuses if one is already running and otherwise starts the <strong>Sequence thread</strong>.</span></div></div>
+  <div class="fstep"><div class="fnum">5</div><div class="fbody"><b>The Sequencer builds the Runtime and emits <code>RunStarted</code></b>
+    <span>The <code>Runtime</code> gets the recipe's globals plus three seams: <code>emit</code> = the outbox's <code>send</code>, <code>should_stop</code> = the stop flag, <code>ask</code> = <code>ask_operator</code>. <code>emit</code> is then <em>wrapped</em> by <code>make_metadata_watcher()</code> so a change to a global named in <code>report_metadata</code> becomes a <code>RunMetadata</code> &mdash; the Report cannot read globals, since it is a thread fed by events while the globals live on the sequence thread. The step layer knows nothing about this and emits what it always emitted.</span></div></div>
+  <div class="fstep"><div class="fnum">6</div><div class="fbody"><b><code>step.run_sequence()</code> runs the body</b>
+    <span><code>SequenceStarted</code> &rarr; <code>Step.run_steps(sequence.steps)</code> &rarr; <strong>in a <code>finally</code></strong> <code>run_steps(teardown_steps, run_to_end=True)</code> &rarr; aggregate &rarr; <code>SequenceFinished</code>. Free of any queue or thread, so a future nested-sequence step can call it for a nested sequence exactly as the Sequencer calls it for the top one.</span></div></div>
+  <div class="fstep"><div class="fnum">7</div><div class="fbody"><b>CORE fans the events out as they arrive</b>
+    <span><code>RunStarted</code> / <code>SequenceStarted</code> &rarr; Report <em>and</em> HMI. <code>StepStarted</code> / <code>StepFinished</code> / <code>SequenceFinished</code> &rarr; HMI only. <code>StepExecuted</code> &rarr; Report only. <code>RunFinished</code> &rarr; both, immediately followed by <code>GenerateReport</code> to the Report. The same object is relayed rather than repacked, so nothing is lost on the way.</span></div></div>
+  <div class="fstep"><div class="fnum">8</div><div class="fbody"><b>The Report writes as it goes</b>
+    <span>One folder per run, <code>&lt;reports_dir&gt;/&lt;timestamp&gt;_&lt;recipe&gt;</code>, created on <code>RunStarted</code>. Each <code>StepExecuted</code> appends one row and flushes &mdash; so a run that crashed keeps what it had. On <code>RunFinished</code>: close, <code>rewrite_csv()</code> to backfill the verdict and the metadata that were unknown when the early rows were written, and <code>rename_run_dir()</code> to append the serial number to the folder name (the serial simply does not exist when the folder is created).</span></div></div>
+  <div class="fstep"><div class="fnum">9</div><div class="fbody"><b>The HTML is built from the rows, then announced</b>
+    <span>Every run-level value is on every row, which is what makes <code>report.html</code> regenerable from <code>report.csv</code> alone &mdash; point <code>rows_from_csv()</code> at a past run and render it again. <code>ReportGenerated</code> &rarr; CORE &rarr; <code>StatusChanged</code> + <code>ReportReady(report_path, report_dir)</code> &rarr; the GUI's "Open report folder" button.</span></div></div>
+</div>
+
+<h3 id="steplife">The step lifecycle</h3>
+
+<p>Owned entirely by the base class. A subclass overrides <code>_step()</code> and nothing else.</p>
+
+<pre><code>resolve inputs  -&gt;  _step()  -&gt;  judge outputs  -&gt;  StepResult</code></pre>
+
+<p><code>Step.run()</code> is the one place in the execution layer that catches broadly, because
+turning an exception into data <em>is</em> its job &mdash; and it nets the output judging too, not only
+<code>_step()</code>. It emits three events per step: <code>StepStarted</code> before the work, then
+<code>StepFinished</code> (flat, for the frontend) and <code>StepExecuted</code> (rich, for the
+Report) &mdash; in that order, so the frontend's event is never held up by the record-keeping.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Phase</th><th>Rules</th></tr></thead>
+<tbody>
+<tr><td><strong><code>inputs</code></strong></td><td>An entry that is <strong>not</strong> a mapping <em>is</em> the value: <code>a: 2</code>. The only other source is <code>{type: global, global_name: ...}</code>. An unknown <code>type</code> raises rather than being left in place as a weird argument. <strong>No type coercion anywhere</strong>: <code>'45'</code> stays a string, <code>45</code> an int.</td></tr>
+<tr><td><strong><code>_step()</code></strong></td><td>Returns a dict judged key by key; any other value is wrapped as <code>{"output": value}</code>; <code>None</code> becomes <code>{}</code>. Raise to fail the step.</td></tr>
+<tr><td><strong><code>outputs</code></strong></td><td><code>passfail</code>, <code>equals</code>, <code>range</code> judge and set the verdict; <code>pass</code> says this output is not a measurement (verdict DONE); <code>global</code> stores it in the run's one scope and leaves the verdict alone. No judging entry at all &rarr; DONE. <strong>When several entries judge, the last one wins</strong> &mdash; kept from the old engine for parity, and a recorded TODO. Judging gets its own <code>try</code>, because a recipe declaring an output the step never returned must be an ERROR <em>on that step</em>, not an exception unwinding <code>run_steps()</code> and abandoning every later step without even the SKIP row.</td></tr>
+<tr><td><strong><code>StepResult</code></strong></td><td>The rich, engine-internal object; it holds the live <code>Step</code> and must never cross the HMI boundary. <code>to_outcome()</code> is the pickle-safe projection that does. <code>error_info</code> carries either the full traceback (ERROR) or the operator's failure reason (FAIL/SKIP), because that is the field the step table's tooltip, the CLI line and the CSV already read &mdash; one sentence reaches all four places and the log.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>A FAIL reason is built for the technician, not the developer: the failing checks first
+(<code>voltage = 4.2, expected between 4.9 and 5.1</code>), then the inputs the step was given and the
+outputs it produced &mdash; the two things needed to tell a bad unit from a bad test setup. Values are
+capped at 80 characters and lists at 8 items, so one bad step cannot turn a log line into a
+ten-kilobyte paragraph in the panel, the tooltip and a CSV cell at once.</p>
+
+<h4><code>run_steps()</code> &mdash; the sequence policy, in one place</h4>
+<ul>
+  <li>An ERROR or a FAIL is recorded and the sequence <strong>carries on</strong>. That is
+      <code>continue_on_error: True</code>, the default: one bad step does not decide for the other
+      nineteen.</li>
+  <li>A step with <code>continue_on_error: false</code> ends the run when it errors <em>or</em> fails.
+      <strong>Per step and nowhere else</strong> &mdash; there is no recipe-level and no
+      <code>globals</code> form, which is exactly what the old engine's three disagreeing sources of
+      truth were. The old per-step <code>critical</code> override is dropped with them.</li>
+  <li>The stop flag is checked <strong>between</strong> steps, never inside one, so a step can leave its
+      hardware in a known state. It stays a separate branch from the verdict, so Stop still ends a run
+      at once even though an ERROR on its own does not.</li>
+  <li>Whichever of the two ends the list early, <strong>every remaining step is still run with a
+      <code>skip_reason</code></strong> rather than dropped: it emits its events and comes back SKIP, so
+      the step table settles every row and the report has a row per step however the run ended. SKIP is
+      the lowest <code>ResultType</code>, so this cannot change what the sequence aggregates to.</li>
+  <li><code>run_to_end=True</code> disables both early exits. Teardown callers pass it: cleanup runs
+      after an abort <em>and</em> after a halt, and one failing cleanup step must not skip the rest of
+      the cleanup &mdash; which is the opposite of what teardown is for.</li>
+</ul>
+
+<h3 id="steptypes">Step types</h3>
+<p><code>step/registry.py</code> is a plain dict &mdash; the replacement for the old factory's
+<code>eval()</code> over the steptype string, which was arbitrary code execution driven by a recipe
+file with a <code>NameError</code> as its only diagnostic. A recipe can only select from this table,
+and an unknown name gets an error listing what would have worked. <code>build_step()</code> splats
+every key except <code>steptype</code> into the constructor, so an unknown key is a
+<code>TypeError</code> at load time rather than a surprise at run time. Keys are lowercase: the YAML
+spelling is case-insensitive, and the YAML names drop the classes' <code>Step</code> suffix.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>YAML <code>steptype</code></th><th>Class</th><th>Required keys</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>Wait</code></td><td><code>WaitStep</code></td><td><code>wait_time</code></td><td>Sleep. The simplest there is, and the first ported &mdash; it exercises the whole base lifecycle with no dependencies. <span class="small">TODO: sleep in slices so a long wait honours an abort.</span></td></tr>
+<tr><td><code>PythonModule</code></td><td><code>PythonModuleStep</code></td><td><code>module</code>, <code>method_name</code></td><td>Call one function; its return value is the output. <code>module:</code> is a file beside the recipe (resolved against <code>runtime.base_dir</code>) or a dotted import name. The old recursive project-wide file search and the <code>read_attribute</code> / <code>write_attribute</code> actions are dropped &mdash; a recipe that wants an attribute writes a one-line getter beside it.</td></tr>
+<tr><td><code>UserInteraction</code></td><td><code>UserInteractionStep</code></td><td><code>message</code>, <code>options</code></td><td>Message + buttons; the chosen option is the output, judged by the ordinary <code>outputs</code> vocabulary. Refuses an empty <code>options</code> at construction: with none the operator has no way to answer, so the step could only ever time out.</td></tr>
+<tr><td><code>UserWrite</code></td><td><code>UserWriteStep</code></td><td><code>message</code></td><td>Message + text field; what is typed is the output. No <code>allow_empty</code> field &mdash; the GUI keeps OK disabled until something is typed, so the only answers that exist are some text or Cancel.</td></tr>
+<tr><td><code>Indexed</code></td><td>&mdash; <span class="badge b-lib">never reaches the registry</span></td><td><code>template</code>, <code>parameter_sets</code></td><td>Expanded <strong>at load time</strong> into one ordinary step per parameter set. Every generated step is a real <code>Step</code> with its own UUID, so the table pre-fills with N rows, the report gets N rows, and nothing in the message layer, the Sequencer or the frontends knows the type exists. The cost: N is fixed when the recipe loads.</td></tr>
+</tbody>
+</table>
+</div>
+
+<p>The two interactive types share <code>step/operator_prompt.py</code> &mdash; plain functions, not a
+base class, so the rule holds that a step type subclasses <code>Step</code>, overrides
+<code>_step()</code> and nothing else. It resolves <code>image_path</code> to an absolute path
+<em>that exists</em>, raising before the request is sent (the GUI's own fallback for a bad path is the
+idle logo, which would leave the operator looking at the wrong picture with nothing said about it),
+and applies one rule for both: <strong>not answering is an ERROR</strong> &mdash; timed out, cancelled,
+run stopped. The exception text distinguishes them because that is worth reading; the verdict does
+not.</p>
+
+<div class="note">
+<p><strong>There is deliberately no message for a <em>particular</em> question.</strong> An earlier
+<code>SerialNumberRequest</code> hard-coded one: the engine went and fetched the serial number of the
+unit under test whether or not the recipe wanted one. Asking is the recipe's job &mdash; a
+<code>UserWrite</code> step writes a global, and the Report picks up whichever globals the recipe's
+<code>report_metadata</code> header names. The framework supplies the prompt, not the policy.</p>
+</div>
+
+<h4>The recipe format lives in one importable file</h4>
+<p><code>recipe/rules.py</code> holds definitions and nothing else: <code>HEADER_REQUIRED</code>,
+<code>HEADER_DEFAULTS</code>, <code>SEQUENCE_REQUIRED</code>, <code>SEQUENCE_DEFAULTS</code>,
+<code>STEP_REQUIRED</code>, <code>STEP_TYPE_REQUIRED</code>, <code>STEP_COMMON_DEFAULTS</code>,
+<code>STEP_TYPE_DEFAULTS</code>, <code>INPUT_TYPES</code>, <code>OUTPUT_TYPES</code>,
+<code>EXPANDED_STEP_TYPES</code>. <code>validator.py</code> checks against them,
+<code>recipe_parser.py</code> applies them, and a unit test pins <code>STEP_TYPE_REQUIRED</code>'s keys
+to the registry's. <code>version</code> in a recipe header is the <em>pypts version the recipe was
+written for</em>, not a version of the recipe; a major.minor mismatch is a notice the operator sees,
+never a refusal.</p>
+
+<h2 id="modules">9. Module reference</h2>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Package</th><th>Runs as</th><th>Owns</th><th>State</th></tr></thead>
+<tbody>
+<tr><td><code>launcher/</code><br><span class="small">startup.py</span></td><td><span class="badge b-proc">process</span></td><td>The process tree. argparse, the config bootstrap notice, the three mp queues, the log path, the HMI&harr;CORE link pair, spawning, the Debug Monitor, and the shutdown of last resort. It must stay the simplest component in the system, because it is the one that has to survive anything the others do.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>messages/</code></td><td><span class="badge b-lib">library</span></td><td>The whole communication contract: one module per link holding both directions and a union per direction, plus the shared vocabulary and the one <code>QueueWrapper</code>. Catalogue in <code>messages.md</code>. Almost nothing is re-exported &mdash; import a message from the link module that owns it, so a reader can tell which contract a name belongs to.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>core/</code><br><span class="small">core.py, 946 lines</span></td><td><span class="badge b-proc">process</span></td><td>The mediator and the engine process. Three handlers are the whole routing table; it also owns liveness, the error policy, the shutdown handshake and the two submodule threads.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>sequencer/</code></td><td><span class="badge b-thread">thread of Core</span></td><td>The event loop, the recipe it was handed, the run-level events, the sequence worker thread, the abort flag, and <code>ask_operator()</code> &mdash; the one place that knows the register-before-send ordering.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>recipe/</code><br><span class="small">recipe &middot; recipe_parser &middot; rules &middot; validator &middot; step_source</span></td><td><span class="badge b-lib">library</span></td><td>The data layer (<code>Recipe</code>, <code>Sequence</code>) and the loading pipeline. It executes nothing, touches no queue and does not import the Sequencer. <code>step_source.py</code> renders the effective step mapping for the GUI's hover panel &mdash; so the GUI need not learn the recipe format.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>step/</code><br><span class="small">step &middot; runtime &middot; registry &middot; indexed_step &middot; operator_prompt &middot; 4 types</span></td><td><span class="badge b-lib">library</span></td><td>The base lifecycle, <code>StepResult</code>, <code>run_steps()</code>, <code>run_sequence()</code>, the <code>Runtime</code>, the registry, and one module per concrete type. <strong>Nothing here imports a queue, a QueueWrapper or the Sequencer</strong> &mdash; a bare <code>Runtime()</code> is a complete fake context, which is what keeps every step testable stand-alone.</td><td><span class="badge b-live">4 of 10 old types ported</span></td></tr>
+<tr><td><code>report/</code></td><td><span class="badge b-thread">thread of Core</span></td><td>One folder per run, an incremental flushed CSV, and a self-contained <code>report.html</code> built from the rows.</td><td><span class="badge b-part">first slice</span></td></tr>
+<tr><td><code>hmi/hmi_client.py</code></td><td><span class="badge b-lib">base class</span></td><td>The protocol half every frontend shares: the routing table, the heartbeat pair, the stop handshake, the commands a frontend may send, and a <code>show_*</code> hook per event with a logging default &mdash; so adding a message to <code>CoreToHmi</code> cannot break a frontend that has not caught up with it. When each frontend had its own copy they drifted: the GUI answered <code>StopHmi</code> with a proper handshake while the CLI just set a flag, so CLI mode only ever exited because the launcher killed it.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>hmi/gui/</code><br><span class="small">18 modules</span></td><td><span class="badge b-proc">process</span></td><td>The PySide6 operator screen. <code>GUI(HmiClient)</code> is the assembler: it overrides presentation hooks only. Two QTimers &mdash; 50 ms for the CORE inbox, 200 ms for tailing the run log. Every colour lives in <code>palette.py</code>; <code>styles.py</code> contains no hex literal.</td><td><span class="badge b-live">visual parity reached</span></td></tr>
+<tr><td><code>hmi/cli/</code></td><td><span class="badge b-lib">in the launcher process</span></td><td>An interactive shell on the main thread with the CORE inbox polled from a daemon thread &mdash; the split is what lets a status update print while the operator is still deciding what to type.</td><td><span class="badge b-part">no exit codes yet</span></td></tr>
+<tr><td><code>logger/</code></td><td><span class="badge b-proc">process</span></td><td>The single writer of the run log, plus <code>init_logging()</code> and <code>get_log_path()</code>.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>config_handler/</code><br><span class="small">config_handler &middot; configuration_schema &middot; file_locations &middot; template_writer</span></td><td><span class="badge b-lib">per-process singleton</span></td><td>Multiple readers, one writer, and it has to work before logging does. Typed access through a schema; the template owns the comments and the schema owns the types, and a unit test fails if they disagree. A broken or version-mismatched file is discarded whole for the run &mdash; never migrated, never repaired.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>utilities/</code></td><td><span class="badge b-lib">library</span></td><td><code>error_handling</code>, <code>heartbeat_manager</code>, <code>common</code> (signals, console), <code>local_storage</code> (log file naming), <code>recent_recipes</code> (per-user state), <code>data_removal</code> (survey-then-delete for the Remove Cache action).</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>helper_applications/debug_monitor/</code></td><td><span class="badge b-proc">subprocess</span></td><td>A <em>reader of the run log</em>: trace table, module liveness, replay. <code>trace_parser.py</code> imports nothing from pypts; <code>liveness.py</code> imports four constants from <code>heartbeat_manager</code>. Neither imports Qt, which is why their tests need no display.</td><td><span class="badge b-live">viewer done</span></td></tr>
+<tr><td><code>helper_applications/recipe_creator/</code><br><code>recipe_verificator/</code><br><code>example_finder/</code></td><td><span class="badge b-lib">standalone</span></td><td>Not yet refactored. The verificator and creator still do <code>from pypts import ...</code> for names the now-minimal <code>__init__.py</code> no longer defines; the example finder still imports PyQt5.</td><td><span class="badge b-stub">broken imports</span></td></tr>
+<tr><td><code>hardware_layer/hal.py</code></td><td>&mdash;</td><td>A docstring recording the agreed shape: a <strong>plain library</strong>, imported by the Sequencer and called with ordinary function calls &mdash; no process, no event loop, no messages of its own, which is what keeps "HAL usable standalone" true by construction. <code>Device</code> base, family bases (<code>PowerSupply</code>, <code>DAQ</code>, <code>Load</code>), concrete drivers; recipes name devices logically and the config supplies the parameters.</td><td><span class="badge b-stub">empty &middot; Phase 5</span></td></tr>
+<tr><td><code>stream_handler/</code></td><td>&mdash;</td><td>An empty placeholder package. The <code>StreamContainer</code> spike lives in <code>spikes/stream_handler/</code> until Phase 3 promotes it.</td><td><span class="badge b-stub">empty &middot; Phase 3</span></td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>The Debug Monitor's one-way rule</h3>
+<div class="warnbox">
+<p><strong>Nothing in <code>core/</code>, <code>sequencer/</code>, <code>report/</code>,
+<code>messages/</code>, <code>logger/</code> or <code>hmi/</code> may import
+<code>helper_applications/debug_monitor/</code>.</strong> It depends on the framework; the framework
+must never depend on it. The launcher starts it with <code>subprocess.Popen</code> on a module
+<em>string</em> for exactly this reason. A <code>--mode debug</code> console existed here once and was
+removed, because it gave the software two shapes &mdash; the product, and the product plus a tap
+&mdash; and anything only visible in the second shape is invisible on the machine where it matters.
+What that buys, beyond keeping one build: ordering is free (every process funnels through the
+single-writer Logger, so the order of the file is the order of the system), and replay is free (the
+same parser reads a run that finished last week).</p>
+</div>
+
+<h3>The GUI's own structure</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Module</th><th>Role</th></tr></thead>
+<tbody>
+<tr><td><code>gui.py</code></td><td><code>PtsMainWindow(QMainWindow)</code> &mdash; menu bar, native toolbar, body splitter, status bar &mdash; and <code>GUI(HmiClient)</code>, the assembler that wires the content widgets to the protocol hooks. It <em>holds</em> its window rather than inheriting <code>QMainWindow</code>, because <code>QWidget.__init__</code> cooperatively calls the next <code>__init__</code> in the MRO and would reach <code>HmiClient.__init__</code> with no arguments.</td></tr>
+<tr><td><code>top_bar.py</code></td><td>The run controls. A pure view: callbacks in through the constructor, update methods out, no protocol knowledge. Every enable/disable transition is caused by a message CORE sent, never by waiting for one &mdash; so nothing here ever blocks.</td></tr>
+<tr><td><code>step_table.py</code></td><td>The step table, which <em>is</em> the run's result view. <strong>Rows are keyed by step id, not index</strong>: each name cell carries its step's UUID in the UserRole, so the table tolerates any event order and a step updated twice (Running..., then the verdict) needs no cursor. The same cell carries that step's rendered YAML for the hover panel.</td></tr>
+<tr><td><code>step_yaml_popup.py</code></td><td>A <code>Qt.ToolTip</code>-flagged frame (a real <code>QToolTip</code> is Qt's to size and dismiss and cannot hold a syntax highlighter), fed strings by <code>recipe/step_source.py</code>.</td></tr>
+<tr><td><code>center_view.py</code>, <code>interaction_panel.py</code></td><td>The right column: one interaction panel (idle / buttons / text) plus the log panel. It owns the <strong>exactly-once answer contract</strong>: a new request first declines any unanswered one, answering clears the pending pair <em>before</em> invoking the callback, and three things call <code>cancel_pending()</code> &mdash; <code>RunFinished</code>, a superseding request, and the operator's Cancel. All three answer <code>None</code>, and the step that asked turns that into an ERROR.</td></tr>
+<tr><td><code>log_panel.py</code>, <code>log_tail.py</code></td><td>The panel shows the <em>run log file</em>, not this process's records &mdash; what the operator wants is the run, which happens in CORE and the engine. Torn records (a read landing between <code>write()</code> and flush) are held back until the line completes.</td></tr>
+<tr><td><code>results_panel.py</code></td><td>Post-run summary. Works from flat <code>StepOutcome</code>s, not live <code>StepResult</code>s.</td></tr>
+<tr><td><code>palette.py</code> / <code>styles.py</code></td><td>Every colour in one file; the stylesheets carry structure only. Verdict chips keep a fixed hue and a themed value &mdash; an operator reads a bench screen by colour, so green stays PASS and red stays FAIL in both themes, but a pastel fill that reads as a soft chip on white glares on charcoal.</td></tr>
+<tr><td><code>scaffold/</code></td><td>A vendored PySide6 port of an upstream PyQt6 four-panel layout. Vendored rather than depended on: upstream's GPL licensing is exactly what the PySide6 migration removed from this project.</td></tr>
+<tr><td><code>remove_cache_dialog.py</code></td><td>Pure presentation over <code>utilities/data_removal.py</code>, which surveys first, hands the caller a list to show somebody, and only deletes what is in that list &mdash; with three guards, because <code>paths.reports_dir</code> is a value in a user-editable INI file.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h2 id="deps">10. Dependencies &mdash; what imports what</h2>
+
+<p>The import graph is a clean stack. Read it downward: every arrow points from a higher layer to a
+lower one, and there is no cycle at module level.</p>
+
+<div class="diagram">
+<div class="layers">
+  <div class="layer" style="border-color:var(--tool)">
+    <div class="lname">Entry</div>
+    <div class="lmods">__main__ &rarr; launcher.startup</div>
+    <div class="lnote">The only module that imports CORE, both frontends, the Logger and the config together.</div>
+  </div>
+  <div class="down">&#9660;</div>
+  <div class="layer" style="border-color:var(--core)">
+    <div class="lname">Modules &mdash; one event loop each</div>
+    <div class="lmods">core.core &middot; sequencer.sequencer &middot; report.report &middot; hmi.hmi_client &rarr; {hmi.gui.gui, hmi.cli.cli}</div>
+    <div class="lnote"><code>core.core</code> imports <code>report.report</code> and <code>sequencer.sequencer</code> because it starts them as threads. Nothing else imports across this layer.</div>
+  </div>
+  <div class="down">&#9660;</div>
+  <div class="layer" style="border-color:var(--engine)">
+    <div class="lname">Execution &mdash; no queues, no Qt</div>
+    <div class="lmods">recipe.recipe_parser &rarr; recipe.{recipe, rules, validator} &middot; step.registry &rarr; step.{wait, python_module, user_interaction, user_write} &rarr; step.step &rarr; step.runtime</div>
+    <div class="lnote">Imports the message dataclasses (to emit events) but never <code>QueueWrapper</code>, never the Sequencer. A bare <code>Runtime()</code> is a complete fake context.</div>
+  </div>
+  <div class="down">&#9660;</div>
+  <div class="layer" style="border-color:var(--hmi)">
+    <div class="lname">Support</div>
+    <div class="lmods">utilities.error_handling &middot; utilities.heartbeat_manager &middot; utilities.{common, local_storage, recent_recipes, data_removal} &middot; config_handler</div>
+  </div>
+  <div class="down">&#9660;</div>
+  <div class="layer" style="border-color:var(--logger)">
+    <div class="lname">Contract &amp; logging</div>
+    <div class="lmods">logger.log &middot; messages.{queue_wrapper, links, common_messages, run_events, blocking_messages, &lt;link modules&gt;}</div>
+    <div class="lnote"><code>links.py</code> imports nothing at all. <code>queue_wrapper.py</code> uses <code>logging</code> directly, because <code>logger/log.py</code> imports <em>it</em>.</div>
+  </div>
+</div>
+<div class="caption">Generated from the AST of every module under <code>src/pypts/</code> except
+<code>old_code/</code>.</div>
+</div>
+
+<h3>The four interesting edges</h3>
+<div class="cols2">
+  <div class="card">
+    <h4>messages &rarr; recipe</h4>
+    <p><code>core_sequencer_communication.py</code> imports <code>Recipe</code>, because
+    <code>UseRecipe</code> carries one. The message layer therefore depends on the data layer &mdash;
+    legal only because this link never crosses a process boundary and nothing is ever pickled.</p>
+  </div>
+  <div class="card">
+    <h4>recipe &harr; step, resolved two ways</h4>
+    <p><code>recipe.recipe</code> imports <code>step.step</code> for its type. <code>step.step</code>
+    needs <code>Sequence</code> only for a signature, so it imports it under
+    <code>if TYPE_CHECKING</code>. And <code>Recipe.from_file()</code> imports
+    <code>recipe_parser</code> <em>inside the method</em> &mdash; the module-level dependency stays
+    one-way, parser &rarr; data.</p>
+  </div>
+  <div class="card">
+    <h4>logger &harr; messages, broken by a plain logger</h4>
+    <p><code>logger/log.py</code> imports <code>QueueWrapper</code> and the Logger's control messages.
+    So <code>queue_wrapper.py</code> cannot import <code>log</code>; it takes
+    <code>logging.getLogger("pypts.trace")</code> instead.</p>
+  </div>
+  <div class="card">
+    <h4>PySide6 has exactly one door</h4>
+    <p>Only <code>hmi/gui/**</code> and <code>helper_applications/**</code> import Qt, and the
+    launcher's import of <code>gui_main</code> sits inside <code>if args.mode == "gui"</code>. As a
+    module-level import it made <code>--mode cli</code> fail outright on a headless bench with no Qt
+    system libraries &mdash; for a frontend that run was never going to open.</p>
+  </div>
+</div>
+
+<h3>Selected import lists</h3>
+<div class="tablewrap">
+<table>
+<thead><tr><th>Module</th><th>Imports from <code>pypts</code></th></tr></thead>
+<tbody>
+<tr><td><code>launcher.startup</code></td><td><code>_version</code>, <code>config_handler</code>, <code>core.core</code>, <code>hmi.cli.cli</code>, <code>hmi.gui.gui</code> <span class="small">(lazily)</span>, <code>logger.log</code>, <code>messages</code>, <code>messages.core_hmi_communication</code>, <code>messages.links</code>, <code>messages.to_logger_communication</code>, <code>utilities.common</code>, <code>utilities.local_storage</code></td></tr>
+<tr><td><code>core.core</code></td><td><code>config_handler</code>, <code>logger.log</code>, <code>messages</code> + all three link modules + <code>common_messages</code> + <code>run_events</code> + <code>links</code>, <code>recipe.recipe</code>, <code>report.report</code>, <code>sequencer.sequencer</code>, <code>utilities.common</code>, <code>utilities.heartbeat_manager</code></td></tr>
+<tr><td><code>sequencer.sequencer</code></td><td><code>_version</code>, <code>logger.log</code>, <code>messages</code>, <code>messages.blocking_messages</code>, <code>messages.common_messages</code>, <code>messages.core_sequencer_communication</code>, <code>messages.run_events</code>, <code>recipe.recipe</code>, <code>step.runtime</code>, <code>step.step</code>, <code>utilities.error_handling</code>, <code>utilities.heartbeat_manager</code></td></tr>
+<tr><td><code>report.report</code></td><td><code>config_handler</code>, <code>logger.log</code>, <code>messages</code>, <code>messages.common_messages</code>, <code>messages.core_report_communication</code>, <code>messages.run_events</code>, <code>utilities.error_handling</code>, <code>utilities.heartbeat_manager</code></td></tr>
+<tr><td><code>hmi.hmi_client</code></td><td><code>logger.log</code>, <code>messages</code>, <code>messages.common_messages</code>, <code>messages.core_hmi_communication</code>, <code>messages.run_events</code>, <code>utilities.error_handling</code>, <code>utilities.heartbeat_manager</code></td></tr>
+<tr><td><code>hmi.gui.gui</code></td><td>the above via <code>HmiClient</code>, plus <code>config_handler</code>, ten sibling <code>hmi.gui.*</code> widgets, <code>recipe.step_source</code>, <code>utilities.common</code>, <code>utilities.data_removal</code>, <code>utilities.error_handling</code>, <code>utilities.recent_recipes</code></td></tr>
+<tr><td><code>step.step</code></td><td><code>logger.log</code>, <code>messages.common_messages</code>, <code>messages.run_events</code>, <code>step.runtime</code>, <code>recipe.recipe</code> <span class="small">(TYPE_CHECKING only)</span></td></tr>
+<tr><td><code>utilities.heartbeat_manager</code></td><td><code>messages.common_messages</code> &mdash; and deliberately nothing else, so the Debug Monitor can take four constants without loading the Sequencer, the Report and the configuration behind them</td></tr>
+<tr><td><code>messages.links</code></td><td>nothing</td></tr>
+<tr><td><code>debug_monitor.trace_parser</code></td><td>nothing</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Third-party dependencies</h3>
+<p>Runtime: <code>PySide6==6.9.1</code>, <code>PyYAML==6.0.2</code>, <code>ruamel.yaml</code>,
+<code>platformdirs</code>, plus the instrument stack the core should not have &mdash;
+<code>nidmm</code>, <code>hightime</code>, <code>nptdms</code>, <code>numpy</code>,
+<code>matplotlib</code>, <code>pyserial</code>, <code>paramiko</code>. Those last seven are hard
+dependencies only because there is no HAL yet: a recipe reaches an instrument through a
+<code>PythonModuleStep</code> into the user's own test package, which imports the driver itself.
+Phase 5 moves them into pip-installable driver plugins depending on <code>pypts.api</code>, and the
+core ships with none of them. For a framework whose specification asks for "lightweight" and "tests
+executable stand-alone", this is the strongest argument for the plugin packaging model.</p>
+
+<h2 id="classes">11. Class inventory</h2>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Class</th><th>Module</th><th>Relationships</th></tr></thead>
+<tbody>
+<tr><td><code>QueueWrapper[Msg]</code></td><td><code>messages.queue_wrapper</code></td><td>Generic over a link union. Held by every module; built only by the launcher and by <code>Core.__init__</code>.</td></tr>
+<tr><td><code>PendingRequests</code></td><td><code>messages.blocking_messages</code></td><td>Held by <code>Sequencer</code>. One <code>SimpleQueue</code> per in-flight <code>request_id</code>, guarded by a <code>Lock</code>.</td></tr>
+<tr><td><code>Core</code></td><td><code>core.core</code></td><td>Holds 6 <code>QueueWrapper</code>s, 1 <code>HeartbeatManager</code>, 2 <code>threading.Thread</code>s, the current <code>Recipe</code>, and four per-module latch dicts.</td></tr>
+<tr><td><code>Sequencer</code></td><td><code>sequencer.sequencer</code></td><td>Holds 2 wrappers, a <code>HeartbeatManager</code>, a <code>PendingRequests</code>, the sequence <code>Thread</code>, the <code>Recipe</code> and the abort flag. Builds a <code>Runtime</code> per run.</td></tr>
+<tr><td><code>Report</code></td><td><code>report.report</code></td><td>Holds 2 wrappers, a <code>HeartbeatManager</code>, the open CSV file and writer, the accumulated rows, and this run's column list.</td></tr>
+<tr><td><code>HmiClient</code></td><td><code>hmi.hmi_client</code></td><td><strong>Base of both frontends.</strong> Holds 2 wrappers, a <code>HeartbeatManager</code> and a <code>HeartbeatWatch</code>. Subclasses override <code>show_*</code> / <code>ask_*</code> / <code>on_stop</code> only.</td></tr>
+<tr><td><code>GUI(HmiClient)</code></td><td><code>hmi.gui.gui</code></td><td>Composes <code>PtsMainWindow</code>, <code>TopBarContent</code>, <code>StepTableContent</code>, <code>ResultsPanel</code>, <code>CenterContent</code>, <code>LogTail</code>, <code>RecentRecipes</code>; two <code>QTimer</code>s.</td></tr>
+<tr><td><code>CLI(HmiClient)</code></td><td><code>hmi.cli.cli</code></td><td>A command loop on the main thread, a daemon poll thread, one <code>Lock</code> over the status string.</td></tr>
+<tr><td><code>Logger</code></td><td><code>logger.log</code></td><td>Owns the only <code>FileHandler</code> on the log file (UTF-8 pinned), plus a stdout handler it can silence.</td></tr>
+<tr><td><code>HeartbeatManager</code> / <code>HeartbeatWatch</code></td><td><code>utilities.heartbeat_manager</code></td><td>The sending and receiving halves. Four instances of the first (Sequencer, Report, HMI, and CORE towards the HMI), one of the second (the HMI watching CORE).</td></tr>
+<tr><td><code>ConfigHandler</code></td><td><code>config_handler.config_handler</code></td><td>Per-<em>process</em> singleton with a <code>Role</code> (READER / WRITER) and a <code>BootstrapOutcome</code> (LOADED / CREATED / DISCARDED). Validated against <code>SCHEMA</code>, a dict of <code>Field</code>.</td></tr>
+<tr><td><code>Recipe</code> / <code>Sequence</code></td><td><code>recipe.recipe</code></td><td>Data only. <code>Recipe</code> holds <code>dict[str, Sequence]</code>; <code>Sequence</code> holds <code>list[Step]</code> plus <code>teardown_steps</code>. Both have <code>to_summary()</code> &mdash; the pickle-safe projection, mirroring <code>StepResult.to_outcome()</code>.</td></tr>
+<tr><td><code>Step</code></td><td><code>step.step</code></td><td>Base of <code>WaitStep</code>, <code>PythonModuleStep</code>, <code>UserInteractionStep</code>, <code>UserWriteStep</code>. Owns <code>run()</code>, <code>process_inputs()</code>, <code>process_outputs()</code>, and the static <code>run_steps()</code>.</td></tr>
+<tr><td><code>StepResult</code></td><td><code>step.step</code></td><td>Holds the live <code>Step</code>. Never crosses a process boundary; <code>to_outcome()</code> is what does.</td></tr>
+<tr><td><code>Runtime</code></td><td><code>step.runtime</code></td><td>The run's globals plus three callables (<code>emit</code>, <code>should_stop</code>, <code>ask</code>) and <code>base_dir</code>. All three default to no-ops, which makes a bare <code>Runtime()</code> the step tests' fake context. One flat scope for the whole run &mdash; a per-sequence <code>locals</code> frame existed and was dropped.</td></tr>
+<tr><td>~30 message dataclasses</td><td><code>messages/*</code></td><td>All <code>frozen=True, slots=True</code>. Unions: <code>HmiToCore</code>, <code>CoreToHmi</code>, <code>CoreToSequencer</code>, <code>SequencerToCore</code>, <code>CoreToReport</code>, <code>ReportToCore</code>, <code>LoggerControl</code>.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Constructs that are load-bearing</h3>
+<p>These look like candidates for simplification and are not. They are what makes a forgotten message
+an error instead of silence, and changing any of them is a design conversation, not a cleanup:</p>
+<ul>
+  <li>the <code>match</code> / <code>case</code> handlers closed with <code>unhandled()</code>;</li>
+  <li>the frozen slotted dataclasses;</li>
+  <li>the link union types;</li>
+  <li><code>Never</code> / <code>NoReturn</code>;</li>
+  <li><code>QueueWrapper[Msg]</code>.</li>
+</ul>
+<p>Everywhere else the house style is the opposite: plain, old-school, readable Python &mdash; an
+<code>if</code>/<code>else</code> over a conditional expression, a named local over a clever one-liner,
+a loop over stacked comprehensions. <code>SIM108</code> and <code>N818</code> are disabled in ruff for
+exactly that reason.</p>
+
+<h2 id="gaps">12. Stubs &amp; known gaps</h2>
+
+<p><code>resources/roadmap/pypts_roadmap.md</code> is the authority on status; this is the shape of it
+as it stands in the code.</p>
+
+<div class="tablewrap">
+<table>
+<thead><tr><th>Area</th><th>State</th><th>Detail</th></tr></thead>
+<tbody>
+<tr><td>Execution engine</td><td><span class="badge b-part">first slices in</span></td><td>Four step types ported of the old ten. <code>UserLoadingStep</code> remains; <code>UserRunMethodStep</code> and <code>SequenceStep</code> are dropped; the SSH pair leaves the step layer to become part of the framework, with credentials in the config first.</td></tr>
+<tr><td>Report</td><td><span class="badge b-part">first slice</span></td><td>CSV + HTML + run folders work. Missing: <code>ExportReport</code> (stub at both ends), TDMS plots, configurable templates and <code>report.type</code> / <code>report.theme</code>.</td></tr>
+<tr><td>HAL</td><td><span class="badge b-stub">empty</span></td><td><code>hal.py</code> is a docstring recording the agreed design so the module is not designed from scratch twice. Phase 5.</td></tr>
+<tr><td>Stream handler</td><td><span class="badge b-stub">empty</span></td><td>Package placeholder; the spike lives in <code>spikes/</code> and needs rewriting rather than moving back.</td></tr>
+<tr><td><code>--mode connect</code></td><td><span class="badge b-stub">not implemented</span></td><td>Accepted by argparse, no branch &mdash; falls through to the CLI.</td></tr>
+<tr><td><code>SetConfigParameter</code></td><td><span class="badge b-stub">refused by design</span></td><td>CORE is the single writer of <code>config.ini</code>, but propagating a change to processes that each read it at startup is unsolved. A configuration change takes effect on the next start.</td></tr>
+<tr><td>Helper applications</td><td><span class="badge b-stub">broken imports</span></td><td>The verificator and creator import schema constants from <code>pypts/__init__.py</code>, which is now minimal. Phase 0 gives them a home; <code>recipe/rules.py</code> is the obvious one.</td></tr>
+<tr><td>Watchdog</td><td><span class="badge b-live">acting</span></td><td>Both thresholds are live and the fatal path ends the run. The <code>[watchdog] enabled</code> gate exists for debugging sessions.</td></tr>
+<tr><td>Per-run log folders</td><td><span class="badge b-stub">open</span></td><td>The log <em>directory</em> comes from the config, but a run is still one timestamped file rather than a folder with a file per process.</td></tr>
+<tr><td>Two refactor-only defaults</td><td><span class="badge b-part">temporary</span></td><td><code>[logging] level = DEBUG</code>, and the Debug Monitor on by default. Both revert before v1.0 and both carry TODOs in the roadmap.</td></tr>
+<tr><td>Last-wins output judging</td><td><span class="badge b-part">parity</span></td><td>When several <code>outputs</code> entries judge, the last decides. Kept from the old engine on purpose; revisiting it against "all checks must pass" is a recorded TODO.</td></tr>
+<tr><td>Threads inside the engine</td><td><span class="badge b-part">accepted cost</span></td><td>A fault in the Sequencer or Report thread takes CORE with it, and the log names both of them <code>Core</code>, because the format names the process. The trade bought unpickled engine links and the ability to pass live objects.</td></tr>
+</tbody>
+</table>
+</div>
+
+<h3>Quality gates</h3>
+<p>All three must pass before any change is called done, and all three run in CI:</p>
+<pre><code>pytest tests          # 341 passed, 51 skipped as of the last green run
+ruff check src tests  # line-length 100, rules in [tool.ruff]
+mypy                  # scope is [tool.mypy]: messages/ and the handler modules</code></pre>
+<p>The mypy scope is the point: it covers exactly the modules where an incomplete
+<code>match</code> must be a build failure.</p>
+
+<footer>
+<p>Generated from a read of <code>src/pypts/</code> (excluding <code>old_code/</code>) on branch
+<code>architecture_refactor</code>. The import graph was extracted from the AST of all 95 modules.
+For status and plan, <code>resources/roadmap/pypts_roadmap.md</code> is the authority; for per-module
+detail, the <code>&lt;module&gt;.md</code> files beside the code &mdash; <code>messages.md</code>,
+<code>step.md</code>, <code>gui.md</code>, <code>config_handler.md</code>,
+<code>logging_rules.md</code>.</p>
+<p>SPDX-License-Identifier: CC-BY-SA-4.0 &middot; &copy; 2026 CERN</p>
+</footer>
+
+</main>
+</div>
+</body>
+</html>

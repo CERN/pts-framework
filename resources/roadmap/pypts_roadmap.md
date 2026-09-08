@@ -941,7 +941,9 @@ testable stand-alone.
 `Recipe` object** to the Sequencer in the new `UseRecipe` message on the internal link.
 That is the design choice §1.5 left open ("whether to allow live objects on the engine
 links"), now taken deliberately: this link never leaves the Core process, nothing is
-pickled, and the message's docstring says so. The boundary link stays pickle-tested and
+pickled, and the message's docstring says so. **Superseded 2026-09-08 — see §1.42:** the
+live-object choice stands, but `UseRecipe` is gone and `RunSequence` carries the recipe,
+so CORE keeps the loaded one and hands it over per run. The boundary link stays pickle-tested and
 carries only `StepOutcome`, the flat projection of the rich, engine-internal `StepResult`.
 An invalid recipe never reaches the Sequencer — CORE reports the `RecipeError` through
 `report_own_error()` (CORE has no outbox to itself, so it builds the `ModuleError` by hand
@@ -2955,6 +2957,63 @@ firing in order.
       launcher spawns immediately afterwards, and slightly generous for the Sequencer and the
       Report, which are threads CORE starts itself and which beat within milliseconds. Not
       worth two clocks today.
+
+---
+
+### 1.42 CORE owns the loaded recipe; `UseRecipe` is gone — **done**
+
+§1.13 gave the Sequencer the recipe the moment the operator opened one: `Core.load_recipe()`
+sent `UseRecipe(recipe)` on the internal link, and the Sequencer held it until the next load.
+That was a deliberate choice then, and it is reversed here. Reversed, not repaired — the
+message worked; what it bought was the question.
+
+**The recipe was stored twice and read once.** `Core.recipe` was assigned in `load_recipe()`
+and never read anywhere else in `core.py` — write-only state whose only consumer was a test.
+The Sequencer's copy was the live one. Two homes for one fact, one of them dead, is the
+smell that started this.
+
+**Loading is not starting, and the split made CORE unable to say so.** With the recipe on the
+far side of the link, "no recipe is loaded" could only be discovered by the Sequencer, after
+CORE had already sent it a command it could not carry out. The mediator was routing a request
+it had everything it needed to refuse.
+
+**`RunSequence` now carries both halves**: `RunSequence(recipe, sequence_name)`, and
+`UseRecipe` is deleted from the module and from the `CoreToSequencer` union. It inherits the
+rich-object justification unchanged — this link never leaves the Core process, nothing is
+pickled — and the identity handoff is the same live object it always was. One message rather
+than two also removes an ordering assumption: there is no window in which the Sequencer has a
+name but not the recipe it names.
+
+**CORE owns the recipe.** `load_recipe()` parses, validates, keeps it and answers
+`RecipeLoaded` to the HMI — and sends the Sequencer nothing at all. `start_sequence()` refuses
+when `recipe is None`, reporting through the same `handle_module_error()` path
+`load_recipe()` already used for the version notice, so the operator gets the sentence CORE
+alone can now produce.
+
+**The Sequencer holds nothing between runs.** `take_recipe()` is gone; the `RunSequence` case
+is the one place `self.recipe` is written, so a run always executes the recipe its own command
+carried. Its `"no recipe is loaded"` guard survives as a guard — unreachable through the
+protocol now, kept for a direct call and for the `Recipe | None` narrowing, and commented as
+such.
+
+**A side benefit, not a goal:** a recipe reloaded mid-run can no longer reach a running
+sequence at all. The GUI already disabled the open button during a run (`top_bar.py`), but
+that was a frontend guard standing in for an engine invariant; the invariant is now
+structural.
+
+**Verified:** `pytest tests` — 747 passed, 43 skipped; `ruff check src tests` clean; `mypy`
+clean. Test changes: `test_load_recipe_command_is_handled` inverts (the Sequencer gets
+nothing), `test_start_sequence_hands_the_recipe_over_with_the_command` takes over the identity
+assertion, `test_start_sequence_without_a_recipe_is_refused_by_core` is new, and
+`test_run_sequence_takes_the_recipe_from_the_command` replaces
+`test_use_recipe_stores_the_live_recipe` as the pin on the message-to-attribute path.
+
+**New TODOs this opened:**
+
+- [ ] **TODO:** nothing stops the operator loading a recipe while a sequence runs — CORE
+      accepts `LoadRecipe` at any time and replaces `self.recipe`. Harmless today (the running
+      sequence holds its own recipe, and the GUI disables the button), but the CLI has no such
+      guard and the refusal belongs in CORE beside the `start_sequence()` one.
 
 ---
 

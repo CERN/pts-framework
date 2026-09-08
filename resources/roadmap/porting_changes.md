@@ -105,7 +105,8 @@ tracking them** (now tracked here):
 - Only ERROR stops a sequence; `continue_on_error`/`critical` policy is a
   design TODO, not ported.
 - Stops land at step boundaries; `RunStarted` ⇒ exactly one `RunFinished`.
-- `UseRecipe` carries the live `Recipe` (in-process link only); the HMI
-  boundary stays pickle-tested plain values.
+- `RunSequence` carries the live `Recipe` (in-process link only); the HMI
+  boundary stays pickle-tested plain values. (Was `UseRecipe` at load time
+  until roadmap §1.42 moved the handoff to the start of a run.)
 - No dark mode for now: `force_light_mode()` pins the light scheme.
 - Scaffold license clearance from its author is still owed (roadmap §1.14).

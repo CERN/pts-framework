@@ -62,7 +62,6 @@ from pypts.messages.core_sequencer_communication import (
     SequencerStopped,
     SequencerToCore,
     StopSequencer,
-    UseRecipe,
 )
 from pypts.messages.links import (
     CORE_TO_REPORT,
@@ -262,8 +261,9 @@ class Core:
         #: (StepExecuted / RunFinished / GenerateReport) before it closes.
         self.stop_report_pending = False
 
-        #: The recipe LoadRecipe loaded and validated, or None until one has.
-        #: The Sequencer holds the same object - one process, nothing copied.
+        #: The loaded recipe, and the only copy of it: CORE owns it, and hands
+        #: it to the Sequencer with each RunSequence. None until one is loaded,
+        #: which is what makes StartSequence refusable here.
         self.recipe: Recipe | None = None
 
         #: When CORE stops waiting for the modules it asked to stop. None until
@@ -558,10 +558,11 @@ class Core:
         """
         Load and validate a recipe; validation gates execution.
 
-        On success the HMI gets RecipeLoaded and the Sequencer gets the live
-        Recipe object with UseRecipe. On failure the Sequencer gets nothing at
-        all - an invalid recipe never reaches it - and the operator sees the
-        error through the ModuleError path.
+        On success CORE keeps the Recipe and the HMI gets RecipeLoaded. The
+        Sequencer is told nothing: loading is not starting, and the recipe
+        reaches it with the RunSequence that runs it (roadmap section 1.40).
+        On failure nothing is kept and the operator sees the error through the
+        ModuleError path.
         """
         log.debug("Loading a recipe from '%s'.", recipe_path)
         try:
@@ -583,7 +584,6 @@ class Core:
                     operation="Recipe.from_file",
                 )
             )
-        self.to_sequencer.send(UseRecipe(recipe))
         self.to_hmi.send(
             RecipeLoaded(
                 recipe_name=recipe.name,
@@ -609,14 +609,27 @@ class Core:
 
     def start_sequence(self, sequence_name: str) -> None:
         """
-        Ask the Sequencer to run a sequence.
+        Ask the Sequencer to run a sequence, handing over the recipe with it.
 
-        The name now reaches the Sequencer, which the old interface could not do:
-        its run_sequence() took no arguments, so the operator's choice stopped at
-        CORE. Execution itself is still a stub inside the Sequencer.
+        CORE holds the loaded recipe, so CORE is the one that can refuse: with
+        nothing loaded the command stops here and the operator is told why. The
+        Sequencer is never asked to run a recipe it was not given.
         """
+        if self.recipe is None:
+            self.handle_module_error(
+                ModuleError(
+                    source="pypts.core.core",
+                    severity=ErrorSeverity.ERROR,
+                    message=(
+                        f"Cannot start '{sequence_name}': no recipe is loaded. "
+                        f"Open a recipe first."
+                    ),
+                    operation="Core.start_sequence",
+                )
+            )
+            return
         log.debug("CORE asking the Sequencer to run sequence '%s'.", sequence_name)
-        self.to_sequencer.send(RunSequence(sequence_name))
+        self.to_sequencer.send(RunSequence(self.recipe, sequence_name))
 
     #: What CORE logs a reported failure at. The sender rates its own failure -
     #: it is the only one who can - and CORE takes it at its word. That is the

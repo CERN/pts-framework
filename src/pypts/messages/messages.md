@@ -119,7 +119,7 @@ that stops being true.
 
 | Direction | Messages |
 |---|---|
-| `CoreToSequencer` (6) | **CMD** `UseRecipe(recipe)` (the live, validated Recipe subsequent runs use - the one message carrying a rich object, allowed because this link never leaves the Core process) · `RunSequence(sequence_name)` · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `UserTextResponse` — answers relayed back from the HMI |
+| `CoreToSequencer` (5) | **CMD** `RunSequence(recipe, sequence_name)` (the live, validated Recipe *and* the sequence to run - the one message carrying a rich object, allowed because this link never leaves the Core process; CORE owns the loaded recipe and hands it over per run, so the Sequencer holds none between runs) · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `UserTextResponse` — answers relayed back from the HMI |
 | `SequencerToCore` (13) | **EVT** `SequencerStopped()` · the 6 run-progress events · `StepExecuted` (routed to the Report, never the HMI) · `RunMetadata` (routed to both) · the 2 operator requests · `Heartbeat` · `ModuleError` |
 
 ## CORE ↔ Report — `core_report_communication.py` (thread of the Core process)
@@ -157,7 +157,7 @@ authority on when.
   threading constraint with it: the thread that calls `wait()` must not be the one draining
   the inbox.
 - **Now that the Sequencer is in-process**, the engine links no longer have to be
-  pickle-safe. The choice was made with the first slice of the engine port: `UseRecipe`
+  pickle-safe. The choice was made with the first slice of the engine port: `RunSequence`
   carries the live `Recipe`, deliberately and documented on the message — and it does not
   apply to `core_hmi_communication`, which still crosses a process boundary and stays
   pickle-tested.

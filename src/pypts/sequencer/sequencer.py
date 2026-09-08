@@ -5,10 +5,11 @@
 """
 The Sequencer - executes the sequences of a loaded recipe.
 
-Runs as a thread of the Core process. CORE hands it the validated recipe with
-UseRecipe; RunSequence starts one of its sequences, and execute_sequence()
-drives the step layer (pypts.step) through a Runtime whose emit/should_stop
-seams point back here. 
+Runs as a thread of the Core process. RunSequence brings both the validated
+recipe and the name of the sequence to run, and execute_sequence() drives the
+step layer (pypts.step) through a Runtime whose emit/should_stop seams point
+back here. CORE owns the recipe between runs; this module keeps only the one
+it was last asked to run. 
 
 A sequence runs on a thread of its own, not on the event loop. 
 """
@@ -30,7 +31,6 @@ from pypts.messages.core_sequencer_communication import (
     SequencerToCore,
     StopSequence,
     StopSequencer,
-    UseRecipe,
 )
 from pypts.messages.run_events import (
     RunFinished,
@@ -77,9 +77,10 @@ class Sequencer:
               steps. One writer, one reader, one bool - no lock needed.
         sequence_thread: the thread a sequence is running on, or None if none
               has been started yet.
-        recipe: the validated Recipe CORE handed over with UseRecipe, or None
-              until it does. A live object, not a copy - the two threads share
-              one process.
+        recipe: the validated Recipe that came with the last RunSequence, or
+              None until one has. A live object, not a copy - the two threads
+              share one process. CORE holds the loaded recipe; this is only
+              what the current run was given.
     """
 
     def __init__(
@@ -119,9 +120,10 @@ class Sequencer:
     @catch_and_report_errors()
     def handle_core_message(self, message: CoreToSequencer) -> None:
         match message:
-            case UseRecipe(recipe=recipe):
-                self.take_recipe(recipe)
-            case RunSequence(sequence_name=sequence_name):
+            case RunSequence(recipe=recipe, sequence_name=sequence_name):
+                # The only place `recipe` is written: a run always uses the
+                # recipe its own command carried.
+                self.recipe = recipe
                 self.run_sequence(sequence_name)
             case StopSequence():
                 self.stop_sequence()
@@ -133,19 +135,6 @@ class Sequencer:
                 unhandled(message)
 
     # --- Execution ------------------------------------------------------------
-
-    @catch_and_report_errors()
-    def take_recipe(self, recipe: Recipe) -> None:
-        """Store the validated recipe subsequent RunSequence commands run."""
-        self.recipe = recipe
-        # CORE owns the operator's "Recipe ... loaded" line (logging_rules.md section
-        # 5); this is the receiving half of it and belongs at DEBUG.
-        log.debug(
-            "Sequencer received recipe '%s' v%s with sequences: %s.",
-            recipe.name,
-            recipe.version,
-            ", ".join(recipe.sequences),
-        )
 
     @catch_and_report_errors()
     def run_sequence(self, sequence_name: str) -> None:
@@ -184,6 +173,9 @@ class Sequencer:
         (SequenceStarted, the step events, SequenceFinished) comes out of the
         step layer through the Runtime's messages.
         """
+        # Unreachable through the protocol - RunSequence carries the recipe, and
+        # CORE refuses the command when it has none. Kept as the guard for a
+        # direct call, and because `recipe` is Recipe | None until the first run.
         if self.recipe is None:
             report_problem(
                 self,

@@ -76,7 +76,6 @@ from pypts.messages.core_sequencer_communication import (
     SequencerToCore,
     StopSequence,
     StopSequencer,
-    UseRecipe,
 )
 from pypts.messages.run_events import (
     RecipeLoaded,
@@ -114,7 +113,7 @@ AN_ERROR = ModuleError(
     error_type="ValueError",
 )
 
-#: A tiny but real Recipe, for the UseRecipe example. Built with the plain
+#: A tiny but real Recipe, for the RunSequence example. Built with the plain
 #: constructors rather than parsed, so this file stays free of YAML fixtures.
 A_RECIPE = Recipe(
     name="DUT smoke test",
@@ -208,8 +207,7 @@ EXAMPLES = {
         report_path="/tmp/run/report.html", report_dir="/tmp/run"
     ),
     # core_sequencer_communication
-    UseRecipe: UseRecipe(recipe=A_RECIPE),
-    RunSequence: RunSequence(sequence_name="Main"),
+    RunSequence: RunSequence(recipe=A_RECIPE, sequence_name="Main"),
     StopSequence: StopSequence(),
     StopSequencer: StopSequencer(),
     SequencerStopped: SequencerStopped(),

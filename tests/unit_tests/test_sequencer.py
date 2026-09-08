@@ -15,10 +15,11 @@ Every test here drives the loop by hand, calling `poll_core()` the way
 run" an assertion rather than a hope, and it keeps the tests free of sleeps
 waiting for a background loop to come round.
 
-The second half tests the engine itself, by handing the Sequencer a recipe
-with UseRecipe and calling `execute_sequence()` directly on the test thread -
-it is a plain instance method, so asserting on event ordering needs no thread
-behind it. The threading half already proves it runs on its own thread.
+The second half tests the engine itself, by setting the Sequencer's recipe
+and calling `execute_sequence()` directly on the test thread - it is a plain
+instance method, so asserting on event ordering needs no thread behind it. The
+threading half already proves it runs on its own thread, and one test there
+pins the real protocol: RunSequence is what delivers the recipe.
 """
 
 import queue
@@ -37,7 +38,6 @@ from pypts.messages.core_sequencer_communication import (
     SequencerStopped,
     StopSequence,
     StopSequencer,
-    UseRecipe,
 )
 from pypts.messages.run_events import (
     RunFinished,
@@ -114,6 +114,11 @@ def sequencer():
         instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
 
 
+def wait_recipe():
+    """The fixture recipe, parsed. Every RunSequence carries one now."""
+    return Recipe.from_file(str(WAIT_RECIPE))
+
+
 def drain(a_queue):
     """Everything waiting on a queue right now, as a list."""
     messages = []
@@ -145,7 +150,7 @@ def start_a_blocking_sequence(instance, inbox):
     reached = threading.Event()
     instance.execute_sequence = blocks_until(release, reached)
 
-    inbox.put(RunSequence("power_on"))
+    inbox.put(RunSequence(wait_recipe(), "power_on"))
     instance.poll_core()
 
     assert reached.wait(timeout=REACHED_TIMEOUT_S), "the sequence thread never started"
@@ -155,6 +160,25 @@ def start_a_blocking_sequence(instance, inbox):
 # --------------------------------------------------------------------------
 # The threading shape
 # --------------------------------------------------------------------------
+
+
+def test_run_sequence_takes_the_recipe_from_the_command(sequencer):
+    """
+    RunSequence is the only thing that writes `recipe`.
+
+    CORE owns the loaded recipe and hands it over per run, so the Sequencer
+    holds nothing between runs and cannot run a recipe it was never given
+    (roadmap section 1.40).
+    """
+    instance, _outbox, inbox = sequencer
+    assert instance.recipe is None
+    recipe = wait_recipe()
+    instance.execute_sequence = lambda sequence_name: None
+
+    inbox.put(RunSequence(recipe, "Main"))
+    instance.poll_core()
+
+    assert instance.recipe is recipe
 
 
 def test_run_sequence_returns_while_the_sequence_is_still_running(sequencer):
@@ -206,7 +230,7 @@ def test_stop_sequence_is_received_while_a_sequence_runs(sequencer):
             time.sleep(0.01)
 
     instance.execute_sequence = waits_for_the_flag
-    inbox.put(RunSequence("power_on"))
+    inbox.put(RunSequence(wait_recipe(), "power_on"))
     instance.poll_core()
     assert reached.wait(timeout=REACHED_TIMEOUT_S)
 
@@ -238,7 +262,7 @@ def test_a_step_waiting_for_an_answer_is_woken_by_the_event_loop(sequencer):
         answer["value"] = instance.pending.wait(request_id, timeout_s=REACHED_TIMEOUT_S)
 
     instance.execute_sequence = asks_the_operator
-    inbox.put(RunSequence("power_on"))
+    inbox.put(RunSequence(wait_recipe(), "power_on"))
     instance.poll_core()
     assert reached.wait(timeout=REACHED_TIMEOUT_S)
 
@@ -271,7 +295,7 @@ def test_ask_operator_sends_the_question_and_returns_the_answer(sequencer):
         answer["value"] = instance.ask_operator(request)
 
     instance.execute_sequence = asks_the_operator
-    inbox.put(RunSequence("power_on"))
+    inbox.put(RunSequence(wait_recipe(), "power_on"))
     instance.poll_core()
     assert asked.wait(timeout=REACHED_TIMEOUT_S)
 
@@ -305,7 +329,7 @@ def test_ask_operator_gives_up_when_the_run_is_stopped(sequencer):
         answer["value"] = instance.ask_operator(request)
 
     instance.execute_sequence = asks_the_operator
-    inbox.put(RunSequence("power_on"))
+    inbox.put(RunSequence(wait_recipe(), "power_on"))
     instance.poll_core()
     assert asked.wait(timeout=REACHED_TIMEOUT_S)
 
@@ -326,7 +350,7 @@ def test_a_second_run_sequence_is_refused_rather_than_queued(sequencer):
     instance, outbox, inbox = sequencer
     release = start_a_blocking_sequence(instance, inbox)
 
-    inbox.put(RunSequence("power_off"))
+    inbox.put(RunSequence(wait_recipe(), "power_off"))
     instance.poll_core()
 
     release.set()
@@ -354,7 +378,7 @@ def test_stop_reports_stopped_only_after_the_sequence_thread_has_ended(sequencer
             time.sleep(0.01)
 
     instance.execute_sequence = waits_for_the_flag
-    inbox.put(RunSequence("power_on"))
+    inbox.put(RunSequence(wait_recipe(), "power_on"))
     instance.poll_core()
     assert reached.wait(timeout=REACHED_TIMEOUT_S)
 
@@ -435,20 +459,20 @@ def test_an_abandoned_sequence_is_reported_critical_before_sequencer_stopped(
 
 
 def load_wait_recipe(instance, inbox, recipe_text=None):
-    """Hand the Sequencer a recipe the way CORE does: UseRecipe on the inbox."""
+    """
+    Give the Sequencer the recipe the run below uses.
+
+    Set on the attribute rather than sent as RunSequence, because RunSequence
+    starts a thread and every test below drives `execute_sequence()` itself.
+    `recipe` is a public attribute of the class; the message path that writes
+    it is pinned by test_run_sequence_takes_the_recipe_from_the_command().
+    """
     if recipe_text is None:
         recipe = Recipe.from_file(str(WAIT_RECIPE))
     else:
         recipe = Recipe.from_yaml_text(recipe_text)
-    inbox.put(UseRecipe(recipe))
-    instance.poll_core()
+    instance.recipe = recipe
     return recipe
-
-
-def test_use_recipe_stores_the_live_recipe(sequencer):
-    instance, _outbox, inbox = sequencer
-    recipe = load_wait_recipe(instance, inbox)
-    assert instance.recipe is recipe
 
 
 def test_run_sequence_executes_steps_in_order(sequencer):
@@ -683,14 +707,13 @@ def test_run_started_carries_the_recipe_and_pypts_versions(sequencer):
 
 
 def test_a_metadata_global_is_reported_when_a_step_sets_it(sequencer, tmp_path):
-    instance, outbox, inbox = sequencer
+    instance, outbox, _inbox = sequencer
     (tmp_path / "metadata_module.py").write_text(
         "def read_serial():\n    return 'SN-0042'\n", encoding="utf-8"
     )
     recipe = Recipe.from_yaml_text(METADATA_RECIPE)
     recipe.base_dir = str(tmp_path)
-    inbox.put(UseRecipe(recipe))
-    instance.poll_core()
+    instance.recipe = recipe
 
     instance.execute_sequence("Main")
 
@@ -704,14 +727,13 @@ def test_a_metadata_global_is_reported_when_a_step_sets_it(sequencer, tmp_path):
 def test_a_metadata_global_is_reported_once_not_per_event(sequencer, tmp_path):
     """Every event looks, but only a change is sent - the Report must not be
     told the same serial number twenty times."""
-    instance, outbox, inbox = sequencer
+    instance, outbox, _inbox = sequencer
     (tmp_path / "metadata_module.py").write_text(
         "def read_serial():\n    return 'SN-0042'\n", encoding="utf-8"
     )
     recipe = Recipe.from_yaml_text(METADATA_RECIPE)
     recipe.base_dir = str(tmp_path)
-    inbox.put(UseRecipe(recipe))
-    instance.poll_core()
+    instance.recipe = recipe
 
     instance.execute_sequence("Main")
 
