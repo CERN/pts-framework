@@ -21,7 +21,7 @@ from typing import get_args
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.links import ANY_TO_LOGGER
 from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
-from pypts.utilities.common import ignore_keyboard_interrupt, pin_ascii_console
+from pypts.utilities.common import ignore_keyboard_interrupt
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
@@ -150,7 +150,6 @@ def logger_main(log_queue, log_file_path: str, stdout_enabled: bool = True) -> N
     # shutdown are written after the rest of the application has stopped. The
     # launcher ends it with StopLogger, and only that.
     ignore_keyboard_interrupt()
-    pin_ascii_console()
 
     logger = Logger(log_queue, log_file_path, stdout_enabled)
     logger.start()

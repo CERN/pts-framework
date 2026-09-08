@@ -31,19 +31,19 @@ from pypts.messages.run_events import (
 
 # Sender: core.py handle_sequencer_message(), right after it forwards
 # RunFinished. Receiver: report.py generate_report().
-@dataclass(frozen=True, slots=True)
+@dataclass
 class GenerateReport:
     """Build the report for the run that just finished."""
 
 
 # NOT SENT YET - receiver: report.py export_report(). No trigger in CORE either;
 # the operator command that would ask for it does not exist yet.
-@dataclass(frozen=True, slots=True)
+@dataclass
 class ExportReport:
     """Write the generated report out in its configured format."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StopReport:
     """Shut the module down. Report answers with ReportStopped."""
 
@@ -51,14 +51,14 @@ class StopReport:
 # --- Report -> CORE: events ---------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class ReportStopped:
     """The Report's event loop has ended."""
 
 
 # Sender: report.py generate_report(). Receiver: core.py
 # handle_report_message(), which relays it to the operator as ReportReady.
-@dataclass(frozen=True, slots=True)
+@dataclass
 class ReportGenerated:
     """A report was built. `report_path` is absolute."""
 
@@ -66,7 +66,7 @@ class ReportGenerated:
 
 
 # NOT SENT YET - receiver: core.py handle_report_message(), same treatment.
-@dataclass(frozen=True, slots=True)
+@dataclass
 class ReportExported:
     """A report was written out. `report_path` is absolute."""
 

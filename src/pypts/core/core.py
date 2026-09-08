@@ -88,7 +88,7 @@ from pypts.messages.run_events import (
 from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.report.report import report_main
 from pypts.sequencer.sequencer import sequencer_main
-from pypts.utilities.common import ignore_keyboard_interrupt, pin_ascii_console
+from pypts.utilities.common import ignore_keyboard_interrupt
 
 # The heartbeat protocol - the timeout CORE applies and the names it knows the
 # modules by - is declared with the sender's half in heartbeat_manager.py, so
@@ -178,7 +178,6 @@ def core_main(
     # and Report threads - with it. The launcher asks through ShutdownRequested;
     # that stays the only way CORE stops.
     ignore_keyboard_interrupt()
-    pin_ascii_console()
 
     init_logging(log_queue, log_level)
     Core(to_hmi, from_hmi, log_queue, log_level=log_level).start()

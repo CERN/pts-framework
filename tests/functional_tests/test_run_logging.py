@@ -63,7 +63,3 @@ def test_the_log_names_itself_and_the_configuration_it_used():
 def test_cli_mode_keeps_stdout_clean():
     """Child processes must not print over the interactive prompt."""
 
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_non_ascii_messages_do_not_raise_on_a_non_utf8_locale():
-    ...

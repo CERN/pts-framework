@@ -233,9 +233,9 @@ everything else follows from:</p>
     log records, which go straight to the Logger so that logging survives a dead CORE.</p>
   </div>
   <div class="card">
-    <h4>A message is a frozen value</h4>
-    <p>Every message is a <code>@dataclass(frozen=True, slots=True)</code> of plain values, declared in
-    the module that owns its <em>link</em>, and a member of that link's union type. Every handler is a
+    <h4>A message is a plain value</h4>
+    <p>Every message is a <code>@dataclass</code> of plain values, declared in the module that owns
+    its <em>link</em>, and a member of that link's union type. Every handler is a
     <code>match</code> closed with <code>unhandled()</code>, so a forgotten message raises instead of
     vanishing.</p>
   </div>
@@ -321,7 +321,7 @@ CLI runs inside the launcher's own process.</p>
     <span class="lg-tool">Launcher / developer tool</span>
   </div>
   <div class="caption">The Sequencer and the Report are threads, not processes. That is what makes
-  their links plain <code>queue.Queue</code> and lets <code>UseRecipe</code> carry a live
+  their links plain <code>queue.Queue</code> and lets <code>RunSequence</code> carry a live
   <code>Recipe</code> object. The cost, recorded in the roadmap: a fault in either thread takes CORE
   with it, and both are named <code>Core</code> in the log, because the log format names the
   <em>process</em>.</div>
@@ -351,23 +351,27 @@ the first <code>Queue()</code> is built. Two reasons: the configuration notice m
 unsupported; and Windows &mdash; where development happens &mdash; always spawns, so pinning it makes
 Linux exercise the same code paths rather than quietly different ones.</p>
 
-<h3>Signals and console encoding</h3>
+<h3>Signals</h3>
 <p>Ctrl+C at a terminal raises SIGINT in <em>every</em> process of the foreground group. Each child
 entry point therefore calls <code>utilities/common.py: ignore_keyboard_interrupt()</code>
 (<code>SIG_IGN</code>, never a handler that logs &mdash; a Python signal handler runs between
 bytecodes and <code>logging</code> takes locks, so a logging handler could deadlock against a log call
 the same thread was already making). The launcher deliberately does <strong>not</strong>: it is the
-one process that must still hear Ctrl+C, and it then runs the orderly shutdown it owns. Every entry
-point also calls <code>pin_ascii_console()</code>, so no message can fail a run on its encoding; the
-log <em>file</em> keeps its UTF-8.</p>
+one process that must still hear Ctrl+C, and it then runs the orderly shutdown it owns.</p>
+<p>Console encoding is left to the locale. Nothing reconfigures <code>sys.stdout</code>, so a
+non-ASCII character in a log line or a <code>print()</code> would raise
+<code>UnicodeEncodeError</code> on a C-locale bench. The framework simply does not write one:
+<code>tests/unit_tests/test_console_output.py</code> scans every log call and <code>print()</code>
+in the source and fails on any string that is not ASCII. The log <em>file</em> is unaffected &mdash;
+the Logger pins UTF-8 on its <code>FileHandler</code>.</p>
 
 <h2 id="spawning">2. Spawning &amp; startup, in order</h2>
 
 <div class="flow">
-  <div class="fstep"><div class="fnum">1</div><div class="fbody"><b>Console and start method are pinned</b>
-    <span><code>pin_ascii_console()</code> before the first <code>print()</code>; <code>set_start_method("spawn")</code> before the first <code>Queue()</code>.</span></div></div>
+  <div class="fstep"><div class="fnum">1</div><div class="fbody"><b>The start method is pinned</b>
+    <span><code>set_start_method("spawn")</code> before the first <code>Queue()</code>.</span></div></div>
   <div class="fstep"><div class="fnum">2</div><div class="fbody"><b>Arguments are parsed</b>
-    <span><code>--mode gui|cli|connect</code> (gui default), <code>--log-level</code>, <code>--debug-monitor / --no-debug-monitor</code> (on by default).</span></div></div>
+    <span><code>--mode gui|cli</code> (gui default), <code>--log-level</code>, <code>--debug-monitor / --no-debug-monitor</code> (on by default).</span></div></div>
   <div class="fstep"><div class="fnum">3</div><div class="fbody"><b>PySide6 is imported &mdash; only in GUI mode</b>
     <span>The GUI import sits inside <code>if args.mode == "gui"</code>. Qt is the one heavy dependency and <code>hmi/gui/gui.py</code> is the only door to it: nothing in CORE, the Logger, the messages or the engine imports Qt. A missing PySide6 is a plain message and <code>exit(1)</code>, not a traceback over a half-built run.</span></div></div>
   <div class="fstep"><div class="fnum">4</div><div class="fbody"><b>Configuration bootstraps</b>
@@ -388,10 +392,6 @@ log <em>file</em> keeps its UTF-8.</p>
     <span><code>core_main()</code> calls <code>init_logging()</code> first and <em>only</em> here for this process &mdash; the two threads inherit the root logger rather than configuring one of their own. <code>Core.__init__</code> builds the four thread-side queues; <code>start_submodules()</code> starts the Sequencer and Report daemon threads, handing each exactly its two link halves.</span></div></div>
 </div>
 
-<div class="warnbox">
-<p><strong><code>--mode connect</code> is accepted by argparse but has no branch.</strong> It falls
-through the <code>if args.mode == "gui"</code> and silently starts the CLI. It is not implemented.</p>
-</div>
 
 <h4>Who creates which queue</h4>
 <div class="tablewrap">
@@ -575,7 +575,7 @@ SKIPs aggregates to SKIP. Adding a member means placing it in that order deliber
 <h3 id="catalogue">Message catalogue</h3>
 
 <h4>HMI &harr; CORE &mdash; the pickled link</h4>
-<p>Everything here must stay a frozen dataclass of plain values: no live queues, no Qt objects, no
+<p>Everything here must stay a dataclass of plain values: no live queues, no Qt objects, no
 device handles. <code>tests/unit_tests/test_messages.py</code> round-trips every member of both unions
 and fails if one stops being pickle-safe.</p>
 
@@ -615,8 +615,7 @@ and fails if one stops being pickle-safe.</p>
 <table>
 <thead><tr><th>Direction</th><th>Message</th><th>Note</th></tr></thead>
 <tbody>
-<tr><td>CORE &rarr;</td><td><code>UseRecipe(recipe)</code></td><td><strong>The one message carrying a rich object.</strong> Allowed because this link never leaves the Core process. CORE only ever sends a recipe that passed validation.</td></tr>
-<tr><td>CORE &rarr;</td><td><code>RunSequence(sequence_name)</code></td><td>The operator's choice now reaches the Sequencer &mdash; the old interface's <code>run_sequence()</code> took no arguments, so the choice stopped at CORE.</td></tr>
+<tr><td>CORE &rarr;</td><td><code>RunSequence(recipe, sequence_name)</code></td><td><strong>The one message carrying a rich object.</strong> Allowed because this link never leaves the Core process, so nothing is pickled. It carries <em>both</em> halves of the command: CORE owns the loaded recipe and hands it over per run, so the Sequencer holds no recipe between runs and cannot be asked to run one it was never given. CORE only ever sends a recipe that passed validation.</td></tr>
 <tr><td>CORE &rarr;</td><td><code>StopSequence</code>, <code>StopSequencer</code></td><td>Abort the run vs. shut the module down.</td></tr>
 <tr><td>CORE &rarr;</td><td><code>UserPromptResponse</code>, <code>UserTextResponse</code></td><td>Answers relayed back from the operator.</td></tr>
 <tr><td>&rarr; CORE</td><td><code>SequencerStopped</code></td><td>Also what releases the held <code>StopReport</code>.</td></tr>
@@ -658,7 +657,7 @@ Grep for the marker to find the whole set; today it is <code>SetConfigParameter<
 
 <h3 id="addmsg">Adding a message &mdash; two steps</h3>
 <ol>
-  <li>Declare the frozen dataclass in the link module, and add it to that link's union.</li>
+  <li>Declare the dataclass in the link module, and add it to that link's union.</li>
   <li>Handle it with a <code>case</code> in the recipient's handler.</li>
 </ol>
 <p>Everything else finds you: <code>mypy</code> flags every <code>match</code> that is now incomplete
@@ -928,11 +927,11 @@ by default. Both go back to opt-in before v1.0.</p>
   <div class="fstep"><div class="fnum">1</div><div class="fbody"><b>The operator opens a file</b>
     <span>GUI toolbar or <code>load_recipe &lt;path&gt;</code> &rarr; <code>HmiClient.load_recipe()</code> &rarr; <code>LoadRecipe</code>.</span></div></div>
   <div class="fstep"><div class="fnum">2</div><div class="fbody"><b>CORE parses and validates &mdash; validation gates execution</b>
-    <span><code>Recipe.from_file()</code> &rarr; <code>recipe_parser.load_recipe()</code>. On failure the Sequencer gets <strong>nothing at all</strong>; the operator sees it through the <code>ModuleError</code> path. On success: <code>UseRecipe(recipe)</code> to the Sequencer &mdash; the live object, one process, nothing copied &mdash; and <code>RecipeLoaded(summary)</code> to the HMI.</span></div></div>
+    <span><code>Recipe.from_file()</code> &rarr; <code>recipe_parser.load_recipe()</code>. On failure the Sequencer gets <strong>nothing at all</strong>; the operator sees it through the <code>ModuleError</code> path. On success CORE <em>keeps</em> the validated <code>Recipe</code> and sends <code>RecipeLoaded(summary)</code> to the HMI. The Sequencer is told nothing yet: loading a recipe reaches the engine only when the operator starts something.</span></div></div>
   <div class="fstep"><div class="fnum">3</div><div class="fbody"><b>The parsing pipeline, in order</b>
     <span>read &rarr; parse YAML (document 1 is the header, the rest are sequences) &rarr; normalize (the recipe language is case-insensitive; keys and structural values are lowercased once, so everything downstream stays strict) &rarr; validate (<em>every</em> problem in one <code>RecipeError</code>, so the author fixes the file in one round trip) &rarr; check the framework version (warn-only) &rarr; apply defaults &rarr; expand <code>Indexed</code> steps &rarr; build <code>Recipe</code> &rarr; <code>Sequence</code> &rarr; <code>Step</code> through the registry.</span></div></div>
   <div class="fstep"><div class="fnum">4</div><div class="fbody"><b>The operator presses Start</b>
-    <span><code>StartSequence(name)</code> &rarr; CORE &rarr; <code>RunSequence(name)</code> &rarr; <code>Sequencer.run_sequence()</code>, which refuses if one is already running and otherwise starts the <strong>Sequence thread</strong>.</span></div></div>
+    <span><code>StartSequence(name)</code> &rarr; CORE. With no recipe loaded the command stops <em>there</em>, and the operator is told why &mdash; CORE holds the recipe, so CORE is the one that can refuse. Otherwise <code>RunSequence(recipe, name)</code> hands the live object over &mdash; one process, nothing copied &mdash; and <code>Sequencer.run_sequence()</code> refuses if a sequence is already running, or starts the <strong>Sequence thread</strong>.</span></div></div>
   <div class="fstep"><div class="fnum">5</div><div class="fbody"><b>The Sequencer builds the Runtime and emits <code>RunStarted</code></b>
     <span>The <code>Runtime</code> gets the recipe's globals plus three seams: <code>emit</code> = the outbox's <code>send</code>, <code>should_stop</code> = the stop flag, <code>ask</code> = <code>ask_operator</code>. <code>emit</code> is then <em>wrapped</em> by <code>make_metadata_watcher()</code> so a change to a global named in <code>report_metadata</code> becomes a <code>RunMetadata</code> &mdash; the Report cannot read globals, since it is a thread fed by events while the globals live on the sequence thread. The step layer knows nothing about this and emits what it always emitted.</span></div></div>
   <div class="fstep"><div class="fnum">6</div><div class="fbody"><b><code>step.run_sequence()</code> runs the body</b>
@@ -1055,7 +1054,7 @@ never a refusal.</p>
 <tr><td><code>launcher/</code><br><span class="small">startup.py</span></td><td><span class="badge b-proc">process</span></td><td>The process tree. argparse, the config bootstrap notice, the three mp queues, the log path, the HMI&harr;CORE link pair, spawning, the Debug Monitor, and the shutdown of last resort. It must stay the simplest component in the system, because it is the one that has to survive anything the others do.</td><td><span class="badge b-live">working</span></td></tr>
 <tr><td><code>messages/</code></td><td><span class="badge b-lib">library</span></td><td>The whole communication contract: one module per link holding both directions and a union per direction, plus the shared vocabulary and the one <code>QueueWrapper</code>. Catalogue in <code>messages.md</code>. Almost nothing is re-exported &mdash; import a message from the link module that owns it, so a reader can tell which contract a name belongs to.</td><td><span class="badge b-live">working</span></td></tr>
 <tr><td><code>core/</code><br><span class="small">core.py, 946 lines</span></td><td><span class="badge b-proc">process</span></td><td>The mediator and the engine process. Three handlers are the whole routing table; it also owns liveness, the error policy, the shutdown handshake and the two submodule threads.</td><td><span class="badge b-live">working</span></td></tr>
-<tr><td><code>sequencer/</code></td><td><span class="badge b-thread">thread of Core</span></td><td>The event loop, the recipe it was handed, the run-level events, the sequence worker thread, the abort flag, and <code>ask_operator()</code> &mdash; the one place that knows the register-before-send ordering.</td><td><span class="badge b-live">working</span></td></tr>
+<tr><td><code>sequencer/</code></td><td><span class="badge b-thread">thread of Core</span></td><td>The event loop, the run-level events, the sequence worker thread, the abort flag, and <code>ask_operator()</code> &mdash; the one place that knows the register-before-send ordering.</td><td><span class="badge b-live">working</span></td></tr>
 <tr><td><code>recipe/</code><br><span class="small">recipe &middot; recipe_parser &middot; rules &middot; validator &middot; step_source</span></td><td><span class="badge b-lib">library</span></td><td>The data layer (<code>Recipe</code>, <code>Sequence</code>) and the loading pipeline. It executes nothing, touches no queue and does not import the Sequencer. <code>step_source.py</code> renders the effective step mapping for the GUI's hover panel &mdash; so the GUI need not learn the recipe format.</td><td><span class="badge b-live">working</span></td></tr>
 <tr><td><code>step/</code><br><span class="small">step &middot; runtime &middot; registry &middot; indexed_step &middot; operator_prompt &middot; 4 types</span></td><td><span class="badge b-lib">library</span></td><td>The base lifecycle, <code>StepResult</code>, <code>run_steps()</code>, <code>run_sequence()</code>, the <code>Runtime</code>, the registry, and one module per concrete type. <strong>Nothing here imports a queue, a QueueWrapper or the Sequencer</strong> &mdash; a bare <code>Runtime()</code> is a complete fake context, which is what keeps every step testable stand-alone.</td><td><span class="badge b-live">4 of 10 old types ported</span></td></tr>
 <tr><td><code>report/</code></td><td><span class="badge b-thread">thread of Core</span></td><td>One folder per run, an incremental flushed CSV, and a self-contained <code>report.html</code> built from the rows.</td><td><span class="badge b-part">first slice</span></td></tr>
@@ -1151,7 +1150,7 @@ lower one, and there is no cycle at module level.</p>
   <div class="card">
     <h4>messages &rarr; recipe</h4>
     <p><code>core_sequencer_communication.py</code> imports <code>Recipe</code>, because
-    <code>UseRecipe</code> carries one. The message layer therefore depends on the data layer &mdash;
+    <code>RunSequence</code> carries one. The message layer therefore depends on the data layer &mdash;
     legal only because this link never crosses a process boundary and nothing is ever pickled.</p>
   </div>
   <div class="card">
@@ -1215,8 +1214,8 @@ executable stand-alone", this is the strongest argument for the plugin packaging
 <tbody>
 <tr><td><code>QueueWrapper[Msg]</code></td><td><code>messages.queue_wrapper</code></td><td>Generic over a link union. Held by every module; built only by the launcher and by <code>Core.__init__</code>.</td></tr>
 <tr><td><code>PendingRequests</code></td><td><code>messages.blocking_messages</code></td><td>Held by <code>Sequencer</code>. One <code>SimpleQueue</code> per in-flight <code>request_id</code>, guarded by a <code>Lock</code>.</td></tr>
-<tr><td><code>Core</code></td><td><code>core.core</code></td><td>Holds 6 <code>QueueWrapper</code>s, 1 <code>HeartbeatManager</code>, 2 <code>threading.Thread</code>s, the current <code>Recipe</code>, and four per-module latch dicts.</td></tr>
-<tr><td><code>Sequencer</code></td><td><code>sequencer.sequencer</code></td><td>Holds 2 wrappers, a <code>HeartbeatManager</code>, a <code>PendingRequests</code>, the sequence <code>Thread</code>, the <code>Recipe</code> and the abort flag. Builds a <code>Runtime</code> per run.</td></tr>
+<tr><td><code>Core</code></td><td><code>core.core</code></td><td>Holds 6 <code>QueueWrapper</code>s, 1 <code>HeartbeatManager</code>, 2 <code>threading.Thread</code>s, <strong>the loaded <code>Recipe</code></strong> (it owns it, and hands it to the Sequencer per run), and four per-module latch dicts.</td></tr>
+<tr><td><code>Sequencer</code></td><td><code>sequencer.sequencer</code></td><td>Holds 2 wrappers, a <code>HeartbeatManager</code>, a <code>PendingRequests</code>, the sequence <code>Thread</code>, the abort flag, and the <code>Recipe</code> the current run was given &mdash; not one it keeps between runs. Builds a <code>Runtime</code> per run.</td></tr>
 <tr><td><code>Report</code></td><td><code>report.report</code></td><td>Holds 2 wrappers, a <code>HeartbeatManager</code>, the open CSV file and writer, the accumulated rows, and this run's column list.</td></tr>
 <tr><td><code>HmiClient</code></td><td><code>hmi.hmi_client</code></td><td><strong>Base of both frontends.</strong> Holds 2 wrappers, a <code>HeartbeatManager</code> and a <code>HeartbeatWatch</code>. Subclasses override <code>show_*</code> / <code>ask_*</code> / <code>on_stop</code> only.</td></tr>
 <tr><td><code>GUI(HmiClient)</code></td><td><code>hmi.gui.gui</code></td><td>Composes <code>PtsMainWindow</code>, <code>TopBarContent</code>, <code>StepTableContent</code>, <code>ResultsPanel</code>, <code>CenterContent</code>, <code>LogTail</code>, <code>RecentRecipes</code>; two <code>QTimer</code>s.</td></tr>
@@ -1228,7 +1227,7 @@ executable stand-alone", this is the strongest argument for the plugin packaging
 <tr><td><code>Step</code></td><td><code>step.step</code></td><td>Base of <code>WaitStep</code>, <code>PythonModuleStep</code>, <code>UserInteractionStep</code>, <code>UserWriteStep</code>. Owns <code>run()</code>, <code>process_inputs()</code>, <code>process_outputs()</code>, and the static <code>run_steps()</code>.</td></tr>
 <tr><td><code>StepResult</code></td><td><code>step.step</code></td><td>Holds the live <code>Step</code>. Never crosses a process boundary; <code>to_outcome()</code> is what does.</td></tr>
 <tr><td><code>Runtime</code></td><td><code>step.runtime</code></td><td>The run's globals plus three callables (<code>emit</code>, <code>should_stop</code>, <code>ask</code>) and <code>base_dir</code>. All three default to no-ops, which makes a bare <code>Runtime()</code> the step tests' fake context. One flat scope for the whole run &mdash; a per-sequence <code>locals</code> frame existed and was dropped.</td></tr>
-<tr><td>~30 message dataclasses</td><td><code>messages/*</code></td><td>All <code>frozen=True, slots=True</code>. Unions: <code>HmiToCore</code>, <code>CoreToHmi</code>, <code>CoreToSequencer</code>, <code>SequencerToCore</code>, <code>CoreToReport</code>, <code>ReportToCore</code>, <code>LoggerControl</code>.</td></tr>
+<tr><td>~30 message dataclasses</td><td><code>messages/*</code></td><td>Plain <code>@dataclass</code>es. They were <code>frozen=True, slots=True</code> until September 2026; that was dropped deliberately &mdash; see the note below. Unions: <code>HmiToCore</code>, <code>CoreToHmi</code>, <code>CoreToSequencer</code>, <code>SequencerToCore</code>, <code>CoreToReport</code>, <code>ReportToCore</code>, <code>LoggerControl</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -1238,11 +1237,20 @@ executable stand-alone", this is the strongest argument for the plugin packaging
 an error instead of silence, and changing any of them is a design conversation, not a cleanup:</p>
 <ul>
   <li>the <code>match</code> / <code>case</code> handlers closed with <code>unhandled()</code>;</li>
-  <li>the frozen slotted dataclasses;</li>
   <li>the link union types;</li>
   <li><code>Never</code> / <code>NoReturn</code>;</li>
   <li><code>QueueWrapper[Msg]</code>.</li>
 </ul>
+<div class="note">
+<p><strong>Messages were <code>frozen=True, slots=True</code> until September 2026, and are no
+longer.</strong> Frozen made a message read-only after construction; slots fixed the set of field
+names, so a typo was a <code>TypeError</code> rather than a silently missing field. Both were
+dropped on purpose: the framework is the only thing that builds and forwards a message, so "nobody
+edits a payload in flight" is now a rule the code keeps rather than one the type enforces. Two
+consequences to know &mdash; a message is no longer hashable (nothing puts one in a set or uses one
+as a dict key), and CORE forwards the <em>same object</em> on the in-process links, so a handler
+that mutated one would change what any other in-process recipient sees.</p>
+</div>
 <p>Everywhere else the house style is the opposite: plain, old-school, readable Python &mdash; an
 <code>if</code>/<code>else</code> over a conditional expression, a named local over a clever one-liner,
 a loop over stacked comprehensions. <code>SIM108</code> and <code>N818</code> are disabled in ruff for
@@ -1261,7 +1269,6 @@ as it stands in the code.</p>
 <tr><td>Report</td><td><span class="badge b-part">first slice</span></td><td>CSV + HTML + run folders work. Missing: <code>ExportReport</code> (stub at both ends), TDMS plots, configurable templates and <code>report.type</code> / <code>report.theme</code>.</td></tr>
 <tr><td>HAL</td><td><span class="badge b-stub">empty</span></td><td><code>hal.py</code> is a docstring recording the agreed design so the module is not designed from scratch twice. Phase 5.</td></tr>
 <tr><td>Stream handler</td><td><span class="badge b-stub">empty</span></td><td>Package placeholder; the spike lives in <code>spikes/</code> and needs rewriting rather than moving back.</td></tr>
-<tr><td><code>--mode connect</code></td><td><span class="badge b-stub">not implemented</span></td><td>Accepted by argparse, no branch &mdash; falls through to the CLI.</td></tr>
 <tr><td><code>SetConfigParameter</code></td><td><span class="badge b-stub">refused by design</span></td><td>CORE is the single writer of <code>config.ini</code>, but propagating a change to processes that each read it at startup is unsolved. A configuration change takes effect on the next start.</td></tr>
 <tr><td>Helper applications</td><td><span class="badge b-stub">broken imports</span></td><td>The verificator and creator import schema constants from <code>pypts/__init__.py</code>, which is now minimal. Phase 0 gives them a home; <code>recipe/rules.py</code> is the obvious one.</td></tr>
 <tr><td>Watchdog</td><td><span class="badge b-live">acting</span></td><td>Both thresholds are live and the fatal path ends the run. The <code>[watchdog] enabled</code> gate exists for debugging sessions.</td></tr>

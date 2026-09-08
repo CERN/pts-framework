@@ -5,18 +5,17 @@
 """
 The console is ASCII, and stays ASCII.
 
-`pin_ascii_console()` makes the *stream* safe: nothing pypts writes can raise
-UnicodeEncodeError on a bench whose locale is C, and the same run prints the
-same bytes on every machine. What it cannot do is keep the text *readable* - a
-character it cannot encode arrives as `\\uXXXX`, which is not what anybody meant
-to show an operator. So the pin covers values that turn up at runtime (a recipe
-name, a serial number typed by hand) and this test covers the strings we write
-ourselves, which is the half that can simply be got right.
+`print()` and the Logger's stdout handler encode with whatever the locale says.
+On a bench whose locale is C that is plain ASCII, and one non-ASCII character
+then raises UnicodeEncodeError inside the handler. There is no stream-level net
+under that any more - this test *is* the guarantee, and it works by keeping the
+strings out of the source in the first place, which is the half that can simply
+be got right.
 
 It reads the source rather than running anything, because the failure it guards
 against is invisible on the machine where the line is written: a developer on a
-UTF-8 terminal sees an em-dash and a technician on a C-locale bench sees
-`\\u2014`, and nothing between the two says so.
+UTF-8 terminal sees an em-dash, and the technician on a C-locale bench loses
+the record that line was supposed to be.
 
 **Log calls and `print()` only.** Qt widget text is deliberately not checked -
 the Debug Monitor's window titles and column placeholders are full of em-dashes
@@ -103,8 +102,7 @@ def non_ascii_console_strings(path: pathlib.Path) -> list[str]:
 def test_console_strings_are_ascii(path):
     """
     A log line or a print() that is not ASCII cannot be shown on a C-locale
-    console. It does not crash - pin_ascii_console() sees to that - but it
-    reaches the operator as an escape sequence instead of a character.
+    console: the handler raises UnicodeEncodeError and the record is lost.
 
     Write the ASCII form: `->` not an arrow, `-` not an em-dash, `...` not an
     ellipsis. If a real character is genuinely needed, it belongs somewhere that

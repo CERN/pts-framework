@@ -55,7 +55,6 @@ from pypts.messages.core_hmi_communication import (
 )
 from pypts.messages.links import ANY_TO_LOGGER, CORE_TO_HMI, HMI_TO_CORE
 from pypts.messages.to_logger_communication import LoggerControl, StopLogger
-from pypts.utilities.common import pin_ascii_console
 from pypts.utilities.local_storage import get_log_file_path
 
 #: How long CORE gets to shut itself down cleanly before it is killed.
@@ -79,11 +78,6 @@ MONITOR_LOG_POLL_S = 0.05
 
 
 def main() -> None:
-    # Before the first print(): the console is ASCII on every platform and in
-    # every locale, so nothing this process writes can raise on the encoding.
-    # See pin_ascii_console(); the run log file keeps its UTF-8.
-    pin_ascii_console()
-
     # Children are always spawned, never forked - on every platform. Two
     # reasons. The bootstrap notice below can create a QApplication in this
     # process, and forking a process that holds live Qt state is unsupported
@@ -98,9 +92,9 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
-        choices=["gui", "cli", "connect"],
+        choices=["gui", "cli"],
         default="gui",
-        help="Choose the app mode: GUI (default), CLI, or connect",
+        help="Choose the app mode: GUI (default) or CLI",
     )
     parser.add_argument(
         "--log-level",

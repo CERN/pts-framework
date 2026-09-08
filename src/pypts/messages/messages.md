@@ -10,10 +10,16 @@ handler placement — is settled. The individual messages below are *declared*; 
 have no sender yet, because the execution engine has not been ported. Reviewing and
 reworking this list is its own task, deliberately deferred.
 
-Every message is a **frozen slotted dataclass of plain values**. Frozen because a message is
-a fact that has already happened; slotted because a typo in a field name should be an
-`AttributeError`, not a silent new attribute. Each direction has a union type — that union
-*is* the contract.
+Every message is a plain **dataclass of plain values**. Each direction has a union type — that
+union *is* the contract.
+
+They were `frozen=True, slots=True` until September 2026, so that a message could not be
+edited in flight and a typo in a field name was an error rather than a silent new attribute.
+Both were dropped deliberately: the framework is the only thing that builds and forwards a
+message, so that is now a rule the code keeps rather than one the type enforces. Two
+consequences worth knowing — a message is no longer hashable (nothing puts one in a set or
+uses one as a dict key today), and Core forwards the *same object* on the two in-process
+links, so a handler that mutated one would change what the other recipient sees.
 
 Legend: **CMD** an instruction to one recipient, which may be refused · **EVT** a fact that
 has already happened · **STUB** declared, nothing sends or carries it out yet.
@@ -40,7 +46,7 @@ same change that starts sending the message.
 One class carries every link. It wraps *anything* with `put()` and `get_nowait()`, and that
 is the whole reason one class serves both kinds of boundary: the launcher hands out a
 `multiprocessing.Queue` for HMI ↔ CORE, CORE hands out plain `queue.Queue` to the Sequencer
-and the Report, and a future `--mode connect` can hand out a socket-backed queue-alike.
+and the Report, and a future remote CORE can hand out a socket-backed queue-alike.
 No module ever learns which one it holds.
 
 Nothing blocks. Each module polls its inboxes from an event loop, so `receive()` takes what

@@ -8,7 +8,6 @@ Small helpers with no home of their own.
 
 import contextlib
 import signal
-import sys
 
 
 def ignore_keyboard_interrupt() -> None:
@@ -46,43 +45,6 @@ def ignore_keyboard_interrupt() -> None:
     # install. Nothing to do, and nothing worth failing a run over.
     with contextlib.suppress(ValueError):
         signal.signal(signal.SIGINT, signal.SIG_IGN)
-
-
-def pin_ascii_console() -> None:
-    """
-    Make the console ASCII, on every platform and in every locale.
-
-    `print()` and the Logger's stdout handler both encode with whatever the
-    locale says. On Windows that is a code page; on Linux under `LANG=C` - a
-    systemd unit, a minimal container, a bench with no locale configured - it is
-    plain ASCII, and one non-ASCII character then raises UnicodeEncodeError
-    inside the handler. A run must not be able to fail on the *shape* of a
-    message.
-
-    Pinning ASCII rather than UTF-8 is the stronger choice on purpose: two
-    machines running the same recipe print the same bytes, instead of one
-    showing a character and the other mojibake. `backslashreplace` means nothing
-    is lost either way - an unexpected character arrives as `\\uXXXX` and is
-    still readable. **The run log file is unaffected**: the Logger pins UTF-8 on
-    its FileHandler, so the file keeps the real characters and the console is
-    the only thing narrowed.
-
-    Called first thing by the launcher and by every child process entry point,
-    because each one has its own `sys.stdout`.
-
-    Best effort by design. A stream may be None (a windowed interpreter), may
-    have been replaced by something without `reconfigure()` (pytest's capture),
-    or may already be detached. None of that is worth failing a run over, and
-    none of it can happen on the console this exists for.
-    """
-    for stream in (sys.stdout, sys.stderr):
-        if stream is None or not hasattr(stream, "reconfigure"):
-            continue
-        try:
-            stream.reconfigure(encoding="ascii", errors="backslashreplace")
-        except (OSError, ValueError):
-            # Detached, closed, or not a text stream. Leave it as it was.
-            continue
 
 
 def convert_string_to_int(value: str) -> int:

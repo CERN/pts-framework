@@ -22,7 +22,7 @@ class ErrorSeverity(Enum):
     CRITICAL = auto()
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class ModuleError:
     """
     A failure a module wants CORE to know about.
@@ -51,7 +51,7 @@ class ModuleError:
     error_type: str = ""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class Heartbeat:
     """Still alive. `source` travels on it so one CORE handler serves all links."""
 
@@ -79,7 +79,7 @@ class ResultType(IntEnum):
         return self.name
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StepOutcome:
     """
     The pickle-safe summary of one executed step.

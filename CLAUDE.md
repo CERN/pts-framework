@@ -98,7 +98,7 @@ every one of them in one folder. This holds for *all* HTML documents in the proj
 
 ```
 src/pypts/
-  launcher/startup.py    entry point; --mode gui|cli|connect, --log-level and
+  launcher/startup.py    entry point; --mode gui|cli, --log-level and
                          --debug-monitor; creates the queues, builds the HMI<->CORE links,
                          spawns Logger + CORE + frontend
   messages/              the whole communication contract - one module per link (see below,
@@ -139,7 +139,7 @@ Sequencer and the Report are **threads of the Core process**, started by
 messages are pickled; the four engine links are plain `queue.Queue`. A thread entry point
 must never call `init_logging()` — the root logger belongs to the process.
 
-Every message is a **frozen slotted dataclass** of plain values. Each *link* gets a module
+Every message is a plain **dataclass** of plain values. Each *link* gets a module
 `<a>_<b>_communication.py` holding both directions and a union type per direction; the Logger's
 is `to_logger_communication.py`, named for its one direction because nothing is sent back.
 `common_messages.py` and `run_events.py` hold what more than one link shares, `links.py` the
@@ -226,9 +226,6 @@ mode, console banner otherwise) and the reason is an ERROR in the log. The fix i
 user's: edit the file or delete it so it is recreated.
 A leftover `%TEMP%/pypts/config/config.ini` from an older build is no longer read at all.
 
-`--mode connect` is accepted by argparse but **has no branch**, so it silently falls
-through and starts the CLI. It is not implemented.
-
 ## Quality gates
 
 All three must pass before any change is called done, and all three run in CI
@@ -260,9 +257,12 @@ comprehensions. `SIM108` and `N818` are disabled in ruff for exactly this reason
   `<NAME> module stopped.` (INFO). `<NAME>` is one of `LAUNCHER LOGGER CORE SEQUENCER REPORT
   GUI CLI`. Ordinary event lines carry no such prefix — see `logging_rules.md` §4.
 - **Some "modern" constructs are load-bearing and must not be simplified away**: the
-  `match`/`case` handlers closed with `unhandled()`, the frozen slotted dataclasses, the link
-  union types, `Never`/`NoReturn`, and `QueueWrapper[Msg]`. They are what makes a forgotten
-  message an error instead of silence. Changing them is a design conversation, not a cleanup.
+  `match`/`case` handlers closed with `unhandled()`, the link union types, `Never`/`NoReturn`,
+  and `QueueWrapper[Msg]`. They are what makes a forgotten message an error instead of
+  silence. Changing them is a design conversation, not a cleanup. (Messages were also
+  `frozen=True, slots=True` until September 2026; that was dropped on purpose — the
+  framework is the only thing that builds and forwards a message, so "nobody edits a
+  payload in flight" is a rule the code keeps rather than one the type enforces.)
 
 ## Working style
 
@@ -270,7 +270,7 @@ comprehensions. `SIM108` and `N818` are disabled in ruff for exactly this reason
   to work through tasks; mark items `[x]` with a note rather than deleting them.
 - The user orchestrates specific tasks; do that task, not the surrounding ones.
 - Prefer small, reviewable changes aligned with the roadmap phase in progress.
-- Match existing conventions (frozen message dataclasses, link modules, `unhandled()`-closed
+- Match existing conventions (message dataclasses, link modules, `unhandled()`-closed
   handlers, module layout) rather than introducing new patterns unasked. For SPDX headers,
   follow `reuse.toml` — see above.
 - **Never `git checkout` a file to undo an experiment** — it reverts to HEAD and takes any

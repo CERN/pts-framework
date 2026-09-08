@@ -34,7 +34,7 @@ from pypts.recipe.recipe import Recipe
 # --- CORE -> Sequencer: commands ----------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class RunSequence:
     """
     Run one named sequence of the recipe carried with the command.
@@ -54,7 +54,7 @@ class RunSequence:
     sequence_name: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StopSequencer:
     """Shut the module down. The Sequencer answers with SequencerStopped."""
 
@@ -62,7 +62,7 @@ class StopSequencer:
 # --- Sequencer -> CORE: events ------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class SequencerStopped:
     """The Sequencer's event loop has ended."""
 

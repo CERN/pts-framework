@@ -801,8 +801,8 @@ Two limitations, accepted:
 
 - The file is read **once, at load**. Editing the `.yml` afterwards makes the panel
   show the new file while the engine runs the old one.
-- It cannot work if CORE ever runs on another machine (`--mode connect`, not
-  implemented). The fix then is a `StepSummary.yaml_source` field — deliberately not
+- It cannot work if CORE ever runs on another machine (a remote CORE; there is no
+  such mode today). The fix then is a `StepSummary.yaml_source` field — deliberately not
   added now, because it would put a copy of the whole recipe text through the HMI
   boundary to serve a hover.
 

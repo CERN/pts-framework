@@ -36,7 +36,7 @@ from pypts.messages.common_messages import ResultType, StepOutcome
 # `Core.load_recipe()` for `RecipeLoaded`.
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StepSummary:
     """
     One step, as a frontend needs to draw its table row before the run.
@@ -51,7 +51,7 @@ class StepSummary:
     description: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class SequenceSummary:
     """
     One sequence's rows, in the order they will run.
@@ -65,7 +65,7 @@ class SequenceSummary:
 
 
 # Sender: Core.load_recipe(). Receiver: hmi_client.py show_recipe_loaded()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class RecipeLoaded:
     """
     A recipe file was parsed and validated. Emitted by CORE, not the Sequencer.
@@ -84,7 +84,7 @@ class RecipeLoaded:
 
 
 # Sender: Sequencer.execute_sequence(). Receiver: hmi_client.py show_run_started()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class RunStarted:
     """
     Execution of a recipe has begun.
@@ -105,7 +105,7 @@ class RunStarted:
 
 
 # Sender: Sequencer.execute_sequence(). Receiver: hmi_client.py show_run_finished()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class RunFinished:
     """Execution finished, for any reason. `outcomes` is flat, in execution order."""
 
@@ -115,7 +115,7 @@ class RunFinished:
 
 # Sender: Sequencer, from the emit seam it wraps. Receivers: report.py
 # record_metadata() and hmi_client.py show_run_metadata()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class RunMetadata:
     """
     The current value of one or more of the run's metadata globals.
@@ -134,7 +134,7 @@ class RunMetadata:
 
 
 # Sender: step.run_sequence(). Receiver: hmi_client.py show_sequence_started()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class SequenceStarted:
     """One named sequence within the recipe has begun."""
 
@@ -142,7 +142,7 @@ class SequenceStarted:
 
 
 # Sender: step.run_sequence(). Receiver: hmi_client.py show_sequence_finished()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class SequenceFinished:
     """One named sequence finished, with its aggregated result."""
 
@@ -151,7 +151,7 @@ class SequenceFinished:
 
 
 # Sender: Step.run(). Receiver: hmi_client.py show_step_started()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StepStarted:
     """One step is about to run. `step_id` is how a frontend finds the row."""
 
@@ -160,7 +160,7 @@ class StepStarted:
 
 
 # Sender: Step.run(). Receiver: hmi_client.py show_step_finished()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StepFinished:
     """One step finished. Carries the whole outcome so a frontend needs no lookup."""
 
@@ -168,7 +168,7 @@ class StepFinished:
 
 
 # Sender: Step.run(). Receiver: report.py record_step()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StepExecuted:
     """
     One step finished, with everything the Report writes about it.
@@ -195,7 +195,7 @@ class StepExecuted:
 # --- Commands the operator gives about a run ----------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StopSequence:
     """
     Abort the running sequence but keep the module alive.
@@ -226,7 +226,7 @@ class StopSequence:
 
 # Sent by: step/user_interaction_step.py, via Runtime.ask -> Sequencer.ask_operator()
 # Receiver: hmi_client.py ask_user()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class UserPromptRequest:
     """
     Show the operator a message and wait for one of `options` to be chosen.
@@ -240,7 +240,7 @@ class UserPromptRequest:
     image_path: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class UserPromptResponse:
     """The operator's answer. `choice` is None if they cancelled or it timed out."""
 
@@ -250,7 +250,7 @@ class UserPromptResponse:
 
 # Sent by: step/user_write_step.py, via Runtime.ask -> Sequencer.ask_operator()
 # Receiver: hmi_client.py ask_user_text()
-@dataclass(frozen=True, slots=True)
+@dataclass
 class UserTextRequest:
     """
     Show the operator a message and wait for a line of text to be typed.
@@ -265,7 +265,7 @@ class UserTextRequest:
     image_path: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class UserTextResponse:
     """What the operator typed. `text` is None if they cancelled or it timed out."""
 

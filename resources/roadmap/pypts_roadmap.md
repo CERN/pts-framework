@@ -13,7 +13,7 @@ The `architecture_refactor` branch is a real step toward the spec: the **process
 | Area | State on the branch |
 |---|---|
 | Package layout | Matches the system design: `core/`, `sequencer/`, `recipe/`, `step/`, `report/`, `hmi/{gui,cli}/`, `config_handler/`, `logger/`, `stream_handler/`, `hardware_layer/`, `helper_applications/{recipe_creator,recipe_verificator,example_finder}/`, `utilities/`, `launcher/`, plus `old_code/` holding the previous engine |
-| Process model | **Reworked (see §1.5).** `launcher/startup.py`: argparse `--mode gui/cli/connect` (gui is the default) and `--log-level`, spawns the Logger and Core as processes and the GUI as a third; Core runs the Sequencer and the Report as **threads of its own process**. Two processes plus the Logger, exactly as agreed below |
+| Process model | **Reworked (see §1.5).** `launcher/startup.py`: argparse `--mode gui/cli` (gui is the default) and `--log-level`, spawns the Logger and Core as processes and the GUI as a third; Core runs the Sequencer and the Report as **threads of its own process**. Two processes plus the Logger, exactly as agreed below |
 | Typed messaging | **Reworked (see §1.1).** `pypts/messages/`: one frozen dataclass per message, one union per link, one generic `QueueWrapper` for all six links, every handler closed with `unhandled()`. The enums, the interface ABCs and the queue data-layer classes are gone, and with them the 4-step "add a message" workflow — it is two steps now. Protocol tests in `tests/unit_tests/test_messages.py` |
 | Health & errors | `HeartbeatManager` ticking from Sequencer/Report/HMI, Core-side timeout detection (armed only for modules still expected to run); two decorators sending a typed `ModuleError` to Core for what nobody expected, and `report_error()`/`report_problem()` for a raise site that recognised the failure and rates it (see §1.10, §1.11). Every one names the module, the method and the exception type |
 | GUI toolkit | **PySide6 migration done** (GUI skeleton + `test_pyside6_conversion.py`) — the PyQt6/LGPL conflict is resolved. **Visual parity with master reached (§1.20, §1.21):** full light/dark theme, `LogPanel`, `InteractionPanel`, `ResultsPanel`, SVG-icon toolbar + pause, browse/pause mode; scaffold replaced by `PtsMainWindow(QMainWindow)` matching the GIF layout (native toolbar, full-width state tab bar, splitter, status bar) |
@@ -93,9 +93,15 @@ is two edits rather than four, and both ends of a link are now one file.
 - [ ] **TODO:** The CLI's main thread is parked in `input()`, so a `StopHmi` from Core is only
       noticed after the next Enter. Pre-existing, and now the only remaining asymmetry between
       the two frontends.
-- [ ] **TODO:** `--mode connect` is still unimplemented. When it lands it needs event fan-out
-      from Core to several HMI channels; commands stay point-to-point. A string-topic event bus
-      was considered and rejected — it would erase the explicit topology.
+- [x] **DONE (September 2026):** `--mode connect` is **gone**. It was accepted by argparse and
+      had no branch, so it fell through and silently started a CLI — a flag that advertised a
+      feature nobody had written. `choices` is `gui`/`cli` now, and `connect` is an argparse
+      error rather than a lie. Nothing else changed: there never was any implementation behind
+      it, in this tree or in `old_code/`.
+- [ ] **TODO:** a **remote CORE** (the frontend on one machine, the engine on another) remains
+      wanted, and has no flag today — one gets added when the feature does, not before. It
+      needs event fan-out from Core to several HMI channels; commands stay point-to-point. A
+      string-topic event bus was considered and rejected — it would erase the explicit topology.
 - [ ] **TODO:** Add the `QT_QPA_PLATFORM=offscreen` CI job. `tests/unit_tests/test_hmi_gui.py`
       has real tests now and they need it on the runner.
 
@@ -883,7 +889,8 @@ none of them held:
   `queue.Queue`, which was the default. What makes a constructed `Core` start nothing is that
   `__init__` builds queues and `start_submodules()` starts threads — the argument had no part
   in it.
-- *"The seam a future `--mode connect` turns."* Wrong seam. Connect mode needs event fan-out
+- *"The seam a future `--mode connect` turns."* Wrong seam — and that flag has since been
+  removed (§1.1's list); the remote-CORE feature it named is still wanted. It needs event fan-out
   from CORE to several **HMI** channels (the TODO in §1.1's list), and the HMI↔Core pair is
   built by `startup.py` and handed to CORE as `to_hmi`/`from_hmi`. It never went through
   `queue_factory`. What `queue_factory` did build — Core↔Sequencer, Core↔Report — stays inside
@@ -1960,7 +1967,7 @@ paint it as a log panel.
 - [ ] **TODO:** the recipe file is read **once, at load**. Editing the `.yml` afterwards makes
       the panel show the new file while the engine runs the old one. Re-reading on every hover
       would cost a `stat()` per row; a `mtime` check on the first hover after a run would not.
-- [ ] **TODO:** `--mode connect` (a CORE on another machine) cannot work with a GUI-side file
+- [ ] **TODO:** a remote CORE (the engine on another machine) cannot work with a GUI-side file
       read. That is when `StepSummary` gains a `yaml_source: str` and this switches over — the
       2-step message procedure in `src/pypts/README.md`, plus an `EXAMPLES` entry.
 - [ ] **TODO:** the panel is suppressed for the whole run, a hold included. If operators ask
@@ -2611,7 +2618,9 @@ Four things were wrong, all small, and are fixed here.
   deliberately does not call it: it is the process that must still hear Ctrl+C. Nothing
   becomes unkillable — `stop_core()` still terminates after its timeout.
 
-- **Non-ASCII on stdout could raise under `LANG=C`.** The Logger's `StreamHandler` encodes
+- **Non-ASCII on stdout could raise under `LANG=C`.** *(The stream pin described here was
+  removed again in §1.43; the source-level rule it names is what remains.)* The Logger's
+  `StreamHandler` encodes
   with the locale, so on a systemd unit or a minimal container one stray character raised
   `UnicodeEncodeError` inside the handler. `pin_ascii_console()` reconfigures `sys.stdout`
   and `sys.stderr` to `encoding="ascii", errors="backslashreplace"` in the launcher and in
@@ -3017,6 +3026,46 @@ assertion, `test_start_sequence_without_a_recipe_is_refused_by_core` is new, and
 
 ---
 
+### 1.43 The ASCII console pin is removed — **done**
+
+`pin_ascii_console()` (§1.37) is gone, with its four call sites and its three unit tests.
+
+**Why.** It was a net under a failure the framework already prevents at the source. The two
+halves of §1.37 overlapped: the pin reconfigured `sys.stdout` and `sys.stderr` to
+`encoding="ascii", errors="backslashreplace"` so that *nothing* could raise on the encoding,
+and `tests/unit_tests/test_console_output.py` kept every string we write ASCII in the first
+place. The second is the half that fixes the problem rather than hiding it, and it is the one
+we rely on now: a character we should not have written is a failing test at the moment it is
+written, instead of an escape sequence on a technician's screen.
+
+**What went.** The function in `utilities/common.py`, and its now-unused `import sys`; the
+call in `launcher/startup.py: main()` and in the `core_main`, `gui_main` and `logger_main`
+entry points; `test_pin_ascii_console_makes_the_console_ascii`,
+`..._escapes_rather_than_raising` and `..._survives_a_stream_it_cannot_reconfigure` in
+`test_utilities.py`, with the `make_text_stream` helper and the `io`/`sys` imports only they
+used; and the skipped placeholder
+`test_non_ascii_messages_do_not_raise_on_a_non_utf8_locale` in
+`tests/functional_tests/test_run_logging.py`, which declared a guarantee the framework no
+longer makes.
+
+**What stays.** `test_console_output.py`, unchanged in behaviour, its docstrings rewritten so
+they no longer lean on a pin that is not there. It is now the *only* thing between a non-ASCII
+console string and a lost record, so its scope matters more than it did: the
+`helper_applications/` exclusion recorded as a TODO under §1.37 is the one real hole in it.
+`docs/source/architecture_overview.html` is updated to match.
+
+**What this accepts, deliberately.** A non-ASCII value arriving at *runtime* — a recipe name,
+a hand-typed serial number, a third-party exception message, a device reply — can raise
+`UnicodeEncodeError` inside the Logger's `StreamHandler` on a console whose locale is C. No
+source scan can catch that, because the string is not in our source. The framework's own
+output is guaranteed clean; foreign text on a C-locale console is not defended against. The
+run log *file* is unaffected either way, since the Logger pins UTF-8 on its `FileHandler`.
+
+**Verified:** `pytest tests` — 744 passed, 42 skipped, down from 747/43 by exactly the four
+tests removed above; `ruff check src tests` clean; `mypy` clean.
+
+---
+
 ## TODO — Step types: which of the ten are ported, and which are dropped
 
 > **Status: decided 2026-09-01; `PythonModule` finished, `UserInteraction` ported (§1.28)
@@ -3121,7 +3170,7 @@ CLI mode: no HMI process at all — CLI runs in the launcher process, engine unc
 
 - [ ] **TODO:** Launcher stays the parent of *both* processes — the GUI is **not** spawned by Core. The supervisor must be the simplest, most stable component; the GUI must outlive an engine crash in order to report it. (`startup.py` already does this — keep it.)
 - [x] **DONE (see §1.5):** Core runs Sequencer and Report as **threads**, not `multiprocessing.Process` (`core.py: start_submodules()`). StreamHandler joins them as a third thread when it lands.
-- [x] **DONE (mechanism):** the **transport is not baked into any module**. `QueueWrapper` wraps anything with `put()`/`get_nowait()`, which is the whole mechanism: the launcher builds the HMI↔Core pair out of `multiprocessing.Queue` because that link crosses a process boundary, and `Core.__init__` builds its four submodule links out of `queue.Queue` because the Sequencer and the Report are threads of its own process. No module knows which of the two it is holding. See §1.12 for why the `queue_factory` argument that used to sit on `Core.__init__` is gone: `--mode connect` (TODO above) changes the *HMI* boundary, which the launcher owns, not the submodule links.
+- [x] **DONE (mechanism):** the **transport is not baked into any module**. `QueueWrapper` wraps anything with `put()`/`get_nowait()`, which is the whole mechanism: the launcher builds the HMI↔Core pair out of `multiprocessing.Queue` because that link crosses a process boundary, and `Core.__init__` builds its four submodule links out of `queue.Queue` because the Sequencer and the Report are threads of its own process. No module knows which of the two it is holding. See §1.12 for why the `queue_factory` argument that used to sit on `Core.__init__` is gone: a remote CORE (TODO above) changes the *HMI* boundary, which the launcher owns, not the submodule links.
 - [ ] **TODO:** HAL becomes a **plain library** imported by the Sequencer — no process, no event loop, no queue. Driver calls stay ordinary function calls; this also keeps the spec's "HAL usable standalone outside the framework" true by construction.
 - [x] **DONE:** every HMI↔Core message type is round-tripped through `pickle.dumps`/`loads`, and a second test rejects any field that is not a plain value, a UUID, an Enum, a tuple or another message. Both are parametrised over the link unions, and a third test fails if a message exists without an example — so the coverage cannot rot. `tests/unit_tests/test_messages.py`.
 - [x] **DONE (contract):** user interaction is a **request/response pair** joined by a `request_id` — `UserPromptRequest`/`Response` and `SerialNumberRequest`/`Response` in `messages/run_events.py`, with `PendingRequests` as the waiting side. The live `SimpleQueue` is gone. *Remaining:* wiring it into the steps themselves during the Phase 1 port, and the worker-thread requirement noted in §1.1.

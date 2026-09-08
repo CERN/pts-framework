@@ -15,14 +15,14 @@ from dataclasses import dataclass
 # --- any module -> Logger: commands -------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class SetStdoutEnabled:
     """Console echo for the whole application. The Logger owns that handler."""
 
     enabled: bool
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StopLogger:
     """Stop the Logger. Sent last, and queued, so pending records are written first."""
 

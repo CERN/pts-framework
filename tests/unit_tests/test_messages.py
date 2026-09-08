@@ -28,7 +28,7 @@ without an example, so nothing here can be forgotten by omission.
 
 import pickle
 import queue
-from dataclasses import FrozenInstanceError, fields, is_dataclass
+from dataclasses import fields, is_dataclass
 from enum import Enum
 from typing import get_args
 from uuid import UUID
@@ -279,20 +279,17 @@ def test_no_example_is_left_over():
 
 
 @pytest.mark.parametrize("message_type", ALL_TYPES, ids=ids(ALL_TYPES))
-def test_every_message_is_a_frozen_dataclass(message_type):
-    """Frozen because a message is a fact that has already happened.
+def test_every_message_is_a_dataclass(message_type):
+    """A message is a plain dataclass of values, and nothing else.
 
-    Nothing downstream may edit a message in flight - Core forwards the same
-    object to the HMI rather than repacking it, so a mutable message would let
-    one recipient change what another one sees.
+    They used to be `frozen=True, slots=True` as well. That was dropped
+    deliberately: the framework is the only thing that builds and forwards a
+    message, so "nobody edits a payload in flight" is a rule the code keeps
+    rather than one the type enforces. What the message layer still guarantees
+    - every union member handled, every union member picklable - is checked by
+    the tests around this one.
     """
     assert is_dataclass(message_type), f"{message_type.__name__} is not a dataclass"
-
-    instance = EXAMPLES[message_type]
-    if fields(message_type):
-        first = fields(message_type)[0].name
-        with pytest.raises(FrozenInstanceError):
-            setattr(instance, first, None)
 
 
 # --------------------------------------------------------------------------

@@ -34,14 +34,14 @@ from pypts.messages.run_events import (
 # --- HMI -> CORE: commands ----------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class LoadRecipe:
     """Load and validate a recipe. CORE answers with RecipeLoaded or ModuleError."""
 
     recipe_path: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StartSequence:
     """Run one named sequence of the loaded recipe."""
 
@@ -55,7 +55,7 @@ class StartSequence:
 # until two questions are answered: whether CORE replies with a confirmation or
 # an error, and how a process that read a value at startup learns it changed.
 # Until then a configuration change takes effect on the next start.
-@dataclass(frozen=True, slots=True)
+@dataclass
 class SetConfigParameter:
     """
     Change one configuration value. Declared, not implemented.
@@ -67,7 +67,7 @@ class SetConfigParameter:
     value: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class ShutdownRequested:
     """Shut the whole application down. The launcher sends this too."""
 
@@ -75,7 +75,7 @@ class ShutdownRequested:
 # --- HMI -> CORE: events ------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class HmiStopped:
     """The HMI's event loop has ended. CORE waits for this before it may exit."""
 
@@ -83,7 +83,7 @@ class HmiStopped:
 # --- CORE -> HMI: commands ----------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StopHmi:
     """Close the frontend. The HMI answers with HmiStopped once its loop has ended."""
 
@@ -91,21 +91,21 @@ class StopHmi:
 # --- CORE -> HMI: events ------------------------------------------------------
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class StatusChanged:
     """One line of free text. Anything with structure has its own message."""
 
     text: str
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class ModuleErrorReported:
     """An error CORE decided the operator should see. Not every ModuleError is."""
 
     error: ModuleError
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass
 class ReportReady:
     """
     The report of the run that just finished is on disk.

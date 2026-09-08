@@ -64,7 +64,7 @@ from pypts.messages.run_events import (
     UserTextRequest,
 )
 from pypts.recipe import step_source
-from pypts.utilities.common import ignore_keyboard_interrupt, pin_ascii_console
+from pypts.utilities.common import ignore_keyboard_interrupt
 from pypts.utilities.data_removal import survey
 from pypts.utilities.error_handling import (
     catch_and_report_errors,
@@ -124,7 +124,6 @@ def gui_main(
     # children under the one rule: the launcher owns shutdown, and asks for it
     # with StopHmi.
     ignore_keyboard_interrupt()
-    pin_ascii_console()
 
     init_logging(log_queue, log_level, log_file_path)
     app = QApplication(sys.argv)
