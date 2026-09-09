@@ -21,6 +21,7 @@ Layout:
 HmiClient owns the protocol; GUI is the assembler (gui.md §6).
 """
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -704,12 +705,18 @@ class GUI(HmiClient):
             )
             return
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_file))):
-            report_problem(
-                self,
-                f"This machine has no application set up to open {config_file}",
-                severity=ErrorSeverity.WARNING,
-                operation="open_config_file",
-            )
+            try:
+                if sys.platform == "win32":
+                    subprocess.Popen(["notepad.exe", str(config_file)])
+                else:
+                    subprocess.Popen(["xdg-open", str(config_file)])
+            except OSError:
+                report_problem(
+                    self,
+                    f"This machine has no application set up to open {config_file}",
+                    severity=ErrorSeverity.WARNING,
+                    operation="open_config_file",
+                )
 
     def ask_user(self, request: UserPromptRequest) -> None:
         self.center.show_prompt(
