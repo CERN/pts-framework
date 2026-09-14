@@ -50,7 +50,6 @@ def build_core_that_spawns_nothing():
     return Core(
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
-        log_queue=queue.Queue(),
         watchdog_enabled=True,
     )
 
@@ -65,7 +64,7 @@ def test_heartbeat_timeout_warns_once_per_outage(caplog):
 
     core = build_core_that_spawns_nothing()
     # Pretend the Sequencer was last heard from well past the timeout.
-    core.last_heartbeat[SEQUENCER] = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
+    core.modules[SEQUENCER].last_heartbeat = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
 
     with caplog.at_level(logging.DEBUG):
         for _ in range(50):
@@ -90,13 +89,13 @@ def test_heartbeat_timeout_is_reported_again_after_the_module_recovers(caplog):
     stale = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
 
     with caplog.at_level(logging.DEBUG):
-        core.last_heartbeat[SEQUENCER] = stale
+        core.modules[SEQUENCER].last_heartbeat = stale
         core.do_periodic_tasks()
         core.do_periodic_tasks()
 
         # The module comes back, then goes quiet a second time.
         core.note_heartbeat(Heartbeat(source=SEQUENCER, timestamp=time.time()))
-        core.last_heartbeat[SEQUENCER] = stale
+        core.modules[SEQUENCER].last_heartbeat = stale
         core.do_periodic_tasks()
 
     timeouts = [r for r in caplog.records if "Heartbeat timeout" in r.message]
@@ -108,8 +107,8 @@ def test_a_stopped_module_does_not_produce_timeout_warnings(caplog):
     from pypts.core.core import HEARTBEAT_TIMEOUT_S, SEQUENCER
 
     core = build_core_that_spawns_nothing()
-    core.last_heartbeat[SEQUENCER] = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
-    core.module_running[SEQUENCER] = False
+    core.modules[SEQUENCER].last_heartbeat = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
+    core.modules[SEQUENCER].running = False
 
     with caplog.at_level(logging.WARNING):
         core.do_periodic_tasks()
@@ -143,7 +142,8 @@ def test_core_records_heartbeats_from_each_module():
         inbox.send(Heartbeat(source=name, timestamp=timestamps[name]))
     core.poll_all_sources()
 
-    assert core.last_heartbeat == timestamps
+    recorded = {name: state.last_heartbeat for name, state in core.modules.items()}
+    assert recorded == timestamps
 
 
 def test_a_poisoned_message_does_not_stop_the_mediator(caplog):
@@ -173,7 +173,7 @@ def test_a_poisoned_message_does_not_stop_the_mediator(caplog):
     assert "does not understand" in errors[0].getMessage()
     # What it was stays at DEBUG, where the message repr belongs.
     assert any("No handler for message" in r.getMessage() for r in caplog.records)
-    assert core.last_heartbeat[REPORT] == 1_700_000_003.0
+    assert core.modules[REPORT].last_heartbeat == 1_700_000_003.0
 
 
 def test_a_sequencer_event_is_routed_to_the_hmi():
@@ -387,8 +387,8 @@ def test_core_stops_when_all_modules_have_exited(caplog):
 
     with caplog.at_level(logging.DEBUG):
         core.stop_all_modules()
-        for name in core.module_running:
-            core.module_running[name] = False
+        for state in core.modules.values():
+            state.running = False
         core.check_stop_status()
 
     assert core.running is False
@@ -405,9 +405,9 @@ def test_core_keeps_waiting_while_a_module_is_still_running():
     core = build_core_that_spawns_nothing()
 
     core.stop_all_modules()
-    for name in core.module_running:
-        core.module_running[name] = False
-    core.module_running[SEQUENCER] = True
+    for state in core.modules.values():
+        state.running = False
+    core.modules[SEQUENCER].running = True
 
     core.check_stop_status()
 
@@ -425,10 +425,10 @@ def test_a_module_that_never_answers_does_not_hold_core_forever(caplog):
     core = build_core_that_spawns_nothing()
 
     core.stop_all_modules()
-    for name in core.module_running:
-        core.module_running[name] = False
-    core.module_running[SEQUENCER] = True
-    core.module_running[REPORT] = True
+    for state in core.modules.values():
+        state.running = False
+    core.modules[SEQUENCER].running = True
+    core.modules[REPORT].running = True
 
     # Pretend the budget has already run out, rather than sleeping through it.
     core.shutdown_deadline = time.time() - 1
@@ -698,7 +698,7 @@ def test_report_generated_is_relayed_as_report_ready():
 
 def silence(core, name, seconds):
     """Backdate a module's last heartbeat so it reads as silent for `seconds`."""
-    core.last_heartbeat[name] = time.time() - seconds
+    core.modules[name].last_heartbeat = time.time() - seconds
 
 
 def test_a_warned_module_does_not_end_the_run_on_its_own(caplog):
@@ -715,7 +715,7 @@ def test_a_warned_module_does_not_end_the_run_on_its_own(caplog):
     with caplog.at_level("DEBUG"):
         core.do_periodic_tasks()
 
-    assert core.heartbeat_lost[SEQUENCER] is True
+    assert core.modules[SEQUENCER].heartbeat_lost is True
     assert not core.shutting_down
     assert core.running
 
@@ -795,7 +795,6 @@ def test_the_watchdog_can_be_switched_off():
     core = Core(
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
-        log_queue=queue.Queue(),
         watchdog_enabled=False,
     )
     silence(core, SEQUENCER, HEARTBEAT_FATAL_S + 1)
@@ -805,7 +804,7 @@ def test_the_watchdog_can_be_switched_off():
     assert not core.shutting_down
     assert core.running
     # Reported all the same.
-    assert core.heartbeat_lost[SEQUENCER] is True
+    assert core.modules[SEQUENCER].heartbeat_lost is True
 
 
 def test_a_module_that_has_reported_itself_stopped_is_not_watched():
@@ -816,7 +815,7 @@ def test_a_module_that_has_reported_itself_stopped_is_not_watched():
     from pypts.core.core import HEARTBEAT_FATAL_S, REPORT
 
     core = build_core_that_spawns_nothing()
-    core.module_running[REPORT] = False
+    core.modules[REPORT].running = False
     silence(core, REPORT, HEARTBEAT_FATAL_S + 100)
 
     core.do_periodic_tasks()
@@ -951,6 +950,26 @@ def test_the_fatal_countdown_starts_when_the_module_first_speaks():
     assert not core.shutting_down
 
     # ...and then goes quiet for good.
-    core.last_heartbeat[SEQUENCER] = time.time() - (HEARTBEAT_FATAL_S + 1)
+    core.modules[SEQUENCER].last_heartbeat = time.time() - (HEARTBEAT_FATAL_S + 1)
     core.do_periodic_tasks()
     assert core.shutting_down
+
+
+def test_every_watchdog_module_has_a_friendly_source_name():
+    """
+    When the watchdog reports a dead module it builds a ModuleError from
+    MODULE_SOURCE and hands it to handle_module_error, which calls
+    describe_source(). A source path missing from FRIENDLY_SOURCE_NAME silently
+    falls back to "the software" - correct but unhelpful. This test makes the
+    relationship structural: adding a module to MODULE_SOURCE without updating
+    FRIENDLY_SOURCE_NAME is a test failure, not a silent wrong name.
+    """
+    from pypts.core.core import FRIENDLY_SOURCE_NAME, MODULE_SOURCE
+
+    missing = [
+        path for path in MODULE_SOURCE.values() if path not in FRIENDLY_SOURCE_NAME
+    ]
+    assert not missing, (
+        f"MODULE_SOURCE paths not in FRIENDLY_SOURCE_NAME: {missing}. "
+        f"Add them so the operator sees the module's name, not 'the software'."
+    )

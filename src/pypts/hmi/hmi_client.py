@@ -52,11 +52,6 @@ from pypts.messages.run_events import (
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import HMI, HeartbeatManager, HeartbeatWatch
 
-#: The name CORE knows a frontend by, and the `source` on its heartbeats. Both
-#: frontends use it because only one of them ever runs. Imported rather than
-#: spelled again: CORE keys its liveness tables on the same string.
-MODULE_NAME = HMI
-
 #: How long stop_and_wait() gives CORE to answer a shutdown request before the
 #: frontend stops on its own. Without a bound, a wedged CORE would hang the exit.
 SHUTDOWN_GRACE_S = 5.0
@@ -77,7 +72,7 @@ class HmiClient:
         self.core = to_core
         self.inbox = from_core
         self.running = True
-        self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
+        self.heartbeat_manager = HeartbeatManager(self.core, HMI)
 
         #: The other half of the same protocol: CORE beats back at this frontend
         #: and this watches for it. Only the HMI does - the Sequencer and the

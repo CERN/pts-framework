@@ -37,10 +37,6 @@ from pypts.messages.run_events import (
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import REPORT, HeartbeatManager
 
-#: The name CORE knows this module by, and the `source` on its heartbeats.
-#: Imported rather than spelled again
-MODULE_NAME = REPORT
-
 #: One flat row per executed step. report.csv is the whole record of a run -
 #: there is no second file - so the run-level facts are repeated on every row
 #: rather than kept somewhere else. `recipe_name` always worked this way; the
@@ -135,7 +131,7 @@ class Report:
         self.core = to_core
         self.inbox = from_core
         self.running = True
-        self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
+        self.heartbeat_manager = HeartbeatManager(self.core, REPORT)
         if output_dir is not None:
             self.output_dir = Path(output_dir)
         else:

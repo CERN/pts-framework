@@ -239,7 +239,7 @@ class Logger:
             case StopLogger():
                 self.running = False
             case _:
-                unhandled(message)
+                unhandled(message)  # unreachable; keeps mypy's exhaustiveness check live
 
     def write_record(self, record):
         """

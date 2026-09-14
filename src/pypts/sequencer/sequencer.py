@@ -49,9 +49,6 @@ from pypts.step.step import run_sequence as run_sequence_body
 from pypts.utilities.error_handling import catch_and_report_errors, report_error, report_problem
 from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
 
-#: The name CORE knows this module by the name
-MODULE_NAME = SEQUENCER
-
 #: How long stop() waits for a sequence that is still running.
 SEQUENCE_JOIN_TIMEOUT_S = 2.0
 
@@ -93,7 +90,7 @@ class Sequencer:
         self.running = True
         self.stop_requested = False
         self.pending = PendingRequests()
-        self.heartbeat_manager = HeartbeatManager(self.core, MODULE_NAME)
+        self.heartbeat_manager = HeartbeatManager(self.core, SEQUENCER)
         self.sequence_thread: threading.Thread | None = None
         self.recipe: Recipe | None = None
 
@@ -363,7 +360,7 @@ class Sequencer:
             case UserTextResponse():
                 value = message.text
             case _:
-                unhandled(message)
+                unhandled(message)  # unreachable; keeps mypy's exhaustiveness check live
 
         if not self.pending.return_caller(message.request_id, value):
             # Late, or answered twice. Nothing is broken and nothing is lost -

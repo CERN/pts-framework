@@ -26,6 +26,7 @@ import logging
 import threading
 import time
 import traceback
+from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
 from typing import ClassVar
@@ -152,6 +153,17 @@ def describe_source(source: str) -> str:
     return FRIENDLY_SOURCE_NAME.get(source, "the software")
 
 
+@dataclass
+class _ModuleState:
+    """Per-module liveness state tracked by CORE's watchdog."""
+
+    running: bool = True
+    last_heartbeat: float | None = None  # None = never heard from
+    heartbeat_lost: bool = False
+    start_reported: bool = False
+    watchdog_suppressed: bool = False
+
+
 def core_main(
     to_hmi: QueueWrapper[CoreToHmi],
     from_hmi: QueueWrapper[HmiToCore],
@@ -180,7 +192,7 @@ def core_main(
     ignore_keyboard_interrupt()
 
     init_logging(log_queue, log_level)
-    Core(to_hmi, from_hmi, log_queue, log_level=log_level).start()
+    Core(to_hmi, from_hmi).start()
 
 
 class Core:
@@ -214,17 +226,10 @@ class Core:
         self,
         to_hmi: QueueWrapper[CoreToHmi],
         from_hmi: QueueWrapper[HmiToCore],
-        log_queue,
-        log_level: int = DEFAULT_LOG_LEVEL,
         watchdog_enabled: bool | None = None,
     ) -> None:
         """
         Args:
-            log_queue: kept so CORE can hand it on if a submodule ever needs to
-                configure logging of its own. The threads do not: they share
-                this process's root logger, which core_main() has already
-                pointed at the Logger.
-            log_level: kept for the same reason.
             watchdog_enabled: whether prolonged silence ends the run. None asks
                 the configuration, which is what a real run does; a test passes
                 the value, the way the Report is passed its output_dir, because
@@ -232,9 +237,6 @@ class Core:
         """
         self.to_hmi = to_hmi
         self.from_hmi = from_hmi
-
-        self.log_queue = log_queue
-        self.log_level = log_level
 
         # One queue per direction. The QueueWrapper type parameter is the union that
         # queue is allowed to carry, and `link` is the name it goes by in the
@@ -274,45 +276,30 @@ class Core:
         self.sequencer_thread: threading.Thread | None = None
         self.report_thread: threading.Thread | None = None
 
-        # Which modules CORE is still waiting for before it may exit.
-        self.module_running = {HMI: True, SEQUENCER: True, REPORT: True}
+        #: Per-module liveness state. Replaces the five parallel dicts that used
+        #: to track the same three keys separately, making do_periodic_tasks
+        #: readable in a single pass.
+        #:
+        #: last_heartbeat starts as None (never heard from), not as time.time().
+        #: The old seeding asserted every module had been heard from when CORE
+        #: was built - at which point the HMI has not even been spawned. A cold
+        #: PySide6 import over a network home directory is seconds of entirely
+        #: normal startup, and the fatal countdown must not run against it.
+        self.modules: dict[str, _ModuleState] = {
+            HMI: _ModuleState(),
+            SEQUENCER: _ModuleState(),
+            REPORT: _ModuleState(),
+        }
 
         #: When CORE was built, which is the only clock a module that has never
         #: spoken can be measured against.
         self.started_at = time.time()
-
-        #: When each module was last heard from. **None means never**, which is
-        #: not the same as "a long time ago" and is the distinction the fatal
-        #: threshold rests on.
-        #:
-        #: This used to be seeded with time.time(), asserting that every module
-        #: had been heard from when CORE was built - at which point the HMI has
-        #: not even been spawned. Harmless while a timeout only warned; once it
-        #: could end the run it meant the countdown was already running against a
-        #: frontend that was still starting. A cold PySide6 import over a network
-        #: home directory is seconds of perfectly normal startup, and it is
-        #: slower on Linux than on Windows, where all the development happens.
-        self.last_heartbeat: dict[str, float | None] = dict.fromkeys(self.module_running)
-
-        # Which modules have already been reported late. The main loop turns
-        # every 10 ms, so without this the timeout below would log the same
-        # warning about a hundred times a second for the rest of the run.
-        self.heartbeat_lost = {name: False for name in self.module_running}
-
-        # The same latch for the other sentence - a module that has not started
-        # yet, which is a different thing to say and must not be said twice.
-        self.start_reported = {name: False for name in self.module_running}
 
         #: CORE's own heartbeat, towards the HMI and nowhere else. The Sequencer
         #: and the Report are threads of this process and cannot outlive it, so
         #: watching for a CORE that has gone would be watching for something
         #: that cannot happen - and would double the trace traffic doing it.
         self.hmi_heartbeat = HeartbeatManager(self.to_hmi, CORE)
-
-        # Which modules have already had the *fatal* threshold pass with the
-        # watchdog switched off. Same reason as heartbeat_lost above: without it
-        # a debugging session logs the same DEBUG line a hundred times a second.
-        self.watchdog_suppressed = {name: False for name in self.module_running}
 
         #: Whether prolonged silence ends the run, or is only reported. Off is
         #: for a developer with a debugger attached: a breakpoint in an event
@@ -443,7 +430,7 @@ class Core:
             case ShutdownRequested():
                 self.stop_all_modules()
             case HmiStopped():
-                self.module_running[HMI] = False
+                self.modules[HMI].running = False
             case LoadRecipe(recipe_path=recipe_path):
                 self.load_recipe(recipe_path)
             case StartSequence(sequence_name=sequence_name):
@@ -480,7 +467,7 @@ class Core:
     def handle_sequencer_message(self, message: SequencerToCore) -> None:
         match message:
             case SequencerStopped():
-                self.module_running[SEQUENCER] = False
+                self.modules[SEQUENCER].running = False
                 self.release_stop_report()
             case RunStarted() | SequenceStarted():
                 # Progress is the frontend's business, and these two are the
@@ -531,7 +518,7 @@ class Core:
     def handle_report_message(self, message: ReportToCore) -> None:
         match message:
             case ReportStopped():
-                self.module_running[REPORT] = False
+                self.modules[REPORT].running = False
             case ReportGenerated(report_path=path):
                 log.debug("CORE relaying the generated report at %s.", path)
                 self.to_hmi.send(StatusChanged(f"Report generated: {path}"))
@@ -696,20 +683,21 @@ class Core:
             self.to_hmi.send(ModuleErrorReported(error))
 
     def note_heartbeat(self, beat: Heartbeat) -> None:
-        if beat.source not in self.last_heartbeat:
+        state = self.modules.get(beat.source)
+        if state is None:
             log.debug("Heartbeat from an unknown module: '%s'.", beat.source)
             return
 
         # A module that was reported late and is now answering again is worth
         # one line, so the log says the outage ended instead of just going quiet.
-        if self.heartbeat_lost[beat.source]:
+        if state.heartbeat_lost:
             log.info("The %s is responding again.", FRIENDLY_MODULE_NAME[beat.source])
             # The Monitor's other machine-read line - see do_periodic_tasks().
             log.debug("Module is responding again: %s", beat.source)
-            self.heartbeat_lost[beat.source] = False
-            self.watchdog_suppressed[beat.source] = False
+            state.heartbeat_lost = False
+            state.watchdog_suppressed = False
 
-        self.last_heartbeat[beat.source] = beat.timestamp
+        state.last_heartbeat = beat.timestamp
 
     # --- Background tasks -----------------------------------------------------
 
@@ -752,20 +740,20 @@ class Core:
             return
 
         now = time.time()
-        for name, last_seen in self.last_heartbeat.items():
-            if not self.module_running[name]:
+        for name, state in self.modules.items():
+            if not state.running:
                 continue
 
-            if last_seen is None:
-                self.note_a_module_has_not_started(name)
+            if state.last_heartbeat is None:
+                self.note_a_module_has_not_started(name, state)
                 # Never heard from is not the same as gone: it may still be
                 # starting, and a module that has never spoken cannot be said to
                 # have stopped responding. Nothing below applies until it does.
                 continue
 
-            silent_for = now - last_seen
+            silent_for = now - state.last_heartbeat
 
-            if silent_for > HEARTBEAT_TIMEOUT_S and not self.heartbeat_lost[name]:
+            if silent_for > HEARTBEAT_TIMEOUT_S and not state.heartbeat_lost:
                 # The one liveness fact the operator is told, and it is told
                 # without the mechanism - logging_rules.md section 7.1. Everything
                 # measurable about it is on the DEBUG line under it.
@@ -780,7 +768,7 @@ class Core:
                     silent_for,
                     HEARTBEAT_TIMEOUT_S,
                 )
-                self.heartbeat_lost[name] = True
+                state.heartbeat_lost = True
 
             if silent_for > HEARTBEAT_FATAL_S:
                 if self.watchdog_enabled:
@@ -789,8 +777,8 @@ class Core:
                     # to be learned by measuring the other two against a clock
                     # they were never going to answer.
                     return
-                if not self.watchdog_suppressed[name]:
-                    self.watchdog_suppressed[name] = True
+                if not state.watchdog_suppressed:
+                    state.watchdog_suppressed = True
                     log.debug(
                         "The %s passed the fatal threshold of %.1f s, but "
                         "[watchdog] enabled is off, so the run continues.",
@@ -798,7 +786,7 @@ class Core:
                         HEARTBEAT_FATAL_S,
                     )
 
-    def note_a_module_has_not_started(self, name: str) -> None:
+    def note_a_module_has_not_started(self, name: str, state: _ModuleState) -> None:
         """
         Say once that a module has yet to say anything at all.
 
@@ -814,12 +802,12 @@ class Core:
         returns at once if the frontend dies on import, and join_submodules()
         reports a thread that failed to start.
         """
-        if self.start_reported[name]:
+        if state.start_reported:
             return
         if time.time() - self.started_at < HEARTBEAT_TIMEOUT_S:
             return
 
-        self.start_reported[name] = True
+        state.start_reported = True
         log.warning("The %s has not started yet.", FRIENDLY_MODULE_NAME[name])
         log.debug(
             "No heartbeat from %s in the %.1f s since CORE was built.",
@@ -936,7 +924,7 @@ class Core:
         so CORE could not kill it even if threads were killable - which is the
         other reason this reports rather than acts.
         """
-        if not any(self.module_running.values()):
+        if not any(state.running for state in self.modules.values()):
             log.debug("Every module has reported itself stopped.")
             self.running = False
             return
@@ -949,7 +937,7 @@ class Core:
 
         # Reached once: self.running is cleared below, so the loop that calls
         # this does not come back round to log the same sentence again.
-        late = sorted(name for name, running in self.module_running.items() if running)
+        late = sorted(name for name, state in self.modules.items() if state.running)
         log.error(
             "Parts of the software did not stop in time and were left behind: %s.",
             ", ".join(FRIENDLY_MODULE_NAME[name] for name in late),

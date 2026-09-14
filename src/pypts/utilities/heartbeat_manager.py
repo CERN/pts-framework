@@ -11,9 +11,9 @@ are called. They belong together because they only mean anything as a set - a
 timeout shorter than the interval declares every module dead, and a module name
 that does not match the key in CORE's tables is a heartbeat CORE cannot place.
 
-The names in particular used to be spelled four times: once as `MODULE_NAME` in
-each of the three modules and again as three constants in `core.py`. Nothing
-checked that they agreed.
+The names in particular used to be spelled four times: once in each of the
+three modules and again as three constants in `core.py`. Nothing checked that
+they agreed.
 
 This module imports almost nothing on purpose. The Debug Monitor needs the
 timeout and the names to fold liveness out of a run log, and it used to reach
