@@ -5,11 +5,14 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -23,6 +26,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -484,3 +488,380 @@ class HeaderStrip(QFrame):
         idx = self._seq_combo.currentIndex()
         if idx >= 0:
             self._model.remove_sequence(idx)
+
+
+# ── MappingRowsWidget ─────────────────────────────────────────────────────────
+
+
+class MappingRowsWidget(QWidget):
+    """Editable rows for a step's `inputs` or `outputs` dict."""
+
+    def __init__(self, model, seq_idx: int, step_idx: int, mapping_key: str, parent=None) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._seq_idx = seq_idx
+        self._step_idx = step_idx
+        self._key = mapping_key  # "inputs" or "outputs"
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(2)
+
+        self._rows_widget = QWidget()
+        self._rows_layout = QVBoxLayout(self._rows_widget)
+        self._rows_layout.setContentsMargins(0, 0, 0, 0)
+        self._rows_layout.setSpacing(2)
+        outer.addWidget(self._rows_widget)
+
+        add_btn = QPushButton(f"+ Add {mapping_key[:-1]}")  # "Add input" / "Add output"
+        add_btn.clicked.connect(self._add_row)
+        outer.addWidget(add_btn)
+        outer.addStretch()
+
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        # Clear rows
+        while self._rows_layout.count():
+            item = self._rows_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        step = self._model.steps(self._seq_idx)[self._step_idx]
+        mapping = step.get(self._key) or {}
+        for name, spec in mapping.items():
+            self._rows_layout.addWidget(self._build_row(name, spec))
+
+    def _build_row(self, name: str, spec) -> QWidget:
+        from pypts.recipe.rules import INPUT_TYPES, OUTPUT_TYPES
+
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(4)
+
+        name_edit = QLineEdit(name)
+        name_edit.setFixedWidth(110)
+        rl.addWidget(name_edit)
+
+        if self._key == "inputs":
+            types = ["literal"] + list(INPUT_TYPES.keys())
+        else:
+            types = list(OUTPUT_TYPES.keys())
+
+        type_combo = QComboBox()
+        type_combo.addItems(types)
+        if isinstance(spec, dict):
+            current_type = spec.get("type", types[0])
+        else:
+            current_type = "literal"
+        if current_type in types:
+            type_combo.setCurrentText(current_type)
+        type_combo.setFixedWidth(90)
+        rl.addWidget(type_combo)
+
+        # Value widget placeholder — replaced when type changes
+        value_holder = QWidget()
+        value_holder_layout = QHBoxLayout(value_holder)
+        value_holder_layout.setContentsMargins(0, 0, 0, 0)
+        rl.addWidget(value_holder)
+
+        def refresh_value(t: str) -> None:
+            while value_holder_layout.count():
+                item = value_holder_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+            self._add_value_widgets(value_holder_layout, t, spec)
+
+        type_combo.currentTextChanged.connect(refresh_value)
+        refresh_value(current_type)
+
+        remove_btn = QPushButton("\u2715")
+        remove_btn.setFixedWidth(28)
+        remove_btn.clicked.connect(lambda: self._remove_row(name))
+        rl.addWidget(remove_btn)
+
+        return row
+
+    def _add_value_widgets(self, layout, type_name: str, spec) -> None:
+        if type_name == "literal":
+            val = spec if not isinstance(spec, dict) else spec.get("value", "")
+            edit = QLineEdit(str(val) if val is not None else "")
+            layout.addWidget(edit)
+        elif type_name == "global":
+            val = spec.get("global_name", "") if isinstance(spec, dict) else ""
+            edit = QLineEdit(str(val))
+            edit.setPlaceholderText("global_name")
+            layout.addWidget(edit)
+        elif type_name == "equals":
+            val = spec.get("value", "") if isinstance(spec, dict) else ""
+            edit = QLineEdit(str(val))
+            edit.setPlaceholderText("value")
+            layout.addWidget(edit)
+        elif type_name == "range":
+            mn = spec.get("min", "") if isinstance(spec, dict) else ""
+            mx = spec.get("max", "") if isinstance(spec, dict) else ""
+            min_edit = QLineEdit(str(mn))
+            min_edit.setPlaceholderText("min")
+            max_edit = QLineEdit(str(mx))
+            max_edit.setPlaceholderText("max")
+            layout.addWidget(min_edit)
+            layout.addWidget(QLabel("\u2026"))
+            layout.addWidget(max_edit)
+        # passfail / pass: no extra fields
+
+    def _add_row(self) -> None:
+        step = self._model.steps(self._seq_idx)[self._step_idx]
+        mapping = dict(step.get(self._key) or {})
+        new_name = f"new_{self._key[:-1]}_{len(mapping) + 1}"
+        if self._key == "inputs":
+            mapping[new_name] = ""
+        else:
+            mapping[new_name] = {"type": "pass"}
+        self._model.set_step_field(self._seq_idx, self._step_idx, self._key, mapping)
+
+    def _remove_row(self, name: str) -> None:
+        step = self._model.steps(self._seq_idx)[self._step_idx]
+        mapping = dict(step.get(self._key) or {})
+        mapping.pop(name, None)
+        self._model.set_step_field(self._seq_idx, self._step_idx, self._key, mapping)
+
+
+# ── MappingYamlWidget ─────────────────────────────────────────────────────────
+
+
+class MappingYamlWidget(QWidget):
+    """Small YAML editor for a step's `inputs` or `outputs` block."""
+
+    def __init__(
+        self,
+        model,
+        seq_idx: int,
+        step_idx: int,
+        mapping_key: str,
+        dark: bool = False,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._seq_idx = seq_idx
+        self._step_idx = step_idx
+        self._key = mapping_key
+        self._updating = False
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self._editor = QTextEdit()
+        self._editor.setFixedHeight(130)
+        font = QFont("Courier New", 10)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        self._editor.setFont(font)
+        layout.addWidget(self._editor)
+
+        self._error_label = QLabel()
+        self._error_label.setWordWrap(True)
+        p = get_palette(dark)
+        self._error_label.setStyleSheet(f"color: {p.danger};")
+        self._error_label.setVisible(False)
+        layout.addWidget(self._error_label)
+
+        self._highlighter = PaletteYamlHighlighter(self._editor.document(), dark)
+
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(300)
+        self._debounce.timeout.connect(self._on_debounce)
+        self._editor.textChanged.connect(lambda: self._debounce.start())
+
+        self.rebuild()
+
+    def set_dark(self, dark: bool) -> None:
+        self._highlighter.set_dark(dark)
+        p = get_palette(dark)
+        self._error_label.setStyleSheet(f"color: {p.danger};")
+
+    def rebuild(self) -> None:
+        import yaml as _pyyaml
+
+        step = self._model.steps(self._seq_idx)[self._step_idx]
+        mapping = step.get(self._key)
+        text = _pyyaml.dump(mapping, default_flow_style=False) if mapping else ""
+        self._updating = True
+        self._editor.setPlainText(text.rstrip())
+        self._updating = False
+
+    def _on_debounce(self) -> None:
+        import yaml as _pyyaml
+
+        if self._updating:
+            return
+        text = self._editor.toPlainText().strip()
+        if not text:
+            self._model.set_step_field(self._seq_idx, self._step_idx, self._key, {})
+            self._error_label.setVisible(False)
+            return
+        try:
+            parsed = _pyyaml.safe_load(text)
+            if not isinstance(parsed, dict):
+                raise ValueError("Expected a YAML mapping")
+            self._model.set_step_field(self._seq_idx, self._step_idx, self._key, parsed)
+            self._error_label.setVisible(False)
+        except Exception as exc:
+            self._error_label.setText(str(exc))
+            self._error_label.setVisible(True)
+
+
+# ── StepFormWidget ────────────────────────────────────────────────────────────
+
+
+class StepFormWidget(QWidget):
+    """Form for editing all fields of a single step."""
+
+    def __init__(
+        self,
+        model,
+        seq_idx: int,
+        step_idx: int,
+        dark: bool = False,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._seq_idx = seq_idx
+        self._step_idx = step_idx
+        self._dark = dark
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(4, 4, 4, 4)
+        outer.setSpacing(6)
+
+        # Step type label
+        self._type_label = QLabel()
+        outer.addWidget(self._type_label)
+
+        # Common fields
+        common_group = QGroupBox("Common")
+        common_form = QFormLayout(common_group)
+        self._name_edit = QLineEdit()
+        self._desc_edit = QLineEdit()
+        self._skip_check = QCheckBox()
+        self._coe_check = QCheckBox()
+        common_form.addRow("Name", self._name_edit)
+        common_form.addRow("Description", self._desc_edit)
+        common_form.addRow("Skip", self._skip_check)
+        common_form.addRow("Continue on error", self._coe_check)
+        outer.addWidget(common_group)
+
+        self._name_edit.editingFinished.connect(
+            lambda: model.set_step_field(seq_idx, step_idx, "step_name", self._name_edit.text())
+        )
+        self._desc_edit.editingFinished.connect(
+            lambda: model.set_step_field(seq_idx, step_idx, "description", self._desc_edit.text())
+        )
+        self._skip_check.toggled.connect(
+            lambda v: model.set_step_field(seq_idx, step_idx, "skip", v)
+        )
+        self._coe_check.toggled.connect(
+            lambda v: model.set_step_field(seq_idx, step_idx, "continue_on_error", v)
+        )
+
+        # Type-specific fields area
+        self._specific_widget = QWidget()
+        self._specific_layout = QFormLayout(self._specific_widget)
+        self._specific_layout.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(self._specific_widget)
+
+        # Inputs section
+        inputs_group = QGroupBox("Inputs")
+        inputs_vlayout = QVBoxLayout(inputs_group)
+        self._inputs_stack = QStackedWidget()
+        self._inputs_rows = MappingRowsWidget(model, seq_idx, step_idx, "inputs")
+        self._inputs_yaml = MappingYamlWidget(model, seq_idx, step_idx, "inputs", dark)
+        self._inputs_stack.addWidget(self._inputs_rows)
+        self._inputs_stack.addWidget(self._inputs_yaml)
+        toggle_inputs = QPushButton("Rows | YAML")
+        toggle_inputs.setCheckable(False)
+        toggle_inputs.clicked.connect(
+            lambda: self._inputs_stack.setCurrentIndex(1 - self._inputs_stack.currentIndex())
+        )
+        inputs_vlayout.addWidget(toggle_inputs)
+        inputs_vlayout.addWidget(self._inputs_stack)
+        outer.addWidget(inputs_group)
+
+        # Outputs section
+        outputs_group = QGroupBox("Outputs")
+        outputs_vlayout = QVBoxLayout(outputs_group)
+        self._outputs_stack = QStackedWidget()
+        self._outputs_rows = MappingRowsWidget(model, seq_idx, step_idx, "outputs")
+        self._outputs_yaml = MappingYamlWidget(model, seq_idx, step_idx, "outputs", dark)
+        self._outputs_stack.addWidget(self._outputs_rows)
+        self._outputs_stack.addWidget(self._outputs_yaml)
+        toggle_outputs = QPushButton("Rows | YAML")
+        toggle_outputs.setCheckable(False)
+        toggle_outputs.clicked.connect(
+            lambda: self._outputs_stack.setCurrentIndex(1 - self._outputs_stack.currentIndex())
+        )
+        outputs_vlayout.addWidget(toggle_outputs)
+        outputs_vlayout.addWidget(self._outputs_stack)
+        outer.addWidget(outputs_group)
+
+        outer.addStretch()
+        model.changed.connect(self.rebuild)
+        self.rebuild()
+
+    def set_dark(self, dark: bool) -> None:
+        self._dark = dark
+        self._inputs_yaml.set_dark(dark)
+        self._outputs_yaml.set_dark(dark)
+
+    def rebuild(self) -> None:
+        from pypts.recipe.rules import STEP_TYPE_REQUIRED
+
+        steps = self._model.steps(self._seq_idx)
+        if self._step_idx >= len(steps):
+            return
+        step = steps[self._step_idx]
+
+        _em = "\u2014"
+        self._type_label.setText(f"Type: {step.get('steptype', _em)}")
+
+        for widget in [self._name_edit, self._desc_edit, self._skip_check, self._coe_check]:
+            widget.blockSignals(True)
+        self._name_edit.setText(str(step.get("step_name") or ""))
+        self._desc_edit.setText(str(step.get("description") or ""))
+        self._skip_check.setChecked(bool(step.get("skip", False)))
+        self._coe_check.setChecked(bool(step.get("continue_on_error", True)))
+        for widget in [self._name_edit, self._desc_edit, self._skip_check, self._coe_check]:
+            widget.blockSignals(False)
+
+        # Rebuild type-specific fields
+        while self._specific_layout.rowCount():
+            self._specific_layout.removeRow(0)
+        steptype = step.get("steptype", "")
+        for field in STEP_TYPE_REQUIRED.get(steptype, ()):
+            if field in ("inputs", "outputs"):
+                continue
+            if field == "wait_time":
+                spin = QDoubleSpinBox()
+                spin.setRange(0, 99999)
+                spin.setValue(float(step.get(field) or 0))
+                spin.valueChanged.connect(
+                    lambda v, f=field: self._model.set_step_field(
+                        self._seq_idx, self._step_idx, f, v
+                    )
+                )
+                self._specific_layout.addRow(field, spin)
+            else:
+                edit = QLineEdit(str(step.get(field) or ""))
+                edit.editingFinished.connect(
+                    lambda f=field, e=edit: self._model.set_step_field(
+                        self._seq_idx, self._step_idx, f, e.text()
+                    )
+                )
+                self._specific_layout.addRow(field, edit)
+
+        self._inputs_rows.rebuild()
+        self._outputs_rows.rebuild()
+        self._inputs_yaml.rebuild()
+        self._outputs_yaml.rebuild()
