@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import sys
+import webbrowser
 from pathlib import Path
 
 from PySide6.QtCore import QTimer, Qt
@@ -15,6 +16,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSizePolicy,
@@ -143,6 +145,12 @@ class RecipeCreatorNewWindow(QMainWindow):
         act_wiki = QAction("Wiki", self)
         about_menu.addAction(act_gitlab)
         about_menu.addAction(act_wiki)
+        act_gitlab.triggered.connect(
+            lambda: webbrowser.open("https://gitlab.cern.ch/pts-framework/pts-framework")
+        )
+        act_wiki.triggered.connect(
+            lambda: webbrowser.open("https://gitlab.cern.ch/pts-framework/pts-framework/-/wikis")
+        )
 
     def _build_toolbar(self) -> None:
         tb = QToolBar("Main")
@@ -223,7 +231,11 @@ class RecipeCreatorNewWindow(QMainWindow):
         step_bar_layout = QVBoxLayout(step_bar)
         step_bar_layout.setContentsMargins(4, 4, 4, 4)
         add_btn = QPushButton("+ Add Step \u25bc")
-        add_btn.clicked.connect(lambda: self._add_step("wait"))
+        add_menu = QMenu(self)
+        for _st in STEP_TYPE_REQUIRED:
+            _act = add_menu.addAction(_st)
+            _act.triggered.connect(lambda checked=False, t=_st: self._add_step(t))
+        add_btn.setMenu(add_menu)
         del_btn = QPushButton("Delete")
         del_btn.clicked.connect(self._delete_selected_step)
         btn_row = QHBoxLayout()

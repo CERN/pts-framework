@@ -570,15 +570,30 @@ class MappingRowsWidget(QWidget):
         value_holder_layout.setContentsMargins(0, 0, 0, 0)
         rl.addWidget(value_holder)
 
+        def _commit() -> None:
+            steps = self._model.steps(self._seq_idx)
+            if self._step_idx >= len(steps):
+                return
+            new_name = name_edit.text().strip()
+            if not new_name:
+                return
+            t = type_combo.currentText()
+            new_spec = self._read_row_spec(t, value_holder_layout)
+            old_mapping = dict(steps[self._step_idx].get(self._key) or {})
+            new_mapping = {k: v for k, v in old_mapping.items() if k != name}
+            new_mapping[new_name] = new_spec
+            self._model.set_step_field(self._seq_idx, self._step_idx, self._key, new_mapping)
+
         def refresh_value(t: str) -> None:
             while value_holder_layout.count():
                 item = value_holder_layout.takeAt(0)
                 if item.widget():
                     item.widget().deleteLater()
-            self._add_value_widgets(value_holder_layout, t, spec)
+            self._add_value_widgets(value_holder_layout, t, spec, _commit)
 
-        type_combo.currentTextChanged.connect(refresh_value)
         refresh_value(current_type)
+        type_combo.currentTextChanged.connect(lambda t: (refresh_value(t), _commit()))
+        name_edit.editingFinished.connect(_commit)
 
         remove_btn = QPushButton("\u2715")
         remove_btn.setFixedWidth(28)
@@ -587,20 +602,46 @@ class MappingRowsWidget(QWidget):
 
         return row
 
-    def _add_value_widgets(self, layout, type_name: str, spec) -> None:
+    def _read_row_spec(self, type_name: str, value_holder_layout) -> object:
+        """Build spec value from the current value-holder widgets."""
+        line_edits = [
+            value_holder_layout.itemAt(i).widget()
+            for i in range(value_holder_layout.count())
+            if isinstance(value_holder_layout.itemAt(i).widget(), QLineEdit)
+        ]
+        if type_name == "literal":
+            return line_edits[0].text() if line_edits else ""
+        if type_name == "global":
+            return {"type": "global", "global_name": line_edits[0].text() if line_edits else ""}
+        if type_name == "equals":
+            return {"type": "equals", "value": line_edits[0].text() if line_edits else ""}
+        if type_name == "range":
+            mn = line_edits[0].text() if len(line_edits) > 0 else ""
+            mx = line_edits[1].text() if len(line_edits) > 1 else ""
+            return {"type": "range", "min": mn, "max": mx}
+        return {"type": type_name}
+
+    def _add_value_widgets(self, layout, type_name: str, spec, commit_fn=None) -> None:
+        def _wire(edit: QLineEdit) -> None:
+            if commit_fn:
+                edit.editingFinished.connect(commit_fn)
+
         if type_name == "literal":
             val = spec if not isinstance(spec, dict) else spec.get("value", "")
             edit = QLineEdit(str(val) if val is not None else "")
+            _wire(edit)
             layout.addWidget(edit)
         elif type_name == "global":
             val = spec.get("global_name", "") if isinstance(spec, dict) else ""
             edit = QLineEdit(str(val))
             edit.setPlaceholderText("global_name")
+            _wire(edit)
             layout.addWidget(edit)
         elif type_name == "equals":
             val = spec.get("value", "") if isinstance(spec, dict) else ""
             edit = QLineEdit(str(val))
             edit.setPlaceholderText("value")
+            _wire(edit)
             layout.addWidget(edit)
         elif type_name == "range":
             mn = spec.get("min", "") if isinstance(spec, dict) else ""
@@ -609,6 +650,8 @@ class MappingRowsWidget(QWidget):
             min_edit.setPlaceholderText("min")
             max_edit = QLineEdit(str(mx))
             max_edit.setPlaceholderText("max")
+            _wire(min_edit)
+            _wire(max_edit)
             layout.addWidget(min_edit)
             layout.addWidget(QLabel("\u2026"))
             layout.addWidget(max_edit)

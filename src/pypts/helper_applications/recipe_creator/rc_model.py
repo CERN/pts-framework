@@ -12,6 +12,7 @@ from ruamel.yaml import YAML
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
+from pypts.helper_applications.recipe_verificator import verify_string
 from pypts.recipe.rules import (
     STEP_TYPE_REQUIRED,
     STEP_COMMON_DEFAULTS,
@@ -92,8 +93,6 @@ class RecipeModel(QObject):
 
     def load_yaml(self, text: str) -> list:
         """Replace _docs from YAML text. Clears undo stack. Returns ValidationIssues."""
-        from pypts.helper_applications.recipe_verificator import verify_string
-
         docs = list(self._yaml.load_all(text))
         self._docs = docs
         self.undo_stack.clear()

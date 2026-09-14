@@ -5,6 +5,7 @@ from pypts.helper_applications.recipe_creator.customGUIModules import (
     ScintillaYamlEditor,
     WatermarkWidget,
     HashableTreeItem,
+    RecipeCreatorDialog,
 )
 
 import re
@@ -35,8 +36,10 @@ from PySide6.QtGui import (
     QPixmap,
 )
 from PySide6.QtCore import QSize, QMargins
+import yaml as _yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.error import YAMLError
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from datetime import datetime
 import webbrowser
 import sys
@@ -48,8 +51,6 @@ from PySide6.QtGui import QKeySequence, QShortcut
 
 def _generate_template(data: dict) -> str:
     """Generate a recipe YAML string conforming to the current schema."""
-    import yaml as _yaml
-
     header = {
         "name": data["name"],
         "version": data["version"],
@@ -570,7 +571,6 @@ class RecipeEditorMainMenu(QMainWindow):
             self.log(f"❌ Save failed: {e}")
 
     def on_add_clicked(self):
-        from pypts.helper_applications.recipe_creator.customGUIModules import RecipeCreatorDialog
         dialog = RecipeCreatorDialog()
         dialog.set_dark_mode(self.dark_mode)
         dialog.resize(500, 300)
@@ -818,8 +818,6 @@ class RecipeEditorMainMenu(QMainWindow):
             QApplication.processEvents()
 
     def populate_tree(self, data, parent_item, path=()):
-        from ruamel.yaml.comments import CommentedMap, CommentedSeq
-
         if isinstance(data, CommentedMap):
             # Determine context to select required fields list
             context_required_fields = set()
