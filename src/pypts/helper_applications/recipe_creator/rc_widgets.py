@@ -869,6 +869,19 @@ class StepFormWidget(QWidget):
         self._outputs_yaml.rebuild()
 
 
+# ── _ClickLabel ───────────────────────────────────────────────────────────────
+
+
+class _ClickLabel(QLabel):
+    """QLabel that emits clicked() on mouse press — avoids monkey-patching."""
+
+    clicked = Signal()
+
+    def mousePressEvent(self, event) -> None:  # noqa: ANN001
+        self.clicked.emit()
+        super().mousePressEvent(event)
+
+
 # ── ListStepView ──────────────────────────────────────────────────────────────
 
 
@@ -876,6 +889,7 @@ class ListStepView(QSplitter):
     """Vertical splitter: step list on top, StepFormWidget below."""
 
     step_selected = Signal(int, int)
+    step_action_requested = Signal(str, int, int)
 
     def __init__(self, model, parent=None) -> None:
         super().__init__(Qt.Orientation.Vertical, parent)
@@ -932,7 +946,7 @@ class ListStepView(QSplitter):
             self.step_selected.emit(self._seq_idx, row)
 
     def _on_rows_moved(self, _parent, src, _srcEnd, _dst, dst) -> None:
-        to = dst if dst > src else dst
+        to = dst - 1 if dst > src else dst
         self._model.move_step(self._seq_idx, src, to)
 
     def _show_form(self, row: int) -> None:
@@ -951,6 +965,7 @@ class CardStepView(QScrollArea):
     """Accordion of StepCard widgets, one card per step."""
 
     step_selected = Signal(int, int)
+    step_action_requested = Signal(str, int, int)
 
     def __init__(self, model, parent=None) -> None:
         super().__init__(parent)
@@ -1003,12 +1018,20 @@ class CardStepView(QScrollArea):
         header_layout.setContentsMargins(0, 0, 0, 0)
         steptype = step.get("steptype", "?")
         name = step.get("step_name", "")
-        title = QLabel(f"[{steptype}] {name}")
+        title = _ClickLabel(f"[{steptype}] {name}")
         expand_btn = QPushButton("▼" if step_idx == self._expanded_idx else "▶")
         expand_btn.setFixedWidth(28)
+        delete_btn = QPushButton("✕")
+        delete_btn.setFixedWidth(28)
+        delete_btn.clicked.connect(
+            lambda checked=False, idx=step_idx: self.step_action_requested.emit(
+                "delete", self._seq_idx, idx
+            )
+        )
         header_layout.addWidget(title)
         header_layout.addStretch()
         header_layout.addWidget(expand_btn)
+        header_layout.addWidget(delete_btn)
         card_layout.addWidget(header)
 
         # Body (form)
@@ -1025,7 +1048,7 @@ class CardStepView(QScrollArea):
             self.step_selected.emit(self._seq_idx, step_idx)
 
         expand_btn.clicked.connect(toggle)
-        title.mousePressEvent = lambda _: toggle()
+        title.clicked.connect(toggle)
         return card
 
 
@@ -1036,6 +1059,7 @@ class PanelsStepView(QSplitter):
     """Horizontal splitter: slim type+name list on left, StepFormWidget on right."""
 
     step_selected = Signal(int, int)
+    step_action_requested = Signal(str, int, int)
 
     def __init__(self, model, parent=None) -> None:
         super().__init__(Qt.Orientation.Horizontal, parent)
