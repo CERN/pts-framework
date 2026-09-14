@@ -106,6 +106,7 @@ class YamlEditor(ScintillaYamlEditor):
 
     def set_content(self, text: str) -> None:
         """Set editor text without triggering the debounce/commit cycle."""
+        self._debounce.stop()
         self._updating = True
         self.setPlainText(text)
         self._updating = False
@@ -117,7 +118,7 @@ class YamlEditor(ScintillaYamlEditor):
 
     def go_to_line(self, line_num: int) -> None:
         """Move cursor to 1-based line_num and ensure it is visible."""
-        if line_num and line_num > 0:
+        if line_num > 0:
             self.setCursorPosition(line_num - 1, 0)
             self.ensureLineVisible(line_num - 1)
 
