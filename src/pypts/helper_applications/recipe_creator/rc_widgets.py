@@ -867,3 +867,230 @@ class StepFormWidget(QWidget):
         self._outputs_rows.rebuild()
         self._inputs_yaml.rebuild()
         self._outputs_yaml.rebuild()
+
+
+# ── ListStepView ──────────────────────────────────────────────────────────────
+
+
+class ListStepView(QSplitter):
+    """Vertical splitter: step list on top, StepFormWidget below."""
+
+    step_selected = Signal(int, int)
+
+    def __init__(self, model, parent=None) -> None:
+        super().__init__(Qt.Orientation.Vertical, parent)
+        self._model = model
+        self._seq_idx = 0
+        self._dark = False
+        self._form: StepFormWidget | None = None
+
+        # Top: list
+        top = QWidget()
+        top_layout = QVBoxLayout(top)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        self._list = QListWidget()
+        self._list.setDragDropMode(QListWidget.DragDropMode.InternalMove)
+        self._list.currentRowChanged.connect(self._on_row_changed)
+        top_layout.addWidget(self._list)
+        self.addWidget(top)
+
+        # Bottom: form placeholder
+        self._form_container = QScrollArea()
+        self._form_container.setWidgetResizable(True)
+        self.addWidget(self._form_container)
+
+        model.changed.connect(self.rebuild)
+        self.rebuild()
+        self._list.model().rowsMoved.connect(self._on_rows_moved)
+
+    def set_seq_idx(self, idx: int) -> None:
+        self._seq_idx = idx
+        self.rebuild()
+
+    def set_dark(self, dark: bool) -> None:
+        self._dark = dark
+        if self._form:
+            self._form.set_dark(dark)
+
+    def rebuild(self) -> None:
+        self._list.blockSignals(True)
+        prev = self._list.currentRow()
+        self._list.clear()
+        for step in self._model.steps(self._seq_idx):
+            steptype = step.get("steptype", "?")
+            name = step.get("step_name", "")
+            skip = " [skip]" if step.get("skip") else ""
+            self._list.addItem(f"[{steptype}] {name}{skip}")
+        self._list.blockSignals(False)
+        if prev >= 0 and prev < self._list.count():
+            self._list.setCurrentRow(prev)
+        self._show_form(self._list.currentRow())
+
+    def _on_row_changed(self, row: int) -> None:
+        self._show_form(row)
+        if row >= 0:
+            self.step_selected.emit(self._seq_idx, row)
+
+    def _on_rows_moved(self, _parent, src, _srcEnd, _dst, dst) -> None:
+        to = dst if dst > src else dst
+        self._model.move_step(self._seq_idx, src, to)
+
+    def _show_form(self, row: int) -> None:
+        if row < 0 or row >= len(self._model.steps(self._seq_idx)):
+            self._form_container.setWidget(QWidget())
+            self._form = None
+            return
+        self._form = StepFormWidget(self._model, self._seq_idx, row, self._dark)
+        self._form_container.setWidget(self._form)
+
+
+# ── CardStepView ──────────────────────────────────────────────────────────────
+
+
+class CardStepView(QScrollArea):
+    """Accordion of StepCard widgets, one card per step."""
+
+    step_selected = Signal(int, int)
+
+    def __init__(self, model, parent=None) -> None:
+        super().__init__(parent)
+        self._model = model
+        self._seq_idx = 0
+        self._dark = False
+        self._expanded_idx: int = -1
+
+        self._content = QWidget()
+        self._layout = QVBoxLayout(self._content)
+        self._layout.setContentsMargins(4, 4, 4, 4)
+        self._layout.setSpacing(4)
+        self._layout.addStretch()
+        self.setWidget(self._content)
+        self.setWidgetResizable(True)
+
+        model.changed.connect(self.rebuild)
+        self.rebuild()
+
+    def set_seq_idx(self, idx: int) -> None:
+        self._seq_idx = idx
+        self._expanded_idx = -1
+        self.rebuild()
+
+    def set_dark(self, dark: bool) -> None:
+        self._dark = dark
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        # Remove all except the trailing stretch
+        while self._layout.count() > 1:
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+
+        for idx, step in enumerate(self._model.steps(self._seq_idx)):
+            card = self._make_card(idx, step)
+            self._layout.insertWidget(idx, card)
+
+    def _make_card(self, step_idx: int, step: dict) -> QFrame:
+        card = QFrame()
+        card.setFrameShape(QFrame.Shape.StyledPanel)
+        card_layout = QVBoxLayout(card)
+        card_layout.setContentsMargins(4, 4, 4, 4)
+        card_layout.setSpacing(2)
+
+        # Header row
+        header = QWidget()
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+        steptype = step.get("steptype", "?")
+        name = step.get("step_name", "")
+        title = QLabel(f"[{steptype}] {name}")
+        expand_btn = QPushButton("▼" if step_idx == self._expanded_idx else "▶")
+        expand_btn.setFixedWidth(28)
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        header_layout.addWidget(expand_btn)
+        card_layout.addWidget(header)
+
+        # Body (form)
+        form = StepFormWidget(self._model, self._seq_idx, step_idx, self._dark)
+        form.setVisible(step_idx == self._expanded_idx)
+        card_layout.addWidget(form)
+
+        def toggle():  # noqa: ANN202
+            if self._expanded_idx == step_idx:
+                self._expanded_idx = -1
+            else:
+                self._expanded_idx = step_idx
+            self.rebuild()
+            self.step_selected.emit(self._seq_idx, step_idx)
+
+        expand_btn.clicked.connect(toggle)
+        title.mousePressEvent = lambda _: toggle()
+        return card
+
+
+# ── PanelsStepView ────────────────────────────────────────────────────────────
+
+
+class PanelsStepView(QSplitter):
+    """Horizontal splitter: slim type+name list on left, StepFormWidget on right."""
+
+    step_selected = Signal(int, int)
+
+    def __init__(self, model, parent=None) -> None:
+        super().__init__(Qt.Orientation.Horizontal, parent)
+        self._model = model
+        self._seq_idx = 0
+        self._dark = False
+        self._form: StepFormWidget | None = None
+
+        # Left: slim list
+        self._list = QListWidget()
+        self._list.setFixedWidth(180)
+        self._list.currentRowChanged.connect(self._on_row_changed)
+        self.addWidget(self._list)
+
+        # Right: form in scroll area
+        self._form_container = QScrollArea()
+        self._form_container.setWidgetResizable(True)
+        self.addWidget(self._form_container)
+        self.setStretchFactor(0, 0)
+        self.setStretchFactor(1, 1)
+
+        model.changed.connect(self.rebuild)
+        self.rebuild()
+
+    def set_seq_idx(self, idx: int) -> None:
+        self._seq_idx = idx
+        self.rebuild()
+
+    def set_dark(self, dark: bool) -> None:
+        self._dark = dark
+        if self._form:
+            self._form.set_dark(dark)
+
+    def rebuild(self) -> None:
+        self._list.blockSignals(True)
+        prev = self._list.currentRow()
+        self._list.clear()
+        for step in self._model.steps(self._seq_idx):
+            steptype = step.get("steptype", "?")
+            name = step.get("step_name", "")
+            self._list.addItem(f"[{steptype}]\n{name}")
+        self._list.blockSignals(False)
+        if prev >= 0 and prev < self._list.count():
+            self._list.setCurrentRow(prev)
+        self._show_form(self._list.currentRow())
+
+    def _on_row_changed(self, row: int) -> None:
+        self._show_form(row)
+        if row >= 0:
+            self.step_selected.emit(self._seq_idx, row)
+
+    def _show_form(self, row: int) -> None:
+        if row < 0 or row >= len(self._model.steps(self._seq_idx)):
+            self._form_container.setWidget(QWidget())
+            self._form = None
+            return
+        self._form = StepFormWidget(self._model, self._seq_idx, row, self._dark)
+        self._form_container.setWidget(self._form)
