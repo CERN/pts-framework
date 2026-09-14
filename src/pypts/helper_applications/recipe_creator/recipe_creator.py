@@ -5,7 +5,6 @@ from pypts.helper_applications.recipe_creator.customGUIModules import (
     ScintillaYamlEditor,
     WatermarkWidget,
     HashableTreeItem,
-    RecipeCreatorApp,
 )
 
 import re
@@ -577,6 +576,7 @@ class RecipeEditorMainMenu(QMainWindow):
         dialog.resize(500, 300)
         if not dialog.exec():
             return
+        self.current_file_path = ""
         data = dialog.get_data()
         yaml_string = _generate_template(data)
         if not yaml_string:
@@ -593,6 +593,7 @@ class RecipeEditorMainMenu(QMainWindow):
         self.action_restore_recipe.setEnabled(True)
         self.collapse_inside_steps()
         self.log("✅ New recipe created from template.")
+        self.setWindowTitle(f"{self.title} recipe editor *")
 
     def on_open_wiki_clicked(self):
         url = "https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/master/"
