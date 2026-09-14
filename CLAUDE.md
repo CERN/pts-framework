@@ -40,12 +40,13 @@ Current branch: `architecture_refactor`.
 
 ## Where the plan and the implementation status live
 
-**`resources/roadmap/pypts_roadmap.md` is the single source of truth for what is
+**`pypts_implementation_status.md` (repo root) is the single source of truth for what is
 implemented, what is still a stub, and what comes next.** It is a *living* document.
 **Read it before planning or starting any work.**
 
-Also in that folder: `porting_changes.md` (open review/parity findings R-1..R-6, M-1..M-7)
-and `recipe_guide.md` (old engine recipe format reference for the Phase 1 port).
+Also in `resources/roadmap/`: `recipe_guide.md` — the new-format recipe reference (step
+types, input/output mapping, verificator gaps). Open findings (R-1..R-6, M-1..M-7) are in
+`TODO.txt` and summarised in `migration_status.html` (repo root).
 
 Keeping the roadmap current is part of every task:
 
@@ -82,13 +83,14 @@ Update the context file in the same change that touches the module.
 
 ## Where generated HTML documents go
 
-**Every HTML report, summary or overview the user asks for is saved in
-`resources/internal_reports/`.** Not the repo root, not next to the code it describes, not a
-scratch directory — the user opens these in a browser and expects every one of them in one folder.
+**Ephemeral generated HTML documents go in `resources/internal_reports/`.** Not the repo
+root, not next to the code they describe — the user opens these in a browser and expects every
+one of them in one folder. **Permanent project-reference HTML documents** (`migration_status.html`,
+`best_practices.html`) live at the **repo root** alongside `TODO.txt`.
 
 - One self-contained file: inline CSS, no external assets, light *and* dark palettes.
-- `resources/**` is not covered by `reuse.toml`, so a new file there needs its own inline
-  SPDX header — `CC-BY-SA-4.0` for documentation.
+- A file in `resources/**` needs its own inline SPDX header (`CC-BY-SA-4.0`). A file at repo
+  root also needs one.
 - **Open a *newly created* document in the browser** as the last step — do not offer, do not
   ask, just open it: `Invoke-Item <path>` from PowerShell. Say where you put it in the same breath.
 - **Do not open a document you only edited.** Say what changed and where; the user opens it
@@ -122,10 +124,15 @@ src/pypts/
   stream_handler/        empty placeholder — Phase 3+ (context: stream_handler/stream_handler.md)
   helper_applications/   debug_monitor, recipe_creator, recipe_verificator, example_finder
   old_code/              frozen legacy implementation — read only, never modify
-resources/internal_reports/  every generated HTML document
-resources/roadmap/       the plan, recipe guide, porting session findings
+resources/internal_reports/  generated HTML documents (dev artifacts)
+resources/roadmap/       recipe_guide.md (new recipe format reference)
 resources/recipes/       example recipes (YAML, *.yml)
 tests/                   unit_tests/ + functional_tests/
+pypts_implementation_status.md  phased plan + implementation status (at repo root)
+TODO.txt                 open task list (at repo root)
+best_practices.md / best_practices.html  recipe conventions (at repo root)
+migration_status.html    what still needs porting from old_code (at repo root)
+plans/                   refactoring_progress.md (completed work log) + README.md
 ```
 
 ## Communication model
@@ -161,7 +168,7 @@ Two error decorators — pick the right one:
 
 For recognised failures use `report_error(self, exc, severity=…)` (live exception) or
 `report_problem(self, message, severity=…)` (refused command, no exception). Neither raises.
-See `utilities/utilities.md` and roadmap §1.10–§1.11.
+See `utilities/utilities.md` and `pypts_implementation_status.md` §1.10–§1.11.
 
 ## Running
 
@@ -178,10 +185,11 @@ python -m pypts.helper_applications.debug_monitor   # Monitor alone, on the newe
 
 The Debug Monitor is **on by default during the refactor** (`--no-debug-monitor` turns it
 off). It only has something to show at DEBUG. Nothing in the framework may import
-`helper_applications/debug_monitor/`. See roadmap §1.4.1 for the revert TODO.
+`helper_applications/debug_monitor/`. See `pypts_implementation_status.md` §1.4.1 for the
+revert TODO.
 
 Config file: `%LOCALAPPDATA%\pypts\config.ini` (Windows) / `~/.config/pypts/config.ini`
-(Linux). Ships as DEBUG level during the refactor (see roadmap §1.6 for revert TODO).
+(Linux). Ships as DEBUG level during the refactor (see §1.6 for revert TODO).
 A broken or version-mismatched file is discarded and the run continues on template defaults.
 
 ## Quality gates

@@ -1,0 +1,347 @@
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PyPTS — Migration Status</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg:        #ffffff;
+      --surface:   #f6f8fa;
+      --border:    #d0d7de;
+      --text:      #1f2328;
+      --muted:     #656d76;
+      --accent:    #0969da;
+      --code-bg:   #f0f2f5;
+      --red:       #cf222e;
+      --red-bg:    #fff8f8;
+      --red-border:#ffcdd3;
+      --orange:    #bc4c00;
+      --orange-bg: #fff8f0;
+      --orange-brd:#ffd8b5;
+      --yellow:    #9a6700;
+      --yellow-bg: #fffbef;
+      --yellow-brd:#ffe58f;
+      --green:     #1a7f37;
+      --green-bg:  #eafbee;
+      --green-brd: #9ae6b4;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:        #0d1117;
+        --surface:   #161b22;
+        --border:    #30363d;
+        --text:      #e6edf3;
+        --muted:     #8b949e;
+        --accent:    #58a6ff;
+        --code-bg:   #1c2128;
+        --red:       #ff7b72;
+        --red-bg:    #3d0f0f;
+        --red-border:#9d1f1f;
+        --orange:    #ffa657;
+        --orange-bg: #3d1f00;
+        --orange-brd:#8b4500;
+        --yellow:    #e3b341;
+        --yellow-bg: #2f2200;
+        --yellow-brd:#7d5a00;
+        --green:     #3fb950;
+        --green-bg:  #0a2b12;
+        --green-brd: #1d6830;
+      }
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 15px;
+      line-height: 1.65;
+      color: var(--text);
+      background: var(--bg);
+      margin: 0;
+      padding: 0;
+    }
+    .page { max-width: 960px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+    header { border-bottom: 1px solid var(--border); padding-bottom: 1rem; margin-bottom: 2rem; }
+    header h1 { margin: 0 0 0.25rem; font-size: 1.6rem; }
+    header p  { margin: 0; color: var(--muted); font-size: 0.9rem; }
+    h2 { font-size: 1.15rem; border-bottom: 1px solid var(--border); padding-bottom: 0.3rem; margin-top: 2.5rem; }
+    h3 { font-size: 1rem; margin-top: 1.5rem; margin-bottom: 0.3rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; font-size: 0.8rem; }
+    /* ── Finding cards ── */
+    .findings { display: grid; gap: 0.75rem; margin-top: 0.75rem; }
+    .finding {
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      background: var(--surface);
+    }
+    .finding .tag {
+      display: inline-block;
+      font-size: 0.75rem;
+      font-weight: 600;
+      border-radius: 4px;
+      padding: 0.15em 0.5em;
+      margin-right: 0.4em;
+      vertical-align: middle;
+    }
+    .sev-critical { background: var(--red-bg);    color: var(--red);    border: 1px solid var(--red-border); }
+    .sev-important{ background: var(--orange-bg); color: var(--orange); border: 1px solid var(--orange-brd); }
+    .sev-design   { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-brd); }
+    .sev-trivial  { background: var(--green-bg);  color: var(--green);  border: 1px solid var(--green-brd); }
+    .finding strong { font-size: 0.9rem; }
+    .finding p { margin: 0.4rem 0 0; font-size: 0.88rem; color: var(--muted); }
+    /* ── Step-type table ── */
+    table { width: 100%; border-collapse: collapse; font-size: 0.87rem; margin-top: 0.5rem; }
+    th, td { padding: 0.45rem 0.75rem; border: 1px solid var(--border); text-align: left; }
+    th { background: var(--surface); font-weight: 600; }
+    code { font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+    p code, li code, td code {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.1em 0.3em;
+      font-size: 0.85em;
+    }
+    .badge {
+      display: inline-block; font-size: 0.75rem; font-weight: 600;
+      border-radius: 4px; padding: 0.15em 0.5em;
+    }
+    .not-ported  { background: var(--red-bg);    color: var(--red);    border: 1px solid var(--red-border); }
+    .moved-hal   { background: var(--yellow-bg); color: var(--yellow); border: 1px solid var(--yellow-brd); }
+    .dropped     { background: var(--surface);   color: var(--muted);  border: 1px solid var(--border); }
+    footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.8rem; }
+  </style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <h1>PyPTS — Migration Status</h1>
+  <p>What still needs to be done to fully port the old engine to the new architecture.
+     Derived from <code>porting_changes.md</code> review findings (R-1..R-6) and parity
+     audit (M-1..M-7). Branch: <code>architecture_refactor</code> · September 2026.</p>
+</header>
+
+<!-- ═══════════════════════════════════════════ Code-review findings ══ -->
+<h2>Code-review findings (R-1..R-6)</h2>
+<p>Spotted during the August 2026 porting session. None fixed yet; fix in Phase 1.</p>
+
+<div class="findings">
+
+  <div class="finding">
+    <span class="tag sev-critical">R-1 · critical</span>
+    <strong><code>process_outputs()</code> sits outside <code>run()</code>'s except block</strong>
+    <p>A judging failure (missing output key, unknown output type, non-numeric <code>range</code>)
+    escapes the step — no <code>StepFinished</code> (GUI row stuck on "Running…"), no
+    <code>SequenceFinished</code>, <code>RunFinished(ERROR)</code> with zero outcomes blamed on
+    the Sequencer. Test blind spot: judging tests never go through <code>run()</code>.<br>
+    <em>Fix: move <code>process_outputs()</code> inside the <code>try</code> in
+    <code>step/step.py</code>.</em></p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-critical">R-2 · critical</span>
+    <strong><code>PythonModuleStep</code> re-imports the user's module on every step call</strong>
+    <p>The old engine imported once per process, so module-level state persisted across steps.
+    Re-importing per step breaks that contract and writes <code>__pycache__</code> beside the
+    operator's recipes on every step.<br>
+    <em>Fix: cache the imported module object in <code>step/step.py</code>
+    (<code>load_python_module</code> per sequence, not per step).</em></p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">R-3 · important</span>
+    <strong>Non-<code>RecipeError</code> load failures escape to the poll catch-all</strong>
+    <p>Triggers: <code>None</code> values for <code>steps:</code>/<code>globals:</code>/
+    <code>locals:</code>, <code>steptype: 5</code>, scalar step entries. Operator sees nothing.
+    Needs type validation in <code>from_document</code> + defensive
+    <code>except Exception → report_own_error</code> in CORE.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">R-4 · important</span>
+    <strong>A dead/wedged CORE makes the GUI window unclosable</strong>
+    <p><code>allow_close</code> is only ever set by the <code>StopHmi</code> handshake. If
+    CORE never sends it, the operator cannot close the window. The CLI already has
+    <code>wait_until_stopped</code> with a bounded-grace fallback; the GUI needs the same.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">R-5 · important</span>
+    <strong><code>LoadRecipe</code> accepted mid-run</strong>
+    <p>Swaps the recipe under the running sequence and repaints the step table with new IDs;
+    the rest of the run's events miss their rows. Reachable from the CLI. CORE should refuse
+    <code>LoadRecipe</code> while a run is in flight.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-trivial">R-6 · trivial</span>
+    <strong>Stray <code>-1</code> typo in a <code>startup.py</code> docstring line</strong>
+    <p>In the uncommitted <code>--no-debug-monitor</code> edit.</p>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════════ Parity gaps ══ -->
+<h2>Parity gaps vs old_code (M-1..M-7)</h2>
+<p>Capabilities present in the old engine that are missing from the new architecture with no
+tracking elsewhere. Fix in Phase 1 (before v0.3.0).</p>
+
+<div class="findings">
+
+  <div class="finding">
+    <span class="tag sev-design">M-1 · design decision needed</span>
+    <strong><code>UserPromptRequest.options</code> shape — decide before porting User* steps</strong>
+    <p>The old format was a list of single-entry dicts:
+    <code>- 'yes': 'Press me'</code>; empty caption → <code>key.capitalize()</code>; no options
+    → one unlabelled button. The new <code>options: tuple[str, ...]</code> collapsed this.
+    This is baked into a pickled dataclass — the shape must be decided before the
+    <code>User*</code> step port or it becomes a protocol change.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">M-2 · important</span>
+    <strong>No embedding API</strong>
+    <p>The old <code>run_recipe_app</code> / <code>run_pts</code> / <code>PtsApi</code> are
+    gone. There is no supported way to drive the engine from another Python program.
+    Roadmap Phase 2 plugin plan addresses this.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">M-2b · important</span>
+    <strong>No scripted/non-interactive path</strong>
+    <p>No <code>--recipe</code> autoload, no "load X, run Y, exit with code N" for CI/headless
+    benches. The roadmap Phase 1 CLI items gesture at this but do not record the loss explicitly.
+    Needed before the framework can be used in CI pipelines.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">M-3 · important</span>
+    <strong>Per-step inputs/outputs no longer reach any frontend</strong>
+    <p><code>StepOutcome</code> has no field for them. The old result tree showed every measured
+    value inline. The operator's only view of measurements is gone. Must be added to
+    <code>StepFinished</code> and rendered in both the GUI's <code>ResultsPanel</code> and
+    the CLI output.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">M-4 · important</span>
+    <strong>Report TDMS plots absent</strong>
+    <p>The old <code>report.py</code> discovered <code>.tdms</code> files in the run folder and
+    embedded FFT + time-domain matplotlib plots in the HTML. This is absent from every Report
+    TODO. Roadmap Phase 4.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">M-5 · important</span>
+    <strong>Abort does not produce per-step STOP results</strong>
+    <p>Old code marked the interrupted step and every un-run step <code>STOP</code> (table
+    grayed, CSV rows present). New code stops emitting — remaining rows stay "Pending" with
+    no explanation. Implement alongside the Report port: abort should close open rows with
+    <code>STOP</code> and write them to the CSV.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-trivial">M-5b · trivial</span>
+    <strong>Window title does not show recipe name</strong>
+    <p>The old engine set the window title to <code>"PTS: &lt;recipe&gt;"</code> on load.
+    Matters when several bench windows are open simultaneously. One-line fix in
+    <code>gui/main_window.py</code> on <code>RecipeLoaded</code>.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">M-6 · important</span>
+    <strong><code>indexed: true</code> on a step input is silently ignored</strong>
+    <p>The step runs once with the whole list as the value — contradicts the loader's "loud
+    refusal" principle. Make it a load-time <code>RecipeError</code> until
+    <code>IndexedStep</code> expansion is ported.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">M-7 · important</span>
+    <strong>Step-level <code>continue_on_error:</code> makes a recipe fail to load</strong>
+    <p>The old engine accepted it on 6 of 10 step types;
+    <code>comprehensive_recipe.yml</code> carries it 8 times. In the new architecture it causes
+    a load-time error on some types. Tolerate-and-warn like the header-level key until the
+    policy is designed.</p>
+  </div>
+
+</div>
+
+<!-- ═══════════════════════════════════════════ Unported step types ══ -->
+<h2>Unported step types</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Old type</th>
+      <th>New name / status</th>
+      <th>Blocker</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>UserLoadingStep</code></td>
+      <td><span class="badge not-ported">Not ported</span></td>
+      <td>Multi-value response fix needed first (M-1 / one-response-per-request protocol change)</td>
+    </tr>
+    <tr>
+      <td><code>SSHConnectStep</code> / <code>SSHCloseStep</code></td>
+      <td><span class="badge moved-hal">Moves to HAL — Phase 3</span></td>
+      <td>Redesigned as a framework-level facility; credentials stored in Config Handler. Not a step type in the new architecture.</td>
+    </tr>
+    <tr>
+      <td><code>SequenceStep</code></td>
+      <td><span class="badge dropped">Dropped</span></td>
+      <td>No nested sequences in the new architecture.</td>
+    </tr>
+    <tr>
+      <td><code>UserRunMethodStep</code></td>
+      <td><span class="badge dropped">Deprecated</span></td>
+      <td>Use a <code>UserInteraction</code> step followed by a <code>PythonModule</code> step.</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ═══════════════════════════════════════════ Other pending items ══ -->
+<h2>Other pending Phase 1 items</h2>
+
+<div class="findings">
+
+  <div class="finding">
+    <span class="tag sev-critical">Blocker</span>
+    <strong>One-response-per-request fix for multi-value responses</strong>
+    <p>Some old_code interaction steps read a <em>second</em> value off the same response queue
+    after the first answer (a file path, a measured value, a <code>(port, baudrate, IDN)</code>
+    triple). <code>UserPromptResponse</code> does not model this. Each follow-up must become its
+    own typed request before <code>UserLoadingStep</code> can be ported.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-important">Phase 1</span>
+    <strong>CLI <code>StopHmi</code> timing gap</strong>
+    <p>The CLI main thread is parked in <code>input()</code>, so a <code>StopHmi</code> from
+    CORE is only noticed after the next Enter key. Pre-existing asymmetry. Fix before
+    v0.3.0 tagging.</p>
+  </div>
+
+  <div class="finding">
+    <span class="tag sev-design">Future</span>
+    <strong>Remote CORE (frontend on one machine, engine on another)</strong>
+    <p>Wanted, but has no flag today. Needs event fan-out from CORE to several HMI channels;
+    commands stay point-to-point. A string-topic event bus was considered and rejected. Added
+    when the feature is designed, not before.</p>
+  </div>
+
+</div>
+
+<footer>
+  PyPTS · CERN · CC-BY-SA-4.0 · Branch <code>architecture_refactor</code> · September 2026
+</footer>
+
+</div>
+</body>
+</html>
