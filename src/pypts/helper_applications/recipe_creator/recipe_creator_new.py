@@ -129,6 +129,13 @@ class RecipeCreatorNewWindow(QMainWindow):
         self._act_list_view.triggered.connect(lambda: self._switch_view(0))
         self._act_card_view.triggered.connect(lambda: self._switch_view(1))
         self._act_panels_view.triggered.connect(lambda: self._switch_view(2))
+        view_menu.addSeparator()
+        self._act_toggle_header = QAction("Toggle Header", self)
+        self._act_toggle_log = QAction("Toggle Log", self)
+        view_menu.addAction(self._act_toggle_header)
+        view_menu.addAction(self._act_toggle_log)
+        self._act_toggle_header.triggered.connect(self._toggle_header)
+        self._act_toggle_log.triggered.connect(self._toggle_log)
 
         # About
         about_menu = mb.addMenu("About")
@@ -245,7 +252,7 @@ class RecipeCreatorNewWindow(QMainWindow):
         # Log console
         self._log = QTextEdit()
         self._log.setReadOnly(True)
-        self._log.setFixedHeight(120)
+        self._log.setFixedHeight(150)
         root_layout.addWidget(self._log)
 
     # ── Slots ──────────────────────────────────────────────────────────────────
@@ -279,6 +286,12 @@ class RecipeCreatorNewWindow(QMainWindow):
             [self._act_list_view, self._act_card_view, self._act_panels_view]
         ):
             act.setChecked(i == idx)
+
+    def _toggle_header(self) -> None:
+        self._header_strip.setVisible(not self._header_strip.isVisible())
+
+    def _toggle_log(self) -> None:
+        self._log.setVisible(not self._log.isVisible())
 
     def _toggle_dark(self, dark: bool) -> None:
         self._dark = dark
