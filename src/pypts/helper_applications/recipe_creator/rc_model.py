@@ -4,10 +4,10 @@
 
 from __future__ import annotations
 
+import copy
 import io
 from typing import Any
 
-import yaml as _pyyaml  # noqa: F401  (imported for completeness; parsing uses ruamel)
 from ruamel.yaml import YAML
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
@@ -17,8 +17,10 @@ from pypts.recipe.rules import (
     STEP_COMMON_DEFAULTS,
     STEP_TYPE_DEFAULTS,
     SEQUENCE_DEFAULTS,
-    HEADER_DEFAULTS,
 )
+
+
+_MISSING = object()
 
 
 class RecipeModel(QObject):
@@ -112,7 +114,7 @@ class RecipeModel(QObject):
         for field in STEP_TYPE_REQUIRED.get(steptype, ()):
             if field not in step:
                 step[field] = ""
-        step.update(STEP_TYPE_DEFAULTS.get(steptype, {}))
+        step.update(copy.deepcopy(STEP_TYPE_DEFAULTS.get(steptype, {})))
         return step
 
 
@@ -128,14 +130,14 @@ class _SetDictField(QUndoCommand):
         self._target = target
         self._key = key
         self._new = new
-        self._old = target.get(key)
+        self._old = target.get(key, _MISSING)
 
     def redo(self) -> None:
         self._target[self._key] = self._new
         self._model._notify()
 
     def undo(self) -> None:
-        if self._old is None:
+        if self._old is _MISSING:
             self._target.pop(self._key, None)
         else:
             self._target[self._key] = self._old
@@ -209,7 +211,12 @@ class _AddSequence(QUndoCommand):
     def __init__(self, model: RecipeModel, name: str) -> None:
         super().__init__(f"Add sequence '{name}'")
         self._model = model
-        self._seq: dict = {"sequence_name": name, "steps": [], **SEQUENCE_DEFAULTS}
+        self._seq: dict = {
+            "sequence_name": name,
+            "description": SEQUENCE_DEFAULTS.get("description", ""),
+            "steps": [],
+            "teardown_steps": [],
+        }
 
     def redo(self) -> None:
         self._model._docs.append(self._seq)
