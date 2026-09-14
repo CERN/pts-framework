@@ -1,14 +1,18 @@
 # SPDX-FileCopyrightText: 2025 CERN <home.cern>
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
-from pypts import (
+from pypts.helper_applications.recipe_creator.customGUIModules import (
     ScintillaYamlEditor,
     WatermarkWidget,
     HashableTreeItem,
-    RecipeCreatorApp
+    RecipeCreatorApp,
 )
 
 import re
+import os
+from pathlib import Path
+from pypts.hmi.gui.styles import get_stylesheet
+from pypts.helper_applications.recipe_verificator import verify_file, verify_string, ValidationIssue
 import io
 from PySide6.QtWidgets import (
     QApplication,
@@ -41,6 +45,41 @@ from PySide6.QtGui import QTextCharFormat, QFont
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTreeWidget, QTreeWidgetItem
 from PySide6.QtGui import QKeySequence, QShortcut
+
+
+def _generate_template(data: dict) -> str:
+    """Generate a recipe YAML string conforming to the current schema."""
+    import yaml as _yaml
+
+    header = {
+        "name": data["name"],
+        "version": data["version"],
+        "description": data["description"],
+        "main_sequence": data["main_sequence"],
+        "globals": {},
+    }
+
+    steps = []
+    for i in range(data["num_steps"]):
+        steps.append({
+            "steptype": "userinteraction",
+            "step_name": f"Step {i + 1}",
+            "description": f"Step {i + 1} description",
+            "skip": False,
+            "continue_on_error": True,
+            "message": "Tell the operator what to do",
+            "options": [{"yes": ""}, {"no": ""}],
+            "outputs": {"output": {"type": "equals", "value": "yes"}},
+        })
+
+    sequence = {
+        "sequence_name": data["main_sequence"],
+        "description": f"{data['main_sequence']} description",
+        "steps": steps,
+    }
+
+    spdx = "# SPDX-FileCopyrightText: 2025 CERN <home.cern>\n#\n# SPDX-License-Identifier: LGPL-2.1-or-later\n"
+    return spdx + _yaml.dump_all([header, sequence], sort_keys=False)
 
 
 class RecipeEditorMainMenu(QMainWindow):
@@ -133,7 +172,7 @@ class RecipeEditorMainMenu(QMainWindow):
             self.dev_menu.addAction(action)
 
     def setup_central_widget(self):
-        self.setStyleSheet(light_style)
+        self.setStyleSheet(get_stylesheet(False))
         self.central_widget = QWidget()
         self.setCentralWidget(self.central_widget)
         self.main_layout = QVBoxLayout(self.central_widget)
@@ -241,7 +280,8 @@ class RecipeEditorMainMenu(QMainWindow):
         self.tree_and_yaml_layout.addWidget(self.tree_status_container)
 
         # Watermark widget (your logo)
-        self.watermark_widget = WatermarkWidget("../Resources/images/CERN_Logo.png")  # Replace with your logo
+        _logo = str(Path(__file__).parent.parent.parent.parent / "resources" / "images" / "CERN_Logo.png")
+        self.watermark_widget = WatermarkWidget(_logo)
 
         # Stacked layout to switch between watermark and main editor
         self.stacked_layout = QStackedLayout()
@@ -270,12 +310,12 @@ class RecipeEditorMainMenu(QMainWindow):
     def toggle_dark_mode(self, enabled):
         if enabled:
             self.dark_mode = True
-            self.setStyleSheet(dark_style)
+            self.setStyleSheet(get_stylesheet(True))
             self.yaml_viewer.set_dark_mode(True)
             self.log("🌙 Dark Mode enabled.")
         else:
             self.dark_mode = False
-            self.setStyleSheet(light_style)
+            self.setStyleSheet(get_stylesheet(False))
             self.yaml_viewer.set_dark_mode(False)
             self.log("☀️ Light Mode restored.")
 
@@ -531,32 +571,28 @@ class RecipeEditorMainMenu(QMainWindow):
             self.log(f"❌ Save failed: {e}")
 
     def on_add_clicked(self):
-        generator_pop_up = RecipeCreatorApp()
-        result = generator_pop_up.open_creator_dialog(self.dark_mode)
-        if result == None:
+        from pypts.helper_applications.recipe_creator.customGUIModules import RecipeCreatorDialog
+        dialog = RecipeCreatorDialog()
+        dialog.set_dark_mode(self.dark_mode)
+        dialog.resize(500, 300)
+        if not dialog.exec():
             return
-
-        filename = os.path.basename(self.current_file_path)
-        if filename == "":
-            self.setWindowTitle(f"Recipe Editor - *unnamed recipe* *unsaved changes*")
-        else:
-            self.setWindowTitle(f"Recipe Editor - {filename} *unsaved changes*")
-        self.close_recipe.setEnabled(True)
-        self.action_restore_recipe.setEnabled(True)
-        yaml_string = generator_pop_up.get_generated_recipe()
+        data = dialog.get_data()
+        yaml_string = _generate_template(data)
+        if not yaml_string:
+            return
         self.temporary_recipe_contents = yaml_string
         self.update_yaml_viewer()
-
-        # Mark as unsaved
-        self.current_file_path = None
+        self.update_yaml_treeview()
         self.stacked_layout.setCurrentIndex(1)
-
-        self.collapse_inside_steps()
-
-        self.action_save.setEnabled(False)
-        self.action_save_as.setEnabled(True)
-        self.save_action.setEnabled(False)
+        self.close_recipe.setEnabled(True)
         self.save_as_action.setEnabled(True)
+        self.save_action.setEnabled(True)
+        self.action_save.setEnabled(True)
+        self.action_save_as.setEnabled(True)
+        self.action_restore_recipe.setEnabled(True)
+        self.collapse_inside_steps()
+        self.log("✅ New recipe created from template.")
 
     def on_open_wiki_clicked(self):
         url = "https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/master/"
@@ -691,16 +727,18 @@ class RecipeEditorMainMenu(QMainWindow):
 
     def validate_recipe(self):
         try:
-            if (validate_recipe_filepath(self.current_file_path)):
+            issues = verify_file(self.current_file_path)
+            errors = [i for i in issues if i.is_error]
+            if not errors:
                 self.log("✅ Recipe file validated successfully.")
                 self.show_recipe_ok()
             else:
-                self.log("❌ Recipe file failed the validation!")
-                self.show_recipe_error("❌ Recipe file is invalid!")
+                self.log(f"❌ Recipe file failed validation: {errors[0].message}")
+                self.show_recipe_error("Recipe file is invalid!")
                 return False
         except Exception as e:
-            self.tree.blockSignals(False)  # Safety catch
-            self.log(f"❌ Expception while validating the recipe, recipe might be corrupted.")
+            self.tree.blockSignals(False)
+            self.log(f"❌ Exception while validating the recipe: {e}")
             return False
 
     def validate_yaml_documents(self):
@@ -712,10 +750,13 @@ class RecipeEditorMainMenu(QMainWindow):
         return validation_result
 
     def validate_temporary_recipe_contents(self):
-        result, description = validate_recipe_string_variable(self.temporary_recipe_contents)
-        if result == True:
+        issues = verify_string(self.temporary_recipe_contents)
+        errors = [i for i in issues if i.is_error]
+        ok = not errors
+        description = "; ".join(f"{i.field}: {i.message}" for i in issues) if issues else ""
+        if ok:
             self.last_valid_recipe = self.temporary_recipe_contents
-        return result, description
+        return ok, description
 
     def open_recipe(self):
         file_path, _ = QFileDialog.getOpenFileName(self, "Open recipe file", "", "YAML Files (*.yml *.yaml)")
@@ -914,8 +955,8 @@ class RecipeEditorMainMenu(QMainWindow):
                 parent.removeChild(item)
             else:
                 # Top-level item
-                index = self.indexOfTopLevelItem(item)
-                self.takeTopLevelItem(index)
+                index = self.tree.indexOfTopLevelItem(item)
+                self.tree.takeTopLevelItem(index)
             # Manually trigger the handler after deletion
             self.on_treeview_item_changed(item, 0)
 
