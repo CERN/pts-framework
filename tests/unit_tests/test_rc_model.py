@@ -136,3 +136,15 @@ def test_default_step_has_required_fields(qapp):
         assert step["steptype"] == steptype
         for field in STEP_TYPE_REQUIRED[steptype]:
             assert field in step, f"{steptype} missing {field}"
+
+
+def test_rc_widgets_importable(qapp):
+    from pypts.helper_applications.recipe_creator.rc_widgets import (
+        PaletteYamlHighlighter,
+        YamlEditor,
+        VerificationPanel,
+    )
+
+    assert PaletteYamlHighlighter is not None
+    assert YamlEditor is not None
+    assert VerificationPanel is not None
