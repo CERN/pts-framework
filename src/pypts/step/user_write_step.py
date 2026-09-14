@@ -27,7 +27,7 @@ which meant the engine itself believed every unit under test has a serial
 number and went and fetched it. Asking is the recipe's job. What the framework
 supplies is the prompt and the global scope to keep the answer in; the
 convention that the global is called `serial_number` and the step is called
-`get_serial_number` is documented in resources/roadmap/best_practices.md and
+`get_serial_number` is documented in recipe_guide.html (repo root) and
 is a recommendation, not a rule - the Report picks up whichever globals the
 recipe's `report_metadata` header names.
 

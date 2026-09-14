@@ -40,11 +40,11 @@ Current branch: `architecture_refactor`.
 
 ## Where the plan and the implementation status live
 
-**`pypts_implementation_status.md` (repo root) is the single source of truth for what is
+**`pypts_implementation_status.html` (repo root) is the single source of truth for what is
 implemented, what is still a stub, and what comes next.** It is a *living* document.
 **Read it before planning or starting any work.**
 
-Also in `resources/roadmap/`: `recipe_guide.md` — the new-format recipe reference (step
+Also at repo root: `recipe_guide.html` — the new-format recipe reference (step
 types, input/output mapping, verificator gaps). Open findings (R-1..R-6, M-1..M-7) are in
 `TODO.txt` and summarised in `migration_status.html` (repo root).
 
@@ -86,7 +86,8 @@ Update the context file in the same change that touches the module.
 **Ephemeral generated HTML documents go in `resources/internal_reports/`.** Not the repo
 root, not next to the code they describe — the user opens these in a browser and expects every
 one of them in one folder. **Permanent project-reference HTML documents** (`migration_status.html`,
-`best_practices.html`) live at the **repo root** alongside `TODO.txt`.
+`pypts_implementation_status.html`, `recipe_guide.html`, `migration_instructions.html`)
+live at the **repo root** alongside `TODO.txt`.
 
 - One self-contained file: inline CSS, no external assets, light *and* dark palettes.
 - A file in `resources/**` needs its own inline SPDX header (`CC-BY-SA-4.0`). A file at repo
@@ -125,13 +126,14 @@ src/pypts/
   helper_applications/   debug_monitor, recipe_creator, recipe_verificator, example_finder
   old_code/              frozen legacy implementation — read only, never modify
 resources/internal_reports/  generated HTML documents (dev artifacts)
-resources/roadmap/       recipe_guide.md (new recipe format reference)
+resources/roadmap/       (roadmap content now in repo-root HTML files)
 resources/recipes/       example recipes (YAML, *.yml)
 tests/                   unit_tests/ + functional_tests/
-pypts_implementation_status.md  phased plan + implementation status (at repo root)
-TODO.txt                 open task list (at repo root)
-best_practices.md / best_practices.html  recipe conventions (at repo root)
+pypts_implementation_status.html  phased plan + implementation status (at repo root)
+recipe_guide.html        new-format recipe reference (at repo root)
+migration_instructions.html  porting guide for old recipes (at repo root)
 migration_status.html    what still needs porting from old_code (at repo root)
+TODO.txt                 open task list (at repo root)
 plans/                   refactoring_progress.md (completed work log) + README.md
 ```
 
@@ -168,7 +170,7 @@ Two error decorators — pick the right one:
 
 For recognised failures use `report_error(self, exc, severity=…)` (live exception) or
 `report_problem(self, message, severity=…)` (refused command, no exception). Neither raises.
-See `utilities/utilities.md` and `pypts_implementation_status.md` §1.10–§1.11.
+See `utilities/utilities.md` and `pypts_implementation_status.html` §1.10–§1.11.
 
 ## Running
 
@@ -185,7 +187,7 @@ python -m pypts.helper_applications.debug_monitor   # Monitor alone, on the newe
 
 The Debug Monitor is **on by default during the refactor** (`--no-debug-monitor` turns it
 off). It only has something to show at DEBUG. Nothing in the framework may import
-`helper_applications/debug_monitor/`. See `pypts_implementation_status.md` §1.4.1 for the
+`helper_applications/debug_monitor/`. See `pypts_implementation_status.html` §1.4.1 for the
 revert TODO.
 
 Config file: `%LOCALAPPDATA%\pypts\config.ini` (Windows) / `~/.config/pypts/config.ini`

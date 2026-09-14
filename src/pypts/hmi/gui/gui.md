@@ -206,7 +206,7 @@ has a typed, owned equivalent:
 | nine `*_signal = Signal(dict)` + `getattr(self, name + "_signal")` | the `match` in `HmiClient.handle_core_message()` closed with `unhandled()` → typed `show_*` / `ask_*` hooks the GUI overrides. mypy and `test_messages.py` replace "hope the dict has the key" |
 | ViewModel dicts built in the proxy | the messages *are* the view models: `StepStarted(step_id, step_name)`, `StepFinished(outcome: StepOutcome)`, `RunFinished(result, outcomes)` — plain values, already pickle-tested |
 | proxy suppressing `SequenceStep` rows | not needed yet (no nested steps); when `SequenceStep` lands, the same policy belongs in the presentation layer, not the transport |
-| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `UserTextRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_user_text()`. The hooks **default to declining** so a blocked step is never stranded. Both halves are live end to end — `UserInteractionStep` asks the first (roadmap §1.28), `UserWriteStep` the second. The old GUI's dedicated serial-number dialog has no successor **on purpose**: asking for a serial number is a recipe's `get_serial_number` step, not something the framework does — see `resources/roadmap/best_practices.md` |
+| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `UserTextRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_user_text()`. The hooks **default to declining** so a blocked step is never stranded. Both halves are live end to end — `UserInteractionStep` asks the first (roadmap §1.28), `UserWriteStep` the second. The old GUI's dedicated serial-number dialog has no successor **on purpose**: asking for a serial number is a recipe's `get_serial_number` step, not something the framework does — see `recipe_guide.html` (repo root) |
 | second value pushed on the same queue (`file`/`wrt`/`ID`) | **unsolved by design** — each follow-up must become its own request/response pair when those steps are ported (roadmap §1.1 TODO) |
 | `WAIT_FOR_TERMINATION` global + nested QEventLoop on abort | nothing blocks: Stop sends the command and the *events* drive the buttons — `RunFinished` (result STOP) is the "engine has stopped" confirmation the old global tried to be |
 | root-logger tap into the log box | the GUI logs normally; its records go to the Logger like everyone's. The log box is fed the other way round: `log_tail.py` reads the run log file the Logger writes, so the panel shows *every* process, not just the GUI's own records (§8) |
@@ -366,7 +366,7 @@ There was a second page here until 2026-09-02: a serial-number form with its own
 `QLineEdit`, driven by a `SerialNumberRequest` nothing ever sent. It is gone, along with
 `CenterContent`'s `QStackedWidget`, because the framework does not ask for a serial number —
 a recipe does, with a `get_serial_number` `UserWrite` step
-(`resources/roadmap/best_practices.md`).
+(`recipe_guide.html`, repo root).
 
 Three things decline an open prompt, all through `cancel_pending()`, all answering `None`:
 

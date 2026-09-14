@@ -13,7 +13,7 @@ decision behind each, so the state of the port can be read off one table instead
 re-derived from `old_code/steps.py` every time.
 
 The roadmap stays the authority on status and phase and wins where they overlap.
-`resources/roadmap/recipe_guide.md` §10 is the reference for what each old type *did*, in
+`recipe_guide.html` (repo root) §10 is the reference for what each old type *did*, in
 recipe terms, and is worth reading before porting one.
 
 ---
@@ -198,7 +198,7 @@ global scope. What is left of the coupling is one recipe-header field —
 `report_metadata`, defaulting to `("serial_number",)` — which names the globals the
 Report stamps on every row of `report.csv`, shows in `report.html`'s header, appends
 to the run folder's name and puts in the GUI's top bar. The convention itself lives in
-`resources/roadmap/best_practices.md`: a step named `get_serial_number` writing the
+`recipe_guide.html` (repo root) §3: a step named `get_serial_number` writing the
 `serial_number` global.
 
 ### 2.5 `UserLoadingStep` — to be implemented
@@ -548,7 +548,7 @@ type gets them for free and must not repeat them; the old format's per-type
 `continue_on_error` is why putting it on the wrong one of the ten types was a load-time
 `TypeError` (§16 F9).
 
-Then document it in `recipe_guide.md` §10 and update the table in §1 above.
+Then document it in `recipe_guide.html` §10 and update the table in §1 above.
 
 ---
 

@@ -1,0 +1,171 @@
+<!-- SPDX-FileCopyrightText: 2026 CERN <home.cern> -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Migration Instructions</title>
+<style>
+:root {
+  --bg:       #ffffff;
+  --bg2:      #f5f6f8;
+  --bg3:      #e8eaed;
+  --border:   #d0d4db;
+  --text:     #1a1d23;
+  --text2:    #4a5068;
+  --link:     #0066cc;
+  --link-vis: #5555aa;
+  --code-bg:  #f0f2f5;
+  --code-c:   #c7254e;
+  --pre-bg:   #f0f2f5;
+  --pre-c:    #1a1d23;
+  --mark-bg:  #fff3cd;
+  --th-bg:    #e8eaed;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:       #1a1d23;
+    --bg2:      #22262f;
+    --bg3:      #2c313d;
+    --border:   #3a3f4e;
+    --text:     #dde1ea;
+    --text2:    #9099b0;
+    --link:     #5baeff;
+    --link-vis: #aa88ff;
+    --code-bg:  #2c313d;
+    --code-c:   #ff7070;
+    --pre-bg:   #1e2229;
+    --pre-c:    #dde1ea;
+    --mark-bg:  #3a3000;
+    --th-bg:    #2c313d;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  padding: 2rem 1rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+}
+.page { max-width: 900px; margin: 0 auto; }
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text);
+  margin: 1.8rem 0 0.5rem;
+  line-height: 1.25;
+  font-weight: 600;
+}
+h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: .4rem; }
+h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+h3 { font-size: 1.2rem; }
+h4, h5, h6 { font-size: 1rem; }
+p { margin: .7rem 0; }
+a { color: var(--link); text-decoration: none; }
+a:visited { color: var(--link-vis); }
+a:hover { text-decoration: underline; }
+code {
+  background: var(--code-bg);
+  color: var(--code-c);
+  padding: .1em .35em;
+  border-radius: 3px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: .88em;
+}
+pre {
+  background: var(--pre-bg);
+  color: var(--pre-c);
+  padding: 1rem 1.2rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  font-size: .9em;
+  line-height: 1.5;
+}
+pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+blockquote {
+  border-left: 4px solid var(--border);
+  margin: 1rem 0;
+  padding: .5rem 1rem;
+  background: var(--bg2);
+  color: var(--text2);
+  border-radius: 0 4px 4px 0;
+}
+blockquote p { margin: .3rem 0; }
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+ul, ol { margin: .6rem 0; padding-left: 1.8rem; }
+li { margin: .2rem 0; }
+li > ul, li > ol { margin: .2rem 0; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: .93em;
+  overflow-x: auto;
+  display: block;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: .5rem .75rem;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: var(--th-bg); font-weight: 600; }
+tr:nth-child(even) td { background: var(--bg2); }
+del { color: var(--text2); text-decoration: line-through; }
+mark { background: var(--mark-bg); }
+details { margin: .6rem 0; }
+summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+<h1 id="migration-instructions">Migration instructions</h1>
+<p>How to run an existing recipe against the new architecture.</p>
+<h2 id="entry-point">Entry point</h2>
+<p><strong>Old:</strong> User package had its own <code><strong>main</strong>.py</code>` calling <code>run_pts()</code>` + <code>create_and_start_gui()</code>`. Recipe ran inside the same process.</p>
+<p><strong>New:</strong> Delete your <code><strong>main</strong>.py</code>`. Run the framework directly:</p>
+<pre><code class="language-bash">python -m pypts          # GUI
+python -m pypts --mode cli</code></pre>
+<p>Load your recipe from the GUI file picker, or (CLI) type <code>load &lt;path&gt;</code>` then <code>run</code>`.</p>
+<h2 id="step-type-names">Step-type names</h2>
+<p>The <code>steptype</code>` field values changed — the <code>Step</code>` suffix was dropped:</p>
+<table><thead><tr><th>Old</th><th>New</th></tr></thead><tbody><tr><td><code>PythonModuleStep</code>`</td><td><code>PythonModule</code>`</td></tr><tr><td><code>UserInteractionStep</code>`</td><td><code>UserInteraction</code>`</td></tr><tr><td><code>WaitStep</code>`</td><td><code>Wait</code>`</td></tr><tr><td><code>UserWriteStep</code>`</td><td><code>UserWrite</code>`</td></tr><tr><td><code>IndexedStep</code>`</td><td>handled at load time — wrap steps in an indexed input</td></tr></tbody></table>
+<p>Rename every <code>steptype:</code>` value in your recipe YAML accordingly.</p>
+<h2 id="step-types-that-no-longer-exist">Step types that no longer exist</h2>
+<table><thead><tr><th>Old steptype</th><th>What to do</th></tr></thead><tbody><tr><td><code>SequenceStep</code>`</td><td>Dropped. Inline the steps or restructure the recipe.</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated. Replace with a <code>UserInteraction</code>` step (for the prompt) followed by a <code>PythonModule</code>` step (for the method call).</td></tr><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not yet available (Phase 3 HAL). Keep using the old engine for recipes that need SSH.</td></tr><tr><td><code>UserLoadingStep</code>`</td><td>Not yet ported. Keep using the old engine for recipes that need file-load dialogs.</td></tr></tbody></table>
+<h2 id="pythonmodulestep-action-type">PythonModuleStep — action_type</h2>
+<p><code>read_attribute</code>` and <code>write_attribute</code>` are dropped. If your step uses these, replace them with a <code>PythonModule</code>` step that calls a wrapper method instead.</p>
+<h2 id="userwritestep-serial-port-mode">UserWriteStep — serial-port mode</h2>
+<p>The <code>ID</code>` option (serial-port picker) is dropped. The <code>wrt</code>` text-entry mode is available as <code>UserWrite</code>`. If you relied on <code>ID</code>`, implement the serial-port dialog in a <code>PythonModule</code>` step.</p>
+<h2 id="module-loading">Module loading</h2>
+<p>Both file-based (path relative to recipe) and package-based (<code>test_package</code>` in the header) loading still work. The <code>test_package</code>` package must be installed.</p>
+<h2 id="reports">Reports</h2>
+<p>Reports are now written to a per-run subfolder under <code>reports_dir</code>` (configured in <code>config.ini</code>`). The path is shown in the GUI after the run, and sent to the log. There is no longer a single overwritten <code>report.csv</code>`.</p>
+<h2 id="globals-used-as-magic-keys">Globals used as magic keys</h2>
+<p>The old engine read certain globals by convention (e.g. <code>cancel_key</code>`, <code>ssh_client</code>`, <code>ID_key</code>`, <code>wrt_key</code>`). The new engine does not. You can remove those from your recipe.</p>
+<h2 id="config-file">Config file</h2>
+<p>The new framework writes a config on first run:</p>
+<ul>
+<li>Windows: <code>%LOCALAPPDATA%\pypts\config.ini</code>`
+</li>
+<li>Linux: <code>~/.config/pypts/config.ini</code>`
+</ul>
+<p>Edit it to set <code>[paths] reports_dir</code>` if you want reports somewhere specific.</p>
+</div>
+</body>
+</html>

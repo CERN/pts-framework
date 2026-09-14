@@ -202,4 +202,4 @@ The recipe YAML format is largely the same. Key differences:
   first sequence if `main_sequence` is absent.
 
 For the full old-engine recipe format specification, including all 28 audit findings,
-see `resources/roadmap/recipe_guide.md`.
+see `recipe_guide.html` (repo root).

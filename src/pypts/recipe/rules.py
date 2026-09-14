@@ -26,7 +26,7 @@ HEADER_REQUIRED: tuple[str, ...] = ("name", "version")
 #: header of report.html. Named by the recipe, so the framework carries a
 #: convention rather than a policy: the default is the one PyPTS proposes
 #: (a `get_serial_number` UserWrite step writing the `serial_number`
-#: global - see resources/roadmap/best_practices.md), and a recipe testing
+#: global - see recipe_guide.html at repo root), and a recipe testing
 #: something without a serial number writes its own list, or `[]` for none.
 #: A name that is never set stays an empty cell; nothing complains.
 REPORT_METADATA_DEFAULT: tuple[str, ...] = ("serial_number",)

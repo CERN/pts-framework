@@ -1,0 +1,366 @@
+<!-- SPDX-FileCopyrightText: 2026 CERN <home.cern> -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Recipe Guide</title>
+<style>
+:root {
+  --bg:       #ffffff;
+  --bg2:      #f5f6f8;
+  --bg3:      #e8eaed;
+  --border:   #d0d4db;
+  --text:     #1a1d23;
+  --text2:    #4a5068;
+  --link:     #0066cc;
+  --link-vis: #5555aa;
+  --code-bg:  #f0f2f5;
+  --code-c:   #c7254e;
+  --pre-bg:   #f0f2f5;
+  --pre-c:    #1a1d23;
+  --mark-bg:  #fff3cd;
+  --th-bg:    #e8eaed;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:       #1a1d23;
+    --bg2:      #22262f;
+    --bg3:      #2c313d;
+    --border:   #3a3f4e;
+    --text:     #dde1ea;
+    --text2:    #9099b0;
+    --link:     #5baeff;
+    --link-vis: #aa88ff;
+    --code-bg:  #2c313d;
+    --code-c:   #ff7070;
+    --pre-bg:   #1e2229;
+    --pre-c:    #dde1ea;
+    --mark-bg:  #3a3000;
+    --th-bg:    #2c313d;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  padding: 2rem 1rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+}
+.page { max-width: 900px; margin: 0 auto; }
+h1, h2, h3, h4, h5, h6 {
+  color: var(--text);
+  margin: 1.8rem 0 0.5rem;
+  line-height: 1.25;
+  font-weight: 600;
+}
+h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: .4rem; }
+h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+h3 { font-size: 1.2rem; }
+h4, h5, h6 { font-size: 1rem; }
+p { margin: .7rem 0; }
+a { color: var(--link); text-decoration: none; }
+a:visited { color: var(--link-vis); }
+a:hover { text-decoration: underline; }
+code {
+  background: var(--code-bg);
+  color: var(--code-c);
+  padding: .1em .35em;
+  border-radius: 3px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: .88em;
+}
+pre {
+  background: var(--pre-bg);
+  color: var(--pre-c);
+  padding: 1rem 1.2rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  font-size: .9em;
+  line-height: 1.5;
+}
+pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+blockquote {
+  border-left: 4px solid var(--border);
+  margin: 1rem 0;
+  padding: .5rem 1rem;
+  background: var(--bg2);
+  color: var(--text2);
+  border-radius: 0 4px 4px 0;
+}
+blockquote p { margin: .3rem 0; }
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2rem 0;
+}
+ul, ol { margin: .6rem 0; padding-left: 1.8rem; }
+li { margin: .2rem 0; }
+li > ul, li > ol { margin: .2rem 0; }
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+  font-size: .93em;
+  overflow-x: auto;
+  display: block;
+}
+th, td {
+  border: 1px solid var(--border);
+  padding: .5rem .75rem;
+  text-align: left;
+  vertical-align: top;
+}
+th { background: var(--th-bg); font-weight: 600; }
+tr:nth-child(even) td { background: var(--bg2); }
+del { color: var(--text2); text-decoration: line-through; }
+mark { background: var(--mark-bg); }
+details { margin: .6rem 0; }
+summary { cursor: pointer; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+<h1 id="pypts-recipe-guide">PyPTS Recipe Guide</h1>
+<p><strong>Purpose.</strong> The definitive reference for what a recipe <em>is</em> and what the current framework does with it. One document, one version of the truth.</p>
+<hr>
+<h2 id="1-the-model-in-30-seconds">1. The model in 30 seconds</h2>
+<p>A recipe is a <strong>multi-document YAML file</strong>:</p>
+<pre><code>document 1        recipe header   — name, version, main_sequence, globals
+document 2..N     sequences       — each: locals + setup_steps / steps / teardown_steps</code></pre>
+<p>A <strong>sequence</strong> is an ordered list of <strong>steps</strong>. A <strong>step</strong> has a <code>steptype</code>` (which Python class runs it), an <code>input_mapping</code>` (where its arguments come from), and an <code>output_mapping</code>` (what to do with what it returned).</p>
+<p>Two variable scopes: <strong>globals</strong> (whole recipe) and <strong>locals</strong> (one dict per sequence). Steps never talk to each other directly — they communicate by writing and reading variables.</p>
+<p>Every step produces a <code>StepResult</code>` with one <code>ResultType</code>`. A sequence's result is the maximum severity of its children.</p>
+<pre><code>Recipe
+└── Sequence "Main"
+    ├── setup_steps   ─┐
+    ├── steps          ├─ executed as one flat list in order
+    └── teardown_steps ─┘ always executed, even after failure</code></pre>
+<hr>
+<h2 id="2-file-anatomy">2. File anatomy</h2>
+<pre><code class="language-yaml"># SPDX headers (required by REUSE for files under resources/)
+name: My Recipe
+version: 0.1.0
+...
+---                             # YAML document separator
+sequence_name: Main
+...
+---
+sequence_name: Subsequence
+...</code></pre>
+<p>Loaded with <code>yaml.safe_load_all</code>` — document order is significant. Doc 1 is the header, every following doc is a sequence keyed by <code>sequence_name</code>`.</p>
+<hr>
+<h2 id="3-recipe-header">3. Recipe header</h2>
+<pre><code class="language-yaml">name: LED driver acceptance      # required; shown in GUI title and report
+description: Checks the LED driver board at 5 V
+version: 0.2                     # required; stored in the report
+main_sequence: Main              # required; the sequence that runs by default
+test_package: my_tests           # optional; package root for module resolution
+report_metadata: [serial_number] # optional; globals that become report columns
+globals:
+  target_voltage: 5.0
+  tolerance: 0.1</code></pre>
+<table><thead><tr><th>Field</th><th>Required</th><th>Purpose</th></tr></thead><tbody><tr><td><code>name</code>`</td><td>yes</td><td>GUI header, report metadata</td></tr><tr><td><code>description</code>`</td><td>yes</td><td>GUI, log</td></tr><tr><td><code>version</code>`</td><td>yes</td><td>report metadata</td></tr><tr><td><code>main_sequence</code>`</td><td>yes</td><td>sequence that the GUI/CLI starts by default</td></tr><tr><td><code>test_package</code>`</td><td>no</td><td>package root for <code>PythonModule</code>` file resolution (see §6.1)</td></tr><tr><td><code>report_metadata</code>`</td><td>no</td><td>list of global names to embed as CSV columns; defaults to <code>[serial_number]</code>`</td></tr><tr><td><code>globals</code>`</td><td>yes</td><td>flat <code>name: value</code>` dict; initial global variable store</td></tr></tbody></table>
+<p><strong><code>serial_number</code>` is not injected.</strong> The engine has no concept of a serial number. Capture it with a <code>UserWrite</code>` step and store it in the <code>serial_number</code>` global; the framework picks it up through <code>report_metadata</code>`. See <code>best_practices.md</code>` §1.</p>
+<hr>
+<h2 id="4-sequence-document">4. Sequence document</h2>
+<pre><code class="language-yaml">sequence_name: Main          # required; the identifier other parts reference
+description: Main test flow
+locals:                      # required; {} if none needed
+  target: '45'
+setup_steps: []              # required; [] if empty
+steps:
+  - ...
+teardown_steps: []           # required; [] if empty; runs even on failure/abort</code></pre>
+<p>All seven fields are required — a missing field or a <code>null</code>` value raises at load time.</p>
+<p><strong><code>setup_steps</code>` / <code>steps</code>` / <code>teardown_steps</code>`:</strong> <code>setup_steps</code>` and <code>steps</code>` are merged into one flat list in order; only <code>teardown_steps</code>` has special behaviour (runs in a <code>finally</code>` block after success, failure or abort).</p>
+<p><strong>Local scope:</strong> <code>get_local</code>`/<code>set_local</code>` only ever touch <code>local_stack[-1]</code>` — a sequence cannot see its caller's locals.</p>
+<hr>
+<h2 id="5-step-common-fields">5. Step — common fields</h2>
+<pre><code class="language-yaml">- steptype: PythonModule     # required; selects the class (see §8)
+  step_name: Check 3V3 rail  # required; shown in GUI table and report
+  description: ...           # required
+  id: my-stable-id           # optional; fresh uuid4 if absent
+  skip: false                # optional; SKIP result, inputs never resolved
+  continue_on_error: true    # optional; see §7
+  input_mapping: {}          # optional; empty dict if absent
+  output_mapping: {}         # optional; empty dict if absent
+  # ... steptype-specific fields</code></pre>
+<ul>
+<li><code>steptype</code>` is case-insensitive for all current types.
+</li>
+<li><code>skip: true</code>` → step is not executed; result is <code>SKIP</code>`.
+</ul>
+<hr>
+<h2 id="6-input-mapping-where-arguments-come-from">6. <code>input_mapping</code>` — where arguments come from</h2>
+<pre><code class="language-yaml">input_mapping:
+  arg1: { type: direct, value: "hello" }
+  arg2: { type: local,  local_name: target }
+  arg3: { type: global, global_name: tolerance }</code></pre>
+<table><thead><tr><th><code>type</code>`</th><th>Extra keys</th><th>Behaviour</th></tr></thead><tbody><tr><td><code>direct</code>` (default when <code>type</code>` omitted)</td><td><code>value</code>`</td><td>literal value from the YAML</td></tr><tr><td><code>local</code>`</td><td><code>local_name</code>`</td><td>reads <code>local_stack[-1][local_name]</code>`</td></tr><tr><td><code>global</code>`</td><td><code>global_name</code>`</td><td>reads <code>globals[global_name]</code>`</td></tr></tbody></table>
+<p><strong>No type coercion.</strong> <code>value: '45'</code>` is the string <code>"45"</code>`; <code>value: 45</code>` is the int. Both YAML styles (flow and block) are equivalent.</p>
+<p><strong>Note on <code>indexed: true</code>`:</strong> currently <strong>silently ignored</strong> (step runs once with the whole list). This will become a load-time <code>RecipeError</code>` in an upcoming fix (M-6). Do not rely on it.</p>
+<h3 id="6-1-test-package-and-module-resolution">6.1 <code>test_package</code>` and module resolution</h3>
+<p>When <code>test_package</code>` is set in the header, <code>PythonModule</code>` resolves the <code>module:</code>` key as a package resource (recursive search under the package root, skipping common exclude dirs). Without it, <code>module:</code>` is a file path relative to the recipe's directory.</p>
+<p>Both spellings work: <code>module: example_tests.py</code>` and <code>module: example_tests</code>`. Every directory in the chain needs <code><strong>init</strong>.py</code>`. Module names must be unique — resolution picks whichever the glob hits first for ambiguous names.</p>
+<hr>
+<h2 id="7-output-mapping-judging-and-storing-results">7. <code>output_mapping</code>` — judging and storing results</h2>
+<pre><code class="language-yaml">output_mapping:
+  voltage:  { type: range,    min: 4.9, max: 5.1 }
+  measured: { type: global,   global_name: last_voltage }
+  passed:   { type: passfail }</code></pre>
+<table><thead><tr><th><code>type</code>`</th><th>Extra keys</th><th>Effect on result</th></tr></thead><tbody><tr><td><code>passfail</code>`</td><td>—</td><td><code>PASS</code>` if truthy, else <code>FAIL</code>`</td></tr><tr><td><code>equals</code>`</td><td><code>value</code>`</td><td><code>PASS</code>` if <code>output == value</code>` (no coercion)</td></tr><tr><td><code>range</code>`</td><td><code>min</code>`, <code>max</code>`</td><td><code>PASS</code>` if <code>min ≤ float(output) ≤ max</code>`</td></tr><tr><td><code>local</code>`</td><td><code>local_name</code>`</td><td>stores into sequence locals; does not affect result</td></tr><tr><td><code>global</code>`</td><td><code>global_name</code>`</td><td>stores into globals; does not affect result</td></tr></tbody></table>
+<p><strong>Result rule:</strong> start value is <code>DONE</code>`. Each judging entry (<code>passfail</code>`/<code>equals</code>`/<code>range</code>`) assigns the step result. If there are multiple judging entries, the last one wins — write one judging entry per step to avoid surprises. <code>local</code>`/<code>global</code>` entries never touch the result.</p>
+<p>A step key not present in the returned dict is an <code>ERROR</code>`.</p>
+<hr>
+<h2 id="8-result-model">8. Result model</h2>
+<p><code>ResultType</code>` is an <code>IntEnum</code>`; the ordering is the aggregation rule:</p>
+<pre><code>SKIP(0) &lt; DONE(1) &lt; PASS(2) &lt; FAIL(3) &lt; ERROR(4) &lt; STOP(5)</code></pre>
+<ul>
+<li>A sequence's result is <code>max(child results)</code>`.
+</li>
+<li><strong>Only <code>ERROR</code>` stops a sequence</strong> (unless <code>continue_on_error: false</code>`). A <code>FAIL</code>` never halts
+<p>anything — a failing DUT should still be fully characterised.</p>
+</li>
+<li><code>STOP</code>` is produced by an operator abort.
+</li>
+<li><code>DONE</code>` means "ran, no verdict" — a step with no judging <code>output_mapping</code>` entries.
+</ul>
+<hr>
+<h2 id="9-execution-control">9. Execution control</h2>
+<h3 id="9-1-continue-on-error">9.1 <code>continue_on_error</code>`</h3>
+<pre><code class="language-yaml">- steptype: PythonModule
+  step_name: power_on
+  continue_on_error: false   # stop the sequence if this step raises
+  ...</code></pre>
+<p>Default is <code>true</code>` (continue on error). Set <code>false</code>` when stopping is safer — power supply never came up, fixture is open. <code>critical: true</code>` re-arms the stop even when the sequence default is continue.</p>
+<p><strong>Current limitation (M-7):</strong> <code>continue_on_error</code>` at the step level causes a load failure on some step types. This will be fixed to tolerate-and-warn. Until then, avoid it on non- <code>PythonModule</code>` steps.</p>
+<h3 id="9-2-abort">9.2 Abort</h3>
+<p><code>runtime.stop_event</code>` is checked before each step and immediately after it returns. Interactive steps poll the event while waiting for the operator, so an abort is honoured within ~1 s.</p>
+<hr>
+<h2 id="10-step-type-catalogue">10. Step type catalogue</h2>
+<p>Four step types are available. <code>steptype</code>` values are case-insensitive.</p>
+<h3 id="pythonmodule-run-user-python"><code>PythonModule</code>` — run user Python</h3>
+<pre><code class="language-yaml">- steptype: PythonModule
+  step_name: measure_voltage
+  description: Reads the 3V3 rail and compares against limits
+  action_type: method
+  module: example_tests.py
+  method_name: range_test
+  input_mapping:
+    value: { type: local,  local_name: measured }
+    min:   { type: direct, value: 3.1 }
+    max:   { type: direct, value: 3.5 }
+  output_mapping:
+    result: { type: range, min: 3.1, max: 3.5 }</code></pre>
+<ul>
+<li><code>action_type: method</code>` only; <code>read_attribute</code>`/<code>write_attribute</code>` from the old engine are
+<p>dropped.</p>
+</li>
+<li><code>input_mapping</code>` keys are passed as keyword arguments to the method.
+</li>
+<li>Return value: dict → used as-is; <code>None</code>` → <code>{}</code>`; anything else → <code>{"output": value}</code>`.
+</li>
+<li>Required fields: <code>step_name</code>`, <code>description</code>`, <code>action_type</code>`, <code>module</code>`, <code>method_name</code>`.
+</ul>
+<h3 id="wait-sleep"><code>Wait</code>` — sleep</h3>
+<pre><code class="language-yaml">- steptype: Wait
+  step_name: settle
+  description: Let the rail settle
+  wait_time: 3               # seconds (int or float)</code></pre>
+<p>Always returns <code>DONE</code>`.</p>
+<h3 id="userinteraction-prompt-operator-with-buttons"><code>UserInteraction</code>` — prompt operator with buttons</h3>
+<pre><code class="language-yaml">- steptype: UserInteraction
+  step_name: confirm_wiring
+  description: Operator confirms the harness is connected
+  message: Connect the harness, then press Next.
+  image_path: harness.jpg    # optional
+  options:
+    - next:   Next
+    - cancel: Cancel
+  output_mapping:
+    output: { type: equals, value: next }</code></pre>
+<ul>
+<li><code>options</code>` is a list of <code>{response_key: button_label}</code>` dicts.
+</li>
+<li>Empty label → <code>key.capitalize()</code>` as the button text.
+</li>
+<li>No <code>options</code>` → a single unlabelled button.
+</li>
+<li><code>cancel</code>` as a response key stops the run.
+</ul>
+<h3 id="userwrite-operator-types-a-value"><code>UserWrite</code>` — operator types a value</h3>
+<pre><code class="language-yaml">- steptype: UserWrite
+  step_name: get_serial_number
+  description: Scan or type the serial number
+  message: Scan or type the serial number of the unit under test.
+  outputs:
+    output: { type: global, global_name: serial_number }</code></pre>
+<p>Text-entry mode only. The typed string is stored per <code>outputs</code>`. The old serial-port picker mode (<code>ID</code>` key) is not available.</p>
+<hr>
+<h2 id="11-step-types-not-yet-available">11. Step types not yet available</h2>
+<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>UserLoadingStep</code>`</td><td>Not yet ported — blocked on multi-value response protocol (M-1)</td></tr><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not step types in the new architecture — moves to HAL (Phase 3)</td></tr><tr><td><code>SequenceStep</code>`</td><td>Dropped — no nested sequences</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated — use <code>UserInteraction</code>` + <code>PythonModule</code>` in sequence</td></tr><tr><td><code>IndexedStep</code>`</td><td>Not a YAML type — will be handled at load time; currently <code>indexed: true</code>` is silently ignored</td></tr></tbody></table>
+<hr>
+<h2 id="12-yaml-pitfalls">12. YAML pitfalls</h2>
+<ol>
+<li><strong><code>yes</code>`/<code>no</code>`/<code>on</code>`/<code>off</code>`/<code>true</code>` are booleans in YAML 1.1.</strong> A button key <code>- yes: ''</code>`
+<p>produces the key <code>True</code>`, not <code>"yes"</code>`. Always quote: <code>- 'yes': ''</code>`.</p>
+</li>
+<li><strong><code>None</code>` is a string, not null.</strong> YAML null is <code>null</code>`, <code>~</code>`, or empty. Recipes use <code>None</code>`
+<p>as a placeholder; quote it where needed.</p>
+</li>
+<li><strong>Quoting changes the type.</strong> <code>value: 45</code>` ≠ <code>value: '45'</code>` for <code>equals</code>`. <code>range</code>` is safe
+<p>(it calls <code>float()</code>`).</p>
+</li>
+<li><strong>The leading <code>-</code>` before <code>steptype</code>`</strong> makes a step a list element. Omitting it turns the
+<p>step into a mapping key and produces a confusing <code>KeyError</code>`.</p>
+</li>
+<li><strong>A blank <code>locals:</code>` is null, not <code>{}</code>`.</strong> Write <code>locals: {}</code>` explicitly.
+</li>
+<li><strong>Duplicate <code>sequence_name</code>` across documents</strong> — last one silently wins.
+</li>
+<li><strong>Tabs are illegal in YAML.</strong> Indentation must be spaces.
+</ol>
+<hr>
+<h2 id="13-what-the-verificator-checks">13. What the verificator checks</h2>
+<p><code>recipe_verificator</code>` composes the YAML twice (once for line-number mapping, once for values) so every fault carries a line number. Returns <code>list[ValidationIssue]</code>` with severity, field path, message, hint, and line number. Collects all problems in one pass.</p>
+<p><strong>Checked:</strong></p>
+<ul>
+<li>Each document is a dict; document kind is inferred from its first key.
+</li>
+<li>Header: <code>version</code>`, <code>description</code>`, <code>main_sequence</code>`, <code>globals</code>` present, correct type.
+</li>
+<li>Sequence: all required fields present and correctly typed.
+</li>
+<li>Per step: per-steptype required fields, <code>input_mapping</code>`/<code>output_mapping</code>` are dicts, <code>skip</code>` is bool.
+</ul>
+<p><strong>Not yet checked:</strong></p>
+<ul>
+<li><code>setup_steps</code>` / <code>teardown_steps</code>` step contents.
+</li>
+<li>That <code>main_sequence</code>` names an existing sequence.
+</li>
+<li>That a <code>steptype</code>` is a known type.
+</li>
+<li>Contents of <code>input_mapping</code>`/<code>output_mapping</code>` (type validity, required sub-keys).
+</li>
+<li>That referenced locals/globals are declared, or that required globals exist.
+</li>
+<li>That <code>module</code>`/<code>method_name</code>` resolve at load time.
+</ul>
+</div>
+</body>
+</html>

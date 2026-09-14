@@ -18,7 +18,6 @@ Running::
    :maxdepth: 1
 
    usage
-   migration_instructions
    troubleshooting
 
 .. toctree::

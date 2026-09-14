@@ -232,7 +232,7 @@ class StopSequence:
 # number of the unit under test whether or not the recipe wanted one. Asking is
 # the recipe's job: a UserWrite step named `get_serial_number` puts the answer in
 # a global, and the framework supplies the prompt, not the policy. See
-# resources/roadmap/best_practices.md.
+# recipe_guide.html (repo root).
 
 
 # Sent by: step/user_interaction_step.py, via Runtime.ask -> Sequencer.ask_operator()
