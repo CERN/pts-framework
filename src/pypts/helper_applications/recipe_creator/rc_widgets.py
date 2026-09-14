@@ -263,3 +263,230 @@ class VerificationPanel(QFrame):
             issue = current.data(Qt.ItemDataRole.UserRole)
             if issue:
                 self._hint_label.setText(issue.hint)
+
+
+# ── GlobalsEditorDialog ───────────────────────────────────────────────────────
+
+
+class GlobalsEditorDialog(QDialog):
+    """Modal dialog for editing the `globals` header dict."""
+
+    def __init__(self, model, parent=None) -> None:
+        from PySide6.QtWidgets import (
+            QDialogButtonBox,
+            QPushButton,
+            QTableWidget,
+            QTableWidgetItem,
+        )
+        super().__init__(parent)
+        self._model = model
+        self.setWindowTitle("Edit Globals")
+        self.resize(420, 300)
+        layout = QVBoxLayout(self)
+
+        self._table = QTableWidget(0, 2)
+        self._table.setHorizontalHeaderLabels(["Name", "Initial value"])
+        self._table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self._table)
+
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("+ Add")
+        add_btn.clicked.connect(self._add_row)
+        remove_btn = QPushButton("- Remove")
+        remove_btn.clicked.connect(self._remove_row)
+        btn_row.addWidget(add_btn)
+        btn_row.addWidget(remove_btn)
+        btn_row.addStretch()
+        layout.addLayout(btn_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self._on_ok)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._populate(model.header().get("globals") or {})
+
+    def _populate(self, globals_dict: dict) -> None:
+        from PySide6.QtWidgets import QTableWidgetItem
+        self._table.setRowCount(0)
+        for name, value in globals_dict.items():
+            row = self._table.rowCount()
+            self._table.insertRow(row)
+            self._table.setItem(row, 0, QTableWidgetItem(str(name)))
+            self._table.setItem(row, 1, QTableWidgetItem(str(value) if value is not None else ""))
+
+    def _add_row(self) -> None:
+        from PySide6.QtWidgets import QTableWidgetItem
+        row = self._table.rowCount()
+        self._table.insertRow(row)
+        self._table.setItem(row, 0, QTableWidgetItem(""))
+        self._table.setItem(row, 1, QTableWidgetItem(""))
+
+    def _remove_row(self) -> None:
+        for item in self._table.selectedItems():
+            self._table.removeRow(item.row())
+
+    def _on_ok(self) -> None:
+        result = {}
+        for row in range(self._table.rowCount()):
+            name_item = self._table.item(row, 0)
+            val_item = self._table.item(row, 1)
+            name = name_item.text().strip() if name_item else ""
+            value = val_item.text().strip() if val_item else ""
+            if name:
+                result[name] = value
+        self._model.set_header_field("globals", result)
+        self.accept()
+
+
+# ── HeaderStrip ───────────────────────────────────────────────────────────────
+
+
+class HeaderStrip(QFrame):
+    """Collapsible strip showing recipe header fields and sequence selector."""
+
+    sequence_changed = Signal(int)
+
+    def __init__(self, model, parent=None) -> None:
+        from PySide6.QtWidgets import (
+            QComboBox,
+            QFormLayout,
+            QLineEdit,
+            QPushButton,
+        )
+        super().__init__(parent)
+        self._model = model
+        self._expanded = True
+        self.setFrameShape(QFrame.Shape.StyledPanel)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 4, 6, 4)
+        outer.setSpacing(4)
+
+        # Collapse bar
+        bar = QWidget()
+        bar_layout = QHBoxLayout(bar)
+        bar_layout.setContentsMargins(0, 0, 0, 0)
+        self._title_label = QLabel("Recipe header")
+        self._collapse_btn = QLabel("[▼]")
+        self._collapse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._collapse_btn.mousePressEvent = lambda _: self._toggle()
+        bar_layout.addWidget(self._title_label)
+        bar_layout.addStretch()
+        bar_layout.addWidget(self._collapse_btn)
+        outer.addWidget(bar)
+
+        # Form
+        self._form_widget = QWidget()
+        form = QFormLayout(self._form_widget)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setSpacing(4)
+
+        self._name_edit = QLineEdit()
+        self._version_edit = QLineEdit()
+        self._desc_edit = QLineEdit()
+        self._globals_btn = QPushButton("Edit globals…")
+        self._globals_btn.clicked.connect(self._open_globals)
+        self._metadata_edit = QLineEdit()
+
+        form.addRow("Name *", self._name_edit)
+        form.addRow("Version *", self._version_edit)
+        form.addRow("Description", self._desc_edit)
+        form.addRow("Globals", self._globals_btn)
+        form.addRow("Report metadata", self._metadata_edit)
+
+        # Sequence row
+        seq_row = QWidget()
+        seq_layout = QHBoxLayout(seq_row)
+        seq_layout.setContentsMargins(0, 0, 0, 0)
+        self._seq_combo = QComboBox()
+        self._seq_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        add_seq_btn = QPushButton("+")
+        add_seq_btn.setFixedWidth(28)
+        add_seq_btn.clicked.connect(self._add_sequence)
+        remove_seq_btn = QPushButton("−")
+        remove_seq_btn.setFixedWidth(28)
+        remove_seq_btn.clicked.connect(self._remove_sequence)
+        seq_layout.addWidget(self._seq_combo)
+        seq_layout.addWidget(add_seq_btn)
+        seq_layout.addWidget(remove_seq_btn)
+        form.addRow("Sequence", seq_row)
+
+        outer.addWidget(self._form_widget)
+
+        # Wire field changes to model
+        self._name_edit.editingFinished.connect(
+            lambda: model.set_header_field("name", self._name_edit.text())
+        )
+        self._version_edit.editingFinished.connect(
+            lambda: model.set_header_field("version", self._version_edit.text())
+        )
+        self._desc_edit.editingFinished.connect(
+            lambda: model.set_header_field("description", self._desc_edit.text())
+        )
+        self._metadata_edit.editingFinished.connect(
+            lambda: model.set_header_field(
+                "report_metadata",
+                [s.strip() for s in self._metadata_edit.text().split(",") if s.strip()],
+            )
+        )
+        self._seq_combo.currentIndexChanged.connect(self._on_seq_changed)
+
+        model.changed.connect(self.rebuild)
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        h = self._model.header()
+        self._title_label.setText(h.get("name") or "Recipe header")
+        self._name_edit.blockSignals(True)
+        self._version_edit.blockSignals(True)
+        self._desc_edit.blockSignals(True)
+        self._metadata_edit.blockSignals(True)
+        self._seq_combo.blockSignals(True)
+
+        self._name_edit.setText(str(h.get("name") or ""))
+        self._version_edit.setText(str(h.get("version") or ""))
+        self._desc_edit.setText(str(h.get("description") or ""))
+        meta = h.get("report_metadata") or []
+        self._metadata_edit.setText(", ".join(meta) if isinstance(meta, list) else str(meta))
+
+        prev_idx = self._seq_combo.currentIndex()
+        self._seq_combo.clear()
+        for seq in self._model.sequences():
+            self._seq_combo.addItem(seq.get("sequence_name", ""))
+        if prev_idx >= 0 and prev_idx < self._seq_combo.count():
+            self._seq_combo.setCurrentIndex(prev_idx)
+
+        self._name_edit.blockSignals(False)
+        self._version_edit.blockSignals(False)
+        self._desc_edit.blockSignals(False)
+        self._metadata_edit.blockSignals(False)
+        self._seq_combo.blockSignals(False)
+
+    def current_seq_idx(self) -> int:
+        return max(0, self._seq_combo.currentIndex())
+
+    def _toggle(self) -> None:
+        self._expanded = not self._expanded
+        self._form_widget.setVisible(self._expanded)
+        self._collapse_btn.setText("[▼]" if self._expanded else "[▶]")
+
+    def _open_globals(self) -> None:
+        dlg = GlobalsEditorDialog(self._model, self)
+        dlg.exec()
+
+    def _on_seq_changed(self, idx: int) -> None:
+        self.sequence_changed.emit(idx)
+
+    def _add_sequence(self) -> None:
+        from PySide6.QtWidgets import QInputDialog
+        name, ok = QInputDialog.getText(self, "Add sequence", "Sequence name:")
+        if ok and name.strip():
+            self._model.add_sequence(name.strip())
+
+    def _remove_sequence(self) -> None:
+        idx = self._seq_combo.currentIndex()
+        if idx >= 0:
+            self._model.remove_sequence(idx)
