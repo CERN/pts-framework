@@ -52,6 +52,8 @@ class RecipeModel(QObject):
 
     def steps(self, seq_idx: int, teardown: bool = False) -> list[dict]:
         key = "teardown_steps" if teardown else "steps"
+        if seq_idx >= len(self._docs) - 1:
+            return []
         return self.sequence(seq_idx).get(key, [])
 
     def is_modified(self) -> bool:
