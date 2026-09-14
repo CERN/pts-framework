@@ -2,37 +2,23 @@
 ..
 .. SPDX-License-Identifier: CC-BY-SA-4.0
 
-.. _API_docs:
+API
+===
 
-pypts API documentation
-========================
+The old public API (``pypts.pts.run_pts``, ``pypts.startup.create_and_start_gui``,
+``pypts.recipe``, ``pypts.steps``, ``pypts.report``) no longer exists. Those modules
+were part of the pre-refactor single-process architecture.
 
-This section provides detailed documentation for the public modules and classes within the ``pypts`` framework.
+The new framework has no embeddable Python API. The entry point is::
 
-Core Runner (`pts`)
--------------------
-.. automodule:: pypts.pts
-   :members: run_pts, PtsApi
-   :undoc-members:
-   :show-inheritance:
+   python -m pypts [--mode gui|cli] [--log-level LEVEL]
 
-Recipe Components (`recipe`)
-----------------------------
-.. automodule:: pypts.recipe
-   :members: Recipe, Sequence, Step, ResultType, StepResult, Runtime
-   :undoc-members:
-   :show-inheritance:
+A plugin API (``pypts.api``) is planned for Phase 2 (see roadmap §3). Until then,
+integration is done by:
 
-Step Implementations (`steps`)
-------------------------------
-.. automodule:: pypts.steps
-   :members: PythonModuleStep, SequenceStep, IndexedStep, UserInteractionStep, WaitStep
-   :undoc-members:
-   :show-inheritance:
+1. Writing a recipe YAML file (see :ref:`yaml_format`).
+2. Writing Python modules called by ``PythonModule`` steps.
+3. Running ``python -m pypts`` in GUI or CLI mode and loading the recipe.
 
-Reporting (`report`)
---------------------
-.. automodule:: pypts.report
-   :members: Report, report_listener, generate_html_report
-   :undoc-members:
-   :show-inheritance:
+For the message protocol used between CORE and the HMI, see
+``src/pypts/messages/messages.md``.

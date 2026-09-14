@@ -2,126 +2,55 @@
 ..
 .. SPDX-License-Identifier: CC-BY-SA-4.0
 
-.. _gui_event_handling:
+GUI Event Handling
+==================
 
-#################################
-GUI Event Handling and Displays
-#################################
+The GUI runs in a separate **HMI process**. It communicates with CORE exclusively
+through typed message dataclasses on a ``QueueWrapper`` (the HMI↔CORE link). It never
+sees the recipe object, step objects, or any live engine state directly.
 
-This document describes how events from the recipe execution engine are processed 
-and displayed in the user interface, focusing on the decoupling achieved through 
-the consistent use of the ViewModel pattern via dictionary-based signals.
+Message flow
+------------
 
-RecipeEventProxy: The Bridge
-=============================
+Operator action (button, menu) → ``HmiClient.send()`` → CORE inbox.
 
-The `RecipeEventProxy` class (defined in `pypts.event_proxy`) acts as a crucial 
-bridge between the recipe execution thread and the main GUI thread.
+Engine event (step started, run finished) → CORE → ``HmiClient`` inbox → polled by a
+background thread in the GUI → Qt signal → main thread slot.
 
-1.  It runs in a separate `QThread`.
-2.  It listens to a `SimpleQueue` (`event_queue`) where the `recipe.Runtime` 
-    puts events (like `pre_run_step`, `post_run_step`, `pre_run_recipe`, `post_run_recipe`, etc.) 
-    along with their associated data.
-3.  When an event is received, the proxy transforms the incoming data
-    (e.g., a `recipe.StepResult` object, a `recipe.Step` object, strings)
-    into a simpler **ViewModel** dictionary containing only the data relevant
-    for the GUI.
-4.  It dynamically finds the corresponding Qt signal (e.g., `pre_run_step_signal`,
-    `post_run_step_signal`) and emits it, passing the **ViewModel dictionary**
-    as the single payload.
-5.  These Qt signals (all defined as `Signal(dict)`) are connected to slots
-    in the `MainWindow` (`gui.py`) in the main GUI thread (`__main__.py`),
-    ensuring thread-safe updates.
+The Qt signal carries a typed message object (e.g. ``StepStarted``, ``StepFinished``,
+``RunFinished``). The GUI slot reads the fields it needs; it does not import ``recipe``
+or ``step`` modules.
 
-GUI Result Displays
-===================
+Key messages the GUI handles
+-----------------------------
 
-The `MainWindow` features two distinct widgets on the left side for displaying 
-recipe progress and results:
+Inbound (CORE → HMI):
 
-1. Live Step Status (`self.step_list`)
---------------------------------------
+- ``RunStarted`` — recipe name, description, sequence list
+- ``SequenceStarted`` / ``SequenceFinished`` — which sequence is running
+- ``StepStarted`` / ``StepFinished`` — step name, result, outcome
+- ``RunFinished`` — overall result
+- ``ReportReady`` — path to ``report.html``
+- ``UserInteractionRequest`` — message, image path, button options
+- ``UserWriteRequest`` — prompt text
+- ``ModuleErrorReported`` — error text for the log panel (WARNING and above)
+- ``StopHmi`` — shut down the frontend
 
-*   **Widget Type:** `QTableWidget`
-*   **Purpose:** Provides immediate, live feedback on the status of each step 
-    as the recipe progresses.
-*   **Initialization:** When a sequence starts (`pre_run_sequence` event, emitting a
-    dictionary containing the `recipe.Sequence` object), the `MainWindow.update_sequence`
-    slot populates this table with the names of the steps in that sequence.
-    Crucially, it also stores the unique `step.id` (UUID) associated with each
-    step name using `Qt.ItemDataRole.UserRole`.
-*   **Update Mechanism (ViewModel Pattern):**
-    1.  When a step is about to run, `recipe.Runtime` puts a `pre_run_step` event
-        onto the `event_queue` containing the `recipe.Step` object.
-    2.  `RecipeEventProxy` receives this, creates a ViewModel `{'step_uuid': ..., 'step_name': ...}`,
-        and emits `pre_run_step_signal`.
-    3.  The `MainWindow.update_running_step` slot receives the dictionary, finds the
-        row using the UUID, and updates the status cell text to "Running..." and makes it bold.
-    4.  When a step finishes, the `recipe.Runtime` puts a `post_run_step` event
-        onto the `event_queue` containing the `recipe.StepResult` object.
-    5.  `RecipeEventProxy` receives this event.
-    6.  It extracts the necessary information from the `StepResult` (the *original*
-        `step.id`, not the `step_result.uuid`, and result type) and creates a
-        simple **ViewModel dictionary**:
+Outbound (HMI → CORE):
 
-        .. code-block:: python
+- ``ShutdownRequested`` — operator clicked Stop / closed window
+- ``RunSequence`` — operator selected a sequence and clicked Run
+- ``UseRecipe`` — recipe loaded from disk
+- ``UserInteractionResponse`` / ``UserWriteResponse`` — operator replied to a prompt
+- ``HmiStopped`` — frontend has shut down cleanly
 
-           step_status_view_model = {
-               "step_uuid": step_result.step.id, # Use original Step ID
-               "status_text": str(result_type), # e.g., "PASS", "FAIL"
-               "status_color": background_color # e.g., "green", "red"
-           }
+For the full message list see ``src/pypts/messages/messages.md``.
 
-    7.  `RecipeEventProxy` emits the `post_run_step_signal` with this
-        *dictionary* as the payload.
-    8.  The `MainWindow.update_step_result` slot receives this dictionary.
-    9.  The slot uses the `step_uuid` from the dictionary to find the
-        corresponding row in the `QTableWidget` (by checking the stored `UserRole`
-        data).
-    10. It then updates the status cell in that row using the `status_text` and
-        `status_color` from the dictionary, resetting the font from bold.
+Difference from old architecture
+---------------------------------
 
-    **Note:** To prevent unnecessary warnings in the GUI log, the `RecipeEventProxy` explicitly filters out
-    `pre_run_step` and `post_run_step` events if they originate from a `recipe.SequenceStep`.
-    This is because the wrapper `SequenceStep` used to run the main sequence isn't displayed
-    in the live table, and its events would otherwise cause "Could not find step with UUID" messages.
-
-*   **Decoupling:** Because the `MainWindow` slots (`update_sequence`, `update_running_step`, `update_step_result`)
-    only receive simple dictionaries, `MainWindow` does **not** need to know about
-    the internal structure of `recipe.Sequence`, `recipe.Step`, `recipe.StepResult`,
-    or `recipe.ResultType` for these live updates.
-
-2. Final Hierarchical Results (`self.result_list`)
---------------------------------------------------
-
-*   **Widget Type:** `QTreeView`
-*   **Purpose:** Displays the complete, detailed, and potentially nested results 
-    of the entire recipe *after* it has finished execution.
-*   **Initialization:** This view is populated only once when the recipe finishes.
-*   **Update Mechanism (ViewModel Dictionary + Coupled Model):**
-    1.  When the recipe finishes, `recipe.Runtime` puts a `post_run_recipe` 
-        event onto the `event_queue` containing the final `List[recipe.StepResult]`.
-    2.  `RecipeEventProxy` receives this event.
-    3.  It creates a ViewModel dictionary `{'results': List[recipe.StepResult]}` and emits
-        the `post_run_recipe_signal` with this dictionary as the payload.
-    4.  The `MainWindow.show_results` slot receives this dictionary and extracts the raw list.
-    5.  It instantiates `StepResultModel`, passing the raw list to its constructor.
-    6.  `StepResultModel` (which **is** coupled to `recipe.StepResult`) 
-        interprets the list, including `subresults` and parent relationships, 
-        to build the hierarchical data structure required by the `QTreeView`.
-*   **Coupling:** While the signal/slot communication now uses a dictionary,
-    the final display mechanism via `StepResultModel` is **still coupled**
-    to the `recipe.StepResult` structure. Refactoring `StepResultModel` to work
-    with a pre-processed, purely hierarchical data structure (a ViewModel tailored
-    for the tree view) would be necessary to fully decouple this part of the GUI.
-
-Summary
-=======
-
-*   All communication from `RecipeEventProxy` to `MainWindow` uses Qt signals
-    emitting **ViewModel dictionaries**.
-*   This approach ensures a **consistent interface** and **decouples** the GUI
-    slots from the specific data structures used in the recipe execution logic.
-*   **`step_list` (Top Table):** Live updates are fully decoupled.
-*   **`result_list` (Bottom Tree):** Populated via a dictionary signal, but the
-    underlying `StepResultModel` remains coupled to `recipe.StepResult`. 
+The old architecture used ``RecipeEventProxy`` (a ``QThread``) listening on a
+``SimpleQueue`` and emitting Qt signals with ViewModel dictionaries. The new
+architecture replaces this with a polling background thread in ``HmiClient`` that
+reads typed messages from the ``QueueWrapper`` and emits Qt signals directly. The
+GUI no longer imports ``recipe.StepResult`` or ``recipe.ResultType``.

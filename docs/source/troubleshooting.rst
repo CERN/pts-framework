@@ -2,138 +2,60 @@
 ..
 .. SPDX-License-Identifier: CC-BY-SA-4.0
 
-.. _troubleshooting:
-
 Troubleshooting
-=====
+===============
 
-This guide provides a basic overview troubleshooting for commonly occuring problems and basic setup of the environment.
+GUI does not open (Linux)
+-------------------------
 
+Install the Qt system libraries::
 
+   sudo dnf install libxcb libxcb-devel xcb-util xcb-util-wm xcb-util-keysyms \
+                    xcb-util-image xcb-util-renderutil
 
-basic ``pypts`` environment setup.
-------------
-Issues can often occur due to missing libraries, conflicting versions or conflicting elements in the environment.
+Or run headless: ``QT_QPA_PLATFORM=offscreen python -m pypts``.
 
-If you come into any difficulties, making a fresh virtual environment is recommended.
-To do so, create a new virtual environment in the project folder in a similar position as this.
+Config popup on startup
+-----------------------
 
-.. code-block:: text
+The launcher shows a popup when ``config.ini`` is missing, unreadable, or has a
+wrong structure version. Delete the file to get a fresh one::
 
-     my_project/
-     ├── .venv/
-     ├── /src/pypts/
-     ├── ├── __init__.py
-     ├── ├── __main__.py
-     ├── ├── recipes/
-     ├── ├── ├── simple_recipe_GOLDEN_COPY.yml
-     ├── tests/unit_tests/
-     │   └── other_test_modules.py
-     └── README.md
+   # Windows
+   del "%LOCALAPPDATA%\pypts\config.ini"
+   # Linux
+   rm ~/.config/pypts/config.ini
 
-Activate the environment and install the package within the environment.
+Recipe fails to load
+--------------------
 
-.. code-block:: bash
+Check these common causes:
 
-   # Install in development mode
-   pip install -e .
-   
-   # Or install normally
-   pip install .
+- **Unknown steptype** — the new YAML step-type names differ from the old ones.
+  See :ref:`yaml_format` for the current names (``PythonModule``, ``UserInteraction``,
+  ``Wait``, ``UserWrite``).
+- **Missing required sequence keys** — all six sequence keys are required:
+  ``sequence_name``, ``parameters``, ``locals``, ``outputs``, ``setup_steps``, ``steps``,
+  ``teardown_steps``. An empty list ``[]`` is fine.
+- **YAML type coercion** — ``yes``/``no`` are booleans, ``None`` is the string
+  ``"None"``. Quote values you want to keep as strings.
 
-Before using pypts, you may need to install the following system dependencies for PySide6 (Qt GUI framework):
+ModuleNotFoundError in PythonModuleStep
+---------------------------------------
 
-.. code-block:: bash
+- Verify the module path is relative to the recipe file's directory, or that
+  ``test_package`` is set and the package is installed (``pip install -e .``).
+- All directories in the package must have ``__init__.py``.
 
-   sudo dnf install libxcb libxcb-devel
-   sudo dnf install xcb-util xcb-util-wm xcb-util-keysyms xcb-util-image xcb-util-renderutil
+Step type not available
+-----------------------
 
+``UserLoadingStep`` is not yet ported. ``UserRunMethodStep`` is deprecated (replace
+with a ``UserInteraction`` step followed by a ``PythonModule`` step).
+``SSHConnectStep`` / ``SSHCloseStep`` will move to the HAL layer (Phase 3).
 
-Recipe-related issues. 
------------------------------------------
-Issues related to the recipe are often related to a difference or lack of keys.
+Log file location
+-----------------
 
-**Required framework for recipe**
-
-The specifics in the framework below is required in the prelude of the recipe to run the framework.
-
-.. code-block:: yaml
-
-     name: Example Test Recipe
-     version: 0.1.0
-     recipe_version: 1.0.0
-     description: A sample description of a recipe
-     main_sequence: Main
-     test_package: test_package
-     globals: {}
-
-The Main sequence is also required and consists of the rest of the test cases which exists of the following elements.
-
-.. code-block:: yaml
-    
-     sequence_name: Main
-     description: The main sequence of steps for the example recipe.
-     parameters:
-         target_value: '0'
-     locals:
-         target_value: '45'
-         test_name: Hello
-     outputs:
-         my_output: None
-     setup_steps: []
-     steps:
-     - steptype: UserInteractionStep
-         step_name: Are you all right?
-         description: Asking user for something
-         skip: false
-         input_mapping:
-             message:
-                 type: direct
-                 value: 'example'
-             image_path:
-                 type: direct
-                 value: example.jpg
-             options:
-                 type: direct
-                 value:
-                 - 'yes': ''
-                 - 'no': ''
-         output_mapping:
-             user_response:
-                 type: equals
-                 value: 'yes'
-         - steptype: PythonModuleStep
-         step_name: Run a other_test
-         action_type: method
-         module: example_tests.py
-         method_name: other_test
-         input_mapping: {}
-         output_mapping:
-             some_return:
-                 type: passfail
-             value:
-                 type: local
-                 local_name: test_value
-    
-Above we see an example of an UserInteractionStep type and a PythonModuleStep setup. The UserInteractionStep is used for when the system is awaiting an action from user.
-The PythonModuleStep shows a requirement for determining which module to use and a specification of the method_name to be used.
-
-.. note::
-    Notice that the output_mapping for ``UserInteractionStep`` is user_response, respective to a response on a pushed button. 
-
-**ModuleNotFoundError**
-
-Ensure test_package is properly named in the recipe and that the method_name properly name the specific function to run.
-
-.. note::
-   As of 13/08/2025, the ``run_tests.py`` will run through all the tests, but will not catch lack of test_package which would appear as an error during runtime.
-
-
-**Import Errors**: Make sure all directories have ``__init__.py`` files
-
-**Path Issues**: Remove directory prefixes from module paths in the recipe - just use the filename. Requires the test_package.
-
-**Package Installation**: Ensure your package is installed in the Python environment where you're running pypts
-
-**Failing test despite reading a passing value**: Ensure the datatype that is compared against is equal to the read value, i.e. string cannot be compared to integer.
-
+Run log is written to ``<logs_dir>/pypts_<timestamp>.log`` (see config). Pass
+``--log-level DEBUG`` to get the full message trace.

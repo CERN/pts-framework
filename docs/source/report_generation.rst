@@ -2,68 +2,40 @@
 ..
 .. SPDX-License-Identifier: CC-BY-SA-4.0
 
-=====================
 Report Generation
-=====================
+=================
 
-The pypts framework includes an automated reporting system that generates a detailed CSV report of the execution flow and results of a recipe run. This process runs incrementally in the background.
+The Report is a **thread inside the CORE process**, not a separate daemon. It receives
+typed messages from CORE via a ``QueueWrapper`` (the CORE↔Report link).
 
-Initialization
---------------
+Run lifecycle
+-------------
 
-When a pypts recipe execution is initiated via the ``pts.run_pts`` function:
+1. CORE receives ``RunSequence`` → sends ``RunStarted`` to the Report thread.
+2. Report creates ``<reports_dir>/<timestamp>_<recipe_name>/report.csv`` and writes the
+   CSV header.
+3. As steps finish, CORE forwards ``StepFinished`` events → Report appends a row.
+4. CORE forwards ``RunFinished`` → Report records the overall result.
+5. CORE sends ``GenerateReport`` → Report writes ``report.html`` and sends
+   ``ReportReady`` back to CORE, which forwards it to the HMI.
+6. On shutdown, CORE holds ``StopReport`` until the Sequencer has stopped (plan 002),
+   so the aborted run's tail (CSV rows + HTML) is always written before the Report stops.
 
-1.  A ``SimpleQueue`` named ``report_queue`` is created. This queue serves as the communication channel between the main recipe execution thread and the reporting thread.
-2.  A report output directory is determined. Currently, this is hardcoded within ``pts.run_pts`` to be ``./pts_reports`` relative to the directory where the pypts application was launched. The directory is created if it doesn't exist.
-3.  A dedicated daemon thread is started, running the ``report.report_listener`` function. This function is passed the ``report_queue`` and the path to the output directory.
-4.  The ``report_queue`` is passed to the ``recipe.Runtime`` object, making it accessible during recipe execution.
+Output location
+---------------
 
-Sending Results to the Queue
-----------------------------
+Configured in ``config.ini`` under ``[paths] reports_dir``. Each run creates its own
+subfolder: ``<reports_dir>/<YYYYMMDD_HHMMSS>_<recipe_name>/``.
 
-As the recipe executes, each time a ``recipe.Step`` finishes its execution within the ``Step.run`` method:
+Files per run:
 
-1.  A ``recipe.StepResult`` object, containing details about the step's execution (inputs, outputs, result status, errors, UUIDs, etc.), is created.
-2.  Immediately after the ``post_run_step`` event is emitted, this ``StepResult`` object is placed onto the ``report_queue`` using ``runtime.report_queue.put(step_result)``.
+- ``report.csv`` — one row per step; written incrementally.
+- ``report.html`` — generated after the run; styled summary.
 
-Report Listener (`report_listener`)
------------------------------------
+Difference from old architecture
+---------------------------------
 
-The ``report_listener`` function runs continuously in its own thread, monitoring the ``report_queue``. Its primary responsibilities are:
-
-1.  **Initialization:** Upon starting, it instantiates a ``report.Report`` object, passing it the designated output directory. The ``Report`` object handles the creation and management of the actual report file (``report.csv``).
-2.  **Waiting for Results:** It blocks, waiting for items to appear on the ``report_queue`` using ``result_queue.get()``.
-3.  **Processing Results:**
-    *   If the received item is a ``StepResult`` object, it calls ``report_manager.add_step_result(item)`` to process and write the result to the report file.
-    *   If the received item is the special sentinel object ``report.STOP_LISTENER``, it signifies the end of the recipe execution.
-    *   Any other unexpected item type is logged as a warning.
-4.  **Termination:** Upon receiving the ``STOP_LISTENER`` sentinel, the listener loop terminates.
-
-Report Manager (`Report` Class)
--------------------------------
-
-The ``report.Report`` class manages the actual file I/O for the CSV report:
-
-1.  **Initialization (`__init__`)**:
-    *   Takes the output directory path.
-    *   Creates the directory if needed.
-    *   Opens the ``report.csv`` file in write mode (`'w'`), effectively overwriting any previous report in that location for the current run.
-    *   Creates a ``csv.DictWriter`` instance, configured with the predefined CSV headers.
-    *   Writes the header row to the CSV file.
-2.  **Adding Results (`add_step_result`)**:
-    *   Takes a ``StepResult`` object as input.
-    *   Uses internal helper functions (``_result_to_dict``, ``_flatten_single_result``) to convert the potentially nested ``StepResult`` object into a flat dictionary suitable for a single CSV row. Complex data structures like inputs and outputs are JSON-serialized.
-    *   Writes the flattened dictionary as a row to the CSV file using the ``DictWriter``.
-    *   Flushes the file buffer to ensure the data is written to disk promptly.
-3.  **Finalization (`finish_reports`)**:
-    *   Called by the ``report_listener`` just before it exits.
-    *   Closes the CSV file handle, ensuring all data is saved.
-
-Stopping the Listener
----------------------
-
-When the main recipe execution completes in ``recipe.Recipe.run``:
-
-1.  Before returning the final results, it imports the ``report.STOP_LISTENER`` sentinel object.
-2.  It places this sentinel onto the ``report_queue`` using ``runtime.report_queue.put(STOP_LISTENER)``.
-3.  This signals the ``report_listener`` thread to stop waiting for more results, finalize the report by calling ``
+The old architecture used a ``report_listener`` daemon thread reading a ``SimpleQueue``
+and writing a single ``./pts_reports/report.csv`` (overwritten each run). The new
+architecture uses a per-run folder, typed messages, and the Report is stopped cleanly
+via the message protocol rather than a sentinel object on the queue.
