@@ -5,16 +5,24 @@
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
+    QDialogButtonBox,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPushButton,
     QScrollArea,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
+    QTableWidget,
+    QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -272,12 +280,6 @@ class GlobalsEditorDialog(QDialog):
     """Modal dialog for editing the `globals` header dict."""
 
     def __init__(self, model, parent=None) -> None:
-        from PySide6.QtWidgets import (
-            QDialogButtonBox,
-            QPushButton,
-            QTableWidget,
-            QTableWidgetItem,
-        )
         super().__init__(parent)
         self._model = model
         self.setWindowTitle("Edit Globals")
@@ -309,7 +311,6 @@ class GlobalsEditorDialog(QDialog):
         self._populate(model.header().get("globals") or {})
 
     def _populate(self, globals_dict: dict) -> None:
-        from PySide6.QtWidgets import QTableWidgetItem
         self._table.setRowCount(0)
         for name, value in globals_dict.items():
             row = self._table.rowCount()
@@ -318,15 +319,15 @@ class GlobalsEditorDialog(QDialog):
             self._table.setItem(row, 1, QTableWidgetItem(str(value) if value is not None else ""))
 
     def _add_row(self) -> None:
-        from PySide6.QtWidgets import QTableWidgetItem
         row = self._table.rowCount()
         self._table.insertRow(row)
         self._table.setItem(row, 0, QTableWidgetItem(""))
         self._table.setItem(row, 1, QTableWidgetItem(""))
 
     def _remove_row(self) -> None:
-        for item in self._table.selectedItems():
-            self._table.removeRow(item.row())
+        rows = sorted({item.row() for item in self._table.selectedItems()}, reverse=True)
+        for row in rows:
+            self._table.removeRow(row)
 
     def _on_ok(self) -> None:
         result = {}
@@ -350,12 +351,6 @@ class HeaderStrip(QFrame):
     sequence_changed = Signal(int)
 
     def __init__(self, model, parent=None) -> None:
-        from PySide6.QtWidgets import (
-            QComboBox,
-            QFormLayout,
-            QLineEdit,
-            QPushButton,
-        )
         super().__init__(parent)
         self._model = model
         self._expanded = True
@@ -481,7 +476,6 @@ class HeaderStrip(QFrame):
         self.sequence_changed.emit(idx)
 
     def _add_sequence(self) -> None:
-        from PySide6.QtWidgets import QInputDialog
         name, ok = QInputDialog.getText(self, "Add sequence", "Sequence name:")
         if ok and name.strip():
             self._model.add_sequence(name.strip())
