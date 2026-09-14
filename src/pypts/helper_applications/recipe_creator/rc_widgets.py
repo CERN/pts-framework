@@ -39,8 +39,11 @@ from PySide6.QtGui import (
 )
 from PySide6.QtCore import Qt, QRegularExpression, QTimer, Signal
 
+import yaml
+
 from pypts.helper_applications.recipe_creator.customGUIModules import ScintillaYamlEditor
 from pypts.hmi.gui.palette import get_palette
+from pypts.recipe.rules import INPUT_TYPES, OUTPUT_TYPES, STEP_TYPE_REQUIRED
 
 
 # ── PaletteYamlHighlighter ────────────────────────────────────────────────────
@@ -527,14 +530,15 @@ class MappingRowsWidget(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        step = self._model.steps(self._seq_idx)[self._step_idx]
+        steps = self._model.steps(self._seq_idx)
+        if self._step_idx >= len(steps):
+            return
+        step = steps[self._step_idx]
         mapping = step.get(self._key) or {}
         for name, spec in mapping.items():
             self._rows_layout.addWidget(self._build_row(name, spec))
 
     def _build_row(self, name: str, spec) -> QWidget:
-        from pypts.recipe.rules import INPUT_TYPES, OUTPUT_TYPES
-
         row = QWidget()
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -682,18 +686,18 @@ class MappingYamlWidget(QWidget):
         self._error_label.setStyleSheet(f"color: {p.danger};")
 
     def rebuild(self) -> None:
-        import yaml as _pyyaml
-
-        step = self._model.steps(self._seq_idx)[self._step_idx]
+        steps = self._model.steps(self._seq_idx)
+        if self._step_idx >= len(steps):
+            return
+        step = steps[self._step_idx]
         mapping = step.get(self._key)
-        text = _pyyaml.dump(mapping, default_flow_style=False) if mapping else ""
+        text = yaml.dump(mapping, default_flow_style=False) if mapping else ""
         self._updating = True
         self._editor.setPlainText(text.rstrip())
+        self._debounce.stop()
         self._updating = False
 
     def _on_debounce(self) -> None:
-        import yaml as _pyyaml
-
         if self._updating:
             return
         text = self._editor.toPlainText().strip()
@@ -702,7 +706,7 @@ class MappingYamlWidget(QWidget):
             self._error_label.setVisible(False)
             return
         try:
-            parsed = _pyyaml.safe_load(text)
+            parsed = yaml.safe_load(text)
             if not isinstance(parsed, dict):
                 raise ValueError("Expected a YAML mapping")
             self._model.set_step_field(self._seq_idx, self._step_idx, self._key, parsed)
@@ -816,8 +820,6 @@ class StepFormWidget(QWidget):
         self._outputs_yaml.set_dark(dark)
 
     def rebuild(self) -> None:
-        from pypts.recipe.rules import STEP_TYPE_REQUIRED
-
         steps = self._model.steps(self._seq_idx)
         if self._step_idx >= len(steps):
             return
