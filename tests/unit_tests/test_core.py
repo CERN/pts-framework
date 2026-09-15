@@ -1107,7 +1107,7 @@ def test_a_value_of_the_wrong_type_is_refused_and_the_key_is_named(writable_conf
 
 def test_a_managed_section_is_refused_even_with_a_valid_value(writable_config):
     """
-    `meta.config_version = 2` parses perfectly well. It is refused anyway: a
+    `meta.config_version = 2.0.0` parses perfectly well. It is refused anyway: a
     hand-picked structure version is how a file gets discarded at the next start.
     """
     from pypts.messages.core_hmi_communication import SetConfigParameter
@@ -1115,7 +1115,7 @@ def test_a_managed_section_is_refused_even_with_a_valid_value(writable_config):
     core = build_core_that_spawns_nothing()
     before = writable_config.read_text(encoding="utf-8")
 
-    core.from_hmi.send(SetConfigParameter(key="meta.config_version", value="2"))
+    core.from_hmi.send(SetConfigParameter(key="meta.config_version", value="2.0.0"))
     core.poll_all_sources()
 
     answers = config_answers(core)

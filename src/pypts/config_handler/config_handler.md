@@ -97,7 +97,7 @@ Sections currently in the schema:
 
 | Section | Keys |
 |---|---|
-| `meta` | `config_version` (int, managed by pypts) |
+| `meta` | `config_version` (`MAJOR.MINOR.PATCH` string, managed by pypts) |
 | `operating_system` | `name`, `version`, `architecture`, `kernel` — **derived**, recorded once at creation, never recomputed |
 | `paths` | `base_dir`, `logs_dir`, `reports_dir` — **derived** paths |
 | `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
@@ -190,14 +190,15 @@ it into place, so an interrupted write cannot leave a half-written config behind
 
 ## Structure version — no migration, no repair, discard instead
 
-`CONFIG_VERSION` (in `configuration_schema.py`, currently **4** — version 4 added
-`[gui] window_mode`) is bumped whenever a
-section or key is added, removed or renamed — or when the values a key accepts change.
-Version 2 added `[watchdog]`. Version 3 (September 2026) changed `[gui] theme` from
-`default`/`light`/`dark` to `light`/`dark`/`system` and shipped `light`; a version-2 file
-saying `theme = default` would fail validation anyway, and the bump says why in plain words.
-Every file written before a bump is discarded for the run, which is the whole point of
-having the number.
+`CONFIG_VERSION` (in `configuration_schema.py`) is a `MAJOR.MINOR.PATCH` string, currently
+**`1.0.0`**. Only the **major** number decides whether a file is trusted: `1.3.7` loads under a
+`1.0.0` pypts, `2.0.0` does not, and neither does text that is not three dot-separated numbers.
+
+**The version is not changed for every schema edit.** It changes only when a change adds
+something new that is mandatory — something an existing file cannot work without. It was
+reset to `1.0.0` in September 2026; the bare integers `2`–`4` before that (`[watchdog]`, the
+`[gui] theme` values, `[gui] window_mode`) were refactor-branch history, and a file still
+saying `config_version = 4` is not a `MAJOR.MINOR.PATCH` version, so it is discarded.
 
 There used to be a migration/repair pass in `bootstrap()` (renamed keys moved via a
 `DEPRECATED` map, new keys added, `config.ini.v<n>.bak` backups, newer files refused). It was
@@ -206,10 +207,10 @@ user's job — edit it by hand, or delete it to have it recreated from the templ
 
 `_load_or_discard()` decides what an existing file is worth, and the decision is whole-file:
 
-- Reads as INI, version **==** code version, every value validates → **LOADED**: the file is
-  in force. A version match alone is a DEBUG note.
-- Anything wrong — cannot be opened at all, not INI, version **≠** code version (older *or*
-  newer), a missing key or section, a value of the wrong type → **DISCARDED**: the template
+- Reads as INI, same major version as the code, every value validates → **LOADED**: the file
+  is in force. A version match alone is a DEBUG note.
+- Anything wrong — cannot be opened at all, not INI, a different major version (older *or*
+  newer) or an unreadable one, a missing key or section, a value of the wrong type → **DISCARDED**: the template
   defaults are built in memory (`_build_from_defaults()`), **nothing is written**, the reason
   lands in `bootstrap_problem` and as an ERROR in the log, and the launcher shows the operator
   a notice. The run continues on the defaults.
@@ -274,10 +275,14 @@ Two file-format details worth knowing:
 1. Add the `Field` to `SCHEMA` in `configuration_schema.py`.
 2. Add the same key, with its default and a comment, to `config_template.ini`. Derived keys
    ship **blank**.
-3. Bump `CONFIG_VERSION` in `configuration_schema.py` **and** the literal `config_version`
-   in the template — the two are checked against each other.
-4. There is no migration: an existing file now reports a version mismatch at ERROR until its
-   owner updates it by hand or deletes it to have it recreated from the template.
+3. **Only if the change adds something new that is mandatory**, change `CONFIG_VERSION` in
+   `configuration_schema.py` **and** the literal `config_version` in the template — the two
+   are checked against each other. Otherwise leave the version alone; ask when unsure.
+4. There is no migration: after a major change an existing file reports a version mismatch at
+   ERROR until its owner updates it by hand or deletes it to have it recreated.
+
+Note that every schema key is currently required: a key the file lacks fails validation and
+discards the file, whatever the version says.
 
 `tests/unit_tests/test_config_handler.py::test_schema_and_template_agree` fails if a key
 exists in one and not the other; `test_every_template_default_is_valid_for_its_type` fails if

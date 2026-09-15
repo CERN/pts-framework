@@ -212,6 +212,12 @@ Config file: `%LOCALAPPDATA%\pypts\config.ini` (Windows) / `~/.config/pypts/conf
 (Linux). Ships as DEBUG level during the refactor (see §1.6 for revert TODO).
 A broken or version-mismatched file is discarded and the run continues on template defaults.
 
+**Config structure version** (`CONFIG_VERSION` in `config_handler/configuration_schema.py`,
+mirrored in `config_template.ini`) is a `MAJOR.MINOR.PATCH` string, currently `1.0.0`; only
+the major number must match for a file to be trusted. **Do not change it automatically** when
+editing the schema — only when a change adds something new that is mandatory. If unsure
+whether a change qualifies, ask.
+
 ## Quality gates
 
 All three must pass before any change is called done:

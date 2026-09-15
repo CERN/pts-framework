@@ -32,20 +32,19 @@ pre-empt the answer.
 
 from dataclasses import dataclass
 
-#: Bumped whenever a section or key is added, removed or renamed. An existing
-#: config.ini declaring a different version is not trusted at all: it is
-#: discarded for the run (template defaults in memory, a notice at startup, an
-#: ERROR in the log) - pypts never modifies an existing file. Bringing it up to
-#: date is the user's job: edit it by hand, or delete it to have it recreated
-#: from the template.
-#: Version 2 added [watchdog]. Every config.ini written before it is discarded
-#: for the run and the user is told to delete it - which is the whole point of
-#: the version, and cheap on a refactor branch.
-#: Version 3 changed the values `[gui] theme` accepts: "default" became
-#: "system", and "light" became the shipped value. A version-2 file saying
-#: `theme = default` would fail validation anyway; the bump says why plainly.
-#: Version 4 added `[gui] window_mode`.
-CONFIG_VERSION = 4
+#: The structure version, MAJOR.MINOR.PATCH. Only the MAJOR number decides
+#: whether an existing config.ini is trusted: a file declaring a different major
+#: number (or no readable version at all) is discarded for the run (template
+#: defaults in memory, a notice at startup, an ERROR in the log) - pypts never
+#: modifies an existing file. Bringing it up to date is the user's job: edit it
+#: by hand, or delete it to have it recreated from the template.
+#:
+#: Do not change the version for every edit to the schema. It changes only when
+#: the change adds something new that is mandatory - something an existing file
+#: cannot work without. Reset to 1.0.0 in September 2026; the integer versions
+#: 2-4 before it ([watchdog], the `[gui] theme` values, `[gui] window_mode`)
+#: belong to the refactor branch and are not continued.
+CONFIG_VERSION = "1.0.0"
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
 #: that a file written by hand behaves the way an INI file is expected to.
@@ -83,7 +82,7 @@ LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 #: nothing and read as structure.
 SCHEMA: dict[str, dict[str, Field]] = {
     "meta": {
-        "config_version": Field("int", str(CONFIG_VERSION)),
+        "config_version": Field("str", CONFIG_VERSION),
     },
     "operating_system": {
         "name": Field("str", derived=True),

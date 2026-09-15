@@ -280,8 +280,8 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       containing <code>report.csv</code> (written step by step) and <code>report.html</code>.</li>
   <li><strong>Run log</strong>: one file per run. Its first lines give the version, the user and
       the machine, which makes it useful to attach to a bug report.</li>
-  <li><strong>config.ini</strong>: created on the first start. If it's broken or from an older
-      version, PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
+  <li><strong>config.ini</strong>: created on the first start. If it's broken or from an incompatible
+      version (a different major number in <code>config_version</code>), PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
       Fix the file, or delete it to have it recreated.</li>
 </ul>
 

@@ -364,9 +364,9 @@ class ConfigHandler:
         return self._path
 
     @property
-    def config_version(self) -> int:
-        """Structure version of the file on disk."""
-        return int(self._raw.get("meta", {}).get("config_version", 0))
+    def config_version(self) -> str:
+        """Structure version of the file on disk, as written (MAJOR.MINOR.PATCH)."""
+        return self._raw.get("meta", {}).get("config_version", "")
 
     # --- writing --------------------------------------------------------------
 
@@ -525,22 +525,25 @@ class ConfigHandler:
         at all; the caller discards it. The version key itself is not repaired
         or rewritten, like everything else in the file.
         """
-        found_version = raw.get("meta", {}).get("config_version", "0")
-        try:
-            file_version = int(found_version)
-        except ValueError:
-            file_version = 0
+        found_version = raw.get("meta", {}).get("config_version", "")
+        file_major = _major_version(found_version)
+        if file_major is None:
+            return (
+                f"It declares structure version {found_version!r}, which is not a "
+                f"MAJOR.MINOR.PATCH version; this pypts expects {CONFIG_VERSION}."
+            )
 
-        if file_version == CONFIG_VERSION:
+        if file_major == _major_version(CONFIG_VERSION):
             self._note(
                 logging.DEBUG,
-                f"Configuration declares the current structure version {CONFIG_VERSION}.",
+                f"Configuration declares structure version {found_version}, compatible "
+                f"with this pypts' {CONFIG_VERSION}.",
             )
             return None
 
         return (
-            f"It declares structure version {file_version}, but this pypts expects "
-            f"{CONFIG_VERSION}."
+            f"It declares structure version {found_version}, but this pypts expects "
+            f"{CONFIG_VERSION} (the major number must match)."
         )
 
     def _validate(self, raw: dict[str, dict[str, str]]) -> dict[str, dict[str, Any]]:
@@ -687,6 +690,20 @@ def _default_paths() -> dict[str, str]:
         "logs_dir": str(base / "logs"),
         "reports_dir": str(base / "reports"),
     }
+
+
+def _major_version(text: str) -> int | None:
+    """
+    The MAJOR number of a MAJOR.MINOR.PATCH version, or None if `text` is not
+    one - including the bare integers the refactor branch used to write.
+    """
+    parts = text.strip().split(".")
+    if len(parts) != 3:
+        return None
+    for part in parts:
+        if not part.isdigit():
+            return None
+    return int(parts[0])
 
 
 def _field_for(section: str, key: str) -> Field | None:

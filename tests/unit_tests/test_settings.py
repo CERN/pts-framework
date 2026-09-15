@@ -654,7 +654,7 @@ def test_an_answer_with_no_dialog_open_goes_to_the_status_line(gui_factory):
 def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monkeypatch):
     from pypts.hmi.gui.settings_dialog import SettingsDialog
 
-    a_config_file({"meta.config_version": "1"})
+    a_config_file({"meta.config_version": "2.0.0"})
     instance, _outbox, _inbox = gui_factory()
     seen = {}
 
@@ -666,7 +666,7 @@ def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monke
     monkeypatch.setattr(SettingsDialog, "exec", look_at_the_dialog)
     instance.window.settings_action.trigger()
 
-    assert "structure version 1" in seen["problem"]
+    assert "structure version 2.0.0" in seen["problem"]
     assert seen["can_save"] is False
 
 

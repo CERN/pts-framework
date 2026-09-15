@@ -487,7 +487,7 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
     is never touched, and the reason is an ERROR in the log.
     """
     mismatched = config_path.read_text(encoding="utf-8").replace(
-        f"config_version = {CONFIG_VERSION}", f"config_version = {CONFIG_VERSION + 5}"
+        f"config_version = {CONFIG_VERSION}", "config_version = 2.0.0"
     )
     mismatched = mismatched.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(mismatched, encoding="utf-8")
@@ -497,7 +497,7 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
 
     assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
     assert handler.bootstrap_problem is not None
-    assert str(CONFIG_VERSION + 5) in handler.bootstrap_problem
+    assert "2.0.0" in handler.bootstrap_problem
     assert f"expects {CONFIG_VERSION}" in handler.bootstrap_problem
     # The defaults are in force, not the file's values.
     assert handler.get_parameter("gui.window_width") == 1280
@@ -510,6 +510,44 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
     assert "discarded" in caplog.text
     assert f"expects {CONFIG_VERSION}" in caplog.text
     assert str(config_path) in caplog.text
+
+
+def test_a_different_minor_or_patch_version_is_still_loaded(config, config_path):
+    """
+    Only the major number decides. A file from a pypts with a different minor or
+    patch number is trusted, and its values are the ones in force.
+    """
+    newer = config_path.read_text(encoding="utf-8").replace(
+        f"config_version = {CONFIG_VERSION}", "config_version = 1.3.7"
+    )
+    newer = newer.replace("window_width = 1280", "window_width = 999")
+    config_path.write_text(newer, encoding="utf-8")
+    ConfigHandler.reset_for_testing()
+
+    handler = _bootstrap_before_logging()
+
+    assert handler.bootstrap_outcome is BootstrapOutcome.LOADED
+    assert handler.config_version == "1.3.7"
+    assert handler.get_parameter("gui.window_width") == 999
+
+
+def test_a_version_that_is_not_major_minor_patch_discards_the_file(config, config_path):
+    """
+    The integer versions of the refactor branch (`config_version = 4`) are not
+    read as major 4, or as anything: the reason names the text found.
+    """
+    old_style = config_path.read_text(encoding="utf-8").replace(
+        f"config_version = {CONFIG_VERSION}", "config_version = 4"
+    )
+    config_path.write_text(old_style, encoding="utf-8")
+    ConfigHandler.reset_for_testing()
+
+    handler = _bootstrap_before_logging()
+
+    assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert handler.bootstrap_problem is not None
+    assert "'4'" in handler.bootstrap_problem
+    assert "MAJOR.MINOR.PATCH" in handler.bootstrap_problem
 
 
 def test_a_discarded_configuration_refuses_runtime_writes(config, config_path):
@@ -588,7 +626,7 @@ def test_finding_an_existing_file_is_narrated(config, config_path, caplog):
         handler.replay_bootstrap_log()
 
     assert "Found an existing configuration file" in caplog.text
-    assert "declares the current structure version" in caplog.text
+    assert f"compatible with this pypts' {CONFIG_VERSION}" in caplog.text
     assert "creating one from the template" not in caplog.text
 
 
