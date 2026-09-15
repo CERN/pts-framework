@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The right-side content: InteractionPanel (idle / prompt / text) + LogPanel.
+The right-side content: InteractionPanel (idle / prompt / text / path) + LogPanel.
 
 The left side (idle placeholder / step table / results) is owned by
 PtsMainWindow and managed via _switch_screen(). This widget manages only the
@@ -15,9 +15,9 @@ right column and the exact-once answer contract:
     RunFinished, a superseding request, and the operator's own Cancel button.
     All three answer None, and the step that asked turns that into an ERROR.
 
-Both questions live in the one InteractionPanel, which is why there is no
-stack here any more: a button prompt and a text prompt differ by which row is
-shown under the same picture and the same message. The panel that used to sit
+All three questions live in the one InteractionPanel, which is why there is no
+stack here any more: a button prompt, a text prompt and a path prompt differ by
+which row is shown under the same picture and the same message. The panel that used to sit
 beside it asked specifically for a serial number - a question the framework no
 longer has an opinion about, since a recipe asks it with a UserWrite step.
 """
@@ -29,7 +29,7 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from pypts.hmi.gui.interaction_panel import InteractionPanel
 from pypts.hmi.gui.log_panel import LogPanel
 from pypts.messages.common_messages import StepOutcome
-from pypts.messages.run_events import UserPromptRequest, UserTextRequest
+from pypts.messages.run_events import UserPathRequest, UserPromptRequest, UserTextRequest
 
 
 class CenterContent(QWidget):
@@ -104,6 +104,14 @@ class CenterContent(QWidget):
         self.cancel_pending()
         self._pending = (request.request_id, answer)
         self.interaction.set_text_prompt(request.message, request.image_path)
+
+    def show_path_request(
+        self, request: UserPathRequest, answer: Callable[[str | None], None]
+    ) -> None:
+        """The file-or-folder question. Same contract as show_prompt(), same panel."""
+        self.cancel_pending()
+        self._pending = (request.request_id, answer)
+        self.interaction.set_path_prompt(request.message, request.select, request.image_path)
 
     def show_idle(self) -> None:
         self.interaction.set_idle()

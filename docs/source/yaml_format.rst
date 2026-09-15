@@ -75,9 +75,10 @@ Step types
    * - ``UserWrite``
      - Prompt operator to type a string (text-entry mode only)
      - Available
-   * - ``UserLoadingStep``
-     - Prompt operator to pick a file
-     - **Not yet ported**
+   * - ``UserLoading``
+     - Prompt operator to pick a file or a folder (``select: file`` / ``folder``);
+       the absolute path is the output
+     - Available
    * - ``SSHConnectStep`` / ``SSHCloseStep``
      - Open / close an SSH connection
      - **Moved to HAL (Phase 3+)**

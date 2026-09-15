@@ -10,10 +10,12 @@
 #
 # One steptype per demo recipe in this folder:
 #   pythonmodulestep_demo.yml    this file
-#   userinteractionstep_demo.yml asking the operator
+#   userinteractionstep_demo.yml asking the operator to choose
+#   userwritestep_demo.yml       asking the operator to type
+#   userloadingstep_demo.yml     asking the operator to pick a file or folder
 #   indexedstep_demo.yml         one authored step, N real ones
 #   wait_recipe.yml              the Wait step
-#   all_steptypes_demo.yml       all four together, for a single test run
+#   all_steptypes_demo.yml       all of them together, for a single test run
 #
 # Header: only `name` is mandatory. `main_sequence` is omitted here, so the
 # first sequence in the file is the one a frontend offers to run.

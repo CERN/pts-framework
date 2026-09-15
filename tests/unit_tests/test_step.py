@@ -26,6 +26,7 @@ from pypts.messages.run_events import (
     StepExecuted,
     StepFinished,
     StepStarted,
+    UserPathRequest,
 )
 from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.registry import STEP_TYPES, build_step
@@ -41,6 +42,7 @@ from pypts.step.step import (
     run_sequence,
 )
 from pypts.step.user_interaction_step import UserInteractionStep
+from pypts.step.user_loading_step import UserLoadingStep
 from pypts.step.user_write_step import UserWriteStep
 from pypts.step.wait_step import WaitStep
 
@@ -1385,6 +1387,155 @@ def test_the_registry_builds_a_user_write_step():
     )
     assert isinstance(step, UserWriteStep)
     assert step.message == "Type the serial number"
+
+
+# --------------------------------------------------------------------------
+# UserLoadingStep - the operator picks a file or a folder
+# --------------------------------------------------------------------------
+
+
+def test_user_loading_step_asks_and_returns_the_absolute_file_path(tmp_path):
+    chosen = tmp_path / "cal.csv"
+    chosen.write_text("1,2,3", encoding="utf-8")
+    seen = []
+    step = UserLoadingStep(
+        step_name="pick_calibration_file",
+        message="Select the calibration file",
+        outputs={"output": {"type": "global", "global_name": "calibration_file"}},
+    )
+    runtime = Runtime(ask=make_asker(str(chosen), seen))
+    result = step.run(runtime)
+
+    assert result.result is ResultType.DONE
+    assert result.outputs == {"output": str(chosen.resolve())}
+    assert runtime.get_global("calibration_file") == str(chosen.resolve())
+    assert len(seen) == 1
+    assert isinstance(seen[0], UserPathRequest)
+    assert seen[0].message == "Select the calibration file"
+    assert seen[0].select == "file"
+    assert seen[0].image_path is None
+
+
+def test_user_loading_step_stores_an_absolute_path_for_a_relative_answer(tmp_path, monkeypatch):
+    """What is stored is resolved, whatever form the answer came in."""
+    (tmp_path / "cal.csv").write_text("x", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    step = UserLoadingStep(step_name="pick", message="Pick")
+    result = step.run(Runtime(ask=make_asker("cal.csv")))
+    assert result.outputs == {"output": str((tmp_path / "cal.csv").resolve())}
+
+
+def test_user_loading_step_folder_mode(tmp_path):
+    folder = tmp_path / "dumps"
+    folder.mkdir()
+    seen = []
+    step = UserLoadingStep(step_name="pick_folder", message="Pick the folder", select="folder")
+    result = step.run(Runtime(ask=make_asker(str(folder), seen)))
+
+    assert result.result is ResultType.DONE
+    assert result.outputs == {"output": str(folder.resolve())}
+    assert seen[0].select == "folder"
+
+
+def test_user_loading_step_select_is_case_insensitive():
+    step = UserLoadingStep(step_name="pick", message="Pick", select="Folder")
+    assert step.select == "folder"
+
+
+def test_user_loading_step_refuses_an_unknown_select():
+    with pytest.raises(ValueError, match="'select' must be 'file' or 'folder'") as excinfo:
+        UserLoadingStep(step_name="pick", message="Pick", select="directory")
+    assert "directory" in str(excinfo.value)
+
+
+def test_user_loading_step_a_path_that_does_not_exist_is_a_step_error(tmp_path):
+    missing = tmp_path / "no_such_file.csv"
+    step = UserLoadingStep(step_name="pick", message="Pick")
+    result = step.run(Runtime(ask=make_asker(str(missing))))
+    assert result.result is ResultType.ERROR
+    assert "no_such_file.csv" in result.error_info
+    assert "does not exist" in result.error_info
+
+
+def test_user_loading_step_a_folder_given_for_a_file_is_a_step_error(tmp_path):
+    step = UserLoadingStep(step_name="pick", message="Pick", select="file")
+    result = step.run(Runtime(ask=make_asker(str(tmp_path))))
+    assert result.result is ResultType.ERROR
+    assert str(tmp_path) in result.error_info
+    assert "not a file" in result.error_info
+
+
+def test_user_loading_step_a_file_given_for_a_folder_is_a_step_error(tmp_path):
+    chosen = tmp_path / "cal.csv"
+    chosen.write_text("x", encoding="utf-8")
+    step = UserLoadingStep(step_name="pick", message="Pick", select="folder")
+    result = step.run(Runtime(ask=make_asker(str(chosen))))
+    assert result.result is ResultType.ERROR
+    assert "cal.csv" in result.error_info
+    assert "not a folder" in result.error_info
+
+
+def test_user_loading_step_an_empty_answer_is_a_step_error():
+    """Path('') is the current directory - it must not pass as a folder."""
+    step = UserLoadingStep(step_name="pick", message="Pick", select="folder")
+    result = step.run(Runtime(ask=make_asker("")))
+    assert result.result is ResultType.ERROR
+    assert "empty path" in result.error_info
+
+
+def test_user_loading_step_no_answer_is_a_step_error():
+    """Same one rule as the other two prompting types - ask_or_raise."""
+    step = UserLoadingStep(step_name="ignored", message="Pick")
+    result = step.run(Runtime(ask=make_asker(None)))
+    assert result.result is ResultType.ERROR
+    assert "cancelled" in result.error_info
+
+
+def test_user_loading_step_says_so_when_the_run_was_stopped():
+    step = UserLoadingStep(step_name="aborted", message="Pick")
+    runtime = Runtime(ask=make_asker(None), should_stop=lambda: True)
+    result = step.run(runtime)
+    assert result.result is ResultType.ERROR
+    assert "stopped" in result.error_info
+
+
+def test_user_loading_step_resolves_the_image_beside_the_recipe(tmp_path):
+    image = tmp_path / "cal.png"
+    image.write_bytes(b"not really a png")
+    chosen = tmp_path / "cal.csv"
+    chosen.write_text("x", encoding="utf-8")
+    seen = []
+    step = UserLoadingStep(
+        step_name="pick",
+        message="Pick",
+        select="FILE",
+        image_path="cal.png",
+    )
+    step.run(Runtime(ask=make_asker(str(chosen), seen), base_dir=str(tmp_path)))
+    assert seen[0].image_path == str(image.resolve())
+    assert seen[0].select == "file"
+
+
+def test_user_loading_step_missing_image_is_a_step_error(tmp_path):
+    seen = []
+    step = UserLoadingStep(step_name="pick", message="Pick", image_path="no_such_image.png")
+    result = step.run(Runtime(ask=make_asker("anything", seen), base_dir=str(tmp_path)))
+    assert result.result is ResultType.ERROR
+    assert "no_such_image.png" in result.error_info
+    assert seen == [], "nothing should be asked when the image is wrong"
+
+
+def test_the_registry_builds_a_user_loading_step():
+    step = build_step(
+        {
+            "steptype": "UserLoading",
+            "step_name": "pick_calibration_file",
+            "message": "Select the calibration file",
+            "select": "folder",
+        }
+    )
+    assert isinstance(step, UserLoadingStep)
+    assert step.select == "folder"
 
 
 # --------------------------------------------------------------------------

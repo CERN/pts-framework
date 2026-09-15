@@ -23,7 +23,6 @@ between them.
 
 import logging
 import queue
-import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -33,10 +32,8 @@ from pypts.config_handler import file_locations
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ErrorSeverity, ModuleError, ResultType, StepOutcome
 from pypts.messages.core_hmi_communication import (
-    ConfigParameterResult,
     HmiStopped,
     ModuleErrorReported,
-    SetConfigParameter,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
@@ -52,6 +49,8 @@ from pypts.messages.run_events import (
     StepStarted,
     StepSummary,
     StopSequence,
+    UserPathRequest,
+    UserPathResponse,
     UserPromptRequest,
     UserPromptResponse,
     UserTextRequest,
@@ -520,6 +519,242 @@ def test_a_text_request_supersedes_an_unanswered_prompt(gui):
 
     assert UserPromptResponse(request_id=prompt.request_id, choice=None) in drain(outbox)
     assert "Type it" in instance.center.prompt_message.text()
+
+
+# --------------------------------------------------------------------------
+# The center view - the path prompt (UserLoading)
+# --------------------------------------------------------------------------
+
+
+def a_path_request(select="file", message="Select the calibration file for this unit."):
+    return UserPathRequest(request_id=uuid4(), message=message, select=select)
+
+
+def no_real_file_dialog(monkeypatch, chosen_file="", chosen_folder=""):
+    """Replace both choosers the path page can open, so no real dialog appears.
+    Returns the list of calls, each (kind, start_folder)."""
+    from pypts.hmi.gui import interaction_panel
+
+    calls = []
+
+    def fake_open_file_name(parent, caption="", start_folder=""):
+        calls.append(("file", start_folder))
+        return chosen_file, ""
+
+    def fake_existing_directory(parent, caption="", start_folder=""):
+        calls.append(("folder", start_folder))
+        return chosen_folder
+
+    monkeypatch.setattr(interaction_panel.QFileDialog, "getOpenFileName", fake_open_file_name)
+    monkeypatch.setattr(
+        interaction_panel.QFileDialog, "getExistingDirectory", fake_existing_directory
+    )
+    return calls
+
+
+def test_a_path_request_shows_the_path_page(gui):
+    instance, _outbox, inbox = gui
+
+    request = a_path_request()
+    inbox.send(request)
+    instance.poll_core()
+
+    center = instance.center
+    panel = center.interaction
+    assert not panel.is_idle()
+    assert "calibration file" in center.prompt_message.text()
+    assert panel.path_input.text() == ""
+    assert panel.path_browse_button.text() == "Browse..."
+    assert not panel.path_ok_button.isEnabled()
+
+
+def test_path_ok_is_disabled_until_the_path_is_an_existing_file(gui, tmp_path):
+    instance, _outbox, _inbox = gui
+    instance.ask_user_path(a_path_request(select="file"))
+    panel = instance.center.interaction
+
+    assert not panel.path_ok_button.isEnabled()
+    assert panel.path_hint_label.text() != ""
+
+    panel.path_input.setText(str(tmp_path / "missing.csv"))
+    assert not panel.path_ok_button.isEnabled()
+    assert panel.path_hint_label.text() == "No such file."
+
+    panel.path_input.setText(str(tmp_path))
+    assert not panel.path_ok_button.isEnabled()
+    assert panel.path_hint_label.text() == "That is a folder - a file is asked for."
+
+    calibration = tmp_path / "unit42.csv"
+    calibration.write_text("1,2,3")
+    panel.path_input.setText(str(calibration))
+    assert panel.path_ok_button.isEnabled()
+    assert panel.path_hint_label.text() == ""
+
+
+def test_path_ok_is_disabled_until_the_path_is_an_existing_folder(gui, tmp_path):
+    instance, _outbox, _inbox = gui
+    instance.ask_user_path(a_path_request(select="folder", message="Pick the dump folder"))
+    panel = instance.center.interaction
+
+    panel.path_input.setText(str(tmp_path / "no_such_folder"))
+    assert not panel.path_ok_button.isEnabled()
+    assert panel.path_hint_label.text() == "No such folder."
+
+    a_file = tmp_path / "a_file.txt"
+    a_file.write_text("x")
+    panel.path_input.setText(str(a_file))
+    assert not panel.path_ok_button.isEnabled()
+    assert panel.path_hint_label.text() == "That is a file - a folder is asked for."
+
+    panel.path_input.setText(str(tmp_path))
+    assert panel.path_ok_button.isEnabled()
+    assert panel.path_hint_label.text() == ""
+
+
+def test_path_ok_sends_the_absolute_path_to_core(gui, tmp_path):
+    instance, outbox, _inbox = gui
+    request = a_path_request()
+    instance.ask_user_path(request)
+    panel = instance.center.interaction
+    calibration = tmp_path / "unit42.csv"
+    calibration.write_text("1,2,3")
+
+    panel.path_input.setText(f"  {calibration}  ")
+    panel.path_ok_button.click()
+
+    expected = UserPathResponse(request_id=request.request_id, path=str(calibration.resolve()))
+    assert expected in drain(outbox)
+    assert panel.is_idle()
+
+
+def test_a_relative_path_is_sent_absolute(gui, tmp_path, monkeypatch):
+    """CORE would resolve a relative path against its own working directory."""
+    instance, outbox, _inbox = gui
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "cal").mkdir()
+    request = a_path_request(select="folder")
+    instance.ask_user_path(request)
+    panel = instance.center.interaction
+
+    panel.path_input.setText("cal")
+    assert panel.path_ok_button.isEnabled()
+    panel.path_ok_button.click()
+
+    sent = drain(outbox)
+    expected = str((tmp_path / "cal").resolve())
+    assert UserPathResponse(request_id=request.request_id, path=expected) in sent
+    assert Path(expected).is_absolute()
+
+
+def test_return_in_the_path_field_answers_only_when_valid(gui, tmp_path):
+    instance, outbox, _inbox = gui
+    request = a_path_request()
+    instance.ask_user_path(request)
+    panel = instance.center.interaction
+
+    panel.path_input.setText(str(tmp_path / "missing.csv"))
+    panel.path_input.returnPressed.emit()
+    assert drain(outbox) == []
+    assert not panel.is_idle()
+
+    calibration = tmp_path / "unit42.csv"
+    calibration.write_text("1,2,3")
+    panel.path_input.setText(str(calibration))
+    panel.path_input.returnPressed.emit()
+    expected = UserPathResponse(request_id=request.request_id, path=str(calibration.resolve()))
+    assert expected in drain(outbox)
+
+
+def test_browse_fills_the_path_field_from_the_file_chooser(gui, tmp_path, monkeypatch):
+    instance, _outbox, _inbox = gui
+    calibration = tmp_path / "unit42.csv"
+    calibration.write_text("1,2,3")
+    # Qt hands paths out with forward slashes.
+    calls = no_real_file_dialog(monkeypatch, chosen_file=calibration.as_posix())
+    instance.ask_user_path(a_path_request(select="file"))
+    panel = instance.center.interaction
+
+    panel.path_browse_button.click()
+
+    assert calls == [("file", "")]
+    assert panel.path_input.text() == str(calibration)
+    assert panel.path_ok_button.isEnabled()
+
+
+def test_browse_uses_the_folder_chooser_and_starts_where_the_field_points(
+    gui, tmp_path, monkeypatch
+):
+    instance, _outbox, _inbox = gui
+    start = tmp_path / "start"
+    start.mkdir()
+    chosen = tmp_path / "chosen"
+    chosen.mkdir()
+    calls = no_real_file_dialog(monkeypatch, chosen_folder=str(chosen))
+    instance.ask_user_path(a_path_request(select="folder"))
+    panel = instance.center.interaction
+    panel.path_input.setText(str(start))
+
+    panel.path_browse_button.click()
+
+    assert calls == [("folder", str(start.resolve()))]
+    assert panel.path_input.text() == str(chosen)
+
+
+def test_a_cancelled_chooser_leaves_the_path_field_unchanged(gui, tmp_path, monkeypatch):
+    instance, outbox, _inbox = gui
+    calibration = tmp_path / "unit42.csv"
+    calibration.write_text("1,2,3")
+    calls = no_real_file_dialog(monkeypatch, chosen_file="")
+    instance.ask_user_path(a_path_request(select="file"))
+    panel = instance.center.interaction
+    panel.path_input.setText(str(calibration))
+
+    panel.path_browse_button.click()
+
+    # A file in the field: the chooser starts in the folder that holds it.
+    assert calls == [("file", str(tmp_path.resolve()))]
+    assert panel.path_input.text() == str(calibration)
+    assert drain(outbox) == []
+    assert not panel.is_idle()
+
+
+def test_the_cancel_button_declines_the_path_prompt(gui):
+    instance, outbox, _inbox = gui
+    request = a_path_request()
+    instance.ask_user_path(request)
+
+    instance.center.interaction.path_cancel_button.click()
+
+    assert UserPathResponse(request_id=request.request_id, path=None) in drain(outbox)
+    assert instance.center.interaction.is_idle()
+
+
+def test_run_finished_cancels_a_pending_path_prompt(gui):
+    instance, outbox, inbox = gui
+    request = a_path_request()
+    instance.ask_user_path(request)
+
+    inbox.send(RunFinished(result=ResultType.STOP))
+    instance.poll_core()
+
+    assert UserPathResponse(request_id=request.request_id, path=None) in drain(outbox)
+    assert instance.center.interaction.is_idle()
+
+
+def test_a_path_request_supersedes_an_unanswered_text_request(gui):
+    """Three questions, one panel: the exactly-once gate spans all of them."""
+    instance, outbox, _inbox = gui
+    text_request = UserTextRequest(request_id=uuid4(), message="Type it")
+    path_request = a_path_request(message="Pick it")
+
+    instance.ask_user_text(text_request)
+    instance.ask_user_path(path_request)
+
+    assert UserTextResponse(request_id=text_request.request_id, text=None) in drain(outbox)
+    panel = instance.center.interaction
+    assert "Pick it" in instance.center.prompt_message.text()
+    assert not panel._text_row.isVisibleTo(panel)
+    assert panel._path_page.isVisibleTo(panel)
 
 
 # --------------------------------------------------------------------------
@@ -1833,364 +2068,3 @@ def test_a_new_recipe_clears_the_metadata_of_the_last_run(gui):
 
     assert instance.top_bar.metadata_label.text() == ""
     assert not instance.top_bar.metadata_label.isVisibleTo(instance.top_bar)
-
-
-# --------------------------------------------------------------------------
-# Edit > Configuration
-# --------------------------------------------------------------------------
-
-
-def a_config_file(settings=None):
-    """
-    Write a real config.ini where `isolated_configuration` points, with some
-    values replaced, then drop the singleton - so the GUI built next reads the
-    file the way a GUI process would.
-
-    Args:
-        settings: dotted key -> value as it should appear in the file, e.g.
-            {"gui.theme": "dark"}. Replaced inside its own section, because
-            `theme` is a key of both [report] and [gui].
-    """
-    from pypts.config_handler import ConfigHandler
-
-    path = file_locations.config_file_path()
-    ConfigHandler.bootstrap()
-    text = path.read_text(encoding="utf-8")
-    for dotted, value in (settings or {}).items():
-        section, _, key = dotted.rpartition(".")
-        head, header, rest = text.partition(f"[{section}]")
-        rest = re.sub(rf"^{key} = .*$", f"{key} = {value}", rest, count=1, flags=re.MULTILINE)
-        text = head + header + rest
-    path.write_text(text, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
-    return path
-
-
-@pytest.fixture
-def gui_factory(qapp):
-    """
-    Builds a GUI when the test asks, so config.ini can be written first - the
-    `gui` fixture builds its window before the test body runs.
-    """
-    from pypts.hmi.gui.gui import GUI
-
-    built = []
-
-    def build():
-        outbox: queue.Queue = queue.Queue()
-        inbox: queue.Queue = queue.Queue()
-        instance = GUI(QueueWrapper(outbox), QueueWrapper(inbox))
-        built.append(instance)
-        return instance, outbox, QueueWrapper(inbox)
-
-    yield build
-    for instance in built:
-        instance.timer.stop()
-        instance.window.allow_close = True
-        instance.window.close()
-
-
-def settings_in_force(tmp_path):
-    """What a dialog is opened with: every editable key, as text."""
-    return {
-        "paths.base_dir": str(tmp_path),
-        "paths.logs_dir": str(tmp_path / "logs"),
-        "paths.reports_dir": str(tmp_path / "reports"),
-        "logging.level": "INFO",
-        "report.type": "html",
-        "report.theme": "default",
-        "gui.theme": "default",
-        "gui.window_width": "1280",
-        "gui.window_height": "720",
-        "watchdog.enabled": "true",
-    }
-
-
-def a_configuration_dialog(tmp_path, sent=None, **options):
-    from pypts.hmi.gui.configuration_dialog import ConfigurationDialog
-
-    if sent is None:
-        sent = []
-    return ConfigurationDialog(
-        settings_in_force(tmp_path), lambda key, value: sent.append((key, value)), **options
-    )
-
-
-def test_edit_offers_configuration(gui):
-    instance, _outbox, _inbox = gui
-
-    assert instance.window.configuration_action.text() == "Configuration..."
-    assert instance.window.configuration_action.isEnabled() is True
-
-
-def test_the_dialog_offers_every_setting_but_the_managed_ones(qapp, tmp_path):
-    """`meta` and `operating_system` are not settings; everything else is."""
-    from pypts.hmi.gui.configuration_dialog import editable_keys
-
-    dialog = a_configuration_dialog(tmp_path)
-
-    assert list(dialog.editors) == editable_keys()
-    assert "paths.logs_dir" in dialog.editors
-    assert "paths.reports_dir" in dialog.editors
-    assert "gui.window_width" in dialog.editors
-    assert not [key for key in dialog.editors if key.startswith(("meta.", "operating_system."))]
-    dialog.close()
-
-
-def test_each_setting_gets_an_editor_that_fits_its_type(qapp, tmp_path):
-    from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QSpinBox
-
-    dialog = a_configuration_dialog(tmp_path)
-
-    assert isinstance(dialog.editors["paths.reports_dir"], QLineEdit)
-    assert isinstance(dialog.editors["logging.level"], QComboBox)
-    assert isinstance(dialog.editors["gui.theme"], QComboBox)
-    assert isinstance(dialog.editors["gui.window_height"], QSpinBox)
-    assert isinstance(dialog.editors["watchdog.enabled"], QCheckBox)
-    assert dialog.text_of("gui.window_height") == "720"
-    assert dialog.text_of("watchdog.enabled") == "true"
-    dialog.close()
-
-
-def test_nothing_changed_means_nothing_to_save(qapp, tmp_path):
-    dialog = a_configuration_dialog(tmp_path)
-
-    assert dialog.changes() == {}
-    assert dialog.save_button.isEnabled() is False
-    dialog.close()
-
-
-def test_save_sends_only_what_changed(qapp, tmp_path):
-    sent = []
-    dialog = a_configuration_dialog(tmp_path, sent)
-    dialog.editors["gui.window_width"].setValue(1600)
-    dialog.editors["watchdog.enabled"].setChecked(False)
-
-    assert dialog.save_button.text() == "Save 2 changes"
-    dialog.save_button.click()
-
-    assert sent == [("gui.window_width", "1600"), ("watchdog.enabled", "false")]
-    assert dialog.showing == "saving"
-    assert dialog.editors["gui.window_width"].isEnabled() is False
-    dialog.close()
-
-
-def test_a_relative_path_cannot_be_saved_and_says_why(qapp, tmp_path):
-    """A relative path would land wherever pypts happened to be started from."""
-    dialog = a_configuration_dialog(tmp_path)
-
-    dialog.editors["paths.reports_dir"].setText("reports")
-
-    assert dialog.save_button.isEnabled() is False
-    assert dialog.path_errors["paths.reports_dir"].isHidden() is False
-
-    dialog.editors["paths.reports_dir"].setText(str(tmp_path / "elsewhere"))
-
-    assert dialog.save_button.isEnabled() is True
-    assert dialog.path_errors["paths.reports_dir"].isHidden() is True
-    dialog.close()
-
-
-def test_the_answers_are_shown_once_every_change_is_answered(qapp, tmp_path):
-    from pypts.hmi.gui.configuration_dialog import NEXT_START_NOTE
-
-    dialog = a_configuration_dialog(tmp_path)
-    dialog.editors["gui.window_width"].setValue(1600)
-    dialog.editors["logging.level"].setCurrentText("DEBUG")
-    dialog.save_button.click()
-
-    dialog.apply_result(ConfigParameterResult(key="logging.level", value="DEBUG", accepted=True))
-    assert dialog.showing == "saving"
-
-    dialog.apply_result(
-        ConfigParameterResult(
-            key="gui.window_width", value="1600", accepted=False, reason="The file was discarded."
-        )
-    )
-
-    assert dialog.showing == "result"
-    shown = " ".join(_all_text(dialog.result_page))
-    assert "Partly saved" in shown
-    assert "Log level: DEBUG" in shown
-    assert "Window width: The file was discarded." in shown
-    assert NEXT_START_NOTE in shown
-    dialog.close()
-
-
-def test_an_answer_nobody_asked_for_is_not_taken(qapp, tmp_path):
-    dialog = a_configuration_dialog(tmp_path)
-
-    taken = dialog.apply_result(ConfigParameterResult(key="gui.theme", value="dark", accepted=True))
-
-    assert taken is False
-    assert dialog.showing == "edit"
-    dialog.close()
-
-
-def test_changes_nobody_answered_are_reported_when_the_wait_runs_out(qapp, qtbot, tmp_path):
-    """A CORE that never answers must not leave the dialog saying Saving... forever."""
-    from pypts.hmi.gui.configuration_dialog import NO_ANSWER_REASON
-
-    dialog = a_configuration_dialog(tmp_path, answer_timeout_ms=10)
-    dialog.editors["gui.window_width"].setValue(1600)
-    dialog.save_button.click()
-
-    qtbot.waitUntil(lambda: dialog.showing == "result", timeout=2000)
-
-    assert "Not saved" in " ".join(_all_text(dialog.result_page))
-    assert NO_ANSWER_REASON in " ".join(_all_text(dialog.result_page))
-    dialog.close()
-
-
-def test_a_discarded_settings_file_offers_no_save(qapp, tmp_path):
-    """Writing one value would replace the user's broken file with the defaults."""
-    dialog = a_configuration_dialog(tmp_path, problem="It declares structure version 1.")
-    dialog.editors["gui.window_width"].setValue(1600)
-
-    assert dialog.save_button.isEnabled() is False
-    assert dialog.editors["gui.window_width"].isEnabled() is False
-    assert any("structure version 1" in text for text in _all_text(dialog))
-    dialog.close()
-
-
-def test_cancel_sends_nothing(qapp, tmp_path):
-    sent = []
-    dialog = a_configuration_dialog(tmp_path, sent)
-    dialog.editors["gui.window_width"].setValue(1600)
-
-    dialog.cancel_button.click()
-
-    assert sent == []
-
-
-def test_the_dialog_saves_through_core_and_shows_its_answer(gui_factory, monkeypatch):
-    """
-    The whole round trip inside the GUI: Save puts SetConfigParameter on the
-    link, and CORE's answer - arriving through the poll timer, which keeps
-    running under exec()'s nested event loop - reaches the open dialog.
-    """
-    from pypts.hmi.gui.configuration_dialog import ConfigurationDialog
-
-    a_config_file()
-    instance, outbox, inbox = gui_factory()
-    seen = {}
-
-    def operator_changes_the_width(dialog):
-        dialog.editors["gui.window_width"].setValue(1500)
-        dialog.save_button.click()
-        seen["asked"] = [m for m in drain(outbox) if isinstance(m, SetConfigParameter)]
-        inbox.send(ConfigParameterResult(key="gui.window_width", value="1500", accepted=True))
-        instance.poll_core()
-        seen["showing"] = dialog.showing
-        return 0
-
-    monkeypatch.setattr(ConfigurationDialog, "exec", operator_changes_the_width)
-    instance.window.configuration_action.trigger()
-
-    assert seen["asked"] == [SetConfigParameter(key="gui.window_width", value="1500")]
-    assert seen["showing"] == "result"
-    assert instance.config_dialog is None
-
-
-def test_a_saved_setting_is_shown_when_the_dialog_reopens(gui_factory, monkeypatch):
-    """This process never re-reads config.ini, so it remembers what CORE confirmed."""
-    from pypts.hmi.gui.configuration_dialog import ConfigurationDialog
-
-    a_config_file()
-    instance, _outbox, inbox = gui_factory()
-    inbox.send(ConfigParameterResult(key="gui.window_width", value="1500", accepted=True))
-    instance.poll_core()
-    shown = {}
-
-    def look_at_the_width(dialog):
-        shown["width"] = dialog.text_of("gui.window_width")
-        return 0
-
-    monkeypatch.setattr(ConfigurationDialog, "exec", look_at_the_width)
-    instance.window.configuration_action.trigger()
-
-    assert shown["width"] == "1500"
-
-
-def test_an_answer_with_no_dialog_open_goes_to_the_status_line(gui):
-    instance, _outbox, inbox = gui
-
-    inbox.send(
-        ConfigParameterResult(
-            key="gui.theme", value="dark", accepted=False, reason="The file was discarded."
-        )
-    )
-    instance.poll_core()
-
-    assert "gui.theme not saved: The file was discarded." in instance.status_label.text()
-
-
-def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monkeypatch):
-    from pypts.hmi.gui.configuration_dialog import ConfigurationDialog
-
-    a_config_file({"meta.config_version": "1"})
-    instance, _outbox, _inbox = gui_factory()
-    seen = {}
-
-    def look_at_the_dialog(dialog):
-        seen["problem"] = dialog.problem
-        seen["can_save"] = dialog.save_button.isEnabled()
-        return 0
-
-    monkeypatch.setattr(ConfigurationDialog, "exec", look_at_the_dialog)
-    instance.window.configuration_action.trigger()
-
-    assert "structure version 1" in seen["problem"]
-    assert seen["can_save"] is False
-
-
-def test_the_window_opens_with_the_configured_size_and_theme(gui_factory):
-    a_config_file({"gui.theme": "dark", "gui.window_width": "1100", "gui.window_height": "750"})
-
-    instance, _outbox, _inbox = gui_factory()
-
-    assert (instance.window.width(), instance.window.height()) == (1100, 750)
-    assert instance._dark is True
-
-
-def test_a_chosen_theme_does_not_follow_the_operating_system(gui_factory, monkeypatch):
-    """An operator who picked light must not be switched to dark by the OS."""
-    from pypts.hmi.gui import gui as gui_module
-
-    installed = []
-    monkeypatch.setattr(
-        gui_module,
-        "install_system_theme_sync",
-        lambda app, callback: installed.append(callback) or (lambda: None),
-    )
-    a_config_file({"gui.theme": "light"})
-
-    instance, _outbox, _inbox = gui_factory()
-
-    assert installed == []
-    assert instance._dark is False
-
-
-def test_the_default_theme_follows_the_operating_system(gui_factory, monkeypatch):
-    from pypts.hmi.gui import gui as gui_module
-
-    installed = []
-    monkeypatch.setattr(gui_module, "detect_system_dark_mode", lambda app=None: True)
-    monkeypatch.setattr(
-        gui_module,
-        "install_system_theme_sync",
-        lambda app, callback: installed.append(callback) or (lambda: None),
-    )
-
-    instance, _outbox, _inbox = gui_factory()
-
-    assert instance._dark is True
-    assert len(installed) == 1
-
-
-def test_without_a_configuration_the_window_uses_the_template_defaults(gui):
-    """A GUI built by a test, or started by hand, still opens."""
-    instance, _outbox, _inbox = gui
-
-    assert (instance.window.width(), instance.window.height()) == (1280, 720)
-    assert instance._dark is False

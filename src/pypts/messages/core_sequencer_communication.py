@@ -24,6 +24,8 @@ from pypts.messages.run_events import (
     # Defined in run_events because it rides two links: a frontend sends it and
     # CORE relays the very same object here (see the class docstring).
     StopSequence,
+    UserPathRequest,
+    UserPathResponse,
     UserPromptRequest,
     UserPromptResponse,
     UserTextRequest,
@@ -76,6 +78,7 @@ CoreToSequencer = (
     # Answers to questions the Sequencer asked, relayed back by CORE.
     | UserPromptResponse
     | UserTextResponse
+    | UserPathResponse
 )
 
 SequencerToCore = (
@@ -90,6 +93,7 @@ SequencerToCore = (
     | StepExecuted
     | UserPromptRequest
     | UserTextRequest
+    | UserPathRequest
     | Heartbeat
     | ModuleError
 )

@@ -273,7 +273,7 @@ def test_a_rejected_value_never_reaches_the_file(config, config_path):
         config.set_parameter("gui.theme", "chartreuse")
 
     assert "chartreuse" not in config_path.read_text(encoding="utf-8")
-    assert config.get_parameter("gui.theme") == "default"
+    assert config.get_parameter("gui.theme") == "light"
 
 
 def test_restore_default_discards_user_values(config):
@@ -281,7 +281,7 @@ def test_restore_default_discards_user_values(config):
 
     config.restore_default()
 
-    assert config.get_parameter("gui.theme") == "default"
+    assert config.get_parameter("gui.theme") == "light"
 
 
 def test_a_second_bootstrap_does_not_touch_the_file(config, config_path):

@@ -28,7 +28,7 @@ Every message marked **STUB** here also carries a `NOT SENT YET` comment in the 
 dataclass and again on the branch that receives it. The marker means one specific thing:
 **the receiving end is written and works; nothing constructs the message.** Only the Report
 link's export pair (`ExportReport` / `ReportExported`) is in that state today —
-`SetConfigParameter` left it in September 2026, when the GUI's Configuration dialog started
+`SetConfigParameter` left it in September 2026, when the GUI's Settings dialog started
 sending it. Grep for it to find the set:
 
 ```bash
@@ -46,9 +46,8 @@ same change that starts sending the message.
 
 One class carries every link. It wraps *anything* with `put()` and `get_nowait()`, and that
 is the whole reason one class serves both kinds of boundary: the launcher hands out a
-`multiprocessing.Queue` for HMI ↔ CORE, CORE hands out plain `queue.Queue` to the Sequencer
-and the Report, and a future remote CORE can hand out a socket-backed queue-alike.
-No module ever learns which one it holds.
+`multiprocessing.Queue` for HMI ↔ CORE, and CORE hands out plain `queue.Queue` to the
+Sequencer and the Report. No module ever learns which one it holds.
 
 Nothing blocks. Each module polls its inboxes from an event loop, so `receive()` takes what
 is there at that moment and returns; a message sent between two ticks arrives on the next.
@@ -111,30 +110,30 @@ reaches a union, which is what stops those comments from quietly going stale.
 | `StepSummary(step_id, step_name, description)` · `SequenceSummary(sequence_name, steps)` | — | **Payloads**, in `run_events.py`. The rows a frontend draws before a run: `StepSummary` is a field of `SequenceSummary`, which is a field of `RecipeLoaded`. Summaries, not the live `Step` and `Sequence` — those must never cross the HMI boundary. |
 | `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. CORE also forwards `RunStarted` and `SequenceStarted` to the Report, which needs the run brackets for its folder and its rows. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
 | `StepExecuted(outcome, step_type, inputs, outputs, started_at, duration_s)` | EVT | The rich sibling of `StepFinished`, emitted by `Step.run()` right after it: everything the Report writes about one executed step, including the resolved inputs, the judged outputs and the measured duration. **Engine-internal**: it rides Sequencer→CORE and CORE→Report only, two links that never leave the Core process — it must never join the HMI unions, whose flat `StepOutcome` is the projection that crosses the boundary. |
-| `UserPromptRequest/Response`, `UserTextRequest/Response` | EVT | The two questions the engine asks the operator, joined by a `request_id` the asker generates. Both are live end to end: `UserInteractionStep` asks the first (a choice between the recipe's buttons), `UserWriteStep` the second (a line of typed text). There is deliberately **no message for a particular question** — an earlier `SerialNumberRequest` hard-coded one, so the engine fetched the serial number of the unit under test whether or not the recipe wanted one. Asking is the recipe's job. |
+| `UserPromptRequest/Response`, `UserTextRequest/Response`, `UserPathRequest/Response` | EVT | The three questions the engine asks the operator, joined by a `request_id` the asker generates. All three are live end to end: `UserInteractionStep` asks the first (a choice between the recipe's buttons), `UserWriteStep` the second (a line of typed text), `UserLoadingStep` the third — `UserPathRequest(request_id, message, select, image_path)` with `select` `"file"` or `"folder"` (always lowercase), answered by `UserPathResponse(request_id, path)`, `path` None if declined. The frontend hooks are `HmiClient.ask_user_path()` (the default declines with a WARNING) and `answer_user_path()`. There is deliberately **no message for a particular question** — an earlier `SerialNumberRequest` hard-coded one, so the engine fetched the serial number of the unit under test whether or not the recipe wanted one. Asking is the recipe's job. |
 | `RunMetadata(values)` | EVT | What the run has learned about the unit on the bench: the globals the recipe named in its `report_metadata` header, as pairs, sent by the Sequencer whenever one appears or changes. The Report cannot read globals — it is a thread fed by events, while the globals live on the sequence thread — so the Sequencer wraps the Runtime's `emit` seam and sends them. CORE relays it to the Report (which stamps it on every CSV row) and to the HMI (whose top bar shows it). |
 
 ## CORE ↔ HMI — `core_hmi_communication.py` (the only process boundary)
 
-| `HmiToCore` (10) | Kind | Meaning |
+| `HmiToCore` (11) | Kind | Meaning |
 |---|---|---|
 | `LoadRecipe(recipe_path)` | CMD | Load and validate a recipe. CORE answers `RecipeLoaded` or `ModuleError`. |
 | `StartSequence(sequence_name)` | CMD | Run one named sequence of the loaded recipe. |
 | `StopSequence()` | CMD | Abort the running sequence; the application stays up. Defined in `run_events.py` because it rides two links: CORE relays the same object to the Sequencer, and the confirmation is the run's own `RunFinished(STOP)`. |
-| `SetConfigParameter(key, value)` | CMD | Change one value in `config.ini`. CORE is the single runtime writer, so a frontend asks instead of writing; `value` is the text as the file spells it. Sent by the GUI's Edit → Configuration dialog, one per changed key. CORE answers `ConfigParameterResult`. In force from the next start. |
+| `SetConfigParameter(key, value)` | CMD | Change one value in `config.ini`. CORE is the single runtime writer, so a frontend asks instead of writing; `value` is the text as the file spells it. Sent by the GUI's Edit → Settings dialog, one per changed key. CORE answers `ConfigParameterResult`. In force from the next start. |
 | `ShutdownRequested()` | CMD | Shut the whole application down. The *launcher* sends this too, on the same link. |
 | `HmiStopped()` | EVT | The frontend's loop has ended. CORE waits for this before it may exit. |
-| `UserPromptResponse`, `UserTextResponse` | EVT | The operator's answers; CORE relays them to the Sequencer. |
+| `UserPromptResponse`, `UserTextResponse`, `UserPathResponse` | EVT | The operator's answers; CORE relays them to the Sequencer. |
 | `Heartbeat`, `ModuleError` | EVT | Shared vocabulary, as above. |
 
-| `CoreToHmi` (16) | Kind | Meaning |
+| `CoreToHmi` (17) | Kind | Meaning |
 |---|---|---|
 | `StopHmi()` | CMD | Close the frontend. It answers `HmiStopped`. |
 | `ConfigParameterResult(key, value, accepted, reason)` | EVT | CORE's answer to one `SetConfigParameter`. `accepted` means the value is in the file now; otherwise nothing was written and `reason` says why (wrong type, unknown key, a read-only section, a file discarded at startup). `key`/`value` repeat the request so a frontend waiting on several answers can tell them apart. |
 | `StatusChanged(text)` | EVT | One line of free text for the frontend's status bar. Anything with structure has its own message now. **Not logged above DEBUG**: the fact behind it was already written to the run log by whichever module owns it, so logging the status text too would say it twice - see `logger/logging_rules.md` section 5. |
 | `ModuleErrorReported(error)` | EVT | An error CORE decided the operator should see (severity above WARNING). |
 | `ReportReady(report_path, report_dir)` | EVT | The run's report is on disk. Sent by CORE when the Report answers `ReportGenerated`; the structured sibling of the `StatusChanged` sent beside it. `report_dir` is what a frontend's "open report folder" control opens. |
-| the 7 progress events + `RunMetadata` + the 2 requests | EVT | Forwarded from the Sequencer, unchanged. `RunMetadata` is what the GUI's top bar shows beside the recipe name, so the operator can see which unit the bench believes is in front of them. |
+| the 7 progress events + `RunMetadata` + the 3 requests | EVT | Forwarded from the Sequencer, unchanged. `RunMetadata` is what the GUI's top bar shows beside the recipe name, so the operator can see which unit the bench believes is in front of them. |
 | `Heartbeat` | EVT | CORE's own, at 1 Hz, and the only message that travels this way for the frontend's benefit rather than the operator's. `HmiClient.check_core_is_alive()` watches it: quiet for 5 s is a WARNING, quiet for 15 s closes the window. Without it a CORE killed outright — or one whose event loop has wedged while the process stays up — leaves the frontend showing a run that stopped long ago, with nobody left to send it `StopHmi`. CORE keeps beating all through a shutdown for the same reason: the HMI is being stopped then, and must not read the silence as an engine that died under it. |
 
 Everything on this link is **pickled**: it is the one link that still crosses a process
@@ -146,8 +145,8 @@ that stops being true.
 
 | Direction | Messages |
 |---|---|
-| `CoreToSequencer` (5) | **CMD** `RunSequence(recipe, sequence_name)` (the live, validated Recipe *and* the sequence to run - the one message carrying a rich object, allowed because this link never leaves the Core process; CORE owns the loaded recipe and hands it over per run, so the Sequencer holds none between runs) · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `UserTextResponse` — answers relayed back from the HMI |
-| `SequencerToCore` (13) | **EVT** `SequencerStopped()` · the 6 run-progress events · `StepExecuted` (routed to the Report, never the HMI) · `RunMetadata` (routed to both) · the 2 operator requests · `Heartbeat` · `ModuleError` |
+| `CoreToSequencer` (6) | **CMD** `RunSequence(recipe, sequence_name)` (the live, validated Recipe *and* the sequence to run - the one message carrying a rich object, allowed because this link never leaves the Core process; CORE owns the loaded recipe and hands it over per run, so the Sequencer holds none between runs) · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `UserTextResponse` · `UserPathResponse` — answers relayed back from the HMI |
+| `SequencerToCore` (14) | **EVT** `SequencerStopped()` · the 6 run-progress events · `StepExecuted` (routed to the Report, never the HMI) · `RunMetadata` (routed to both) · the 3 operator requests · `Heartbeat` · `ModuleError` |
 
 ## CORE ↔ Report — `core_report_communication.py` (thread of the Core process)
 
@@ -173,11 +172,13 @@ authority on when.
 - **A configuration change is not propagated.** `SetConfigParameter` is answered with
   `ConfigParameterResult`; a process that already read a value keeps it until the next
   start, by decision.
-- **A response models one answer only.** Some `old_code` interaction steps read a
-  *second* value off the same response queue — a file path, a measured value, a
-  (port, baudrate, IDN) triple. Each follow-up needs to become its own request rather than
-  an untyped extra read. `UserWrite` did not need it (one question, one line of text);
-  `UserLoadingStep` will (see `step/step.md` §2.5).
+- **A response models one answer only — settled.** Some `old_code` interaction steps read
+  a *second* value off the same response queue — a file path, a measured value, a
+  (port, baudrate, IDN) triple. The rule is that each follow-up becomes its own request
+  rather than an untyped extra read. `UserLoadingStep` was the case that needed it, and it
+  follows the rule: the old "button, then path" pair is one `UserPathRequest` answered by
+  one `UserPathResponse` carrying the path (see `step/step.md` §2.5). The IDN triple went
+  with `UserWrite`'s dropped `ID` mode.
 - **`PendingRequests` is only half wired.** The Sequencer owns one and calls
   `return_caller()` from `deliver_response()`, so answers coming back are handled. The
   *asking* half — `start()` and `wait()` — lands with the execution engine, and it brings a

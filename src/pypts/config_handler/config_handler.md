@@ -102,12 +102,12 @@ Sections currently in the schema:
 | `paths` | `base_dir`, `logs_dir`, `reports_dir` — **derived** paths |
 | `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
 | `report` | `type` (`html`/`csv`), `theme` |
-| `gui` | `theme` (`default` follows the OS / `light` / `dark`), `window_width`, `window_height` — the GUI window opens with them |
+| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
 | `watchdog` | `enabled` (bool) - whether prolonged heartbeat silence *ends the run* or is only reported. Off is for a developer with a debugger attached to CORE, where a breakpoint in an event loop is indistinguishable from an event loop that has died. It gates the acting half only: a module that goes quiet is reported at WARNING either way |
 
 That is the whole schema — a flat list of named sections, nothing generated or matched by
 pattern. `READ_ONLY_SECTIONS` (`meta`, `operating_system`) names the two that are not
-settings: the Configuration dialog does not offer them and CORE refuses a
+settings: the Settings dialog does not offer them and CORE refuses a
 `SetConfigParameter` for either. One idea explains the rest of the shape of the file:
 
 - **Derived values** ship *blank* in the template and are filled at creation from
@@ -159,7 +159,7 @@ at the next start when the file is all there is.
 **At runtime the writer is CORE.** The chain is:
 
 ```
-GUI  Edit > Configuration  ->  ConfigurationDialog  (changed keys only, as text)
+GUI  Edit > Settings  ->  SettingsDialog  (changed keys only, as text)
        -> HmiClient.set_config_parameter()  ->  SetConfigParameter(key, value)
 CORE   Core.set_config_parameter()
          READ_ONLY_SECTIONS?  -> refuse
@@ -170,7 +170,8 @@ GUI    show_config_parameter_result()  ->  the open dialog, or the status line
 
 A change is **written at once and in force from the next start.** No running process
 re-reads its configuration, CORE included, and nothing is propagated; the dialog says so on
-both of its pages. The GUI remembers what CORE confirmed this session so that reopening the
+both of its pages. The one exception is presentation, not configuration: the GUI previews a
+picked theme in its own window, and puts the old one back if the new one is not saved. The GUI remembers what CORE confirmed this session so that reopening the
 dialog shows the saved value rather than the one read at startup.
 
 Writing goes through `template_writer.py`, never `configparser.write()`, because the parsed
@@ -188,9 +189,13 @@ it into place, so an interrupted write cannot leave a half-written config behind
 
 ## Structure version — no migration, no repair, discard instead
 
-`CONFIG_VERSION` (in `configuration_schema.py`, currently **2**) is bumped whenever a
-section or key is added, removed or renamed. Version 2 added `[watchdog]`; every file
-written before it is discarded for the run, which is the whole point of having the number.
+`CONFIG_VERSION` (in `configuration_schema.py`, currently **3**) is bumped whenever a
+section or key is added, removed or renamed — or when the values a key accepts change.
+Version 2 added `[watchdog]`. Version 3 (September 2026) changed `[gui] theme` from
+`default`/`light`/`dark` to `light`/`dark`/`system` and shipped `light`; a version-2 file
+saying `theme = default` would fail validation anyway, and the bump says why in plain words.
+Every file written before a bump is discarded for the run, which is the whole point of
+having the number.
 
 There used to be a migration/repair pass in `bootstrap()` (renamed keys moved via a
 `DEPRECATED` map, new keys added, `config.ini.v<n>.bak` backups, newer files refused). It was
@@ -255,7 +260,8 @@ Two file-format details worth knowing:
 | `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.logs_dir`, `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
 | `core/core.py` | `open_for_writing()` in `core_main()`; `watchdog.enabled`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
-| `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` when the window opens (template defaults if there is no config); `get_whole_config()` + `bootstrap_outcome` to fill the Configuration dialog; `paths.reports_dir` for the report button |
+| `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` when the window opens (template defaults if there is no config); `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
+| `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
 
 `local_storage.get_log_file_path()` no longer decides a location; it is given one.
 
@@ -315,7 +321,7 @@ Roadmap §1.3 is the authority; the TODOs live there, not in code comments. In s
   the replacement — reading a device section into a `DeviceConfig` and handing it to drivers
   by logical name — and is free to choose a shape that is not this one.
 - **`report.type` / `report.theme` are editable but not yet used** — Phase 4. The
-  Configuration dialog marks both "Not used yet."
+  Settings dialog marks both "Not used yet."
 - **`stdout_logging_enabled` is still derived from `--mode`**, not from the configuration.
   Probably correct — it follows from having a console rather than from a preference — but it
   is the one logging decision the config does not own.

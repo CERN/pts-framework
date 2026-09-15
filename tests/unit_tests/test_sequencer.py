@@ -46,6 +46,8 @@ from pypts.messages.run_events import (
     SequenceFinished,
     StepFinished,
     StepStarted,
+    UserPathRequest,
+    UserPathResponse,
     UserPromptRequest,
     UserPromptResponse,
     UserTextResponse,
@@ -307,6 +309,35 @@ def test_ask_operator_sends_the_question_and_returns_the_answer(sequencer):
 
     instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
     assert answer["value"] == "Yes"
+
+
+def test_a_path_answer_reaches_the_step_that_asked_for_it(sequencer):
+    """UserLoading's question takes the same round trip: one request out,
+    one UserPathResponse back, joined by request_id."""
+    instance, outbox, inbox = sequencer
+
+    request = UserPathRequest(
+        request_id=uuid4(), message="Select the calibration file", select="file"
+    )
+    asked = threading.Event()
+    answer = {}
+
+    def asks_the_operator(sequence_name: str) -> None:
+        asked.set()
+        answer["value"] = instance.ask_operator(request)
+
+    instance.execute_sequence = asks_the_operator
+    inbox.put(RunSequence(wait_recipe(), "power_on"))
+    instance.poll_core()
+    assert asked.wait(timeout=REACHED_TIMEOUT_S)
+
+    assert request in drain(outbox)
+
+    inbox.put(UserPathResponse(request_id=request.request_id, path="/bench/cal.csv"))
+    instance.poll_core()
+
+    instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
+    assert answer["value"] == "/bench/cal.csv"
 
 
 def test_ask_operator_gives_up_when_the_run_is_stopped(sequencer):

@@ -36,6 +36,7 @@ from pypts.messages.run_events import (
     RunFinished,
     RunMetadata,
     RunStarted,
+    UserPathResponse,
     UserPromptResponse,
     UserTextResponse,
 )
@@ -126,7 +127,7 @@ class Sequencer:
                 self.stop_sequence()
             case StopSequencer():
                 self.stop()
-            case UserPromptResponse() | UserTextResponse():
+            case UserPromptResponse() | UserTextResponse() | UserPathResponse():
                 self.deliver_response(message)
             case _:
                 unhandled(message)
@@ -350,7 +351,9 @@ class Sequencer:
         self.core.send(request)
         return self.pending.wait(request_id, should_abort=lambda: self.stop_requested)
 
-    def deliver_response(self, message: UserPromptResponse | UserTextResponse) -> None:
+    def deliver_response(
+        self, message: UserPromptResponse | UserTextResponse | UserPathResponse
+    ) -> None:
         """
         Hand an operator's answer to the step waiting for it.
         """
@@ -359,6 +362,8 @@ class Sequencer:
                 value = message.choice
             case UserTextResponse():
                 value = message.text
+            case UserPathResponse():
+                value = message.path
             case _:
                 unhandled(message)  # unreachable; keeps mypy's exhaustiveness check live
 

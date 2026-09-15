@@ -79,7 +79,7 @@ used the full class name with the `Step` suffix:
 | `UserRunMethodStep` | — | Deprecated (use `UserInteraction` + `PythonModule`) |
 | `SSHConnectStep` | — | Not a step type — moves to HAL (Phase 3) |
 | `SSHCloseStep` | — | Same as above |
-| `UserLoadingStep` | — | Not yet ported |
+| `UserLoadingStep` | `UserLoading` | Available (file or folder pick; one request, one response) |
 
 ---
 
@@ -127,7 +127,13 @@ new architecture by sequencing a `UserInteraction` step followed by a `PythonMod
 ### `UserLoadingStep`
 
 Prompted the operator to pick a file; stored the path in a global or local variable.
-Not yet ported to the new architecture.
+The path was pushed onto the response queue as a second value after the button.
+
+Ported as `UserLoading`: `message`, optional `image_path` and `select` (`file`, the default,
+or `folder`) are fields on the step, and the chosen path - absolute and resolved - is the
+step's `output`, stored with an ordinary `global` output. One `UserPathRequest` is answered by
+one `UserPathResponse`. No file filter, start folder or save-as mode; a path that does not
+exist or is the wrong kind is an ERROR.
 
 ### `SequenceStep` / `IndexedStep`
 

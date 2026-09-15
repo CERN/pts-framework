@@ -50,7 +50,7 @@ ModuleNotFoundError in PythonModuleStep
 Step type not available
 -----------------------
 
-``UserLoadingStep`` is not yet ported. ``UserRunMethodStep`` is deprecated (replace
+``UserLoadingStep`` is ported as ``UserLoading``. ``UserRunMethodStep`` is deprecated (replace
 with a ``UserInteraction`` step followed by a ``PythonModule`` step).
 ``SSHConnectStep`` / ``SSHCloseStep`` will move to the HAL layer (Phase 3).
 

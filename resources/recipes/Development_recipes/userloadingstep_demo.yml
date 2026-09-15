@@ -1,0 +1,83 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The UserLoading showcase - asking the operator to *pick* a file or a folder,
+# and what later steps then do with the path.
+#
+# **GUI mode** (`python -m pypts`), for the same reason as
+# userinteractionstep_demo.yml: the CLI frontend declines every question, so
+# both picks here would come back unanswered and be an ERROR - and the two
+# PythonModule steps after them would then read a global nobody wrote.
+#
+# A UserLoading step carries its question directly on the step - `message`,
+# `select` and `image_path` are fields, not inputs entries. `select` is `file`
+# (the default) or `folder`, case-insensitive. The chosen path arrives as the
+# step's `output`, absolute and resolved, so the ordinary vocabulary stores it
+# in a `global` for later steps to read. There is deliberately no file filter
+# and no start folder.
+#
+# The step does not take the frontend's word for the answer: a path that does
+# not exist, or a folder where a file was asked for (or the other way round),
+# is an ERROR naming the path. So is Cancel, the five-minute timeout, or
+# pressing Stop.
+#
+# One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
+name: UserLoading demo
+description: Letting the operator choose a file and a folder - UserLoading end to end.
+version: 0.2
+
+# Declared for documentation: both are written by a pick before anything reads
+# them, but a global read before it is written is a KeyError.
+globals:
+  calibration_file: ''
+  dump_folder: ''
+---
+sequence_name: Main
+description: Pick a file, pick a folder, then use both paths.
+steps:
+  # A file pick. `select: file` is the default and could be left out; it is
+  # spelled here because this recipe is the example. Any existing file will do
+  # for the demo - example_tests.py beside this recipe is a handy one.
+  - steptype: UserLoading
+    step_name: pick_calibration_file
+    description: The operator chooses the calibration file for this unit.
+    message: Select the calibration file for this unit.
+    select: file
+    outputs:
+      output: {type: global, global_name: calibration_file}
+
+  # A folder pick. `Folder` is written capitalised on purpose: `select` is
+  # case-insensitive, like every other structural word in a recipe. An
+  # `image_path` could go here too, resolved against this recipe's folder;
+  # a picture that does not exist is refused when the recipe loads.
+  - steptype: UserLoading
+    step_name: Pick the dump folder
+    description: The operator chooses the folder the fixture wrote its dump to.
+    message: Select the folder the fixture wrote its dump to.
+    select: Folder
+    outputs:
+      output: {type: global, global_name: dump_folder}
+
+  # The paths used by later steps - which is why they were stored. The file
+  # is judged with a range any real file satisfies, so the verdict is a PASS
+  # whatever was picked; a real recipe would check what it actually needs.
+  - steptype: PythonModule
+    step_name: Check the calibration file
+    description: Reads the global the file pick wrote and looks at the file.
+    module: example_tests.py
+    method_name: describe_file
+    inputs:
+      path: {type: global, global_name: calibration_file}
+    outputs:
+      size_bytes: {type: range, min: '0', max: '1000000000000'}
+
+  - steptype: PythonModule
+    step_name: Count the dump folder
+    description: Reads the global the folder pick wrote and counts what is in it.
+    module: example_tests.py
+    method_name: count_folder_entries
+    inputs:
+      path: {type: global, global_name: dump_folder}
+    outputs:
+      is_folder: {type: passfail}

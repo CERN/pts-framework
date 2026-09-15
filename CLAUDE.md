@@ -186,6 +186,11 @@ pytest tests                          # unit + functional tests
 python run_tests.py                   # same, via wrapper
 
 python -m pypts.helper_applications.debug_monitor   # Monitor alone, on the newest log
+
+run_pypts.bat [args]                  # Windows double-click / shell: run_pypts.py via .venv
+run_recipe_creator.bat                # the Recipe Creator, the same way
+python run_pypts.py [args]            # = python -m pypts, with src on the path
+python run_recipe_creator.py          # = python -m pypts.helper_applications.recipe_creator
 ```
 
 The Debug Monitor is **on by default during the refactor** (`--no-debug-monitor` turns it

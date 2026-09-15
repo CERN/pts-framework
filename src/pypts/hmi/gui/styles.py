@@ -417,6 +417,11 @@ QPushButton#settingsBrowse {{
     font-size: 12px;
     padding: 4px 12px;
 }}
+QDialog#settingsDialog QPushButton#primaryBtn:disabled {{
+    background-color: {LIGHT.window};
+    color: {LIGHT.toolbutton_disabled};
+    border: 1px solid {LIGHT.border};
+}}
 QLabel#sectionLabel {{
     font-size: 10px;
     padding-left: 9px;
@@ -886,6 +891,11 @@ QDialog#settingsDialog QLineEdit:disabled, QDialog#settingsDialog QSpinBox:disab
 QPushButton#settingsBrowse {{
     font-size: 12px;
     padding: 4px 12px;
+}}
+QDialog#settingsDialog QPushButton#primaryBtn:disabled {{
+    background-color: {DARK.window};
+    color: {DARK.toolbutton_disabled};
+    border: 1px solid {DARK.border};
 }}
 QLabel#statusLabel {{
     padding-left: 10px;

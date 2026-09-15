@@ -30,6 +30,7 @@ from pypts.api import (
     Pts,
     PtsError,
     RunResult,
+    UserPathRequest,
     UserPromptRequest,
     UserTextRequest,
     open_gui,
@@ -37,22 +38,29 @@ from pypts.api import (
 
 RECIPES = Path(__file__).resolve().parent / "resources" / "recipes" / "Development_recipes"
 
-#: Every step type, including three questions and a text request.
+#: Every step type, including three questions, a text request and a file pick.
 ALL_STEPTYPES = RECIPES / "all_steptypes_demo.yml"
 
 #: Four function calls and no questions - the simplest headless run.
 PYTHON_MODULE = RECIPES / "pythonmodulestep_demo.yml"
 
 
-def answer_like_an_operator(request: UserPromptRequest | UserTextRequest) -> str | None:
+def answer_like_an_operator(
+    request: UserPromptRequest | UserTextRequest | UserPathRequest,
+) -> str | None:
     """
     Answer the questions all_steptypes_demo.yml asks, the way a technician would.
 
-    A UserTextRequest wants typed text; a UserPromptRequest wants one of its
-    options. Returning None declines, which makes that step an ERROR.
+    A UserTextRequest wants typed text; a UserPathRequest wants an existing
+    file or folder, as `request.select` says; a UserPromptRequest wants one of
+    its options. Returning None declines, which makes that step an ERROR.
     """
     if isinstance(request, UserTextRequest):
         return "SN-0001"
+    if isinstance(request, UserPathRequest):
+        if request.select == "folder":
+            return str(RECIPES)
+        return str(RECIPES / "example_tests.py")
     if "serial port" in request.message:
         return "COM2"
     # "Continue" for the connection prompt, "Yes" for the LED.

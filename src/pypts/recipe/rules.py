@@ -79,6 +79,7 @@ STEP_TYPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "pythonmodule": ("module", "method_name"),
     "userinteraction": ("message", "options"),
     "userwrite": ("message",),
+    "userloading": ("message",),
     "wait": ("wait_time",),
     "indexed": ("template", "parameter_sets"),
 }
@@ -133,6 +134,10 @@ STEP_TYPE_DEFAULTS: dict[str, dict[str, Any]] = {
     # output, so there is nothing to feed in. No `allow_empty` - the GUI
     # keeps OK disabled until something is typed.
     "userwrite": {"image_path": None, "outputs": {}},
+    # A UserLoading asks for a path: `select` says whether a file or a folder,
+    # and anything but those two words (case-insensitive) is refused by the
+    # step's constructor when the recipe loads. The chosen path is the output.
+    "userloading": {"select": "file", "image_path": None, "outputs": {}},
     "wait": {},
     # An Indexed step owns no mappings of its own: what every generated step
     # shares goes on the `template`, what differs goes in a `parameter_sets`

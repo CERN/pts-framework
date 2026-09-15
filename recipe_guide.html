@@ -251,7 +251,7 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
 <p>A stop request is checked <em>between</em> steps, never inside one, so a step can leave its hardware in a known state. Every step that did not run is still recorded as <code>SKIP</code>` with the reason "Not run: the run was stopped by the operator.", so the step table and the CSV have a row for each; the run's result is <code>STOP</code>`. Interactive steps poll for the stop every 100 ms while waiting for the operator.</p>
 <hr>
 <h2 id="10-step-type-catalogue">10. Step type catalogue</h2>
-<p>Four step types are available. <code>steptype</code>` values are case-insensitive.</p>
+<p>Five step types are available (plus <code>Indexed</code>`, which is expanded at load time). <code>steptype</code>` values are case-insensitive.</p>
 <h3 id="pythonmodule-run-user-python"><code>PythonModule</code>` — run user Python</h3>
 <pre><code class="language-yaml">- steptype: PythonModule
   step_name: measure_voltage
@@ -307,9 +307,27 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
   outputs:
     output: { type: global, global_name: serial_number }</code></pre>
 <p>Text-entry mode only. The typed string is stored per <code>outputs</code>`. The old serial-port picker mode (<code>ID</code>` key) is not available.</p>
+<h3 id="userloading-operator-picks-a-file-or-folder"><code>UserLoading</code>` — operator picks a file or folder</h3>
+<pre><code class="language-yaml">- steptype: UserLoading
+  step_name: pick_calibration_file
+  description: Choose the calibration file for this unit
+  message: Select the calibration file for this unit.
+  select: file               # optional: file (default) or folder, case-insensitive
+  image_path: cal.png        # optional
+  outputs:
+    output: { type: global, global_name: calibration_file }</code></pre>
+<ul>
+<li>The chosen path is stored per <code>outputs</code>` as an absolute, resolved path string; a later step reads it with <code>inputs: {path: {type: global, global_name: calibration_file}}</code>`.
+</li>
+<li><code>select</code>` other than <code>file</code>`/<code>folder</code>` is refused at load time. There is no file filter, no start folder and no save-as mode.
+</li>
+<li>The step checks the answer itself: a path that does not exist, or a folder where a file was asked for (or the other way round), is <code>ERROR</code>`. Cancelling, a timeout or a stop is <code>ERROR</code>` too.
+</li>
+<li>One request, one response: the old type's second value on the response queue is gone. Worked example: <code>resources/recipes/Development_recipes/userloadingstep_demo.yml</code>` (GUI mode — the CLI declines).
+</ul>
 <hr>
 <h2 id="11-step-types-not-yet-available">11. Step types not yet available</h2>
-<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>UserLoadingStep</code>`</td><td>Not yet ported — blocked on a separate request/response for the file path (one response per request)</td></tr><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not step types in the new architecture — becomes a framework facility (HAL or service, not decided; Phase 5)</td></tr><tr><td><code>SequenceStep</code>`</td><td>Dropped — no nested sequences</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated — use <code>UserInteraction</code>` + <code>PythonModule</code>` in sequence</td></tr><tr><td><code>IndexedStep</code>`</td><td>Available as <code>steptype: Indexed</code>` (<code>template</code>` + <code>parameter_sets</code>`), expanded at load time; the old <code>indexed: true</code>` input flag is gone</td></tr></tbody></table>
+<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not step types in the new architecture — becomes a framework facility (HAL or service, not decided; Phase 5)</td></tr><tr><td><code>SequenceStep</code>`</td><td>Dropped — no nested sequences</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated — use <code>UserInteraction</code>` + <code>PythonModule</code>` in sequence</td></tr><tr><td><code>IndexedStep</code>`</td><td>Available as <code>steptype: Indexed</code>` (<code>template</code>` + <code>parameter_sets</code>`), expanded at load time; the old <code>indexed: true</code>` input flag is gone</td></tr></tbody></table>
 <hr>
 <h2 id="12-yaml-pitfalls">12. YAML pitfalls</h2>
 <ol>

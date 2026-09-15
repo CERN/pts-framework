@@ -659,7 +659,6 @@ class SettingsDialog(QDialog):
 
     def _build_edit_page(self, values: Mapping[str, str]) -> QWidget:
         page = QWidget()
-        page.setMinimumSize(820, 580)
         outer = QVBoxLayout(page)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
@@ -684,6 +683,10 @@ class SettingsDialog(QDialog):
         self.nav.setObjectName("settingsNav")
         self.nav.setFixedWidth(190)
         self.pages = QStackedWidget()
+        # On the pages rather than the whole dialog, so the problem banner adds
+        # height instead of taking it from them. Wide enough for the three
+        # theme cards side by side.
+        self.pages.setMinimumSize(680, 500)
         for title, keys in pages_for_schema():
             self._page_titles.append(title)
             self._page_keys.append(keys)
@@ -772,7 +775,7 @@ class SettingsDialog(QDialog):
         size_row.setContentsMargins(0, 0, 0, 0)
         size_row.setSpacing(8)
         size_row.addWidget(width)
-        times = QLabel("×")
+        times = QLabel("×")  # noqa: RUF001 - a multiplication sign, meant for the reader
         times.setObjectName("settingsCardTitle")
         size_row.addWidget(times)
         size_row.addWidget(height)
@@ -786,7 +789,7 @@ class SettingsDialog(QDialog):
         preset_row.setContentsMargins(0, 0, 0, 0)
         preset_row.setSpacing(6)
         for name, preset_width, preset_height in WINDOW_PRESETS:
-            button = QPushButton(f"{name}  {preset_width} × {preset_height}")
+            button = QPushButton(f"{name}  {preset_width} × {preset_height}")  # noqa: RUF001 - sign
             button.setObjectName("settingsPreset")
             button.setAutoDefault(False)
             button.clicked.connect(
@@ -800,7 +803,9 @@ class SettingsDialog(QDialog):
         column.addLayout(preset_row)
 
         card = SettingCard(
-            "Window size", "The window is never smaller than 1000 × 700.", body
+            "Window size",
+            "The window is never smaller than 1000 × 700.",  # noqa: RUF001 - a multiplication sign
+            body,
         )
         self._register(WIDTH_KEY, width, card)
         self._register(HEIGHT_KEY, height, card)

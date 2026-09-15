@@ -44,6 +44,8 @@ from pypts.messages.run_events import (
     SequenceSummary,
     StepFinished,
     StepSummary,
+    UserPathRequest,
+    UserPathResponse,
     UserPromptRequest,
     UserPromptResponse,
     UserTextRequest,
@@ -364,6 +366,44 @@ def test_a_text_request_is_answered_by_the_answer_function(engine):
 
     assert core.sent_of(UserTextResponse) == [
         UserTextResponse(request_id=request.request_id, text="SN-0001")
+    ]
+
+
+def test_a_path_request_is_answered_by_the_answer_function(engine):
+    client, core = engine
+    with_a_recipe_loaded(client, core)
+    request = UserPathRequest(
+        request_id=uuid4(), message="Select the calibration file.", select="file"
+    )
+    core.on(StartSequence, lambda message: [started(), request])
+    core.on(UserPathResponse, lambda message: finished())
+    asked = []
+
+    def answer(question):
+        asked.append(question.select)
+        return "C:/bench/cal.csv"
+
+    client.run(answer=answer)
+
+    assert asked == ["file"]
+    assert core.sent_of(UserPathResponse) == [
+        UserPathResponse(request_id=request.request_id, path="C:/bench/cal.csv")
+    ]
+
+
+def test_a_path_request_without_an_answer_function_is_declined(engine):
+    client, core = engine
+    with_a_recipe_loaded(client, core)
+    request = UserPathRequest(
+        request_id=uuid4(), message="Select the dump folder.", select="folder"
+    )
+    core.on(StartSequence, lambda message: [started(), request])
+    core.on(UserPathResponse, lambda message: finished(ResultType.ERROR))
+
+    client.run()
+
+    assert core.sent_of(UserPathResponse) == [
+        UserPathResponse(request_id=request.request_id, path=None)
     ]
 
 

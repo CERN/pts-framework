@@ -33,7 +33,7 @@ from pypts.api.embedding import (
     open_gui,
 )
 from pypts.messages.common_messages import ResultType
-from pypts.messages.run_events import UserPromptRequest, UserTextRequest
+from pypts.messages.run_events import UserPathRequest, UserPromptRequest, UserTextRequest
 
 __all__ = [
     "LoadedRecipe",
@@ -42,6 +42,7 @@ __all__ = [
     "ResultType",
     "RunResult",
     "StepVerdict",
+    "UserPathRequest",
     "UserPromptRequest",
     "UserTextRequest",
     "open_gui",

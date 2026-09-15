@@ -68,6 +68,7 @@ from pypts.messages.core_hmi_communication import (
 from pypts.messages.run_events import (
     RecipeLoaded,
     StepStarted,
+    UserPathRequest,
     UserPromptRequest,
     UserTextRequest,
 )
@@ -949,6 +950,11 @@ class GUI(HmiClient):
     def ask_user_text(self, request: UserTextRequest) -> None:
         self.center.show_text_request(
             request, lambda text: self.answer_user_text(request, text)
+        )
+
+    def ask_user_path(self, request: UserPathRequest) -> None:
+        self.center.show_path_request(
+            request, lambda path: self.answer_user_path(request, path)
         )
 
     def on_stop(self) -> None:

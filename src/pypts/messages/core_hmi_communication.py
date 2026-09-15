@@ -25,6 +25,8 @@ from pypts.messages.run_events import (
     # Defined in run_events because it rides two links: a frontend sends it
     # here and CORE relays the very same object to the Sequencer.
     StopSequence,
+    UserPathRequest,
+    UserPathResponse,
     UserPromptRequest,
     UserPromptResponse,
     UserTextRequest,
@@ -150,6 +152,7 @@ HmiToCore = (
     | HmiStopped
     | UserPromptResponse
     | UserTextResponse
+    | UserPathResponse
     | Heartbeat
     | ModuleError
 )
@@ -170,6 +173,7 @@ CoreToHmi = (
     | StepFinished
     | UserPromptRequest
     | UserTextRequest
+    | UserPathRequest
     # The one heartbeat that travels away from CORE. The HMI is the only module
     # in a process of its own, so it is the only one that can still be running
     # with nothing on the other end of its link - CORE killed outright, or its

@@ -21,7 +21,7 @@ recipe terms, and is worth reading before porting one.
 ## 1. The catalogue
 
 Ten classes existed in `old_code/steps.py` (the whole file is commented out — it is read,
-never run). Five are ported. One more is wanted, four are not.
+never run). Six are ported; the other four are not wanted.
 
 | # | Old class | YAML today | Status | Decision |
 |---|---|---|---|---|
@@ -29,15 +29,15 @@ never run). Five are ported. One more is wanted, four are not.
 | 2 | `PythonModuleStep` | `PythonModule` | ✅ **done** | methods only; the attribute actions are dropped |
 | 3 | `UserInteractionStep` | `UserInteraction` | ✅ **done** | the first type that blocks on a person |
 | 4 | `UserWriteStep` | `UserWrite` | ✅ **done, one mode of two** | the `wrt` text dialog; the `ID` serial-port mode is dropped — §2.4 |
-| 5 | `UserLoadingStep` | — | ❌ missing | **to be implemented** |
+| 5 | `UserLoadingStep` | `UserLoading` | ✅ **done, redesigned** | pick a file or a folder; one request, one response — §2.5 |
 | 6 | `UserRunMethodStep` | — | ❌ missing | **deprecated — to be dropped** |
 | 7 | `SSHConnectStep` | — | ❌ missing | **not a step type — moves into the framework** |
 | 8 | `SSHCloseStep` | — | ❌ missing | **not a step type — moves into the framework** |
 | 9 | `SequenceStep` | — | ❌ missing | **to be dropped** |
 | 10 | `IndexedStep` | `Indexed` | ✅ **done, reshaped** | replaced by load-time expansion — §2.9 |
 
-Decisions recorded 2026-09-01; `UserWrite` landed 2026-09-02. One type left to port, four that will never
-appear in `STEP_TYPES` — plus `Indexed`, which is in the rules but never in the registry
+Decisions recorded 2026-09-01; `UserWrite` landed 2026-09-02, `UserLoading` 2026-09-15.
+Nothing left to port; four types will never appear in `STEP_TYPES` — plus `Indexed`, which is in the rules but never in the registry
 because it is gone before anything is built.
 
 ---
@@ -119,8 +119,8 @@ def ask_operator(self, request):            # sequencer.py
 A step just calls `runtime.ask(request)` and cannot get it wrong. The rule that stays
 load-bearing: **`ask` may only be called from the sequence thread.** The answer is
 delivered by `deliver_response()` on the *event loop* thread, so a caller on the event
-loop would block the very loop that has to wake it. `UserWriteStep` uses the same seam,
-and `UserLoadingStep` will.
+loop would block the very loop that has to wake it. `UserWriteStep` and `UserLoadingStep`
+use the same seam.
 
 **Waiting is a poll, not one long sleep.** `PendingRequests.wait()` surfaces every
 `POLL_INTERVAL_S` (100 ms) to look at `should_abort`. Without it, pressing Stop with a
@@ -175,11 +175,11 @@ declines every question).
     output: {type: global, global_name: serial_number}
 ```
 
-**What the two prompting types share lives in `operator_prompt.py`**, as two plain
+**What the prompting types share lives in `operator_prompt.py`**, as two plain
 functions rather than a base class, so §4's rule still holds — a step type subclasses
 `Step`, overrides `_step()` and nothing else. `resolve_image_path()` is the absolute-path
-rule of §2.3; `ask_or_raise()` is its "not answering is an ERROR" rule. Both types call
-both, so neither can drift.
+rule of §2.3; `ask_or_raise()` is its "not answering is an ERROR" rule. All three types
+(`UserInteraction`, `UserWrite`, `UserLoading`) call both, so none can drift.
 
 **There is no `allow_empty` field.** The GUI keeps OK disabled while the field is empty
 (`interaction_panel.set_text_prompt`), so the only answers that exist are some text and
@@ -210,18 +210,53 @@ to the run folder's name and puts in the GUI's top bar. The convention itself li
 `recipe_guide.html` (repo root) §3: a step named `get_serial_number` writing the
 `serial_number` global.
 
-### 2.5 `UserLoadingStep` — to be implemented
+### 2.5 `UserLoadingStep` → `UserLoading` — done, redesigned
 
-The operator picks a file; the path is stored per `file_save_location`.
+`user_loading_step.py`. Ask the operator to pick a file or a folder; the chosen path is
+the step's output. The third prompting type, shaped exactly like `UserWrite` — the
+question on the step, only the answer through a mapping, `resolve_image_path()` and
+`ask_or_raise()` from `operator_prompt.py`. Landed 2026-09-15 (engine side; the GUI's
+chooser and the API's answer come in later stages — until then `HmiClient`'s default
+`ask_user_path()` declines, so the step ends ERROR).
 
-This is the one that carries a **real design problem**, not just work. The old dialog
-pushed a *second* value onto the same response queue — the button first, the chosen path
-after it. Nothing in the new message layer models that: a request has exactly one
-response, joined by `request_id`. Each follow-up has to become **its own request/response
-pair** (recorded as a roadmap §1.1 TODO). Settle that before implementing.
+```yaml
+- steptype: UserLoading
+  step_name: pick_calibration_file
+  message: Select the calibration file for this unit.
+  select: file          # optional: file (default) or folder
+  image_path: cal.png   # optional, resolved against the recipe's folder
+  outputs:
+    output: {type: global, global_name: calibration_file}
+```
 
-Also from the old type: `type: local` in `file_save_location` still wrote a **global**
-(§16 F15). Moot now — `local` no longer exists (§3.5), there is one scope.
+**The design problem, and how it was solved.** The old dialog pushed a *second* value
+onto the same response queue — the button first, the chosen path after it — which the new
+message layer cannot model: a request has exactly one response, joined by `request_id`.
+The answer is that the path *is* the response. The step sends one
+`UserPathRequest(request_id, message, select, image_path)` and gets one
+`UserPathResponse(request_id, path)` back; `path` is None when the operator declined.
+No button value exists to compete with it, as with `UserWrite` (§2.4).
+
+**`select` is `file` or `folder`**, default `file`, lowercased like a steptype or an
+outputs `type` — `select: Folder` works, and the message always carries the lowercase
+word. Anything else is a `ValueError` from the constructor, which the parser turns into a
+`RecipeError` naming the sequence and the step, so a typo is refused at load time.
+Deliberately **no** file filter, start folder or "must exist" option.
+
+**The answer is checked again on the engine side.** The frontend is expected to offer OK
+only for an existing path of the right kind, but the step does not trust that: an empty
+answer, a path that does not exist, a folder where a file was asked for or a file where a
+folder was asked for is an ERROR whose text names the path. What the step returns — and
+what an `outputs` `global` stores — is the **absolute, resolved path as a string**. A
+relative answer would be resolved against the Core process's working directory; no
+frontend is expected to send one.
+
+**Not answering is an ERROR**, the one rule of §2.3: cancelled, timed out and stopped all
+end the step ERROR through `ask_or_raise()`.
+
+**Not carried over:** the old `file_save_location` key (the path goes through the ordinary
+`outputs` mapping instead) and its F15 defect, `type: local` still writing a global — moot
+anyway, since there is one scope (§3.5).
 
 ### 2.6 `UserRunMethodStep` — deprecated, to be dropped
 

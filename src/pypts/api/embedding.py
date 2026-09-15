@@ -44,6 +44,7 @@ from pypts.messages.run_events import (
     RunFinished,
     RunStarted,
     StepFinished,
+    UserPathRequest,
     UserPromptRequest,
     UserTextRequest,
 )
@@ -75,8 +76,10 @@ START_REFUSALS = (
 
 #: A question the running recipe puts to the operator, answered by code: the
 #: button to press for a UserPromptRequest, the text to type for a
-#: UserTextRequest, or None to decline.
-Answer = Callable[[UserPromptRequest | UserTextRequest], str | None]
+#: UserTextRequest, the path of an existing file or folder for a
+#: UserPathRequest, or None to decline.
+Question = UserPromptRequest | UserTextRequest | UserPathRequest
+Answer = Callable[[Question], str | None]
 
 
 class PtsError(Exception):
@@ -179,6 +182,9 @@ class ApiClient(HmiClient):
     def ask_user_text(self, request: UserTextRequest) -> None:
         log.debug("A text request reached the API; run() answers it: %s", request.message)
 
+    def ask_user_path(self, request: UserPathRequest) -> None:
+        log.debug("A path request reached the API; run() answers it: %s", request.message)
+
     # --- Blocking calls -----------------------------------------------------------
 
     def load(
@@ -242,7 +248,7 @@ class ApiClient(HmiClient):
                 steps.append(step)
                 if on_step is not None:
                     on_step(step)
-            elif isinstance(message, UserPromptRequest | UserTextRequest):
+            elif isinstance(message, UserPromptRequest | UserTextRequest | UserPathRequest):
                 self._answer(answer, message)
             elif isinstance(message, ModuleErrorReported):
                 if not started and message.error.operation in START_REFUSALS:
@@ -260,7 +266,7 @@ class ApiClient(HmiClient):
 
     # --- Helpers ------------------------------------------------------------------
 
-    def _answer(self, answer: Answer | None, request: UserPromptRequest | UserTextRequest) -> None:
+    def _answer(self, answer: Answer | None, request: Question) -> None:
         """
         Answer one question, always.
 
@@ -282,8 +288,10 @@ class ApiClient(HmiClient):
         finally:
             if isinstance(request, UserPromptRequest):
                 self.answer_user_prompt(request, value)
-            else:
+            elif isinstance(request, UserTextRequest):
                 self.answer_user_text(request, value)
+            else:
+                self.answer_user_path(request, value)
 
     def _wait_for_report(self, errors: list[str]) -> str | None:
         deadline = time.monotonic() + REPORT_TIMEOUT_S
@@ -392,9 +400,12 @@ class Pts:
         Args:
             sequence: which one; None runs the recipe's main sequence.
             answer: called for every question the recipe asks the operator,
-                with the UserPromptRequest or UserTextRequest; returns the
-                button or the text, or None to decline. Without it every
-                question is declined, and a declined question is an ERROR.
+                with the UserPromptRequest, UserTextRequest or UserPathRequest;
+                returns the button, the text, or the path of an existing file
+                or folder (`request.select` says which), or None to decline.
+                Without it every question is declined, and a declined question
+                is an ERROR. The step checks a path itself: one that does not
+                exist, or is the wrong kind, is an ERROR too.
             on_step: called with each step as it finishes, for live progress.
 
         Raises PtsError if the run could not start, or if the engine stopped

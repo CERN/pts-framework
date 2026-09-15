@@ -1015,7 +1015,7 @@ def _unknown_steptype_hint(steptype_raw: str) -> str:
         "waitstep": "wait",
         "pythonmodulestep": "pythonmodule",
         "userwritestep": "userwrite",
-        "userloadingstep": "userwrite",
+        "userloadingstep": "userloading",
         "sshconnectstep": "(SSH steps are not yet available in this version)",
         "sshclosestep": "(SSH steps are not yet available in this version)",
         "sequencestep": "(SequenceStep is dropped; put sub-sequences in-line)",
@@ -1054,6 +1054,12 @@ def _step_field_hint(steptype: str, field: str) -> str:
             "A UserWrite step needs 'message': the prompt shown before the "
             "operator types their input.\n"
             "Example:  message: Scan or type the serial number."
+        ),
+        ("userloading", "message"): (
+            "A UserLoading step needs 'message': the prompt shown while the "
+            "operator chooses a file or a folder ('select: file' or "
+            "'select: folder', file by default).\n"
+            "Example:  message: Select the calibration file for this unit."
         ),
         ("indexed", "template"): (
             "An Indexed step needs 'template': the step mapping used as a "

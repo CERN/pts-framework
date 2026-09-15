@@ -83,6 +83,8 @@ from pypts.messages.run_events import (
     StepFinished,
     StepStarted,
     StopSequence,
+    UserPathRequest,
+    UserPathResponse,
     UserPromptRequest,
     UserPromptResponse,
     UserTextRequest,
@@ -446,7 +448,7 @@ class Core:
                 # The operator's abort. Relayed unchanged; the Sequencer answers
                 # with the run's own RunFinished(STOP).
                 self.to_sequencer.send(message)
-            case UserPromptResponse() | UserTextResponse():
+            case UserPromptResponse() | UserTextResponse() | UserPathResponse():
                 # The operator's answer belongs to whoever asked the question.
                 self.to_sequencer.send(message)
             case SetConfigParameter(key=key, value=value):
@@ -500,11 +502,11 @@ class Core:
                 # flat StepFinished, and this one must not cross the process
                 # boundary (see its docstring).
                 self.to_report.send(message)
-            case UserPromptRequest() | UserTextRequest():
+            case UserPromptRequest() | UserTextRequest() | UserPathRequest():
                 # A step is waiting on the sequence thread for the answer to
                 # this. Relayed unchanged; the answer comes back through
-                # handle_hmi_message. Both are live: UserInteraction asks the
-                # first, UserWrite the second.
+                # handle_hmi_message. All three are live: UserInteraction asks
+                # the first, UserWrite the second, UserLoading the third.
                 self.to_hmi.send(message)
             case Heartbeat():
                 self.note_heartbeat(message)

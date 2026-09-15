@@ -56,14 +56,15 @@ PySide6 application. Full context in `hmi/gui/gui.md`. Key points:
 ## Key messages (HMI → CORE)
 
 `LoadRecipe`, `StartSequence`, `ShutdownRequested`, `UserPromptResponse`, `UserTextResponse`,
-`HmiStopped`, `SetConfigParameter` (sent by `set_config_parameter()`; only the GUI's
-Configuration dialog calls it — the CLI has no command for it).
+`UserPathResponse` (sent by `answer_user_path()`), `HmiStopped`, `SetConfigParameter` (sent by `set_config_parameter()`; only the GUI's
+Settings dialog calls it — the CLI has no command for it).
 
 ## Key messages (CORE → HMI)
 
 `RecipeLoaded`, `RunStarted`, `SequenceStarted`, `StepStarted`, `StepFinished`,
 `SequenceFinished`, `RunFinished`, `ReportReady`, `UserPromptRequest`, `UserTextRequest`,
-`ModuleErrorReported`, `StatusChanged`, `StopHmi`, `ConfigParameterResult` (hook
+`UserPathRequest` (hook `ask_user_path()`; the default declines with a WARNING, like
+`ask_user_text()`), `ModuleErrorReported`, `StatusChanged`, `StopHmi`, `ConfigParameterResult` (hook
 `show_config_parameter_result()`; the default logs at DEBUG).
 
 Full catalogue: `messages/messages.md`.

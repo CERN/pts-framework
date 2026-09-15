@@ -206,8 +206,8 @@ has a typed, owned equivalent:
 | nine `*_signal = Signal(dict)` + `getattr(self, name + "_signal")` | the `match` in `HmiClient.handle_core_message()` closed with `unhandled()` → typed `show_*` / `ask_*` hooks the GUI overrides. mypy and `test_messages.py` replace "hope the dict has the key" |
 | ViewModel dicts built in the proxy | the messages *are* the view models: `StepStarted(step_id, step_name)`, `StepFinished(outcome: StepOutcome)`, `RunFinished(result, outcomes)` — plain values, already pickle-tested |
 | proxy suppressing `SequenceStep` rows | not needed yet (no nested steps); when `SequenceStep` lands, the same policy belongs in the presentation layer, not the transport |
-| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `UserTextRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_user_text()`. The hooks **default to declining** so a blocked step is never stranded. Both halves are live end to end — `UserInteractionStep` asks the first (roadmap §1.28), `UserWriteStep` the second. The old GUI's dedicated serial-number dialog has no successor **on purpose**: asking for a serial number is a recipe's `get_serial_number` step, not something the framework does — see `recipe_guide.html` (repo root) |
-| second value pushed on the same queue (`file`/`wrt`/`ID`) | **unsolved by design** — each follow-up must become its own request/response pair when those steps are ported (roadmap §1.1 TODO) |
+| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `UserTextRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_user_text()`. The hooks **default to declining** so a blocked step is never stranded. All three are live end to end — `UserInteractionStep` asks the first (roadmap §1.28), `UserWriteStep` the second, `UserLoadingStep` the third (`UserPathRequest`/`UserPathResponse`, answered by `answer_user_path()`). The old GUI's dedicated serial-number dialog has no successor **on purpose**: asking for a serial number is a recipe's `get_serial_number` step, not something the framework does — see `recipe_guide.html` (repo root) |
+| second value pushed on the same queue (`file`/`wrt`/`ID`) | **solved by giving each follow-up its own request/response pair.** `wrt` became `UserTextRequest` (UserWrite); `file` became `UserPathRequest`/`UserPathResponse` (UserLoading, 2026-09-15) — one request, one response carrying the path, answered by `answer_user_path()` from the path page (§7, *Three questions, one panel*). The serial-port `ID` mode was dropped |
 | `WAIT_FOR_TERMINATION` global + nested QEventLoop on abort | nothing blocks: Stop sends the command and the *events* drive the buttons — `RunFinished` (result STOP) is the "engine has stopped" confirmation the old global tried to be |
 | root-logger tap into the log box | the GUI logs normally; its records go to the Logger like everyone's. The log box is fed the other way round: `log_tail.py` reads the run log file the Logger writes, so the panel shows *every* process, not just the GUI's own records (§8) |
 | `StepResultModel` over live `StepResult` trees | `RunFinished.outcomes` is a **flat tuple** of `StepOutcome` (execution order). The tree returns only if a pickle-safe outcome tree is added when nesting lands |
@@ -266,7 +266,7 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe, Configuration… → §10c, Remove Cache → §10) / View (dark mode toggle) / About (GitHub, Wiki - both open a URL, §12) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe, Settings → §10c, Remove Cache → §10) / View (dark mode toggle) / About (GitHub, Wiki - both open a URL, §12) |
 | `screen_tab_bar` (`QTabBar`, CERN Blue bg) | Full-width state indicator: Idle \| Running \| Prompt \| Results; click snaps back unless `_browsable=True` (pause mode) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" below the tab bar |
 | `QSplitter` 52/48 | left: `left_stack` (`QStackedWidget`, 3 pages); right: `CenterContent` |
@@ -349,18 +349,43 @@ the request plus a closure that answers it. `CenterContent` holds **one** `_pend
 a time, and `_answer()` clears it *before* invoking the callback — so a step waiting on the
 other side is answered exactly once, however many times a button is clicked.
 
-**Two questions, one panel.** A `UserTextRequest` takes the same path through
+**Three questions, one panel.** A `UserTextRequest` takes the same path through
 `ask_user_text()` → `show_text_request()` → `InteractionPanel.set_text_prompt()`, which shows
 the same picture and the same message with a `QLineEdit` + OK + Cancel where the button row
-would be. It answers through the same two signals — `response_given` with the typed text,
-`cancelled` from Cancel — so everything below applies to it unchanged and neither question
-needs a special case. `is_idle()` reports the panel's **logical** mode, not Qt visibility: a
+would be. A `UserPathRequest` (UserLoading) takes `ask_user_path()` → `show_path_request()` →
+`InteractionPanel.set_path_prompt(message, select, image_path)` and shows the path page:
+
+```
+  Select the calibration file for this unit.
+
+  [ C:\bench\cal\unit42.csv          ] [Browse...]
+  (hint: why OK is disabled - empty when the path is fine)
+                               [ OK ]  [ Cancel ]
+```
+
+Both answer through the same two signals — `response_given` with the answer, `cancelled`
+from Cancel — so everything below applies to them unchanged and no question needs a special
+case. `is_idle()` reports the panel's **logical** mode, not Qt visibility: a
 child of a window that has never been shown reports `isVisible()` False whatever was asked
 of it, which is exactly the case under test.
 
 **OK is disabled while the field is empty.** That is the whole of the "no empty answers"
 rule — the operator types something or cancels — and it is why no recipe has to spell an
 `allow_empty` out.
+
+**The path page's OK is enabled only for an existing path of the right kind.**
+`interaction_panel.path_problem(text, select)` is the one check: it returns the hint shown
+under the field (`No such file.`, `That is a folder - a file is asked for.`, and the folder
+equivalents) or `""` when the path will do, and both the OK button and Return in the field go
+through it. It runs on every keystroke, like the text page's check. The operator may type or
+paste a path, or press **Browse...**: `QFileDialog.getOpenFileName` for `select: file`,
+`getExistingDirectory` for `select: folder`, parented to the window, starting in the folder of
+what the field already holds when that exists (otherwise Qt chooses). A cancelled chooser
+leaves the field alone. **What is sent is always absolute** — `str(Path(text.strip()).resolve())`
+— because a relative path would be resolved in the CORE process, against a working directory
+the operator never saw. The step checks the answer again and ERRORs on anything that is not
+an existing path of the right kind (`step/step.md` §2.5). No file filter, no start-folder
+option and no save-as, deliberately. The CLI keeps `HmiClient`'s default and declines.
 
 There was a second page here until 2026-09-02: a serial-number form with its own
 `QLineEdit`, driven by a `SerialNumberRequest` nothing ever sent. It is gone, along with
@@ -372,7 +397,7 @@ Three things decline an open prompt, all through `cancel_pending()`, all answeri
 
 | Trigger | Why |
 |---|---|
-| a superseding `show_prompt()` / `show_text_request()` | the step waiting on the old request must be released, not stranded |
+| a superseding `show_prompt()` / `show_text_request()` / `show_path_request()` | the step waiting on the old request must be released, not stranded |
 | `RunFinished` (`gui.py`) | the run is over; nothing is left to answer |
 | the operator's **Cancel** button | they chose not to answer |
 
@@ -717,43 +742,59 @@ confirm view's height.
 
 ---
 
-## 10c. Edit → Configuration — and the settings the window opens with
+## 10c. Edit → Settings — and the theme and size the window opens with
 
-`Edit → Configuration…` shows every setting in `config.ini` an operator may change and saves
-the ones they changed. `configuration_dialog.py` is the dialog; `gui.py` wires it.
+`Edit → Settings` shows every setting in `config.ini` an operator may change and saves the
+ones they changed. `settings_dialog.py` is the dialog; `gui.py` wires it.
+
+**What it looks like.** A page list on the left — Appearance, Folders, Logging, Report,
+Advanced (`PAGES`) — and the page's settings on the right, one card each. The control fits
+the value, not the file: the theme is three picture cards (a thumbnail of the window in that
+theme; System shows light and dark side by side), a short list of choices is a row of
+buttons, a yes/no is an On/Off switch, the window size is two number fields plus HD / HD+ /
+Full HD presets on one card, a folder is a path with Browse and Open. A card whose value
+differs from the one the dialog opened with is outlined, shows **Reset**, and puts a `•`
+after its page's name. Save reads "Save N changes".
 
 **The GUI does not write the file.** It holds its configuration read-only like every process
 but CORE. Save sends one `SetConfigParameter` per changed key, and CORE answers each with
 `ConfigParameterResult` (the chain is in `config_handler/config_handler.md` → *Writing*):
 
 ```
-Edit > Configuration -> GUI._open_configuration()
-                          |  values = get_whole_config() as text + this session's saved changes
-                          |  problem = bootstrap_problem if the file was DISCARDED
-                          v
-                        ConfigurationDialog.exec()            page 1: editors
-                          | Save: send(key, text) per change   -> set_config_parameter()
-                          |                                        -> SetConfigParameter
-                          |     ... poll timer keeps running inside exec() ...
-                          |                                    <- ConfigParameterResult
-                          | GUI.show_config_parameter_result() -> dialog.apply_result()
-                          v
-                        page 2: saved / not saved, "applies from the next start"
+Edit > Settings -> GUI._open_settings()
+                     |  values = get_whole_config() as text + this session's saved changes
+                     |  problem = bootstrap_problem if the file was DISCARDED
+                     v
+                   SettingsDialog.exec()                page 1: pages of cards
+                     | theme card clicked               -> preview_theme = GUI._use_theme()
+                     | Save: send(key, text) per change -> set_config_parameter()
+                     |                                      -> SetConfigParameter
+                     |     ... poll timer keeps running inside exec() ...
+                     |                                  <- ConfigParameterResult
+                     | GUI.show_config_parameter_result() -> dialog.apply_result()
+                     v
+                   page 2: ✓ saved / ✗ not saved, "applies from the next start"
+                     | done() (Close, Cancel, Esc, X): theme not saved -> preview the old one
 ```
 
 **Decisions worth not undoing:**
 
-- **Editors come from `SCHEMA`.** Choices → combo box, `int` → number field (no arrows),
-  `bool` → check box carrying its own caption, `path` → line edit + Browse, other `str` →
-  line edit. `READ_ONLY_SECTIONS` are skipped. A new schema key appears with no GUI change;
-  `LABELS` / `HINTS` only make it read well.
-- **Only changed keys are sent**, compared as the file spells them (`setting_text()`:
-  `True` → `"true"`), so an untouched value is never re-sent.
-- **Paths must be absolute** before Save is enabled — a relative one would resolve against
-  wherever pypts was started. The Config Handler itself only insists on non-empty.
+- **No setting is left out.** `PAGES` places the keys it knows; any other editable key of
+  `SCHEMA` gets a page named after its section and a control chosen from its type
+  (`pages_for_schema()`), so a new schema key appears with no GUI change. `READ_ONLY_SECTIONS`
+  are skipped.
+- **Every control reads and writes text as the file spells it** (`SettingEditor.value()` /
+  `set_value()`; `setting_text()` turns `True` into `"true"`), so only really changed keys are
+  sent and an untouched value is never re-sent.
+- **The theme is the one live setting.** Picking a card calls `preview_theme` at once. Every
+  way out goes through `done()`, which puts the theme in force back unless CORE confirmed
+  saving the new one — so the window never stays in a theme the next start will not use.
+- **Folders must be absolute** before Save is enabled — a relative one would resolve against
+  wherever pypts was started. Open is enabled only for a folder that exists, checked when
+  typing finishes rather than per keystroke (a `stat()` on a dead share can hang).
 - **A discarded file offers no Save.** CORE would refuse every change (writing one value
   would replace the user's broken file with defaults), so the dialog shows
-  `bootstrap_problem` in a banner and disables the editors. Every process applies the same
+  `bootstrap_problem` in a banner and disables every card. Every process applies the same
   discard rule, so the GUI's verdict is CORE's.
 - **The answer wait is bounded** (`ANSWER_TIMEOUT_MS`, 5 s — the heartbeat timeout). Changes
   still unanswered are reported as "may not have been saved" rather than leaving the dialog
@@ -761,18 +802,23 @@ Edit > Configuration -> GUI._open_configuration()
 - **This session's saved values are remembered** (`GUI._saved_settings`), because this
   process never re-reads `config.ini`; without it the dialog would reopen showing the
   startup values. An answer that arrives with no dialog open goes to the status line.
-- **Nothing applies until the next start**, and both pages say so.
+- **Everything but the theme applies at the next start**, and both pages say so.
 
 **The window reads `[gui]` once, at startup** (`window_settings()`): `window_width` /
 `window_height` size it — `setMinimumSize(1000, 700)` still wins over anything smaller — and
-`theme` decides the palette. `default` detects the OS scheme and installs the live OS sync;
-`light` / `dark` are fixed and the OS sync is **not** installed, so an operator's choice is
-not overruled. View → Toggle Dark Mode still flips either for the session. With no
-configuration at all (a test, a frontend started by hand) the template defaults apply —
-1280×720, `default`.
+`theme` goes through `GUI._use_theme()`. `light` (the shipped value) and `dark` are fixed and
+the OS sync is **not** installed, so the operator's choice is not overruled; `system` detects
+the OS scheme and installs the live OS sync. View → Toggle Dark Mode still flips either for
+the session. With no configuration at all (a test, a frontend started by hand) the template
+values apply — 1280×720, light.
+
+**The Recipe Creator reads the same setting** through `gui_theme.configured_theme()` — the
+one reading of `[gui] theme` both windows share — and follows the OS the same way when it is
+`system`. It never writes the configuration.
 
 Tests pin the OS theme to light and point the config at a non-existent file
-(`isolated_configuration` in `test_hmi_gui.py`), so no test depends on the machine running it.
+(`isolated_configuration` in `test_hmi_gui.py` and `test_settings.py`), so no test depends on
+the machine running it.
 
 ---
 
@@ -877,14 +923,8 @@ emits and therefore the order of the table's rows. `test_recipe.py` pins the two
 together against `all_steptypes_demo.yml`, whose rows include five from one Indexed
 step.
 
-Two limitations, accepted:
-
-- The file is read **once, at load**. Editing the `.yml` afterwards makes the panel
-  show the new file while the engine runs the old one.
-- It cannot work if CORE ever runs on another machine (a remote CORE; there is no
-  such mode today). The fix then is a `StepSummary.yaml_source` field — deliberately not
-  added now, because it would put a copy of the whole recipe text through the HMI
-  boundary to serve a hover.
+One limitation, accepted: the file is read **once, at load**. Editing the `.yml`
+afterwards makes the panel show the new file while the engine runs the old one.
 
 ### The widget, and two decisions inside it
 

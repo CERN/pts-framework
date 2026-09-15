@@ -24,6 +24,12 @@ Who owns what in this package:
     python_module_step.py  a minimal PythonModuleStep (method calls only;
                            module beside the recipe or a dotted import) and
                            load_python_module()
+    user_interaction_step.py  UserInteractionStep: the operator picks a button
+    user_write_step.py     UserWriteStep: the operator types a line of text
+    user_loading_step.py   UserLoadingStep: the operator picks a file or a
+                           folder; the checked, absolute path is the output
+    operator_prompt.py     what the three prompting types share:
+                           resolve_image_path() and ask_or_raise()
     registry.py            steptype name -> class, and build_step(); the
                            replacement for the old eval() factory
     indexed_step.py        `steptype: Indexed`: one authored step and N
@@ -62,9 +68,9 @@ ERROR stops a sequence; a FAIL (a failed measurement) never halts anything.
 
 Which of the old engine's ten types are being ported, which are dropped, and
 what each port still needs is the catalogue in step.md beside this file - read
-it before starting one. In short: the rest of PythonModuleStep
-(read_attribute/write_attribute) and three interactive types
-(UserInteraction, UserWrite, UserLoading) are to come; UserRunMethodStep and
+it before starting one. In short: PythonModule, Wait and the three
+interactive types (UserInteraction, UserWrite, UserLoading) are ported;
+PythonModuleStep's read_attribute/write_attribute, UserRunMethodStep and
 SequenceStep are dropped; IndexedStep came back as `Indexed`, expanded at load
 time rather than looped at run time; and the SSH pair leaves the step layer to
 become part of the framework. The continue_on_error policy (F8:

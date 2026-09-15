@@ -19,8 +19,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 - **`execute_sequence()`** — resolves the sequence, builds a `Runtime`, emits
   `RunStarted`, calls `run_sequence_body()` from the step layer, emits `RunFinished`.
   Also watches `report_metadata` globals and forwards `RunMetadata` updates to CORE.
-- **Operator interaction** — `ask_operator()` puts a `UserPromptRequest` or
-  `UserTextRequest` on the CORE link and blocks in `PendingRequests.wait()` until the
+- **Operator interaction** — `ask_operator()` puts a `UserPromptRequest`,
+  `UserTextRequest` or `UserPathRequest` on the CORE link and blocks in `PendingRequests.wait()` until the
   response arrives. The event loop must keep turning; `ask_operator` runs on the sequence
   thread, not the event loop thread.
 - **Stop** — `stop_running_sequence()` sets `stop_requested` and joins the sequence thread
@@ -45,4 +45,3 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 ## Known gaps
 
 - `WaitStep` does not honour `stop_requested` mid-sleep (step layer issue, not sequencer).
-- `UserLoadingStep` is not yet ported; see `step/step.md`.

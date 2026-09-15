@@ -5,13 +5,16 @@
 """
 The test functions the demo recipes call - the shape user test code takes.
 Used by pythonmodulestep_demo.yml, indexedstep_demo.yml,
-userinteractionstep_demo.yml and all_steptypes_demo.yml.
+userinteractionstep_demo.yml, userwritestep_demo.yml, userloadingstep_demo.yml
+and all_steptypes_demo.yml.
 
 Framework-free on purpose: a PythonModuleStep calls a plain function with the
 recipe's resolved inputs as keyword arguments, and judges whatever comes back.
 A dict is judged key by key against the step's output_mapping; anything else
 is wrapped as {"output": value}.
 """
+
+from pathlib import Path
 
 
 def add(a, b):
@@ -32,3 +35,28 @@ def is_even(number):
 def greet(name):
     """A scalar return - wrapped as {"output": ...} by the framework."""
     return f"Hello, {name}!"
+
+
+def describe_file(path):
+    """
+    Look at a file the operator picked - the recipe reads the path from a global.
+
+    The recipe judges `size_bytes` with a `range` any real file satisfies; the
+    name is returned too, for the report's measured values.
+    """
+    chosen = Path(path)
+    return {"name": chosen.name, "size_bytes": chosen.stat().st_size}
+
+
+def count_folder_entries(path):
+    """
+    Count what is in a folder the operator picked.
+
+    The recipe judges `is_folder` with `passfail`; the count is returned too,
+    for the report's measured values.
+    """
+    chosen = Path(path)
+    entries = 0
+    if chosen.is_dir():
+        entries = len(list(chosen.iterdir()))
+    return {"is_folder": chosen.is_dir(), "entries": entries}

@@ -10,19 +10,22 @@
 #   Indexed         one authored step, N real ones (expanded at load time)
 #   UserInteraction ask the operator to choose, and use their answer
 #   UserWrite       ask the operator to type, and use what they typed
+#   UserLoading     ask the operator to pick a file or folder, and use the path
 #
 # Each of those has a demo of its own in this folder - pythonmodulestep_demo,
-# indexedstep_demo, userinteractionstep_demo, userwritestep_demo, wait_recipe -
-# and this file is the five of them together, trimmed.
+# indexedstep_demo, userinteractionstep_demo, userwritestep_demo,
+# userloadingstep_demo, wait_recipe - and this file is the six of them
+# together, trimmed.
 #
-# **GUI mode** (`python -m pypts`), because of the UserInteraction steps: the
-# CLI frontend declines every question it is asked, so each prompt here would
-# come back unanswered and be an ERROR. Everything else runs headless.
+# **GUI mode** (`python -m pypts`), because of the UserInteraction, UserWrite
+# and UserLoading steps: the CLI frontend declines every question it is asked,
+# so each of them here would come back unanswered and be an ERROR. Everything
+# else runs headless.
 #
 # Expect a mixed verdict on purpose: two steps are written to FAIL so the
 # report and the step table have something other than green to show.
 name: All steptypes demo
-description: Wait, PythonModule, Indexed, UserInteraction and UserWrite in one run.
+description: Wait, PythonModule, Indexed, UserInteraction, UserWrite and UserLoading in one run.
 version: 0.2
 
 # The default, spelled out because this recipe is a showcase: the serial_number
@@ -36,6 +39,7 @@ report_metadata: [serial_number]
 # read before it is written is a KeyError, and this recipe says what it uses.
 globals:
   port: ''
+  data_file: ''
 ---
 sequence_name: Main
 description: One of everything, in the order a real recipe would use them.
@@ -138,6 +142,27 @@ steps:
     method_name: greet
     inputs:
       name: {type: global, global_name: port}
+
+  # --- UserLoading: the operator picks a file, a later step uses the path --
+  # `select` is file (the default) or folder. The step checks the answer
+  # itself: a path that does not exist, or is the wrong kind, is an ERROR.
+  - steptype: UserLoading
+    step_name: Pick a data file
+    description: The operator chooses any existing file; its path is kept.
+    message: Select a data file - any existing file will do for this demo.
+    select: file
+    outputs:
+      output: {type: global, global_name: data_file}
+
+  - steptype: PythonModule
+    step_name: Check the data file
+    description: Reads the path back out of the globals and looks at the file.
+    module: example_tests.py
+    method_name: describe_file
+    inputs:
+      path: {type: global, global_name: data_file}
+    outputs:
+      size_bytes: {type: range, min: '0', max: '1000000000000'}
 
   # --- One last question, judged against what was answered ----------------
   - steptype: UserInteraction

@@ -5,10 +5,12 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from PySide6.QtCore import QEvent, Qt, Signal
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
+    QFileDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -27,6 +29,39 @@ from pypts.hmi.gui.resources import load_cern_logo_pixmap, make_placeholder_pixm
 #: not one of the options: it emits `cancelled`, not `response_given`, so a
 #: recipe that happens to offer its own "Cancel" option keeps it distinct.
 CANCEL_LABEL = "Cancel"
+
+#: The path page's button that opens the operating system's file or folder chooser.
+BROWSE_LABEL = "Browse..."
+
+#: What a UserPathRequest's `select` may say - the same two words the step uses.
+SELECT_FILE = "file"
+SELECT_FOLDER = "folder"
+
+
+def path_problem(text: str, select: str) -> str:
+    """
+    Why `text` cannot answer a path question, in the operator's words - or ""
+    when it can.
+
+    `select` is "file" or "folder". A relative path is checked against this
+    process's working directory, which is also what the answer is resolved
+    against before it is sent, so the check and the answer agree.
+    """
+    text = text.strip()
+    if select == SELECT_FOLDER:
+        wanted = "folder"
+    else:
+        wanted = "file"
+    if not text:
+        return f"Type the path of a {wanted}, or use {BROWSE_LABEL}"
+    path = Path(text)
+    if not path.exists():
+        return f"No such {wanted}."
+    if select == SELECT_FOLDER and not path.is_dir():
+        return "That is a file - a folder is asked for."
+    if select != SELECT_FOLDER and not path.is_file():
+        return "That is a folder - a file is asked for."
+    return ""
 
 
 class InteractionPanel(QWidget):
@@ -99,6 +134,47 @@ class InteractionPanel(QWidget):
         self._text_row.setVisible(False)
         self._inner.addWidget(self._text_row)
 
+        # The path page is the third question, used by set_path_prompt(): a field
+        # the path lands in, Browse beside it, a hint under it saying why OK is
+        # disabled, and OK + Cancel on a row of their own. Built once and hidden,
+        # like the other two rows.
+        self._path_select = SELECT_FILE
+        self._path_page = QWidget()
+        path_layout = QVBoxLayout(self._path_page)
+        path_layout.setContentsMargins(0, 0, 0, 0)
+        path_layout.setSpacing(6)
+
+        path_field_row = QHBoxLayout()
+        path_field_row.setSpacing(8)
+        self.path_input = QLineEdit()
+        self.path_input.textChanged.connect(self._refresh_path_ok_enabled)
+        self.path_input.returnPressed.connect(self._path_accepted)
+        self.path_browse_button = QPushButton(BROWSE_LABEL)
+        self.path_browse_button.clicked.connect(self._browse_for_path)
+        path_field_row.addWidget(self.path_input, stretch=1)
+        path_field_row.addWidget(self.path_browse_button)
+        path_layout.addLayout(path_field_row)
+
+        self.path_hint_label = QLabel()
+        self.path_hint_label.setWordWrap(True)
+        path_layout.addWidget(self.path_hint_label)
+
+        path_button_row = QHBoxLayout()
+        path_button_row.setSpacing(8)
+        self.path_ok_button = QPushButton("OK")
+        self.path_ok_button.setObjectName("primaryBtn")
+        self.path_ok_button.clicked.connect(self._path_accepted)
+        self.path_cancel_button = QPushButton(CANCEL_LABEL)
+        self.path_cancel_button.setObjectName("stopBtn")
+        self.path_cancel_button.clicked.connect(self.cancelled.emit)
+        path_button_row.addStretch()
+        path_button_row.addWidget(self.path_ok_button)
+        path_button_row.addWidget(self.path_cancel_button)
+        path_layout.addLayout(path_button_row)
+
+        self._path_page.setVisible(False)
+        self._inner.addWidget(self._path_page)
+
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.set_idle()
 
@@ -121,6 +197,7 @@ class InteractionPanel(QWidget):
         self.message_label.setStyleSheet(
             f"font-size:13px; font-weight:500; color:{text_color}; padding:4px 0;"
         )
+        self.path_hint_label.setStyleSheet(f"font-size:11px; color:{palette.text_muted};")
         self._refresh_visual()
 
     def set_idle(self):
@@ -131,6 +208,8 @@ class InteractionPanel(QWidget):
         self._button_row.setVisible(False)
         self._text_row.setVisible(False)
         self.text_input.clear()
+        self._path_page.setVisible(False)
+        self.path_input.clear()
         self._mode = "idle"
         self._refresh_idle_visual()
 
@@ -142,6 +221,7 @@ class InteractionPanel(QWidget):
 
     def set_prompt(self, message: str, buttons: list[dict], image_path: str | None = None):
         self._text_row.setVisible(False)
+        self._path_page.setVisible(False)
         self._set_image_from_path(image_path)
         self.message_label.setText(message)
         self.message_label.setVisible(bool(message))
@@ -177,6 +257,7 @@ class InteractionPanel(QWidget):
         """
         self.clear_buttons()
         self._button_row.setVisible(False)
+        self._path_page.setVisible(False)
         self._set_image_from_path(image_path)
         self.message_label.setText(message)
         self.message_label.setVisible(bool(message))
@@ -194,6 +275,74 @@ class InteractionPanel(QWidget):
     def _refresh_text_ok_enabled(self):
         self.text_ok_button.setEnabled(bool(self.text_input.text().strip()))
 
+    def set_path_prompt(
+        self, message: str, select: str = SELECT_FILE, image_path: str | None = None
+    ):
+        """
+        The path prompt: same picture and message, a path field with Browse
+        beside it instead of buttons. `select` is "file" or "folder".
+
+        It answers through the same two signals as the other prompts -
+        `response_given` with the path, `cancelled` from Cancel - so
+        CenterContent's exactly-once gate, RunFinished and a superseding
+        request all reach it with no special case of their own.
+
+        OK is enabled only while the field holds an existing path of the right
+        kind, and the hint under the field says why when it is not. What is
+        sent is always absolute: a relative path would otherwise be resolved
+        in the CORE process, against a working directory the operator never
+        saw.
+        """
+        self.clear_buttons()
+        self._button_row.setVisible(False)
+        self._text_row.setVisible(False)
+        self._set_image_from_path(image_path)
+        self.message_label.setText(message)
+        self.message_label.setVisible(bool(message))
+        self._path_select = select
+        self.path_input.clear()
+        self._refresh_path_ok_enabled()
+        self._path_page.setVisible(True)
+        self._mode = "path"
+        self.path_input.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def _path_accepted(self):
+        text = self.path_input.text().strip()
+        if path_problem(text, self._path_select):
+            return
+        self.response_given.emit(str(Path(text).resolve()))
+
+    def _refresh_path_ok_enabled(self):
+        problem = path_problem(self.path_input.text(), self._path_select)
+        self.path_ok_button.setEnabled(not problem)
+        self.path_hint_label.setText(problem)
+
+    def _browse_for_path(self):
+        """
+        Open the operating system's chooser and put what was chosen in the
+        field. It starts in the folder of what the field already holds, when
+        that exists; otherwise Qt chooses. A cancelled chooser changes nothing.
+        """
+        current = Path(self.path_input.text().strip())
+        start_folder = ""
+        if self.path_input.text().strip():
+            if current.is_dir():
+                start_folder = str(current.resolve())
+            elif current.is_file():
+                start_folder = str(current.resolve().parent)
+
+        if self._path_select == SELECT_FOLDER:
+            chosen = QFileDialog.getExistingDirectory(
+                self.window(), "Select a folder", start_folder
+            )
+        else:
+            chosen, _selected_filter = QFileDialog.getOpenFileName(
+                self.window(), "Select a file", start_folder
+            )
+        if chosen:
+            # Path() puts the platform's own separators back: Qt hands out "/".
+            self.path_input.setText(str(Path(chosen)))
+
     def set_image(self, image_path: str | None):
         self._set_image_from_path(image_path)
 
@@ -201,6 +350,7 @@ class InteractionPanel(QWidget):
         self._interaction_blocked = blocked
         self._button_row.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
         self._text_row.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
+        self._path_page.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
 
     def add_button(self, label: str, value: str, primary: bool = False, on_click=None):
         """One prompt button. `on_click` replaces the default answer-with-value

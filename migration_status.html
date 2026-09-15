@@ -156,41 +156,10 @@ Fix in Phase 1 (before v0.3.0) unless noted.</p>
 
 </div>
 
-<!-- ═══════════════════════════════════════════ Unported step types ══ -->
-<h2>Unported step types</h2>
-
-<table>
-  <thead>
-    <tr>
-      <th>Old type</th>
-      <th>New name / status</th>
-      <th>Blocker</th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><code>UserLoadingStep</code></td>
-      <td><span class="badge not-ported">Not ported</span></td>
-      <td>One-response-per-request fix for the file path needed first (see below)</td>
-    </tr>
-  </tbody>
-</table>
-
 <!-- ═══════════════════════════════════════════ Other pending items ══ -->
 <h2>Other pending Phase 1 items</h2>
 
 <div class="findings">
-
-  <div class="finding">
-    <span class="tag sev-critical">Blocker</span>
-    <strong>One-response-per-request fix for multi-value responses</strong>
-    <p>Old <code>UserLoadingStep</code> (and <code>UserInteractionStep</code>'s
-    <code>loadFile_key</code>) read a <em>second</em> value, a file path, off the same response
-    queue after the first answer. <code>UserPromptResponse</code> carries exactly one value, so
-    the file pick must become its own typed request before <code>UserLoadingStep</code> can be
-    ported. (The other old cases no longer apply: <code>UserWrite</code> got its own
-    <code>UserTextRequest</code>, and the serial-port <code>ID</code> mode was dropped.)</p>
-  </div>
 
   <div class="finding">
     <span class="tag sev-important">Phase 1</span>
@@ -198,14 +167,6 @@ Fix in Phase 1 (before v0.3.0) unless noted.</p>
     <p>The CLI main thread is parked in <code>input()</code>, so a <code>StopHmi</code> from
     CORE is only noticed after the next Enter key. Pre-existing asymmetry. Fix before
     v0.3.0 tagging.</p>
-  </div>
-
-  <div class="finding">
-    <span class="tag sev-design">Future</span>
-    <strong>Remote CORE (frontend on one machine, engine on another)</strong>
-    <p>Wanted, but has no flag today. Needs event fan-out from CORE to several HMI channels;
-    commands stay point-to-point. A string-topic event bus was considered and rejected. Added
-    when the feature is designed, not before.</p>
   </div>
 
 </div>

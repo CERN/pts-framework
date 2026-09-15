@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-What the engine reports while a recipe runs, and the two questions it asks back.
+What the engine reports while a recipe runs, and the three questions it asks back.
 
 Emitted by the Sequencer, forwarded unchanged by CORE to the HMI, so each one
 belongs to two unions and is defined once here. A message says what happened,
@@ -16,8 +16,9 @@ CLI and the GUI all had to agree on the contract before the engine existed, and
 `mypy` plus `test_messages.py` keep every branch honest in the meantime. The
 seven progress events below carried the marker until the first slice of the
 engine port landed, `UserPromptRequest` until the UserInteraction step type
-landed and `UserTextRequest` until the UserWrite one did. Nothing in this module
-carries the marker any more.
+landed and `UserTextRequest` until the UserWrite one did. `UserPathRequest`
+arrived together with its sender, the UserLoading step type. Nothing in this
+module carries the marker any more.
 """
 
 from dataclasses import dataclass
@@ -224,8 +225,9 @@ class StopSequence:
 # Joined by a `request_id` the asker generates, which is what lets these cross a
 # process boundary. The waiting side is in blocking_messages.py.
 #
-# Both pairs are live end to end: UserInteractionStep and UserWriteStep ask
-# through Runtime.ask, and the frontends answer.
+# All three pairs are live end to end: UserInteractionStep, UserWriteStep and
+# UserLoadingStep ask through Runtime.ask, and the frontends answer. One request,
+# one response, always - a follow-up question is a request of its own.
 #
 # There is deliberately no message for a *particular* question. An earlier
 # SerialNumberRequest hard-coded one - the engine went and fetched the serial
@@ -282,3 +284,34 @@ class UserTextResponse:
 
     request_id: UUID
     text: str | None
+
+
+# Sent by: step/user_loading_step.py, via Runtime.ask -> Sequencer.ask_operator()
+# Receiver: hmi_client.py ask_user_path()
+@dataclass
+class UserPathRequest:
+    """
+    Show the operator a message and wait for a file or a folder to be chosen.
+
+    The third question, and the port of the old UserLoadingStep's dialog. The
+    old one pushed a second value onto the response queue after the button;
+    this is one request answered by one UserPathResponse, like the other two.
+
+    `select` is "file" or "folder" - always lowercase, the step normalises it.
+    A frontend should only let the operator confirm an existing path of that
+    kind; the step checks the answer again either way. `image_path` is
+    absolute, for the same reason as UserPromptRequest's.
+    """
+
+    request_id: UUID
+    message: str
+    select: str = "file"
+    image_path: str | None = None
+
+
+@dataclass
+class UserPathResponse:
+    """The path the operator chose. `path` is None if they cancelled or it timed out."""
+
+    request_id: UUID
+    path: str | None

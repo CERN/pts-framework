@@ -46,6 +46,8 @@ from pypts.messages.run_events import (
     StepFinished,
     StepStarted,
     StopSequence,
+    UserPathRequest,
+    UserPathResponse,
     UserPromptRequest,
     UserPromptResponse,
     UserTextRequest,
@@ -155,8 +157,9 @@ class HmiClient:
             case ConfigParameterResult():
                 self.show_config_parameter_result(message)
             # The progress events below are live: CORE and the engine send all
-            # of them on every run, and so are both questions - UserInteraction
-            # asks the first, UserWrite the second.
+            # of them on every run, and so are all three questions -
+            # UserInteraction asks the first, UserWrite the second, UserLoading
+            # the third.
             case RecipeLoaded():
                 self.show_recipe_loaded(message)
             case RunStarted(recipe_name=name, recipe_description=description):
@@ -177,6 +180,8 @@ class HmiClient:
                 self.ask_user(message)
             case UserTextRequest():
                 self.ask_user_text(message)
+            case UserPathRequest():
+                self.ask_user_path(message)
             case Heartbeat():
                 self.core_watch.note()
             case _:
@@ -228,6 +233,10 @@ class HmiClient:
     def answer_user_text(self, request: UserTextRequest, text: str | None) -> None:
         """Answer a UserTextRequest. `text` is None if the operator declined."""
         self.core.send(UserTextResponse(request_id=request.request_id, text=text))
+
+    def answer_user_path(self, request: UserPathRequest, path: str | None) -> None:
+        """Answer a UserPathRequest. `path` is None if the operator declined."""
+        self.core.send(UserPathResponse(request_id=request.request_id, path=path))
 
     # --- Shutdown -------------------------------------------------------------
 
@@ -355,6 +364,18 @@ class HmiClient:
             request.message,
         )
         self.answer_user_text(request, None)
+
+    def ask_user_path(self, request: UserPathRequest) -> None:
+        """As ask_user(), and declines for the same reason. `request.select`
+        says whether a file or a folder is wanted; answer with
+        answer_user_path()."""
+        log.warning(
+            "This interface cannot ask the operator to choose a %s, so the "
+            "request '%s' was declined.",
+            request.select,
+            request.message,
+        )
+        self.answer_user_path(request, None)
 
     def on_stop(self) -> None:
         """Frontend teardown - close the window, print a farewell. Optional."""

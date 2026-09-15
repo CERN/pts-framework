@@ -57,12 +57,20 @@ if __name__ == "__main__":
   `Sequencer.execute_sequence` *before* `RunStarted` it refuses a start. Any other error is a
   load warning (a version notice) or goes into `RunResult.errors`. A new refusal path in CORE
   or the Sequencer has to be added to `LOAD_REFUSAL` / `START_REFUSALS`.
+- **Three kinds of question, one `answer` function.** It is called with a `UserPromptRequest`
+  (return one of `options`), a `UserTextRequest` (return the text) or a `UserPathRequest`
+  (return the path of an existing file or folder - `request.select` says which), and returns
+  `None` to decline. `ApiClient` overrides `ask_user` / `ask_user_text` / `ask_user_path` as
+  DEBUG no-ops so the poll thread does not decline on `HmiClient`'s behalf; `run()` answers on
+  the caller's thread through `_answer`. The UserLoading step checks a returned path itself:
+  one that does not exist, or is the wrong kind, is an ERROR.
 - **A question is always answered.** No `answer` function declines, as the CLI does. An answer
   function that raises still sends a decline before the exception reaches the caller, so the
   step is not left waiting out its 300 s timeout.
 - **Returns dataclasses, not messages.** `LoadedRecipe`, `RunResult`, `StepVerdict` are the
   contract; the message dataclasses stay internal and free to change. `ResultType`,
-  `UserPromptRequest` and `UserTextRequest` are re-exported because the caller needs them.
+  `UserPromptRequest`, `UserTextRequest` and `UserPathRequest` are re-exported because the
+  caller needs them.
 - **`open_gui(start=True)`** passes the recipe and the start to `gui_main()`; the GUI opens it
   through `open_recipe()` and starts the sequence in `show_recipe_loaded()`. A refused recipe
   is never started, and any other open before `RecipeLoaded` cancels the pending start

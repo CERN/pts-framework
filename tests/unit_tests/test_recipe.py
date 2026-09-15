@@ -36,6 +36,7 @@ PYTHONMODULE_DEMO = DEMOS / "pythonmodulestep_demo.yml"
 INDEXED_DEMO = DEMOS / "indexedstep_demo.yml"
 USER_INTERACTION_DEMO = DEMOS / "userinteractionstep_demo.yml"
 USER_WRITE_DEMO = DEMOS / "userwritestep_demo.yml"
+USER_LOADING_DEMO = DEMOS / "userloadingstep_demo.yml"
 ALL_STEPTYPES_DEMO = DEMOS / "all_steptypes_demo.yml"
 
 PLACEHOLDER = "placeholder - test not implemented yet"
@@ -361,6 +362,46 @@ def test_steptype_specific_required_fields_are_enforced():
     assert "method_name" in str(excinfo.value)
 
 
+USER_LOADING_STEP = """\
+  - steptype: userloading
+    step_name: pick_calibration_file
+    message: Select the calibration file for this unit.
+    outputs:
+      output: {type: global, global_name: calibration_file}
+"""
+
+
+def test_a_user_loading_step_loads_and_selects_a_file_by_default():
+    from pypts.step.user_loading_step import UserLoadingStep
+
+    text = VALID + USER_LOADING_STEP
+    step = Recipe.from_yaml_text(text).sequences["Main"].steps[1]
+
+    assert isinstance(step, UserLoadingStep)
+    assert step.select == "file"
+    assert step.image_path is None
+    assert step.outputs == {"output": {"type": "global", "global_name": "calibration_file"}}
+
+
+def test_a_user_loading_step_accepts_folder_in_any_case():
+    text = VALID + USER_LOADING_STEP + "    select: Folder\n"
+    step = Recipe.from_yaml_text(text).sequences["Main"].steps[1]
+    assert step.select == "folder"
+
+
+def test_a_user_loading_step_with_an_unknown_select_is_refused():
+    text = VALID + USER_LOADING_STEP + "    select: directory\n"
+    with pytest.raises(RecipeError, match="'select' must be 'file' or 'folder'") as excinfo:
+        Recipe.from_yaml_text(text)
+    assert "pick_calibration_file" in str(excinfo.value)
+
+
+def test_a_user_loading_step_needs_a_message():
+    text = VALID + "  - steptype: UserLoading\n    step_name: pick\n"
+    with pytest.raises(RecipeError, match="message"):
+        Recipe.from_yaml_text(text)
+
+
 def test_every_problem_is_reported_in_one_error():
     """The validator collects; the user fixes the file in one round trip."""
     broken = "\n".join(
@@ -483,6 +524,37 @@ def test_the_user_write_demo_recipe_parses():
     }
 
 
+def test_the_user_loading_demo_recipe_parses():
+    """resources/recipes/Development_recipes/userloadingstep_demo.yml is the UserLoading
+    showcase: a file pick and a folder pick, each stored in a global that a
+    later PythonModule step reads."""
+    recipe = Recipe.from_file(str(USER_LOADING_DEMO))
+
+    steps = recipe.sequences["Main"].steps
+    assert [step.name for step in steps] == [
+        "pick_calibration_file",
+        "Pick the dump folder",
+        "Check the calibration file",
+        "Count the dump folder",
+    ]
+    assert [type(step).__name__ for step in steps] == [
+        "UserLoadingStep",
+        "UserLoadingStep",
+        "PythonModuleStep",
+        "PythonModuleStep",
+    ]
+    # `select: Folder` in the file - lowercased when the step is built.
+    assert steps[0].select == "file"
+    assert steps[1].select == "folder"
+    assert steps[0].outputs == {
+        "output": {"type": "global", "global_name": "calibration_file"}
+    }
+    assert steps[2].inputs == {
+        "path": {"type": "global", "global_name": "calibration_file"}
+    }
+    assert steps[3].inputs == {"path": {"type": "global", "global_name": "dump_folder"}}
+
+
 def test_the_all_steptypes_demo_recipe_builds_one_of_everything():
     """resources/recipes/Development_recipes/all_steptypes_demo.yml is the single run that
     exercises every steptype - the one to reach for when testing the engine
@@ -494,6 +566,7 @@ def test_the_all_steptypes_demo_recipe_builds_one_of_everything():
     assert built == {
         "UserInteractionStep",
         "UserWriteStep",
+        "UserLoadingStep",
         "WaitStep",
         "PythonModuleStep",
     }

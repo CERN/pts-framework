@@ -90,6 +90,8 @@ from pypts.messages.run_events import (
     StepFinished,
     StepStarted,
     StepSummary,
+    UserPathRequest,
+    UserPathResponse,
     UserPromptRequest,
     UserPromptResponse,
     UserTextRequest,
@@ -195,6 +197,13 @@ EXAMPLES = {
         image_path="/tmp/label.png",
     ),
     UserTextResponse: UserTextResponse(request_id=REQUEST_ID, text="SN-42"),
+    UserPathRequest: UserPathRequest(
+        request_id=REQUEST_ID,
+        message="Select the calibration file",
+        select="folder",
+        image_path="/tmp/cal.png",
+    ),
+    UserPathResponse: UserPathResponse(request_id=REQUEST_ID, path="/tmp/cal/unit_7.csv"),
     # core_hmi_communication
     LoadRecipe: LoadRecipe(recipe_path="resources/recipes/example.yaml"),
     StartSequence: StartSequence(sequence_name="Main"),
@@ -596,6 +605,7 @@ SHARED_PROTOCOL_METHODS = (
     "request_shutdown",
     "answer_user_prompt",
     "answer_user_text",
+    "answer_user_path",
 )
 
 
