@@ -22,6 +22,11 @@ from typing import Any
 #: only ever changes with the framework that reads it.
 HEADER_REQUIRED: tuple[str, ...] = ("name", "version")
 
+#: Header fields that hold one value - a name, a version, a sentence - and so
+#: may not be written as a list or a mapping. `globals` is the one header
+#: field that must be a mapping; `report_metadata` is checked by the parser.
+HEADER_SINGLE_VALUE: tuple[str, ...] = ("name", "version", "description", "main_sequence")
+
 #: The globals the Report stamps on every row of report.csv and in the
 #: header of report.html. Named by the recipe, so the framework carries a
 #: convention rather than a policy: the default is the one PyPTS proposes

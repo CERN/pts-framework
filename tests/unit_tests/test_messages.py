@@ -47,6 +47,7 @@ from pypts.messages.common_messages import (
     StepOutcome,
 )
 from pypts.messages.core_hmi_communication import (
+    ConfigParameterResult,
     CoreToHmi,
     HmiStopped,
     HmiToCore,
@@ -205,6 +206,12 @@ EXAMPLES = {
     ModuleErrorReported: ModuleErrorReported(error=AN_ERROR),
     ReportReady: ReportReady(
         report_path="/tmp/run/report.html", report_dir="/tmp/run"
+    ),
+    ConfigParameterResult: ConfigParameterResult(
+        key="gui.window_width",
+        value="wide",
+        accepted=False,
+        reason="Configuration key 'gui.window_width' is 'wide'; a whole number is required.",
     ),
     # core_sequencer_communication
     RunSequence: RunSequence(recipe=A_RECIPE, sequence_name="Main"),
@@ -477,9 +484,21 @@ def unwrapped(instance, method_name):
 
 
 @pytest.fixture
-def core():
-    """A Core with its links built and its submodules never started."""
-    return Core(
+def core(tmp_path, monkeypatch):
+    """
+    A Core with its links built and its submodules never started.
+
+    Pointed at a config.ini that does not exist. The handler coverage test
+    drives SetConfigParameter through CORE's real write path, which must find
+    nothing to write to - never the configuration of whoever runs the tests.
+    """
+    from pypts.config_handler import ConfigHandler, file_locations
+
+    monkeypatch.setattr(
+        file_locations, "config_file_path", lambda: tmp_path / "no_config" / "config.ini"
+    )
+    ConfigHandler.reset_for_testing()
+    yield Core(
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
         # Passed, not read from the configuration: outside a real run there is
@@ -487,6 +506,7 @@ def core():
         # fixture below is told its output_dir.
         watchdog_enabled=True,
     )
+    ConfigHandler.reset_for_testing()
 
 
 @pytest.fixture

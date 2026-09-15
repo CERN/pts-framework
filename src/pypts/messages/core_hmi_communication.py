@@ -48,19 +48,16 @@ class StartSequence:
     sequence_name: str
 
 
-# NOT SENT YET - and the only message in the system that is dead at *both* ends.
-# No frontend constructs it, and CORE's branch for it
-# (`core.py: handle_hmi_message()`) deliberately logs that it is ignoring the
-# request rather than carrying it out. That refusal is the honest behaviour
-# until two questions are answered: whether CORE replies with a confirmation or
-# an error, and how a process that read a value at startup learns it changed.
-# Until then a configuration change takes effect on the next start.
 @dataclass
 class SetConfigParameter:
     """
-    Change one configuration value. Declared, not implemented.
+    Change one configuration value in config.ini. CORE answers ConfigParameterResult.
 
-    CORE is the single writer of config.ini, so a frontend asks instead of writing.
+    CORE is the single runtime writer of config.ini, so a frontend asks instead
+    of writing. `value` is the text as it should appear in the file ("true",
+    "1280", an absolute path). The change is written straight away but takes
+    effect on the next start: every process read its configuration once, at
+    startup, and nothing tells a running one that a value changed.
     """
 
     key: str
@@ -120,6 +117,25 @@ class ReportReady:
     report_dir: str
 
 
+@dataclass
+class ConfigParameterResult:
+    """
+    CORE's answer to one SetConfigParameter.
+
+    `accepted` True: the value is in config.ini now and applies from the next
+    start. False: the file was not touched, and `reason` says why in words meant
+    for whoever made the change - a value of the wrong type, a key that does not
+    exist, a read-only section, or a settings file that was discarded at startup.
+    `key` and `value` repeat the request, so a frontend waiting on several
+    answers can tell them apart.
+    """
+
+    key: str
+    value: str
+    accepted: bool
+    reason: str = ""
+
+
 # --- The link ------------------------------------------------------------------
 #
 # The two unions are the contract: `unhandled()` is checked against them, and the
@@ -143,6 +159,7 @@ CoreToHmi = (
     | StatusChanged
     | ModuleErrorReported
     | ReportReady
+    | ConfigParameterResult
     | RecipeLoaded
     | RunStarted
     | RunFinished

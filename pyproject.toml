@@ -186,6 +186,7 @@ files = [
   "src/pypts/logger",
   "src/pypts/utilities",
   "src/pypts/hmi/hmi_client.py",
+  "src/pypts/api",
 ]
 
 # Deliberately not `strict`. The value here is in the message contract being

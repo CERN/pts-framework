@@ -25,6 +25,17 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 - **Shutdown** — `stop_core()` sends `HmiStopped` + `ShutdownRequested` to CORE, joins
   up to `CORE_SHUTDOWN_TIMEOUT_S` (5.0 s), and terminates if CORE does not stop in time.
 
+## The engine half, shared with `pypts.api`
+
+`main()` is argument parsing plus three functions, which `pypts.api` calls too - so the API
+starts exactly what `python -m pypts` starts:
+
+| Function | Does |
+|----------|------|
+| `start_engine(mode, log_level_name, debug_monitor)` | pins spawn, bootstraps config, starts the Logger, `init_logging()`, starts CORE; returns an `Engine` (the processes and both HMI links). Stops what it started if it fails. `mode` is `gui` / `cli` / `api`. |
+| `run_gui(engine, recipe_path, start, sequence_name)` | spawns the GUI process and joins it. The last three are for `pypts.api.open_gui()`. |
+| `stop_engine(engine)` | `stop_core()`, then `StopLogger` and the Logger join. |
+
 ## Process topology
 
 ```

@@ -41,7 +41,10 @@ from dataclasses import dataclass
 #: Version 2 added [watchdog]. Every config.ini written before it is discarded
 #: for the run and the user is told to delete it - which is the whole point of
 #: the version, and cheap on a refactor branch.
-CONFIG_VERSION = 2
+#: Version 3 changed the values `[gui] theme` accepts: "default" became
+#: "system", and "light" became the shipped value. A version-2 file saying
+#: `theme = default` would fail validation anyway; the bump says why plainly.
+CONFIG_VERSION = 3
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
 #: that a file written by hand behaves the way an INI file is expected to.
@@ -103,7 +106,9 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "theme": Field("str", "default"),
     },
     "gui": {
-        "theme": Field("str", "default", choices=("default", "light", "dark")),
+        # Light unless the operator chooses otherwise; "system" follows the
+        # operating system. Read by pypts' window and by the Recipe Creator.
+        "theme": Field("str", "light", choices=("light", "dark", "system")),
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
     },
@@ -115,6 +120,14 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "enabled": Field("bool", "true"),
     },
 }
+
+#: Sections that are not settings. `meta` is managed by pypts - a hand-picked
+#: `config_version` would get the whole file discarded at the next start - and
+#: `operating_system` records the machine the file was created on. A frontend
+#: does not offer them for editing, and CORE refuses a `SetConfigParameter` for
+#: either, so the rule holds even for a frontend that forgets it.
+READ_ONLY_SECTIONS = ("meta", "operating_system")
+
 
 def schema_for_section(section: str) -> dict[str, Field] | None:
     """

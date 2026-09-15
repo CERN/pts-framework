@@ -259,6 +259,164 @@ QPushButton#cacheDialogRemoveBtn:disabled {{
     color: {LIGHT.toolbutton_disabled};
     border: 1px solid {LIGHT.border};
 }}
+QListWidget#settingsNav {{
+    background-color: {LIGHT.header_background};
+    border: none;
+    border-right: 1px solid {LIGHT.border};
+    padding: 14px 8px;
+    font-size: 13px;
+    outline: 0;
+}}
+QListWidget#settingsNav::item {{
+    padding: 9px 12px;
+    margin-bottom: 2px;
+    border-radius: 6px;
+    color: {LIGHT.text};
+}}
+QListWidget#settingsNav::item:hover {{
+    background-color: {LIGHT.menu_highlight};
+}}
+QListWidget#settingsNav::item:selected {{
+    background-color: {LIGHT.brand_accent};
+    color: {LIGHT.text_on_brand};
+}}
+QFrame#settingsFooter {{
+    border-top: 1px solid {LIGHT.border};
+}}
+QLabel#settingsFooterNote, QLabel#settingsSubtitle {{
+    font-size: 12px;
+    color: {LIGHT.text_muted};
+}}
+QLabel#settingsPageTitle, QLabel#settingsResultTitle {{
+    font-size: 18px;
+    font-weight: 600;
+    color: {LIGHT.accent_text};
+}}
+QFrame#settingsCard {{
+    border: 1px solid {LIGHT.border};
+    border-radius: 8px;
+}}
+QFrame#settingsCard[modified="true"] {{
+    border: 1px solid {LIGHT.brand_accent};
+}}
+QLabel#settingsCardTitle {{
+    font-size: 13px;
+    font-weight: 600;
+    color: {LIGHT.text};
+}}
+QLabel#settingsCardHint {{
+    font-size: 11px;
+    color: {LIGHT.section_label};
+}}
+QLabel#settingsError, QLabel#settingsProblem, QLabel#settingsRefused {{
+    font-size: 12px;
+    color: {LIGHT.danger};
+}}
+QLabel#settingsSaved {{
+    font-size: 12px;
+    color: {LIGHT.text};
+}}
+QPushButton#settingsReset {{
+    background-color: transparent;
+    border: none;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: {LIGHT.accent_text};
+}}
+QPushButton#settingsReset:hover {{
+    color: {LIGHT.brand};
+}}
+QPushButton#settingsSegment, QPushButton#settingsPreset {{
+    background-color: {LIGHT.window};
+    color: {LIGHT.text};
+    border: 1px solid {LIGHT.button_border};
+    border-radius: 6px;
+    padding: 4px 14px;
+    font-size: 12px;
+}}
+QPushButton#settingsPreset {{
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 11px;
+}}
+QPushButton#settingsSegment:hover, QPushButton#settingsPreset:hover {{
+    border: 1px solid {LIGHT.brand_accent};
+}}
+QPushButton#settingsSegment:checked {{
+    background-color: {LIGHT.brand_accent};
+    color: {LIGHT.text_on_brand};
+    border: 1px solid {LIGHT.brand_accent};
+}}
+QPushButton#settingsSwitch {{
+    background-color: {LIGHT.window};
+    color: {LIGHT.text_muted};
+    border: 1px solid {LIGHT.button_border};
+    border-radius: 15px;
+    padding: 0;
+    font-size: 12px;
+    font-weight: 600;
+}}
+QPushButton#settingsSwitch:checked {{
+    background-color: {LIGHT.brand_accent};
+    color: {LIGHT.text_on_brand};
+    border: 1px solid {LIGHT.brand_accent};
+}}
+QPushButton#settingsThemeCard {{
+    background-color: {LIGHT.window};
+    border: 2px solid {LIGHT.border};
+    border-radius: 10px;
+    padding: 0;
+}}
+QPushButton#settingsThemeCard:hover {{
+    border: 2px solid {LIGHT.header_underline};
+}}
+QPushButton#settingsThemeCard:checked {{
+    border: 2px solid {LIGHT.brand_accent};
+}}
+QLabel#settingsThemeName {{
+    font-size: 13px;
+    font-weight: 600;
+    color: {LIGHT.text};
+}}
+QLabel#settingsThemeHint {{
+    font-size: 11px;
+    color: {LIGHT.section_label};
+}}
+QFrame#themeSwatchLight {{
+    background-color: {LIGHT.window};
+    border: 1px solid {LIGHT.border};
+}}
+QFrame#themeSwatchLightBar {{
+    background-color: {LIGHT.brand};
+    border: none;
+}}
+QFrame#themeSwatchDark {{
+    background-color: {DARK.window};
+    border: 1px solid {DARK.border};
+}}
+QFrame#themeSwatchDarkBar {{
+    background-color: {DARK.brand_accent};
+    border: none;
+}}
+QDialog#settingsDialog QLineEdit, QDialog#settingsDialog QSpinBox {{
+    background-color: {LIGHT.table_background};
+    color: {LIGHT.text};
+    border: 1px solid {LIGHT.button_border};
+    border-radius: 4px;
+    padding: 4px 6px;
+}}
+QDialog#settingsDialog QLineEdit:focus, QDialog#settingsDialog QSpinBox:focus {{
+    border: 1px solid {LIGHT.brand_accent};
+}}
+QDialog#settingsDialog QLineEdit:disabled, QDialog#settingsDialog QSpinBox:disabled {{
+    background-color: {LIGHT.window};
+    color: {LIGHT.toolbutton_disabled};
+}}
+QPushButton#settingsBrowse {{
+    font-size: 12px;
+    padding: 4px 12px;
+}}
 QLabel#sectionLabel {{
     font-size: 10px;
     padding-left: 9px;
@@ -570,6 +728,164 @@ QPushButton#cacheDialogRemoveBtn:disabled {{
     background-color: {DARK.window};
     color: {DARK.toolbutton_disabled};
     border: 1px solid {DARK.border};
+}}
+QListWidget#settingsNav {{
+    background-color: {DARK.log_background};
+    border: none;
+    border-right: 1px solid {DARK.border};
+    padding: 14px 8px;
+    font-size: 13px;
+    outline: 0;
+}}
+QListWidget#settingsNav::item {{
+    padding: 9px 12px;
+    margin-bottom: 2px;
+    border-radius: 6px;
+    color: {DARK.text};
+}}
+QListWidget#settingsNav::item:hover {{
+    background-color: {DARK.menu_highlight};
+}}
+QListWidget#settingsNav::item:selected {{
+    background-color: {DARK.brand_accent};
+    color: {DARK.text_on_brand};
+}}
+QFrame#settingsFooter {{
+    border-top: 1px solid {DARK.border};
+}}
+QLabel#settingsFooterNote, QLabel#settingsSubtitle {{
+    font-size: 12px;
+    color: {DARK.text_muted};
+}}
+QLabel#settingsPageTitle, QLabel#settingsResultTitle {{
+    font-size: 18px;
+    font-weight: 600;
+    color: {DARK.accent_text};
+}}
+QFrame#settingsCard {{
+    border: 1px solid {DARK.border};
+    border-radius: 8px;
+}}
+QFrame#settingsCard[modified="true"] {{
+    border: 1px solid {DARK.brand_accent};
+}}
+QLabel#settingsCardTitle {{
+    font-size: 13px;
+    font-weight: 600;
+    color: {DARK.text};
+}}
+QLabel#settingsCardHint {{
+    font-size: 11px;
+    color: {DARK.section_label};
+}}
+QLabel#settingsError, QLabel#settingsProblem, QLabel#settingsRefused {{
+    font-size: 12px;
+    color: {DARK.danger};
+}}
+QLabel#settingsSaved {{
+    font-size: 12px;
+    color: {DARK.text};
+}}
+QPushButton#settingsReset {{
+    background-color: transparent;
+    border: none;
+    padding: 2px 6px;
+    font-size: 11px;
+    font-weight: 600;
+    color: {DARK.accent_text};
+}}
+QPushButton#settingsReset:hover {{
+    color: {DARK.text};
+}}
+QPushButton#settingsSegment, QPushButton#settingsPreset {{
+    background-color: {DARK.window};
+    color: {DARK.text};
+    border: 1px solid {DARK.button_border};
+    border-radius: 6px;
+    padding: 4px 14px;
+    font-size: 12px;
+}}
+QPushButton#settingsPreset {{
+    padding: 3px 10px;
+    font-size: 11px;
+    border-radius: 11px;
+}}
+QPushButton#settingsSegment:hover, QPushButton#settingsPreset:hover {{
+    border: 1px solid {DARK.brand_accent};
+}}
+QPushButton#settingsSegment:checked {{
+    background-color: {DARK.brand_accent};
+    color: {DARK.text_on_brand};
+    border: 1px solid {DARK.brand_accent};
+}}
+QPushButton#settingsSwitch {{
+    background-color: {DARK.window};
+    color: {DARK.text_muted};
+    border: 1px solid {DARK.button_border};
+    border-radius: 15px;
+    padding: 0;
+    font-size: 12px;
+    font-weight: 600;
+}}
+QPushButton#settingsSwitch:checked {{
+    background-color: {DARK.brand_accent};
+    color: {DARK.text_on_brand};
+    border: 1px solid {DARK.brand_accent};
+}}
+QPushButton#settingsThemeCard {{
+    background-color: {DARK.window};
+    border: 2px solid {DARK.border};
+    border-radius: 10px;
+    padding: 0;
+}}
+QPushButton#settingsThemeCard:hover {{
+    border: 2px solid {DARK.button_border};
+}}
+QPushButton#settingsThemeCard:checked {{
+    border: 2px solid {DARK.brand_accent};
+}}
+QLabel#settingsThemeName {{
+    font-size: 13px;
+    font-weight: 600;
+    color: {DARK.text};
+}}
+QLabel#settingsThemeHint {{
+    font-size: 11px;
+    color: {DARK.section_label};
+}}
+QFrame#themeSwatchLight {{
+    background-color: {LIGHT.window};
+    border: 1px solid {LIGHT.border};
+}}
+QFrame#themeSwatchLightBar {{
+    background-color: {LIGHT.brand};
+    border: none;
+}}
+QFrame#themeSwatchDark {{
+    background-color: {DARK.window};
+    border: 1px solid {DARK.button_border};
+}}
+QFrame#themeSwatchDarkBar {{
+    background-color: {DARK.brand_accent};
+    border: none;
+}}
+QDialog#settingsDialog QLineEdit, QDialog#settingsDialog QSpinBox {{
+    background-color: {DARK.table_background};
+    color: {DARK.text};
+    border: 1px solid {DARK.button_border};
+    border-radius: 4px;
+    padding: 4px 6px;
+}}
+QDialog#settingsDialog QLineEdit:focus, QDialog#settingsDialog QSpinBox:focus {{
+    border: 1px solid {DARK.brand_accent};
+}}
+QDialog#settingsDialog QLineEdit:disabled, QDialog#settingsDialog QSpinBox:disabled {{
+    background-color: {DARK.window};
+    color: {DARK.toolbutton_disabled};
+}}
+QPushButton#settingsBrowse {{
+    font-size: 12px;
+    padding: 4px 12px;
 }}
 QLabel#statusLabel {{
     padding-left: 10px;

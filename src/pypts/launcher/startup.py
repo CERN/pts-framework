@@ -10,12 +10,17 @@ frontend, and it is the parent of all of them. It must stay the simplest
 component in the system, because it is the one that has to survive anything the
 others do.
 
-The tree is three processes in GUI mode - launcher, Logger, CORE, plus the GUI -1
-and two in CLI mode, where the CLI runs here in the launcher's own process. The
+The tree is four processes in GUI mode - launcher, Logger, CORE and the GUI - and
+three in CLI mode, where the CLI runs here in the launcher's own process. The
 Sequencer and the Report are not among them: they are threads inside CORE.
 
 It also builds the HMI <-> CORE links, the only pair that still crosses a
 process boundary and therefore the only pair whose messages are pickled.
+
+The engine half - configuration, Logger, CORE and the links - is start_engine()
+and stop_engine(), separate from main() so that pypts.api can start the very
+same engine under code instead of under a frontend. run_gui() is the GUI half,
+shared the same way.
 
 The Debug Monitor is started beside the run, and it is **on by default**: running
 this file with no arguments at all gives you the frontend and the Monitor
@@ -33,13 +38,16 @@ imports the tool and the tool still cannot affect the run. See
 
 import argparse
 import getpass
+import importlib
 import logging
 import platform
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from multiprocessing import Process, Queue, get_start_method, set_start_method
 from pathlib import Path
+from typing import Any
 
 from pypts._version import __version__
 from pypts.config_handler import BootstrapOutcome, ConfigHandler
@@ -77,18 +85,30 @@ MONITOR_LOG_WAIT_S = 5.0
 MONITOR_LOG_POLL_S = 0.05
 
 
-def main() -> None:
-    # Children are always spawned, never forked - on every platform. Two
-    # reasons. The bootstrap notice below can create a QApplication in this
-    # process, and forking a process that holds live Qt state is unsupported
-    # (children can abort or hang on the duplicated display connection). And
-    # Windows - where all development runs - always spawns, so pinning spawn
-    # makes Linux exercise the same code paths instead of quietly different
-    # ones. Must happen before the first Queue() below: queues are built from
-    # the default context at call time.
-    if get_start_method(allow_none=True) != "spawn":
-        set_start_method("spawn")
+@dataclass
+class Engine:
+    """
+    One running pypts session without its frontend: the Logger and CORE
+    processes, and the two links a frontend talks to CORE on.
 
+    Built by start_engine() and ended by stop_engine(). The launcher puts the
+    GUI or the CLI on top of it; pypts.api puts code on top of it.
+    """
+
+    mode: str
+    log_queue: Any
+    log_level: int
+    log_file_path: str
+    logger_process: Process
+    logger_control: QueueWrapper[LoggerControl]
+    to_core: QueueWrapper[HmiToCore]
+    to_hmi: QueueWrapper[CoreToHmi]
+    #: Held for the lifetime of the run. Nothing waits on it but stop_engine().
+    core_process: Process | None = None
+    monitor_process: subprocess.Popen | None = None
+
+
+def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
@@ -134,7 +154,7 @@ def main() -> None:
     # plain message and an exit rather than a traceback over a half-built run.
     if args.mode == "gui":
         try:
-            from pypts.hmi.gui.gui import gui_main
+            importlib.import_module("pypts.hmi.gui.gui")
         except ImportError as error:
             # There is no logger yet, which is why this prints - the same reason
             # _print_config_banner() does.
@@ -146,6 +166,57 @@ def main() -> None:
             )
             sys.exit(1)
 
+    engine = start_engine(args.mode, args.log_level, args.debug_monitor)
+    try:
+        if args.mode == "gui":
+            run_gui(engine)
+        else:
+            # The CLI runs here in the launcher's own process, so there is no
+            # fourth process in CLI mode.
+            log.debug("Running the CLI in the launcher process.")
+            cli_main(engine.to_core, engine.to_hmi)
+    finally:
+        # In case of shutdown of the launcher (instead of clean exit from the UI)
+        stop_engine(engine)
+
+
+def pin_spawn_start_method() -> None:
+    """
+    Children are always spawned, never forked - on every platform.
+
+    Two reasons. The bootstrap notice can create a QApplication in this process,
+    and forking a process that holds live Qt state is unsupported (children can
+    abort or hang on the duplicated display connection). And Windows - where all
+    development runs - always spawns, so pinning spawn makes Linux exercise the
+    same code paths instead of quietly different ones. Must happen before the
+    first Queue(): queues are built from the default context at call time.
+
+    Pinning twice is a RuntimeError, so the guard - not force=True - is what
+    makes a second call harmless.
+    """
+    if get_start_method(allow_none=True) != "spawn":
+        set_start_method("spawn")
+
+
+def start_engine(
+    mode: str, log_level_name: str | None = None, debug_monitor: bool = False
+) -> Engine:
+    """
+    Bring up everything a frontend talks to: configuration, Logger, CORE.
+
+    Args:
+        mode: "gui", "cli" or "api". It decides how a configuration notice is
+            shown (a popup only in GUI mode) and whether the Logger also writes
+            to stdout (only in GUI mode - the CLI and the API have their own
+            console output), and it names the mode in the run log's first line.
+        log_level_name: overrides [logging] level in config.ini, as --log-level.
+        debug_monitor: open the Debug Monitor on this run's log.
+
+    If anything fails after the Logger is up, what was started is stopped again
+    before the exception leaves.
+    """
+    pin_spawn_start_method()
+
     # Before anything else, including logging: the configuration.
     # This is the one call that either open config.ini or creates it.
     # An existing file is never modified, and every other process only reads
@@ -155,7 +226,7 @@ def main() -> None:
 
     if config.bootstrap_outcome is BootstrapOutcome.CREATED:
         show_config_popup(
-            args.mode,
+            mode,
             "pypts configuration created",
             f"No configuration was found; a new one was created with default "
             f"values at:\n{config.config_path}",
@@ -163,7 +234,7 @@ def main() -> None:
         )
     elif config.bootstrap_outcome is BootstrapOutcome.DISCARDED:
         show_config_popup(
-            args.mode,
+            mode,
             "pypts configuration discarded",
             f"The configuration file could not be used:\n\n"
             f"{config.bootstrap_problem}\n\n"
@@ -180,12 +251,12 @@ def main() -> None:
     log_queue = Queue()
     log_file_path = get_log_file_path(config.get_parameter("paths.logs_dir"))
 
-    configured_level = args.log_level or config.get_parameter("logging.level")
+    configured_level = log_level_name or config.get_parameter("logging.level")
     log_level = parse_log_level(configured_level)
     # -1 is not a level, so it survives only when the name meant nothing.
     level_was_understood = not configured_level or parse_log_level(configured_level, -1) != -1
 
-    stdout_logging_enabled = args.mode == "gui"
+    stdout_logging_enabled = mode == "gui"
 
     # Use as a separate pocess instead of standalone import (many writers)
     logger_process = Process(
@@ -199,12 +270,16 @@ def main() -> None:
     init_logging(log_queue, log_level, log_file_path)
 
     # CORE-HMI process links
-    to_core: QueueWrapper[HmiToCore] = QueueWrapper(Queue(), link=HMI_TO_CORE)
-    to_hmi: QueueWrapper[CoreToHmi] = QueueWrapper(Queue(), link=CORE_TO_HMI)
-
-    #: Held for the lifetime of the run. The launcher never waits on it and never kills it.
-    core_process = None
-    monitor_process = None
+    engine = Engine(
+        mode=mode,
+        log_queue=log_queue,
+        log_level=log_level,
+        log_file_path=log_file_path,
+        logger_process=logger_process,
+        logger_control=logger_control,
+        to_core=QueueWrapper(Queue(), link=HMI_TO_CORE),
+        to_hmi=QueueWrapper(Queue(), link=CORE_TO_HMI),
+    )
     try:
         # Everything the launcher did before there was a logger: since there is
         # no logging before log_path, the bootstrap actions are replayed and
@@ -214,7 +289,7 @@ def main() -> None:
         # The first three lines of every run log: what this is, who ran it,
         # and where the file they are reading lives. A log taken out of context
         # for a support ticket still answers all three - logging_rules.md section 6.
-        log.info("PyPTS %s started in %s mode.", __version__, args.mode.upper())
+        log.info("PyPTS %s started in %s mode.", __version__, mode.upper())
         log.info("Started by %s on %s.", describe_operator(), platform.node() or "an unknown host")
         log.info("Run log: %s", log_file_path)
 
@@ -234,56 +309,85 @@ def main() -> None:
 
         # Debug monitor is a developer-only helper application to trace and
         # simulate queue communication. To be removed after reaching stable build.
-        if args.debug_monitor:
-            monitor_process = start_debug_monitor(log_file_path, log_level)
+        if debug_monitor:
+            engine.monitor_process = start_debug_monitor(log_file_path, log_level)
 
-        # Spawning CORE and UI
-        core_process = Process(
+        engine.core_process = Process(
             target=core_main,
             name="Core",
-            args=(to_hmi, to_core, log_queue, log_level),
+            args=(engine.to_hmi, engine.to_core, log_queue, log_level),
         )
-        core_process.start()
-        log.debug("Core process started (pid %s).", core_process.pid)
+        engine.core_process.start()
+        log.debug("Core process started (pid %s).", engine.core_process.pid)
+    except BaseException:
+        stop_engine(engine)
+        raise
+    return engine
 
-        if args.mode == "gui":
-            # The GUI is given the log path as well as the queue: it tails the
-            # run log into its LOG OUTPUT panel, and the launcher is the only
-            # one that knows which file this run writes to.
-            ui_process = Process(
-                target=gui_main,
-                name="GUI",
-                args=(to_core, to_hmi, log_queue, log_level, log_file_path),
-            )
-            ui_process.start()
-            log.debug("GUI process started (pid %s).", ui_process.pid)
-            ui_process.join()
-            log.debug("The GUI process has ended.")
-        else:
-            # The CLI runs here in the launcher's own process, so there is no
-            # third process in CLI mode.
-            log.debug("Running the CLI in the launcher process.")
-            cli_main(to_core, to_hmi)
-    finally:
-        # In case of shutdown of the launcher (instead of clean exit from the UI)
-        stop_core(core_process, to_core)
 
-        # Deliberately not stopped with the rest - for debugging purposes.
-        # To be removed after reaching stable build.
-        if monitor_process is not None and monitor_process.poll() is None:
-            log.debug(
-                "Debug Monitor (pid %d) left running; close its window when you are done.",
-                monitor_process.pid,
-            )
+def run_gui(
+    engine: Engine,
+    recipe_path: str | None = None,
+    start: bool = False,
+    sequence_name: str | None = None,
+) -> None:
+    """
+    Start the GUI process on a running engine and wait until it has ended.
 
-        log.info("PyPTS has finished.")
-        log.debug("Stopping the Logger.")
-        # A queued message, so the Logger acts on it only after writing
-        # everything already in flight.
-        logger_control.send(StopLogger())
-        logger_process.join(timeout=LOGGER_SHUTDOWN_TIMEOUT_S)
-        if logger_process.is_alive():
-            logger_process.terminate()
+    Args:
+        recipe_path: a recipe the window opens as soon as it is up, as if the
+            operator had picked it. None opens an empty window.
+        start: start a sequence of that recipe once CORE has loaded it.
+        sequence_name: which one; None means the recipe's main sequence.
+    """
+    # Imported here and not at the top, for the reason main() checks the import
+    # before anything is created: the launcher must load without Qt.
+    from pypts.hmi.gui.gui import gui_main
+
+    # The GUI is given the log path as well as the queue: it tails the
+    # run log into its LOG OUTPUT panel, and the launcher is the only
+    # one that knows which file this run writes to.
+    ui_process = Process(
+        target=gui_main,
+        name="GUI",
+        args=(
+            engine.to_core,
+            engine.to_hmi,
+            engine.log_queue,
+            engine.log_level,
+            engine.log_file_path,
+            recipe_path,
+            start,
+            sequence_name,
+        ),
+    )
+    ui_process.start()
+    log.debug("GUI process started (pid %s).", ui_process.pid)
+    ui_process.join()
+    log.debug("The GUI process has ended.")
+
+
+def stop_engine(engine: Engine) -> None:
+    """CORE first, then the Logger - so the records explaining the shutdown reach the file."""
+    stop_core(engine.core_process, engine.to_core)
+
+    # Deliberately not stopped with the rest - for debugging purposes.
+    # To be removed after reaching stable build.
+    monitor_process = engine.monitor_process
+    if monitor_process is not None and monitor_process.poll() is None:
+        log.debug(
+            "Debug Monitor (pid %d) left running; close its window when you are done.",
+            monitor_process.pid,
+        )
+
+    log.info("PyPTS has finished.")
+    log.debug("Stopping the Logger.")
+    # A queued message, so the Logger acts on it only after writing
+    # everything already in flight.
+    engine.logger_control.send(StopLogger())
+    engine.logger_process.join(timeout=LOGGER_SHUTDOWN_TIMEOUT_S)
+    if engine.logger_process.is_alive():
+        engine.logger_process.terminate()
 
 
 def describe_operator() -> str:

@@ -45,8 +45,8 @@ implemented, what is still a stub, and what comes next.** It is a *living* docum
 **Read it before planning or starting any work.**
 
 Also at repo root: `recipe_guide.html` — the new-format recipe reference (step
-types, input/output mapping, verificator gaps). Open findings (R-1..R-6, M-1..M-7) are in
-`TODO.txt` and summarised in `migration_status.html` (repo root).
+types, input/output mapping, verificator gaps). Open porting findings (the remaining R-* and
+M-* items) are in `migration_status.html` (repo root).
 
 Keeping the roadmap current is part of every task:
 
@@ -76,6 +76,7 @@ owns, the rules and decisions behind them, how to extend it, known gaps.
 | `hmi/` | `hmi/hmi.md` |
 | `hardware_layer/` | `hardware_layer/hal.md` |
 | `stream_handler/` | `stream_handler/stream_handler.md` |
+| `api/` | `api/api.md` |
 | `helper_applications/recipe_verificator/` | `recipe_verificator/recipe_verificator.md` |
 
 The roadmap stays authority on *status and plan*; context files say *how it works*.
@@ -115,6 +116,8 @@ src/pypts/
   report/                incremental CSV + HTML, one folder per run (context: report/report.md)
   hmi/hmi_client.py      protocol half shared by all frontends (context: hmi/hmi.md)
   hmi/cli/  hmi/gui/     CLI shell and PySide6 GUI
+  api/                   pypts.api: Pts (headless engine driven by code) and open_gui()
+                         (context: api/api.md; showcase: api_showcase.py at repo root)
   messages/              all typed message dataclasses, one module per link
                          (context: messages/messages.md)
   config_handler/        per-user config.ini (context: config_handler/config_handler.md)

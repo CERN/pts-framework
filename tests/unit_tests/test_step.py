@@ -924,6 +924,55 @@ def test_python_module_step_missing_function_is_a_step_error(tmp_path):
     assert "addd" in result.error_info
 
 
+def write_counter_module(folder, start=0):
+    folder.mkdir(parents=True, exist_ok=True)
+    module_file = folder / "bench_tests.py"
+    module_file.write_text(
+        f"counter = {start}\n"
+        "\n"
+        "def bump():\n"
+        "    global counter\n"
+        "    counter += 1\n"
+        "    return {'counter': counter}\n",
+        encoding="utf-8",
+    )
+    return module_file
+
+
+def test_a_module_file_is_loaded_once_so_its_state_survives_between_steps(tmp_path):
+    """The old engine imported a test module once per process: a handle a
+    `connect()` step keeps at module level is still there for `measure()`."""
+    write_counter_module(tmp_path)
+    first = PythonModuleStep(step_name="one", module="bench_tests.py", method_name="bump")
+    second = PythonModuleStep(step_name="two", module="bench_tests", method_name="bump")
+    runtime = Runtime(base_dir=str(tmp_path))
+
+    assert first.run(runtime).outputs == {"counter": 1}
+    assert second.run(runtime).outputs == {"counter": 2}
+
+
+def test_same_named_module_files_in_different_folders_stay_separate(tmp_path):
+    write_counter_module(tmp_path / "bench_a", start=0)
+    write_counter_module(tmp_path / "bench_b", start=100)
+    step = PythonModuleStep(step_name="bump", module="bench_tests.py", method_name="bump")
+
+    assert step.run(Runtime(base_dir=str(tmp_path / "bench_a"))).outputs == {"counter": 1}
+    assert step.run(Runtime(base_dir=str(tmp_path / "bench_b"))).outputs == {"counter": 101}
+
+
+def test_a_module_file_that_failed_to_load_is_tried_again(tmp_path):
+    """A syntax error must not stick: once the file is fixed, the next step loads it."""
+    module_file = tmp_path / "broken_tests.py"
+    module_file.write_text("def bump(:\n", encoding="utf-8")
+    step = PythonModuleStep(step_name="bump", module="broken_tests.py", method_name="bump")
+    runtime = Runtime(base_dir=str(tmp_path))
+
+    assert step.run(runtime).result is ResultType.ERROR
+
+    module_file.write_text("def bump():\n    return {'ok': True}\n", encoding="utf-8")
+    assert step.run(runtime).outputs == {"ok": True}
+
+
 def test_python_module_step_requires_a_method_name():
     with pytest.raises(ValueError, match="method_name"):
         PythonModuleStep(step_name="nameless", module="demo_tests.py")

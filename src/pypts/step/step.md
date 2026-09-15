@@ -72,6 +72,15 @@ passed as keyword arguments.
 - **Also dropped:** the old project-wide `rglob` search for the module file — a heuristic
   with a bare `except` at its heart. Here the recipe says where its code is: a path
   resolved against the recipe's own folder, or a dotted import name.
+- **A module file is loaded once per process** (2026-09-15), as the old engine's
+  `import_module` did. `load_python_module()` remembers each file in `_loaded_modules`,
+  keyed by its resolved path, so module-level state - a handle a `connect()` step keeps
+  for `measure()` - survives from one step to the next and from one run to the next. It
+  used to run the file again for every step, which silently reset that state. Two recipes
+  with an `example_tests.py` in different folders stay separate; a file that fails to load
+  is not remembered, so fixing it takes effect on the next step. The cost: an edit to a test
+  module takes effect only after restarting pypts. A dotted name goes through
+  `importlib.import_module`, which `sys.modules` already caches.
 
 ### 2.3 `UserInteractionStep` → `UserInteraction` — done
 

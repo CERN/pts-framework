@@ -26,6 +26,14 @@ only the HMI is across a process boundary.
   forwards `RecipeLoaded` (or error) back to HMI and to the Sequencer.
 - **Error reporting** — all `ModuleError` messages above WARNING are forwarded to the HMI
   as `ModuleErrorReported`.
+- **Configuration changes** — CORE is the single runtime writer of `config.ini`.
+  `core_main()` calls `ConfigHandler.open_for_writing()` before `Core()` is built (its first
+  read would otherwise make the process a reader, which cannot be promoted).
+  `set_config_parameter()` refuses `READ_ONLY_SECTIONS`, writes through
+  `ConfigHandler().set_parameter()` (which parses against the schema and refuses a discarded
+  file), and answers every request with `ConfigParameterResult` — refusals are logged at
+  WARNING and answered, never only logged. In force from the next start; nothing is
+  propagated to running modules. See `config_handler/config_handler.md` → *Writing*.
 
 ## Key constants
 
@@ -46,4 +54,3 @@ must end with `unhandled()` — do not add an unreachable `case _`.
 
 - Error-handling policy for CORE (§1.11): today CORE logs and forwards; what it *does*
   about critical failures is an open design question.
-- `SetConfigParameter` declared in the HMI link but not implemented.

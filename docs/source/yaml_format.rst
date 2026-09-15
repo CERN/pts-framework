@@ -52,7 +52,7 @@ Step common fields
    step_name: My step
    description: optional
    skip: false              # optional, default false
-   continue_on_error: false # optional, default false
+   continue_on_error: true  # optional, default true; false ends the run on ERROR or FAIL
 
 Step types
 ----------

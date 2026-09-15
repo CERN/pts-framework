@@ -16,6 +16,9 @@ Two concrete frontends (GUI and CLI) share one protocol base class.
 | `cli/cli.py` | `Cli` — text-based frontend, runs in the launcher process |
 | `gui/` | PySide6 GUI — runs in its own process; see `gui/gui.md` |
 
+A third subclass lives outside this folder: `pypts.api.embedding.ApiClient`, the frontend with
+no presentation that `pypts.api.Pts` drives from code (`api/api.md`).
+
 ## `HmiClient` (the protocol half)
 
 Owns:
@@ -53,12 +56,14 @@ PySide6 application. Full context in `hmi/gui/gui.md`. Key points:
 ## Key messages (HMI → CORE)
 
 `LoadRecipe`, `StartSequence`, `ShutdownRequested`, `UserPromptResponse`, `UserTextResponse`,
-`HmiStopped`.
+`HmiStopped`, `SetConfigParameter` (sent by `set_config_parameter()`; only the GUI's
+Configuration dialog calls it — the CLI has no command for it).
 
 ## Key messages (CORE → HMI)
 
 `RecipeLoaded`, `RunStarted`, `SequenceStarted`, `StepStarted`, `StepFinished`,
 `SequenceFinished`, `RunFinished`, `ReportReady`, `UserPromptRequest`, `UserTextRequest`,
-`ModuleErrorReported`, `StatusChanged`, `StopHmi`.
+`ModuleErrorReported`, `StatusChanged`, `StopHmi`, `ConfigParameterResult` (hook
+`show_config_parameter_result()`; the default logs at DEBUG).
 
 Full catalogue: `messages/messages.md`.

@@ -134,9 +134,10 @@ Not yet ported to the new architecture.
 `SequenceStep` called another sequence as a sub-step. Dropped in the new architecture
 (no nested sequences).
 
-`IndexedStep` ran a step multiple times with a list of inputs, column-wise. In the new
-architecture this is handled at recipe-load time by expanding `indexed: true` inputs into
-a row-wise set of parameter combinations; there is no `IndexedStep` class at runtime.
+`IndexedStep` ran a step multiple times with a list of inputs, column-wise, driven by
+`indexed: true` on its inputs. In the new architecture that flag is gone: `steptype: Indexed`
+takes a `template` step and a list of `parameter_sets`, and is expanded into separate steps
+at recipe-load time.
 
 ---
 
@@ -196,8 +197,9 @@ The recipe YAML format is largely the same. Key differences:
 - `steptype` values used to include the `Step` suffix (e.g. `PythonModuleStep`).
 - `setup_steps` / `teardown_steps` / `parameters` / `outputs` are still parsed but
   `parameters` and `outputs` are not yet used in the new engine.
-- `continue_on_error` and `critical` at the step level are parsed but not enforced in
-  the new engine (roadmap M-6/M-7).
+- `continue_on_error` at the step level is supported on every step type (default `true`;
+  `false` ends the run on an ERROR or FAIL). `critical` is no longer supported and is
+  refused at load time.
 - The old engine required `main_sequence: Main` explicitly; the new engine defaults to the
   first sequence if `main_sequence` is absent.
 

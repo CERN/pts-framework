@@ -26,9 +26,10 @@ has already happened · **STUB** declared, nothing sends or carries it out yet.
 
 Every message marked **STUB** here also carries a `NOT SENT YET` comment in the source, on the
 dataclass and again on the branch that receives it. The marker means one specific thing:
-**the receiving end is written and works; nothing constructs the message.** Five messages
-are in that state today: the two prompt requests, `SetConfigParameter`, and the Report
-link's export pair (`ExportReport` / `ReportExported`). Grep for it to find the set:
+**the receiving end is written and works; nothing constructs the message.** Only the Report
+link's export pair (`ExportReport` / `ReportExported`) is in that state today —
+`SetConfigParameter` left it in September 2026, when the GUI's Configuration dialog started
+sending it. Grep for it to find the set:
 
 ```bash
 grep -rn "NOT SENT YET" src/pypts
@@ -120,15 +121,16 @@ reaches a union, which is what stops those comments from quietly going stale.
 | `LoadRecipe(recipe_path)` | CMD | Load and validate a recipe. CORE answers `RecipeLoaded` or `ModuleError`. |
 | `StartSequence(sequence_name)` | CMD | Run one named sequence of the loaded recipe. |
 | `StopSequence()` | CMD | Abort the running sequence; the application stays up. Defined in `run_events.py` because it rides two links: CORE relays the same object to the Sequencer, and the confirmation is the run's own `RunFinished(STOP)`. |
-| `SetConfigParameter(key, value)` | CMD · STUB | CORE is the single writer of `config.ini`, so a frontend asks instead of writing. The handler currently logs that it is not implemented. |
+| `SetConfigParameter(key, value)` | CMD | Change one value in `config.ini`. CORE is the single runtime writer, so a frontend asks instead of writing; `value` is the text as the file spells it. Sent by the GUI's Edit → Configuration dialog, one per changed key. CORE answers `ConfigParameterResult`. In force from the next start. |
 | `ShutdownRequested()` | CMD | Shut the whole application down. The *launcher* sends this too, on the same link. |
 | `HmiStopped()` | EVT | The frontend's loop has ended. CORE waits for this before it may exit. |
 | `UserPromptResponse`, `UserTextResponse` | EVT | The operator's answers; CORE relays them to the Sequencer. |
 | `Heartbeat`, `ModuleError` | EVT | Shared vocabulary, as above. |
 
-| `CoreToHmi` (15) | Kind | Meaning |
+| `CoreToHmi` (16) | Kind | Meaning |
 |---|---|---|
 | `StopHmi()` | CMD | Close the frontend. It answers `HmiStopped`. |
+| `ConfigParameterResult(key, value, accepted, reason)` | EVT | CORE's answer to one `SetConfigParameter`. `accepted` means the value is in the file now; otherwise nothing was written and `reason` says why (wrong type, unknown key, a read-only section, a file discarded at startup). `key`/`value` repeat the request so a frontend waiting on several answers can tell them apart. |
 | `StatusChanged(text)` | EVT | One line of free text for the frontend's status bar. Anything with structure has its own message now. **Not logged above DEBUG**: the fact behind it was already written to the run log by whichever module owns it, so logging the status text too would say it twice - see `logger/logging_rules.md` section 5. |
 | `ModuleErrorReported(error)` | EVT | An error CORE decided the operator should see (severity above WARNING). |
 | `ReportReady(report_path, report_dir)` | EVT | The run's report is on disk. Sent by CORE when the Report answers `ReportGenerated`; the structured sibling of the `StatusChanged` sent beside it. `report_dir` is what a frontend's "open report folder" control opens. |
@@ -168,9 +170,9 @@ that stops being true.
 These are the things to settle when the message layer is revisited — the roadmap remains the
 authority on when.
 
-- **`SetConfigParameter` is accepted and ignored.** Two questions are open: whether CORE
-  answers with a confirmation or an error, and how a process that already read a value at
-  startup learns that it changed.
+- **A configuration change is not propagated.** `SetConfigParameter` is answered with
+  `ConfigParameterResult`; a process that already read a value keeps it until the next
+  start, by decision.
 - **A response models one answer only.** Some `old_code` interaction steps read a
   *second* value off the same response queue — a file path, a measured value, a
   (port, baudrate, IDN) triple. Each follow-up needs to become its own request rather than

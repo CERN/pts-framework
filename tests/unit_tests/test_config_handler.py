@@ -40,7 +40,12 @@ from pypts.config_handler.config_handler import (
     _parse,
     _read_template,
 )
-from pypts.config_handler.configuration_schema import CONFIG_VERSION, SCHEMA, Field
+from pypts.config_handler.configuration_schema import (
+    CONFIG_VERSION,
+    READ_ONLY_SECTIONS,
+    SCHEMA,
+    Field,
+)
 
 
 def with_log_level(text: str, level: str) -> str:
@@ -687,7 +692,7 @@ def test_writing_changes_only_the_line_it_was_asked_to_change(config, config_pat
     differences = [
         (old, new) for old, new in zip(before, after, strict=True) if old != new
     ]
-    assert differences == [("theme = default", "theme = dark")]
+    assert differences == [("theme = light", "theme = dark")]
 
 
 def test_the_writer_keeps_a_section_the_template_does_not_have():
@@ -738,6 +743,16 @@ def test_the_template_declares_the_current_structure_version():
 
 
 # --- helpers ---------------------------------------------------------------------------------
+
+
+def test_the_read_only_sections_are_sections_of_the_schema():
+    """
+    CORE refuses changes to these and the Configuration dialog hides them. A
+    typo here would do both to a section nobody has, and leave the real one
+    editable.
+    """
+    for section in READ_ONLY_SECTIONS:
+        assert section in SCHEMA
 
 
 def _bootstrap_before_logging() -> ConfigHandler:

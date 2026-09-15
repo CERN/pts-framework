@@ -23,6 +23,7 @@ between them.
 
 import logging
 import queue
+import re
 from pathlib import Path
 from uuid import uuid4
 
@@ -32,8 +33,10 @@ from pypts.config_handler import file_locations
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ErrorSeverity, ModuleError, ResultType, StepOutcome
 from pypts.messages.core_hmi_communication import (
+    ConfigParameterResult,
     HmiStopped,
     ModuleErrorReported,
+    SetConfigParameter,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
@@ -88,6 +91,29 @@ def isolated_recent_recipes(tmp_path, monkeypatch):
         "recent_recipes_path",
         lambda: tmp_path / "state" / "recent_recipes.json",
     )
+
+
+@pytest.fixture(autouse=True)
+def isolated_configuration(tmp_path, monkeypatch):
+    """
+    No GUI test may read the operator's real config.ini: its [gui] theme and
+    window size would decide what every test here sees.
+
+    Pointed at a file that does not exist, so a GUI opens with the template's
+    defaults - and a test that wants a configuration writes one there with
+    `a_config_file()`. The operating system's theme, which the default theme
+    follows, is pinned to light for the same reason.
+    """
+    from pypts.config_handler import ConfigHandler
+    from pypts.hmi.gui import gui as gui_module
+
+    monkeypatch.setattr(
+        file_locations, "config_file_path", lambda: tmp_path / "config" / "config.ini"
+    )
+    monkeypatch.setattr(gui_module, "detect_system_dark_mode", lambda app=None: False)
+    ConfigHandler.reset_for_testing()
+    yield
+    ConfigHandler.reset_for_testing()
 
 
 @pytest.fixture
@@ -964,6 +990,104 @@ def test_remove_cache_comes_back_when_the_run_finishes(inbox_run_started):
     assert instance.window.remove_cache_action.isEnabled() is True
 
 
+def test_the_window_title_names_the_loaded_recipe(gui):
+    """Several bench windows are often open at once, and the taskbar shows only the title."""
+    instance, _outbox, inbox = gui
+    assert instance.window.windowTitle() == "pyPTS"
+
+    load_demo_recipe(instance, inbox)
+
+    assert instance.window.windowTitle() == "pyPTS: Wait demo"
+
+
+def test_open_recipe_and_start_starts_the_main_sequence_once_it_has_loaded(gui):
+    from pypts.messages.core_hmi_communication import LoadRecipe, StartSequence
+
+    instance, outbox, inbox = gui
+
+    instance.open_recipe_and_start("bench.yml")
+    assert drain(outbox) == [LoadRecipe("bench.yml")]
+
+    load_demo_recipe(instance, inbox)
+
+    assert drain(outbox) == [StartSequence("Main")]
+
+
+def test_open_recipe_and_start_starts_the_sequence_it_names(gui):
+    from pypts.messages.core_hmi_communication import StartSequence
+
+    instance, outbox, inbox = gui
+
+    instance.open_recipe_and_start("bench.yml", "Extra")
+    drain(outbox)
+    load_demo_recipe(instance, inbox)
+
+    assert drain(outbox) == [StartSequence("Extra")]
+    assert instance.top_bar.sequence_combo.currentText() == "Extra"
+
+
+def test_open_recipe_and_start_refuses_a_sequence_the_recipe_does_not_have(gui):
+    from pypts.messages.common_messages import ModuleError
+    from pypts.messages.core_hmi_communication import StartSequence
+
+    instance, outbox, inbox = gui
+
+    instance.open_recipe_and_start("bench.yml", "Nope")
+    drain(outbox)
+    load_demo_recipe(instance, inbox)
+
+    sent = drain(outbox)
+    assert not [message for message in sent if isinstance(message, StartSequence)]
+    errors = [message for message in sent if isinstance(message, ModuleError)]
+    assert len(errors) == 1
+    assert "Nope" in errors[0].message
+
+
+def test_another_open_cancels_a_pending_start(gui):
+    from pypts.messages.core_hmi_communication import StartSequence
+
+    instance, outbox, inbox = gui
+
+    instance.open_recipe_and_start("bench.yml")
+    instance.open_recipe("other.yml")
+    drain(outbox)
+    load_demo_recipe(instance, inbox)
+
+    assert not [message for message in drain(outbox) if isinstance(message, StartSequence)]
+
+
+def test_a_start_happens_once_not_on_every_later_load(gui):
+    from pypts.messages.core_hmi_communication import StartSequence
+
+    instance, outbox, inbox = gui
+
+    instance.open_recipe_and_start("bench.yml")
+    load_demo_recipe(instance, inbox)
+    drain(outbox)
+    load_demo_recipe(instance, inbox)
+
+    assert not [message for message in drain(outbox) if isinstance(message, StartSequence)]
+
+
+def test_the_file_menu_cannot_open_a_recipe_during_a_run(inbox_run_started):
+    """The toolbar button is not the only way in: File -> Open Recipe and
+    File -> Open Recent would repaint the step table under the running sequence."""
+    instance, _outbox, _inbox = inbox_run_started
+
+    assert instance.window.open_recipe_action.isEnabled() is False
+    assert instance.window.recent_menu.menuAction().isEnabled() is False
+
+
+def test_the_file_menu_can_open_a_recipe_again_when_the_run_finishes(inbox_run_started):
+    instance, _outbox, inbox = inbox_run_started
+
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    instance.poll_core()
+
+    assert instance.window.open_recipe_action.isEnabled() is True
+    assert instance.window.recent_menu.menuAction().isEnabled() is True
+
+
 @pytest.fixture
 def inbox_run_started(gui):
     instance, outbox, inbox = gui
@@ -1709,3 +1833,364 @@ def test_a_new_recipe_clears_the_metadata_of_the_last_run(gui):
 
     assert instance.top_bar.metadata_label.text() == ""
     assert not instance.top_bar.metadata_label.isVisibleTo(instance.top_bar)
+
+
+# --------------------------------------------------------------------------
+# Edit > Configuration
+# --------------------------------------------------------------------------
+
+
+def a_config_file(settings=None):
+    """
+    Write a real config.ini where `isolated_configuration` points, with some
+    values replaced, then drop the singleton - so the GUI built next reads the
+    file the way a GUI process would.
+
+    Args:
+        settings: dotted key -> value as it should appear in the file, e.g.
+            {"gui.theme": "dark"}. Replaced inside its own section, because
+            `theme` is a key of both [report] and [gui].
+    """
+    from pypts.config_handler import ConfigHandler
+
+    path = file_locations.config_file_path()
+    ConfigHandler.bootstrap()
+    text = path.read_text(encoding="utf-8")
+    for dotted, value in (settings or {}).items():
+        section, _, key = dotted.rpartition(".")
+        head, header, rest = text.partition(f"[{section}]")
+        rest = re.sub(rf"^{key} = .*$", f"{key} = {value}", rest, count=1, flags=re.MULTILINE)
+        text = head + header + rest
+    path.write_text(text, encoding="utf-8")
+    ConfigHandler.reset_for_testing()
+    return path
+
+
+@pytest.fixture
+def gui_factory(qapp):
+    """
+    Builds a GUI when the test asks, so config.ini can be written first - the
+    `gui` fixture builds its window before the test body runs.
+    """
+    from pypts.hmi.gui.gui import GUI
+
+    built = []
+
+    def build():
+        outbox: queue.Queue = queue.Queue()
+        inbox: queue.Queue = queue.Queue()
+        instance = GUI(QueueWrapper(outbox), QueueWrapper(inbox))
+        built.append(instance)
+        return instance, outbox, QueueWrapper(inbox)
+
+    yield build
+    for instance in built:
+        instance.timer.stop()
+        instance.window.allow_close = True
+        instance.window.close()
+
+
+def settings_in_force(tmp_path):
+    """What a dialog is opened with: every editable key, as text."""
+    return {
+        "paths.base_dir": str(tmp_path),
+        "paths.logs_dir": str(tmp_path / "logs"),
+        "paths.reports_dir": str(tmp_path / "reports"),
+        "logging.level": "INFO",
+        "report.type": "html",
+        "report.theme": "default",
+        "gui.theme": "default",
+        "gui.window_width": "1280",
+        "gui.window_height": "720",
+        "watchdog.enabled": "true",
+    }
+
+
+def a_configuration_dialog(tmp_path, sent=None, **options):
+    from pypts.hmi.gui.configuration_dialog import ConfigurationDialog
+
+    if sent is None:
+        sent = []
+    return ConfigurationDialog(
+        settings_in_force(tmp_path), lambda key, value: sent.append((key, value)), **options
+    )
+
+
+def test_edit_offers_configuration(gui):
+    instance, _outbox, _inbox = gui
+
+    assert instance.window.configuration_action.text() == "Configuration..."
+    assert instance.window.configuration_action.isEnabled() is True
+
+
+def test_the_dialog_offers_every_setting_but_the_managed_ones(qapp, tmp_path):
+    """`meta` and `operating_system` are not settings; everything else is."""
+    from pypts.hmi.gui.configuration_dialog import editable_keys
+
+    dialog = a_configuration_dialog(tmp_path)
+
+    assert list(dialog.editors) == editable_keys()
+    assert "paths.logs_dir" in dialog.editors
+    assert "paths.reports_dir" in dialog.editors
+    assert "gui.window_width" in dialog.editors
+    assert not [key for key in dialog.editors if key.startswith(("meta.", "operating_system."))]
+    dialog.close()
+
+
+def test_each_setting_gets_an_editor_that_fits_its_type(qapp, tmp_path):
+    from PySide6.QtWidgets import QCheckBox, QComboBox, QLineEdit, QSpinBox
+
+    dialog = a_configuration_dialog(tmp_path)
+
+    assert isinstance(dialog.editors["paths.reports_dir"], QLineEdit)
+    assert isinstance(dialog.editors["logging.level"], QComboBox)
+    assert isinstance(dialog.editors["gui.theme"], QComboBox)
+    assert isinstance(dialog.editors["gui.window_height"], QSpinBox)
+    assert isinstance(dialog.editors["watchdog.enabled"], QCheckBox)
+    assert dialog.text_of("gui.window_height") == "720"
+    assert dialog.text_of("watchdog.enabled") == "true"
+    dialog.close()
+
+
+def test_nothing_changed_means_nothing_to_save(qapp, tmp_path):
+    dialog = a_configuration_dialog(tmp_path)
+
+    assert dialog.changes() == {}
+    assert dialog.save_button.isEnabled() is False
+    dialog.close()
+
+
+def test_save_sends_only_what_changed(qapp, tmp_path):
+    sent = []
+    dialog = a_configuration_dialog(tmp_path, sent)
+    dialog.editors["gui.window_width"].setValue(1600)
+    dialog.editors["watchdog.enabled"].setChecked(False)
+
+    assert dialog.save_button.text() == "Save 2 changes"
+    dialog.save_button.click()
+
+    assert sent == [("gui.window_width", "1600"), ("watchdog.enabled", "false")]
+    assert dialog.showing == "saving"
+    assert dialog.editors["gui.window_width"].isEnabled() is False
+    dialog.close()
+
+
+def test_a_relative_path_cannot_be_saved_and_says_why(qapp, tmp_path):
+    """A relative path would land wherever pypts happened to be started from."""
+    dialog = a_configuration_dialog(tmp_path)
+
+    dialog.editors["paths.reports_dir"].setText("reports")
+
+    assert dialog.save_button.isEnabled() is False
+    assert dialog.path_errors["paths.reports_dir"].isHidden() is False
+
+    dialog.editors["paths.reports_dir"].setText(str(tmp_path / "elsewhere"))
+
+    assert dialog.save_button.isEnabled() is True
+    assert dialog.path_errors["paths.reports_dir"].isHidden() is True
+    dialog.close()
+
+
+def test_the_answers_are_shown_once_every_change_is_answered(qapp, tmp_path):
+    from pypts.hmi.gui.configuration_dialog import NEXT_START_NOTE
+
+    dialog = a_configuration_dialog(tmp_path)
+    dialog.editors["gui.window_width"].setValue(1600)
+    dialog.editors["logging.level"].setCurrentText("DEBUG")
+    dialog.save_button.click()
+
+    dialog.apply_result(ConfigParameterResult(key="logging.level", value="DEBUG", accepted=True))
+    assert dialog.showing == "saving"
+
+    dialog.apply_result(
+        ConfigParameterResult(
+            key="gui.window_width", value="1600", accepted=False, reason="The file was discarded."
+        )
+    )
+
+    assert dialog.showing == "result"
+    shown = " ".join(_all_text(dialog.result_page))
+    assert "Partly saved" in shown
+    assert "Log level: DEBUG" in shown
+    assert "Window width: The file was discarded." in shown
+    assert NEXT_START_NOTE in shown
+    dialog.close()
+
+
+def test_an_answer_nobody_asked_for_is_not_taken(qapp, tmp_path):
+    dialog = a_configuration_dialog(tmp_path)
+
+    taken = dialog.apply_result(ConfigParameterResult(key="gui.theme", value="dark", accepted=True))
+
+    assert taken is False
+    assert dialog.showing == "edit"
+    dialog.close()
+
+
+def test_changes_nobody_answered_are_reported_when_the_wait_runs_out(qapp, qtbot, tmp_path):
+    """A CORE that never answers must not leave the dialog saying Saving... forever."""
+    from pypts.hmi.gui.configuration_dialog import NO_ANSWER_REASON
+
+    dialog = a_configuration_dialog(tmp_path, answer_timeout_ms=10)
+    dialog.editors["gui.window_width"].setValue(1600)
+    dialog.save_button.click()
+
+    qtbot.waitUntil(lambda: dialog.showing == "result", timeout=2000)
+
+    assert "Not saved" in " ".join(_all_text(dialog.result_page))
+    assert NO_ANSWER_REASON in " ".join(_all_text(dialog.result_page))
+    dialog.close()
+
+
+def test_a_discarded_settings_file_offers_no_save(qapp, tmp_path):
+    """Writing one value would replace the user's broken file with the defaults."""
+    dialog = a_configuration_dialog(tmp_path, problem="It declares structure version 1.")
+    dialog.editors["gui.window_width"].setValue(1600)
+
+    assert dialog.save_button.isEnabled() is False
+    assert dialog.editors["gui.window_width"].isEnabled() is False
+    assert any("structure version 1" in text for text in _all_text(dialog))
+    dialog.close()
+
+
+def test_cancel_sends_nothing(qapp, tmp_path):
+    sent = []
+    dialog = a_configuration_dialog(tmp_path, sent)
+    dialog.editors["gui.window_width"].setValue(1600)
+
+    dialog.cancel_button.click()
+
+    assert sent == []
+
+
+def test_the_dialog_saves_through_core_and_shows_its_answer(gui_factory, monkeypatch):
+    """
+    The whole round trip inside the GUI: Save puts SetConfigParameter on the
+    link, and CORE's answer - arriving through the poll timer, which keeps
+    running under exec()'s nested event loop - reaches the open dialog.
+    """
+    from pypts.hmi.gui.configuration_dialog import ConfigurationDialog
+
+    a_config_file()
+    instance, outbox, inbox = gui_factory()
+    seen = {}
+
+    def operator_changes_the_width(dialog):
+        dialog.editors["gui.window_width"].setValue(1500)
+        dialog.save_button.click()
+        seen["asked"] = [m for m in drain(outbox) if isinstance(m, SetConfigParameter)]
+        inbox.send(ConfigParameterResult(key="gui.window_width", value="1500", accepted=True))
+        instance.poll_core()
+        seen["showing"] = dialog.showing
+        return 0
+
+    monkeypatch.setattr(ConfigurationDialog, "exec", operator_changes_the_width)
+    instance.window.configuration_action.trigger()
+
+    assert seen["asked"] == [SetConfigParameter(key="gui.window_width", value="1500")]
+    assert seen["showing"] == "result"
+    assert instance.config_dialog is None
+
+
+def test_a_saved_setting_is_shown_when_the_dialog_reopens(gui_factory, monkeypatch):
+    """This process never re-reads config.ini, so it remembers what CORE confirmed."""
+    from pypts.hmi.gui.configuration_dialog import ConfigurationDialog
+
+    a_config_file()
+    instance, _outbox, inbox = gui_factory()
+    inbox.send(ConfigParameterResult(key="gui.window_width", value="1500", accepted=True))
+    instance.poll_core()
+    shown = {}
+
+    def look_at_the_width(dialog):
+        shown["width"] = dialog.text_of("gui.window_width")
+        return 0
+
+    monkeypatch.setattr(ConfigurationDialog, "exec", look_at_the_width)
+    instance.window.configuration_action.trigger()
+
+    assert shown["width"] == "1500"
+
+
+def test_an_answer_with_no_dialog_open_goes_to_the_status_line(gui):
+    instance, _outbox, inbox = gui
+
+    inbox.send(
+        ConfigParameterResult(
+            key="gui.theme", value="dark", accepted=False, reason="The file was discarded."
+        )
+    )
+    instance.poll_core()
+
+    assert "gui.theme not saved: The file was discarded." in instance.status_label.text()
+
+
+def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monkeypatch):
+    from pypts.hmi.gui.configuration_dialog import ConfigurationDialog
+
+    a_config_file({"meta.config_version": "1"})
+    instance, _outbox, _inbox = gui_factory()
+    seen = {}
+
+    def look_at_the_dialog(dialog):
+        seen["problem"] = dialog.problem
+        seen["can_save"] = dialog.save_button.isEnabled()
+        return 0
+
+    monkeypatch.setattr(ConfigurationDialog, "exec", look_at_the_dialog)
+    instance.window.configuration_action.trigger()
+
+    assert "structure version 1" in seen["problem"]
+    assert seen["can_save"] is False
+
+
+def test_the_window_opens_with_the_configured_size_and_theme(gui_factory):
+    a_config_file({"gui.theme": "dark", "gui.window_width": "1100", "gui.window_height": "750"})
+
+    instance, _outbox, _inbox = gui_factory()
+
+    assert (instance.window.width(), instance.window.height()) == (1100, 750)
+    assert instance._dark is True
+
+
+def test_a_chosen_theme_does_not_follow_the_operating_system(gui_factory, monkeypatch):
+    """An operator who picked light must not be switched to dark by the OS."""
+    from pypts.hmi.gui import gui as gui_module
+
+    installed = []
+    monkeypatch.setattr(
+        gui_module,
+        "install_system_theme_sync",
+        lambda app, callback: installed.append(callback) or (lambda: None),
+    )
+    a_config_file({"gui.theme": "light"})
+
+    instance, _outbox, _inbox = gui_factory()
+
+    assert installed == []
+    assert instance._dark is False
+
+
+def test_the_default_theme_follows_the_operating_system(gui_factory, monkeypatch):
+    from pypts.hmi.gui import gui as gui_module
+
+    installed = []
+    monkeypatch.setattr(gui_module, "detect_system_dark_mode", lambda app=None: True)
+    monkeypatch.setattr(
+        gui_module,
+        "install_system_theme_sync",
+        lambda app, callback: installed.append(callback) or (lambda: None),
+    )
+
+    instance, _outbox, _inbox = gui_factory()
+
+    assert instance._dark is True
+    assert len(installed) == 1
+
+
+def test_without_a_configuration_the_window_uses_the_template_defaults(gui):
+    """A GUI built by a test, or started by hand, still opens."""
+    instance, _outbox, _inbox = gui
+
+    assert (instance.window.width(), instance.window.height()) == (1280, 720)
+    assert instance._dark is False

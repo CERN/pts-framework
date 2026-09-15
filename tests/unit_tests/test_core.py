@@ -202,6 +202,34 @@ def test_a_sequencer_event_is_routed_to_the_hmi():
     assert list(core.to_hmi.receive()) == [StepFinished(outcome=outcome)]
 
 
+def test_an_unexpected_parser_failure_is_reported_as_a_load_failure(monkeypatch, caplog):
+    """
+    Only RecipeError is the recipe's fault, but anything else escaping the
+    parser must still end as a refused load the operator is told about - not
+    as the event loop's generic "internal update" error.
+    """
+    from pypts.core import core as core_module
+    from pypts.messages.core_hmi_communication import LoadRecipe, ModuleErrorReported
+
+    def broken_parser(path):
+        raise ValueError("the parser tripped over its own feet")
+
+    monkeypatch.setattr(core_module.Recipe, "from_file", broken_parser)
+    core = build_core_that_spawns_nothing()
+
+    with caplog.at_level(logging.DEBUG):
+        core.from_hmi.send(LoadRecipe(recipe_path="whatever.yml"))
+        core.poll_all_sources()
+
+    assert core.running is True
+    assert core.recipe is None
+    to_hmi = list(core.to_hmi.receive())
+    assert len(to_hmi) == 1
+    assert isinstance(to_hmi[0], ModuleErrorReported)
+    assert "tripped over its own feet" in to_hmi[0].error.message
+    assert not [r for r in caplog.records if "internal update" in r.getMessage()]
+
+
 def test_load_recipe_command_is_handled():
     """
     LoadRecipe -> CORE parses, validates and *keeps* the recipe -> RecipeLoaded
@@ -973,3 +1001,147 @@ def test_every_watchdog_module_has_a_friendly_source_name():
         f"MODULE_SOURCE paths not in FRIENDLY_SOURCE_NAME: {missing}. "
         f"Add them so the operator sees the module's name, not 'the software'."
     )
+
+
+# --------------------------------------------------------------------------
+# SetConfigParameter - CORE is the single runtime writer of config.ini
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def config_file(tmp_path, monkeypatch):
+    """
+    A config.ini in tmp_path, created the way the launcher creates it, and a
+    cold singleton afterwards - so the test decides how this process opens it,
+    the way CORE's own process decides in core_main().
+    """
+    from pypts.config_handler import ConfigHandler, file_locations
+
+    path = tmp_path / "config.ini"
+    monkeypatch.setattr(file_locations, "config_file_path", lambda: path)
+    ConfigHandler.reset_for_testing()
+    ConfigHandler.bootstrap()
+    ConfigHandler.reset_for_testing()
+    yield path
+    ConfigHandler.reset_for_testing()
+
+
+@pytest.fixture
+def writable_config(config_file):
+    """The same file, held for writing the way core_main() holds it."""
+    from pypts.config_handler import ConfigHandler
+
+    ConfigHandler.open_for_writing()
+    return config_file
+
+
+def config_answers(core):
+    """Every ConfigParameterResult CORE has sent the HMI so far."""
+    from pypts.messages.core_hmi_communication import ConfigParameterResult
+
+    return [
+        message for message in core.to_hmi.receive() if isinstance(message, ConfigParameterResult)
+    ]
+
+
+def test_core_main_holds_the_configuration_for_writing(config_file, monkeypatch):
+    """
+    CORE must be a writer before Core() reads its first value: that first read
+    would otherwise make the process a reader, and a reader can never be
+    promoted - every SetConfigParameter of the run would then be refused.
+    """
+    from pypts.config_handler import ConfigHandler, Role
+    from pypts.core import core as core_module
+
+    roles_seen_by_core = []
+
+    class CoreThatRecordsTheRole:
+        def __init__(self, to_hmi, from_hmi):
+            roles_seen_by_core.append(ConfigHandler().role)
+
+        def start(self):
+            pass
+
+    monkeypatch.setattr(core_module, "ignore_keyboard_interrupt", lambda: None)
+    monkeypatch.setattr(core_module, "init_logging", lambda *args: None)
+    monkeypatch.setattr(core_module, "Core", CoreThatRecordsTheRole)
+
+    core_module.core_main(to_hmi=None, from_hmi=None, log_queue=None)
+
+    assert roles_seen_by_core == [Role.WRITER]
+
+
+def test_a_config_change_is_written_and_confirmed(writable_config):
+    """SetConfigParameter -> the value is in config.ini -> the frontend is told so."""
+    from pypts.messages.core_hmi_communication import ConfigParameterResult, SetConfigParameter
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(SetConfigParameter(key="gui.window_width", value="1600"))
+    core.poll_all_sources()
+
+    assert config_answers(core) == [
+        ConfigParameterResult(key="gui.window_width", value="1600", accepted=True)
+    ]
+    assert "window_width = 1600" in writable_config.read_text(encoding="utf-8")
+
+
+def test_a_value_of_the_wrong_type_is_refused_and_the_key_is_named(writable_config, caplog):
+    """The Config Handler parses before it writes; CORE answers with its reason."""
+    from pypts.messages.core_hmi_communication import SetConfigParameter
+
+    core = build_core_that_spawns_nothing()
+    before = writable_config.read_text(encoding="utf-8")
+
+    core.from_hmi.send(SetConfigParameter(key="gui.window_width", value="wide"))
+    with caplog.at_level(logging.WARNING):
+        core.poll_all_sources()
+
+    answers = config_answers(core)
+    assert len(answers) == 1
+    assert answers[0].accepted is False
+    assert "gui.window_width" in answers[0].reason
+    assert writable_config.read_text(encoding="utf-8") == before
+    assert any("was not changed" in record.getMessage() for record in caplog.records)
+
+
+def test_a_managed_section_is_refused_even_with_a_valid_value(writable_config):
+    """
+    `meta.config_version = 2` parses perfectly well. It is refused anyway: a
+    hand-picked structure version is how a file gets discarded at the next start.
+    """
+    from pypts.messages.core_hmi_communication import SetConfigParameter
+
+    core = build_core_that_spawns_nothing()
+    before = writable_config.read_text(encoding="utf-8")
+
+    core.from_hmi.send(SetConfigParameter(key="meta.config_version", value="2"))
+    core.poll_all_sources()
+
+    answers = config_answers(core)
+    assert len(answers) == 1
+    assert answers[0].accepted is False
+    assert "managed by pypts" in answers[0].reason
+    assert writable_config.read_text(encoding="utf-8") == before
+
+
+def test_a_change_with_no_configuration_to_write_is_answered_not_raised(tmp_path, monkeypatch):
+    """
+    No config.ini at all - a CORE built outside a run. The frontend still gets
+    an answer, so a dialog waiting on it is never left spinning.
+    """
+    from pypts.config_handler import ConfigHandler, file_locations
+    from pypts.messages.core_hmi_communication import SetConfigParameter
+
+    monkeypatch.setattr(file_locations, "config_file_path", lambda: tmp_path / "config.ini")
+    ConfigHandler.reset_for_testing()
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(SetConfigParameter(key="gui.theme", value="dark"))
+    core.poll_all_sources()
+    ConfigHandler.reset_for_testing()
+
+    answers = config_answers(core)
+    assert len(answers) == 1
+    assert answers[0].accepted is False
+    assert not (tmp_path / "config.ini").exists()

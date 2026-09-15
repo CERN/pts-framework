@@ -10,6 +10,23 @@ from collections.abc import Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
+from pypts.config_handler import ConfigError, ConfigHandler
+from pypts.config_handler.configuration_schema import SCHEMA
+
+
+def configured_theme() -> str:
+    """
+    `[gui] theme` from config.ini: "light", "dark" or "system".
+
+    Shared by pypts' window and the Recipe Creator, so one setting themes both.
+    With no configuration to read - the Recipe Creator started before pypts
+    ever ran, or a test - it is the template's value, light.
+    """
+    try:
+        return ConfigHandler().get_parameter("gui.theme")
+    except ConfigError:
+        return SCHEMA["gui"]["theme"].default
+
 
 def _style_hints_for(app=None):
     app = app or QApplication.instance()

@@ -266,7 +266,7 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe, Remove Cache → §10) / View (dark mode toggle) / About (GitHub, Wiki - both open a URL, §12) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe, Configuration… → §10c, Remove Cache → §10) / View (dark mode toggle) / About (GitHub, Wiki - both open a URL, §12) |
 | `screen_tab_bar` (`QTabBar`, CERN Blue bg) | Full-width state indicator: Idle \| Running \| Prompt \| Results; click snaps back unless `_browsable=True` (pause mode) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" below the tab bar |
 | `QSplitter` 52/48 | left: `left_stack` (`QStackedWidget`, 3 pages); right: `CenterContent` |
@@ -497,6 +497,27 @@ File > Open Recent   -+                                               |
 A recipe that fails to parse never reaches `show_recipe_loaded()`, so it never
 enters the list. `HmiClient` is untouched by all of this.
 
+**None of the three ways in is offered during a run** (2026-09-15). The top bar greys
+its Open button in `show_run_started()`, and `GUI._set_recipe_opening_enabled()` does
+the same for File > Open Recipe and the File > Open Recent submenu. A load mid-run
+would repaint the step table with new step ids and the rest of the run's events would
+miss their rows. CORE does not refuse a `LoadRecipe` during a run - the decision is that
+the frontend not offering it is enough (roadmap §1.42).
+
+**Opened with a recipe, from code** (2026-09-15). `gui_main()` takes `recipe_path`,
+`start` and `sequence_name`, passed by `pypts.api.open_gui()` through `startup.run_gui()`.
+The recipe goes through `open_recipe()` like any other open. With `start`,
+`open_recipe_and_start()` leaves a pending start that `show_recipe_loaded()` carries out:
+it selects the sequence (the main one when none was named), shows its table and sends
+`StartSequence`. A recipe CORE refuses never loads, so it is never started; a sequence the
+recipe does not have is reported instead of started; any other open before `RecipeLoaded`
+cancels the pending start; and it fires once, not on later loads.
+
+**The window title names the loaded recipe** (2026-09-15): `pyPTS` at start,
+`pyPTS: <recipe name>` from `show_recipe_loaded()` on. The old engine did the same
+(`PTS: <name>`); several bench windows are often open at once and the taskbar shows only
+the title.
+
 **Two decisions worth not undoing:**
 
 - The submenu is rebuilt on `aboutToShow`, not kept in step with the store. It
@@ -693,6 +714,65 @@ Edit > Remove Cache -> GUI._remove_cache()
 result view — not a `QStackedWidget`, whose `sizeHint` is its tallest page
 whatever the size policies say, which left the short result view floating in the
 confirm view's height.
+
+---
+
+## 10c. Edit → Configuration — and the settings the window opens with
+
+`Edit → Configuration…` shows every setting in `config.ini` an operator may change and saves
+the ones they changed. `configuration_dialog.py` is the dialog; `gui.py` wires it.
+
+**The GUI does not write the file.** It holds its configuration read-only like every process
+but CORE. Save sends one `SetConfigParameter` per changed key, and CORE answers each with
+`ConfigParameterResult` (the chain is in `config_handler/config_handler.md` → *Writing*):
+
+```
+Edit > Configuration -> GUI._open_configuration()
+                          |  values = get_whole_config() as text + this session's saved changes
+                          |  problem = bootstrap_problem if the file was DISCARDED
+                          v
+                        ConfigurationDialog.exec()            page 1: editors
+                          | Save: send(key, text) per change   -> set_config_parameter()
+                          |                                        -> SetConfigParameter
+                          |     ... poll timer keeps running inside exec() ...
+                          |                                    <- ConfigParameterResult
+                          | GUI.show_config_parameter_result() -> dialog.apply_result()
+                          v
+                        page 2: saved / not saved, "applies from the next start"
+```
+
+**Decisions worth not undoing:**
+
+- **Editors come from `SCHEMA`.** Choices → combo box, `int` → number field (no arrows),
+  `bool` → check box carrying its own caption, `path` → line edit + Browse, other `str` →
+  line edit. `READ_ONLY_SECTIONS` are skipped. A new schema key appears with no GUI change;
+  `LABELS` / `HINTS` only make it read well.
+- **Only changed keys are sent**, compared as the file spells them (`setting_text()`:
+  `True` → `"true"`), so an untouched value is never re-sent.
+- **Paths must be absolute** before Save is enabled — a relative one would resolve against
+  wherever pypts was started. The Config Handler itself only insists on non-empty.
+- **A discarded file offers no Save.** CORE would refuse every change (writing one value
+  would replace the user's broken file with defaults), so the dialog shows
+  `bootstrap_problem` in a banner and disables the editors. Every process applies the same
+  discard rule, so the GUI's verdict is CORE's.
+- **The answer wait is bounded** (`ANSWER_TIMEOUT_MS`, 5 s — the heartbeat timeout). Changes
+  still unanswered are reported as "may not have been saved" rather than leaving the dialog
+  on *Saving…*.
+- **This session's saved values are remembered** (`GUI._saved_settings`), because this
+  process never re-reads `config.ini`; without it the dialog would reopen showing the
+  startup values. An answer that arrives with no dialog open goes to the status line.
+- **Nothing applies until the next start**, and both pages say so.
+
+**The window reads `[gui]` once, at startup** (`window_settings()`): `window_width` /
+`window_height` size it — `setMinimumSize(1000, 700)` still wins over anything smaller — and
+`theme` decides the palette. `default` detects the OS scheme and installs the live OS sync;
+`light` / `dark` are fixed and the OS sync is **not** installed, so an operator's choice is
+not overruled. View → Toggle Dark Mode still flips either for the session. With no
+configuration at all (a test, a frontend started by hand) the template defaults apply —
+1280×720, `default`.
+
+Tests pin the OS theme to light and point the config at a non-existent file
+(`isolated_configuration` in `test_hmi_gui.py`), so no test depends on the machine running it.
 
 ---
 

@@ -31,11 +31,13 @@ from pathlib import Path
 from queue import Queue
 from typing import ClassVar
 
-from pypts.config_handler import ConfigHandler
+from pypts.config_handler import ConfigError, ConfigHandler
+from pypts.config_handler.configuration_schema import READ_ONLY_SECTIONS
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import QueueWrapper, UnhandledMessage, unhandled
 from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
 from pypts.messages.core_hmi_communication import (
+    ConfigParameterResult,
     CoreToHmi,
     HmiStopped,
     HmiToCore,
@@ -192,6 +194,11 @@ def core_main(
     ignore_keyboard_interrupt()
 
     init_logging(log_queue, log_level)
+    # CORE is the one process allowed to change config.ini while pypts runs
+    # (SetConfigParameter). Opened for writing before Core() is built, because
+    # Core's own first read would otherwise make this process a reader - and a
+    # reader can never be promoted to writer.
+    ConfigHandler.open_for_writing()
     Core(to_hmi, from_hmi).start()
 
 
@@ -443,18 +450,9 @@ class Core:
                 # The operator's answer belongs to whoever asked the question.
                 self.to_sequencer.send(message)
             case SetConfigParameter(key=key, value=value):
-                # NOT SENT YET - no frontend constructs this, and the branch is
-                # deliberately a refusal rather than an implementation.
-                # CORE is the only process allowed to write config.ini, which is
-                # why the message stops here. Carrying it out is not implemented:
-                # a change would have to reach the processes already running,
-                # each holding what it read at startup, and that is unsolved.
-                log.warning(
-                    "The setting '%s' was not changed: settings cannot be changed "
-                    "while the application is running.",
-                    key,
-                )
-                log.debug("The refused change was %s = %r.", key, value)
+                # CORE is the single runtime writer of config.ini, which is
+                # why the message stops here rather than going anywhere else.
+                self.set_config_parameter(key, value)
             case Heartbeat():
                 self.note_heartbeat(message)
             case ModuleError():
@@ -549,11 +547,19 @@ class Core:
         reaches it with the RunSequence that runs it (roadmap section 1.40).
         On failure nothing is kept and the operator sees the error through the
         ModuleError path.
+
+        A RecipeError is the recipe's fault and the expected failure. Anything
+        else escaping the parser is a bug in it, and is caught here too: left
+        alone it would reach the event loop's generic "internal update"
+        catch-all, which tells the operator nothing about the recipe.
         """
         log.debug("Loading a recipe from '%s'.", recipe_path)
         try:
             recipe = Recipe.from_file(recipe_path)
         except RecipeError as error:
+            self.report_own_error(error, operation="Core.load_recipe")
+            return
+        except Exception as error:  # noqa: BLE001 - a parser bug must not pass as a loop fault
             self.report_own_error(error, operation="Core.load_recipe")
             return
         self.recipe = recipe
@@ -616,6 +622,49 @@ class Core:
             return
         log.debug("CORE asking the Sequencer to run sequence '%s'.", sequence_name)
         self.to_sequencer.send(RunSequence(self.recipe, sequence_name))
+
+    def set_config_parameter(self, key: str, value: str) -> None:
+        """
+        Write one value to config.ini, and tell the frontend whether it was.
+
+        CORE holds the configuration for writing - core_main() opens it so - and
+        the Config Handler does the real work: it parses the value against the
+        schema before anything reaches the file, and refuses a file that was
+        discarded at startup. CORE adds one rule of its own, READ_ONLY_SECTIONS,
+        so a frontend that forgets to hide `meta` still cannot break the file.
+
+        Every refusal is answered, not only logged: the operator who asked is
+        looking at a dialog waiting for the answer.
+
+        Written now, in force from the next start. Every process read its
+        configuration once at startup, CORE included, and nothing tells a
+        running one that a value changed - so nothing here pretends to.
+        """
+        section = key.rpartition(".")[0]
+        if section in READ_ONLY_SECTIONS:
+            self.refuse_config_parameter(
+                key, value, f"'{key}' is managed by pypts and cannot be changed."
+            )
+            return
+
+        try:
+            ConfigHandler().set_parameter(key, value)
+        except ConfigError as error:
+            self.refuse_config_parameter(key, value, str(error))
+            return
+
+        # The operator's line ("Setting ... changed to ...") is the Config
+        # Handler's, written as the value reached the file.
+        log.debug("The setting '%s' applies from the next start.", key)
+        self.to_hmi.send(ConfigParameterResult(key=key, value=value, accepted=True))
+
+    def refuse_config_parameter(self, key: str, value: str, reason: str) -> None:
+        """Log a refused SetConfigParameter and answer it, naming why."""
+        log.warning("The setting '%s' was not changed: %s", key, reason)
+        log.debug("The refused change was %s = %r.", key, value)
+        self.to_hmi.send(
+            ConfigParameterResult(key=key, value=value, accepted=False, reason=reason)
+        )
 
     #: What CORE logs a reported failure at. The sender rates its own failure -
     #: it is the only one who can - and CORE takes it at its word. That is the

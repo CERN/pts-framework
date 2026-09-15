@@ -39,6 +39,11 @@ from pypts.helper_applications.recipe_creator.rc_widgets import (
     YamlEditor,
 )
 from pypts.helper_applications.recipe_verificator import verify_string
+from pypts.hmi.gui.gui_theme import (
+    configured_theme,
+    detect_system_dark_mode,
+    install_system_theme_sync,
+)
 from pypts.hmi.gui.styles import get_stylesheet
 from pypts.recipe.rules import STEP_TYPE_REQUIRED
 
@@ -46,7 +51,16 @@ from pypts.recipe.rules import STEP_TYPE_REQUIRED
 class RecipeCreatorNewWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self._dark = self._detect_dark()
+        # The same [gui] theme as pypts, from the same config.ini: light unless
+        # the operator chose otherwise in pypts' Edit > Settings. "system"
+        # follows the operating system, now and whenever it changes.
+        self._theme = configured_theme()
+        if self._theme == "dark":
+            self._dark = True
+        elif self._theme == "system":
+            self._dark = detect_system_dark_mode()
+        else:
+            self._dark = False
         self._file_path: str = ""
         self._model = RecipeModel()
         self._current_seq_idx = 0
@@ -64,7 +78,11 @@ class RecipeCreatorNewWindow(QMainWindow):
         self._build_toolbar()
         self._build_central()
 
-        self.setStyleSheet(get_stylesheet(self._dark))
+        # Through _toggle_dark rather than the stylesheet alone, so the step
+        # views are painted in the starting theme too, not only after a toggle.
+        self._toggle_dark(self._dark)
+        if self._theme == "system":
+            install_system_theme_sync(QApplication.instance(), self._follow_system_theme)
 
         self._model.changed.connect(self._on_model_changed)
 
@@ -305,6 +323,10 @@ class RecipeCreatorNewWindow(QMainWindow):
     def _toggle_log(self) -> None:
         self._log.setVisible(not self._log.isVisible())
 
+    def _follow_system_theme(self, dark: bool) -> None:
+        self._act_dark.setChecked(dark)
+        self._toggle_dark(dark)
+
     def _toggle_dark(self, dark: bool) -> None:
         self._dark = dark
         self.setStyleSheet(get_stylesheet(dark))
@@ -397,12 +419,6 @@ class RecipeCreatorNewWindow(QMainWindow):
 
     def _log_msg(self, msg: str) -> None:
         self._log.append(msg)
-
-    @staticmethod
-    def _detect_dark() -> bool:
-        hints = QGuiApplication.styleHints()
-        scheme = hints.colorScheme()
-        return scheme == Qt.ColorScheme.Dark
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────

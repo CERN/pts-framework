@@ -138,6 +138,46 @@ def test_optional_header_fields_get_their_defaults():
     assert recipe.report_metadata == ("serial_number",)
 
 
+@pytest.mark.parametrize("written", ["5", "[1, 2]", "'text'"])
+def test_globals_that_are_not_a_mapping_are_refused_at_load(written):
+    """`globals: 5` used to load and only fail when a run started."""
+    text = VALID.replace("name: ", f"globals: {written}\nname: ", 1)
+
+    with pytest.raises(RecipeError, match="'globals' must be a mapping"):
+        Recipe.from_yaml_text(text)
+
+
+def test_globals_written_as_a_mapping_load():
+    text = VALID.replace("name: ", "globals:\n  limit: 5\n  unit: V\nname: ", 1)
+
+    assert Recipe.from_yaml_text(text).globals == {"limit": 5, "unit": "V"}
+
+
+def test_an_empty_globals_line_means_no_globals():
+    text = VALID.replace("name: ", "globals:\nname: ", 1)
+
+    assert Recipe.from_yaml_text(text).globals == {}
+
+
+@pytest.mark.parametrize("field", ["name", "description", "main_sequence"])
+def test_a_single_value_header_field_written_as_a_list_is_refused(field):
+    lines = [line for line in VALID.splitlines() if not line.startswith(f"{field}:")]
+    text = "\n".join([f"{field}: [a, b]", *lines])
+
+    with pytest.raises(RecipeError, match=f"'{field}' must be a single value"):
+        Recipe.from_yaml_text(text)
+
+
+def test_every_header_problem_is_named_in_one_error():
+    text = VALID.replace("name: Wait demo", "name: [a]\nglobals: 5", 1)
+
+    with pytest.raises(RecipeError) as raised:
+        Recipe.from_yaml_text(text)
+
+    assert "'name' must be a single value" in str(raised.value)
+    assert "'globals' must be a mapping" in str(raised.value)
+
+
 def test_a_recipe_may_name_its_own_report_metadata():
     """A convention, not a policy - a recipe testing cables names its own."""
     recipe = Recipe.from_yaml_text(

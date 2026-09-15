@@ -287,14 +287,14 @@ summary { cursor: pointer; font-weight: 600; }
 </ul>
 <p><strong>Wired in.</strong> <code>startup.py</code>` takes the log directory from <code>paths.logs_dir</code>` and the log level from <code>logging.level</code>`; <code>report.py</code>` takes its output directory from <code>paths.reports_dir</code>`; <code>local_storage.get_log_file_path()</code>` no longer decides a location, it is given one.</p>
 <ul>
-<li>[ ] <strong>TODO:</strong> <code>SetConfigParameter</code>` (HMI→CORE) is <strong>declared and not implemented</strong> —
-<p>CORE logs and ignores it, and nothing sends it. Two questions are open: whether CORE answers with a confirmation or an error, and how a process already running learns that a value it read at startup has changed. Until that is answered, a configuration change takes effect on the next start.</p>
+<li>[x] <strong>DONE (September 2026):</strong> <code>SetConfigParameter</code>` is implemented end to end —
+<p>the GUI's <strong>Edit → Configuration…</strong> dialog (<code>hmi/gui/configuration_dialog.py</code>) edits every key outside <code>READ_ONLY_SECTIONS</code> (<code>meta</code>, <code>operating_system</code>) and sends one <code>SetConfigParameter</code> per changed key. <code>core_main()</code> opens the configuration with <code>open_for_writing()</code> before <code>Core()</code> reads it; <code>Core.set_config_parameter()</code> refuses read-only sections, writes through <code>set_parameter()</code> and answers every request with the new <code>ConfigParameterResult(key, value, accepted, reason)</code>. The two open questions were settled: <strong>CORE answers</strong> (accepted, or refused with the reason), and <strong>running processes are not told</strong> — a change is written at once and applies from the next start, which both dialog pages say. A file discarded at startup offers no Save. Context: <code>config_handler.md</code> → <em>Writing</em>, <code>gui.md</code> §10c.</p>
 </li>
 <li>[ ] <strong>TODO:</strong> Phase 5 has to decide how a bench is described in the configuration and read
 <p>it into a <code>DeviceConfig</code>` handed to drivers by logical name. Nothing exists for this — the placeholder <code>[hardware.example_device]</code>` section, its schema entry and the <code>SECTION_FAMILIES</code>` mechanism were all removed, so the design is unconstrained. Whatever it becomes needs a <code>CONFIG_VERSION</code>` bump; there is no migration mechanism any more, so existing files are updated by hand or recreated from the template.</p>
 </li>
-<li>[ ] <strong>TODO:</strong> <code>report.type</code>` / <code>report.theme</code>` and the <code>[gui]</code>` keys are read but not yet
-<p><em>used</em> — Phases 4 and 3 respectively.</p>
+<li>[ ] <strong>TODO:</strong> <code>report.type</code>` / <code>report.theme</code>` are editable but not yet
+<p><em>used</em> — Phase 4. (The <code>[gui]</code> keys are used since September 2026: the window opens at <code>window_width</code> × <code>window_height</code>, and <code>theme</code> <code>default</code> follows the OS while <code>light</code>/<code>dark</code> stay fixed — <code>gui.md</code> §10c.)</p>
 </li>
 <li>[ ] <strong>TODO:</strong> Move the plaintext SSH password out of
 <p><code>resources/recipes/comprehensive_recipe.yml:20</code>` and into the configuration now that there is somewhere to put it. Rotate the credential if the host is live.</p>
@@ -1035,8 +1035,8 @@ except TimeoutError as exc:
 <li>[ ] <strong>TODO:</strong> check at load time what only fails on the bench today: that <code>module</code>` and
 <p><code>method_name</code>` resolve, that the argument names match the function's signature (<code>inspect.signature</code>`), and that every <code>local_name</code>` / <code>global_name</code>` a step reads was declared (the guide's P4). All three are possible at parse time — <code>base_dir</code>` is known — and all three currently cost an operator a run.</p>
 </li>
-<li>[ ] <strong>TODO:</strong> <code>PythonModuleStep._step()</code>` re-imports and re-executes its module on
-<p><strong>every step run</strong>, so an N-step recipe against one module imports it N times.</p>
+<li>[x] <strong>TODO:</strong> <code>PythonModuleStep._step()</code>` re-imports and re-executes its module on
+<p><strong>every step run</strong>, so an N-step recipe against one module imports it N times. <strong>Done 2026-09-15:</strong> a module file is now loaded once per process, keyed by its resolved path, so module-level state survives between steps as in the old engine (step.md §2.2).</p>
 </li>
 <li>[ ] <strong>TODO:</strong> the version check is warn-only and the compatibility policy (what a
 <p>mismatch should actually do, and when a recipe is too old to run) is still open — it lands with ~v1.0.</p>
@@ -1332,8 +1332,8 @@ hal        dead      fatal                hal-&gt;core, core-&gt;hal
 <p><strong>Verified:</strong> <code>pytest tests</code>` — 747 passed, 43 skipped; <code>ruff check src tests</code>` clean; <code>mypy</code>` clean. Test changes: <code>test_load_recipe_command_is_handled</code>` inverts (the Sequencer gets nothing), <code>test_start_sequence_hands_the_recipe_over_with_the_command</code>` takes over the identity assertion, <code>test_start_sequence_without_a_recipe_is_refused_by_core</code>` is new, and <code>test_run_sequence_takes_the_recipe_from_the_command</code>` replaces <code>test_use_recipe_stores_the_live_recipe</code>` as the pin on the message-to-attribute path.</p>
 <p><strong>New TODOs this opened:</strong></p>
 <ul>
-<li>[ ] <strong>TODO:</strong> nothing stops the operator loading a recipe while a sequence runs — CORE
-<p>accepts <code>LoadRecipe</code>` at any time and replaces <code>self.recipe</code>`. Harmless today (the running sequence holds its own recipe, and the GUI disables the button), but the CLI has no such guard and the refusal belongs in CORE beside the <code>start_sequence()</code>` one.</p>
+<li>[x] <strong>TODO:</strong> nothing stops the operator loading a recipe while a sequence runs — CORE
+<p>accepts <code>LoadRecipe</code>` at any time and replaces <code>self.recipe</code>`. Harmless today (the running sequence holds its own recipe, and the GUI disables the button), but the CLI has no such guard and the refusal belongs in CORE beside the <code>start_sequence()</code>` one. <strong>Decided 2026-09-15:</strong> no refusal in CORE — the frontend not offering a load during a run is the rule. The GUI now greys out every way in (toolbar Open, File → Open Recipe, File → Open Recent); the CLI is not guarded.</p>
 </ul>
 <hr>
 <h3 id="1-43-the-ascii-console-pin-is-removed-done">1.43 The ASCII console pin is removed — <strong>done</strong></h3>
@@ -1482,7 +1482,7 @@ CLI mode: no HMI process at all — CLI runs in the launcher process, engine unc
 <h3 id="phase-2-plugin-infrastructure">Phase 2 — Plugin infrastructure</h3>
 <p><em>Goal: the extension mechanism of §3, applied where the spec demands openness.</em></p>
 <ul>
-<li>Introduce <code>pypts.api</code>` (stable contracts) + <code>PluginRegistry</code>` with entry-point discovery.
+<li>Introduce <code>pypts.api</code>` (stable contracts) + <code>PluginRegistry</code>` with entry-point discovery. <strong>Note 2026-09-15:</strong> the package already exists, holding the <em>embedding</em> API (migration finding M-2): <code>Pts</code>` drives a headless engine from code, <code>open_gui()</code>` opens the window with a recipe loaded or started. See <code>src/pypts/api/api.md</code>`. The plugin contracts go beside it.
 </li>
 <li>Replace the <code>eval()</code>` step factory with the registry as the step code is ported (cheapest moment: during Phase 1 step 2, latest here); built-in step types self-register through the same mechanism.
 </li>
@@ -1680,7 +1680,7 @@ ni_dmm = "pypts_driver_ni_dmm:NiDmm"</code></pre>
 </li>
 <li><strong>Core busy-loop &amp; heartbeats.</strong> 100 Hz polling in every module is fine for now; when Core gains real work, consider <code>Queue.get(timeout=...)</code>`-driven loops. Heartbeat timeout currently only logs a warning — define the recovery action (restart module? abort run? notify HMI?).
 </li>
-<li><del><strong>Config in the temp directory.</strong></del> <strong>Closed (§1.3):</strong> moved to the <code>platformdirs</code>` per-user config directory, single writer, versioned structure (migration was later removed — see §1.3), and dotted section names for structure. It is still INI — deliberately, because the type information lives in <code>configuration_schema.py</code>` and the file stays hand-editable on a bench. What remains open is <em>changing</em> configuration at runtime: <code>SetConfigParameter</code>` is declared but not implemented, and there is no mechanism for telling a running process that a value changed.
+<li><del><strong>Config in the temp directory.</strong></del> <strong>Closed (§1.3):</strong> moved to the <code>platformdirs</code>` per-user config directory, single writer, versioned structure (migration was later removed — see §1.3), and dotted section names for structure. It is still INI — deliberately, because the type information lives in <code>configuration_schema.py</code>` and the file stays hand-editable on a bench. Changing configuration from the GUI is implemented (<code>SetConfigParameter</code>` → CORE writes → <code>ConfigParameterResult</code>, §1.3); by decision there is no mechanism for telling a running process that a value changed, so a change applies from the next start.
 </li>
 <li><strong>PyPI name.</strong> The pyproject rename to <code>pts-framework</code>` needs an early availability check on PyPI (v1.0.0 requirement), and alignment with the import name <code>pypts</code>`.
 </li>

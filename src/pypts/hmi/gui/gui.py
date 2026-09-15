@@ -37,14 +37,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from pypts.config_handler import ConfigHandler, file_locations
+from pypts.config_handler import BootstrapOutcome, ConfigError, ConfigHandler, file_locations
+from pypts.config_handler.configuration_schema import SCHEMA
 from pypts.hmi.gui.center_view import CenterContent
-from pypts.hmi.gui.gui_theme import install_system_theme_sync
+from pypts.hmi.gui.gui_theme import detect_system_dark_mode, install_system_theme_sync
 from pypts.hmi.gui.log_tail import LogTail
 from pypts.hmi.gui.palette import LIGHT, get_palette
 from pypts.hmi.gui.remove_cache_dialog import show_remove_cache_dialog
 from pypts.hmi.gui.resources import load_cern_logo_pixmap
 from pypts.hmi.gui.results_panel import ResultsPanel
+from pypts.hmi.gui.settings_dialog import SettingsDialog, setting_text
 from pypts.hmi.gui.step_table import StepTableContent
 from pypts.hmi.gui.styles import get_stylesheet
 from pypts.hmi.gui.top_bar import TopBarContent
@@ -57,7 +59,12 @@ from pypts.messages.common_messages import (
     ResultType,
     StepOutcome,
 )
-from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore, ReportReady
+from pypts.messages.core_hmi_communication import (
+    ConfigParameterResult,
+    CoreToHmi,
+    HmiToCore,
+    ReportReady,
+)
 from pypts.messages.run_events import (
     RecipeLoaded,
     StepStarted,
@@ -104,12 +111,45 @@ def open_external_url(url: str) -> None:
         log.warning("This machine has no application set up to open %s.", url)
 
 
+def window_settings() -> tuple[str, int, int]:
+    """
+    The [gui] settings the window opens with: theme, width, height.
+
+    Read once, at startup, like every other setting - a change made in Edit ->
+    Settings applies from the next start. A GUI with no configuration to
+    ask (one built by a test, or a frontend started by hand) opens with the
+    template's defaults, which is what a fresh installation would have written.
+    """
+    try:
+        config = ConfigHandler()
+        return (
+            config.get_parameter("gui.theme"),
+            config.get_parameter("gui.window_width"),
+            config.get_parameter("gui.window_height"),
+        )
+    except ConfigError as error:
+        log.debug("No configuration to take the window settings from (%s).", error)
+        fields = SCHEMA["gui"]
+        return (
+            fields["theme"].default,
+            int(fields["window_width"].default),
+            int(fields["window_height"].default),
+        )
+
+
+def _nothing_to_disconnect() -> None:
+    """Stands in for the OS theme sync's disconnect when the theme is fixed."""
+
+
 def gui_main(
     to_core: QueueWrapper[HmiToCore],
     from_core: QueueWrapper[CoreToHmi],
     log_queue,
     log_level: int = DEFAULT_LOG_LEVEL,
     log_file_path: str | None = None,
+    recipe_path: str | None = None,
+    start: bool = False,
+    sequence_name: str | None = None,
 ) -> None:
     """
     Entry point for the GUI process.
@@ -118,6 +158,10 @@ def gui_main(
         log_file_path: this run's log, handed on from the launcher. The GUI tails
             it into the LOG OUTPUT panel; without it the panel stays empty and
             the rest of the window is unaffected.
+        recipe_path: a recipe to open as soon as the window is up, through the
+            same funnel the Open button uses. pypts.api.open_gui() passes it.
+        start: start a sequence of that recipe once CORE has loaded it.
+        sequence_name: which sequence; None means the recipe's main sequence.
     """
     # Qt's event loop is C code, so a Python signal handler only runs once it
     # returns - Ctrl+C already did nothing visible to a running window. Stating
@@ -130,6 +174,11 @@ def gui_main(
     app = QApplication(sys.argv)
     gui = GUI(to_core, from_core)
     gui.show()
+    if recipe_path is not None:
+        if start:
+            gui.open_recipe_and_start(recipe_path, sequence_name)
+        else:
+            gui.open_recipe(recipe_path)
     sys.exit(app.exec())
 
 
@@ -151,6 +200,7 @@ class PtsMainWindow(QMainWindow):
         step_table: StepTableContent,
         results_panel: ResultsPanel,
         center: CenterContent,
+        window_size: tuple[int, int] = (1280, 720),
     ) -> None:
         super().__init__()
         self._on_close_request = on_close_request
@@ -160,8 +210,10 @@ class PtsMainWindow(QMainWindow):
         self.top_bar = top_bar
 
         self.setWindowTitle("pyPTS")
-        self.resize(1600, 1000)
+        # The minimum wins over a smaller configured size: below it the four
+        # panels stop fitting. The configuration dialog says so beside the field.
         self.setMinimumSize(1000, 700)
+        self.resize(window_size[0], window_size[1])
 
         # Native toolbar
         self.addToolBar(top_bar)
@@ -210,8 +262,8 @@ class PtsMainWindow(QMainWindow):
 
         file_menu = menu_bar.addMenu("File")
         file_menu.setToolTipsVisible(True)  # or Open Config's path is invisible
-        open_action = file_menu.addAction("Open Recipe")
-        open_action.triggered.connect(self.top_bar.choose_recipe_file)
+        self.open_recipe_action = file_menu.addAction("Open Recipe")
+        self.open_recipe_action.triggered.connect(self.top_bar.choose_recipe_file)
 
         # Filled by the assembler on aboutToShow - the window owns the widget,
         # the GUI owns the list. setToolTipsVisible, or the full paths the
@@ -231,6 +283,10 @@ class PtsMainWindow(QMainWindow):
         edit_menu.setToolTipsVisible(True)  # or the disabled reason is invisible
         edit_menu.addAction("Edit Recipe")
         edit_menu.addSeparator()
+        self.settings_action = edit_menu.addAction("Settings")
+        self.settings_action.setToolTip(
+            "Theme, window size, log and report folders, logging and the watchdog."
+        )
         self.remove_cache_action = edit_menu.addAction("Remove Cache")
 
         view_menu = menu_bar.addMenu("View")
@@ -320,6 +376,11 @@ class GUI(HmiClient):
         self.recent_recipes = RecentRecipes()
         self._requested_recipe_path: str | None = None
 
+        #: Set by open_recipe_and_start(): start a sequence the moment the recipe
+        #: it asked for has loaded. `_sequence_to_start` None means the main one.
+        self._start_when_loaded = False
+        self._sequence_to_start: str | None = None
+
         #: Sequence name -> one rendered YAML fragment per step table row, read
         #: back off disk once per load for the step table's hover panel.
         self._recipe_yaml: dict[str, tuple[str, ...]] = {}
@@ -337,13 +398,23 @@ class GUI(HmiClient):
         self.center = CenterContent()
         self.center.results = _results  # inject reference for update_results
 
+        theme, width, height = window_settings()
         self.window = PtsMainWindow(
             self.request_shutdown,
             self.top_bar,
             self.step_table,
             _results,
             self.center,
+            window_size=(width, height),
         )
+
+        #: The Settings dialog while it is open, so CORE's answers can be handed
+        #: to it. None the rest of the time.
+        self.settings_dialog: SettingsDialog | None = None
+        #: Settings CORE confirmed saving this session, dotted key -> text. This
+        #: process read its configuration once and never re-reads it, so without
+        #: these the dialog would reopen showing the old values.
+        self._saved_settings: dict[str, str] = {}
 
         # Status bar
         self.status_label = QLabel("Status: Idle")
@@ -352,12 +423,13 @@ class GUI(HmiClient):
 
         self.report_dir: str | None = None
 
-        # Theme — start in light mode; OS live-sync can still switch to dark
-        app = QApplication.instance()
+        # Theme, from [gui] theme. View > Toggle Dark Mode still flips it for
+        # the session.
         self._dark = False
-        self._apply_theme(False)
-        self._theme_disconnect = install_system_theme_sync(app, self._on_system_theme_changed)
+        self._theme_disconnect = _nothing_to_disconnect
+        self._use_theme(theme)
         self.window.dark_mode_action.triggered.connect(self._toggle_dark_mode)
+        self.window.settings_action.triggered.connect(self._open_settings)
         self.window.remove_cache_action.triggered.connect(self._remove_cache)
         self._set_remove_cache_enabled(True)
         self.window.open_config_action.triggered.connect(self.open_config_file)
@@ -447,6 +519,30 @@ class GUI(HmiClient):
 
     # --- Theme ------------------------------------------------------------------
 
+    def _use_theme(self, theme: str) -> None:
+        """
+        Paint the window in one of the `[gui] theme` values.
+
+        "system" follows the operating system - now, and whenever it changes.
+        "light" and "dark" stay put, so the OS switching cannot overrule a
+        theme the operator chose; anything else is light, the shipped value.
+        Called once at startup, and by the Settings dialog, which previews a
+        theme as it is picked and puts the one in force back if it is not saved.
+        """
+        self._theme_disconnect()
+        self._theme_disconnect = _nothing_to_disconnect
+        app = QApplication.instance()
+        if theme == "dark":
+            self._dark = True
+        elif theme == "system":
+            self._dark = detect_system_dark_mode(app)
+            self._theme_disconnect = install_system_theme_sync(
+                app, self._on_system_theme_changed
+            )
+        else:
+            self._dark = False
+        self._apply_theme(self._dark)
+
     def _toggle_dark_mode(self) -> None:
         self._dark = not self._dark
         self._apply_theme(self._dark)
@@ -516,6 +612,10 @@ class GUI(HmiClient):
         self.window.recipe_label.setText(
             f"Loaded {event.recipe_name}\nReady to start"
         )
+        # Several bench windows are often open at once; the taskbar shows the title.
+        self.window.setWindowTitle(f"pyPTS: {event.recipe_name}")
+        if self._start_when_loaded:
+            self._start_pending_sequence(event)
 
     def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
         super().show_run_metadata(values)
@@ -523,6 +623,7 @@ class GUI(HmiClient):
 
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
         self._set_remove_cache_enabled(False)
+        self._set_recipe_opening_enabled(False)
         self._run_outcomes = []
         self._paused = False
         self.center.set_auto_switch(True)
@@ -535,6 +636,7 @@ class GUI(HmiClient):
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
         self._set_remove_cache_enabled(True)
+        self._set_recipe_opening_enabled(True)
         self._paused = False
         self.center.set_auto_switch(True)
         self.step_table.set_running(False)
@@ -559,6 +661,73 @@ class GUI(HmiClient):
 
     def show_report_ready(self, event: ReportReady) -> None:
         self.report_dir = event.report_dir
+
+    # --- Settings ---------------------------------------------------------------
+
+    @catch_and_report_errors()
+    def _open_settings(self) -> None:
+        """
+        Edit > Settings: show the settings, save the changed ones via CORE.
+
+        The values shown are the ones this process read at startup, with the
+        changes CORE confirmed this session laid over them. The dialog previews
+        a theme through `_use_theme()`. Decorated to report and continue: a
+        dialog that cannot be built must not take the window down.
+        """
+        try:
+            config = ConfigHandler()
+        except ConfigError as error:
+            report_problem(
+                self,
+                f"The settings cannot be shown: {error}",
+                severity=ErrorSeverity.WARNING,
+                operation="open_settings",
+            )
+            return
+
+        values = {}
+        for section, options in config.get_whole_config().items():
+            for key, value in options.items():
+                values[f"{section}.{key}"] = setting_text(value)
+        values.update(self._saved_settings)
+
+        # Every process applies the same discard rule to the same file, so this
+        # process's verdict is CORE's too - and CORE would refuse every change.
+        problem = None
+        if config.bootstrap_outcome is BootstrapOutcome.DISCARDED:
+            problem = config.bootstrap_problem or "The settings file could not be read."
+
+        dialog = SettingsDialog(
+            values,
+            self.set_config_parameter,
+            problem=problem,
+            parent=self.window,
+            preview_theme=self._use_theme,
+        )
+        self.settings_dialog = dialog
+        log.debug("The settings dialog is open.")
+        try:
+            dialog.exec()
+        finally:
+            self.settings_dialog = None
+
+    def show_config_parameter_result(self, result: ConfigParameterResult) -> None:
+        log.debug(
+            "ConfigParameterResult received for '%s': accepted=%s.", result.key, result.accepted
+        )
+        if result.accepted:
+            self._saved_settings[result.key] = result.value
+
+        if self.settings_dialog is not None and self.settings_dialog.apply_result(result):
+            return
+
+        # Nobody is waiting for it - the dialog was closed before CORE answered.
+        # CORE has already logged the outcome; the status line is the one place
+        # left to show it.
+        if result.accepted:
+            self.show_status(f"Setting {result.key} saved; it applies from the next start")
+        else:
+            self.show_status(f"Setting {result.key} not saved: {result.reason}")
 
     # --- Remove Cache -----------------------------------------------------------
 
@@ -596,6 +765,17 @@ class GUI(HmiClient):
 
     # --- Opening a recipe, and the recipes opened before ------------------------
 
+    def _set_recipe_opening_enabled(self, enabled: bool) -> None:
+        """
+        Only between runs. The toolbar's Open button greys out in the top bar;
+        File -> Open Recipe and File -> Open Recent are the other two ways in,
+        and they follow it. Loading mid-run would repaint the step table with
+        new step ids, so the rest of the run's events would miss their rows.
+        CORE does not refuse the load: the frontend not offering it is the rule.
+        """
+        self.window.open_recipe_action.setEnabled(enabled)
+        self.window.recent_menu.menuAction().setEnabled(enabled)
+
     def open_recipe(self, recipe_path: str) -> None:
         """
         The one funnel every open goes through - the toolbar button, File ->
@@ -604,9 +784,52 @@ class GUI(HmiClient):
         It stashes the path because `RecipeLoaded` does not carry one: the HMI
         is the only side that knows which file it asked for, and the recents
         list needs the two halves together.
+
+        Any open cancels a start that open_recipe_and_start() left pending: the
+        operator picking another file has decided what to do next.
         """
+        self._start_when_loaded = False
+        self._sequence_to_start = None
         self._requested_recipe_path = recipe_path
         self.load_recipe(recipe_path)
+
+    def open_recipe_and_start(self, recipe_path: str, sequence_name: str | None = None) -> None:
+        """
+        Open a recipe and start one of its sequences as soon as it has loaded -
+        what pypts.api.open_gui(recipe, start=True) asks for.
+
+        The start waits for RecipeLoaded instead of following the load
+        straight away: a recipe CORE refuses never loads, so it is never
+        started. `sequence_name` None means the recipe's main sequence, which
+        is only known once the recipe has loaded.
+        """
+        self.open_recipe(recipe_path)
+        self._start_when_loaded = True
+        self._sequence_to_start = sequence_name
+
+    def _start_pending_sequence(self, event: RecipeLoaded) -> None:
+        """The second half of open_recipe_and_start(), called from show_recipe_loaded()."""
+        if self._sequence_to_start is None:
+            sequence_name = event.main_sequence
+        else:
+            sequence_name = self._sequence_to_start
+        self._start_when_loaded = False
+        self._sequence_to_start = None
+
+        names = [sequence.sequence_name for sequence in event.sequences]
+        if sequence_name not in names:
+            report_problem(
+                self,
+                f"Cannot start '{sequence_name}': recipe '{event.recipe_name}' has no "
+                f"sequence by that name. It has: {', '.join(names)}.",
+                operation="GUI.open_recipe_and_start",
+            )
+            return
+
+        # The window shows what is about to run, exactly as if it had been chosen.
+        self.top_bar.sequence_combo.setCurrentText(sequence_name)
+        self.show_selected_sequence(sequence_name)
+        self.start_sequence(sequence_name)
 
     @catch_and_report_errors()
     def _rebuild_recent_menu(self) -> None:

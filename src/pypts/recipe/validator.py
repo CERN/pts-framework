@@ -12,8 +12,8 @@ a plain list of human-readable problem strings; an empty list means the
 piece is fine.
 
 What is checked is exactly what rules.py declares: the mandatory fields of
-the header, of every sequence document, and of every step - common fields
-first, then the fields the step's own type requires. Optional fields are
+the header (and the shape of its fields), of every sequence document, and of
+every step - common fields first, then the fields the step's own type requires. Optional fields are
 never demanded; the parser fills their defaults in afterwards. Anything
 beyond field presence (a duplicate sequence name, a main_sequence that
 names no sequence, an unknown step key) stays with the parser, which has
@@ -27,11 +27,31 @@ from pypts.step import indexed_step
 
 
 def validate_header(header: dict[str, Any]) -> list[str]:
-    """The mandatory header fields, per rules.HEADER_REQUIRED."""
+    """
+    The mandatory header fields, per rules.HEADER_REQUIRED, and the shape of
+    the ones that are there.
+
+    The shape matters for `globals` most: `globals: 5` used to load and only
+    fail when a run started, on the Sequencer's thread, far from the file.
+    """
     problems = []
     for field in rules.HEADER_REQUIRED:
         if header.get(field) is None:
             problems.append(f"header: missing the required field '{field}'")
+
+    for field in rules.HEADER_SINGLE_VALUE:
+        value = header.get(field)
+        if isinstance(value, (dict, list)):
+            problems.append(
+                f"header: '{field}' must be a single value, not a {type(value).__name__}"
+            )
+
+    declared_globals = header.get("globals")
+    if declared_globals is not None and not isinstance(declared_globals, dict):
+        problems.append(
+            f"header: 'globals' must be a mapping of names to values "
+            f"(`globals: {{limit: 5}}`), not a {type(declared_globals).__name__}"
+        )
     return problems
 
 

@@ -26,6 +26,14 @@ from pypts.logger.log import log
 from pypts.step.runtime import Runtime
 from pypts.step.step import Step
 
+#: Every module file loaded so far, keyed by its resolved path. A test module
+#: is loaded once per process, as the old engine's import_module did, so a
+#: handle a `connect()` step keeps at module level is still there for the next
+#: step. The full path is the key because two recipes may each have an
+#: `example_tests.py` in their own folder. Only the sequence thread loads
+#: modules, one run at a time, so there is no lock.
+_loaded_modules: dict[Path, ModuleType] = {}
+
 
 def load_python_module(module_ref: str, base_dir: str) -> ModuleType:
     """
@@ -34,7 +42,9 @@ def load_python_module(module_ref: str, base_dir: str) -> ModuleType:
     Two spellings, tried in this order:
     - a file beside the recipe: `example_tests.py` or `example_tests`,
       resolved against `base_dir` (or an absolute path). Loaded from the
-      file directly, without touching sys.modules.
+      file directly, without touching sys.modules, and only the first time:
+      later calls get the same module object back from _loaded_modules.
+      A file that fails to load is not remembered, so it is tried again.
     - a dotted import name: `platform`, `mypackage.tests` - a plain import,
       so stdlib and installed code work too.
 
@@ -56,13 +66,17 @@ def load_python_module(module_ref: str, base_dir: str) -> ModuleType:
 
     for candidate in candidates:
         if candidate.is_file():
+            path = candidate.resolve()
+            if path in _loaded_modules:
+                return _loaded_modules[path]
             spec = importlib.util.spec_from_file_location(
-                f"pypts_recipe_module_{candidate.stem}", candidate
+                f"pypts_recipe_module_{candidate.stem}", path
             )
             if spec is None or spec.loader is None:
                 raise ImportError(f"Cannot load a module from '{candidate}'")
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
+            _loaded_modules[path] = module
             return module
 
     if not module_ref.endswith(".py"):

@@ -23,12 +23,14 @@ from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType, StepOutcome
 from pypts.messages.core_hmi_communication import (
+    ConfigParameterResult,
     CoreToHmi,
     HmiStopped,
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
     ReportReady,
+    SetConfigParameter,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
@@ -150,6 +152,8 @@ class HmiClient:
                 self.show_error(error)
             case ReportReady():
                 self.show_report_ready(message)
+            case ConfigParameterResult():
+                self.show_config_parameter_result(message)
             # The progress events below are live: CORE and the engine send all
             # of them on every run, and so are both questions - UserInteraction
             # asks the first, UserWrite the second.
@@ -195,6 +199,16 @@ class HmiClient:
         no separate acknowledgement to wait for.
         """
         self.core.send(StopSequence())
+
+    def set_config_parameter(self, key: str, value: str) -> None:
+        """
+        Ask CORE to change one value in config.ini.
+
+        CORE is the single runtime writer, so a frontend asks rather than writes.
+        The answer arrives as ConfigParameterResult, at
+        show_config_parameter_result(). The change applies from the next start.
+        """
+        self.core.send(SetConfigParameter(key=key, value=value))
 
     def request_shutdown(self) -> None:
         """
@@ -302,6 +316,14 @@ class HmiClient:
         "open the folder" needs `report_dir`, one that names the file needs
         `report_path`."""
         log.debug("ReportReady received: %s", event.report_path)
+
+    def show_config_parameter_result(self, result: ConfigParameterResult) -> None:
+        """CORE's answer to set_config_parameter(). Passed whole: a frontend
+        waiting on several answers needs the key to tell them apart. CORE has
+        already logged a refusal in the operator's words."""
+        log.debug(
+            "ConfigParameterResult received for '%s': accepted=%s.", result.key, result.accepted
+        )
 
     def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
         """What the run has learned about the unit on the bench - the globals

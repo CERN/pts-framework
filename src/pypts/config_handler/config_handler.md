@@ -41,10 +41,12 @@ modified** — there is no migration and no repair; keeping the file correct is 
 A file that is broken or version-mismatched is **discarded for the run**: the template
 defaults are used in memory, `bootstrap_outcome`/`bootstrap_problem` carry the verdict, and
 the launcher shows the operator a notice (popup in GUI mode, console banner otherwise). The
-run does not stop. From then on the file is read-only to everyone.
+run does not stop. From then on the file is read-only to everyone **except CORE**, which
+`core_main()` opens with `open_for_writing()` and which carries out `SetConfigParameter` —
+the operator's changes from the GUI's Edit → Configuration (see *Writing* below).
 `set_parameter()` on a reader raises `ConfigWriteError` rather than racing. A reader can
 never be promoted to writer — `open_for_writing()` in a process that already holds a reader
-raises.
+raises, which is why `core_main()` opens it *before* `Core()` makes its first read.
 
 **It has to work before logging does.** `bootstrap()` runs before the Logger process exists
 — it is what decides where the log file goes — so it cannot log. It buffers its messages in
@@ -100,11 +102,13 @@ Sections currently in the schema:
 | `paths` | `base_dir`, `logs_dir`, `reports_dir` — **derived** paths |
 | `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
 | `report` | `type` (`html`/`csv`), `theme` |
-| `gui` | `theme` (`default`/`light`/`dark`), `window_width`, `window_height` |
+| `gui` | `theme` (`default` follows the OS / `light` / `dark`), `window_width`, `window_height` — the GUI window opens with them |
 | `watchdog` | `enabled` (bool) - whether prolonged heartbeat silence *ends the run* or is only reported. Off is for a developer with a debugger attached to CORE, where a breakpoint in an event loop is indistinguishable from an event loop that has died. It gates the acting half only: a module that goes quiet is reported at WARNING either way |
 
 That is the whole schema — a flat list of named sections, nothing generated or matched by
-pattern. One idea explains the rest of the shape of the file:
+pattern. `READ_ONLY_SECTIONS` (`meta`, `operating_system`) names the two that are not
+settings: the Configuration dialog does not offer them and CORE refuses a
+`SetConfigParameter` for either. One idea explains the rest of the shape of the file:
 
 - **Derived values** ship *blank* in the template and are filled at creation from
   `platformdirs` / `platform`. This is how the template avoids `/tmp/pypts` (wrong on
@@ -151,6 +155,23 @@ properties.
 `ConfigWriteError` pointing at the `SetConfigParameter` message instead. A value is parsed
 against the schema *before* it reaches the file, so a bad value is refused here rather than
 at the next start when the file is all there is.
+
+**At runtime the writer is CORE.** The chain is:
+
+```
+GUI  Edit > Configuration  ->  ConfigurationDialog  (changed keys only, as text)
+       -> HmiClient.set_config_parameter()  ->  SetConfigParameter(key, value)
+CORE   Core.set_config_parameter()
+         READ_ONLY_SECTIONS?  -> refuse
+         ConfigHandler().set_parameter()  -> ConfigError?  -> refuse, with str(error)
+       -> ConfigParameterResult(key, value, accepted, reason)
+GUI    show_config_parameter_result()  ->  the open dialog, or the status line
+```
+
+A change is **written at once and in force from the next start.** No running process
+re-reads its configuration, CORE included, and nothing is propagated; the dialog says so on
+both of its pages. The GUI remembers what CORE confirmed this session so that reopening the
+dialog shows the saved value rather than the one read at startup.
 
 Writing goes through `template_writer.py`, never `configparser.write()`, because the parsed
 structure has no comments in it and one write would turn a documented file into a bare list
@@ -233,7 +254,8 @@ Two file-format details worth knowing:
 |---|---|
 | `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.logs_dir`, `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
-| `core/core.py` | receives `SetConfigParameter` (HMI→CORE) and **logs a warning and ignores it** |
+| `core/core.py` | `open_for_writing()` in `core_main()`; `watchdog.enabled`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
+| `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` when the window opens (template defaults if there is no config); `get_whole_config()` + `bootstrap_outcome` to fill the Configuration dialog; `paths.reports_dir` for the report button |
 
 `local_storage.get_log_file_path()` no longer decides a location; it is given one.
 
@@ -281,21 +303,19 @@ agreement.
 
 Roadmap §1.3 is the authority; the TODOs live there, not in code comments. In short:
 
-- **`SetConfigParameter` is declared and not implemented.** Nothing sends it and CORE only
-  logs it. Two questions are open: whether CORE answers with a confirmation or an error, and
-  how a process already running learns that a value it read at startup has changed. Until
-  then a configuration change takes effect **on the next start**.
-- **CORE does not actually open the config for writing yet.** `open_for_writing()` exists and
-  the policy is decided, but no caller in the framework uses it — consequently
-  `set_parameter()`, `restore_default()`, `dump()` and `get_whole_config()` are API surface
-  that only the tests exercise today.
+- **A change applies from the next start, and that is by decision, not by omission.**
+  `SetConfigParameter` is carried out and answered (`ConfigParameterResult`), but no running
+  process learns that a value changed. Live propagation would need every reader to be told
+  and to act on it — not planned.
+- **`restore_default()` and `dump()` have no framework caller** — API surface only the tests
+  exercise.
 - **Hardware is not configurable yet, at all.** The placeholder section and its family rule
   were removed rather than left to be designed around; a `[hardware.dmm1]` written by hand is
   preserved and returned as text, and nothing types it, repairs it or reads it. Phase 5 owns
   the replacement — reading a device section into a `DeviceConfig` and handing it to drivers
   by logical name — and is free to choose a shape that is not this one.
-- **`report.type` / `report.theme` and the `[gui]` keys are read but not yet used** —
-  Phases 4 and 3 respectively.
+- **`report.type` / `report.theme` are editable but not yet used** — Phase 4. The
+  Configuration dialog marks both "Not used yet."
 - **`stdout_logging_enabled` is still derived from `--mode`**, not from the configuration.
   Probably correct — it follows from having a console rather than from a preference — but it
   is the one logging decision the config does not own.

@@ -1,0 +1,219 @@
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PyPTS — architecture_refactor summary</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg:      #ffffff;
+      --surface: #f6f8fa;
+      --border:  #d0d7de;
+      --text:    #1f2328;
+      --muted:   #656d76;
+      --accent:  #005096;
+      --code-bg: #eef1f4;
+      --note-bg: #fffbef;
+      --note-brd:#ffe58f;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:      #0d1117;
+        --surface: #161b22;
+        --border:  #30363d;
+        --text:    #e6edf3;
+        --muted:   #8d96a0;
+        --accent:  #6cb6ff;
+        --code-bg: #1f2630;
+        --note-bg: #272115;
+        --note-brd:#6b5310;
+      }
+    }
+    body {
+      margin: 0;
+      padding: 2.5rem 1rem 4rem;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.6 "Segoe UI", Calibri, system-ui, -apple-system, sans-serif;
+    }
+    main { max-width: 52rem; margin: 0 auto; }
+    header { text-align: center; margin-bottom: 2rem; }
+    h1 { color: var(--accent); font-size: 1.9rem; margin: 0 0 .3rem; }
+    .meta { color: var(--muted); font-size: .9rem; }
+    h2 {
+      color: var(--accent);
+      font-size: 1.35rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: .3rem;
+      margin: 2.5rem 0 1rem;
+    }
+    h3 { color: var(--accent); font-size: 1.05rem; margin: 1.6rem 0 .4rem; }
+    ul { margin: 0; padding-left: 1.4rem; }
+    li { margin: .3rem 0; }
+    li::marker { color: var(--muted); }
+    code {
+      background: var(--code-bg);
+      border-radius: 4px;
+      padding: .1em .35em;
+      font: .88em Consolas, "Courier New", monospace;
+    }
+    .short li { margin: .55rem 0; }
+    .section {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: .2rem 1.2rem 1rem;
+      margin-bottom: 1rem;
+    }
+    .note {
+      background: var(--note-bg);
+      border: 1px solid var(--note-brd);
+      border-radius: 8px;
+      padding: .6rem 1rem;
+      font-size: .9rem;
+      margin-bottom: 2rem;
+    }
+  </style>
+</head>
+<body>
+<main>
+
+  <header>
+    <h1>PyPTS – architecture_refactor: what has been done</h1>
+    <div class="meta">46 commits ahead of master • 2 September 2026</div>
+  </header>
+
+  <div class="note">
+    Converted from <code>architecture_refactor_summary.rtf</code> (written 2 September 2026).
+    The original pointed to <code>resources/roadmap/pypts_roadmap.md</code> for status detail;
+    that content now lives in <code>pypts_implementation_status.html</code> at the repo root,
+    which is the current source of truth.
+  </div>
+
+  <h2>Short version</h2>
+  <ul class="short">
+    <li><strong>Architecture rebuilt</strong> – two processes (engine and operator frontend) plus
+      a Logger process, with the Sequencer and Report as threads of the engine, and one launcher
+      owning startup.</li>
+    <li><strong>Messaging replaced end to end</strong> – typed frozen messages, one module per
+      link, one transport class, and handlers that raise on anything unexpected instead of
+      dropping it.</li>
+    <li><strong>Health and error handling in place</strong> – heartbeats from every module,
+      timeout detection in the engine, and a uniform error report naming module, method and
+      exception.</li>
+    <li><strong>Recipe layer rewritten</strong> – rules defined once in code, one validator for
+      every step type, and a simplified format where optional fields can simply be left
+      out.</li>
+    <li><strong>The engine runs recipes</strong> – five step types (Wait, PythonModule, Indexed,
+      UserInteraction, UserWrite), real sequence execution, and per-step
+      continue-on-error.</li>
+    <li><strong>Reporting produces artefacts</strong> – one folder per run, a CSV that grows
+      during the run, an HTML report at the end, and the operator told where it is.</li>
+    <li><strong>Logging centralised</strong> – a single writer process, a complete message trace
+      at DEBUG level, and a Debug Monitor that reads it back.</li>
+    <li><strong>Operator GUI rebuilt on PySide6</strong> – visual parity with the old screen:
+      four panels, live log, live step verdicts, light and dark themes.</li>
+    <li><strong>Configuration made proper</strong> – a singleton handler, a per-user config file
+      from a commented template, typed access, versioned and never silently repaired.</li>
+    <li><strong>Cross-platform behaviour made deliberate</strong> – the same process-spawning
+      semantics everywhere and all paths resolved per platform; verified on Windows, a Linux run
+      still owed.</li>
+  </ul>
+
+  <h2>Longer version</h2>
+
+  <div class="section">
+    <h3>1. Groundwork: architecture, messaging, modules</h3>
+    <ul>
+      <li>Architecture rebuild finished.</li>
+      <li>Message layer implemented.</li>
+      <li>Heartbeats, watchdog timeout detection, and two error-handling decorators.</li>
+      <li>Safe abort and release on unexpected crash, with the full traceback logged.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h3>2. Recipes, rules and the execution engine</h3>
+    <ul>
+      <li>Recipe integration implemented: rules define, validator checks, parser builds, and the
+        recipe object is pure data → passed to the Sequencer via CORE.</li>
+      <li>Format simplified – rules in one importable place, one validator for all step types,
+        many fields made optional, slimmed-down required recipe format – less noise in
+        <code>.yml</code>.</li>
+      <li>Five step types working: Wait, PythonModule, Indexed, UserInteraction and UserWrite.
+        (A few more still to implement.)</li>
+      <li>Real sequence execution, plus demo recipes per step type.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h3>3. Reporting</h3>
+    <ul>
+      <li>One folder per run, a CSV that grows step by step, and a self-contained HTML report
+        when the run finishes.</li>
+      <li>The operator is told where it is – the CLI prints the path, the GUI opens the
+        folder.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h3>4. Logging</h3>
+    <ul>
+      <li>A single Logger process is the only writer of the run log; the level is resolved once
+        by the launcher.</li>
+      <li>Full message trace at DEBUG – every message logged by both sender and receiver.</li>
+      <li>Debug Monitor helper renders the trace, heartbeats and module liveness from a log file,
+        and is started beside the run – debugging only.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h3>5. GUI features</h3>
+    <ul>
+      <li>Implemented a basic GUI with everything necessary for v1.0.0.</li>
+      <li>Four panels: step table, live log tail, interaction panel and results summary.</li>
+      <li>Some new features added – the step table shows live verdicts and a syntax-coloured
+        YAML preview when hovering a step.</li>
+      <li>Operator interaction: images, buttons, keyboard navigation and free-text entry.</li>
+      <li>Full light and dark theming, working tooltips (including on disabled buttons), and a
+        browse-and-pause mode.</li>
+      <li>File → Open Recent, and Edit → Remove Cache (recent-recipes cache + config file), which
+        names and sizes everything before deleting it.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h3>6. Configuration</h3>
+    <ul>
+      <li>One configuration handler replaced the ad-hoc functions that wrote into the temp
+        directory.</li>
+      <li>Automatic config file discovery or creation.</li>
+      <li>The config file now lives in the per-user config directory, created from a commented
+        template.</li>
+      <li>Typed access through a schema, with a single writer.</li>
+      <li>Versioned: a broken or mismatched file is discarded for that run, with a notice to the
+        operator and an entry in the log – never silently repaired.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h3>7. Cross-platform compatibility</h3>
+    <ul>
+      <li>Process spawning pinned to the same method on every platform, so Windows and Linux
+        behaviour is the same.</li>
+      <li>Every per-user path (config, data, state, logs) resolved through one platform-aware
+        place; no hardcoded locations.</li>
+      <li>Verified end to end on Windows; a Linux end-to-end run and a headless GUI test job are
+        still to be tested.</li>
+    </ul>
+  </div>
+
+</main>
+</body>
+</html>

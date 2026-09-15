@@ -138,10 +138,11 @@ summary { cursor: pointer; font-weight: 600; }
 <p>How to run an existing recipe against the new architecture.</p>
 <h2 id="entry-point">Entry point</h2>
 <p><strong>Old:</strong> User package had its own <code><strong>main</strong>.py</code>` calling <code>run_pts()</code>` + <code>create_and_start_gui()</code>`. Recipe ran inside the same process.</p>
-<p><strong>New:</strong> Delete your <code><strong>main</strong>.py</code>`. Run the framework directly:</p>
+<p><strong>New:</strong> Run the framework directly:</p>
 <pre><code class="language-bash">python -m pypts          # GUI
 python -m pypts --mode cli</code></pre>
-<p>Load your recipe from the GUI file picker, or (CLI) type <code>load &lt;path&gt;</code>` then <code>run</code>`.</p>
+<p>Load your recipe from the GUI file picker, or (CLI) type <code>load_recipe &lt;path&gt;</code>` then <code>start_sequence &lt;name&gt;</code>`.</p>
+<p>Or keep a short <code><strong>main</strong>.py</code>` that uses <code>pypts.api</code>` - <code>open_gui("recipe.yml")</code>` opens the window with your recipe loaded (<code>start=True</code>` also starts it), and <code>Pts</code>` runs it with no window. See <code>api_showcase.py</code>` in the repository root.</p>
 <h2 id="step-type-names">Step-type names</h2>
 <p>The <code>steptype</code>` field values changed — the <code>Step</code>` suffix was dropped:</p>
 <table><thead><tr><th>Old</th><th>New</th></tr></thead><tbody><tr><td><code>PythonModuleStep</code>`</td><td><code>PythonModule</code>`</td></tr><tr><td><code>UserInteractionStep</code>`</td><td><code>UserInteraction</code>`</td></tr><tr><td><code>WaitStep</code>`</td><td><code>Wait</code>`</td></tr><tr><td><code>UserWriteStep</code>`</td><td><code>UserWrite</code>`</td></tr><tr><td><code>IndexedStep</code>`</td><td>handled at load time — wrap steps in an indexed input</td></tr></tbody></table>

@@ -212,7 +212,7 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
   arg3: { type: global, global_name: tolerance }</code></pre>
 <table><thead><tr><th><code>type</code>`</th><th>Extra keys</th><th>Behaviour</th></tr></thead><tbody><tr><td><code>direct</code>` (default when <code>type</code>` omitted)</td><td><code>value</code>`</td><td>literal value from the YAML</td></tr><tr><td><code>local</code>`</td><td><code>local_name</code>`</td><td>reads <code>local_stack[-1][local_name]</code>`</td></tr><tr><td><code>global</code>`</td><td><code>global_name</code>`</td><td>reads <code>globals[global_name]</code>`</td></tr></tbody></table>
 <p><strong>No type coercion.</strong> <code>value: '45'</code>` is the string <code>"45"</code>`; <code>value: 45</code>` is the int. Both YAML styles (flow and block) are equivalent.</p>
-<p><strong>Note on <code>indexed: true</code>`:</strong> currently <strong>silently ignored</strong> (step runs once with the whole list). This will become a load-time <code>RecipeError</code>` in an upcoming fix (M-6). Do not rely on it.</p>
+<p><strong>Note on <code>indexed: true</code>`:</strong> the old per-input flag is gone. To repeat a step over several parameter sets, use <code>steptype: Indexed</code>` with a <code>template</code>` and <code>parameter_sets</code>`; it is expanded into separate steps at recipe load time.</p>
 <h3 id="6-1-test-package-and-module-resolution">6.1 <code>test_package</code>` and module resolution</h3>
 <p>When <code>test_package</code>` is set in the header, <code>PythonModule</code>` resolves the <code>module:</code>` key as a package resource (recursive search under the package root, skipping common exclude dirs). Without it, <code>module:</code>` is a file path relative to the recipe's directory.</p>
 <p>Both spellings work: <code>module: example_tests.py</code>` and <code>module: example_tests</code>`. Every directory in the chain needs <code><strong>init</strong>.py</code>`. Module names must be unique — resolution picks whichever the glob hits first for ambiguous names.</p>
@@ -232,8 +232,8 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
 <ul>
 <li>A sequence's result is <code>max(child results)</code>`.
 </li>
-<li><strong>Only <code>ERROR</code>` stops a sequence</strong> (unless <code>continue_on_error: false</code>`). A <code>FAIL</code>` never halts
-<p>anything — a failing DUT should still be fully characterised.</p>
+<li><strong>By default nothing halts a sequence:</strong> an <code>ERROR</code>` or a <code>FAIL</code>` is recorded and the next step runs.
+<p>A step with <code>continue_on_error: false</code>` ends the run when it errors <em>or</em> fails; every remaining step is recorded <code>SKIP</code>`.</p>
 </li>
 <li><code>STOP</code>` is produced by an operator abort.
 </li>
@@ -244,12 +244,11 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
 <h3 id="9-1-continue-on-error">9.1 <code>continue_on_error</code>`</h3>
 <pre><code class="language-yaml">- steptype: PythonModule
   step_name: power_on
-  continue_on_error: false   # stop the sequence if this step raises
+  continue_on_error: false   # end the run if this step errors or fails
   ...</code></pre>
-<p>Default is <code>true</code>` (continue on error). Set <code>false</code>` when stopping is safer — power supply never came up, fixture is open. <code>critical: true</code>` re-arms the stop even when the sequence default is continue.</p>
-<p><strong>Current limitation (M-7):</strong> <code>continue_on_error</code>` at the step level causes a load failure on some step types. This will be fixed to tolerate-and-warn. Until then, avoid it on non- <code>PythonModule</code>` steps.</p>
+<p>Default is <code>true</code>` (carry on). Set <code>false</code>` when stopping is safer — power supply never came up, fixture is open. It is accepted on every step type and only on steps: there is no recipe-level form. On an <code>Indexed</code>` step it applies to every generated step. Teardown steps always run to the end regardless. <code>critical:</code>` is no longer supported and is refused at load time.</p>
 <h3 id="9-2-abort">9.2 Abort</h3>
-<p><code>runtime.stop_event</code>` is checked before each step and immediately after it returns. Interactive steps poll the event while waiting for the operator, so an abort is honoured within ~1 s.</p>
+<p>A stop request is checked <em>between</em> steps, never inside one, so a step can leave its hardware in a known state. Every step that did not run is still recorded as <code>SKIP</code>` with the reason "Not run: the run was stopped by the operator.", so the step table and the CSV have a row for each; the run's result is <code>STOP</code>`. Interactive steps poll for the stop every 100 ms while waiting for the operator.</p>
 <hr>
 <h2 id="10-step-type-catalogue">10. Step type catalogue</h2>
 <p>Four step types are available. <code>steptype</code>` values are case-insensitive.</p>
@@ -288,19 +287,17 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
   description: Operator confirms the harness is connected
   message: Connect the harness, then press Next.
   image_path: harness.jpg    # optional
-  options:
-    - next:   Next
-    - cancel: Cancel
-  output_mapping:
-    output: { type: equals, value: next }</code></pre>
+  options: [Next]
+  outputs:
+    output: { type: equals, value: Next }</code></pre>
 <ul>
-<li><code>options</code>` is a list of <code>{response_key: button_label}</code>` dicts.
+<li><code>options</code>` is a list of strings. Each string is both the button label and the value the step returns as <code>output</code>`.
 </li>
-<li>Empty label → <code>key.capitalize()</code>` as the button text.
+<li>An empty <code>options</code>` list is refused at load time, as is an <code>image_path</code>` that does not exist.
 </li>
-<li>No <code>options</code>` → a single unlabelled button.
+<li>The GUI always adds its own Cancel button. Cancelling, a timeout or a stop makes the step <code>ERROR</code>`; the run carries on unless <code>continue_on_error: false</code>`.
 </li>
-<li><code>cancel</code>` as a response key stops the run.
+<li>The old dict format (<code>- next: Next</code>`) and the <code>cancel_key</code>` global are not supported.
 </ul>
 <h3 id="userwrite-operator-types-a-value"><code>UserWrite</code>` — operator types a value</h3>
 <pre><code class="language-yaml">- steptype: UserWrite
@@ -312,12 +309,12 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
 <p>Text-entry mode only. The typed string is stored per <code>outputs</code>`. The old serial-port picker mode (<code>ID</code>` key) is not available.</p>
 <hr>
 <h2 id="11-step-types-not-yet-available">11. Step types not yet available</h2>
-<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>UserLoadingStep</code>`</td><td>Not yet ported — blocked on multi-value response protocol (M-1)</td></tr><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not step types in the new architecture — moves to HAL (Phase 3)</td></tr><tr><td><code>SequenceStep</code>`</td><td>Dropped — no nested sequences</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated — use <code>UserInteraction</code>` + <code>PythonModule</code>` in sequence</td></tr><tr><td><code>IndexedStep</code>`</td><td>Not a YAML type — will be handled at load time; currently <code>indexed: true</code>` is silently ignored</td></tr></tbody></table>
+<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>UserLoadingStep</code>`</td><td>Not yet ported — blocked on a separate request/response for the file path (one response per request)</td></tr><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not step types in the new architecture — becomes a framework facility (HAL or service, not decided; Phase 5)</td></tr><tr><td><code>SequenceStep</code>`</td><td>Dropped — no nested sequences</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated — use <code>UserInteraction</code>` + <code>PythonModule</code>` in sequence</td></tr><tr><td><code>IndexedStep</code>`</td><td>Available as <code>steptype: Indexed</code>` (<code>template</code>` + <code>parameter_sets</code>`), expanded at load time; the old <code>indexed: true</code>` input flag is gone</td></tr></tbody></table>
 <hr>
 <h2 id="12-yaml-pitfalls">12. YAML pitfalls</h2>
 <ol>
-<li><strong><code>yes</code>`/<code>no</code>`/<code>on</code>`/<code>off</code>`/<code>true</code>` are booleans in YAML 1.1.</strong> A button key <code>- yes: ''</code>`
-<p>produces the key <code>True</code>`, not <code>"yes"</code>`. Always quote: <code>- 'yes': ''</code>`.</p>
+<li><strong><code>yes</code>`/<code>no</code>`/<code>on</code>`/<code>off</code>`/<code>true</code>` are booleans in YAML 1.1.</strong> An option written <code>options: [Yes, No]</code>`
+<p>produces the booleans <code>True</code>`/<code>False</code>`, not the strings <code>"Yes"</code>`/<code>"No"</code>`. Always quote: <code>options: ['Yes', 'No']</code>`, and quote the matching <code>equals</code>` value too.</p>
 </li>
 <li><strong><code>None</code>` is a string, not null.</strong> YAML null is <code>null</code>`, <code>~</code>`, or empty. Recipes use <code>None</code>`
 <p>as a placeholder; quote it where needed.</p>
