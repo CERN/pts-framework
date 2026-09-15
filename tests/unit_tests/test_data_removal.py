@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-Unit tests for Remove Cache (src/pypts/utilities/data_removal.py).
+Unit tests for Settings > Storage's removal (src/pypts/utilities/data_removal.py).
 
 **Every test passes all five locations explicitly.** `survey()` resolves them
 from `file_locations` and the configuration when it is not told, which is what
@@ -273,7 +273,7 @@ def test_survey_resolves_the_real_locations_when_not_told(tmp_path, monkeypatch)
 def test_a_configuration_that_cannot_be_read_leaves_those_categories_empty(
     tmp_path, monkeypatch
 ):
-    """Remove Cache must still open if the config is the thing that is broken."""
+    """The Storage page must still open if the config is the thing that is broken."""
     from pypts.config_handler import file_locations
     from pypts.utilities import data_removal
 

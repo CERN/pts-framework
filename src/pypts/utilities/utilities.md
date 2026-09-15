@@ -44,7 +44,9 @@ them with `except SpecificError:` and call `report_error` / `report_problem` exp
 
 ### `common.py`
 
-Small helpers shared across modules: `ignore_keyboard_interrupt()`, `convert_string_to_int()`,
+Small helpers shared across modules: `RESTART_EXIT_CODE` (75 - the GUI process's exit code
+asking the launcher to start pypts again, see `launcher/launcher.md` → *Restart*; here because
+neither side may import the other), `ignore_keyboard_interrupt()`, `convert_string_to_int()`,
 and `describe_value()` / `describe_step_values()` - a step's text values as the CLI, headless
 mode and the step table's tooltip show them (`outputs: voltage = 12.1 (range 11 .. 13)`, M-3).
 

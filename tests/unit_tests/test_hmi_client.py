@@ -26,6 +26,7 @@ import pytest
 from pypts.hmi.hmi_client import HmiClient
 from pypts.messages import QueueWrapper
 from pypts.messages.core_hmi_communication import HmiStopped
+from pypts.messages.run_events import PauseSequence, ResumeSequence, RunPaused, RunResumed
 
 #: What a frontend is expected to do in: the "returns at once" branch must not
 #: come anywhere near this, let alone near the grace period it was given.
@@ -202,3 +203,46 @@ def test_a_frontend_that_is_stopping_does_not_report_the_engine_as_lost(client, 
         instance.do_periodic_tasks()
 
     assert not [r for r in caplog.records if "stopped responding" in r.getMessage()]
+
+
+# --------------------------------------------------------------------------
+# Pause and Resume
+# --------------------------------------------------------------------------
+
+
+def test_pause_and_resume_send_their_commands(client):
+    instance, to_core = client
+
+    instance.pause_sequence()
+    instance.resume_sequence()
+
+    assert drain(to_core) == [PauseSequence(), ResumeSequence()]
+
+
+def test_run_paused_and_run_resumed_reach_their_hooks(client):
+    """RunPaused is passed whole, like StepStarted: a frontend that says where
+    the run is held needs the step name and both counts."""
+    instance, _to_core = client
+    seen = []
+    instance.show_run_paused = seen.append
+    instance.show_run_resumed = lambda: seen.append("resumed")
+    paused = RunPaused(step_name="measure", position=4, total=10)
+
+    instance.handle_core_message(paused)
+    instance.handle_core_message(RunResumed())
+
+    assert seen == [paused, "resumed"]
+
+
+def test_the_default_pause_hooks_only_log(client, caplog):
+    """The CLI and the API never pause, but they are on the link, so the
+    defaults must take the events quietly."""
+    instance, to_core = client
+
+    with caplog.at_level(logging.DEBUG):
+        instance.show_run_paused(RunPaused(step_name="measure", position=4, total=10))
+        instance.show_run_resumed()
+
+    assert "held before step 4/10 'measure'" in caplog.text
+    assert "RunResumed received" in caplog.text
+    assert drain(to_core) == []

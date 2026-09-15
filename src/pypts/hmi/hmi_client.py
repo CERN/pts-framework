@@ -37,9 +37,13 @@ from pypts.messages.core_hmi_communication import (
     StopHmi,
 )
 from pypts.messages.run_events import (
+    PauseSequence,
     RecipeLoaded,
+    ResumeSequence,
     RunFinished,
     RunMetadata,
+    RunPaused,
+    RunResumed,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
@@ -168,6 +172,12 @@ class HmiClient:
                 self.show_run_finished(result, outcomes)
             case RunMetadata(values=values):
                 self.show_run_metadata(values)
+            # The operator's hold, confirmed. Only the GUI asks for one, but
+            # every frontend is on the link, so every frontend has a hook.
+            case RunPaused():
+                self.show_run_paused(message)
+            case RunResumed():
+                self.show_run_resumed()
             case SequenceStarted(sequence_name=name):
                 self.show_sequence_started(name)
             case SequenceFinished(sequence_name=name, result=result):
@@ -204,6 +214,29 @@ class HmiClient:
         no separate acknowledgement to wait for.
         """
         self.core.send(StopSequence())
+
+    def pause_sequence(self) -> None:
+        """
+        Ask CORE to hold the running sequence before its next main step.
+
+        The step that is running finishes first, so the confirmation - RunPaused,
+        at show_run_paused() - can be a long time coming. If no main step is left
+        the request lapses: teardown always runs straight through, no RunPaused
+        arrives, and the run simply ends with RunFinished. GUI only - the CLI and
+        the API do not offer it.
+        """
+        self.core.send(PauseSequence())
+
+    def resume_sequence(self) -> None:
+        """
+        Ask CORE to end a hold, or to cancel a pause whose hold has not begun.
+
+        The confirmation is RunResumed, at show_run_resumed() - sent only if a
+        hold had actually begun, so cancelling a pending pause is answered by
+        nothing at all. StopSequence also ends a hold, with the same RunResumed
+        before the run's RunFinished. GUI only, like pause_sequence().
+        """
+        self.core.send(ResumeSequence())
 
     def set_config_parameter(self, key: str, value: str) -> None:
         """
@@ -307,6 +340,20 @@ class HmiClient:
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
         log.debug("RunFinished received: %s over %d steps.", result.name, len(outcomes))
+
+    def show_run_paused(self, event: RunPaused) -> None:
+        """The hold has begun. Passed whole: a frontend that says where the run
+        is held needs the step name and both counts."""
+        log.debug(
+            "RunPaused received: held before step %d/%d '%s'.",
+            event.position,
+            event.total,
+            event.step_name,
+        )
+
+    def show_run_resumed(self) -> None:
+        """The hold has ended, by Resume or by Stop; the run is moving again."""
+        log.debug("RunResumed received.")
 
     def show_sequence_started(self, sequence_name: str) -> None:
         log.debug("SequenceStarted received for '%s'.", sequence_name)

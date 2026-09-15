@@ -40,9 +40,13 @@ from pypts.messages.core_hmi_communication import (
     StopHmi,
 )
 from pypts.messages.run_events import (
+    PauseSequence,
     RecipeLoaded,
+    ResumeSequence,
     RunFinished,
     RunMetadata,
+    RunPaused,
+    RunResumed,
     RunStarted,
     SequenceSummary,
     StepFinished,
@@ -1183,7 +1187,7 @@ def test_no_colour_literal_lives_outside_the_palette():
 
 
 # --------------------------------------------------------------------------
-# Remove Cache
+# Settings > Storage - the panel on its own
 # --------------------------------------------------------------------------
 
 
@@ -1200,29 +1204,6 @@ def an_item(key="state", label="Recent recipes", count=2, size=200, note=""):
         item_count=count,
         kept_note=note,
     )
-
-
-def test_remove_cache_is_available_when_idle(gui):
-    instance, _outbox, _inbox = gui
-
-    assert instance.window.remove_cache_action.isEnabled() is True
-
-
-def test_remove_cache_is_greyed_out_during_a_run_and_says_why(inbox_run_started):
-    """Emptying the reports folder under the Report thread would take the run down."""
-    instance, _outbox, _inbox = inbox_run_started
-
-    assert instance.window.remove_cache_action.isEnabled() is False
-    assert "running" in instance.window.remove_cache_action.toolTip().lower()
-
-
-def test_remove_cache_comes_back_when_the_run_finishes(inbox_run_started):
-    instance, _outbox, inbox = inbox_run_started
-
-    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
-    instance.poll_core()
-
-    assert instance.window.remove_cache_action.isEnabled() is True
 
 
 def test_the_window_title_names_the_loaded_recipe(gui):
@@ -1332,7 +1313,7 @@ def inbox_run_started(gui):
 
 
 def four_items(**sizes):
-    """The four real categories, so the default ticks can be asserted."""
+    """The four survey categories - the Storage panel must leave the configuration out."""
     return [
         an_item(key="state", label="Recent recipes", size=sizes.get("state", 800)),
         an_item(key="config", label="Configuration", size=sizes.get("config", 200)),
@@ -1341,74 +1322,70 @@ def four_items(**sizes):
     ]
 
 
-def test_the_dialog_lists_every_category_with_its_size(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
+def a_panel(items, **options):
+    """A Storage panel over a fixed survey. It deletes nothing unless a test says so."""
+    from pypts.hmi.gui.storage_panel import StoragePanel
+    from pypts.utilities.data_removal import RemovalOutcome
 
-    dialog = RemoveCacheDialog(four_items())
+    options.setdefault("remover", lambda chosen: RemovalOutcome())
+    return StoragePanel(lambda: list(items), **options)
 
-    shown = _all_text(dialog)
+
+def test_the_panel_lists_reports_logs_and_recents_with_their_sizes(qapp):
+    panel = a_panel(four_items())
+
+    shown = _all_text(panel)
     assert any("Reports" in text for text in shown)
     assert any("Run logs" in text for text in shown)
     assert any("2 items" in text for text in shown)
-    dialog.close()
 
 
-def test_state_and_config_are_ticked_and_the_records_are_not(qapp):
+def test_the_configuration_is_not_offered(qapp):
+    """config.ini belongs to Settings > Advanced > Restore default settings."""
+    panel = a_panel(four_items())
+
+    assert "config" not in panel.checkboxes
+    assert not any("Configuration" in text for text in _all_text(panel))
+
+
+def test_the_recents_are_ticked_and_the_records_are_not(qapp):
     """Removing test records stays a deliberate extra click."""
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
+    panel = a_panel(four_items())
 
-    dialog = RemoveCacheDialog(four_items())
-
-    assert dialog.checkboxes["state"].isChecked() is True
-    assert dialog.checkboxes["config"].isChecked() is True
-    assert dialog.checkboxes["reports"].isChecked() is False
-    assert dialog.checkboxes["logs"].isChecked() is False
-    dialog.close()
+    assert panel.checkboxes["state"].isChecked() is True
+    assert panel.checkboxes["reports"].isChecked() is False
+    assert panel.checkboxes["logs"].isChecked() is False
 
 
 def test_the_total_counts_only_what_is_ticked(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
+    panel = a_panel(four_items(state=1024))
 
-    dialog = RemoveCacheDialog(four_items(state=1024, config=1024))
-
-    assert dialog.total_label.text() == "2.0 KB"
-    dialog.close()
+    assert panel.total_label.text() == "1.0 KB"
 
 
 def test_ticking_a_category_updates_the_total(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
+    panel = a_panel(four_items(state=1024, reports=2048))
+    panel.checkboxes["reports"].setChecked(True)
 
-    dialog = RemoveCacheDialog(four_items(state=1024, config=1024, reports=2048))
-    dialog.checkboxes["reports"].setChecked(True)
-
-    assert dialog.total_label.text() == "4.0 KB"
-    dialog.close()
+    assert panel.total_label.text() == "3.0 KB"
 
 
 def test_an_empty_category_cannot_be_ticked(qapp):
     """Nothing there means nothing to choose."""
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
+    panel = a_panel([an_item(key="state", count=0, size=0), an_item(key="logs")])
 
-    dialog = RemoveCacheDialog([an_item(key="state", count=0, size=0), an_item(key="logs")])
-
-    assert dialog.checkboxes["state"].isEnabled() is False
-    assert dialog.checkboxes["state"].isChecked() is False
-    dialog.close()
+    assert panel.checkboxes["state"].isEnabled() is False
+    assert panel.checkboxes["state"].isChecked() is False
 
 
-def test_unticking_everything_disables_the_confirm_button(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
+def test_unticking_everything_disables_the_remove_button(qapp):
+    panel = a_panel(four_items())
+    panel.checkboxes["state"].setChecked(False)
 
-    dialog = RemoveCacheDialog(four_items())
-    dialog.checkboxes["state"].setChecked(False)
-    dialog.checkboxes["config"].setChecked(False)
-
-    assert dialog.remove_button.isEnabled() is False
-    dialog.close()
+    assert panel.remove_button.isEnabled() is False
 
 
 def test_only_the_ticked_categories_are_removed(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
     from pypts.utilities.data_removal import RemovalOutcome
 
     passed = []
@@ -1417,115 +1394,89 @@ def test_only_the_ticked_categories_are_removed(qapp):
         passed.extend(items)
         return RemovalOutcome()
 
-    dialog = RemoveCacheDialog(four_items(), remover=remover)
-    dialog.checkboxes["logs"].setChecked(True)
-    dialog.remove_button.click()
+    panel = a_panel(four_items(), remover=remover)
+    panel.checkboxes["logs"].setChecked(True)
+    panel.remove_button.click()
 
-    assert [item.key for item in passed] == ["state", "config", "logs"]
-    dialog.close()
-
-
-def test_cancelling_removes_nothing(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
-
-    called = []
-    dialog = RemoveCacheDialog(four_items(), remover=lambda items: called.append(items))
-    dialog.cancel_button.click()
-
-    assert called == []
-    assert dialog.outcome is None
+    assert [item.key for item in passed] == ["state", "logs"]
 
 
-def test_confirming_calls_the_remover_and_shows_the_result(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
+def test_removing_shows_the_result_and_says_something_was_removed(qapp):
     from pypts.utilities.data_removal import RemovalOutcome
 
     outcome = RemovalOutcome(removed_bytes=2048, removed_count=3)
-    dialog = RemoveCacheDialog(four_items(), remover=lambda items: outcome)
+    removed = []
+    panel = a_panel(four_items(), remover=lambda items: outcome)
+    panel.removed.connect(lambda: removed.append(True))
 
-    dialog.remove_button.click()
+    panel.remove_button.click()
 
-    assert dialog.outcome is outcome
-    assert dialog.showing == "result"
-    shown = " ".join(_all_text(dialog))
+    assert panel.outcome is outcome
+    assert panel.showing == "result"
+    shown = " ".join(_all_text(panel))
     assert "3 items deleted" in shown
     assert "2.0 KB freed" in shown
-    dialog.close()
+    assert removed == [True]
 
 
-def test_the_result_page_names_what_could_not_be_removed(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
+def test_the_result_names_what_could_not_be_removed(qapp):
     from pypts.utilities.data_removal import RemovalOutcome
 
     outcome = RemovalOutcome(removed_count=1, failures=("pypts_now.log: in use",))
-    dialog = RemoveCacheDialog(four_items(), remover=lambda items: outcome)
+    panel = a_panel(four_items(), remover=lambda items: outcome)
 
-    dialog.remove_button.click()
+    panel.remove_button.click()
 
-    shown = " ".join(_all_text(dialog))
-    assert "pypts_now.log: in use" in shown
-    dialog.close()
+    assert "pypts_now.log: in use" in " ".join(_all_text(panel))
 
 
-def test_the_kept_log_note_is_repeated_on_the_result_page(qapp):
+def test_the_kept_log_note_is_repeated_on_the_result(qapp):
     """The operator has to learn why one log is still there."""
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
-    from pypts.utilities.data_removal import RemovalOutcome
-
     item = an_item(key="logs", label="Run logs", note="This run's log stays - it is in use.")
-    dialog = RemoveCacheDialog([item], remover=lambda items: RemovalOutcome())
-    dialog.checkboxes["logs"].setChecked(True)
+    panel = a_panel([item])
+    panel.checkboxes["logs"].setChecked(True)
 
-    dialog.remove_button.click()
+    panel.remove_button.click()
 
-    assert "This run's log stays" in " ".join(_all_text(dialog))
-    dialog.close()
-
-
-def test_a_dialog_with_nothing_to_remove_cannot_be_confirmed(qapp):
-    from pypts.hmi.gui.remove_cache_dialog import RemoveCacheDialog
-
-    dialog = RemoveCacheDialog([an_item(key="state", count=0, size=0)])
-
-    assert dialog.remove_button.isEnabled() is False
-    assert dialog.remove_button.text() == "Nothing to remove"
-    dialog.close()
+    assert "This run's log stays" in " ".join(_all_text(panel))
 
 
-def test_removing_the_cache_resets_the_recents_the_gui_holds(gui, tmp_path, monkeypatch):
-    """The store held the old list in memory and would write it straight back."""
-    from pypts.hmi.gui import gui as gui_module
+def test_a_panel_with_nothing_to_remove_cannot_remove(qapp):
+    panel = a_panel([an_item(key="state", count=0, size=0)])
+
+    assert panel.remove_button.isEnabled() is False
+    assert panel.remove_button.text() == "Nothing to remove"
+
+
+def test_done_goes_back_to_a_fresh_survey(qapp):
+    """The sizes shown after a removal are the sizes now."""
+    from pypts.hmi.gui.storage_panel import StoragePanel
     from pypts.utilities.data_removal import RemovalOutcome
 
-    instance, _outbox, inbox = gui
-    instance.open_recipe(str(a_recipe_file(tmp_path)))
-    load_demo_recipe(instance, inbox)
-    assert instance.recent_recipes.entries() != []
+    surveys = []
 
-    # The real file is under tmp_path (autouse fixture); delete it as removal would.
-    file_locations.recent_recipes_path().unlink()
-    # survey() with no arguments resolves the *real* installation. Stubbed so
-    # that no test in this file can ever be one edit away from deleting it.
-    monkeypatch.setattr(gui_module, "survey", list)
-    monkeypatch.setattr(
-        gui_module, "show_remove_cache_dialog", lambda items, parent=None: RemovalOutcome()
+    def survey():
+        surveys.append(True)
+        return four_items()
+
+    panel = StoragePanel(survey, remover=lambda items: RemovalOutcome())
+    panel.remove_button.click()
+
+    panel.back_button.click()
+
+    assert panel.showing == "confirm"
+    assert len(surveys) == 2
+
+
+def test_nothing_can_be_removed_during_a_run_and_it_says_why(qapp):
+    """Emptying the reports folder under the Report thread would take the run down."""
+    panel = a_panel(
+        four_items(), blocked_reason="Not while a recipe is running - stop the run first."
     )
 
-    instance._remove_cache()
-
-    assert instance.recent_recipes.entries() == []
-
-
-def test_cancelling_from_the_menu_changes_nothing(gui, monkeypatch):
-    from pypts.hmi.gui import gui as gui_module
-
-    instance, _outbox, _inbox = gui
-    monkeypatch.setattr(gui_module, "survey", list)
-    monkeypatch.setattr(gui_module, "show_remove_cache_dialog", lambda items, parent=None: None)
-
-    instance._remove_cache()
-
-    assert instance.window.remove_cache_action.isEnabled() is True
+    assert panel.remove_button.isEnabled() is False
+    assert panel.checkboxes["reports"].isEnabled() is False
+    assert any("running" in text for text in _all_text(panel))
 
 
 def _all_text(widget):
@@ -1722,28 +1673,131 @@ def test_during_a_run_open_says_it_must_wait(gui, inbox_run_started):
     assert "A run is already in progress" in instance.top_bar.start_button.toolTip()
 
 
-def test_pause_calls_itself_resume_once_it_has_paused(gui, inbox_run_started):
-    """Hovering a paused run's Pause button must not still say "Pause"."""
-    instance, _outbox, _inbox = inbox_run_started
-    assert "Pause" in instance.top_bar.pause_button.accessibleName()
+# --------------------------------------------------------------------------
+# Pause and Resume (gui.md section 13)
+# --------------------------------------------------------------------------
 
-    instance._toggle_pause()
 
+def test_clicking_pause_asks_the_engine_and_says_it_is_pausing(gui, inbox_run_started):
+    """The hold begins only when the current step ends, so the window has to
+    say something is coming - and the button already resumes, which is also
+    how a pause that has not begun is cancelled."""
+    instance, outbox, _inbox = inbox_run_started
+    drain(outbox)
+    assert instance.top_bar.pause_button.accessibleName() == "Pause"
+    assert "current step has finished" in instance.top_bar.pause_button.toolTip()
+
+    instance.top_bar.pause_button.click()
+
+    assert PauseSequence() in drain(outbox)
     assert instance.top_bar.pause_button.accessibleName() == "Resume"
     assert "Continue the run" in instance.top_bar.pause_button.toolTip()
+    assert instance.window.recipe_label.text() == "Pausing after the current step..."
 
-    instance._toggle_pause()
+
+def test_run_paused_names_the_step_the_run_is_held_before(gui, inbox_run_started):
+    instance, _outbox, inbox = inbox_run_started
+    instance.top_bar.pause_button.click()
+
+    inbox.send(RunPaused(step_name="measure", position=4, total=10))
+    instance.poll_core()
+
+    assert instance.window.recipe_label.text() == "Paused before step 4/10 'measure'"
+    assert instance.top_bar.pause_button.accessibleName() == "Resume"
+
+
+def test_clicking_resume_asks_the_engine_and_shows_the_run_moving(gui, inbox_run_started):
+    """Resume does not wait for a confirmation before the label changes: a
+    cancelled pause that never began gets no RunResumed at all."""
+    instance, outbox, inbox = inbox_run_started
+    instance.top_bar.pause_button.click()
+    inbox.send(RunPaused(step_name="measure", position=4, total=10))
+    instance.poll_core()
+    drain(outbox)
+
+    instance.top_bar.pause_button.click()
+
+    assert ResumeSequence() in drain(outbox)
+    assert instance.top_bar.pause_button.accessibleName() == "Pause"
+    assert instance.window.recipe_label.text() == "Running demo..."
+
+
+def test_run_resumed_puts_the_running_label_and_the_pause_button_back(gui, inbox_run_started):
+    """A RunPaused that crosses a Resume click leaves "Paused..." showing; the
+    RunResumed the engine sends for that hold is what corrects it."""
+    instance, _outbox, inbox = inbox_run_started
+    instance.top_bar.pause_button.click()
+    instance.top_bar.pause_button.click()
+    inbox.send(RunPaused(step_name="measure", position=4, total=10))
+    instance.poll_core()
+
+    inbox.send(RunResumed())
+    instance.poll_core()
+
+    assert instance.window.recipe_label.text() == "Running demo..."
     assert instance.top_bar.pause_button.accessibleName() == "Pause"
 
 
 def test_a_finished_run_forgets_it_was_paused(gui, inbox_run_started):
+    """A pause that lapsed gets no RunPaused - only the RunFinished."""
     instance, _outbox, inbox = inbox_run_started
-    instance._toggle_pause()
+    instance.top_bar.pause_button.click()
 
     inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
     instance.poll_core()
 
+    assert instance._pause_requested is False
     assert instance.top_bar.pause_button.accessibleName() == "Pause"
+    assert instance.window.recipe_label.text() == "Running demo..."
+
+
+def test_a_new_run_starts_unpaused(gui, inbox_run_started):
+    instance, outbox, inbox = inbox_run_started
+    instance.top_bar.pause_button.click()
+    inbox.send(RunPaused(step_name="measure", position=4, total=10))
+    instance.poll_core()
+
+    inbox.send(RunStarted(recipe_name="second", recipe_description="d"))
+    instance.poll_core()
+    drain(outbox)
+
+    assert instance.top_bar.pause_button.accessibleName() == "Pause"
+    assert instance.window.recipe_label.text() == "Running second..."
+    # Unpaused for real: the next click pauses rather than resumes.
+    instance.top_bar.pause_button.click()
+    assert drain(outbox) == [PauseSequence()]
+
+
+def test_stop_still_works_while_the_run_is_pausing(gui, inbox_run_started):
+    instance, outbox, _inbox = inbox_run_started
+    instance.top_bar.pause_button.click()
+    drain(outbox)
+
+    assert instance.top_bar.stop_button.isEnabled() is True
+    instance.top_bar.stop_button.click()
+
+    assert drain(outbox) == [StopSequence()]
+
+
+def test_a_prompt_stays_answerable_while_the_run_is_pausing(gui, inbox_run_started):
+    """The step running when Pause is pressed may be this very question, and
+    the hold cannot begin until it is answered - so nothing may block it."""
+    from PySide6.QtCore import Qt
+
+    instance, outbox, _inbox = inbox_run_started
+    instance.top_bar.pause_button.click()
+    request = UserPromptRequest(request_id=uuid4(), message="Connect the DUT", options=("ok",))
+
+    instance.ask_user(request)
+
+    interaction = instance.center.interaction
+    for row in (interaction._button_row, interaction._text_row, interaction._path_page):
+        assert not row.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    for button in instance.center.option_buttons:
+        assert not button.testAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+    drain(outbox)
+    instance.center.option_buttons[0].click()
+    assert drain(outbox) == [UserPromptResponse(request_id=request.request_id, choice="ok")]
 
 
 def test_the_toolbar_answers_tooltips_for_disabled_buttons(gui, qapp):

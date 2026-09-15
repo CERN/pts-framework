@@ -11,11 +11,14 @@ process, the event and report queues, and the reporting metadata (serial
 number, pypts version, ...). None of that came along:
 
 - Qt and the queues belong to the Sequencer and the frontends - a Runtime
-  that imports neither is what keeps steps testable stand-alone. The three
+  that imports neither is what keeps steps testable stand-alone. The five
   seams the engine needs are plain callables the Sequencer fills in:
-  `emit` (progress events out), `should_stop` (abort flag in) and `ask` (a
-  question out, the operator's answer back). A bare Runtime() defaults all
-  three to no-ops, and *is* the fake context the step tests use.
+  `emit` (progress events out), `should_stop` (abort flag in), `ask` (a
+  question out, the operator's answer back), `hold_if_paused` (block before
+  a main step while the operator's Pause holds the run) and
+  `drop_pending_pause` (the main steps are over, so a Pause still waiting
+  for a step to hold before has nothing left to hold). A bare Runtime()
+  defaults all five to no-ops, and *is* the fake context the step tests use.
 - The class-level stop event meant one abort flag for every run the process
   would ever do. `should_stop` is per-instance, so it is per-run.
 - The reporting metadata returns with the Report port (roadmap Phase 1
@@ -55,8 +58,16 @@ def _cannot_ask(request: Any) -> Any:
     return None
 
 
+def _never_hold(step_name: str, position: int, total: int) -> None:
+    """No engine behind this Runtime, so nobody can pause it."""
+
+
+def _nothing_to_drop() -> None:
+    """No engine behind this Runtime, so no pause can be pending."""
+
+
 class Runtime:
-    """One variable scope plus the three seams to the Sequencer, nothing else."""
+    """One variable scope plus the five seams to the Sequencer, nothing else."""
 
     def __init__(
         self,
@@ -65,6 +76,8 @@ class Runtime:
         should_stop: Callable[[], bool] | None = None,
         ask: Callable[[Any], Any] | None = None,
         base_dir: str = "",
+        hold_if_paused: Callable[[str, int, int], None] | None = None,
+        drop_pending_pause: Callable[[], None] | None = None,
     ) -> None:
         self.globals: dict[str, Any] = globals if globals is not None else {}
         #: The folder the recipe file came from - what a PythonModuleStep's
@@ -85,6 +98,22 @@ class Runtime:
         #: wrong. Typed Any for the same reason as emit.
         #: MUST only be called from the sequence thread - see Sequencer.
         self.ask: Callable[[Any], Any] = ask if ask is not None else _cannot_ask
+        #: Called by the step layer before each main step - never a teardown
+        #: step, never a step that is only being recorded SKIP - with the
+        #: step's name and its 1-based position among `total` main steps.
+        #: Returns at once unless the operator paused the run; then it blocks
+        #: until the hold ends, by Resume or by Stop. The Sequencer passes
+        #: hold_if_paused(). MUST only be called from the sequence thread.
+        if hold_if_paused is None:
+            hold_if_paused = _never_hold
+        self.hold_if_paused: Callable[[str, int, int], None] = hold_if_paused
+        #: Called once when the main steps have ended, before teardown. A
+        #: Pause that is still waiting for a step to hold before lapses here,
+        #: because teardown is never held. The Sequencer passes
+        #: drop_pending_pause().
+        if drop_pending_pause is None:
+            drop_pending_pause = _nothing_to_drop
+        self.drop_pending_pause: Callable[[], None] = drop_pending_pause
 
     # --- globals: one flat dict for the whole run -----------------------------
 

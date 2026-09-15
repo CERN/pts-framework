@@ -342,6 +342,19 @@ def test_stop_sequence_from_hmi_is_forwarded_to_the_sequencer():
     assert list(core.to_sequencer.receive()) == [StopSequence()]
 
 
+def test_pause_and_resume_from_hmi_are_forwarded_to_the_sequencer():
+    """The hold and the release travel like the abort: the same objects, unchanged."""
+    from pypts.messages.run_events import PauseSequence, ResumeSequence
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(PauseSequence())
+    core.from_hmi.send(ResumeSequence())
+    core.poll_all_sources()
+
+    assert list(core.to_sequencer.receive()) == [PauseSequence(), ResumeSequence()]
+
+
 def test_a_module_error_is_logged_naming_the_method_and_shown_to_the_operator(caplog):
     """
     The whole error path, through the real routing: reported by a module, logged
@@ -696,6 +709,22 @@ def test_step_executed_goes_to_the_report_not_the_hmi():
 
     assert list(core.to_report.receive()) == [executed]
     assert list(core.to_hmi.receive()) == []
+
+
+def test_run_paused_and_run_resumed_go_to_the_hmi_not_the_report():
+    """A hold changes when steps run, not what they produce, so the Report has
+    nothing to write about it."""
+    from pypts.messages.run_events import RunPaused, RunResumed
+
+    core = build_core_that_spawns_nothing()
+    paused = RunPaused(step_name="measure", position=2, total=5)
+
+    core.from_sequencer.send(paused)
+    core.from_sequencer.send(RunResumed())
+    core.poll_all_sources()
+
+    assert list(core.to_hmi.receive()) == [paused, RunResumed()]
+    assert list(core.to_report.receive()) == []
 
 
 def test_report_generated_is_relayed_as_report_ready():

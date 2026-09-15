@@ -733,16 +733,48 @@ def test_writing_changes_only_the_line_it_was_asked_to_change(config, config_pat
     assert differences == [("theme = light", "theme = dark")]
 
 
-def test_the_writer_keeps_a_section_the_template_does_not_have():
-    rendered = template_writer.render(
-        "[gui]\n# a comment\ntheme = default\n",
-        {"gui": {"theme": "dark"}, "hardware.dmm1": {"driver": "nidmm"}},
-    )
+def test_a_key_added_by_hand_stays_in_its_section_when_a_setting_is_saved(config, config_path):
+    """
+    The defect this guards: saving a setting used to rebuild the file from the
+    template and append a hand-added key under a second [gui] header - which
+    configparser refuses, so the next start discarded the whole file.
+    """
+    text = config_path.read_text(encoding="utf-8")
+    hand_edited = text.replace("[gui]\n", "[gui]\nmy_note = bench 4\n", 1)
+    config_path.write_text(hand_edited, encoding="utf-8")
+    ConfigHandler.reset_for_testing()
+    reopened = ConfigHandler.bootstrap()
 
-    assert "theme = dark" in rendered
-    assert "# a comment" in rendered
-    assert "[hardware.dmm1]" in rendered
-    assert "driver = nidmm" in rendered
+    reopened.set_parameter("gui.theme", "dark")
+
+    written = config_path.read_text(encoding="utf-8")
+    assert written.count("[gui]") == 1
+    assert "[gui]\nmy_note = bench 4\n" in written
+    ConfigHandler.reset_for_testing()
+    again = ConfigHandler.bootstrap()
+    assert again.bootstrap_outcome is BootstrapOutcome.LOADED
+    assert again.get_parameter("gui.theme") == "dark"
+
+
+def test_replace_value_changes_the_key_only_in_its_own_section():
+    """[report] and [gui] both have a `theme`; changing one must not touch the other."""
+    text = "[report]\ntheme = default\n\n[gui]\n# a comment\ntheme = light\nextra = kept\n"
+
+    changed = template_writer.replace_value(text, "gui", "theme", "dark")
+
+    expected = "[report]\ntheme = default\n\n[gui]\n# a comment\ntheme = dark\nextra = kept\n"
+    assert changed == expected
+
+
+def test_replace_value_matches_the_key_regardless_of_case():
+    changed = template_writer.replace_value("[gui]\nTheme = light\n", "gui", "theme", "dark")
+
+    assert changed == "[gui]\nTheme = dark\n"
+
+
+def test_replace_value_never_adds_a_key():
+    with pytest.raises(KeyError):
+        template_writer.replace_value("[gui]\ntheme = light\n", "gui", "window_mode", "maximized")
 
 
 # --- the structure verification tool ---------------------------------------------------------

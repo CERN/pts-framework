@@ -158,6 +158,79 @@ def drain(a_queue):
             return messages
 
 
+# --------------------------------------------------------------------------
+# Restarting after Restore default settings
+# --------------------------------------------------------------------------
+
+
+class FinishedGuiProcess:
+    """A GUI process that has already ended with `exitcode`."""
+
+    exitcode = 0
+
+    def __init__(self, target, name, args):
+        self.pid = 1
+
+    def start(self):
+        pass
+
+    def join(self):
+        pass
+
+
+@pytest.mark.parametrize(("exit_code", "restart"), [(75, True), (0, False), (1, False)])
+def test_run_gui_says_whether_the_gui_asked_for_a_restart(monkeypatch, exit_code, restart):
+    from types import SimpleNamespace
+
+    from pypts.utilities.common import RESTART_EXIT_CODE
+
+    pytest.importorskip("PySide6", reason="run_gui imports the GUI")
+    assert RESTART_EXIT_CODE == 75
+
+    class GuiProcess(FinishedGuiProcess):
+        exitcode = exit_code
+
+    monkeypatch.setattr(startup, "Process", GuiProcess)
+    engine = SimpleNamespace(
+        to_core=None, to_hmi=None, log_queue=None, log_level=logging.INFO, log_file_path=None
+    )
+
+    assert startup.run_gui(engine) is restart
+
+
+def a_main_that_runs_nothing(monkeypatch, restart, calls):
+    """main() with the engine and the GUI replaced by recorders."""
+    pytest.importorskip("PySide6", reason="GUI mode checks the GUI can be imported")
+    monkeypatch.setattr(sys, "argv", ["pypts"])
+    monkeypatch.setattr(sys, "orig_argv", ["python", "-m", "pypts", "--no-debug-monitor"])
+    monkeypatch.setattr(startup, "start_engine", lambda mode, level, monitor: "engine")
+    monkeypatch.setattr(startup, "run_gui", lambda engine: restart)
+    monkeypatch.setattr(startup, "stop_engine", lambda engine: calls.append("stopped"))
+    monkeypatch.setattr(
+        startup.subprocess, "call", lambda command: calls.append(command) or 0
+    )
+
+
+def test_main_restarts_pypts_with_the_same_command_line_once_it_has_stopped(monkeypatch):
+    calls = []
+    a_main_that_runs_nothing(monkeypatch, restart=True, calls=calls)
+
+    with pytest.raises(SystemExit) as exit_info:
+        startup.main()
+
+    assert calls == ["stopped", [sys.executable, "-m", "pypts", "--no-debug-monitor"]]
+    assert exit_info.value.code == 0
+
+
+def test_main_does_not_restart_after_an_ordinary_exit(monkeypatch):
+    calls = []
+    a_main_that_runs_nothing(monkeypatch, restart=False, calls=calls)
+
+    startup.main()
+
+    assert calls == ["stopped"]
+
+
 def test_stop_core_asks_before_terminating():
     """
     The order is the whole point: HmiStopped so CORE stops waiting for a

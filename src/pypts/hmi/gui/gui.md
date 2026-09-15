@@ -266,8 +266,8 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe, Settings → §10c, Remove Cache → §10) / View (dark mode toggle) / About (GitHub, Wiki - both open a URL, §12) |
-| `screen_tab_bar` (`QTabBar`, CERN Blue bg) | Full-width state indicator: Idle \| Running \| Prompt \| Results; click snaps back unless `_browsable=True` (pause mode) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Settings → §10c, with the Storage page and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
+| `screen_tab_bar` (`QTabBar`, CERN Blue bg) | Full-width state indicator: Idle \| Running \| Prompt \| Results |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" below the tab bar |
 | `QSplitter` 52/48 | left: `left_stack` (`QStackedWidget`, 3 pages); right: `CenterContent` |
 | `left_stack` page 0 | idle placeholder (CERN logo + "Open a YAML recipe…") |
@@ -319,11 +319,14 @@ Read that code before touching any widget in this folder.
   `#F28B82`, CRITICAL `#ff7c9c`
 - StepTable status colours: same as §2 table, plus RUNNING `#DBEAFE`/`#1D4ED8`
 
-### Browse (pause) mode
+### Browse (pause) mode — not kept
 
-Pause locks the real screen index but lets the operator click tabs to browse
-the left stack (step table ↔ results) without disturbing the running recipe.
-Start resumes and restores the locked tab. `_paused` flag + tab click handler.
+On master, Pause only froze the screen so the operator could click around; the run
+itself went on. That port (`CenterContent.set_auto_switch`,
+`InteractionPanel.set_interaction_blocked`) was removed on 2026-09-15 when Pause became
+a real hold (§13): it made the prompt rows ignore the mouse while "paused", and the
+step running when Pause is pressed may be a question the operator must answer before
+the hold can begin.
 
 ### File layout in `old_code/hmi/` (master reference copy)
 
@@ -428,7 +431,7 @@ Stop, and the sequence carries on to the next step.
 | Light/dark QSS + OS theme sync | ✓ ported (§1.20) | ✓ |
 | `styles.py` colour tokens | ✓ ported (§1.20) | ✓ |
 | `resources.py` logo loader | ✓ ported (§1.20) | ✓ |
-| Browse/pause mode | ✓ ported (§1.20) | ✓ |
+| Browse/pause mode | replaced by a real hold, Pause / Resume (§13) | ✓ (browse only) |
 | XYGraph live plot | **missing** | ✓ (spike) |
 
 Note: master's `StepResultModel` walked live `recipe.StepResult` objects —
@@ -678,67 +681,66 @@ change.
 
 ---
 
-## 10. Remove Cache — a dialog that deletes things
+## 10. Settings → Storage, and Advanced → Restore default settings
 
-`Edit → Remove Cache` clears what pypts writes on this machine: the recents
-list, `config.ini`, every report and every run log. Roadmap §1.25 records the
-decision; this is what a reader of this folder needs.
+What used to be one Edit → Remove Cache dialog is two things now, both inside Settings
+(§10c), because they are two different decisions.
 
-**One checkbox per category, and the defaults carry the meaning.** Only the
-recents list is a cache; reports and run logs are *test records* — a report is
-the evidence that a unit passed. So `state` and `config` are **ticked** when the
-dialog opens and `reports` and `logs` are **not** (`DEFAULT_SELECTION`): removing
-records is one deliberate extra click, and the defaults say which is which
-without a warning banner. A category with nothing in it has a disabled box.
-`Cancel` is the **default** button, so Return dismisses rather than deletes.
+**Storage** is the last page of Settings (`storage_panel.py`, `StoragePanel`). It removes
+what pypts has stored on this machine: the recent recipes list, every report, every run log.
+One checkbox per category (`STORAGE_KEYS`); `data_removal.survey()` also lists
+`config.ini`, and the panel leaves it out. Only the recents list is a cache; reports and run
+logs are *test records* — a report is the evidence that a unit passed — so only `state` is
+**ticked** when the page opens (`DEFAULT_SELECTION`) and removing records is one deliberate
+extra click. A category with nothing in it has a disabled box. The total and **Remove
+selected** follow the ticks; the result view says what went and what could not, and **Done**
+surveys again so the sizes are the sizes now. Nothing on this page restarts pypts.
 
-The total and the confirm button follow the ticks (`_selection_changed`), and
-`selected_items()` is what removal and the result page both act on. The boxes are
-connected to that handler only **after** the whole page is built — `setChecked()`
-during row construction would otherwise emit `toggled` before the total label and
-the button exist.
+**Restore default settings** is the last card of the Advanced page. It asks first
+(`confirm_restore_defaults()`, Cancel is the default), then closes Settings with
+`restore_requested`; `GUI._restore_default_settings()` deletes `config.ini` and calls
+`GUI.restart()`. A fresh start is what recreates the file from the template and puts its
+values in force — the bootstrap already does both, with this machine's paths filled in.
+Unsaved changes in the dialog are lost, and the question says so.
 
-**The split.** `utilities/data_removal.py` decides *what* (no Qt);
-`hmi/gui/remove_cache_dialog.py` shows it (no deleting). The dialog is handed a
-survey and a `remover` callable, so the tests drive the whole thing without a
-single file being deleted — which is why there is a callable at all.
+**The split.** `utilities/data_removal.py` decides *what* (no Qt); `storage_panel.py` shows
+it (no deleting — it is handed a `survey` and a `remover` callable, so the tests drive it
+without deleting a file); `settings_dialog.py` hosts both; `gui.py` acts after the dialog
+closes.
 
 ```
-Edit > Remove Cache -> GUI._remove_cache()
-                          |
-                          +-> data_removal.survey()   what is there, and how big
-                          |
-                          +-> RemoveCacheDialog       page 1: this is what goes
-                                   | operator says yes
-                                   v
-                              data_removal.remove()   deletes exactly the survey
-                                   |
-                                   v
-                              page 2: what went, what could not
+Edit > Settings (or View > Appearance) -> GUI._open_settings()
+   SettingsDialog
+     Storage page, first opened -> StoragePanel(survey)   what is there, how big
+          Remove selected       -> data_removal.remove()  -> result view -> Done
+     Advanced page: Restore defaults -> confirm -> accept() with restore_requested
+   after exec():
+     storage_changed   -> RecentRecipes() rebuilt, status "Stored data removed"
+     restore_requested -> delete config.ini -> GUI.restart()
+                          -> shutdown, exit code 75 -> launcher starts pypts again
 ```
 
-**Four decisions worth not undoing:**
+**Decisions worth not undoing:**
 
-- **Greyed out during a run**, with the reason on hover (the Edit menu therefore
-  needs `setToolTipsVisible(True)`). Emptying the reports folder while the Report
-  thread writes into it would take the run down.
-- **This run's log is never offered.** The Logger holds an open handler on it for
-  as long as pypts is up, so on Windows it cannot be deleted at all. It is
-  excluded from the survey rather than attempted and reported as a failure, and
-  both pages say why it is staying.
-- **Named files and directory *contents*, never a directory.** On Windows
-  `state_dir()`, `config_dir()` and the default `base_dir` are all
-  `%LOCALAPPDATA%\\pypts` — deleting a directory would take all four categories at
-  once. `data_removal` also refuses a `reports_dir` or `logs_dir` that resolves to
-  a filesystem root or the user's home, because those are values in an INI file
-  somebody may edit.
-- **The GUI rebuilds `RecentRecipes` afterwards.** The old store still held the
-  list in memory and would have written it straight back on the next load.
-
-**One page, not two popups.** The confirm view is replaced in the layout by the
-result view — not a `QStackedWidget`, whose `sizeHint` is its tallest page
-whatever the size policies say, which left the short result view floating in the
-confirm view's height.
+- **Both are refused during a run**, with the reason shown in place (`blocked_reason`).
+  Emptying the reports folder while the Report thread writes into it, or restarting, would
+  take the run down.
+- **The Storage survey waits until the page is opened.** It walks the reports and logs
+  folders; Settings must not wait for that to open.
+- **This run's log is never offered.** The Logger holds an open handler on it for as long as
+  pypts is up, so on Windows it cannot be deleted at all. It is excluded from the survey and
+  the page says why it is staying.
+- **Named files and directory *contents*, never a directory.** On Windows `state_dir()`,
+  `config_dir()` and the default `base_dir` are all `%LOCALAPPDATA%\\pypts` — deleting a
+  directory would take everything at once. `data_removal` also refuses a `reports_dir` or
+  `logs_dir` that resolves to a filesystem root or the user's home, because those are values
+  in an INI file somebody may edit.
+- **The GUI rebuilds `RecentRecipes` after a removal.** The old store still held the list in
+  memory and would have written it straight back on the next load.
+- **The restart exit code reaches the launcher through `gui_main()`**, which exits with
+  `GUI.exit_code` once `app.exec()` returns — not through `QApplication.exit(code)` in
+  `on_stop()`, which, called while no event loop runs (every test that stops a GUI), leaves
+  each later loop in the process stopped before it starts. `launcher/launcher.md` → *Restart*.
 
 ---
 
@@ -747,12 +749,12 @@ confirm view's height.
 `Edit → Settings` shows every setting in `config.ini` an operator may change and saves the
 ones they changed. `settings_dialog.py` is the dialog; `gui.py` wires it.
 
-**What it looks like.** A page list on the left — Appearance, Folders, Logging, Report,
-Advanced (`PAGES`) — and the page's settings on the right, one card each. The control fits
+**What it looks like.** A page list on the left — Folders, Appearance, Logging, Report,
+Advanced (`PAGES`), then Storage — and the page's settings on the right, one card each.
+Edit → Settings opens on Folders, the first page; View → Appearance opens on Appearance. The control fits
 the value, not the file: the theme is three picture cards (a thumbnail of the window in that
 theme; System shows light and dark side by side), a short list of choices is a row of
-buttons, a yes/no is an On/Off switch, the window is one card with its mode (Windowed /
-Maximized / Full screen), its size (two number fields and Apply) and HD / HD+ / Full HD
+buttons, a yes/no is an On/Off switch, the window is one card with its mode (Windowed / Full screen), its size (two number fields and Apply) and HD / HD+ / Full HD
 presets, a folder is a path with Browse and Open. A card whose value
 differs from the one the dialog opened with is outlined, shows **Reset**, and puts a `•`
 after its page's name. Save reads "Save N changes".
@@ -774,7 +776,8 @@ Edit > Settings -> GUI._open_settings()
                      |                                  <- ConfigParameterResult
                      | GUI.show_config_parameter_result() -> dialog.apply_result()
                      v
-                   page 2: ✓ saved / ✗ not saved, "applies from the next start"
+                   all accepted -> the dialog closes; status line "Settings saved"
+                   a refusal or no answer -> page 2: ✓ saved / ✗ not saved, and why
                      | done() (Close, Cancel, Esc, X): theme not saved -> preview the old one
 ```
 
@@ -796,9 +799,11 @@ Edit > Settings -> GUI._open_settings()
   counts down `CONFIRM_SECONDS` (15): no answer is Revert, because a window made too big or
   too small may leave nothing to click. Revert is the default button (Return never keeps
   what the operator may not see), and the popup stays on top, centred on its screen rather
-  than on the window being resized. Keep only confirms the preview — Save still writes it;
-  `done()` puts back the window the dialog opened with if what is on screen will not be in
-  force at the next start. Reset on the window card reverts on screen too.
+  than on the window being resized. **Keep also saves**: the window keys that changed go to
+  CORE at once (`_save_window()`), stop counting as changes, and are no longer put back when
+  the dialog closes; their answers reach the GUI's status line. `done()` puts back only a
+  window that was never kept. Save neither counts nor sends the window keys
+  (`_changes_to_save()`), so trying a size never lights up "Save N changes".
 - **Folders must be absolute** before Save is enabled — a relative one would resolve against
   wherever pypts was started. Open is enabled only for a folder that exists, checked when
   typing finishes rather than per keystroke (a `stat()` on a dead share can hang).
@@ -815,15 +820,15 @@ Edit > Settings -> GUI._open_settings()
 - **Everything but the theme applies at the next start**, and both pages say so.
 
 **The window reads `[gui]` once, at startup** (`window_settings()`): `GUI.show()` goes
-through `GUI._use_window()`, so `window_mode` decides full screen, maximized or a normal
+through `GUI._use_window()`, so `window_mode` decides full screen or a normal
 window of `window_width` × `window_height` — `setMinimumSize(1000, 700)` still wins over
 anything smaller. **View → Full Screen (F11)** toggles full screen for the session only;
 leaving it returns to the mode in force (a normal window if that mode is full screen). The
 menu bar stays visible in full screen, so the toggle is always reachable. And
 `theme` goes through `GUI._use_theme()`. `light` (the shipped value) and `dark` are fixed and
 the OS sync is **not** installed, so the operator's choice is not overruled; `system` detects
-the OS scheme and installs the live OS sync. View → Toggle Dark Mode still flips either for
-the session. With no configuration at all (a test, a frontend started by hand) the template
+the OS scheme and installs the live OS sync. There is no View menu toggle for it any more:
+the theme is changed, and previewed, in Edit → Settings. With no configuration at all (a test, a frontend started by hand) the template
 values apply — 1280×720, light.
 
 **The Recipe Creator reads the same setting** through `gui_theme.configured_theme()` — the
@@ -862,7 +867,7 @@ a sighted operator and a screen reader are told the same thing.
 `_refresh_controls()` on every transition, and a disabled control says *why*:
 `Start` reads "Open a recipe first." before a recipe is loaded and "A run is
 already in progress." during one; `Pause` becomes **Resume** while the run is
-held (`set_paused()`, called from `GUI._toggle_pause`). A greyed button that
+held or pausing (`set_paused()`, called only by the GUI, which owns that state — §13). A greyed button that
 does not explain itself is the one that gets filed as a bug.
 
 **And the trap that made all of this invisible.** Qt shows **no tooltip for a
@@ -980,8 +985,8 @@ delay is running. `hide_yaml_popup()` stops the timer as well as hiding, or a wa
 left running would open the panel after the pointer had gone.
 
 `set_running(bool)` is the gate — `gui.py` drives it from `RunStarted` /
-`RunFinished`, and a hold counts as running, because `Pause` produces no
-`RunFinished`. During a run the table is being written to and read for verdicts, and
+`RunFinished` only, and a hold counts as running, because a hold produces no
+`RunFinished` (`RunPaused` / `RunResumed` do not touch the gate). During a run the table is being written to and read for verdicts, and
 the operator wants an unobstructed view of it.
 
 ### Theming
@@ -1015,6 +1020,39 @@ and null repaint the scalars that are really those, and `comment` runs last so i
 wins over all of them. The class was **copied** from
 `helper_applications/recipe_creator/customGUIModules.py`, not imported: nothing in
 `hmi/` imports `helper_applications/`, and the dependency would run the wrong way.
+
+---
+
+## 13. Pause and Resume
+
+One toolbar button, and a real hold: the engine stops *between* main steps, never
+inside one, and never in teardown. GUI only — the CLI and the API inherit the DEBUG
+hooks and offer no command.
+
+| When | Sent / received | Button | `recipe_label` |
+|---|---|---|---|
+| Pause clicked | sends `PauseSequence` (`pause_sequence()`) | Resume | "Pausing after the current step..." |
+| `RunPaused(step_name, position, total)` | the hold has begun | Resume | "Paused before step 4/10 'measure'" |
+| Resume clicked | sends `ResumeSequence` (`resume_sequence()`) | Pause | "Running {recipe}..." |
+| `RunResumed` | the hold ended (by Resume or Stop) | Pause | "Running {recipe}..." |
+| `RunStarted` / `RunFinished` | reset | Pause | `RunFinished` puts "Running {recipe}..." back only if a pause was still showing |
+
+**One owner.** `GUI._pause_requested` is the only copy of the pause state;
+`TopBarContent.set_paused()` just renders it (`_shows_resume`) and never resets it
+itself. The button reads Resume from the click on, not from `RunPaused`, because the
+hold only begins when the current step ends — a long wait — and Resume is also how a
+pause that has not begun is cancelled (the engine answers that with no event).
+
+**Crossing messages are self-correcting.** Resume sets the label on the click *and* on
+`RunResumed`. A `RunPaused` that crosses a Resume click sets Resume/"Paused..." again,
+and the `RunResumed` the engine sends for that hold puts both back. A pause that lapses
+(no main step left) gets no `RunPaused`; the run ends with `RunFinished`, which clears
+the state.
+
+**Prompts stay usable.** Nothing is blocked while pausing or paused — the step running
+when Pause is pressed may be a question that must be answered before the hold begins.
+Stop works in every state. The step table's hover gate (§12) stays on for the whole
+run, a hold included.
 
 ---
 

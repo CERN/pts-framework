@@ -5,7 +5,7 @@
 """
 The Settings dialog: Edit -> Settings.
 
-A list of pages on the left - Appearance, Folders, Logging, Report, Advanced -
+A list of pages on the left - Folders, Appearance, Logging, Report, Advanced -
 and the page's settings on the right, one card each. Controls are chosen for
 the value, not for the file: the theme is three picture cards, a short list of
 choices a row of buttons, a yes/no setting an On/Off switch, the window one card
@@ -27,17 +27,23 @@ start.** Picking a theme card calls `preview_theme` at once. A window mode or a
 size preset - or typed sizes, once Apply is pressed - calls `preview_window`,
 and then asks in `WindowConfirmDialog` whether to keep it: no answer within
 CONFIRM_SECONDS puts the previous window back, because a window made too big or
-too small may leave the operator nothing to click. Keeping only confirms the
-preview; Save still writes it. Every way out of the dialog goes through
+too small may leave the operator nothing to click. Keep also saves the window
+straight away - no Save needed. Every way out of the dialog goes through
 `done()`, which puts back whatever was previewed and will not be in force at
 the next start.
+
+**Two pages are actions, not settings.** Storage, the last page, removes the
+recent recipes list, reports and run logs (`storage_panel.py`). Advanced ends
+with Restore default settings, which - once confirmed - closes the dialog with
+`restore_requested`; the GUI deletes config.ini and restarts pypts, so the
+file is recreated from the template.
 
 **No setting is left out.** PAGES places the keys it knows; any other key of the
 schema (outside `READ_ONLY_SECTIONS`) gets a page named after its section and a
 control chosen from its type, so a key added to `configuration_schema.py` shows
 up with no change here.
 
-Pure presentation, like `remove_cache_dialog.py`: handed the values in force, the
+Pure presentation, like `storage_panel.py`: handed the values in force, the
 `send` callable and the preview callables, so a test drives the whole dialog with
 no CORE and no file. Styling lives in `styles.py` (object names `settings*` and
 `themeSwatch*`).
@@ -59,6 +65,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QListWidget,
+    QMessageBox,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -74,8 +81,9 @@ from pypts.config_handler.configuration_schema import (
     TRUE_VALUES,
     Field,
 )
-from pypts.hmi.gui.remove_cache_dialog import count_of
+from pypts.hmi.gui.storage_panel import StoragePanel, count_of
 from pypts.messages.core_hmi_communication import ConfigParameterResult
+from pypts.utilities.data_removal import RemovableItem, RemovalOutcome, remove
 
 #: How long the dialog waits for CORE's answers before it gives up on them.
 #: CORE answers within one turn of its event loop; five seconds is the heartbeat
@@ -97,17 +105,25 @@ WINDOW_MODE_KEY = "gui.window_mode"
 WIDTH_KEY = "gui.window_width"
 HEIGHT_KEY = "gui.window_height"
 
+#: The last page: not a setting but an action on the installation (storage_panel.py).
+STORAGE_PAGE = "Storage"
+
+#: The page Restore default settings is offered on.
+ADVANCED_PAGE = "Advanced"
+
 #: The keys the window card edits together, in the order `preview_window` takes them.
 WINDOW_KEYS = (WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)
 
 #: Page title -> the keys on it, in order. A key the schema does not have is
 #: skipped; a key the schema has and this does not name gets a page of its own.
 PAGES = (
-    ("Appearance", (THEME_KEY, WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)),
+    # Folders first: where logs and reports go is what a bench is set up for,
+    # so it is the page Edit > Settings opens on.
     ("Folders", ("paths.logs_dir", "paths.reports_dir", "paths.base_dir")),
+    ("Appearance", (THEME_KEY, WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)),
     ("Logging", ("logging.level",)),
     ("Report", ("report.type", "report.theme")),
-    ("Advanced", ("watchdog.enabled",)),
+    (ADVANCED_PAGE, ("watchdog.enabled",)),
 )
 
 #: Page title for a section PAGES does not place.
@@ -156,7 +172,6 @@ THEME_CARDS = {
 #: What each window mode button says.
 WINDOW_MODE_LABELS = {
     "windowed": "Windowed",
-    "maximized": "Maximized",
     "fullscreen": "Full screen",
 }
 
@@ -240,11 +255,9 @@ def field_for(key: str) -> Field:
 
 
 def describe_window(mode: str, width: int, height: int) -> str:
-    """How the confirmation names a window: "Full screen", "Maximized" or "1600 x 900"."""
+    """How the confirmation names a window: "Full screen" or "1600 x 900"."""
     if mode == "fullscreen":
         return "Full screen"
-    if mode == "maximized":
-        return "Maximized"
     return f"{width} {TIMES} {height}"
 
 
@@ -720,6 +733,20 @@ class WindowConfirmDialog(QDialog):
         super().done(result)
 
 
+def confirm_restore_defaults(parent: QWidget | None = None) -> bool:
+    """Ask before Restore default settings; True only for Restore. Cancel is the default."""
+    answer = QMessageBox.question(
+        parent,
+        "Restore default settings",
+        "Put every setting back to its default value?\n\n"
+        "config.ini is recreated from the template and pypts restarts. "
+        "Changes not saved yet are lost.",
+        QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.RestoreDefaults,
+        QMessageBox.StandardButton.Cancel,
+    )
+    return answer == QMessageBox.StandardButton.RestoreDefaults
+
+
 def confirm_window_settings(description: str, parent: QWidget | None = None) -> bool:
     """Ask with a WindowConfirmDialog; True only if the operator pressed Keep in time."""
     dialog = WindowConfirmDialog(description, parent=parent)
@@ -742,6 +769,12 @@ class SettingsDialog(QDialog):
         preview_theme: Callable[[str], None] | None = None,
         preview_window: Callable[[str, int, int], None] | None = None,
         confirm_window: Callable[[str], bool] | None = None,
+        storage_survey: Callable[[], Sequence[RemovableItem]] | None = None,
+        storage_remover: Callable[[Sequence[RemovableItem]], RemovalOutcome] = remove,
+        offer_restore: bool = False,
+        confirm_restore: Callable[[], bool] | None = None,
+        blocked_reason: str | None = None,
+        open_page: str | None = None,
     ) -> None:
         """
         Args:
@@ -761,6 +794,16 @@ class SettingsDialog(QDialog):
             confirm_window: asked whether to keep a previewed window, with its
                 description; True keeps it. None: `confirm_window_settings()`,
                 the countdown dialog.
+            storage_survey: what the Storage page offers. Given, the dialog ends
+                with a Storage page, surveyed only when first opened. None: no page.
+            storage_remover: deletes what the Storage page was asked to remove.
+            offer_restore: show Restore default settings on the Advanced page.
+            confirm_restore: asked before restoring; True restores. None:
+                `confirm_restore_defaults()`, a Cancel / Restore question.
+            blocked_reason: why neither removing stored data nor restoring the
+                defaults is allowed now (a run is in progress), or None.
+            open_page: the page title to open on, e.g. "Appearance". None, or a
+                title there is no page for: the first page.
         """
         super().__init__(parent)
         self._send = send
@@ -794,8 +837,30 @@ class SettingsDialog(QDialog):
         self.pending: dict[str, str] = {}
         #: CORE's answers, in the order they arrived.
         self.results: list[ConfigParameterResult] = []
+        #: True if Save's changes were all accepted, and the dialog closed on it
+        #: without a result page - the GUI says so on the status line instead.
+        self.saved = False
         #: True once CORE confirmed saving the theme, so leaving keeps it.
         self._theme_saved = False
+
+        self._storage_survey = storage_survey
+        self._storage_remover = storage_remover
+        self._offer_restore = offer_restore
+        self._confirm_restore = confirm_restore
+        self.blocked_reason = blocked_reason
+        self._open_page = open_page
+        #: The Storage panel, once its page has been opened. None before.
+        self.storage_panel: StoragePanel | None = None
+        self._storage_row: int | None = None
+        self._storage_column: QVBoxLayout | None = None
+        #: True once the Storage page has removed something - the GUI then
+        #: rebuilds the recents list it holds in memory.
+        self.storage_changed = False
+        #: The Restore default settings button, when offered.
+        self.restore_button: QPushButton | None = None
+        #: True if the operator confirmed Restore default settings; the dialog
+        #: has closed, and the GUI does the restoring.
+        self.restore_requested = False
 
         self._answer_timer = QTimer(self)
         self._answer_timer.setSingleShot(True)
@@ -851,8 +916,14 @@ class SettingsDialog(QDialog):
             self._page_keys.append(keys)
             self.nav.addItem(title)
             self.pages.addWidget(self._build_page(title, keys, values))
-        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
-        self.nav.setCurrentRow(0)
+        if self._storage_survey is not None:
+            self._storage_row = self.nav.count()
+            self._page_titles.append(STORAGE_PAGE)
+            self._page_keys.append(())
+            self.nav.addItem(STORAGE_PAGE)
+            self.pages.addWidget(self._build_storage_page())
+        self.nav.currentRowChanged.connect(self._show_page)
+        self.nav.setCurrentRow(self._row_for(self._open_page))
 
         middle.addWidget(self.nav)
         middle.addWidget(self.pages, stretch=1)
@@ -892,6 +963,8 @@ class SettingsDialog(QDialog):
                 column.addWidget(self._window_card(values))
             else:
                 column.addWidget(self._single_card(key, values))
+        if title == ADVANCED_PAGE and self._offer_restore:
+            column.addWidget(self._restore_card())
         column.addStretch()
 
         scroll = QScrollArea()
@@ -899,6 +972,84 @@ class SettingsDialog(QDialog):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setWidget(content)
         return scroll
+
+    def _build_storage_page(self) -> QWidget:
+        """
+        The Storage page's frame. The panel itself comes in _show_page(), the
+        first time the page is shown: its survey walks the reports and logs
+        folders, and Settings must not wait for that to open.
+        """
+        content = QWidget()
+        column = QVBoxLayout(content)
+        column.setContentsMargins(24, 20, 24, 20)
+        column.setSpacing(12)
+        heading = QLabel(STORAGE_PAGE)
+        heading.setObjectName("settingsPageTitle")
+        column.addWidget(heading)
+        self._storage_column = column
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        return scroll
+
+    def _row_for(self, title: str | None) -> int:
+        if title is not None and title in self._page_titles:
+            return self._page_titles.index(title)
+        return 0
+
+    def _show_page(self, row: int) -> None:
+        self.pages.setCurrentIndex(row)
+        if row != self._storage_row or self.storage_panel is not None:
+            return
+        if self._storage_survey is None or self._storage_column is None:
+            return
+        panel = StoragePanel(
+            self._storage_survey, self._storage_remover, blocked_reason=self.blocked_reason
+        )
+        panel.removed.connect(self._on_storage_removed)
+        self.storage_panel = panel
+        self._storage_column.addWidget(panel)
+        self._storage_column.addStretch()
+
+    def _on_storage_removed(self) -> None:
+        self.storage_changed = True
+
+    def _restore_card(self) -> SettingCard:
+        """Restore default settings, at the end of the Advanced page."""
+        body = QWidget()
+        row = QHBoxLayout(body)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch()
+        self.restore_button = QPushButton("Restore defaults")
+        self.restore_button.setObjectName("cacheDialogRemoveBtn")
+        self.restore_button.setAutoDefault(False)
+        self.restore_button.setEnabled(self.blocked_reason is None)
+        self.restore_button.clicked.connect(self._restore_defaults)
+        row.addWidget(self.restore_button)
+
+        if self.blocked_reason is not None:
+            hint = self.blocked_reason
+        else:
+            hint = (
+                "Puts every setting back to its default value: config.ini is recreated "
+                "from the template and pypts restarts."
+            )
+        # Not registered with a key: it edits nothing, so it is never "modified".
+        return SettingCard("Restore default settings", hint, body)
+
+    def _restore_defaults(self) -> None:
+        if self.blocked_reason is not None:
+            return
+        if self._confirm_restore is not None:
+            confirmed = self._confirm_restore()
+        else:
+            confirmed = confirm_restore_defaults(self)
+        if not confirmed:
+            return
+        self.restore_requested = True
+        self.accept()
 
     def _single_card(self, key: str, values: Mapping[str, str]) -> SettingCard:
         field = field_for(key)
@@ -1105,11 +1256,12 @@ class SettingsDialog(QDialog):
                 and self._window_in_controls() != self.window_on_screen
             )
 
-        if changed:
-            self.save_button.setText(f"Save {count_of(len(changed), 'change')}")
+        to_save = self._changes_to_save()
+        if to_save:
+            self.save_button.setText(f"Save {count_of(len(to_save), 'change')}")
         else:
             self.save_button.setText("Save")
-        self.save_button.setEnabled(self.problem is None and bool(changed) and folders_usable)
+        self.save_button.setEnabled(self.problem is None and bool(to_save) and folders_usable)
 
     # --- The window preview ---------------------------------------------------------
 
@@ -1149,10 +1301,27 @@ class SettingsDialog(QDialog):
         self._preview_window(*wanted)
         if self._ask_to_keep_window(describe_window(*wanted)):
             self.window_on_screen = wanted
+            self._save_window(wanted)
         else:
             self._preview_window(*before)
             self._show_window_in_controls(before)
         self._refresh()
+
+    def _save_window(self, window: tuple[str, int, int]) -> None:
+        """
+        Keep is a save: the window keys that differ from what is in force go to
+        CORE at once, and from then on count as the values the dialog opened
+        with - so they are no longer changes, Save does not send them again, and
+        leaving the dialog does not put the old window back. CORE's answers reach
+        the GUI's status line; a discarded settings file saves nothing.
+        """
+        if self.problem is not None:
+            return
+        texts = (window[0], str(window[1]), str(window[2]))
+        for key, text in zip(WINDOW_KEYS, texts, strict=True):
+            if text != self._original[key]:
+                self._send(key, text)
+                self._original[key] = text
 
     def _ask_to_keep_window(self, description: str) -> bool:
         if self._confirm_window is not None:
@@ -1169,8 +1338,21 @@ class SettingsDialog(QDialog):
 
     # --- Saving ---------------------------------------------------------------------
 
-    def _save(self) -> None:
+    def _changes_to_save(self) -> dict[str, str]:
+        """
+        What Save counts and sends: every change, except the window's keys while
+        the window is previewed. Those are saved by Keep in the "keep these window
+        settings?" question, so trying a size must not light up Save as well - an
+        operator only resizing the window would read that as something left to do.
+        """
         changed = self.changes()
+        if self._preview_window is not None:
+            for key in WINDOW_KEYS:
+                changed.pop(key, None)
+        return changed
+
+    def _save(self) -> None:
+        changed = self._changes_to_save()
         if not changed or self.problem is not None:
             return
 
@@ -1194,7 +1376,10 @@ class SettingsDialog(QDialog):
         """
         Take one of CORE's answers. True if this dialog was waiting for it.
 
-        The result page is shown once the last answer is in.
+        Once the last answer is in: every change accepted closes the dialog -
+        there is nothing to tell the operator that the status line cannot. A
+        refusal shows the result page, because a change that did not happen
+        must not pass silently.
         """
         if result.key not in self.pending:
             return False
@@ -1204,7 +1389,11 @@ class SettingsDialog(QDialog):
             self._theme_saved = True
         if not self.pending:
             self._answer_timer.stop()
-            self._show_result_page()
+            if all(answer.accepted for answer in self.results):
+                self.saved = True
+                self.accept()
+            else:
+                self._show_result_page()
         return True
 
     def _answer_timed_out(self) -> None:

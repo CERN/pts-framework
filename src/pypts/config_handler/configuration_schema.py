@@ -110,8 +110,8 @@ SCHEMA: dict[str, dict[str, Field]] = {
         # operating system. Read by pypts' window and by the Recipe Creator.
         "theme": Field("str", "light", choices=("light", "dark", "system")),
         # How the window opens. The width and height are the windowed size,
-        # also used when leaving full screen or maximized.
-        "window_mode": Field("str", "windowed", choices=("windowed", "maximized", "fullscreen")),
+        # also used when leaving full screen.
+        "window_mode": Field("str", "windowed", choices=("windowed", "fullscreen")),
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
     },

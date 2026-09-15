@@ -133,10 +133,10 @@ still traceable at DEBUG without the operator's panel saying the same thing thre
 | module started / stopped | each module, about itself | — |
 | recipe loaded, sequences available | `core/core.py` | `sequencer`, `hmi_client`, `gui`, `cli` |
 | sequence started / finished, each step started / finished | `step/step.py` — the execution layer the Sequencer drives | `core`, `hmi_client`, `gui`, `cli` |
-| the run summary, the unit under test, the operator's stop | `sequencer/sequencer.py` | `core`, `hmi_client`, `gui`, `cli` |
+| the run summary, the unit under test, the operator's stop, pause and resume, the hold beginning / ending / lapsing | `sequencer/sequencer.py` | `core`, `hmi_client`, `gui`, `cli` |
 | operator prompted, operator answered | the `User*` step types | `core`, `hmi_client`, `gui` |
 | run folder, report generated | `report/report.py` | `core`, `hmi_client`, `gui`, `cli` |
-| operator housekeeping (Remove Cache, clearing recents, a settings write) | `gui`, `utilities`, `config_handler` | — |
+| operator housekeeping (Settings > Storage, clearing recents, a settings write, Restore default settings) | `gui`, `utilities`, `config_handler` | — |
 | status-bar text (`StatusUpdate`) | nobody — it is a UI channel | `hmi_client` only |
 | a module lost / responding again | `core/core.py` | `core` (the raw liveness detail) |
 

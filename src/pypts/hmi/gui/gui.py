@@ -29,6 +29,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
+    QGraphicsOpacityEffect,
     QLabel,
     QMainWindow,
     QSplitter,
@@ -37,13 +38,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from pypts._version import __version__
 from pypts.config_handler import BootstrapOutcome, ConfigError, ConfigHandler, file_locations
 from pypts.config_handler.configuration_schema import SCHEMA
 from pypts.hmi.gui.center_view import CenterContent
 from pypts.hmi.gui.gui_theme import detect_system_dark_mode, install_system_theme_sync
 from pypts.hmi.gui.log_tail import LogTail
 from pypts.hmi.gui.palette import LIGHT, get_palette
-from pypts.hmi.gui.remove_cache_dialog import show_remove_cache_dialog
 from pypts.hmi.gui.resources import load_cern_logo_pixmap
 from pypts.hmi.gui.results_panel import ResultsPanel
 from pypts.hmi.gui.settings_dialog import SettingsDialog, setting_text
@@ -67,13 +68,14 @@ from pypts.messages.core_hmi_communication import (
 )
 from pypts.messages.run_events import (
     RecipeLoaded,
+    RunPaused,
     StepStarted,
     UserPathRequest,
     UserPromptRequest,
     UserTextRequest,
 )
 from pypts.recipe import step_source
-from pypts.utilities.common import ignore_keyboard_interrupt
+from pypts.utilities.common import RESTART_EXIT_CODE, ignore_keyboard_interrupt
 from pypts.utilities.data_removal import survey
 from pypts.utilities.error_handling import (
     catch_and_report_errors,
@@ -97,6 +99,11 @@ _PAGE_LEFT_RESULTS = 2
 #: `pyproject.toml`'s `[project.urls]` still names the old repository.
 _REPOSITORY_URL = "https://github.com/CERN/pts-framework"
 _DOCUMENTATION_URL = "https://cern.github.io/pts-framework/"
+
+#: What Edit > Edit Recipe starts, spelled as `-m` takes it. A string rather than
+#: an import, like the launcher's Debug Monitor: the operator screen must not
+#: import the helper applications.
+RECIPE_CREATOR_MODULE = "pypts.helper_applications.recipe_creator"
 
 
 def open_external_url(url: str) -> None:
@@ -183,7 +190,13 @@ def gui_main(
             gui.open_recipe_and_start(recipe_path, sequence_name)
         else:
             gui.open_recipe(recipe_path)
-    sys.exit(app.exec())
+    app.exec()
+    # The GUI's own exit code rather than the event loop's: restart() sets it,
+    # and the launcher reads it (RESTART_EXIT_CODE). on_stop() leaves the loop
+    # with a plain quit() on purpose - QApplication.exit(code) called while no
+    # loop is running leaves every later event loop in the process stopped
+    # before it starts, which is what it did to the test suite.
+    sys.exit(gui.exit_code)
 
 
 class PtsMainWindow(QMainWindow):
@@ -285,16 +298,20 @@ class PtsMainWindow(QMainWindow):
 
         edit_menu = menu_bar.addMenu("Edit")
         edit_menu.setToolTipsVisible(True)  # or the disabled reason is invisible
-        edit_menu.addAction("Edit Recipe")
+        self.edit_recipe_action = edit_menu.addAction("Edit Recipe")
+        self.edit_recipe_action.setToolTip(
+            "Open the Recipe Creator - on the loaded recipe, when there is one."
+        )
         edit_menu.addSeparator()
         self.settings_action = edit_menu.addAction("Settings")
         self.settings_action.setToolTip(
-            "Theme, window size, log and report folders, logging and the watchdog."
+            "Theme, window, folders, logging, the watchdog, stored data and the defaults."
         )
-        self.remove_cache_action = edit_menu.addAction("Remove Cache")
 
+        # No dark mode toggle here: the theme is chosen, and previewed, in Settings.
         view_menu = menu_bar.addMenu("View")
-        self.dark_mode_action = view_menu.addAction("Toggle Dark Mode")
+        # A shortcut into Settings, opened on its Appearance page.
+        self.appearance_action = view_menu.addAction("Appearance")
         # For the session only; Edit > Settings saves a window mode. The menu
         # bar stays on screen in full screen, so this is always reachable.
         self.full_screen_action = view_menu.addAction("Full Screen")
@@ -379,11 +396,24 @@ class GUI(HmiClient):
 
         self.current_recipe: RecipeLoaded | None = None
         self._run_outcomes: list[StepOutcome] = []
-        self._paused = False
+
+        #: True from the operator's Pause click until Resume, RunResumed or the
+        #: end of the run. The only copy of the pause state: the top bar just
+        #: renders it (set_paused), and the engine's RunPaused/RunResumed
+        #: correct it if a click and an event cross.
+        self._pause_requested = False
+        #: The running recipe's name, for the "Running ..." label a Resume puts back.
+        self._running_recipe_name = ""
 
         # Build content widgets
         self.recent_recipes = RecentRecipes()
         self._requested_recipe_path: str | None = None
+        #: The file of the recipe CORE last confirmed loading - what Edit > Edit
+        #: Recipe opens. None until a recipe has loaded.
+        self._loaded_recipe_path: str | None = None
+        #: Recipe Creators started from here. Held only so a handle is not
+        #: collected while its window is open; never waited on, never stopped.
+        self._recipe_creator_processes: list[subprocess.Popen] = []
 
         #: Set by open_recipe_and_start(): start a sequence the moment the recipe
         #: it asked for has loaded. `_sequence_to_start` None means the main one.
@@ -433,18 +463,40 @@ class GUI(HmiClient):
         self.status_label.setObjectName("statusLabel")
         self.window.statusBar().addWidget(self.status_label, 1)
 
+        # The version, barely there: for a screenshot or a support ticket, not
+        # for reading during a run.
+        self.version_label = QLabel(f"pypts {__version__}")
+        self.version_label.setObjectName("versionLabel")
+        faint = QGraphicsOpacityEffect(self.version_label)
+        faint.setOpacity(0.5)
+        self.version_label.setGraphicsEffect(faint)
+        self.window.statusBar().addPermanentWidget(self.version_label)
+
         self.report_dir: str | None = None
 
-        # Theme, from [gui] theme. View > Toggle Dark Mode still flips it for
-        # the session.
+        #: What the GUI process exits with. RESTART_EXIT_CODE asks the launcher to
+        #: start pypts again once everything has stopped - see restart().
+        self.exit_code = 0
+
+        #: True between RunStarted and RunFinished. Settings refuses Storage
+        #: removal and Restore default settings meanwhile: emptying the reports
+        #: folder under the Report thread, or restarting, would take the run down.
+        self._run_in_progress = False
+
+        # Theme, from [gui] theme; changed and previewed in Edit > Settings.
         self._dark = False
         self._theme_disconnect = _nothing_to_disconnect
         self._use_theme(theme)
-        self.window.dark_mode_action.triggered.connect(self._toggle_dark_mode)
         self.window.full_screen_action.triggered.connect(self._toggle_full_screen)
-        self.window.settings_action.triggered.connect(self._open_settings)
-        self.window.remove_cache_action.triggered.connect(self._remove_cache)
-        self._set_remove_cache_enabled(True)
+        # Lambdas, because triggered() passes a `checked` flag that must not
+        # arrive as the page to open.
+        self.window.settings_action.triggered.connect(
+            lambda _checked=False: self._open_settings()
+        )
+        self.window.appearance_action.triggered.connect(
+            lambda _checked=False: self._open_settings("Appearance")
+        )
+        self.window.edit_recipe_action.triggered.connect(self.open_recipe_creator)
         self.window.open_config_action.triggered.connect(self.open_config_file)
 
         # Rebuilt every time it opens rather than kept in step with the store,
@@ -557,10 +609,6 @@ class GUI(HmiClient):
             self._dark = False
         self._apply_theme(self._dark)
 
-    def _toggle_dark_mode(self) -> None:
-        self._dark = not self._dark
-        self._apply_theme(self._dark)
-
     def _on_system_theme_changed(self, dark: bool) -> None:
         self._dark = dark
         self._apply_theme(dark)
@@ -582,16 +630,14 @@ class GUI(HmiClient):
         """
         Show the window as one of the `[gui] window_mode` values.
 
-        "fullscreen" and "maximized" fill the screen; anything else is a normal
-        window of `width` x `height` - the minimum size still wins over a smaller
-        one. Called by show() at startup, and by the Settings dialog, which tries
-        a window on screen and puts the previous one back unless it is kept.
+        "fullscreen" fills the screen; anything else is a normal window of
+        `width` x `height` - the minimum size still wins over a smaller one.
+        Called by show() at startup, and by the Settings dialog, which tries a
+        window on screen and puts the previous one back unless it is kept.
         """
         self._window_state = (mode, width, height)
         if mode == "fullscreen":
             self.window.showFullScreen()
-        elif mode == "maximized":
-            self.window.showMaximized()
         else:
             self.window.showNormal()
             self.window.resize(width, height)
@@ -611,13 +657,35 @@ class GUI(HmiClient):
             mode = "windowed"
         self._use_window(mode, width, height)
 
-    # --- Pause / browse mode ----------------------------------------------------
+    # --- Pause / Resume ---------------------------------------------------------
 
     def _toggle_pause(self) -> None:
-        self._paused = not self._paused
-        self.center.set_auto_switch(not self._paused)
-        # The button resumes now, so it must stop describing itself as Pause.
-        self.top_bar.set_paused(self._paused)
+        """
+        The one Pause/Resume button.
+
+        Pause says so at once, because the hold only begins once the current
+        step has finished - and that step may be a question the operator has to
+        answer first. Resume needs no wait: it also cancels a pause whose hold
+        has not begun, and the engine answers that with nothing at all.
+        """
+        if self._pause_requested:
+            log.debug("The operator asked to resume the run.")
+            self.resume_sequence()
+            self._show_run_moving()
+        else:
+            log.debug("The operator asked to pause the run.")
+            self.pause_sequence()
+            self._set_pause_requested(True)
+            self.window.recipe_label.setText("Pausing after the current step...")
+
+    def _set_pause_requested(self, requested: bool) -> None:
+        self._pause_requested = requested
+        # The button resumes while this is True, so it must stop describing itself as Pause.
+        self.top_bar.set_paused(requested)
+
+    def _show_run_moving(self) -> None:
+        self._set_pause_requested(False)
+        self.window.recipe_label.setText(f"Running {self._running_recipe_name}...")
 
     # --- Sequence dropdown ------------------------------------------------------
 
@@ -651,6 +719,7 @@ class GUI(HmiClient):
             # Only now, with CORE's confirmation that the file parsed: a path
             # that does not load is not one to offer again.
             self.recent_recipes.remember(self._requested_recipe_path, event.recipe_name)
+            self._loaded_recipe_path = self._requested_recipe_path
             self._recipe_yaml = step_source.step_yaml_by_sequence(
                 self._requested_recipe_path
             )
@@ -671,12 +740,12 @@ class GUI(HmiClient):
         self.top_bar.show_run_metadata(values)
 
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
-        self._set_remove_cache_enabled(False)
+        self._run_in_progress = True
         self._set_recipe_opening_enabled(False)
         self._run_outcomes = []
-        self._paused = False
-        self.center.set_auto_switch(True)
+        self._running_recipe_name = recipe_name
         self.top_bar.show_run_started()
+        self._set_pause_requested(False)
         self.step_table.set_running(True)
         self.step_table.reset_to_pending()
         self.center.show_idle()
@@ -684,15 +753,30 @@ class GUI(HmiClient):
         self.window.recipe_label.setText(f"Running {recipe_name}...")
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
-        self._set_remove_cache_enabled(True)
+        self._run_in_progress = False
         self._set_recipe_opening_enabled(True)
-        self._paused = False
-        self.center.set_auto_switch(True)
+        if self._pause_requested:
+            # A pause that lapsed, or a hold ended by Stop: the label must not
+            # go on saying "Pausing..." or "Paused..." once the run is over.
+            self._show_run_moving()
         self.step_table.set_running(False)
         self.top_bar.show_run_finished()
         self.center.cancel_pending()
         self.center.show_idle()
         self.window.results_panel.set_results(outcomes)
+
+    def show_run_paused(self, event: RunPaused) -> None:
+        super().show_run_paused(event)
+        # The engine says the run is held, so the button resumes - even if a
+        # Resume click crossed this event; the RunResumed after it corrects both.
+        self._set_pause_requested(True)
+        self.window.recipe_label.setText(
+            f"Paused before step {event.position}/{event.total} '{event.step_name}'"
+        )
+
+    def show_run_resumed(self) -> None:
+        super().show_run_resumed()
+        self._show_run_moving()
 
     def show_sequence_started(self, sequence_name: str) -> None:
         log.debug("SequenceStarted received for '%s'.", sequence_name)
@@ -714,15 +798,18 @@ class GUI(HmiClient):
     # --- Settings ---------------------------------------------------------------
 
     @catch_and_report_errors()
-    def _open_settings(self) -> None:
+    def _open_settings(self, page: str | None = None) -> None:
         """
-        Edit > Settings: show the settings, save the changed ones via CORE.
+        Edit > Settings - or View > Appearance, with `page` "Appearance": show
+        the settings, save the changed ones via CORE, and offer the Storage page
+        and Restore default settings.
 
         The values shown are the ones this process read at startup, with the
         changes CORE confirmed this session laid over them. The dialog previews
         a theme through `_use_theme()` and a window through `_use_window()`.
-        Decorated to report and continue: a dialog that cannot be built must not
-        take the window down.
+        After it closes: a Storage removal rebuilds the recents list, and a
+        confirmed Restore default settings restores them. Decorated to report
+        and continue: a dialog that cannot be built must not take the window down.
         """
         try:
             config = ConfigHandler()
@@ -747,6 +834,10 @@ class GUI(HmiClient):
         if config.bootstrap_outcome is BootstrapOutcome.DISCARDED:
             problem = config.bootstrap_problem or "The settings file could not be read."
 
+        blocked_reason = None
+        if self._run_in_progress:
+            blocked_reason = "Not while a recipe is running - stop the run first."
+
         dialog = SettingsDialog(
             values,
             self.set_config_parameter,
@@ -754,6 +845,10 @@ class GUI(HmiClient):
             parent=self.window,
             preview_theme=self._use_theme,
             preview_window=self._use_window,
+            storage_survey=survey,
+            offer_restore=True,
+            blocked_reason=blocked_reason,
+            open_page=page,
         )
         self.settings_dialog = dialog
         log.debug("The settings dialog is open.")
@@ -761,6 +856,17 @@ class GUI(HmiClient):
             dialog.exec()
         finally:
             self.settings_dialog = None
+
+        if dialog.saved:
+            # The dialog closes on a clean save rather than showing a result page.
+            self.show_status("Settings saved; they apply from the next start")
+        if dialog.storage_changed:
+            # The store still holds the list it read at start-up and would write
+            # it straight back on the next load. Rebuild it from the file as it is.
+            self.recent_recipes = RecentRecipes()
+            self.show_status("Stored data removed")
+        if dialog.restore_requested:
+            self._restore_default_settings()
 
     def show_config_parameter_result(self, result: ConfigParameterResult) -> None:
         log.debug(
@@ -780,39 +886,81 @@ class GUI(HmiClient):
         else:
             self.show_status(f"Setting {result.key} not saved: {result.reason}")
 
-    # --- Remove Cache -----------------------------------------------------------
-
-    def _set_remove_cache_enabled(self, enabled: bool) -> None:
-        """
-        Only between runs. Deleting the reports directory while the Report
-        thread is writing into it would take the run down, so the item greys
-        out for the duration and says why on hover.
-        """
-        action = self.window.remove_cache_action
-        action.setEnabled(enabled)
-        if enabled:
-            action.setToolTip("Delete the stored configuration, reports, logs and recents.")
-        else:
-            action.setToolTip("Not while a recipe is running - stop the run first.")
+    # --- Edit Recipe ------------------------------------------------------------
 
     @catch_and_report_errors()
-    def _remove_cache(self) -> None:
+    def open_recipe_creator(self) -> None:
         """
-        Show what would go, and remove it if the operator says so.
+        Edit > Edit Recipe: start the Recipe Creator, on the loaded recipe if
+        there is one.
 
-        The survey is taken fresh every time the dialog opens, so the sizes are
-        the sizes now. Decorated to report and continue: a cleanup that fails
-        must not take the window down.
+        Its own process, started the way it is started by hand (`python -m
+        pypts.helper_applications.recipe_creator [recipe]`), as the launcher
+        starts the Debug Monitor: neither window can take the other down, and
+        nothing in the operator screen imports the tool. It is never waited on
+        and never stopped - closing pypts leaves it open. A recipe saved there
+        is not reloaded here; open it again to run what was saved. Decorated to
+        report and continue: a tool that will not start must not take the
+        window with it.
         """
-        outcome = show_remove_cache_dialog(survey(), parent=self.window)
-        if outcome is None:
-            log.info("The operator cancelled Remove Cache.")
+        command = [sys.executable, "-m", RECIPE_CREATOR_MODULE]
+        if self._loaded_recipe_path is not None:
+            command.append(self._loaded_recipe_path)
+        try:
+            process = subprocess.Popen(command)
+        except OSError as error:
+            report_problem(
+                self,
+                f"The Recipe Creator could not be started: {error}",
+                severity=ErrorSeverity.WARNING,
+                operation="open_recipe_creator",
+            )
             return
+        self._recipe_creator_processes.append(process)
+        log.info("The Recipe Creator was opened.")
+        log.debug("Recipe Creator started (pid %d): %s", process.pid, command)
 
-        # The store still holds the list it read at start-up and would write it
-        # straight back on the next load. Rebuild it from the now-absent file.
-        self.recent_recipes = RecentRecipes()
-        self.show_status("Cache removed")
+    # --- Restart ----------------------------------------------------------------
+
+    def restart(self) -> None:
+        """
+        Close pypts and have the launcher start it again, with the same command line.
+
+        Used by Restore default settings, once config.ini is deleted. Every
+        process read its configuration once, at startup, so a fresh start is
+        what recreates the file from the template and puts its values in force -
+        through the one code path that already does both. The shutdown is the ordinary one
+        (ShutdownRequested -> CORE stops every module -> StopHmi -> on_stop());
+        only the GUI process's exit code differs, and the launcher acts on it.
+        Under pypts.api.open_gui() nothing restarts: the window just closes.
+        """
+        log.info("pypts is restarting, so the configuration is recreated from the template.")
+        self.exit_code = RESTART_EXIT_CODE
+        self.show_status("Restarting")
+        self.request_shutdown()
+
+    def _restore_default_settings(self) -> None:
+        """
+        Settings > Advanced > Restore default settings, once confirmed: delete
+        config.ini and restart, so the launcher's bootstrap recreates it from the
+        template. Deleting rather than rewriting: the restart is needed anyway
+        for the values to be in force, and bootstrap is the one path that
+        already writes a fresh file with this machine's paths filled in.
+        """
+        config_file = file_locations.config_file_path()
+        try:
+            config_file.unlink(missing_ok=True)
+        except OSError as error:
+            report_problem(
+                self,
+                f"The default settings could not be restored: {config_file} could not be "
+                f"deleted ({error}).",
+                severity=ErrorSeverity.ERROR,
+                operation="restore_default_settings",
+            )
+            return
+        log.info("The operator restored the default settings.")
+        self.restart()
 
     # --- Opening a recipe, and the recipes opened before ------------------------
 

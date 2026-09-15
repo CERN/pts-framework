@@ -831,6 +831,74 @@ def test_teardown_ignores_continue_on_error_too():
     assert [r.result for r in results] == [ResultType.ERROR, ResultType.DONE]
 
 
+def test_every_main_step_is_offered_to_the_pause_hold_before_it_runs():
+    """The hold point is the boundary *before* a step, with the same numbers
+    the operator's "Step 2/2 'two'" line uses - which is what lets RunPaused
+    say where the run is held."""
+    happened = []
+
+    def hold(step_name, position, total):
+        happened.append(("hold", step_name, position, total))
+
+    runtime = Runtime(hold_if_paused=hold)
+    Step.run_steps(runtime, [Notes(happened, step_name="one"), Notes(happened, step_name="two")])
+
+    assert happened == [("hold", "one", 1, 2), "one", ("hold", "two", 2, 2), "two"]
+
+
+def test_teardown_is_never_held():
+    """Cleanup returns the bench to a known state; a Pause must not leave it
+    half done."""
+    holds = []
+    runtime = Runtime(hold_if_paused=lambda step_name, position, total: holds.append(step_name))
+    Step.run_steps(runtime, [Notes([], step_name="cleanup")], run_to_end=True)
+    assert holds == []
+
+
+def test_a_step_that_is_only_recorded_skip_is_not_held_before():
+    """Once a halt has decided the rest of the list, there is no step left to
+    pause before - the remaining rows are bookkeeping, not work."""
+    holds = []
+    runtime = Runtime(hold_if_paused=lambda step_name, position, total: holds.append(step_name))
+    steps = [
+        Raises(step_name="critical", continue_on_error=False),
+        Notes([], step_name="two"),
+        Notes([], step_name="three"),
+    ]
+    Step.run_steps(runtime, steps)
+    assert holds == ["critical"]
+
+
+def test_a_stop_that_ends_a_hold_skips_the_step_it_was_held_before():
+    """The hold is asked before the stop check, so a Stop pressed while the
+    run is held lands at once instead of letting one more step run."""
+    ran = []
+    stopped = {"value": False}
+
+    def hold(step_name, position, total):
+        if step_name == "two":
+            stopped["value"] = True
+
+    runtime = Runtime(hold_if_paused=hold, should_stop=lambda: stopped["value"])
+    steps = [
+        Notes(ran, step_name="one"),
+        Notes(ran, step_name="two"),
+        Notes(ran, step_name="three"),
+    ]
+    results = Step.run_steps(runtime, steps)
+
+    assert ran == ["one"]
+    assert [r.result for r in results] == [ResultType.DONE, ResultType.SKIP, ResultType.SKIP]
+    assert "stopped by the operator" in results[1].error_info
+
+
+def test_a_bare_runtime_neither_holds_nor_drops_a_pause():
+    """The fake context stays complete: both new seams are no-ops."""
+    runtime = Runtime()
+    assert runtime.hold_if_paused("step", 1, 1) is None
+    assert runtime.drop_pending_pause() is None
+
+
 # --------------------------------------------------------------------------
 # run_sequence - one sequence, start to finish
 # --------------------------------------------------------------------------
@@ -879,6 +947,21 @@ def test_teardown_runs_after_a_step_halts_the_run():
     assert ran == ["cleanup"]
     assert result is ResultType.ERROR
     assert [r.result for r in results] == [ResultType.ERROR, ResultType.SKIP, ResultType.DONE]
+
+
+def test_run_sequence_drops_a_pending_pause_between_the_steps_and_teardown():
+    """Once, after the last main step and before the first teardown step: the
+    only moment a Pause that found no step to hold before can lapse."""
+    happened = []
+    runtime = Runtime(drop_pending_pause=lambda: happened.append("drop"))
+    sequence = FakeSequence(
+        steps=[Notes(happened, step_name="one"), Notes(happened, step_name="two")],
+        teardown_steps=[Notes(happened, step_name="cleanup")],
+    )
+
+    run_sequence(runtime, sequence)
+
+    assert happened == ["one", "two", "drop", "cleanup"]
 
 
 def test_an_empty_sequence_aggregates_to_skip():

@@ -33,6 +33,7 @@ from pypts.helper_applications.recipe_creator.rc_model import RecipeModel
 from pypts.helper_applications.recipe_creator.rc_widgets import (
     CardStepView,
     HeaderStrip,
+    InvalidOverlay,
     ListStepView,
     PanelsStepView,
     VerificationPanel,
@@ -65,6 +66,7 @@ class RecipeCreatorNewWindow(QMainWindow):
         self._model = RecipeModel()
         self._current_seq_idx = 0
         self._selected_step: tuple[int, int] | None = None
+        self._logged_invalid_reason = ""
         self._verify_timer = QTimer(self)
         self._verify_timer.setSingleShot(True)
         self._verify_timer.setInterval(200)
@@ -118,11 +120,18 @@ class RecipeCreatorNewWindow(QMainWindow):
         edit_menu.addAction(self._act_undo)
         edit_menu.addAction(self._act_redo)
         edit_menu.addSeparator()
-        add_step_menu = edit_menu.addMenu("Add Step")
+        self._act_undo_valid = QAction("Undo to Last Valid", self)
+        self._act_undo_valid.setToolTip(
+            "Undo until the recipe can be shown in the tree again"
+        )
+        edit_menu.insertAction(self._act_redo, self._act_undo_valid)
+        self._act_undo_valid.triggered.connect(self._model.undo_to_last_valid)
+        self._act_undo_valid.setEnabled(False)
+        self._add_step_menu = edit_menu.addMenu("Add Step")
         for steptype in STEP_TYPE_REQUIRED:
             act = QAction(steptype, self)
             act.triggered.connect(lambda checked, t=steptype: self._add_step(t))
-            add_step_menu.addAction(act)
+            self._add_step_menu.addAction(act)
         self._act_del_step = QAction("Delete Step", self)
         edit_menu.addAction(self._act_del_step)
         self._act_del_step.triggered.connect(self._delete_selected_step)
@@ -179,12 +188,13 @@ class RecipeCreatorNewWindow(QMainWindow):
             tb.addAction(act)
         tb.addSeparator()
         tb.addAction(self._act_undo)
+        tb.addAction(self._act_undo_valid)
         tb.addAction(self._act_redo)
         tb.addSeparator()
 
-        validate_btn = QAction("Validate", self)
-        validate_btn.triggered.connect(self._run_verification)
-        tb.addAction(validate_btn)
+        self._act_validate = QAction("Validate", self)
+        self._act_validate.triggered.connect(self._run_verification)
+        tb.addAction(self._act_validate)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -263,6 +273,10 @@ class RecipeCreatorNewWindow(QMainWindow):
         left_layout.addWidget(step_bar)
 
         self._hsplit.addWidget(left)
+        self._left = left
+        self._invalid_overlay = InvalidOverlay(
+            left, "Recipe format invalid, fix the recipe via editor or undo"
+        )
 
         # Right panel: YAML editor
         self._yaml_editor = YamlEditor()
@@ -289,11 +303,42 @@ class RecipeCreatorNewWindow(QMainWindow):
 
     def _on_model_changed(self) -> None:
         self._sync_yaml_from_model()
-        self._verify_timer.start()
+        self._apply_validity()
+        if self._model.is_valid():
+            self._verify_timer.start()
         self._update_title()
 
     def _sync_yaml_from_model(self) -> None:
-        self._yaml_editor.set_content(self._model.to_yaml())
+        text = self._model.to_yaml()
+        # Rewriting identical text would only move the cursor to the start
+        # while the user is typing.
+        if text != self._yaml_editor.toPlainText():
+            self._yaml_editor.set_content(text)
+
+    def _apply_validity(self) -> None:
+        """Gray out the tree and verification while the text cannot be shown as a tree."""
+        valid = self._model.is_valid()
+        self._left.setEnabled(valid)
+        self._invalid_overlay.set_shown(not valid)
+        self._verification.setEnabled(valid)
+        self._act_undo_valid.setEnabled(not valid)
+        self._add_step_menu.setEnabled(valid)
+        self._act_del_step.setEnabled(valid)
+        self._act_validate.setEnabled(valid)
+        if valid:
+            self._logged_invalid_reason = ""
+            return
+        self._verify_timer.stop()
+        self._verification.show_invalid()
+        line = self._model.invalid_line()
+        if line:
+            self._yaml_editor.set_error_lines({line})
+        else:
+            self._yaml_editor.set_error_lines(set())
+        reason = self._model.invalid_reason()
+        if reason != self._logged_invalid_reason:
+            self._logged_invalid_reason = reason
+            self._log_msg(f"Recipe format invalid: {reason}")
 
     def _on_yaml_committed(self, text: str) -> None:
         self._model.set_from_text(text)
@@ -331,10 +376,13 @@ class RecipeCreatorNewWindow(QMainWindow):
         self._dark = dark
         self.setStyleSheet(get_stylesheet(dark))
         self._yaml_editor.set_dark(dark)
+        self._invalid_overlay.set_dark(dark)
         for view in [self._list_view, self._card_view, self._panels_view]:
             view.set_dark(dark)
 
     def _run_verification(self) -> None:
+        if not self._model.is_valid():
+            return
         issues = verify_string(self._model.to_yaml())
         self._verification.update_issues(issues)
         error_lines: set[int] = {i.line for i in issues if i.line and i.is_error}
@@ -375,6 +423,15 @@ class RecipeCreatorNewWindow(QMainWindow):
         )
         if not path:
             return
+        self.open_file(path)
+
+    def open_file(self, path: str) -> None:
+        """
+        Load one recipe file into the editor.
+
+        Split out of the Open dialog so a path given on the command line -
+        what pypts' Edit > Edit Recipe passes - opens the same way.
+        """
         try:
             text = Path(path).read_text(encoding="utf-8")
             issues = self._model.load_yaml(text)
@@ -428,6 +485,10 @@ def main() -> int:
     app = QApplication(sys.argv)
     win = RecipeCreatorNewWindow()
     win.show()
+    # `python -m pypts.helper_applications.recipe_creator [recipe.yml]` - pypts'
+    # Edit > Edit Recipe passes the recipe it has loaded.
+    if len(sys.argv) > 1:
+        win.open_file(sys.argv[1])
     return app.exec()
 
 

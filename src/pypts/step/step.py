@@ -618,16 +618,23 @@ class Step:
           step can leave its hardware in a known state. It stays a separate
           branch from the verdict, so Stop still ends a run at once even
           though an ERROR on its own does not,
+        - the operator's Pause is honoured at the same boundary:
+          `runtime.hold_if_paused()` is called before each step that is
+          about to run for real, and blocks while the run is held. It comes
+          *before* the stop check, so a Stop that ends a hold is seen at
+          once and the remaining steps are skipped. The step layer knows
+          nothing about how the hold is kept - that is the Sequencer's,
         - **whichever of the two ends the list early, every remaining step is
           run with a skip_reason** rather than dropped. It emits its events
           and comes back SKIP, so the step table settles every row and the
           report has a row per step no matter how the run ended. SKIP is the
           lowest ResultType, so this cannot change what the sequence
           aggregates to,
-        - `run_to_end=True` disables both early exits. Teardown callers pass
-          it: cleanup runs after an abort and after a halt, and one failing
-          cleanup step does not skip the rest of the cleanup - which is the
-          opposite of what teardown is for.
+        - `run_to_end=True` disables both early exits, and the pause hold
+          with them. Teardown callers pass it: cleanup runs after an abort
+          and after a halt, straight through without ever being held, and
+          one failing cleanup step does not skip the rest of the cleanup -
+          which is the opposite of what teardown is for.
 
         `phase` is only the word the operator's log lines start with, so that a
         teardown step reads as "Teardown step 1/2 'power_off'" rather than as a
@@ -637,6 +644,10 @@ class Step:
         skip_reason = ""
         total = len(steps)
         for position, step in enumerate(steps, start=1):
+            if not skip_reason and not run_to_end:
+                # Before the stop check, not after it: a Stop pressed while
+                # the run is held ends the hold, and must then be seen here.
+                runtime.hold_if_paused(step.name, position, total)
             if not skip_reason and not run_to_end and runtime.should_stop():
                 skip_reason = "Not run: the run was stopped by the operator."
                 log.debug("The stop flag is set; the remaining steps will be skipped.")
@@ -804,6 +815,9 @@ def run_sequence(runtime: Runtime, sequence: "Sequence") -> tuple[ResultType, li
     try:
         step_results.extend(Step.run_steps(runtime, sequence.steps))
     finally:
+        # The main steps are over, so a Pause still waiting for a step to
+        # hold before has none left: teardown is never held.
+        runtime.drop_pending_pause()
         step_results.extend(
             Step.run_steps(
                 runtime, sequence.teardown_steps, run_to_end=True, phase="Teardown step"

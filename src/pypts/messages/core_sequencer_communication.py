@@ -13,16 +13,21 @@ from dataclasses import dataclass
 
 from pypts.messages.common_messages import Heartbeat, ModuleError
 from pypts.messages.run_events import (
+    # PauseSequence, ResumeSequence and StopSequence are defined in run_events
+    # because they ride two links: a frontend sends them and CORE relays the
+    # very same object here (see the class docstrings).
+    PauseSequence,
+    ResumeSequence,
     RunFinished,
     RunMetadata,
+    RunPaused,
+    RunResumed,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
     StepExecuted,
     StepFinished,
     StepStarted,
-    # Defined in run_events because it rides two links: a frontend sends it and
-    # CORE relays the very same object here (see the class docstring).
     StopSequence,
     UserPathRequest,
     UserPathResponse,
@@ -74,6 +79,8 @@ class SequencerStopped:
 CoreToSequencer = (
     RunSequence
     | StopSequence
+    | PauseSequence
+    | ResumeSequence
     | StopSequencer
     # Answers to questions the Sequencer asked, relayed back by CORE.
     | UserPromptResponse
@@ -85,6 +92,8 @@ SequencerToCore = (
     SequencerStopped
     | RunStarted
     | RunFinished
+    | RunPaused
+    | RunResumed
     | RunMetadata
     | SequenceStarted
     | SequenceFinished

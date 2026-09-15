@@ -152,8 +152,11 @@ it.</div>
   <tr><th>Button</th><th>Does</th></tr>
   <tr><td>Open</td><td>Loads a recipe. Greyed out during a run.</td></tr>
   <tr><td>Start</td><td>Runs the selected sequence.</td></tr>
-  <tr><td>Pause / Resume</td><td>Holds the run. While paused you can click the tabs to look
-      around.</td></tr>
+  <tr><td>Pause / Resume</td><td>Holds the run once the current step has finished. Until then
+      the label reads <em>Pausing after the current step...</em>, then which step the run waits
+      before. If that step is a question, answer it first. The same button, now
+      <strong>Resume</strong>, carries on (or cancels a pause that hasn't begun). Stop still
+      works. Teardown steps are never held.</td></tr>
   <tr><td>Stop</td><td>Aborts the run. Steps that didn't run end as <code>STOP</code>.</td></tr>
   <tr><td>Report (far right)</td><td>Opens this run's report folder, or the reports folder if
       there hasn't been a run yet.</td></tr>
@@ -179,11 +182,11 @@ the sequence continues with the next step.</p>
   <tr><th>Menu</th><th>Items</th></tr>
   <tr><td>File</td><td>Open Recipe · Open Recent (last 10 recipes that loaded) · Open Config
       (opens <code>config.ini</code> in your editor) · Exit</td></tr>
-  <tr><td>Edit</td><td>Edit Recipe · <strong>Settings</strong> (theme, window size, folders,
-      log level…; changes apply at the <em>next</em> start, except the theme) ·
-      <strong>Remove Cache</strong> (clear recents, config, and optionally reports and
-      logs)</td></tr>
-  <tr><td>View</td><td>Toggle dark mode for this session</td></tr>
+  <tr><td>Edit</td><td><strong>Edit Recipe</strong> (opens the Recipe Creator, on the loaded
+      recipe if there is one; save there, then open the recipe again here to run it) ·
+      <strong>Settings</strong>: theme, window, folders, log level…; changes apply at the <em>next</em> start, except the theme and the window mode and size, which you try straight away — keep a window within 15 seconds or it goes back; Keep saves it. Save closes Settings once
+everything is saved, and only stays open to tell you about a setting that could not be saved. The <strong>Storage</strong> page removes the recent recipes list, reports and run logs. <strong>Advanced → Restore default settings</strong> puts every setting back and restarts pypts. Neither works during a run.</td></tr>
+  <tr><td>View</td><td><strong>Appearance</strong> (opens Settings on its Appearance page) · <strong>Full Screen</strong> (<kbd>F11</kbd>) for this session only</td></tr>
   <tr><td>About</td><td>Links to GitHub and the wiki</td></tr>
 </table></div>
 
@@ -282,7 +285,8 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       the machine, which makes it useful to attach to a bug report.</li>
   <li><strong>config.ini</strong>: created on the first start. If it's broken or from an incompatible
       version (a different major number in <code>config_version</code>), PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
-      Fix the file, or delete it to have it recreated.</li>
+      Fix the file, or delete it to have it recreated. Saving in <em>Edit → Settings</em> changes only
+      that setting's line; your comments and anything you added by hand stay where they are.</li>
 </ul>
 
 <h2 id="tools">10. Helper tools</h2>
@@ -290,7 +294,11 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
   <tr><th>Tool</th><th>Start with</th><th>For</th></tr>
   <tr><td>Recipe Creator</td>
       <td><code>run_recipe_creator.bat</code> or<br><code>python run_recipe_creator.py</code></td>
-      <td>Writing and editing recipes in a window, with live validation.</td></tr>
+      <td>Writing and editing recipes in a window, with live validation.
+      If the YAML text can't be shown as a tree (it doesn't parse, or has the wrong shape), the tree
+      and the validation pane are grayed out, the text stays as you typed it, and the log says why.
+      Fix it in the editor, press <em>Undo</em>, or press <em>Undo to Last Valid</em>.
+      <em>Save</em> still writes the text as it is. A broken file opens the same way.</td></tr>
   <tr><td>Debug Monitor</td>
       <td>opens with every run, or<br><code>python -m pypts.helper_applications.debug_monitor</code></td>
       <td>Developers: watching internal messages. Only shows something with

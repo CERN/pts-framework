@@ -28,6 +28,10 @@ Owns:
   go here.
 - **Handshake** — `wait_until_stopped(grace_s)` spins until `self.running` is `False`
   (set by `stop()` when `StopHmi` is handled) or the grace period expires.
+- **Pause / Resume** — `pause_sequence()` / `resume_sequence()` send `PauseSequence` /
+  `ResumeSequence`; the confirmations arrive at `show_run_paused(event)` (passed whole) and
+  `show_run_resumed()`. Only the GUI uses them (`gui/gui.md` §13); the CLI and the API
+  inherit the DEBUG defaults. A pause that lapses gets no `RunPaused`, only `RunFinished`.
 - **Default hooks** — every `show_*` method has a default that logs. A frontend that
   has not yet implemented a hook cannot crash when a new message arrives.
 
@@ -60,13 +64,15 @@ PySide6 application. Full context in `hmi/gui/gui.md`. Key points:
 
 ## Key messages (HMI → CORE)
 
-`LoadRecipe`, `StartSequence`, `ShutdownRequested`, `UserPromptResponse`, `UserTextResponse`,
+`LoadRecipe`, `StartSequence`, `StopSequence`, `PauseSequence` / `ResumeSequence` (GUI only),
+`ShutdownRequested`, `UserPromptResponse`, `UserTextResponse`,
 `UserPathResponse` (sent by `answer_user_path()`), `HmiStopped`, `SetConfigParameter` (sent by `set_config_parameter()`; only the GUI's
 Settings dialog calls it — the CLI has no command for it).
 
 ## Key messages (CORE → HMI)
 
-`RecipeLoaded`, `RunStarted`, `SequenceStarted`, `StepStarted`, `StepFinished`,
+`RecipeLoaded`, `RunStarted`, `RunPaused` / `RunResumed` (hooks `show_run_paused()` /
+`show_run_resumed()`; the defaults log at DEBUG), `SequenceStarted`, `StepStarted`, `StepFinished`,
 `SequenceFinished`, `RunFinished`, `ReportReady`, `UserPromptRequest`, `UserTextRequest`,
 `UserPathRequest` (hook `ask_user_path()`; the default declines with a WARNING, like
 `ask_user_text()`), `ModuleErrorReported`, `StatusChanged`, `StopHmi`, `ConfigParameterResult` (hook

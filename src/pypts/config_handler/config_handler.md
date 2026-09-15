@@ -17,7 +17,7 @@ re-reading the four modules.
 | `file_locations.py` | *Where* the file is. `platformdirs`, and the seam tests monkeypatch. |
 | `configuration_schema.py` | *What* the file contains: section → key → type, default, allowed values; `CONFIG_VERSION`. |
 | `config_template.ini` | The shipped defaults **and** the comments the user reads. |
-| `template_writer.py` | Writing the file without throwing the comments away. |
+| `template_writer.py` | Writing the file without throwing the comments away: `render()` a new file from the template, `replace_value()` one value in an existing file. |
 | `config_handler.py` | The singleton: load, create, validate, get/set, dump. |
 
 `__init__.py` re-exports `ConfigHandler`, `Role` and the five exception types. Nothing else
@@ -102,7 +102,7 @@ Sections currently in the schema:
 | `paths` | `base_dir`, `logs_dir`, `reports_dir` — **derived** paths |
 | `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
 | `report` | `type` (`html`/`csv`), `theme` |
-| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `maximized` / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
+| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
 | `watchdog` | `enabled` (bool) - whether prolonged heartbeat silence *ends the run* or is only reported. Off is for a developer with a debugger attached to CORE, where a breakpoint in an event loop is indistinguishable from an event loop that has died. It gates the acting half only: a module that goes quiet is reported at WARNING either way |
 
 That is the whole schema — a flat list of named sections, nothing generated or matched by
@@ -177,14 +177,25 @@ dialog shows the saved value rather than the one read at startup.
 
 Writing goes through `template_writer.py`, never `configparser.write()`, because the parsed
 structure has no comments in it and one write would turn a documented file into a bare list
-of `key = value`. Instead the **template is the layout**: its comments, blank lines and
-ordering are copied out verbatim and only the text to the right of each `=` is replaced.
-Sections or keys the template does not know about (a user-added `[hardware.*]`, most often)
-are appended under an explanatory banner so nothing is ever lost. The rewrite is line based,
-which keeps the output diffable — change one value and `git diff` shows one line.
+of `key = value`. There are two ways to write, and **the template is used for only one**:
 
-`template_writer.write()` renders to `config.ini.tmp` in the same directory and `replace()`s
-it into place, so an interrupted write cannot leave a half-written config behind.
+- **A new file** (`_write()`: creation at bootstrap, and `restore_default()`, which starts
+  over on purpose) is `render()`ed from the template — its comments, blank lines and ordering,
+  with the values filled in.
+- **A changed value** (`set_parameter()`) edits the **existing file in place**:
+  `replace_value()` finds the key's line inside its own section (key matched regardless of
+  case, as configparser reads it) and replaces the text after `=`. Every other line stays as
+  it is — comments, order, and keys or sections the user added by hand. It never adds a line:
+  the Settings dialog only changes keys that exist. A key whose line is not in the file is
+  refused with `ConfigKeyError` and nothing is written.
+
+The file is the user's from the moment it exists, so it is never rebuilt from the template
+again. (It used to be, on every save, and a hand-added key in a known section was appended
+under a *second* `[gui]` header — which configparser refuses, so the next start discarded the
+whole file.) Both writes are line based, so changing one value changes one line.
+
+`template_writer.write()` writes to `config.ini.tmp` in the same directory and `replace()`s it
+into place, so an interrupted write cannot leave a half-written config behind.
 
 ---
 
@@ -232,7 +243,8 @@ replace the user's file with the defaults. `restore_default()` stays allowed (re
 file deliberately is its job) and ends the discarded state.
 
 An existing file is therefore byte-identical after any number of starts; the only writes ever
-made are creation from the template, `set_parameter()` and `restore_default()`.
+made are creation from the template, `set_parameter()` (one line, in place) and
+`restore_default()`.
 
 ---
 

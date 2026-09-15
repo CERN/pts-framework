@@ -118,6 +118,106 @@ def test_set_from_text_is_undoable(model):
     assert model.header()["name"] == "Test Recipe"
 
 
+def test_unparseable_text_keeps_the_text_and_marks_invalid(model):
+    broken = "name: Test Recipe\nversion: [unclosed\n"
+    model.set_from_text(broken)
+    assert not model.is_valid()
+    assert model.to_yaml() == broken
+    assert "cannot be parsed" in model.invalid_reason()
+    assert model.invalid_line() > 0
+
+
+def test_invalid_text_is_undoable_back_to_the_valid_recipe(model):
+    model.set_from_text("name: [unclosed\n")
+    model.undo_stack.undo()
+    assert model.is_valid()
+    assert model.header()["name"] == "Test Recipe"
+
+
+def test_parseable_text_the_tree_cannot_show_is_invalid(model):
+    model.set_from_text("name: Test\n---\nsequence_name: Main\nsteps:\n  - just a string\n")
+    assert not model.is_valid()
+    assert "not a mapping" in model.invalid_reason()
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "- a list\n",
+        "name: T\n---\nsequence_name: Main\nsteps: 5\n",
+        "name: T\n---\nsequence_name: Main\nsteps:\n  - steptype: [wait]\n",
+        "name: T\n---\nsequence_name: Main\nsteps:\n  - steptype: wait\n    inputs: [a]\n",
+        "name: T\n---\nsequence_name: Main\nsteps:\n  - steptype: wait\n    wait_time: soon\n",
+        "name: T\nglobals: [a]\n",
+    ],
+)
+def test_structure_problems_are_invalid(model, text):
+    model.set_from_text(text)
+    assert not model.is_valid()
+
+
+def test_undo_to_last_valid_skips_every_invalid_edit(model):
+    model.set_from_text(model.to_yaml().replace("Test Recipe", "Second"))
+    model.set_from_text("name: [one\n")
+    model.set_from_text("name: [one two\n")
+    model.undo_to_last_valid()
+    assert model.is_valid()
+    assert model.header()["name"] == "Second"
+    assert model.undo_stack.canUndo()
+
+
+def test_tree_edits_are_refused_while_invalid(model):
+    model.set_from_text("name: [unclosed\n")
+    index_before = model.undo_stack.index()
+    model.set_header_field("name", "Ignored")
+    model.add_step(0, "wait", 0)
+    assert model.undo_stack.index() == index_before
+    model.undo_stack.undo()
+    assert model.header()["name"] == "Test Recipe"
+
+
+def test_undo_past_a_text_edit_keeps_older_commands_working(model):
+    model.set_header_field("name", "Field edit")
+    model.set_from_text("name: [unclosed\n")
+    model.undo_stack.undo()
+    model.undo_stack.undo()
+    assert model.header()["name"] == "Test Recipe"
+
+
+def test_loading_a_broken_file_opens_it_as_invalid(model):
+    model.load_yaml("name: [unclosed\n")
+    assert not model.is_valid()
+    assert model.to_yaml() == "name: [unclosed\n"
+    model.load_yaml(_RECIPE)
+    assert model.is_valid()
+
+
+def test_window_grays_out_the_tree_while_invalid(qapp):
+    from pypts.helper_applications.recipe_creator.recipe_creator_new import (
+        RecipeCreatorNewWindow,
+    )
+
+    window = RecipeCreatorNewWindow()
+    window._model.load_yaml(_RECIPE)
+    assert window._left.isEnabled()
+    assert not window._act_undo_valid.isEnabled()
+
+    window._yaml_editor.setPlainText("name: [unclosed\n")
+    window._yaml_editor._on_debounce()
+    assert window._yaml_editor.toPlainText() == "name: [unclosed\n"
+    assert not window._left.isEnabled()
+    assert not window._invalid_overlay.isHidden()
+    assert not window._verification.isEnabled()
+    assert window._act_undo_valid.isEnabled()
+    window._invalid_overlay.grab()
+
+    window._act_undo_valid.trigger()
+    assert window._left.isEnabled()
+    assert window._invalid_overlay.isHidden()
+    assert "Test Recipe" in window._yaml_editor.toPlainText()
+    window.close()
+
+
 def test_to_yaml_produces_valid_recipe(model):
     from pypts.helper_applications.recipe_verificator import verify_string
 

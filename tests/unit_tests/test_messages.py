@@ -79,9 +79,13 @@ from pypts.messages.core_sequencer_communication import (
     StopSequencer,
 )
 from pypts.messages.run_events import (
+    PauseSequence,
     RecipeLoaded,
+    ResumeSequence,
     RunFinished,
     RunMetadata,
+    RunPaused,
+    RunResumed,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
@@ -174,6 +178,8 @@ EXAMPLES = {
         metadata_names=("serial_number",),
     ),
     RunFinished: RunFinished(result=ResultType.PASS, outcomes=(AN_OUTCOME,)),
+    RunPaused: RunPaused(step_name="Measure voltage", position=4, total=10),
+    RunResumed: RunResumed(),
     RunMetadata: RunMetadata(values=(("serial_number", "SN-0042"),)),
     SequenceStarted: SequenceStarted(sequence_name="Main"),
     SequenceFinished: SequenceFinished(sequence_name="Main", result=ResultType.FAIL),
@@ -228,6 +234,8 @@ EXAMPLES = {
     # core_sequencer_communication
     RunSequence: RunSequence(recipe=A_RECIPE, sequence_name="Main"),
     StopSequence: StopSequence(),
+    PauseSequence: PauseSequence(),
+    ResumeSequence: ResumeSequence(),
     StopSequencer: StopSequencer(),
     SequencerStopped: SequencerStopped(),
     # core_report_communication

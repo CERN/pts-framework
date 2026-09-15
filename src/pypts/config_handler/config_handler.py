@@ -409,9 +409,21 @@ class ConfigHandler:
             # rather than at the next start, when the file is all there is.
             _parse(section, option, text, field)
 
+        # The file is edited in place - one line, in its own section - rather
+        # than rebuilt from the template: from the moment it exists it is the
+        # user's, keys they added by hand included.
+        current = self._path.read_text(encoding="utf-8-sig")
+        try:
+            changed = template_writer.replace_value(current, section, option, text)
+        except KeyError as error:
+            raise ConfigKeyError(
+                f"Configuration key {key!r} is not in {self._path} any more, so it "
+                f"was not changed."
+            ) from error
+        template_writer.write(self._path, changed)
+
         self._raw[section][option] = text
         self._values = self._validate(self._raw)
-        self._write(self._raw)
         log.info("Setting '%s' changed to '%s'.", key, text)
         log.debug("Written to %s.", self._path)
 
@@ -444,7 +456,12 @@ class ConfigHandler:
             )
 
     def _write(self, raw: dict[str, dict[str, str]]) -> None:
-        template_writer.write(self._path, self._template_text, raw)
+        """
+        Write a whole new file from the template. Only for creating the file and
+        for restore_default(); a change to one value goes through set_parameter(),
+        which edits the existing file instead.
+        """
+        template_writer.write(self._path, template_writer.render(self._template_text, raw))
         # Worth a record of its own: this is the only thing in the framework
         # that modifies the user's file, so "was it written, and when" should
         # never have to be inferred from mtime.

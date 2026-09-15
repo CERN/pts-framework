@@ -160,7 +160,8 @@ def test_the_settings_are_grouped_into_pages(qapp, tmp_path):
     dialog = a_settings_dialog(tmp_path)
 
     titles = [dialog.nav.item(row).text() for row in range(dialog.nav.count())]
-    assert titles == ["Appearance", "Folders", "Logging", "Report", "Advanced"]
+    assert titles == ["Folders", "Appearance", "Logging", "Report", "Advanced"]
+    assert dialog.nav.currentItem().text() == "Folders"
 
     dialog.nav.setCurrentRow(1)
 
@@ -212,10 +213,12 @@ def test_a_saved_theme_is_kept_when_the_dialog_closes(qapp, tmp_path):
     dialog = a_settings_dialog(tmp_path, preview_theme=previews.append)
     dialog.editors["gui.theme"].buttons["dark"].click()
     dialog.save_button.click()
+
+    # A clean save closes the dialog by itself - no result page to dismiss.
     dialog.apply_result(ConfigParameterResult(key="gui.theme", value="dark", accepted=True))
 
-    dialog.close_button.click()
-
+    assert dialog.saved is True
+    assert dialog.result() == dialog.DialogCode.Accepted.value
     assert previews == ["dark"]
 
 
@@ -276,14 +279,14 @@ def test_a_changed_setting_is_marked_and_can_be_reset(qapp, tmp_path):
 
     assert card.property("modified") is True
     assert card.reset_button.isHidden() is False
-    assert dialog.nav.item(0).text() != "Appearance"
+    assert dialog.nav.item(1).text() != "Appearance"
 
     card.reset_button.click()
 
     assert dialog.text_of("gui.window_width") == "1280"
     assert card.property("modified") is False
     assert card.reset_button.isHidden() is True
-    assert dialog.nav.item(0).text() == "Appearance"
+    assert dialog.nav.item(1).text() == "Appearance"
     dialog.close()
 
 
@@ -421,6 +424,7 @@ def a_window_dialog(tmp_path, keep=True):
     """
     previews = []
     asked = []
+    sent = []
 
     def confirm(description):
         asked.append(description)
@@ -428,28 +432,26 @@ def a_window_dialog(tmp_path, keep=True):
 
     dialog = a_settings_dialog(
         tmp_path,
+        sent,
         preview_window=lambda mode, width, height: previews.append((mode, width, height)),
         confirm_window=confirm,
     )
-    return dialog, previews, asked
+    return dialog, previews, asked, sent
 
 
 def test_the_window_card_offers_three_modes(qapp, tmp_path):
     dialog = a_settings_dialog(tmp_path)
     buttons = dialog.editors["gui.window_mode"].buttons
 
-    assert list(buttons) == ["windowed", "maximized", "fullscreen"]
-    assert [button.text() for button in buttons.values()] == [
-        "Windowed",
-        "Maximized",
-        "Full screen",
-    ]
+    assert list(buttons) == ["windowed", "fullscreen"]
+    assert [button.text() for button in buttons.values()] == ["Windowed", "Full screen"]
     assert dialog.cards["gui.window_mode"] is dialog.cards["gui.window_width"]
     dialog.close()
 
 
-def test_a_kept_preset_resizes_the_window(qapp, tmp_path):
-    dialog, previews, asked = a_window_dialog(tmp_path, keep=True)
+def test_a_kept_preset_resizes_the_window_and_saves_it(qapp, tmp_path):
+    """Keep is a save: nothing is left for the Save button to do."""
+    dialog, previews, asked, sent = a_window_dialog(tmp_path, keep=True)
 
     dialog.presets["Full HD"].click()
 
@@ -457,13 +459,15 @@ def test_a_kept_preset_resizes_the_window(qapp, tmp_path):
     assert len(asked) == 1
     assert "1920" in asked[0]
     assert dialog.window_on_screen == ("windowed", 1920, 1080)
-    assert dialog.save_button.text() == "Save 2 changes"
+    assert sent == [("gui.window_width", "1920"), ("gui.window_height", "1080")]
+    assert dialog.changes() == {}
+    assert dialog.save_button.isEnabled() is False
     dialog.close()
 
 
 def test_a_size_not_kept_goes_back_on_screen_and_in_the_fields(qapp, tmp_path):
     """No answer within the countdown counts as not kept."""
-    dialog, previews, _asked = a_window_dialog(tmp_path, keep=False)
+    dialog, previews, _asked, sent = a_window_dialog(tmp_path, keep=False)
 
     dialog.presets["Full HD"].click()
 
@@ -471,81 +475,73 @@ def test_a_size_not_kept_goes_back_on_screen_and_in_the_fields(qapp, tmp_path):
     assert dialog.text_of("gui.window_width") == "1280"
     assert dialog.text_of("gui.window_height") == "720"
     assert dialog.changes() == {}
+    assert sent == []
     dialog.close()
 
 
 def test_a_typed_size_waits_for_apply(qapp, tmp_path):
     """The window must not jump on every keystroke."""
-    dialog, previews, _asked = a_window_dialog(tmp_path)
+    dialog, previews, _asked, sent = a_window_dialog(tmp_path)
 
     dialog.set_value("gui.window_width", "1500")
 
     assert previews == []
+    assert sent == []
     assert dialog.apply_window_button.isEnabled() is True
 
     dialog.apply_window_button.click()
 
     assert previews == [("windowed", 1500, 720)]
+    assert sent == [("gui.window_width", "1500")]
     assert dialog.apply_window_button.isEnabled() is False
     dialog.close()
 
 
 def test_picking_full_screen_tries_it_at_once(qapp, tmp_path):
-    dialog, previews, asked = a_window_dialog(tmp_path)
+    dialog, previews, asked, sent = a_window_dialog(tmp_path)
 
     dialog.editors["gui.window_mode"].buttons["fullscreen"].click()
 
     assert previews == [("fullscreen", 1280, 720)]
     assert asked == ["Full screen"]
+    assert sent == [("gui.window_mode", "fullscreen")]
     dialog.close()
 
 
-def test_cancel_puts_a_kept_window_back(qapp, tmp_path):
-    """Keeping only confirms the preview; without Save nothing changes for good."""
-    dialog, previews, _asked = a_window_dialog(tmp_path)
+def test_a_kept_window_stays_when_the_dialog_is_cancelled(qapp, tmp_path):
+    """Keep already saved it; Cancel only drops what was not saved."""
+    dialog, previews, _asked, _sent = a_window_dialog(tmp_path)
     dialog.presets["HD+"].click()
 
     dialog.cancel_button.click()
 
-    assert previews == [("windowed", 1600, 900), ("windowed", 1280, 720)]
-
-
-def test_a_saved_window_stays_when_the_dialog_closes(qapp, tmp_path):
-    dialog, previews, _asked = a_window_dialog(tmp_path)
-    dialog.presets["HD+"].click()
-    dialog.save_button.click()
-    dialog.apply_result(ConfigParameterResult(key="gui.window_width", value="1600", accepted=True))
-    dialog.apply_result(ConfigParameterResult(key="gui.window_height", value="900", accepted=True))
-
-    dialog.close_button.click()
-
     assert previews == [("windowed", 1600, 900)]
 
 
-def test_a_refused_window_goes_back_when_the_dialog_closes(qapp, tmp_path):
-    dialog, previews, _asked = a_window_dialog(tmp_path)
+def test_the_answers_to_a_kept_window_go_to_the_gui_not_the_dialog(qapp, tmp_path):
+    """The dialog is not waiting on Keep's answers; the GUI's status line shows them."""
+    dialog, _previews, _asked, _sent = a_window_dialog(tmp_path)
     dialog.presets["HD+"].click()
-    dialog.save_button.click()
-    dialog.apply_result(
-        ConfigParameterResult(key="gui.window_width", value="1600", accepted=False, reason="No.")
-    )
-    dialog.apply_result(
-        ConfigParameterResult(key="gui.window_height", value="900", accepted=False, reason="No.")
+
+    taken = dialog.apply_result(
+        ConfigParameterResult(key="gui.window_width", value="1600", accepted=True)
     )
 
-    dialog.close_button.click()
+    assert taken is False
+    assert dialog.showing == "edit"
+    dialog.close()
 
-    assert previews == [("windowed", 1600, 900), ("windowed", 1280, 720)]
 
-
-def test_reset_puts_the_window_back_on_screen(qapp, tmp_path):
-    dialog, previews, _asked = a_window_dialog(tmp_path)
-    dialog.presets["HD+"].click()
+def test_reset_puts_a_typed_window_size_back(qapp, tmp_path):
+    dialog, previews, _asked, sent = a_window_dialog(tmp_path)
+    dialog.set_value("gui.window_width", "1500")
 
     dialog.cards["gui.window_width"].reset_button.click()
 
-    assert previews == [("windowed", 1600, 900), ("windowed", 1280, 720)]
+    assert dialog.text_of("gui.window_width") == "1280"
     assert dialog.changes() == {}
+    assert previews == []
+    assert sent == []
     dialog.close()
 
 
@@ -607,14 +603,16 @@ def test_the_dialog_saves_through_core_and_shows_its_answer(gui_factory, monkeyp
         seen["asked"] = [m for m in drain(outbox) if isinstance(m, SetConfigParameter)]
         inbox.send(ConfigParameterResult(key="gui.window_width", value="1500", accepted=True))
         instance.poll_core()
-        seen["showing"] = dialog.showing
+        seen["saved"] = dialog.saved
         return 0
 
     monkeypatch.setattr(SettingsDialog, "exec", operator_changes_the_width)
     instance.window.settings_action.trigger()
 
     assert seen["asked"] == [SetConfigParameter(key="gui.window_width", value="1500")]
-    assert seen["showing"] == "result"
+    # All accepted: the dialog closed itself, and the status line says so.
+    assert seen["saved"] is True
+    assert "Settings saved" in instance.status_label.text()
     assert instance.settings_dialog is None
 
 
@@ -796,6 +794,255 @@ def test_without_a_configuration_the_window_uses_the_template_defaults(gui_facto
 
     assert (instance.window.width(), instance.window.height()) == (1280, 720)
     assert instance._dark is False
+
+
+# --------------------------------------------------------------------------
+# Storage, and Restore default settings
+# --------------------------------------------------------------------------
+
+
+def storage_items(tmp_path, state_file=None):
+    """A survey of the recents list, pointing at a real file so the real remover can run."""
+    from pypts.utilities.data_removal import RemovableItem
+
+    if state_file is None:
+        state_file = tmp_path / "recent.json"
+    if not state_file.exists():
+        state_file.parent.mkdir(parents=True, exist_ok=True)
+        state_file.write_text("[]", encoding="utf-8")
+    return [
+        RemovableItem(
+            key="state",
+            label="Recent recipes",
+            detail="The recent list.",
+            location=str(state_file),
+            targets=(state_file,),
+            size_bytes=state_file.stat().st_size,
+            item_count=1,
+        )
+    ]
+
+
+def test_storage_is_the_last_page_and_waits_until_it_is_opened(qapp, tmp_path):
+    """The survey walks the reports and logs folders; Settings must not wait for it."""
+    surveyed = []
+
+    def survey():
+        surveyed.append(True)
+        return storage_items(tmp_path)
+
+    dialog = a_settings_dialog(tmp_path, storage_survey=survey)
+    last = dialog.nav.count() - 1
+
+    assert dialog.nav.item(last).text() == "Storage"
+    assert surveyed == []
+    assert dialog.storage_panel is None
+
+    dialog.nav.setCurrentRow(last)
+
+    assert surveyed == [True]
+    assert dialog.storage_panel is not None
+    dialog.close()
+
+
+def test_settings_can_open_on_a_named_page(qapp, tmp_path):
+    dialog = a_settings_dialog(
+        tmp_path, storage_survey=lambda: storage_items(tmp_path), open_page="Storage"
+    )
+
+    assert dialog.nav.currentItem().text() == "Storage"
+    assert dialog.storage_panel is not None
+    dialog.close()
+
+
+def test_removing_stored_data_is_remembered_for_the_gui(qapp, tmp_path):
+    dialog = a_settings_dialog(
+        tmp_path, storage_survey=lambda: storage_items(tmp_path), open_page="Storage"
+    )
+
+    dialog.storage_panel.remove_button.click()
+
+    assert dialog.storage_changed is True
+    dialog.close()
+
+
+def test_restore_default_settings_is_offered_on_the_advanced_page(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path, offer_restore=True, confirm_restore=lambda: False)
+
+    assert dialog.restore_button is not None
+    advanced = dialog.pages.widget(dialog.nav.count() - 1)
+    assert dialog.restore_button in advanced.findChildren(type(dialog.restore_button))
+    dialog.close()
+
+
+def test_restore_is_not_offered_unless_asked_for(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path)
+
+    assert dialog.restore_button is None
+    dialog.close()
+
+
+def test_restore_asks_first_and_cancel_does_nothing(qapp, tmp_path):
+    asked = []
+
+    def say_cancel():
+        asked.append(True)
+        return False
+
+    dialog = a_settings_dialog(tmp_path, offer_restore=True, confirm_restore=say_cancel)
+
+    dialog.restore_button.click()
+
+    assert asked == [True]
+    assert dialog.restore_requested is False
+    dialog.close()
+
+
+def test_a_confirmed_restore_closes_settings_asking_for_it(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path, offer_restore=True, confirm_restore=lambda: True)
+
+    dialog.restore_button.click()
+
+    assert dialog.restore_requested is True
+    assert dialog.result() == dialog.DialogCode.Accepted.value
+
+
+def test_restore_is_refused_during_a_run_and_says_why(qapp, tmp_path):
+    dialog = a_settings_dialog(
+        tmp_path,
+        offer_restore=True,
+        confirm_restore=lambda: True,
+        blocked_reason="Not while a recipe is running - stop the run first.",
+    )
+
+    assert dialog.restore_button.isEnabled() is False
+    assert any("running" in text for text in all_text(dialog))
+    dialog.close()
+
+
+def test_edit_offers_only_edit_recipe_and_settings(gui_factory):
+    from PySide6.QtWidgets import QMenu
+
+    instance, _outbox, _inbox = gui_factory()
+    # Found by title among the menu bar's children: QAction.menu() hands back a
+    # wrapper PySide6 may already have let go of.
+    menus = instance.window.menuBar().findChildren(QMenu)
+    edit_menu = next(menu for menu in menus if menu.title() == "Edit")
+
+    assert [action.text() for action in edit_menu.actions() if action.text()] == [
+        "Edit Recipe",
+        "Settings",
+    ]
+
+
+def test_view_appearance_opens_settings_on_the_appearance_page(gui_factory, monkeypatch):
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+
+    a_config_file()
+    instance, _outbox, _inbox = gui_factory()
+    seen = {}
+
+    def look_at_the_page(dialog):
+        seen["page"] = dialog.nav.currentItem().text()
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", look_at_the_page)
+    instance.window.appearance_action.trigger()
+
+    assert seen["page"] == "Appearance"
+
+
+def test_storage_and_restore_are_refused_during_a_run(gui_factory, monkeypatch, tmp_path):
+    from pypts.hmi.gui import gui as gui_module
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+    from pypts.messages.run_events import RunStarted
+
+    a_config_file()
+    instance, _outbox, inbox = gui_factory()
+    monkeypatch.setattr(gui_module, "survey", lambda: storage_items(tmp_path))
+    inbox.send(RunStarted(recipe_name="demo", recipe_description="d"))
+    instance.poll_core()
+    seen = {}
+
+    def open_the_storage_page(dialog):
+        dialog.nav.setCurrentRow(dialog.nav.count() - 1)
+        seen["can_remove"] = dialog.storage_panel.remove_button.isEnabled()
+        seen["can_restore"] = dialog.restore_button.isEnabled()
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", open_the_storage_page)
+    instance.window.settings_action.trigger()
+
+    assert seen["can_remove"] is False
+    assert seen["can_restore"] is False
+
+
+def test_restoring_the_defaults_deletes_the_config_and_restarts_pypts(gui_factory, monkeypatch):
+    """Every process read config.ini at startup; a fresh start recreates it from the template."""
+    from pypts.hmi.gui import settings_dialog
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+    from pypts.utilities.common import RESTART_EXIT_CODE
+
+    config_file = a_config_file()
+    instance, outbox, _inbox = gui_factory()
+    monkeypatch.setattr(settings_dialog, "confirm_restore_defaults", lambda parent: True)
+
+    def press_restore(dialog):
+        dialog.restore_button.click()
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", press_restore)
+    instance.window.settings_action.trigger()
+
+    assert not config_file.exists()
+    assert instance.exit_code == RESTART_EXIT_CODE
+    assert any(isinstance(message, ShutdownRequested) for message in drain(outbox))
+
+
+def test_removing_the_recents_resets_them_without_a_restart(gui_factory, monkeypatch, tmp_path):
+    """The store held the old list in memory and would write it straight back."""
+    from pypts.hmi.gui import gui as gui_module
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+
+    config_file = a_config_file()
+    instance, outbox, _inbox = gui_factory()
+    recipe = tmp_path / "bench.yml"
+    recipe.write_text("name: bench\n", encoding="utf-8")
+    instance.recent_recipes.remember(str(recipe), "Bench")
+    assert instance.recent_recipes.entries() != []
+    state_file = file_locations.recent_recipes_path()
+    monkeypatch.setattr(
+        gui_module, "survey", lambda: storage_items(tmp_path, state_file=state_file)
+    )
+
+    def remove_the_recents(dialog):
+        dialog.nav.setCurrentRow(dialog.nav.count() - 1)
+        dialog.storage_panel.remove_button.click()
+        dialog.accept()
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", remove_the_recents)
+    instance.window.settings_action.trigger()
+
+    assert instance.recent_recipes.entries() == []
+    assert config_file.exists()
+    assert instance.exit_code == 0
+    assert not any(isinstance(message, ShutdownRequested) for message in drain(outbox))
+
+
+def test_the_version_is_shown_faintly_in_the_status_bar(gui_factory):
+    from PySide6.QtWidgets import QGraphicsOpacityEffect
+
+    from pypts._version import __version__
+
+    instance, _outbox, _inbox = gui_factory()
+    label = instance.version_label
+
+    assert label.text() == f"pypts {__version__}"
+    assert isinstance(label.graphicsEffect(), QGraphicsOpacityEffect)
+    assert label.graphicsEffect().opacity() == pytest.approx(0.5)
 
 
 # --------------------------------------------------------------------------

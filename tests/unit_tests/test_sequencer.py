@@ -22,6 +22,7 @@ threading half already proves it runs on its own thread, and one test there
 pins the real protocol: RunSequence is what delivers the recipe.
 """
 
+import logging
 import queue
 import threading
 import time
@@ -34,6 +35,8 @@ from pypts._version import __version__
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType
 from pypts.messages.core_sequencer_communication import (
+    PauseSequence,
+    ResumeSequence,
     RunSequence,
     SequencerStopped,
     StopSequence,
@@ -42,6 +45,8 @@ from pypts.messages.core_sequencer_communication import (
 from pypts.messages.run_events import (
     RunFinished,
     RunMetadata,
+    RunPaused,
+    RunResumed,
     RunStarted,
     SequenceFinished,
     StepFinished,
@@ -783,3 +788,257 @@ def test_a_recipe_that_names_no_metadata_sends_none(sequencer):
     instance.execute_sequence("Main")
 
     assert metadata_values(outbox) == []
+
+
+# --------------------------------------------------------------------------
+# Pause and resume - a hold at the boundary before a main step
+# --------------------------------------------------------------------------
+
+#: Three main steps and one teardown step: a step to press Pause during, a
+#: step to hold before, a last step for the pause to lapse on, and a cleanup
+#: that must never be held.
+PAUSE_RECIPE = f"""\
+name: Pausable
+version: {CURRENT_VERSION}
+description: Three waits and a cleanup.
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: Wait
+    step_name: First
+    wait_time: '0'
+  - steptype: Wait
+    step_name: Second
+    wait_time: '0'
+  - steptype: Wait
+    step_name: Third
+    wait_time: '0'
+teardown_steps:
+  - steptype: Wait
+    step_name: Cleanup
+    wait_time: '0'
+"""
+
+#: The operator's line when a pause finds no step left to hold before.
+LAPSED_LINE = "The run was not paused: no steps were left."
+
+
+def gate_a_step(monkeypatch, gated_name):
+    """
+    Make one Wait step stop inside its body until the test lets it go.
+
+    Pause is only meaningful while a step is running, so every test below
+    needs a step that is genuinely in flight when the command arrives.
+    Returns (entered, release): the first is set once the step is inside, the
+    second lets it finish.
+    """
+    from pypts.step.wait_step import WaitStep
+
+    real_step = WaitStep._step
+    entered = threading.Event()
+    release = threading.Event()
+
+    def gated(self, runtime, step_input):
+        if self.name == gated_name:
+            entered.set()
+            release.wait(timeout=REACHED_TIMEOUT_S)
+        return real_step(self, runtime, step_input)
+
+    monkeypatch.setattr(WaitStep, "_step", gated)
+    return entered, release
+
+
+def send_command(instance, inbox, command):
+    """Deliver one command the way the event loop would."""
+    inbox.put(command)
+    instance.poll_core()
+
+
+def press_pause_during(instance, inbox, monkeypatch, step_name):
+    """
+    Start the pause recipe on its own thread and press Pause while `step_name`
+    is running. Returns the handle that lets that step finish.
+    """
+    entered, release = gate_a_step(monkeypatch, step_name)
+    send_command(instance, inbox, RunSequence(Recipe.from_yaml_text(PAUSE_RECIPE), "Main"))
+    assert entered.wait(timeout=REACHED_TIMEOUT_S), f"step '{step_name}' was never reached"
+    send_command(instance, inbox, PauseSequence())
+    return release
+
+
+def collect_until(outbox, message_type, collected):
+    """
+    Read the outbox into `collected` until a `message_type` arrives, and return it.
+
+    A synchronisation point rather than a sleep: it returns the moment the
+    sequence thread says the thing the test is waiting for.
+    """
+    deadline = time.monotonic() + REACHED_TIMEOUT_S
+    while time.monotonic() < deadline:
+        try:
+            message = outbox.get(timeout=0.05)
+        except queue.Empty:
+            continue
+        collected.append(message)
+        if isinstance(message, message_type):
+            return message
+    pytest.fail(f"no {message_type.__name__} arrived within {REACHED_TIMEOUT_S} s")
+
+
+def finish_the_run(instance, outbox, collected):
+    """Wait for the sequence thread to end, then read everything it sent."""
+    instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
+    assert not instance.sequence_is_running(), "the run did not finish"
+    collected.extend(drain(outbox))
+
+
+def started_names(messages):
+    return [m.step_name for m in messages if isinstance(m, StepStarted)]
+
+
+def types_sent(messages, *message_types):
+    return [m for m in messages if isinstance(m, message_types)]
+
+
+def hold_the_run_before_second(instance, outbox, inbox, monkeypatch):
+    """Press Pause during 'First' and wait until the hold before 'Second' has begun."""
+    release = press_pause_during(instance, inbox, monkeypatch, "First")
+    release.set()
+    collected = []
+    paused = collect_until(outbox, RunPaused, collected)
+    return paused, collected
+
+
+def test_a_paused_run_holds_before_the_next_step_and_says_where(sequencer, monkeypatch):
+    """
+    The step that was running finishes; the next one does not start. RunPaused
+    names the step the run is held before, with the operator's own numbers.
+    """
+    instance, outbox, inbox = sequencer
+
+    paused, collected = hold_the_run_before_second(instance, outbox, inbox, monkeypatch)
+
+    assert paused == RunPaused(step_name="Second", position=2, total=3)
+    assert started_names(collected) == ["First"]
+    assert instance.sequence_is_running()
+
+    send_command(instance, inbox, ResumeSequence())
+    finish_the_run(instance, outbox, collected)
+
+
+def test_resume_releases_the_hold_and_run_resumed_comes_first(sequencer, monkeypatch):
+    """RunResumed is sent when the hold ends, before the held step starts, and
+    the run then finishes normally."""
+    instance, outbox, inbox = sequencer
+    _paused, collected = hold_the_run_before_second(instance, outbox, inbox, monkeypatch)
+
+    send_command(instance, inbox, ResumeSequence())
+    finish_the_run(instance, outbox, collected)
+
+    assert len(types_sent(collected, RunPaused)) == 1
+    assert len(types_sent(collected, RunResumed)) == 1
+    order = types_sent(collected, RunResumed, StepStarted)
+    assert isinstance(order[1], RunResumed)
+    assert order[2].step_name == "Second"
+    assert started_names(collected) == ["First", "Second", "Third", "Cleanup"]
+    assert types_sent(collected, RunFinished)[0].result is ResultType.DONE
+    assert instance.pause_requested is False
+
+
+def test_a_stop_during_a_hold_ends_it_and_skips_the_rest(sequencer, monkeypatch):
+    """
+    Stop while held: the hold ends (RunResumed), the remaining main steps are
+    recorded SKIP, teardown still runs, and the run is STOP.
+    """
+    instance, outbox, inbox = sequencer
+    _paused, collected = hold_the_run_before_second(instance, outbox, inbox, monkeypatch)
+
+    send_command(instance, inbox, StopSequence())
+    finish_the_run(instance, outbox, collected)
+
+    assert len(types_sent(collected, RunResumed)) == 1
+    finished = [m.outcome for m in types_sent(collected, StepFinished)]
+    assert [(o.step_name, o.result) for o in finished] == [
+        ("First", ResultType.DONE),
+        ("Second", ResultType.SKIP),
+        ("Third", ResultType.SKIP),
+        ("Cleanup", ResultType.DONE),
+    ]
+    assert types_sent(collected, RunFinished)[0].result is ResultType.STOP
+
+
+def test_a_pause_during_the_last_step_lapses_and_says_so_once(sequencer, monkeypatch, caplog):
+    """
+    No main step is left to hold before, and teardown is never held: no
+    RunPaused, one INFO line before teardown starts, and the flag is cleared.
+    """
+    instance, outbox, inbox = sequencer
+
+    with caplog.at_level(logging.INFO):
+        release = press_pause_during(instance, inbox, monkeypatch, "Third")
+        release.set()
+        collected = []
+        finish_the_run(instance, outbox, collected)
+
+    assert types_sent(collected, RunPaused, RunResumed) == []
+    assert started_names(collected) == ["First", "Second", "Third", "Cleanup"]
+    assert instance.pause_requested is False
+
+    messages = [record.message for record in caplog.records]
+    lapsed = [r for r in caplog.records if r.message == LAPSED_LINE]
+    assert len(lapsed) == 1
+    assert lapsed[0].levelno == logging.INFO
+    assert messages.index(LAPSED_LINE) < messages.index("Teardown step 1/1 'Cleanup' started.")
+
+
+def test_resume_before_the_hold_begins_cancels_the_pause_silently(sequencer, monkeypatch):
+    """Pause then Resume while the same step is still running: nothing is held,
+    and no event says otherwise."""
+    instance, outbox, inbox = sequencer
+    release = press_pause_during(instance, inbox, monkeypatch, "First")
+
+    send_command(instance, inbox, ResumeSequence())
+    release.set()
+    collected = []
+    finish_the_run(instance, outbox, collected)
+
+    assert types_sent(collected, RunPaused, RunResumed) == []
+    assert started_names(collected) == ["First", "Second", "Third", "Cleanup"]
+    assert types_sent(collected, RunFinished)[0].result is ResultType.DONE
+
+
+def test_teardown_is_never_held(sequencer, monkeypatch):
+    """A Pause pressed during cleanup does not hold it: the bench must get back
+    to a known state."""
+    instance, outbox, inbox = sequencer
+    release = press_pause_during(instance, inbox, monkeypatch, "Cleanup")
+
+    release.set()
+    collected = []
+    finish_the_run(instance, outbox, collected)
+
+    assert types_sent(collected, RunPaused, RunResumed) == []
+    assert types_sent(collected, RunFinished)[0].result is ResultType.DONE
+
+
+def test_a_pause_from_a_finished_run_does_not_hold_the_next_one(sequencer):
+    """`pause_requested` is cleared when a run starts, like `stop_requested`."""
+    instance, _outbox, inbox = sequencer
+    instance.pause_requested = True
+
+    release = start_a_blocking_sequence(instance, inbox)
+    assert instance.pause_requested is False
+
+    release.set()
+
+
+def test_pause_and_resume_with_nothing_running_are_harmless(sequencer):
+    """Nothing to hold: the flag stays down and nothing is sent."""
+    instance, outbox, inbox = sequencer
+
+    send_command(instance, inbox, PauseSequence())
+    assert instance.pause_requested is False
+    send_command(instance, inbox, ResumeSequence())
+
+    assert [m for m in drain(outbox) if not isinstance(m, Heartbeat)] == []

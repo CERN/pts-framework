@@ -37,7 +37,7 @@ from PySide6.QtGui import (
     QSyntaxHighlighter,
     QTextCharFormat,
 )
-from PySide6.QtCore import Qt, QRegularExpression, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QRegularExpression, QTimer, Signal
 
 import yaml
 
@@ -262,6 +262,13 @@ class VerificationPanel(QFrame):
             item.setData(Qt.ItemDataRole.UserRole, issue)
             self._list.addItem(item)
 
+    def show_invalid(self) -> None:
+        """Clear the issues: the recipe text cannot be verified as a tree right now."""
+        self._issues = []
+        self._list.clear()
+        self._hint_label.clear()
+        self._summary_label.setText("❌ Recipe format invalid")
+
     def _toggle(self) -> None:
         self._expanded = not self._expanded
         self._list.setVisible(self._expanded)
@@ -278,6 +285,55 @@ class VerificationPanel(QFrame):
             issue = current.data(Qt.ItemDataRole.UserRole)
             if issue:
                 self._hint_label.setText(issue.hint)
+
+
+# ── InvalidOverlay ────────────────────────────────────────────────────────────
+
+
+class InvalidOverlay(QWidget):
+    """Watermark laid over a grayed-out widget, saying why it cannot be used."""
+
+    def __init__(self, target: QWidget, text: str) -> None:
+        super().__init__(target)
+        self._target = target
+        self._text = text
+        self._dark = False
+        self.setVisible(False)
+        self.setGeometry(target.rect())
+        target.installEventFilter(self)
+
+    def set_dark(self, dark: bool) -> None:
+        self._dark = dark
+        self.update()
+
+    def set_shown(self, shown: bool) -> None:
+        self.setVisible(shown)
+        if shown:
+            self.setGeometry(self._target.rect())
+            self.raise_()
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: ANN001
+        if watched is self._target and event.type() == QEvent.Type.Resize:
+            self.setGeometry(self._target.rect())
+        return False
+
+    def paintEvent(self, event) -> None:  # noqa: ANN001
+        p = get_palette(self._dark)
+        painter = QPainter(self)
+        background = QColor(p.panel_background)
+        background.setAlpha(170)
+        painter.fillRect(self.rect(), background)
+        font = painter.font()
+        font.setPointSize(font.pointSize() + 4)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QColor(p.text_muted))
+        margin = 24
+        flags = Qt.AlignmentFlag.AlignCenter.value | Qt.TextFlag.TextWordWrap.value
+        painter.drawText(
+            self.rect().adjusted(margin, margin, -margin, -margin), flags, self._text
+        )
+        painter.end()
 
 
 # ── GlobalsEditorDialog ───────────────────────────────────────────────────────
@@ -441,7 +497,7 @@ class HeaderStrip(QFrame):
 
     def rebuild(self) -> None:
         h = self._model.header()
-        self._title_label.setText(h.get("name") or "Recipe header")
+        self._title_label.setText(str(h.get("name") or "Recipe header"))
         self._name_edit.blockSignals(True)
         self._version_edit.blockSignals(True)
         self._desc_edit.blockSignals(True)
@@ -457,7 +513,7 @@ class HeaderStrip(QFrame):
         prev_idx = self._seq_combo.currentIndex()
         self._seq_combo.clear()
         for seq in self._model.sequences():
-            self._seq_combo.addItem(seq.get("sequence_name", ""))
+            self._seq_combo.addItem(str(seq.get("sequence_name", "")))
         if prev_idx >= 0 and prev_idx < self._seq_combo.count():
             self._seq_combo.setCurrentIndex(prev_idx)
 

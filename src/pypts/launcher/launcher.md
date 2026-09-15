@@ -33,7 +33,7 @@ starts exactly what `python -m pypts` starts:
 | Function | Does |
 |----------|------|
 | `start_engine(mode, log_level_name, debug_monitor)` | pins spawn, bootstraps config, starts the Logger, `init_logging()`, starts CORE; returns an `Engine` (the processes and both HMI links). Stops what it started if it fails. `mode` is `gui` / `cli` / `api`. |
-| `run_gui(engine, recipe_path, start, sequence_name)` | spawns the GUI process and joins it. The last three are for `pypts.api.open_gui()`. |
+| `run_gui(engine, recipe_path, start, sequence_name)` | spawns the GUI process and joins it. The last three are for `pypts.api.open_gui()`. Returns True if the GUI exited with `RESTART_EXIT_CODE`; `main()` acts on it, the API ignores it. |
 | `stop_engine(engine)` | `stop_core()`, then `StopLogger` and the Logger join. |
 
 ## Process topology
@@ -69,6 +69,23 @@ headless mode only `--recipe` (required) and `--sequence`. The parser is `Argume
 which exits with `USAGE_EXIT_CODE` (3) on a bad command line instead of argparse's 2, because
 headless mode uses 2 for a run that ended in ERROR/STOP. `--debug-monitor` defaults to on in
 gui/cli and off in headless.
+
+## Restart
+
+The GUI can ask for pypts to be started again - today only after Settings → Advanced →
+Restore default settings deleted `config.ini`, so the file is recreated from the template
+(`hmi/gui/gui.md` §10). It asks by
+shutting down the ordinary way and exiting with `RESTART_EXIT_CODE` (75, in
+`utilities/common.py` - the launcher must not import Qt, the GUI must not import the launcher).
+
+`run_gui()` returns True for that exit code. `main()` logs "pypts is restarting.", lets
+`stop_engine()` finish - CORE, the Logger, the run log all closed - and only then calls
+`restart_pypts()`: `subprocess.call([sys.executable, *sys.orig_argv[1:]])`, the same command
+line in a fresh process, so every singleton starts empty and the normal bootstrap recreates
+the file. It **waits** for the new pypts and exits with its code, because a console opened by
+`run_pypts.bat` closes when this process ends and would take the new one with it; each
+restart therefore leaves one idle launcher underneath. The same command line means the same
+flags - a Debug Monitor opens again on the new run log; the old window stays open.
 
 ## Headless mode
 

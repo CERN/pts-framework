@@ -63,6 +63,7 @@ from pypts.messages.core_hmi_communication import (
 )
 from pypts.messages.links import ANY_TO_LOGGER, CORE_TO_HMI, HMI_TO_CORE
 from pypts.messages.to_logger_communication import LoggerControl, StopLogger
+from pypts.utilities.common import RESTART_EXIT_CODE
 from pypts.utilities.local_storage import get_log_file_path
 
 #: How long CORE gets to shut itself down cleanly before it is killed.
@@ -214,9 +215,12 @@ def main() -> None:
             sys.exit(1)
 
     engine = start_engine(args.mode, args.log_level, debug_monitor)
+    restart = False
     try:
         if args.mode == "gui":
-            run_gui(engine)
+            restart = run_gui(engine)
+            if restart:
+                log.info("pypts is restarting.")
         else:
             # The CLI runs here in the launcher's own process, so there is no
             # fourth process in CLI mode.
@@ -225,6 +229,36 @@ def main() -> None:
     finally:
         # In case of shutdown of the launcher (instead of clean exit from the UI)
         stop_engine(engine)
+
+    # Only after everything above has stopped: the new pypts must not meet this
+    # one's CORE, Logger or open log file.
+    if restart:
+        sys.exit(restart_pypts())
+
+
+def restart_pypts() -> int:
+    """
+    Start pypts again with the command line this one was started with, and wait.
+
+    Called by main() when the GUI ended asking for it - after Restore default
+    settings deleted config.ini. A fresh process rather than a second pass through
+    main(): every singleton (the configuration, logging) starts empty, exactly
+    as when an operator starts pypts by hand, so config.ini is recreated from
+    the template by the bootstrap that already does it, and a new run log and
+    Debug Monitor come with it.
+
+    Waiting rather than exiting straight away: the console a .bat file opened
+    closes when this process ends, and would take the new pypts with it. The
+    cost is one idle launcher per restart, which ends when the new pypts does
+    and hands on its exit code.
+
+    Returns:
+        The restarted pypts' exit code.
+    """
+    command = [sys.executable, *sys.orig_argv[1:]]
+    # print, not log: the Logger was stopped with the rest.
+    print("Restarting pypts...", flush=True)
+    return subprocess.call(command)
 
 
 def pin_spawn_start_method() -> None:
@@ -377,7 +411,7 @@ def run_gui(
     recipe_path: str | None = None,
     start: bool = False,
     sequence_name: str | None = None,
-) -> None:
+) -> bool:
     """
     Start the GUI process on a running engine and wait until it has ended.
 
@@ -386,6 +420,11 @@ def run_gui(
             operator had picked it. None opens an empty window.
         start: start a sequence of that recipe once CORE has loaded it.
         sequence_name: which one; None means the recipe's main sequence.
+
+    Returns:
+        True if the GUI ended asking for pypts to be started again
+        (RESTART_EXIT_CODE), after Restore default settings - main() does that;
+        pypts.api.open_gui() ignores it.
     """
     # Imported here and not at the top, for the reason main() checks the import
     # before anything is created: the launcher must load without Qt.
@@ -411,7 +450,8 @@ def run_gui(
     ui_process.start()
     log.debug("GUI process started (pid %s).", ui_process.pid)
     ui_process.join()
-    log.debug("The GUI process has ended.")
+    log.debug("The GUI process has ended (exit code %s).", ui_process.exitcode)
+    return ui_process.exitcode == RESTART_EXIT_CODE
 
 
 def stop_engine(engine: Engine) -> None:

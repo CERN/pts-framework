@@ -14,7 +14,10 @@ only the HMI is across a process boundary.
 - **Three message handlers** — one per link (HMI, Sequencer, Report). Each ends with
   `unhandled()` so no message is silently dropped.
 - **Routing** — events from the Sequencer and Logger flow to the HMI and Report. CORE
-  never interprets recipe content; it forwards.
+  never interprets recipe content; it forwards. `StopSequence`, `PauseSequence` and
+  `ResumeSequence` are relayed unchanged from the HMI to the Sequencer. `RunPaused` and
+  `RunResumed` go to the HMI only — a hold changes when steps run, not what they produce,
+  so the Report has nothing to write.
 - **Shutdown choreography** — `stop_all_modules()` sends `StopSequencer` + `StopHmi`
   first. `StopReport` is held (`stop_report_pending`) until `SequencerStopped` arrives
   (or the deadline expires), so an aborted run's CSV tail and `report.html` are always

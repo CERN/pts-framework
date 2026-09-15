@@ -3,28 +3,35 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The Remove Cache dialog: what will go, then what went.
+Settings -> Storage: remove what pypts has stored on this machine - the recent
+recipes list, reports and run logs.
 
-Two pages in a `QStackedWidget` rather than two popups. A confirm-then-report
-action that throws a second message box at the operator is the thing everybody
-dismisses without reading; this asks and answers in the same small window, and
-the window only closes when they close it.
+Two views in one panel rather than two popups. A confirm-then-report action that
+throws a second message box at the operator is the thing everybody dismisses
+without reading; this asks and answers in the same place.
 
-It is **pure presentation**. It is handed the survey and a callable that does
-the removal, so a test can drive the whole dialog without deleting anything.
-It never calls `data_removal.remove()` by name.
+The configuration is not offered here. `config.ini` belongs to Settings ->
+Advanced -> Restore default settings, which puts it back from the template and
+restarts pypts; nothing removed on this page needs a restart.
+
+It is **pure presentation**. It is handed a `survey` callable and a `remover`
+callable, so a test can drive the whole panel without deleting anything. It
+never calls `data_removal.remove()` by name - that is only the default.
+
+The survey is a callable rather than a list so the panel can take it fresh: the
+Settings dialog builds the panel only when the page is first opened (walking
+the reports and logs folders must not slow Settings down), and **Done** after a
+removal surveys again, so the sizes shown are always the sizes now.
 
 The styling lives in `styles.py` with everything else (object names
-`cacheDialog*`), so the dialog follows the light/dark theme like every other
-widget rather than carrying its own colours.
+`cacheDialog*`, kept from when this was the Remove Cache dialog).
 """
 
 from collections.abc import Callable, Sequence
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QCheckBox,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -35,17 +42,21 @@ from PySide6.QtWidgets import (
 
 from pypts.utilities.data_removal import RemovableItem, RemovalOutcome, remove, total_bytes
 
-#: Ticked when the dialog opens. The recents list and config.ini are pypts'
-#: own housekeeping; reports and run logs are test records, so removing them
-#: stays a deliberate extra click rather than the default.
-DEFAULT_SELECTION = ("state", "config")
+#: The survey categories this page offers: `data_removal.survey()` also lists
+#: the configuration, which is Restore default settings' business.
+STORAGE_KEYS = ("state", "reports", "logs")
+
+#: Ticked when the panel opens. The recents list is pypts' own housekeeping;
+#: reports and run logs are test records, so removing them stays a deliberate
+#: extra click rather than the default.
+DEFAULT_SELECTION = ("state",)
 
 #: Left margin that lines a row's detail text up with its checkbox's label.
 _CHECKBOX_INDENT = 22
 
 
 def count_of(number: int, noun: str) -> str:
-    """"1 item" / "71 items". A dialog nobody wants to read twice says it once."""
+    """"1 item" / "71 items". A page nobody wants to read twice says it once."""
     return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
 
 
@@ -63,59 +74,76 @@ def format_size(byte_count: int) -> str:
     return f"{size:.1f} GB"
 
 
-class RemoveCacheDialog(QDialog):
-    """Ask, remove, report - in one window."""
+class StoragePanel(QWidget):
+    """Choose, remove, report - in one panel."""
+
+    #: A removal ran, whatever it achieved. The GUI rebuilds what it held in memory.
+    removed = Signal()
 
     def __init__(
         self,
-        items: Sequence[RemovableItem],
+        survey: Callable[[], Sequence[RemovableItem]],
         remover: Callable[[Sequence[RemovableItem]], RemovalOutcome] = remove,
-        parent: QWidget | None = None,
+        blocked_reason: str | None = None,
     ) -> None:
-        super().__init__(parent)
-        self._items = list(items)
+        """
+        Args:
+            survey: what there is to remove, and how big. Called when the panel
+                is built and again after Done. Categories outside STORAGE_KEYS
+                are left out.
+            remover: deletes the chosen items and says what happened.
+            blocked_reason: why nothing may be removed right now - a recipe is
+                running, and emptying the reports folder under the Report
+                thread would take the run down. None: removal is allowed.
+        """
+        super().__init__()
+        self._survey = survey
         self._remover = remover
+        self.blocked_reason = blocked_reason
+
+        self._items: list[RemovableItem] = []
         self.outcome: RemovalOutcome | None = None
-        #: What was ticked when the operator confirmed - the result page reads
-        #: this rather than the full survey, so it only reports on what went.
+        #: What was ticked when the operator pressed Remove - the result view
+        #: reads this rather than the full survey, so it only reports on what went.
         self.removed_items: list[RemovableItem] = []
-        #: One checkbox per category, by key. The dialog's whole state.
+        #: One checkbox per category, by key. The panel's whole state.
         self.checkboxes: dict[str, QCheckBox] = {}
 
-        self.setWindowTitle("Remove Cache")
-        self.setObjectName("cacheDialog")
-        self.setModal(True)
-        self.setMinimumWidth(460)
-
-        #: "confirm" until the operator says yes, "result" afterwards.
+        #: "confirm" until something is removed, "result" afterwards.
         self.showing = "confirm"
-        self.confirm_page = self._build_confirm_page()
         self.result_page: QWidget | None = None
+        self.back_button: QPushButton | None = None
 
-        # Not a QStackedWidget: its sizeHint is the tallest page whatever the
-        # size policies say, so the short result page would be shown inside the
-        # confirm page's height with a lake of empty space under it. Swapping
-        # the widget lets the window shrink to what it is actually showing.
+        # Views are swapped in the layout, not stacked: a QStackedWidget's
+        # sizeHint is its tallest page, which would leave the short result view
+        # floating in the confirm view's height.
         self.body = QVBoxLayout(self)
         self.body.setContentsMargins(0, 0, 0, 0)
+        self.confirm_page = self._build_confirm_page()
         self.body.addWidget(self.confirm_page)
 
-    # --- Page 1: what will go --------------------------------------------------
+    # --- View 1: what will go --------------------------------------------------
 
     def _build_confirm_page(self) -> QWidget:
+        self._items = [item for item in self._survey() if item.key in STORAGE_KEYS]
+        self.checkboxes = {}
+
         page = QWidget()
         column = QVBoxLayout(page)
-        column.setContentsMargins(22, 20, 22, 18)
+        column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
-
-        title = QLabel("Remove Cache")
-        title.setObjectName("cacheDialogTitle")
-        column.addWidget(title)
 
         subtitle = QLabel("Choose what to delete from this machine.")
         subtitle.setObjectName("cacheDialogSubtitle")
         subtitle.setWordWrap(True)
         column.addWidget(subtitle)
+
+        if self.blocked_reason is not None:
+            column.addSpacing(8)
+            blocked = QLabel(self.blocked_reason)
+            blocked.setObjectName("cacheDialogFailure")
+            blocked.setWordWrap(True)
+            column.addWidget(blocked)
         column.addSpacing(14)
 
         for index, item in enumerate(self._items):
@@ -127,10 +155,18 @@ class RemoveCacheDialog(QDialog):
         column.addWidget(self._total_row())
 
         column.addSpacing(16)
-        column.addLayout(self._confirm_buttons())
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.addStretch()
+        # Text and enabled state are settled by _selection_changed().
+        self.remove_button = QPushButton("Remove selected")
+        self.remove_button.setObjectName("cacheDialogRemoveBtn")
+        self.remove_button.setAutoDefault(False)
+        self.remove_button.clicked.connect(self._do_remove)
+        buttons.addWidget(self.remove_button)
+        column.addLayout(buttons)
 
-        # Only now: every box exists, and so do the two widgets the handler
-        # touches. One call settles the total and the button.
+        # Only now: every box exists, and so do the widgets the handler touches.
         for box in self.checkboxes.values():
             box.toggled.connect(self._selection_changed)
         self._selection_changed()
@@ -152,7 +188,7 @@ class RemoveCacheDialog(QDialog):
         box = QCheckBox(item.label)
         box.setObjectName("cacheDialogCheck")
         # An empty category cannot be chosen: there would be nothing to do.
-        box.setEnabled(item.item_count > 0)
+        box.setEnabled(item.item_count > 0 and self.blocked_reason is None)
         box.setChecked(item.item_count > 0 and item.key in DEFAULT_SELECTION)
         self.checkboxes[item.key] = box
         heading.addWidget(box)
@@ -216,56 +252,44 @@ class RemoveCacheDialog(QDialog):
         ]
 
     def _selection_changed(self) -> None:
-        """Keep the total and the confirm button honest as boxes are ticked."""
+        """Keep the total and the Remove button honest as boxes are ticked."""
         selected = self.selected_items()
         self.total_label.setText(format_size(total_bytes(selected)))
-        self.remove_button.setEnabled(bool(selected))
+        self.remove_button.setEnabled(bool(selected) and self.blocked_reason is None)
         if any(item.item_count for item in self._items):
             self.remove_button.setText("Remove selected")
         else:
             self.remove_button.setText("Nothing to remove")
 
-    def _confirm_buttons(self) -> QHBoxLayout:
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
-        layout.addStretch()
-
-        self.cancel_button = QPushButton("Cancel")
-        self.cancel_button.setDefault(True)  # the safe button is the default one
-        self.cancel_button.clicked.connect(self.reject)
-        layout.addWidget(self.cancel_button)
-
-        # Text and enabled state are settled by _selection_changed().
-        self.remove_button = QPushButton("Remove selected")
-        self.remove_button.setObjectName("cacheDialogRemoveBtn")
-        self.remove_button.clicked.connect(self._do_remove)
-        layout.addWidget(self.remove_button)
-        return layout
-
-    # --- Page 2: what went -----------------------------------------------------
+    # --- View 2: what went -----------------------------------------------------
 
     def _do_remove(self) -> None:
+        if self.blocked_reason is not None:
+            return
         self.removed_items = self.selected_items()
         self.outcome = self._remover(self.removed_items)
 
-        # Hidden and taken out of the layout, not deleted: the caller may still
-        # hold a reference to a button on it.
+        # Hidden and taken out of the layout, not deleted: a caller may still
+        # hold a reference to a control on it.
         self.body.removeWidget(self.confirm_page)
         self.confirm_page.hide()
 
         self.result_page = self._build_result_page(self.outcome)
         self.body.addWidget(self.result_page)
         self.showing = "result"
-        self.adjustSize()
+        self.removed.emit()
 
     def _build_result_page(self, outcome: RemovalOutcome) -> QWidget:
         page = QWidget()
         column = QVBoxLayout(page)
-        column.setContentsMargins(22, 20, 22, 18)
+        column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
 
-        title = QLabel("Removed" if not outcome.failures else "Partly removed")
+        if outcome.failures:
+            heading = "Partly removed"
+        else:
+            heading = "Removed"
+        title = QLabel(heading)
         title.setObjectName("cacheDialogTitle")
         column.addWidget(title)
 
@@ -296,27 +320,26 @@ class RemoveCacheDialog(QDialog):
             failed.setWordWrap(True)
             column.addWidget(failed)
 
-        if any(item.key == "config" for item in self.removed_items):
-            column.addSpacing(10)
-            restart = QLabel(
-                "config.ini is recreated from the template the next time pypts starts."
-            )
-            restart.setObjectName("cacheDialogDetail")
-            restart.setWordWrap(True)
-            column.addWidget(restart)
-
-        column.addStretch()
         column.addSpacing(16)
         buttons = QHBoxLayout()
         buttons.setContentsMargins(0, 0, 0, 0)
         buttons.addStretch()
-        self.close_button = QPushButton("Close")
-        self.close_button.setObjectName("primaryBtn")
-        self.close_button.setDefault(True)
-        self.close_button.clicked.connect(self.accept)
-        buttons.addWidget(self.close_button)
+        self.back_button = QPushButton("Done")
+        self.back_button.setAutoDefault(False)
+        self.back_button.clicked.connect(self._back_to_choosing)
+        buttons.addWidget(self.back_button)
         column.addLayout(buttons)
         return page
+
+    def _back_to_choosing(self) -> None:
+        """A fresh survey, so the sizes shown are the sizes after the removal."""
+        if self.result_page is not None:
+            self.body.removeWidget(self.result_page)
+            self.result_page.hide()
+            self.result_page = None
+        self.confirm_page = self._build_confirm_page()
+        self.body.addWidget(self.confirm_page)
+        self.showing = "confirm"
 
     # --- Bits ------------------------------------------------------------------
 
@@ -327,15 +350,3 @@ class RemoveCacheDialog(QDialog):
         line.setFrameShape(QFrame.Shape.HLine)
         line.setFixedHeight(1)
         return line
-
-
-def show_remove_cache_dialog(
-    items: Sequence[RemovableItem],
-    remover: Callable[[Sequence[RemovableItem]], RemovalOutcome] = remove,
-    parent: QWidget | None = None,
-) -> RemovalOutcome | None:
-    """Open it modally; the outcome, or None if the operator cancelled."""
-    dialog = RemoveCacheDialog(items, remover, parent)
-    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-    dialog.exec()
-    return dialog.outcome

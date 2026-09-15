@@ -11,15 +11,18 @@ a bare list of key = value. That matters here more than it usually would: this
 file is meant to be opened and edited by hand, by someone setting up a bench,
 and the comments are how they know what `theme` or `timeout_s` mean.
 
-So writing goes through this module instead. The shipped template is the layout:
-its comments, blank lines and ordering are copied out verbatim, and only the
-value to the right of each `=` is replaced with the current one. Anything the
-user added that the template does not know about - a second `[hardware.*]`
-section, most likely - is appended afterwards, so nothing is ever lost.
+So writing goes through this module instead, in one of two ways:
 
-The parsing here is deliberately line based. It has to handle exactly the file
-it wrote itself, and a line-based rewrite keeps the output diffable: change one
-value and `git diff` shows one line.
+- `render()` builds a whole file from the shipped template: its comments, blank
+  lines and ordering, with the given values filled in. Used only when there is
+  no file yet, and by `restore_default()`, which starts over on purpose.
+- `replace_value()` changes one value in the user's existing file. The file is
+  the user's from the moment it exists, so a change edits that file - one line,
+  in its own section - and never rebuilds it from the template. Every other
+  line, a key the user added by hand included, stays exactly as it was.
+
+Both are line based, which keeps the output diffable: change one value and
+`git diff` shows one line.
 """
 
 import re
@@ -33,21 +36,11 @@ SECTION_RE = re.compile(r"^\s*\[(?P<name>[^]]+)\]\s*$")
 #: it here would make a value containing a colon ambiguous.
 KEY_RE = re.compile(r"^(?P<key>[^:=\s][^:=]*?)\s*=(?P<value>.*)$")
 
-#: Heading put above sections that were in the live config but not in the
-#: template - user-added hardware, almost always.
-EXTRA_SECTIONS_HEADER = [
-    "",
-    "# ---------------------------------------------------------------------------",
-    "# Sections below were added to this file rather than coming from the template,",
-    "# so pypts has no comments to restore for them. They are preserved as written.",
-    "# ---------------------------------------------------------------------------",
-]
-
 
 def render(template_text: str, values: dict[str, dict[str, str]]) -> str:
     """
-    Produce the text of a config file: the template's comments and layout, the
-    caller's values.
+    Produce the text of a new config file: the template's comments and layout,
+    the caller's values.
 
     Args:
         template_text: contents of config_template.ini.
@@ -58,89 +51,77 @@ def render(template_text: str, values: dict[str, dict[str, str]]) -> str:
         The full file contents, newline terminated.
 
     A key that the template declares but `values` omits keeps the template's own
-    value, so a caller may pass only what it wants to change.
+    value.
     """
     lines: list[str] = []
-    seen: dict[str, set[str]] = {}
     current_section = ""
-    skipping_continuation = False
 
     for line in template_text.splitlines():
         section_match = SECTION_RE.match(line)
         if section_match:
             current_section = section_match.group("name")
-            seen.setdefault(current_section, set())
-            skipping_continuation = False
             lines.append(line)
             continue
 
         key_match = KEY_RE.match(line)
         if key_match and not line.lstrip().startswith(("#", ";")):
             key = key_match.group("key").strip().lower()
-            seen.setdefault(current_section, set()).add(key)
             value = values.get(current_section, {}).get(key)
             if value is None:
                 value = key_match.group("value").strip()
             lines.append(f"{key} = {value}".rstrip())
-            # A value continued on following indented lines has just been
-            # replaced by a single-line one; drop what is left of the old value
-            # rather than emitting it as if it were still part of the file.
-            skipping_continuation = True
             continue
 
-        # Indented text directly after a key is the remainder of a multi-line
-        # value. Comments and blank lines end that run and are kept.
-        is_continuation = line[:1].isspace() and line.strip() != ""
-        if skipping_continuation and is_continuation:
-            continue
-        skipping_continuation = False
         lines.append(line)
-
-    lines.extend(_render_extras(values, seen))
 
     return "\n".join(lines).rstrip("\n") + "\n"
 
 
-def _render_extras(values: dict[str, dict[str, str]], seen: dict[str, set[str]]) -> list[str]:
+def replace_value(text: str, section: str, key: str, value: str) -> str:
     """
-    Sections and keys present in `values` but absent from the template.
+    The same file with one value changed, and nothing else.
 
-    Keys of a known section are appended to the end of the file rather than to
-    their section, which is not pretty but is honest: it makes an unexpected key
-    visible instead of hiding it among the documented ones.
+    Args:
+        text: the current contents of the config file.
+        section: the section the key is in, spelled as in its header.
+        key: the key whose value changes. Matched regardless of case, the way
+            configparser reads it.
+        value: the new value, as it should appear in the file.
+
+    Returns:
+        `text` with that one line rewritten as `<key as written> = <value>`.
+
+    Raises:
+        KeyError: the section has no such key. Only an existing key is ever
+            changed - this never adds a line.
     """
-    # One pass, two buckets: a section the template never mentioned goes in
-    # whole, a known section contributes only the keys the template lacks.
-    extra_sections: dict[str, dict[str, str]] = {}
-    extra_keys: dict[str, dict[str, str]] = {}
+    lines = text.splitlines(keepends=True)
+    current_section = ""
 
-    for section, keys in values.items():
-        if section not in seen:
-            extra_sections[section] = keys
+    for index, line in enumerate(lines):
+        content = line.rstrip("\r\n")
+        section_match = SECTION_RE.match(content)
+        if section_match:
+            current_section = section_match.group("name")
+            continue
+        if current_section != section:
+            continue
+        if content.lstrip().startswith(("#", ";")):
             continue
 
-        unknown = {key: value for key, value in keys.items() if key not in seen[section]}
-        if unknown:
-            extra_keys[section] = unknown
+        key_match = KEY_RE.match(content)
+        if key_match and key_match.group("key").strip().lower() == key.lower():
+            line_ending = line[len(content):]
+            written_key = key_match.group("key").rstrip()
+            lines[index] = f"{written_key} = {value}".rstrip() + line_ending
+            return "".join(lines)
 
-    if not extra_sections and not extra_keys:
-        return []
-
-    lines = list(EXTRA_SECTIONS_HEADER)
-    for section, keys in extra_sections.items():
-        lines.append("")
-        lines.append(f"[{section}]")
-        lines.extend(f"{key} = {value}" for key, value in keys.items())
-    for section, keys in extra_keys.items():
-        lines.append("")
-        lines.append(f"[{section}]")
-        lines.extend(f"{key} = {value}" for key, value in keys.items())
-    return lines
+    raise KeyError(f"[{section}] has no key {key!r} in the file")
 
 
-def write(path: Path, template_text: str, values: dict[str, dict[str, str]]) -> None:
+def write(path: Path, text: str) -> None:
     """
-    Render and write the file, creating its directory if needed.
+    Write the file, creating its directory if needed.
 
     Written to a temporary file in the same directory and moved into place, so
     an interrupted write cannot leave a half-written config behind - the file
@@ -148,5 +129,5 @@ def write(path: Path, template_text: str, values: dict[str, dict[str, str]]) -> 
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(render(template_text, values), encoding="utf-8")
+    temporary.write_text(text, encoding="utf-8")
     temporary.replace(path)

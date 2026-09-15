@@ -112,7 +112,9 @@ class TopBarContent(QToolBar):
         self._dark = False
         self._running = False
         self._metadata: dict[str, str] = {}
-        self._paused = False
+        #: Rendering only: whether the Pause button currently reads Resume. The
+        #: GUI owns the pause state and sets this through set_paused().
+        self._shows_resume = False
 
         self.open_button = QToolButton()
         self.open_button.setAutoRaise(True)
@@ -232,20 +234,16 @@ class TopBarContent(QToolBar):
             if self.start_button.isEnabled()
             else self._why_no_start(),
         )
-        if self._paused:
-            describe(
-                self.pause_button,
-                "Resume",
-                "Continue the run from the step it was held at.",
-            )
+        if not self.pause_button.isEnabled():
+            describe(self.pause_button, "Pause", "Nothing is running.")
+        elif self._shows_resume:
+            describe(self.pause_button, "Resume", "Continue the run.")
         else:
             describe(
                 self.pause_button,
                 "Pause",
-                "Hold the run before the next step. The window stays live, so "
-                "results can be browsed while it waits."
-                if self.pause_button.isEnabled()
-                else "Nothing is running.",
+                "Hold the run once the current step has finished. "
+                "Teardown steps always run to the end.",
             )
         describe(
             self.stop_button,
@@ -305,8 +303,12 @@ class TopBarContent(QToolBar):
         return child.toolTip()
 
     def set_paused(self, paused: bool) -> None:
-        """Paused: the Pause button resumes, so it has to stop saying "Pause"."""
-        self._paused = paused
+        """
+        Paused, or pausing: the Pause button resumes, so it has to stop saying
+        "Pause". Only the GUI calls this - it owns the pause state, and resets it
+        on RunStarted and RunFinished as well.
+        """
+        self._shows_resume = paused
         self._refresh_controls()
 
     def choose_recipe_file(self) -> None:
@@ -354,7 +356,6 @@ class TopBarContent(QToolBar):
     def show_run_started(self) -> None:
         """A run is on: nothing may change under it, only pausing and stopping are left."""
         self._running = True
-        self._paused = False
         self.open_button.setEnabled(False)
         self.sequence_combo.setEnabled(False)
         self.start_button.setEnabled(False)
@@ -365,7 +366,6 @@ class TopBarContent(QToolBar):
     def show_run_finished(self) -> None:
         """The run answered - however it went, the operator has the controls back."""
         self._running = False
-        self._paused = False
         self.open_button.setEnabled(True)
         self.sequence_combo.setEnabled(True)
         self.start_button.setEnabled(True)

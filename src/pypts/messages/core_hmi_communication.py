@@ -14,16 +14,21 @@ from dataclasses import dataclass
 
 from pypts.messages.common_messages import Heartbeat, ModuleError
 from pypts.messages.run_events import (
+    # PauseSequence, ResumeSequence and StopSequence are defined in run_events
+    # because they ride two links: a frontend sends them here and CORE relays
+    # the very same object to the Sequencer.
+    PauseSequence,
     RecipeLoaded,
+    ResumeSequence,
     RunFinished,
     RunMetadata,
+    RunPaused,
+    RunResumed,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
     StepFinished,
     StepStarted,
-    # Defined in run_events because it rides two links: a frontend sends it
-    # here and CORE relays the very same object to the Sequencer.
     StopSequence,
     UserPathRequest,
     UserPathResponse,
@@ -147,6 +152,8 @@ HmiToCore = (
     LoadRecipe
     | StartSequence
     | StopSequence
+    | PauseSequence
+    | ResumeSequence
     | SetConfigParameter
     | ShutdownRequested
     | HmiStopped
@@ -166,6 +173,8 @@ CoreToHmi = (
     | RecipeLoaded
     | RunStarted
     | RunFinished
+    | RunPaused
+    | RunResumed
     | RunMetadata
     | SequenceStarted
     | SequenceFinished

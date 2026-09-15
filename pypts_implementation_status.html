@@ -291,7 +291,7 @@ summary { cursor: pointer; font-weight: 600; }
 <p>it into a <code>DeviceConfig</code>` handed to drivers by logical name. Nothing exists for this — the placeholder <code>[hardware.example_device]</code>` section, its schema entry and the <code>SECTION_FAMILIES</code>` mechanism were all removed, so the design is unconstrained. If it adds anything mandatory it needs a <code>CONFIG_VERSION</code>` major change; there is no migration mechanism any more, so existing files are updated by hand or recreated from the template.</p>
 </li>
 <li>[ ] <strong>TODO:</strong> <code>report.type</code>` / <code>report.theme</code>` are editable but not yet
-<p><em>used</em> — Phase 4. (The <code>[gui]</code> keys are used since September 2026: the window opens at <code>window_width</code> × <code>window_height</code>, and <code>theme</code> is <code>light</code> (shipped), <code>dark</code> or <code>system</code> (follows the OS) — <code>CONFIG_VERSION</code> 3, which replaced the old <code>default</code> value. <code>CONFIG_VERSION</code> 4 added <code>window_mode</code> (<code>windowed</code>/<code>maximized</code>/<code>fullscreen</code>); a window mode or size picked in Settings is tried on screen at once and reverts unless kept within a 15-second countdown, and View → Full Screen (F11) toggles full screen for the session. The Recipe Creator reads the same <code>theme</code> through <code>gui_theme.configured_theme()</code> — <code>gui.md</code> §10c.)</p>
+<p><em>used</em> — Phase 4. (The <code>[gui]</code> keys are used since September 2026: the window opens at <code>window_width</code> × <code>window_height</code>, and <code>theme</code> is <code>light</code> (shipped), <code>dark</code> or <code>system</code> (follows the OS) — <code>CONFIG_VERSION</code> 3, which replaced the old <code>default</code> value. <code>CONFIG_VERSION</code> 4 added <code>window_mode</code> (<code>windowed</code>/<code>fullscreen</code> — <code>maximized</code> was offered briefly and dropped, full screen covers it); a window mode or size picked in Settings is tried on screen at once and reverts unless kept within a 15-second countdown, and View → Full Screen (F11) toggles full screen for the session. The Recipe Creator reads the same <code>theme</code> through <code>gui_theme.configured_theme()</code> — <code>gui.md</code> §10c.)</p>
 </li>
 <li>[ ] <strong>TODO:</strong> Move the plaintext SSH password out of
 <p><code>resources/recipes/comprehensive_recipe.yml:20</code>` and into the configuration now that there is somewhere to put it. Rotate the credential if the host is live.</p>
@@ -301,6 +301,10 @@ summary { cursor: pointer; font-weight: 600; }
 </li>
 <li>[x] <strong>DONE (September 2026):</strong> <code>CONFIG_VERSION</code> reset from the integer 4 to the
 <p><code>MAJOR.MINOR.PATCH</code> string <code>1.0.0</code>. Only the major number must match for a file to be trusted; text that is not three numbers (a leftover <code>config_version = 4</code>) discards the file. The version changes only when a change adds something new that is mandatory — not on every schema edit (rule recorded in <code>CLAUDE.md</code> and <code>config_handler.md</code>).</p>
+</li>
+<li>[x] <strong>DONE (September 2026):</strong> saving a setting edits <code>config.ini</code> in place.
+<p>It used to rebuild the whole file from the template. A key the user had added by hand to a known section was then appended at the end under a <em>second</em> <code>[gui]</code> header, which configparser refuses, so the next start discarded the whole file. The simplicity review (<code>code_review_simplicity.html</code>) found it.</p>
+<p>Now the template is used only to create a missing file and for <code>restore_default()</code>. <code>set_parameter()</code> changes one line through <code>template_writer.replace_value()</code>: the key inside its own section, matched regardless of case. It never adds a line, and every other line, hand-added keys included, stays as it was. The code that appended unknown keys (<code>_render_extras()</code>) and the unused multi-line-value handling are deleted. Context: <code>config_handler.md</code> → <em>Writing</em>.</p>
 </li>
 <li>[x] <strong>DONE (plans/004):</strong> an existing-but-unopenable config.ini is discarded
 <p>with "exists but cannot be opened: &lt;OS error&gt;" instead of being misdiagnosed as "declares structure version 0" — <code>_read_raw</code>` opens the file explicitly rather than letting configparser swallow the OSError.</p>
@@ -884,6 +888,7 @@ except TimeoutError as exc:
 <p><strong>Styling.</strong> Object names <code>cacheDialog*</code>` in <code>styles.py</code>`, both palettes, tokens only — no colour literal was added to that file. The confirm button uses the existing <code>danger</code>` / <code>danger_background</code>` / <code>danger_border</code>` trio the stop button already uses, so it reads as a refusal in both themes rather than as a wall of red. The checkbox indicator is styled explicitly (<code>brand_accent</code>` filled when ticked, <code>button_border</code>` outline when not): under this stylesheet the native one is all but invisible, and an unticked box the operator cannot see is a category they will not know they can choose.</p>
 <p><strong>Verified:</strong> 502 passed / 43 skipped, <code>ruff</code>` and <code>mypy</code>` clean. 34 new tests — 17 in <code>test_data_removal.py</code>` (survey, sizes, the live-log exclusion, removal, per-target failure, and the three guards, including one that asserts a refused directory is left <em>completely</em> alone) and 17 in <code>test_hmi_gui.py</code>` (menu gating both edges, dialog contents, the default ticks, the total following the selection, an empty category's disabled box, unticking everything, only-the-ticked-are-removed, cancel, confirm, failures, kept note, nothing-to-remove, the recents rebuild). Both dialog pages were rendered to PNG in light and dark and looked at.</p>
 <p><strong>Every test passes its paths in explicitly.</strong> <code>survey()</code>` resolves the real installation when it is not told, so a test that let it would delete the developer's own reports the first time it ran. The two GUI tests that call <code>_remove_cache()</code>` stub <code>survey</code>` as well as the dialog.</p>
+<p><strong>Moved into Settings (September 2026).</strong> Edit → Remove Cache is gone. Its removal of the recent recipes list, reports and run logs is the <strong>Storage</strong> page, the last page of Settings (<code>hmi/gui/storage_panel.py</code>, surveyed only when the page is first opened); <code>config.ini</code> is no longer offered there. Resetting the configuration is <strong>Restore default settings</strong> on the Advanced page: after a Cancel/Restore question it deletes <code>config.ini</code> and restarts pypts so the file is recreated from the template — the GUI exits with <code>RESTART_EXIT_CODE</code> (75, <code>utilities/common.py</code>) and <code>startup.main()</code> runs the same command line again after <code>stop_engine()</code>. Both are refused during a run. View → Appearance opens Settings on its Appearance page. Context: <code>gui.md</code> §10, <code>launcher.md</code> → <em>Restart</em>.</p>
 <p><strong>New TODOs this opened:</strong></p>
 <ul>
 <li>[ ] <strong>TODO:</strong> "Remove Cache" is the operator's name for an action that also deletes test
@@ -1358,6 +1363,49 @@ hal        dead      fatal                hal-&gt;core, core-&gt;hal
 <p><strong>What travels.</strong> <code>StepOutcome</code> gained <code>inputs</code>, <code>outputs</code> and <code>expectations</code>, each a tuple of <code>(name, text)</code> pairs, filled by <code>StepResult.to_outcome()</code> on every verdict. Values go through the existing <code>render_value()</code> (80 characters, strings quoted); each declared output's check comes from the new <code>describe_expectation()</code> (<code>range 11 .. 13</code>, <code>equals 5</code>, <code>must pass</code>, <code>stored as global …</code>, <code>not judged</code>). Text rather than values because a step may return anything; pairs rather than a dict because a message may carry only plain values, tuples and dataclasses (<code>test_messages.py</code>). No new message, link or handler. Recipes, test modules, the Report and <code>build_fail_reason()</code> are unchanged.</p>
 <p><strong>Where it shows.</strong> GUI results panel: a tree, each step opening into Inputs and Outputs rows (<code>voltage = 12.1</code>, its check in the Info column), expanded when a run finishes. Step table: the Result tooltip lists the values on every verdict. CLI and headless mode: an indented <code>inputs:</code> / <code>outputs:</code> line under each step. API: <code>StepVerdict.inputs/outputs/expectations</code> as dicts. Shared formatting: <code>utilities/common.py</code> <code>describe_value()</code> / <code>describe_step_values()</code>.</p>
 <p><strong>Verified:</strong> <code>pytest tests</code> — 952 passed, 44 skipped; opt-in <code>test_api_processes.py</code> 3 passed; a real headless run of <code>pythonmodulestep_demo.yml</code> printed every step's values and checks and exited 1 (its deliberate FAIL); <code>ruff check src tests</code> clean; <code>mypy</code> clean. Not verified by eye: the results tree in a running GUI window (covered by model tests only).</p>
+<hr>
+<h3 id="1-47-pause-holds-the-run-done">1.47 Pause really holds the run — <strong>done</strong></h3>
+<p>The toolbar's Pause button used to hold nothing. It only made the prompt rows ignore the mouse, a leftover of master's "browse mode" (<code>old_code/hmi/gui.py</code>), whose tabs were never ported. Master never held a run either. The simplicity review (<code>code_review_simplicity.html</code>) found it.</p>
+<p><strong>Decisions (2026-09-15, user).</strong></p>
+<ul>
+<li>The hold starts <em>after</em> the step that is running has finished.</li>
+<li>Teardown is never held.</li>
+<li>No report changes.</li>
+<li>GUI only: no CLI command, no API method.</li>
+<li>The engine confirms with events.</li>
+<li>A pause with no main step left lapses, with one INFO line.</li>
+</ul>
+<p><strong>Messages.</strong> Commands <code>PauseSequence</code> / <code>ResumeSequence</code> ride HmiToCore and CoreToSequencer, relayed unchanged like <code>StopSequence</code>. Events <code>RunPaused(step_name, position, total)</code> / <code>RunResumed</code> go Sequencer → CORE → HMI, never to the Report. All four are defined in <code>run_events.py</code>.</p>
+<p><strong>Engine.</strong></p>
+<ul>
+<li><code>Runtime</code> gained two no-op seams, <code>hold_if_paused(step_name, position, total)</code> and <code>drop_pending_pause()</code>.</li>
+<li><code>Step.run_steps</code> calls the first before each main step, ahead of the stop check, so a Stop that ends a hold is seen at once. <code>run_sequence</code> calls the second between the main steps and teardown.</li>
+<li>The Sequencer keeps a <code>pause_requested</code> flag. While it is set it holds on the sequence thread (<code>HOLD_POLL_S</code>), and the event loop keeps turning, so heartbeats, Resume and Stop still arrive.</li>
+<li>Stop during a hold sends <code>RunResumed</code>, skips the remaining steps, runs teardown and finishes with <code>RunFinished(STOP)</code>.</li>
+</ul>
+<p><strong>GUI.</strong></p>
+<ul>
+<li>Pause sends the command. The button turns into Resume and the label reads "Pausing after the current step...".</li>
+<li><code>RunPaused</code> changes the label to "Paused before step 4/10 'measure'".</li>
+<li>Resume, or <code>RunResumed</code>, puts back "Running &lt;recipe&gt;...".</li>
+<li><code>GUI._pause_requested</code> is the only copy of the state; the top bar only renders it.</li>
+<li>The browse-mode leftovers (<code>set_auto_switch</code>, <code>set_interaction_blocked</code>) are deleted, so a prompt shown while pausing can be answered.</li>
+</ul>
+<p>Context: <code>messages.md</code>, <code>sequencer.md</code>, <code>step.md</code> §3.7, <code>core.md</code>, <code>hmi.md</code>, <code>gui.md</code> §13, <code>logging_rules.md</code> §5. Operator docs: <code>usage_manual.html</code> (Pause / Resume).</p>
+<p><strong>Verified:</strong></p>
+<ul>
+<li><code>ruff check src tests</code> and <code>mypy</code> are clean.</li>
+<li><code>pytest tests</code>: 998 passed, 44 skipped, 3 failed.</li>
+<li>The 3 failures are Qt-timer waits: <code>test_the_delay_really_opens_the_panel</code> and two countdown tests in <code>test_settings.py</code>. They are caused by the uncommitted restart-after-Remove-Cache work in this tree, not by Pause. <code>GUI._leave_event_loop()</code> calls <code>QApplication.exit()</code>, which, unlike <code>quit()</code>, has no "is <code>exec()</code> running" check, so under pytest every later timer wait in the process returns without firing (a probe script shows it).</li>
+<li>The last commit passes both files. The pause and the restart tests each pass alongside the timer test.</li>
+</ul>
+<p>New tests: 6 in <code>test_step.py</code>, 8 in <code>test_sequencer.py</code>, 2 in <code>test_core.py</code>, 3 in <code>test_hmi_client.py</code>, and 7 new plus 1 rewritten in <code>test_hmi_gui.py</code>.</p>
+<p><strong>New TODOs this opened:</strong></p>
+<ul>
+<li>[ ] <strong>TODO:</strong> Pause pressed <em>during teardown</em> shows "Pausing after the current step..." until the run finishes, because nothing will ever be held. The Sequencer ignores it and the label resets on <code>RunFinished</code>, so this is cosmetic. The button could be disabled once teardown starts, but no message says when that happens.</li>
+<li>[ ] <strong>TODO:</strong> a <code>Wait</code> step still ignores Stop mid-sleep (<code>sequencer.md</code>), so a hold requested during a long wait starts only once the wait is over.</li>
+<li>[ ] <strong>TODO:</strong> not checked by eye in a running GUI window; covered by unit tests only.</li>
+</ul>
 <hr>
 <h2 id="todo-step-types-which-of-the-ten-are-ported-and-which-are-dropped">TODO — Step types: which of the ten are ported, and which are dropped</h2>
 <blockquote><p><strong>Status: decided 2026-09-01; <code>PythonModule</code>` finished, <code>UserInteraction</code>` ported (§1.28) and <code>UserWrite</code>` ported (§1.31) since.</strong> The catalogue, the per-type notes and the open questions live in <strong><code>src/pypts/step/step.md</code>`</strong> — that file is the authority on the step-type port, and this block only records the decisions so the phase plan above reads correctly.</p></blockquote>

@@ -433,6 +433,11 @@ QLabel#statusLabel {{
     padding-left: 10px;
     padding-bottom: 2px;
 }}
+QLabel#versionLabel {{
+    font-size: 10px;
+    color: {LIGHT.text_muted};
+    padding-right: 10px;
+}}
 QLabel#recipeLabel {{
     font-size: 12px;
     font-weight: 500;
@@ -900,6 +905,11 @@ QDialog#settingsDialog QPushButton#primaryBtn:disabled {{
 QLabel#statusLabel {{
     padding-left: 10px;
     padding-bottom: 2px;
+}}
+QLabel#versionLabel {{
+    font-size: 10px;
+    color: {DARK.text_muted};
+    padding-right: 10px;
 }}
 QLabel#recipeLabel {{
     font-size: 12px;

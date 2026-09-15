@@ -36,8 +36,9 @@ Who owns what in this package:
                            parameter sets expanded, at load time, into N
                            ordinary steps. Never reaches the registry
     runtime.py             the execution context: the run's globals and the
-                           three seams the Sequencer fills in (emit,
-                           should_stop, ask)
+                           five seams the Sequencer fills in (emit,
+                           should_stop, ask, hold_if_paused,
+                           drop_pending_pause)
 
 Each concrete step type gets a module of its own, named after the class
 (snake_case, keeping the class's Step suffix). A newly ported type follows

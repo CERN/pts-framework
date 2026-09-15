@@ -75,7 +75,6 @@ class InteractionPanel(QWidget):
         self._selected_button_index = -1
         self._current_image_path: str | None = None
         self._mode = "idle"
-        self._interaction_blocked = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -201,7 +200,6 @@ class InteractionPanel(QWidget):
         self._refresh_visual()
 
     def set_idle(self):
-        self._interaction_blocked = False
         self.clear_buttons()
         self.message_label.clear()
         self.message_label.setVisible(False)
@@ -346,12 +344,6 @@ class InteractionPanel(QWidget):
     def set_image(self, image_path: str | None):
         self._set_image_from_path(image_path)
 
-    def set_interaction_blocked(self, blocked: bool):
-        self._interaction_blocked = blocked
-        self._button_row.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
-        self._text_row.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
-        self._path_page.setAttribute(Qt.WA_TransparentForMouseEvents, blocked)
-
     def add_button(self, label: str, value: str, primary: bool = False, on_click=None):
         """One prompt button. `on_click` replaces the default answer-with-value
         wiring - it is what makes Cancel decline instead of answering."""
@@ -422,7 +414,7 @@ class InteractionPanel(QWidget):
         super().keyPressEvent(event)
 
     def _handle_navigation_key(self, key: int) -> bool:
-        if not self._buttons or self._interaction_blocked:
+        if not self._buttons:
             return False
 
         if key in (Qt.Key.Key_Right, Qt.Key.Key_Down):

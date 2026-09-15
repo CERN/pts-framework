@@ -43,7 +43,6 @@ class CenterContent(QWidget):
     def __init__(self) -> None:
         super().__init__()
         self._pending: tuple[object, Callable[[str | None], None]] | None = None
-        self._auto_switch = True
 
         self.interaction = InteractionPanel()
         self.interaction.response_given.connect(self._on_interaction_response)
@@ -78,11 +77,6 @@ class CenterContent(QWidget):
     def set_dark(self, dark: bool) -> None:
         self.interaction.set_dark(dark)
         self.log_panel.set_dark(dark)
-
-    def set_auto_switch(self, auto: bool) -> None:
-        """Pause mode: False blocks interaction while operator browses freely."""
-        self._auto_switch = auto
-        self.interaction.set_interaction_blocked(not auto)
 
     # --- The questions ---------------------------------------------------------
 

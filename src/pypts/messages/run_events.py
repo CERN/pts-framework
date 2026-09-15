@@ -125,6 +125,36 @@ class RunFinished:
     outcomes: tuple[StepOutcome, ...] = ()
 
 
+# Sender: Sequencer, at the hold point. Receiver: hmi_client.py show_run_paused()
+@dataclass
+class RunPaused:
+    """
+    The run is now held, before the step it names.
+
+    Sent when the hold actually begins - after the step that was running when
+    the operator pressed Pause has finished - not when PauseSequence arrives.
+    That gap can be long, which is why a frontend waits for this before it
+    says "paused". `position` and `total` count the main steps, 1-based.
+    Never sent for teardown: teardown always runs straight through.
+    """
+
+    step_name: str
+    position: int
+    total: int
+
+
+# Sender: Sequencer, when a hold ends. Receiver: hmi_client.py show_run_resumed()
+@dataclass
+class RunResumed:
+    """
+    A hold has ended and the run carries on.
+
+    Sent only after a RunPaused, and whether the hold was ended by
+    ResumeSequence or by StopSequence - either way the run is moving again,
+    and a stopped run then finishes with RunFinished(STOP) as usual.
+    """
+
+
 # Sender: Sequencer, from the emit seam it wraps. Receivers: report.py
 # record_metadata() and hmi_client.py show_run_metadata()
 @dataclass
@@ -217,6 +247,29 @@ class StopSequence:
     checks the flag between steps - so the abort lands at the next step
     boundary, never in the middle of one. The confirmation a frontend gets is
     the run's own RunFinished with result STOP.
+    """
+
+
+@dataclass
+class PauseSequence:
+    """
+    Hold the running sequence before its next main step.
+
+    Rides two links like StopSequence, relayed unchanged by CORE. The step
+    that is running finishes first; the confirmation is RunPaused, sent when
+    the hold begins. If no main step is left, the request lapses: teardown
+    always runs straight through, and no RunPaused is sent. GUI only - the
+    CLI and the API do not send it.
+    """
+
+
+@dataclass
+class ResumeSequence:
+    """
+    End a hold, or cancel a PauseSequence whose hold has not begun yet.
+
+    Rides two links like StopSequence. The confirmation is RunResumed - sent
+    only if a hold had actually begun.
     """
 
 

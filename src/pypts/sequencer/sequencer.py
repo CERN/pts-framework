@@ -26,6 +26,8 @@ from pypts.messages.blocking_messages import PendingRequests
 from pypts.messages.common_messages import ErrorSeverity, ResultType
 from pypts.messages.core_sequencer_communication import (
     CoreToSequencer,
+    PauseSequence,
+    ResumeSequence,
     RunSequence,
     SequencerStopped,
     SequencerToCore,
@@ -35,6 +37,8 @@ from pypts.messages.core_sequencer_communication import (
 from pypts.messages.run_events import (
     RunFinished,
     RunMetadata,
+    RunPaused,
+    RunResumed,
     RunStarted,
     UserPathResponse,
     UserPromptResponse,
@@ -52,6 +56,11 @@ from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
 
 #: How long stop() waits for a sequence that is still running.
 SEQUENCE_JOIN_TIMEOUT_S = 2.0
+
+#: How often a held run looks at the pause and stop flags. Short enough that
+#: Resume and Stop feel immediate; the hold is on the sequence thread, so this
+#: costs the event loop nothing.
+HOLD_POLL_S = 0.05
 
 
 def sequencer_main(
@@ -73,6 +82,12 @@ class Sequencer:
         pending: questions this module has asked the operator and is waiting on.
         stop_requested: set by StopSequence, read by the sequence thread between
               steps. One writer, one reader, one bool - no lock needed.
+        pause_requested: set by PauseSequence and cleared by ResumeSequence,
+              both on the event loop; read by the sequence thread before each
+              main step, which also clears it once the main steps are over.
+              A plain bool for the same reason as stop_requested: every write
+              is a whole assignment, and a read that is one poll late only
+              moves the hold by one step boundary or one HOLD_POLL_S.
         sequence_thread: the thread a sequence is running on, or None if none
               has been started yet.
         recipe: the validated Recipe that came with the last RunSequence, or
@@ -90,6 +105,7 @@ class Sequencer:
         self.inbox = from_core
         self.running = True
         self.stop_requested = False
+        self.pause_requested = False
         self.pending = PendingRequests()
         self.heartbeat_manager = HeartbeatManager(self.core, SEQUENCER)
         self.sequence_thread: threading.Thread | None = None
@@ -125,6 +141,10 @@ class Sequencer:
                 self.run_sequence(sequence_name)
             case StopSequence():
                 self.stop_sequence()
+            case PauseSequence():
+                self.pause_sequence()
+            case ResumeSequence():
+                self.resume_sequence()
             case StopSequencer():
                 self.stop()
             case UserPromptResponse() | UserTextResponse() | UserPathResponse():
@@ -148,6 +168,7 @@ class Sequencer:
 
         # Cleared here rather than at the end of a run
         self.stop_requested = False
+        self.pause_requested = False
 
         log.debug("Starting the sequence thread for '%s'.", sequence_name)
         self.sequence_thread = threading.Thread(
@@ -203,6 +224,8 @@ class Sequencer:
             should_stop=lambda: self.stop_requested,
             ask=self.ask_operator,
             base_dir=self.recipe.base_dir,
+            hold_if_paused=self.hold_if_paused,
+            drop_pending_pause=self.drop_pending_pause,
         )
         # The Report cannot read globals - it is a thread fed by events - so
         # the emit seam is wrapped to notice when one the recipe named in
@@ -329,6 +352,88 @@ class Sequencer:
         log.info("The operator asked to stop the run.")
         log.debug("The stop flag is set; the run ends at the next step boundary.")
         self.stop_requested = True
+
+    @catch_and_report_errors()
+    def pause_sequence(self) -> None:
+        """
+        Ask the running sequence to hold before its next main step.
+
+        Sets the flag and returns, like stop_sequence(). The step that is
+        running finishes first; the hold itself, and the RunPaused that
+        confirms it, happen on the sequence thread in hold_if_paused().
+        """
+        if not self.sequence_is_running():
+            log.debug("Pause requested with no sequence running; nothing to do.")
+            return
+        log.info("The operator asked to pause the run.")
+        log.debug("The pause flag is set; the run holds before its next main step.")
+        self.pause_requested = True
+
+    @catch_and_report_errors()
+    def resume_sequence(self) -> None:
+        """
+        End a hold, or cancel a pause whose hold has not begun yet.
+
+        Only clears the flag. If the run is held, hold_if_paused() sees it on
+        its next poll and sends RunResumed; if it is not held yet, nothing is
+        sent at all.
+        """
+        if not self.sequence_is_running():
+            log.debug("Resume requested with no sequence running; nothing to do.")
+            return
+        log.info("The operator asked to resume the run.")
+        log.debug("The pause flag is cleared (it was %s).", self.pause_requested)
+        self.pause_requested = False
+
+    def hold_if_paused(self, step_name: str, position: int, total: int) -> None:
+        """
+        Handed to every Runtime as its `hold_if_paused` seam.
+
+        Returns at once unless a pause is pending. Otherwise it holds the run
+        here, before main step `position` of `total`, until ResumeSequence or
+        StopSequence ends the hold. The hold is a poll on the sequence thread:
+        the event loop keeps turning meanwhile, which is what keeps the
+        heartbeats going and lets the Resume or the Stop be read at all.
+
+        MUST be called from the sequence thread, for the same reason as
+        ask_operator().
+        """
+        if not self.pause_is_in_force():
+            return
+
+        self.core.send(RunPaused(step_name=step_name, position=position, total=total))
+        log.info("The run is paused before step %d/%d '%s'.", position, total, step_name)
+        while self.pause_is_in_force():
+            time.sleep(HOLD_POLL_S)
+
+        self.core.send(RunResumed())
+        if self.stop_requested:
+            # The operator's stop has already been logged at INFO.
+            log.debug("The hold before step '%s' ended because the run was stopped.", step_name)
+        else:
+            log.info("The run was resumed.")
+
+    def drop_pending_pause(self) -> None:
+        """
+        Handed to every Runtime as its `drop_pending_pause` seam.
+
+        Called once the main steps are over, before teardown. A pause that
+        was asked for but never got a step to hold before lapses here, and
+        the operator is told so - teardown is never held.
+        """
+        if self.pause_is_in_force():
+            log.info("The run was not paused: no steps were left.")
+        self.pause_requested = False
+
+    def pause_is_in_force(self) -> bool:
+        """
+        Whether a pause is pending and no stop has overridden it.
+
+        A method rather than the expression written out: the other thread
+        changes both flags, and reading them through a call keeps mypy from
+        narrowing an attribute across the hold's poll loop.
+        """
+        return self.pause_requested and not self.stop_requested
 
     def ask_operator(self, request: Any) -> Any:
         """

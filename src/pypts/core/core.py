@@ -73,9 +73,13 @@ from pypts.messages.links import (
     SEQUENCER_TO_CORE,
 )
 from pypts.messages.run_events import (
+    PauseSequence,
     RecipeLoaded,
+    ResumeSequence,
     RunFinished,
     RunMetadata,
+    RunPaused,
+    RunResumed,
     RunStarted,
     SequenceFinished,
     SequenceStarted,
@@ -448,6 +452,11 @@ class Core:
                 # The operator's abort. Relayed unchanged; the Sequencer answers
                 # with the run's own RunFinished(STOP).
                 self.to_sequencer.send(message)
+            case PauseSequence() | ResumeSequence():
+                # The operator's hold and release. Relayed unchanged, like
+                # StopSequence; the Sequencer answers with RunPaused and
+                # RunResumed when the hold actually begins and ends.
+                self.to_sequencer.send(message)
             case UserPromptResponse() | UserTextResponse() | UserPathResponse():
                 # The operator's answer belongs to whoever asked the question.
                 self.to_sequencer.send(message)
@@ -495,6 +504,12 @@ class Core:
                 self.to_report.send(message)
                 self.to_hmi.send(message)
             case SequenceFinished() | StepStarted() | StepFinished():
+                log.debug("CORE relaying %s to the HMI.", type(message).__name__)
+                self.to_hmi.send(message)
+            case RunPaused() | RunResumed():
+                # HMI only. A hold changes when steps run, not what they
+                # produce, so there is nothing for the Report to write: the
+                # step rows and their timestamps already tell the story.
                 log.debug("CORE relaying %s to the HMI.", type(message).__name__)
                 self.to_hmi.send(message)
             case StepExecuted():

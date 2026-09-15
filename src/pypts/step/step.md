@@ -584,6 +584,25 @@ returned, the checks are the `outputs:` block. An object returned by a step show
 `str()`. `build_fail_reason()` and `error_info` are unchanged - the FAIL log line and the CSV
 still need the sentence. The Report keeps the real values, from `StepExecuted`.
 
+### 3.7 Pause - two seams, no messages (2026-09-15)
+
+The operator's Pause holds the run **before the next main step**; the step that is running
+is never interrupted. The step layer knows only two `Runtime` seams, both no-ops on a bare
+`Runtime()`:
+
+- **`hold_if_paused(step_name, position, total)`** - called by `run_steps()` before each
+  main step that is about to run for real (`not run_to_end and not skip_reason`), with the
+  same 1-based numbers as the `Step 4/10 'name'` log line. It blocks while the run is held.
+  It is called **before** the stop check, so a Stop that ends a hold is seen at once and the
+  remaining steps are recorded SKIP as usual.
+- **`drop_pending_pause()`** - called once by `run_sequence()` after the main steps and
+  before teardown (first thing in the `finally`). A pause that found no step to hold before
+  - pressed during the last step, or after a `continue_on_error: false` halt - lapses here.
+
+**Teardown is never held**: `run_to_end=True` skips the hold with the two early exits. What
+a hold *is* - the flag, the `RunPaused`/`RunResumed` events, the log lines - belongs to the
+Sequencer (`sequencer/sequencer.md`).
+
 ---
 
 ## 4. Adding a step type — the three edits

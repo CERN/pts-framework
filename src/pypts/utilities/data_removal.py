@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-What "Remove Cache" removes, and the guards that stop it removing more.
+What Settings > Storage removes, and the guards that stop it removing more.
 
 This module deletes the operator's files, so it is written the way a delete
 routine has to be: it finds out first (`survey()`), hands the caller a list to
@@ -178,7 +178,7 @@ def _directory_item(
     location = str(directory)
     refusal = _refuse_reason(directory)
     if refusal:
-        log.debug("Remove Cache refuses %s: %s", directory, refusal)
+        log.debug("Storage removal refuses %s: %s", directory, refusal)
         return RemovableItem(key, label, detail, location, (), 0, 0, refusal)
 
     if not directory.is_dir():
@@ -238,7 +238,7 @@ def remove(items: Iterable[RemovableItem]) -> RemovalOutcome:
             removed_count += 1
 
     log.info(
-        "Remove Cache: %d item(s) deleted, %d byte(s) freed, %d could not be deleted.",
+        "Stored data removed: %d item(s) deleted, %d byte(s) freed, %d could not be deleted.",
         removed_count,
         removed_bytes,
         len(failures),
@@ -287,12 +287,12 @@ def _configured_dir(key: str) -> Path:
 
 def _configured_dir_or_none(key: str) -> Path | None:
     """
-    Remove Cache has to open even when the configuration is the broken thing.
+    The Storage page has to open even when the configuration is the broken thing.
     """
     try:
         return _configured_dir(key)
     except Exception as exc:  # noqa: BLE001 - any config failure means "unknown"
-        log.debug("Remove Cache cannot resolve the location of %s: %s", key, exc)
+        log.debug("Storage removal cannot resolve the location of %s: %s", key, exc)
         return None
 
 
