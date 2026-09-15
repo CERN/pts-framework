@@ -141,6 +141,36 @@ def describe_failed_check(output_name: str, output_config: dict[str, Any], value
             return measured
 
 
+def describe_expectation(output_config: Any) -> str:
+    """
+    What one declared output is checked against, as the operator reads it.
+
+    `range 11 .. 13`, `equals 5`, `must pass`, `stored as global serial_number`,
+    `not judged`. Built for every step, whatever its verdict, so it must never
+    raise: a configuration it does not recognise is simply not described.
+    """
+    if not isinstance(output_config, dict):
+        return ""
+    match output_config.get("type"):
+        case "passfail":
+            return "must pass"
+        case "equals":
+            return f"equals {render_value(output_config.get('value'))}"
+        case "range":
+            return f"range {output_config.get('min')} .. {output_config.get('max')}"
+        case "global":
+            return f"stored as global {output_config.get('global_name')}"
+        case "pass":
+            return "not judged"
+        case _:
+            return ""
+
+
+def render_values(values: dict[str, Any]) -> dict[str, str]:
+    """Every value as text (render_value()), so it can cross the HMI boundary."""
+    return {name: render_value(value) for name, value in values.items()}
+
+
 def exception_headline(exc: BaseException) -> str:
     """
     The exception and its message on one line: `ValueError: no answer`.
@@ -289,13 +319,28 @@ class StepResult:
         self.error_info = reason
 
     def to_outcome(self) -> StepOutcome:
-        """The pickle-safe projection a frontend receives."""
+        """
+        The pickle-safe projection a frontend receives.
+
+        The inputs and outputs travel as text, not as the values themselves: a
+        step may return anything, a device handle included, and only text is
+        sure to cross the HMI boundary. The Report keeps the real values - it
+        gets them from StepExecuted.
+        """
         result = self.result if self.result is not None else ResultType.ERROR
+        expectations: dict[str, str] = {}
+        for output_name, output_config in self.step.outputs.items():
+            expectation = describe_expectation(output_config)
+            if expectation:
+                expectations[output_name] = expectation
         return StepOutcome(
             step_id=self.step.id,
             step_name=self.step.name,
             result=result,
             error_info=self.error_info,
+            inputs=tuple(render_values(self.inputs).items()),
+            outputs=tuple(render_values(self.outputs).items()),
+            expectations=tuple(expectations.items()),
         )
 
     @staticmethod

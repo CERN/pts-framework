@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QLabel,
@@ -112,19 +112,21 @@ def open_external_url(url: str) -> None:
         log.warning("This machine has no application set up to open %s.", url)
 
 
-def window_settings() -> tuple[str, int, int]:
+def window_settings() -> tuple[str, str, int, int]:
     """
-    The [gui] settings the window opens with: theme, width, height.
+    The [gui] settings the window opens with: theme, window mode, width, height.
 
     Read once, at startup, like every other setting - a change made in Edit ->
-    Settings applies from the next start. A GUI with no configuration to
-    ask (one built by a test, or a frontend started by hand) opens with the
-    template's defaults, which is what a fresh installation would have written.
+    Settings applies from the next start (the theme and the window are previewed
+    straight away). A GUI with no configuration to ask (one built by a test, or
+    a frontend started by hand) opens with the template's defaults, which is
+    what a fresh installation would have written.
     """
     try:
         config = ConfigHandler()
         return (
             config.get_parameter("gui.theme"),
+            config.get_parameter("gui.window_mode"),
             config.get_parameter("gui.window_width"),
             config.get_parameter("gui.window_height"),
         )
@@ -133,6 +135,7 @@ def window_settings() -> tuple[str, int, int]:
         fields = SCHEMA["gui"]
         return (
             fields["theme"].default,
+            fields["window_mode"].default,
             int(fields["window_width"].default),
             int(fields["window_height"].default),
         )
@@ -292,6 +295,11 @@ class PtsMainWindow(QMainWindow):
 
         view_menu = menu_bar.addMenu("View")
         self.dark_mode_action = view_menu.addAction("Toggle Dark Mode")
+        # For the session only; Edit > Settings saves a window mode. The menu
+        # bar stays on screen in full screen, so this is always reachable.
+        self.full_screen_action = view_menu.addAction("Full Screen")
+        self.full_screen_action.setCheckable(True)
+        self.full_screen_action.setShortcut(QKeySequence("F11"))
 
         about_menu = menu_bar.addMenu("About")
         about_menu.setToolTipsVisible(True)
@@ -399,7 +407,10 @@ class GUI(HmiClient):
         self.center = CenterContent()
         self.center.results = _results  # inject reference for update_results
 
-        theme, width, height = window_settings()
+        theme, window_mode, width, height = window_settings()
+        #: The window as it is meant to be shown: (mode, width, height). What
+        #: show() uses, and what View > Full Screen returns to.
+        self._window_state = (window_mode, width, height)
         self.window = PtsMainWindow(
             self.request_shutdown,
             self.top_bar,
@@ -430,6 +441,7 @@ class GUI(HmiClient):
         self._theme_disconnect = _nothing_to_disconnect
         self._use_theme(theme)
         self.window.dark_mode_action.triggered.connect(self._toggle_dark_mode)
+        self.window.full_screen_action.triggered.connect(self._toggle_full_screen)
         self.window.settings_action.triggered.connect(self._open_settings)
         self.window.remove_cache_action.triggered.connect(self._remove_cache)
         self._set_remove_cache_enabled(True)
@@ -453,7 +465,8 @@ class GUI(HmiClient):
         self.timer.start(POLL_INTERVAL_MS)
 
     def show(self) -> None:
-        self.window.show()
+        """Show the window in the mode [gui] window_mode names."""
+        self._use_window(*self._window_state)
 
     # --- Log panel --------------------------------------------------------------
 
@@ -562,6 +575,41 @@ class GUI(HmiClient):
         # These two colour themselves per item, which no stylesheet can reach.
         self.step_table.set_dark(dark)
         self.window.paint_idle_logo(dark)
+
+    # --- Window mode and size ----------------------------------------------------
+
+    def _use_window(self, mode: str, width: int, height: int) -> None:
+        """
+        Show the window as one of the `[gui] window_mode` values.
+
+        "fullscreen" and "maximized" fill the screen; anything else is a normal
+        window of `width` x `height` - the minimum size still wins over a smaller
+        one. Called by show() at startup, and by the Settings dialog, which tries
+        a window on screen and puts the previous one back unless it is kept.
+        """
+        self._window_state = (mode, width, height)
+        if mode == "fullscreen":
+            self.window.showFullScreen()
+        elif mode == "maximized":
+            self.window.showMaximized()
+        else:
+            self.window.showNormal()
+            self.window.resize(width, height)
+        self.window.full_screen_action.setChecked(mode == "fullscreen")
+
+    def _toggle_full_screen(self, checked: bool) -> None:
+        """
+        View > Full Screen (F11), for the session only. Leaving full screen goes
+        back to the window mode in force - or a normal window, if that mode is
+        full screen itself.
+        """
+        if checked:
+            self.window.showFullScreen()
+            return
+        mode, width, height = self._window_state
+        if mode == "fullscreen":
+            mode = "windowed"
+        self._use_window(mode, width, height)
 
     # --- Pause / browse mode ----------------------------------------------------
 
@@ -672,8 +720,9 @@ class GUI(HmiClient):
 
         The values shown are the ones this process read at startup, with the
         changes CORE confirmed this session laid over them. The dialog previews
-        a theme through `_use_theme()`. Decorated to report and continue: a
-        dialog that cannot be built must not take the window down.
+        a theme through `_use_theme()` and a window through `_use_window()`.
+        Decorated to report and continue: a dialog that cannot be built must not
+        take the window down.
         """
         try:
             config = ConfigHandler()
@@ -704,6 +753,7 @@ class GUI(HmiClient):
             problem=problem,
             parent=self.window,
             preview_theme=self._use_theme,
+            preview_window=self._use_window,
         )
         self.settings_dialog = dialog
         log.debug("The settings dialog is open.")

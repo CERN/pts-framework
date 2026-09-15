@@ -241,6 +241,30 @@ def test_run_returns_the_verdict_the_steps_and_the_report_folder(engine):
     assert result.passed is False
 
 
+def test_each_step_verdict_carries_the_steps_values(engine):
+    client, core = engine
+    with_a_recipe_loaded(client, core)
+    outcome = StepOutcome(
+        step_id=uuid4(),
+        step_name="Measure voltage",
+        result=ResultType.PASS,
+        inputs=(("channel", "1"),),
+        outputs=(("voltage", "12.1"),),
+        expectations=(("voltage", "range 11 .. 13"),),
+    )
+    core.on(
+        StartSequence,
+        lambda message: [started(), StepFinished(outcome=outcome), *finished(ResultType.PASS)],
+    )
+
+    result = client.run()
+
+    (step,) = result.steps
+    assert step.inputs == {"channel": "1"}
+    assert step.outputs == {"voltage": "12.1"}
+    assert step.expectations == {"voltage": "range 11 .. 13"}
+
+
 def test_run_starts_the_sequence_it_is_given(engine):
     client, core = engine
     with_a_recipe_loaded(client, core)

@@ -44,7 +44,8 @@ from dataclasses import dataclass
 #: Version 3 changed the values `[gui] theme` accepts: "default" became
 #: "system", and "light" became the shipped value. A version-2 file saying
 #: `theme = default` would fail validation anyway; the bump says why plainly.
-CONFIG_VERSION = 3
+#: Version 4 added `[gui] window_mode`.
+CONFIG_VERSION = 4
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
 #: that a file written by hand behaves the way an INI file is expected to.
@@ -109,6 +110,9 @@ SCHEMA: dict[str, dict[str, Field]] = {
         # Light unless the operator chooses otherwise; "system" follows the
         # operating system. Read by pypts' window and by the Recipe Creator.
         "theme": Field("str", "light", choices=("light", "dark", "system")),
+        # How the window opens. The width and height are the windowed size,
+        # also used when leaving full screen or maximized.
+        "window_mode": Field("str", "windowed", choices=("windowed", "maximized", "fullscreen")),
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
     },

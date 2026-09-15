@@ -1567,6 +1567,73 @@ def test_switching_theme_repaints_the_verdicts(gui):
     assert cell.toolTip() == "it broke"
 
 
+def a_measured_outcome(step_id=None, result=ResultType.PASS):
+    from uuid import uuid4
+
+    return StepOutcome(
+        step_id=step_id or uuid4(),
+        step_name="Measure voltage",
+        result=result,
+        inputs=(("channel", "1"),),
+        outputs=(("voltage", "12.1"),),
+        expectations=(("voltage", "range 11 .. 13"),),
+    )
+
+
+def test_a_passing_rows_tooltip_lists_its_values(gui):
+    """M-3: a PASS row says what was measured, not only a FAIL row."""
+    instance, _outbox, inbox = gui
+    event = load_demo_recipe(instance, inbox)
+    step = event.sequences[0].steps[0]
+
+    inbox.send(StepFinished(outcome=a_measured_outcome(step.step_id)))
+    instance.poll_core()
+
+    tooltip = instance.step_table.table.item(0, 2).toolTip()
+    assert tooltip == "inputs: channel = 1\noutputs: voltage = 12.1 (range 11 .. 13)"
+
+
+def test_the_results_tree_opens_each_step_into_its_values(qapp):
+    from PySide6.QtCore import QModelIndex, Qt
+
+    from pypts.hmi.gui.results_panel import StepResultModel
+
+    model = StepResultModel((a_measured_outcome(),))
+
+    step_row = model.index(0, 0)
+    assert model.data(step_row) == "Measure voltage"
+    assert model.data(model.index(0, 1)) == "PASS"
+    assert model.rowCount(step_row) == 2
+
+    inputs_group = model.index(0, 0, step_row)
+    outputs_group = model.index(1, 0, step_row)
+    assert model.data(inputs_group) == "Inputs"
+    assert model.data(outputs_group) == "Outputs"
+    assert model.data(model.index(0, 0, inputs_group)) == "channel = 1"
+
+    voltage = model.index(0, 0, outputs_group)
+    assert model.data(voltage) == "voltage = 12.1"
+    assert model.data(model.index(0, 2, outputs_group)) == "range 11 .. 13"
+    # A value row has no verdict chip, and walks back up to its step.
+    assert model.data(model.index(0, 1, outputs_group)) == ""
+    assert model.data(model.index(0, 1, outputs_group), Qt.BackgroundRole) is None
+    assert model.parent(voltage) == outputs_group
+    assert model.parent(outputs_group) == step_row
+    assert model.parent(step_row) == QModelIndex()
+
+
+def test_a_step_with_no_values_has_no_groups(qapp):
+    from uuid import uuid4
+
+    from pypts.hmi.gui.results_panel import StepResultModel
+
+    model = StepResultModel(
+        (StepOutcome(step_id=uuid4(), step_name="Wait", result=ResultType.DONE),)
+    )
+
+    assert model.rowCount(model.index(0, 0)) == 0
+
+
 def test_pending_rows_are_repainted_too(gui):
     """A theme switch before a run must not leave the Pending column behind."""
     from PySide6.QtGui import QColor

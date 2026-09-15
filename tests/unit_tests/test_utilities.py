@@ -31,7 +31,12 @@ import pytest
 
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
-from pypts.utilities.common import convert_string_to_int, ignore_keyboard_interrupt
+from pypts.utilities.common import (
+    convert_string_to_int,
+    describe_step_values,
+    describe_value,
+    ignore_keyboard_interrupt,
+)
 from pypts.utilities.error_handling import (
     catch_and_report_errors,
     report_and_reraise,
@@ -398,3 +403,17 @@ def test_ignore_keyboard_interrupt_is_harmless_off_the_main_thread():
     worker.join()
 
     assert failures == []
+
+
+def test_describe_value_adds_the_check_only_when_there_is_one():
+    assert describe_value("voltage", "12.1") == "voltage = 12.1"
+    assert describe_value("voltage", "12.1", "range 11 .. 13") == "voltage = 12.1 (range 11 .. 13)"
+
+
+def test_describe_step_values_gives_one_line_per_group_and_none_when_empty():
+    assert describe_step_values({}, {}, {}) == []
+    assert describe_step_values(
+        {"a": "2", "b": "3"}, {"sum": "5"}, {"sum": "equals 5"}
+    ) == ["inputs: a = 2, b = 3", "outputs: sum = 5 (equals 5)"]
+    # An output with no declared check is shown bare.
+    assert describe_step_values({}, {"label": "'ch1'"}, {}) == ["outputs: label = 'ch1'"]

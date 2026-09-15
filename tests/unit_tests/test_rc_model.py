@@ -141,8 +141,8 @@ def test_default_step_has_required_fields(qapp):
 def test_rc_widgets_importable(qapp):
     from pypts.helper_applications.recipe_creator.rc_widgets import (
         PaletteYamlHighlighter,
-        YamlEditor,
         VerificationPanel,
+        YamlEditor,
     )
 
     assert PaletteYamlHighlighter is not None

@@ -123,6 +123,7 @@ def settings_in_force(tmp_path):
         "report.type": "html",
         "report.theme": "default",
         "gui.theme": "light",
+        "gui.window_mode": "windowed",
         "gui.window_width": "1280",
         "gui.window_height": "720",
         "watchdog.enabled": "true",
@@ -409,6 +410,174 @@ def test_cancel_sends_nothing(qapp, tmp_path):
 
 
 # --------------------------------------------------------------------------
+# Trying a window on screen
+# --------------------------------------------------------------------------
+
+
+def a_window_dialog(tmp_path, keep=True):
+    """
+    A dialog whose window previews are recorded, and whose "keep it?" question
+    is answered with `keep` - the countdown dialog itself is tested on its own.
+    """
+    previews = []
+    asked = []
+
+    def confirm(description):
+        asked.append(description)
+        return keep
+
+    dialog = a_settings_dialog(
+        tmp_path,
+        preview_window=lambda mode, width, height: previews.append((mode, width, height)),
+        confirm_window=confirm,
+    )
+    return dialog, previews, asked
+
+
+def test_the_window_card_offers_three_modes(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path)
+    buttons = dialog.editors["gui.window_mode"].buttons
+
+    assert list(buttons) == ["windowed", "maximized", "fullscreen"]
+    assert [button.text() for button in buttons.values()] == [
+        "Windowed",
+        "Maximized",
+        "Full screen",
+    ]
+    assert dialog.cards["gui.window_mode"] is dialog.cards["gui.window_width"]
+    dialog.close()
+
+
+def test_a_kept_preset_resizes_the_window(qapp, tmp_path):
+    dialog, previews, asked = a_window_dialog(tmp_path, keep=True)
+
+    dialog.presets["Full HD"].click()
+
+    assert previews == [("windowed", 1920, 1080)]
+    assert len(asked) == 1
+    assert "1920" in asked[0]
+    assert dialog.window_on_screen == ("windowed", 1920, 1080)
+    assert dialog.save_button.text() == "Save 2 changes"
+    dialog.close()
+
+
+def test_a_size_not_kept_goes_back_on_screen_and_in_the_fields(qapp, tmp_path):
+    """No answer within the countdown counts as not kept."""
+    dialog, previews, _asked = a_window_dialog(tmp_path, keep=False)
+
+    dialog.presets["Full HD"].click()
+
+    assert previews == [("windowed", 1920, 1080), ("windowed", 1280, 720)]
+    assert dialog.text_of("gui.window_width") == "1280"
+    assert dialog.text_of("gui.window_height") == "720"
+    assert dialog.changes() == {}
+    dialog.close()
+
+
+def test_a_typed_size_waits_for_apply(qapp, tmp_path):
+    """The window must not jump on every keystroke."""
+    dialog, previews, _asked = a_window_dialog(tmp_path)
+
+    dialog.set_value("gui.window_width", "1500")
+
+    assert previews == []
+    assert dialog.apply_window_button.isEnabled() is True
+
+    dialog.apply_window_button.click()
+
+    assert previews == [("windowed", 1500, 720)]
+    assert dialog.apply_window_button.isEnabled() is False
+    dialog.close()
+
+
+def test_picking_full_screen_tries_it_at_once(qapp, tmp_path):
+    dialog, previews, asked = a_window_dialog(tmp_path)
+
+    dialog.editors["gui.window_mode"].buttons["fullscreen"].click()
+
+    assert previews == [("fullscreen", 1280, 720)]
+    assert asked == ["Full screen"]
+    dialog.close()
+
+
+def test_cancel_puts_a_kept_window_back(qapp, tmp_path):
+    """Keeping only confirms the preview; without Save nothing changes for good."""
+    dialog, previews, _asked = a_window_dialog(tmp_path)
+    dialog.presets["HD+"].click()
+
+    dialog.cancel_button.click()
+
+    assert previews == [("windowed", 1600, 900), ("windowed", 1280, 720)]
+
+
+def test_a_saved_window_stays_when_the_dialog_closes(qapp, tmp_path):
+    dialog, previews, _asked = a_window_dialog(tmp_path)
+    dialog.presets["HD+"].click()
+    dialog.save_button.click()
+    dialog.apply_result(ConfigParameterResult(key="gui.window_width", value="1600", accepted=True))
+    dialog.apply_result(ConfigParameterResult(key="gui.window_height", value="900", accepted=True))
+
+    dialog.close_button.click()
+
+    assert previews == [("windowed", 1600, 900)]
+
+
+def test_a_refused_window_goes_back_when_the_dialog_closes(qapp, tmp_path):
+    dialog, previews, _asked = a_window_dialog(tmp_path)
+    dialog.presets["HD+"].click()
+    dialog.save_button.click()
+    dialog.apply_result(
+        ConfigParameterResult(key="gui.window_width", value="1600", accepted=False, reason="No.")
+    )
+    dialog.apply_result(
+        ConfigParameterResult(key="gui.window_height", value="900", accepted=False, reason="No.")
+    )
+
+    dialog.close_button.click()
+
+    assert previews == [("windowed", 1600, 900), ("windowed", 1280, 720)]
+
+
+def test_reset_puts_the_window_back_on_screen(qapp, tmp_path):
+    dialog, previews, _asked = a_window_dialog(tmp_path)
+    dialog.presets["HD+"].click()
+
+    dialog.cards["gui.window_width"].reset_button.click()
+
+    assert previews == [("windowed", 1600, 900), ("windowed", 1280, 720)]
+    assert dialog.changes() == {}
+    dialog.close()
+
+
+def test_the_confirmation_reverts_by_itself_when_the_countdown_runs_out(qapp, qtbot):
+    """A window too big or too small may leave nothing to click - so waiting reverts."""
+    from pypts.hmi.gui.settings_dialog import WindowConfirmDialog
+
+    dialog = WindowConfirmDialog("1920 × 1080", seconds=1)  # noqa: RUF001 - as shown on screen
+    dialog.open()
+
+    qtbot.waitUntil(lambda: dialog.timed_out, timeout=3000)
+
+    assert dialog.isVisible() is False
+    assert dialog.result() != dialog.DialogCode.Accepted.value
+
+
+def test_the_confirmation_counts_down_and_keep_accepts(qapp):
+    from pypts.hmi.gui.settings_dialog import WindowConfirmDialog
+
+    dialog = WindowConfirmDialog("Full screen", seconds=15)
+
+    assert "15 seconds" in dialog.countdown_label.text()
+    assert dialog.revert_button.isDefault() is True
+
+    dialog.open()
+    dialog.keep_button.click()
+
+    assert dialog.result() == dialog.DialogCode.Accepted.value
+    assert dialog.timed_out is False
+
+
+# --------------------------------------------------------------------------
 # The dialog inside the GUI
 # --------------------------------------------------------------------------
 
@@ -564,6 +733,61 @@ def test_the_system_theme_follows_the_operating_system(gui_factory, monkeypatch)
 
     assert instance._dark is True
     assert len(installed) == 1
+
+
+def test_view_offers_full_screen_on_f11(gui_factory):
+    instance, _outbox, _inbox = gui_factory()
+    action = instance.window.full_screen_action
+
+    assert action.text() == "Full Screen"
+    assert action.isCheckable() is True
+    assert action.shortcut().toString() == "F11"
+
+
+def test_full_screen_toggles_for_the_session(gui_factory):
+    instance, _outbox, _inbox = gui_factory()
+    instance.show()
+
+    instance.window.full_screen_action.trigger()
+    assert instance.window.isFullScreen() is True
+
+    instance.window.full_screen_action.trigger()
+    assert instance.window.isFullScreen() is False
+
+
+def test_the_window_opens_in_the_configured_mode(gui_factory):
+    a_config_file({"gui.window_mode": "fullscreen"})
+    instance, _outbox, _inbox = gui_factory()
+
+    instance.show()
+
+    assert instance.window.isFullScreen() is True
+    assert instance.window.full_screen_action.isChecked() is True
+
+
+def test_a_window_tried_in_settings_really_resizes_and_cancel_restores_it(
+    gui_factory, monkeypatch
+):
+    from pypts.hmi.gui import settings_dialog
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+
+    a_config_file()
+    instance, _outbox, _inbox = gui_factory()
+    instance.show()
+    monkeypatch.setattr(settings_dialog, "confirm_window_settings", lambda text, parent: True)
+    seen = {}
+
+    def try_hd_plus_then_cancel(dialog):
+        dialog.presets["HD+"].click()
+        seen["size_while_open"] = (instance.window.width(), instance.window.height())
+        dialog.reject()
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", try_hd_plus_then_cancel)
+    instance.window.settings_action.trigger()
+
+    assert seen["size_while_open"] == (1600, 900)
+    assert (instance.window.width(), instance.window.height()) == (1280, 720)
 
 
 def test_without_a_configuration_the_window_uses_the_template_defaults(gui_factory):

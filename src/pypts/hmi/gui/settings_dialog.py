@@ -8,11 +8,11 @@ The Settings dialog: Edit -> Settings.
 A list of pages on the left - Appearance, Folders, Logging, Report, Advanced -
 and the page's settings on the right, one card each. Controls are chosen for
 the value, not for the file: the theme is three picture cards, a short list of
-choices a row of buttons, a yes/no setting an On/Off switch, the window size two
-number fields with presets, a folder a path with Browse and Open. A card whose
-value differs from the one the dialog opened with is outlined, gets a Reset, and
-marks its page in the list. Save sends the changed values; the same window then
-says what was saved and what was not.
+choices a row of buttons, a yes/no setting an On/Off switch, the window one card
+with its mode, its size, an Apply button and presets, a folder a path with
+Browse and Open. A card whose value differs from the one the dialog opened with
+is outlined, gets a Reset, and marks its page in the list. Save sends the
+changed values; the same window then says what was saved and what was not.
 
 **It does not write the file.** CORE is the single runtime writer of config.ini
 (config_handler.md), so Save hands each changed value to a `send` callable - the
@@ -22,11 +22,15 @@ to `apply_result()`. The answers get here through the GUI's poll timer, which
 keeps firing inside `exec()`'s nested event loop. If they do not all arrive
 within ANSWER_TIMEOUT_MS the dialog stops waiting and says so.
 
-**The theme is previewed, everything else waits for the next start.** Picking a
-theme card calls `preview_theme`, so the operator sees it at once; every way out
-of the dialog goes through `done()`, which puts the theme in force back unless
-CORE confirmed saving the new one. No other setting can be applied to a running
-pypts - every process read its configuration once, at startup.
+**The theme and the window are previewed, everything else waits for the next
+start.** Picking a theme card calls `preview_theme` at once. A window mode or a
+size preset - or typed sizes, once Apply is pressed - calls `preview_window`,
+and then asks in `WindowConfirmDialog` whether to keep it: no answer within
+CONFIRM_SECONDS puts the previous window back, because a window made too big or
+too small may leave the operator nothing to click. Keeping only confirms the
+preview; Save still writes it. Every way out of the dialog goes through
+`done()`, which puts back whatever was previewed and will not be in force at
+the next start.
 
 **No setting is left out.** PAGES places the keys it knows; any other key of the
 schema (outside `READ_ONLY_SECTIONS`) gets a page named after its section and a
@@ -34,7 +38,7 @@ control chosen from its type, so a key added to `configuration_schema.py` shows
 up with no change here.
 
 Pure presentation, like `remove_cache_dialog.py`: handed the values in force, the
-`send` callable and the preview callable, so a test drives the whole dialog with
+`send` callable and the preview callables, so a test drives the whole dialog with
 no CORE and no file. Styling lives in `styles.py` (object names `settings*` and
 `themeSwatch*`).
 """
@@ -44,7 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QShowEvent
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QButtonGroup,
@@ -78,6 +82,9 @@ from pypts.messages.core_hmi_communication import ConfigParameterResult
 #: timeout, the point at which the rest of the framework presumes a module lost.
 ANSWER_TIMEOUT_MS = 5000
 
+#: How long a previewed window waits to be kept before it is put back.
+CONFIRM_SECONDS = 15
+
 #: Upper bound of every whole-number field. Only there so a slipped finger
 #: cannot type a window no screen could show.
 _SPIN_MAXIMUM = 100_000
@@ -86,13 +93,17 @@ _SPIN_MAXIMUM = 100_000
 _INPUT_HEIGHT = 30
 
 THEME_KEY = "gui.theme"
+WINDOW_MODE_KEY = "gui.window_mode"
 WIDTH_KEY = "gui.window_width"
 HEIGHT_KEY = "gui.window_height"
+
+#: The keys the window card edits together, in the order `preview_window` takes them.
+WINDOW_KEYS = (WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)
 
 #: Page title -> the keys on it, in order. A key the schema does not have is
 #: skipped; a key the schema has and this does not name gets a page of its own.
 PAGES = (
-    ("Appearance", (THEME_KEY, WIDTH_KEY, HEIGHT_KEY)),
+    ("Appearance", (THEME_KEY, WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)),
     ("Folders", ("paths.logs_dir", "paths.reports_dir", "paths.base_dir")),
     ("Logging", ("logging.level",)),
     ("Report", ("report.type", "report.theme")),
@@ -117,6 +128,7 @@ LABELS = {
     "report.type": "Report type",
     "report.theme": "Report theme",
     "gui.theme": "Theme",
+    "gui.window_mode": "Window mode",
     "gui.window_width": "Window width",
     "gui.window_height": "Window height",
     "watchdog.enabled": "End the run when a module stops responding",
@@ -141,6 +153,13 @@ THEME_CARDS = {
     "system": ("System", "Follows the operating system."),
 }
 
+#: What each window mode button says.
+WINDOW_MODE_LABELS = {
+    "windowed": "Windowed",
+    "maximized": "Maximized",
+    "fullscreen": "Full screen",
+}
+
 #: Window size presets: name, width, height.
 WINDOW_PRESETS = (
     ("HD", 1280, 720),
@@ -152,10 +171,13 @@ WINDOW_PRESETS = (
 MODIFIED_MARK = "  •"
 
 NEXT_START_NOTE = "Changes take effect the next time pypts starts."
-FOOTER_NOTE = f"{NEXT_START_NOTE} The theme is previewed straight away."
+FOOTER_NOTE = f"{NEXT_START_NOTE} The theme and the window are previewed straight away."
 
 #: Said for every change still unanswered when ANSWER_TIMEOUT_MS runs out.
 NO_ANSWER_REASON = "The engine did not answer, so this change may not have been saved."
+
+#: The multiplication sign between a width and a height.
+TIMES = "×"  # noqa: RUF001 - the multiplication sign, deliberately, defined once here
 
 
 def setting_text(value: Any) -> str:
@@ -215,6 +237,15 @@ def label_for(key: str) -> str:
 def field_for(key: str) -> Field:
     section, _, name = key.rpartition(".")
     return SCHEMA[section][name]
+
+
+def describe_window(mode: str, width: int, height: int) -> str:
+    """How the confirmation names a window: "Full screen", "Maximized" or "1600 x 900"."""
+    if mode == "fullscreen":
+        return "Full screen"
+    if mode == "maximized":
+        return "Maximized"
+    return f"{width} {TIMES} {height}"
 
 
 # --- The controls ---------------------------------------------------------------
@@ -277,13 +308,24 @@ class _ExclusiveButtons(SettingEditor):
 class ChoiceButtons(_ExclusiveButtons):
     """A row of buttons, one per allowed value."""
 
-    def __init__(self, choices: Sequence[str], text: str) -> None:
+    def __init__(
+        self, choices: Sequence[str], text: str, labels: Mapping[str, str] | None = None
+    ) -> None:
+        """
+        Args:
+            labels: what each button says, by value. A value missing here shows
+                itself, which is right for the log levels.
+        """
         super().__init__()
         row = QHBoxLayout(self)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(6)
         for choice in choices:
-            button = QPushButton(choice)
+            if labels is not None and choice in labels:
+                caption = labels[choice]
+            else:
+                caption = choice
+            button = QPushButton(caption)
             button.setObjectName("settingsSegment")
             button.setMinimumHeight(_INPUT_HEIGHT)
             row.addWidget(self._add(choice, button))
@@ -535,9 +577,9 @@ class FolderField(SettingEditor):
 
 class SettingCard(QFrame):
     """
-    One setting - or a few that belong together, like width and height - on a
-    card: a title, a line of explanation, the control, and a Reset that appears
-    once the value differs from the one the dialog opened with.
+    One setting - or a few that belong together, like the window's mode and
+    size - on a card: a title, a line of explanation, the control, and a Reset
+    that appears once the value differs from the one the dialog opened with.
     """
 
     def __init__(self, title: str, hint: str, body: QWidget) -> None:
@@ -585,6 +627,105 @@ class SettingCard(QFrame):
         self.style().polish(self)
 
 
+# --- Keeping a previewed window -------------------------------------------------
+
+
+class WindowConfirmDialog(QDialog):
+    """
+    "Keep these window settings?" with a countdown, the way an operating system
+    asks after a display change.
+
+    Left alone it closes itself as Revert after `seconds`: a window made too big
+    to fit, or too small to use, may leave nothing on screen to click. Revert is
+    the default button for the same reason - Return must never keep a window the
+    operator cannot see. It sits on top of everything and centres itself on its
+    screen rather than on the window it is asking about, which may have just
+    become the wrong size to centre on.
+    """
+
+    def __init__(
+        self, description: str, seconds: int = CONFIRM_SECONDS, parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.setObjectName("windowConfirmDialog")
+        self.setWindowTitle("Keep these window settings?")
+        self.setModal(True)
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        self.setMinimumWidth(380)
+
+        self._remaining = seconds
+        #: True if the countdown ran out, rather than the operator answering.
+        self.timed_out = False
+
+        column = QVBoxLayout(self)
+        column.setContentsMargins(24, 20, 24, 18)
+        column.setSpacing(6)
+
+        title = QLabel("Keep these window settings?")
+        title.setObjectName("settingsResultTitle")
+        column.addWidget(title)
+
+        window = QLabel(description)
+        window.setObjectName("settingsCardTitle")
+        column.addWidget(window)
+
+        self.countdown_label = QLabel()
+        self.countdown_label.setObjectName("settingsSubtitle")
+        column.addWidget(self.countdown_label)
+
+        column.addSpacing(14)
+        buttons = QHBoxLayout()
+        buttons.setContentsMargins(0, 0, 0, 0)
+        buttons.setSpacing(8)
+        buttons.addStretch()
+        self.revert_button = QPushButton("Revert")
+        self.revert_button.setDefault(True)
+        self.revert_button.clicked.connect(self.reject)
+        buttons.addWidget(self.revert_button)
+        self.keep_button = QPushButton("Keep")
+        self.keep_button.setObjectName("primaryBtn")
+        self.keep_button.setAutoDefault(False)
+        self.keep_button.clicked.connect(self.accept)
+        buttons.addWidget(self.keep_button)
+        column.addLayout(buttons)
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(1000)
+        self._timer.timeout.connect(self._tick)
+        self._show_remaining()
+
+    def showEvent(self, event: QShowEvent) -> None:  # noqa: N802 - Qt virtual
+        super().showEvent(event)
+        self.adjustSize()
+        screen = self.screen()
+        if screen is not None:
+            self.move(screen.availableGeometry().center() - self.rect().center())
+        self._timer.start()
+
+    def _tick(self) -> None:
+        self._remaining -= 1
+        if self._remaining <= 0:
+            self.timed_out = True
+            self.reject()
+            return
+        self._show_remaining()
+
+    def _show_remaining(self) -> None:
+        self.countdown_label.setText(
+            f"Going back to the previous window in {count_of(self._remaining, 'second')}."
+        )
+
+    def done(self, result: int) -> None:
+        self._timer.stop()
+        super().done(result)
+
+
+def confirm_window_settings(description: str, parent: QWidget | None = None) -> bool:
+    """Ask with a WindowConfirmDialog; True only if the operator pressed Keep in time."""
+    dialog = WindowConfirmDialog(description, parent=parent)
+    return dialog.exec() == QDialog.DialogCode.Accepted.value
+
+
 # --- The dialog -------------------------------------------------------------------
 
 
@@ -599,6 +740,8 @@ class SettingsDialog(QDialog):
         parent: QWidget | None = None,
         answer_timeout_ms: int = ANSWER_TIMEOUT_MS,
         preview_theme: Callable[[str], None] | None = None,
+        preview_window: Callable[[str, int, int], None] | None = None,
+        confirm_window: Callable[[str], bool] | None = None,
     ) -> None:
         """
         Args:
@@ -613,23 +756,39 @@ class SettingsDialog(QDialog):
             preview_theme: called with a theme value as the operator picks it,
                 and again with the theme in force if they leave without saving
                 it. None: no preview.
+            preview_window: called with (mode, width, height) to show the window
+                that way. None: no preview, and no Apply button does anything.
+            confirm_window: asked whether to keep a previewed window, with its
+                description; True keeps it. None: `confirm_window_settings()`,
+                the countdown dialog.
         """
         super().__init__(parent)
         self._send = send
         self.problem = problem
         self._answer_timeout_ms = answer_timeout_ms
         self._preview_theme = preview_theme
+        self._preview_window = preview_window
+        self._confirm_window = confirm_window
 
         #: One control per dotted key. The dialog's whole editable state.
         self.editors: dict[str, SettingEditor] = {}
-        #: The card holding each key. Width and height share one.
+        #: The card holding each key. The window's three keys share one.
         self.cards: dict[str, SettingCard] = {}
         #: Window size preset name -> its button.
         self.presets: dict[str, QPushButton] = {}
+        #: Applies typed window sizes. Built with the window card.
+        self.apply_window_button: QPushButton | None = None
         #: Each control's value as the dialog opened, to tell what changed.
         self._original: dict[str, str] = {}
         self._page_titles: list[str] = []
         self._page_keys: list[tuple[str, ...]] = []
+
+        #: The window as it is on screen now: (mode, width, height). Starts as
+        #: the one in force and moves only when a preview is kept.
+        self.window_on_screen: tuple[str, int, int] | None = None
+        #: True while the dialog itself sets the window controls, so doing so
+        #: does not start another preview.
+        self._setting_window_controls = False
 
         #: Changes sent to CORE and not answered yet, key -> text.
         self.pending: dict[str, str] = {}
@@ -704,6 +863,8 @@ class SettingsDialog(QDialog):
         # handler touches. Connecting earlier would fire it half-built.
         for key, editor in self.editors.items():
             self._original[key] = editor.value()
+        if self._has_window_card():
+            self.window_on_screen = self._window_in_controls()
         if self.problem is not None:
             for card in self._all_cards():
                 card.body.setEnabled(False)
@@ -723,12 +884,12 @@ class SettingsDialog(QDialog):
         heading.setObjectName("settingsPageTitle")
         column.addWidget(heading)
 
-        has_window_size = WIDTH_KEY in keys and HEIGHT_KEY in keys
+        has_window_card = all(key in keys for key in WINDOW_KEYS)
         for key in keys:
             if key in self.cards:
                 continue
-            if has_window_size and key in (WIDTH_KEY, HEIGHT_KEY):
-                column.addWidget(self._window_size_card(values))
+            if has_window_card and key in WINDOW_KEYS:
+                column.addWidget(self._window_card(values))
             else:
                 column.addWidget(self._single_card(key, values))
         column.addStretch()
@@ -760,9 +921,16 @@ class SettingsDialog(QDialog):
             return ChoiceButtons(field.choices, text)
         return TextField(text)
 
-    def _window_size_card(self, values: Mapping[str, str]) -> SettingCard:
+    def _window_card(self, values: Mapping[str, str]) -> SettingCard:
+        """The window's mode and size on one card, with Apply and the presets."""
+        mode_field = field_for(WINDOW_MODE_KEY)
         width_field = field_for(WIDTH_KEY)
         height_field = field_for(HEIGHT_KEY)
+        mode = ChoiceButtons(
+            mode_field.choices,
+            values.get(WINDOW_MODE_KEY, mode_field.default),
+            labels=WINDOW_MODE_LABELS,
+        )
         width = NumberField(values.get(WIDTH_KEY, width_field.default), width_field.default)
         height = NumberField(values.get(HEIGHT_KEY, height_field.default), height_field.default)
 
@@ -770,18 +938,27 @@ class SettingsDialog(QDialog):
         column = QVBoxLayout(body)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(8)
+        column.addWidget(mode)
 
         size_row = QHBoxLayout()
         size_row.setContentsMargins(0, 0, 0, 0)
         size_row.setSpacing(8)
         size_row.addWidget(width)
-        times = QLabel("×")  # noqa: RUF001 - a multiplication sign, meant for the reader
+        times = QLabel(TIMES)
         times.setObjectName("settingsCardTitle")
         size_row.addWidget(times)
         size_row.addWidget(height)
         unit = QLabel("pixels")
         unit.setObjectName("settingsCardHint")
         size_row.addWidget(unit)
+        size_row.addSpacing(8)
+        self.apply_window_button = QPushButton("Apply")
+        self.apply_window_button.setObjectName("settingsBrowse")
+        self.apply_window_button.setAutoDefault(False)
+        self.apply_window_button.setMinimumHeight(_INPUT_HEIGHT)
+        self.apply_window_button.setToolTip("Resize the window now to try this size.")
+        self.apply_window_button.clicked.connect(self._apply_window)
+        size_row.addWidget(self.apply_window_button)
         size_row.addStretch()
         column.addLayout(size_row)
 
@@ -789,7 +966,7 @@ class SettingsDialog(QDialog):
         preset_row.setContentsMargins(0, 0, 0, 0)
         preset_row.setSpacing(6)
         for name, preset_width, preset_height in WINDOW_PRESETS:
-            button = QPushButton(f"{name}  {preset_width} × {preset_height}")  # noqa: RUF001 - sign
+            button = QPushButton(f"{name}  {preset_width} {TIMES} {preset_height}")
             button.setObjectName("settingsPreset")
             button.setAutoDefault(False)
             button.clicked.connect(
@@ -803,10 +980,13 @@ class SettingsDialog(QDialog):
         column.addLayout(preset_row)
 
         card = SettingCard(
-            "Window size",
-            "The window is never smaller than 1000 × 700.",  # noqa: RUF001 - a multiplication sign
+            "Window",
+            f"Tried on screen straight away; keep it within {CONFIRM_SECONDS} seconds or it "
+            f"goes back. The size is the windowed size, never smaller than "
+            f"1000 {TIMES} 700.",
             body,
         )
+        self._register(WINDOW_MODE_KEY, mode, card)
         self._register(WIDTH_KEY, width, card)
         self._register(HEIGHT_KEY, height, card)
         return card
@@ -875,18 +1055,31 @@ class SettingsDialog(QDialog):
     def _on_edited(self, key: str) -> None:
         if key == THEME_KEY and self._preview_theme is not None:
             self._preview_theme(self.text_of(THEME_KEY))
+        # A mode is tried as soon as it is picked; typed sizes wait for Apply,
+        # so the window does not jump on every keystroke.
+        if key == WINDOW_MODE_KEY and not self._setting_window_controls:
+            self._apply_window()
         self._refresh()
 
     def _use_window_size(self, width: int, height: int) -> None:
-        self.set_value(WIDTH_KEY, str(width))
-        self.set_value(HEIGHT_KEY, str(height))
+        """A preset: a windowed window of that size, tried at once."""
+        self._show_window_in_controls(("windowed", width, height))
+        self._apply_window()
+        self._refresh()
 
     def _reset_card(self, card: SettingCard) -> None:
-        for key in card.keys:
-            self.set_value(key, self._original[key])
+        self._setting_window_controls = True
+        try:
+            for key in card.keys:
+                self.set_value(key, self._original[key])
+        finally:
+            self._setting_window_controls = False
+        if any(key in WINDOW_KEYS for key in card.keys):
+            self._apply_window()
+        self._refresh()
 
     def _refresh(self) -> None:
-        """Keep the marks, the error lines and the Save button honest as the operator edits."""
+        """Keep the marks, the error lines and the buttons honest as the operator edits."""
         folders_usable = True
         for editor in self.editors.values():
             # Every folder is checked, not just up to the first bad one, so
@@ -905,11 +1098,74 @@ class SettingsDialog(QDialog):
                 title = title + MODIFIED_MARK
             self.nav.item(row).setText(title)
 
+        if self.apply_window_button is not None:
+            self.apply_window_button.setEnabled(
+                self._preview_window is not None
+                and self.showing == "edit"
+                and self._window_in_controls() != self.window_on_screen
+            )
+
         if changed:
             self.save_button.setText(f"Save {count_of(len(changed), 'change')}")
         else:
             self.save_button.setText("Save")
         self.save_button.setEnabled(self.problem is None and bool(changed) and folders_usable)
+
+    # --- The window preview ---------------------------------------------------------
+
+    def _has_window_card(self) -> bool:
+        return all(key in self.editors for key in WINDOW_KEYS)
+
+    def _window_in_controls(self) -> tuple[str, int, int]:
+        return (
+            self.text_of(WINDOW_MODE_KEY),
+            int(self.text_of(WIDTH_KEY)),
+            int(self.text_of(HEIGHT_KEY)),
+        )
+
+    def _show_window_in_controls(self, window: tuple[str, int, int]) -> None:
+        mode, width, height = window
+        self._setting_window_controls = True
+        try:
+            self.set_value(WINDOW_MODE_KEY, mode)
+            self.set_value(WIDTH_KEY, str(width))
+            self.set_value(HEIGHT_KEY, str(height))
+        finally:
+            self._setting_window_controls = False
+
+    def _apply_window(self) -> None:
+        """
+        Show the window the controls describe, and keep it only if the operator
+        says so in time. Anything else puts the previous window back, on screen
+        and in the controls.
+        """
+        if self._preview_window is None or not self._has_window_card():
+            return
+        wanted = self._window_in_controls()
+        before = self.window_on_screen
+        if before is None or wanted == before:
+            return
+
+        self._preview_window(*wanted)
+        if self._ask_to_keep_window(describe_window(*wanted)):
+            self.window_on_screen = wanted
+        else:
+            self._preview_window(*before)
+            self._show_window_in_controls(before)
+        self._refresh()
+
+    def _ask_to_keep_window(self, description: str) -> bool:
+        if self._confirm_window is not None:
+            return self._confirm_window(description)
+        return confirm_window_settings(description, self)
+
+    def _window_in_force_next_start(self) -> tuple[str, int, int]:
+        """The window config.ini will hold: saved values where CORE accepted them."""
+        accepted = {result.key: result.value for result in self.results if result.accepted}
+        values = []
+        for key in WINDOW_KEYS:
+            values.append(accepted.get(key, self._original[key]))
+        return (values[0], int(values[1]), int(values[2]))
 
     # --- Saving ---------------------------------------------------------------------
 
@@ -927,6 +1183,8 @@ class SettingsDialog(QDialog):
         self.save_button.setEnabled(False)
         self.save_button.setText("Saving...")
         self.cancel_button.setText("Close")
+        if self.apply_window_button is not None:
+            self.apply_window_button.setEnabled(False)
 
         for key, text in changed.items():
             self._send(key, text)
@@ -962,14 +1220,35 @@ class SettingsDialog(QDialog):
     def done(self, result: int) -> None:
         """
         Every way out - Close, Cancel, Escape, the title bar's X - comes through
-        here, so this is where a previewed theme is put back, unless CORE
-        confirmed saving it.
+        here, so this is where a preview is put back.
+
+        The theme goes back unless CORE confirmed saving it. The window goes
+        back to the one the dialog opened with if what is on screen is not what
+        the next start will use - never to some other size, because that one
+        was never confirmed on screen.
         """
         self._answer_timer.stop()
         if self._preview_theme is not None and not self._theme_saved:
             original = self._original.get(THEME_KEY)
             if original is not None and self.text_of(THEME_KEY) != original:
                 self._preview_theme(original)
+
+        if (
+            self._preview_window is not None
+            and self._has_window_card()
+            and self.window_on_screen is not None
+        ):
+            opened_with = (
+                self._original[WINDOW_MODE_KEY],
+                int(self._original[WIDTH_KEY]),
+                int(self._original[HEIGHT_KEY]),
+            )
+            if (
+                self.window_on_screen != self._window_in_force_next_start()
+                and self.window_on_screen != opened_with
+            ):
+                self._preview_window(*opened_with)
+                self.window_on_screen = opened_with
         super().done(result)
 
     # --- Page 2: what was saved -------------------------------------------------------

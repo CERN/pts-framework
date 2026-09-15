@@ -102,7 +102,7 @@ Sections currently in the schema:
 | `paths` | `base_dir`, `logs_dir`, `reports_dir` — **derived** paths |
 | `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
 | `report` | `type` (`html`/`csv`), `theme` |
-| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
+| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `maximized` / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
 | `watchdog` | `enabled` (bool) - whether prolonged heartbeat silence *ends the run* or is only reported. Off is for a developer with a debugger attached to CORE, where a breakpoint in an event loop is indistinguishable from an event loop that has died. It gates the acting half only: a module that goes quiet is reported at WARNING either way |
 
 That is the whole schema — a flat list of named sections, nothing generated or matched by
@@ -171,7 +171,8 @@ GUI    show_config_parameter_result()  ->  the open dialog, or the status line
 A change is **written at once and in force from the next start.** No running process
 re-reads its configuration, CORE included, and nothing is propagated; the dialog says so on
 both of its pages. The one exception is presentation, not configuration: the GUI previews a
-picked theme in its own window, and puts the old one back if the new one is not saved. The GUI remembers what CORE confirmed this session so that reopening the
+picked theme and a picked window mode or size in its own window — the window only after a
+15-second "keep it?" countdown — and puts the old ones back if the new ones are not saved. The GUI remembers what CORE confirmed this session so that reopening the
 dialog shows the saved value rather than the one read at startup.
 
 Writing goes through `template_writer.py`, never `configparser.write()`, because the parsed
@@ -189,7 +190,8 @@ it into place, so an interrupted write cannot leave a half-written config behind
 
 ## Structure version — no migration, no repair, discard instead
 
-`CONFIG_VERSION` (in `configuration_schema.py`, currently **3**) is bumped whenever a
+`CONFIG_VERSION` (in `configuration_schema.py`, currently **4** — version 4 added
+`[gui] window_mode`) is bumped whenever a
 section or key is added, removed or renamed — or when the values a key accepts change.
 Version 2 added `[watchdog]`. Version 3 (September 2026) changed `[gui] theme` from
 `default`/`light`/`dark` to `light`/`dark`/`system` and shipped `light`; a version-2 file

@@ -210,7 +210,7 @@ has a typed, owned equivalent:
 | second value pushed on the same queue (`file`/`wrt`/`ID`) | **solved by giving each follow-up its own request/response pair.** `wrt` became `UserTextRequest` (UserWrite); `file` became `UserPathRequest`/`UserPathResponse` (UserLoading, 2026-09-15) — one request, one response carrying the path, answered by `answer_user_path()` from the path page (§7, *Three questions, one panel*). The serial-port `ID` mode was dropped |
 | `WAIT_FOR_TERMINATION` global + nested QEventLoop on abort | nothing blocks: Stop sends the command and the *events* drive the buttons — `RunFinished` (result STOP) is the "engine has stopped" confirmation the old global tried to be |
 | root-logger tap into the log box | the GUI logs normally; its records go to the Logger like everyone's. The log box is fed the other way round: `log_tail.py` reads the run log file the Logger writes, so the panel shows *every* process, not just the GUI's own records (§8) |
-| `StepResultModel` over live `StepResult` trees | `RunFinished.outcomes` is a **flat tuple** of `StepOutcome` (execution order). The tree returns only if a pickle-safe outcome tree is added when nesting lands |
+| `StepResultModel` over live `StepResult` trees | `RunFinished.outcomes` is a flat tuple of `StepOutcome` (execution order); `results_panel.build_result_tree()` turns it into a tree of `ResultNode`s: each step row opens into **Inputs** and **Outputs** groups, one row per value (`voltage = 12.1`) with its check in the Info column (`range 11 .. 13`). Expanded on `set_results()`, as the old tree was. The values come as text on `StepOutcome` (M-3). The step table's Result tooltip lists them too, on every verdict, under the failure reason when there is one |
 | GUI-side `Recipe` parse to pre-fill the table | `RecipeLoaded` carries the whole pickle-safe summary — `main_sequence` plus per-sequence `StepSummary(step_id, step_name, description)` rows built by `Recipe.to_summary()` — so the table pre-fills at load time with no second parse |
 
 What the new GUI already has for free: the whole protocol (`HmiClient`), the
@@ -751,8 +751,9 @@ ones they changed. `settings_dialog.py` is the dialog; `gui.py` wires it.
 Advanced (`PAGES`) — and the page's settings on the right, one card each. The control fits
 the value, not the file: the theme is three picture cards (a thumbnail of the window in that
 theme; System shows light and dark side by side), a short list of choices is a row of
-buttons, a yes/no is an On/Off switch, the window size is two number fields plus HD / HD+ /
-Full HD presets on one card, a folder is a path with Browse and Open. A card whose value
+buttons, a yes/no is an On/Off switch, the window is one card with its mode (Windowed /
+Maximized / Full screen), its size (two number fields and Apply) and HD / HD+ / Full HD
+presets, a folder is a path with Browse and Open. A card whose value
 differs from the one the dialog opened with is outlined, shows **Reset**, and puts a `•`
 after its page's name. Save reads "Save N changes".
 
@@ -789,6 +790,15 @@ Edit > Settings -> GUI._open_settings()
 - **The theme is the one live setting.** Picking a card calls `preview_theme` at once. Every
   way out goes through `done()`, which puts the theme in force back unless CORE confirmed
   saving the new one — so the window never stays in a theme the next start will not use.
+- **The window is tried on screen, and reverts unless kept.** A mode button or a preset
+  calls `preview_window` at once; typed sizes wait for **Apply**, so the window does not
+  jump per keystroke. Then `WindowConfirmDialog` asks "Keep these window settings?" and
+  counts down `CONFIRM_SECONDS` (15): no answer is Revert, because a window made too big or
+  too small may leave nothing to click. Revert is the default button (Return never keeps
+  what the operator may not see), and the popup stays on top, centred on its screen rather
+  than on the window being resized. Keep only confirms the preview — Save still writes it;
+  `done()` puts back the window the dialog opened with if what is on screen will not be in
+  force at the next start. Reset on the window card reverts on screen too.
 - **Folders must be absolute** before Save is enabled — a relative one would resolve against
   wherever pypts was started. Open is enabled only for a folder that exists, checked when
   typing finishes rather than per keystroke (a `stat()` on a dead share can hang).
@@ -804,8 +814,12 @@ Edit > Settings -> GUI._open_settings()
   startup values. An answer that arrives with no dialog open goes to the status line.
 - **Everything but the theme applies at the next start**, and both pages say so.
 
-**The window reads `[gui]` once, at startup** (`window_settings()`): `window_width` /
-`window_height` size it — `setMinimumSize(1000, 700)` still wins over anything smaller — and
+**The window reads `[gui]` once, at startup** (`window_settings()`): `GUI.show()` goes
+through `GUI._use_window()`, so `window_mode` decides full screen, maximized or a normal
+window of `window_width` × `window_height` — `setMinimumSize(1000, 700)` still wins over
+anything smaller. **View → Full Screen (F11)** toggles full screen for the session only;
+leaving it returns to the mode in force (a normal window if that mode is full screen). The
+menu bar stays visible in full screen, so the toggle is always reachable. And
 `theme` goes through `GUI._use_theme()`. `light` (the shipped value) and `dark` are fixed and
 the OS sync is **not** installed, so the operator's choice is not overruled; `system` detects
 the OS scheme and installs the live OS sync. View → Toggle Dark Mode still flips either for

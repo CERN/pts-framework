@@ -38,17 +38,22 @@ Subclass contract:
 
 ## CLI (`cli/cli.py`)
 
-Minimal readline loop. Sends `LoadRecipe`, `StartSequence`, `ShutdownRequested` in
-response to typed commands. Shows run events as plain log lines. No threads of its own
-beyond the background poll thread inherited from `HmiClient`.
+Minimal shell. Sends `LoadRecipe`, `StartSequence`, `StopSequence`, `ShutdownRequested`
+in response to typed commands, and prints run events. Three threads: the main thread
+dispatches commands, a background thread polls CORE and heartbeats, and a daemon reader
+thread owns `input()` and hands each line over through a queue. The main thread only
+waits `INPUT_POLL_S` (0.1 s) for a line before checking `running`, so a `StopHmi` from
+CORE ends the shell at once, without waiting for the operator's next Enter (2026-09-15).
+The reader asks for a line only when the shell is ready for one, so nothing is read after
+`exit`.
 
 ## GUI (`hmi/gui/`)
 
 PySide6 application. Full context in `hmi/gui/gui.md`. Key points:
 
 - Runs in a dedicated process (spawned by the launcher).
-- Reads `from_core` on the background poll thread; updates UI via Qt signals to the main
-  thread.
+- Polls `from_core` on a `QTimer` on the Qt main thread, so the hooks update widgets
+  directly.
 - All CORE communication uses typed message objects — the GUI never imports `recipe` or
   `step` modules.
 - The pickle-safe boundary means no live queues, no Qt objects in messages.

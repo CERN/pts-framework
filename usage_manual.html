@@ -1,0 +1,316 @@
+<!-- SPDX-FileCopyrightText: 2026 CERN <home.cern> -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Usage Manual</title>
+<style>
+:root {
+  --bg: #ffffff; --bg2: #f5f6f8; --border: #d0d4db;
+  --text: #1a1d23; --text2: #4a5068; --link: #0066cc;
+  --code-bg: #f0f2f5; --code-c: #c7254e; --accent: #0033a0;
+  --note-bg: #eef4ff; --warn-bg: #fff3cd; --th-bg: #e8eaed;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1a1d23; --bg2: #22262f; --border: #3a3f4e;
+    --text: #dde1ea; --text2: #9099b0; --link: #5baeff;
+    --code-bg: #2c313d; --code-c: #ff7070; --accent: #7ea6ff;
+    --note-bg: #1f2a40; --warn-bg: #3a3000; --th-bg: #2c313d;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+body {
+  margin: 0; padding: 2rem 1rem; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size: 16px; line-height: 1.6;
+}
+.page { max-width: 880px; margin: 0 auto; }
+h1 { font-size: 2rem; margin: 0 0 .3rem; }
+h2 { font-size: 1.4rem; margin: 2.2rem 0 .6rem; padding-bottom: .3rem;
+     border-bottom: 1px solid var(--border); color: var(--accent); }
+h3 { font-size: 1.1rem; margin: 1.4rem 0 .4rem; }
+.lead { color: var(--text2); margin-top: 0; }
+a { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code {
+  background: var(--code-bg); color: var(--code-c); padding: .1em .35em; border-radius: 3px;
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace; font-size: .88em;
+}
+pre {
+  background: var(--code-bg); padding: .8rem 1rem; border-radius: 6px; overflow-x: auto;
+  font-family: Consolas, "SFMono-Regular", Menlo, monospace; font-size: .88em; line-height: 1.45;
+}
+pre code { background: none; color: var(--text); padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: .6rem 0; }
+th, td { border: 1px solid var(--border); padding: .4rem .6rem; text-align: left; vertical-align: top; }
+th { background: var(--th-bg); }
+.wrap { overflow-x: auto; }
+.note, .warn { padding: .6rem .9rem; border-radius: 6px; margin: .8rem 0; }
+.note { background: var(--note-bg); }
+.warn { background: var(--warn-bg); }
+nav { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+      padding: .6rem 1rem; margin: 1rem 0; }
+nav ol { margin: .2rem 0; padding-left: 1.3rem; columns: 2; }
+kbd { border: 1px solid var(--border); border-radius: 3px; padding: 0 .3em; font-size: .88em;
+      background: var(--bg2); }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>PyPTS Usage Manual</h1>
+<p class="lead">How to start and use PyPTS. Short on purpose. For how to <em>write</em> a recipe,
+see <a href="recipe_guide.html">recipe_guide.html</a>.</p>
+
+<nav><ol>
+  <li><a href="#what">What PyPTS does</a></li>
+  <li><a href="#start">Starting it</a></li>
+  <li><a href="#modes">The modes</a></li>
+  <li><a href="#options">Command-line options</a></li>
+  <li><a href="#gui">GUI mode</a></li>
+  <li><a href="#cli">CLI mode</a></li>
+  <li><a href="#api">From Python code (API)</a></li>
+  <li><a href="#headless">Headless / CI mode</a></li>
+  <li><a href="#files">Where files go</a></li>
+  <li><a href="#tools">Helper tools</a></li>
+  <li><a href="#trouble">Troubleshooting</a></li>
+</ol></nav>
+
+<h2 id="what">1. What PyPTS does</h2>
+<p>PyPTS runs a <strong>recipe</strong> against hardware. A recipe is a YAML file that lists
+<strong>sequences</strong>, and each sequence lists <strong>steps</strong>, for example calling a
+Python function, waiting, or asking the operator a question. Every step ends with a verdict
+(<code>PASS</code>, <code>FAIL</code>, <code>DONE</code>, <code>SKIP</code>, <code>ERROR</code>
+or <code>STOP</code>). Every run leaves a <strong>report</strong> and a <strong>run log</strong>.</p>
+<p>The usual workflow is: <strong>open a recipe → pick a sequence → start → answer questions →
+read the result</strong>.</p>
+
+<h2 id="start">2. Starting it</h2>
+<p>From the repository root:</p>
+<pre><code>python -m pypts              # GUI (the default)
+python -m pypts --mode cli   # text shell instead of a window</code></pre>
+<p>On Windows you can also double-click <code>run_pypts.bat</code>, or run it from a shell with
+the same options, e.g. <code>run_pypts.bat --mode cli</code>. It uses the repository's
+<code>.venv</code> when there is one.</p>
+<div class="note">During the refactor the <strong>Debug Monitor</strong> window opens next to
+every run. It's a developer tool, so add <code>--no-debug-monitor</code> if you don't want
+it.</div>
+<p>To try it out, load the smallest demo recipe:
+<code>resources/recipes/Development_recipes/wait_recipe.yml</code> (two short waits).</p>
+
+<h2 id="modes">3. The modes</h2>
+<div class="wrap"><table>
+  <tr><th>Mode</th><th>Start with</th><th>Use it when</th></tr>
+  <tr><td><strong>GUI</strong></td><td><code>python -m pypts</code></td>
+      <td>An operator runs tests at a bench. This is the full experience.</td></tr>
+  <tr><td><strong>CLI</strong></td><td><code>python -m pypts --mode cli</code></td>
+      <td>You have no display, or you just want a quick text shell. Some limits, see
+      <a href="#cli">§6</a>.</td></tr>
+  <tr><td><strong>API</strong></td><td><code>from pypts.api import Pts</code></td>
+      <td>Your own Python program drives PyPTS, with no window or with one.</td></tr>
+  <tr><td><strong>Headless / CI</strong></td><td><code>python -m pypts --mode headless --recipe x.yml</code></td>
+      <td>A pipeline or script runs a recipe with one command and reads the exit code. See
+      <a href="#headless">§8</a>.</td></tr>
+</table></div>
+
+<h2 id="options">4. Command-line options</h2>
+<div class="wrap"><table>
+  <tr><th>Option</th><th>Meaning</th></tr>
+  <tr><td><code>--mode gui</code> / <code>cli</code> / <code>headless</code></td><td>Window, text shell, or
+      one unattended run. Default: <code>gui</code>.</td></tr>
+  <tr><td><code>--recipe PATH</code></td><td>Headless only (and required there): the recipe to run.</td></tr>
+  <tr><td><code>--sequence NAME</code></td><td>Headless only: which sequence. Default: the recipe's main one.</td></tr>
+  <tr><td><code>--log-level LEVEL</code></td>
+      <td><code>DEBUG</code>, <code>INFO</code>, <code>WARNING</code>, <code>ERROR</code> or
+      <code>CRITICAL</code>. Overrides the level in <code>config.ini</code>. <code>DEBUG</code>
+      also records every internal message, which is useful for bug reports.</td></tr>
+  <tr><td><code>--no-debug-monitor</code> / <code>--debug-monitor</code></td><td>Don't / do open the Debug
+      Monitor. Default: on in GUI and CLI, off in headless.</td></tr>
+  <tr><td><code>-h</code></td><td>Show the options.</td></tr>
+</table></div>
+
+<h2 id="gui">5. GUI mode</h2>
+
+<h3>Running a recipe</h3>
+<ol>
+  <li><strong>Open</strong> (toolbar, or <em>File → Open Recipe</em>) and pick a <code>.yml</code>
+      file. The step table fills in, and the window title shows the recipe name.</li>
+  <li>Pick a <strong>sequence</strong> in the drop-down. The recipe's main sequence is
+      selected by default.</li>
+  <li><strong>Start</strong>. Each row goes <em>Pending → Running... → verdict</em>.</li>
+  <li>When a step asks something, answer it in the right-hand panel (see below).</li>
+  <li>When the run ends, the <strong>Results</strong> tab shows PASS/FAIL counts and a
+      result tree. Each step opens into its <strong>Inputs</strong> and <strong>Outputs</strong>,
+      e.g. <code>voltage = 12.1</code> with its check (<code>range 11 .. 13</code>).</li>
+</ol>
+
+<h3>The toolbar</h3>
+<div class="wrap"><table>
+  <tr><th>Button</th><th>Does</th></tr>
+  <tr><td>Open</td><td>Loads a recipe. Greyed out during a run.</td></tr>
+  <tr><td>Start</td><td>Runs the selected sequence.</td></tr>
+  <tr><td>Pause / Resume</td><td>Holds the run. While paused you can click the tabs to look
+      around.</td></tr>
+  <tr><td>Stop</td><td>Aborts the run. Steps that didn't run end as <code>STOP</code>.</td></tr>
+  <tr><td>Report (far right)</td><td>Opens this run's report folder, or the reports folder if
+      there hasn't been a run yet.</td></tr>
+</table></div>
+<p>Hover over any button to see what it does, or why it's greyed out.
+Hover over a step's result to see why it failed (if it did) and the values it measured.
+Hover over a step row for about 1&nbsp;second between runs to see that step's YAML.</p>
+
+<h3>Answering questions</h3>
+<p>A step can ask one of three things:</p>
+<ul>
+  <li><strong>A choice</strong>: click one of the buttons (or use the arrow keys and
+      <kbd>Enter</kbd>).</li>
+  <li><strong>Text</strong>, such as a serial number: type it and press OK.</li>
+  <li><strong>A file or folder</strong>: type a path or use <em>Browse...</em>. OK only
+      becomes active when the path exists.</li>
+</ul>
+<p><strong>Cancel</strong> is always there. Cancelling makes that step <code>ERROR</code>, and
+the sequence continues with the next step.</p>
+
+<h3>Menus</h3>
+<div class="wrap"><table>
+  <tr><th>Menu</th><th>Items</th></tr>
+  <tr><td>File</td><td>Open Recipe · Open Recent (last 10 recipes that loaded) · Open Config
+      (opens <code>config.ini</code> in your editor) · Exit</td></tr>
+  <tr><td>Edit</td><td>Edit Recipe · <strong>Settings</strong> (theme, window size, folders,
+      log level…; changes apply at the <em>next</em> start, except the theme) ·
+      <strong>Remove Cache</strong> (clear recents, config, and optionally reports and
+      logs)</td></tr>
+  <tr><td>View</td><td>Toggle dark mode for this session</td></tr>
+  <tr><td>About</td><td>Links to GitHub and the wiki</td></tr>
+</table></div>
+
+<h2 id="cli">6. CLI mode</h2>
+<p>Start with <code>python -m pypts --mode cli</code>, then type commands at the
+<code>pypts&gt;</code> prompt:</p>
+<div class="wrap"><table>
+  <tr><th>Command</th><th>Does</th></tr>
+  <tr><td><code>load_recipe &lt;path&gt;</code></td><td>Loads a recipe and lists its sequences.
+      The main one is marked <code>(main)</code>.</td></tr>
+  <tr><td><code>start_sequence &lt;name&gt;</code></td><td>Runs that sequence. Results print
+      as steps finish.</td></tr>
+  <tr><td><code>stop_sequence</code></td><td>Aborts the current run.</td></tr>
+  <tr><td><code>status</code></td><td>Shows the current status.</td></tr>
+  <tr><td><code>help</code></td><td>Lists the commands.</td></tr>
+  <tr><td><code>exit</code> (or <code>quit</code>, <code>stop</code>)</td><td>Leaves PyPTS.
+      <kbd>Ctrl+C</kbd> does the same.</td></tr>
+</table></div>
+<pre><code>pypts&gt; load_recipe resources/recipes/Development_recipes/wait_recipe.yml
+Recipe loaded: Wait demo (version 0.2)
+Sequences: Main (main)
+pypts&gt; start_sequence Main
+...
+pypts&gt; exit</code></pre>
+<div class="warn"><strong>Careful:</strong> the CLI can't answer questions yet. Any step that asks
+the operator something (a choice, text, or a path) is declined and ends as <code>ERROR</code>.
+Use the GUI or the API for recipes that ask questions. Also, <code>stop</code> exits the
+program. To abort a run, type <code>stop_sequence</code>.</div>
+
+<h3>Without Qt</h3>
+<p>CLI mode doesn't need PySide6, so it works on a bench with no display. Add
+<code>--no-debug-monitor</code> there too.</p>
+
+<h2 id="api">7. From Python code (API)</h2>
+<p>Use <code>pypts.api</code> to run recipes from your own script. Always put the code under
+<code>if __name__ == "__main__":</code>, because PyPTS starts extra processes that re-import
+your file.</p>
+<pre><code>from pypts.api import Pts, open_gui
+
+def answer(request):
+    # Called for every question. Return an option / text / path, or None to decline.
+    return request.options[0]
+
+if __name__ == "__main__":
+    # No window:
+    with Pts() as pts:
+        pts.load_recipe("bench.yml")
+        result = pts.run(answer=answer)       # blocks until the run ends
+        print(result.result)
+
+    # Or the normal window, with the recipe already loaded and started:
+    open_gui("bench.yml", start=True)</code></pre>
+<p>More cases (progress printing, stopping from another thread, and more) are in
+<code>api_showcase.py</code> at the repository root, for example
+<code>python api_showcase.py headless</code>.</p>
+
+<h2 id="headless">8. Headless / CI mode</h2>
+<p>Runs one recipe with nobody at the keyboard, then exits. There's no window and no
+prompt.</p>
+<pre><code>python -m pypts --mode headless --recipe bench.yml
+python -m pypts --mode headless --recipe bench.yml --sequence Calibration</code></pre>
+<p>It prints each step as it finishes (with its inputs and outputs), the final result and the report folder. Then it exits
+with a code you can check:</p>
+<div class="wrap"><table>
+  <tr><th>Exit code</th><th>Meaning</th></tr>
+  <tr><td><code>0</code></td><td>Passed (<code>PASS</code> or <code>DONE</code>)</td></tr>
+  <tr><td><code>1</code></td><td>A step failed (<code>FAIL</code>)</td></tr>
+  <tr><td><code>2</code></td><td>Not judged: the run ended in <code>ERROR</code> or <code>STOP</code>,
+      skipped everything, or was interrupted with <kbd>Ctrl+C</kbd></td></tr>
+  <tr><td><code>3</code></td><td>Nothing ran: bad arguments, the recipe is missing or refused, the
+      sequence doesn't exist, or the engine failed</td></tr>
+</table></div>
+<div class="warn"><strong>Questions are declined.</strong> Any step that asks the operator something
+ends as <code>ERROR</code>, so the exit code is <code>2</code>. Recipes meant for CI shouldn't ask
+questions. If yours must, answer them from code with the <a href="#api">API</a>.</div>
+<p>Example in a pipeline:</p>
+<pre><code>python -m pypts --mode headless --recipe tests/board.yml
+if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
+
+<h2 id="files">9. Where files go</h2>
+<div class="wrap"><table>
+  <tr><th>What</th><th>Windows</th><th>Linux</th></tr>
+  <tr><td>Settings (<code>config.ini</code>)</td><td><code>%LOCALAPPDATA%\pypts\config.ini</code></td>
+      <td><code>~/.config/pypts/config.ini</code></td></tr>
+  <tr><td>Run logs</td><td><code>%LOCALAPPDATA%\pypts\logs</code></td>
+      <td><code>~/.local/share/pypts/logs</code></td></tr>
+  <tr><td>Reports</td><td><code>%LOCALAPPDATA%\pypts\reports</code></td>
+      <td><code>~/.local/share/pypts/reports</code></td></tr>
+</table></div>
+<p>These are the defaults. You can change the log and report folders in
+<em>Edit → Settings</em> or in <code>config.ini</code>.</p>
+<ul>
+  <li><strong>Report</strong>: each run gets one folder, <code>&lt;timestamp&gt;_&lt;recipe&gt;</code>,
+      containing <code>report.csv</code> (written step by step) and <code>report.html</code>.</li>
+  <li><strong>Run log</strong>: one file per run. Its first lines give the version, the user and
+      the machine, which makes it useful to attach to a bug report.</li>
+  <li><strong>config.ini</strong>: created on the first start. If it's broken or from an older
+      version, PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
+      Fix the file, or delete it to have it recreated.</li>
+</ul>
+
+<h2 id="tools">10. Helper tools</h2>
+<div class="wrap"><table>
+  <tr><th>Tool</th><th>Start with</th><th>For</th></tr>
+  <tr><td>Recipe Creator</td>
+      <td><code>run_recipe_creator.bat</code> or<br><code>python run_recipe_creator.py</code></td>
+      <td>Writing and editing recipes in a window, with live validation.</td></tr>
+  <tr><td>Debug Monitor</td>
+      <td>opens with every run, or<br><code>python -m pypts.helper_applications.debug_monitor</code></td>
+      <td>Developers: watching internal messages. Only shows something with
+      <code>--log-level DEBUG</code>. On its own it opens the newest log.</td></tr>
+</table></div>
+
+<h2 id="trouble">11. Troubleshooting</h2>
+<div class="wrap"><table>
+  <tr><th>You see</th><th>Do</th></tr>
+  <tr><td>"GUI mode needs PySide6…"</td><td>Install PySide6, or start with <code>--mode cli</code>.</td></tr>
+  <tr><td>"pypts configuration discarded"</td><td>Your <code>config.ini</code> is broken or outdated.
+      The run continues on defaults. Fix the file, or delete it.</td></tr>
+  <tr><td>A recipe won't load</td><td>The error names the problem. Open the recipe in the Recipe Creator to
+      see every issue at once.</td></tr>
+  <tr><td>A step that asks a question ends <code>ERROR</code> in the CLI</td><td>That's expected, see
+      <a href="#cli">§6</a>. Use the GUI or the API.</td></tr>
+  <tr><td>Debug Monitor is empty</td><td>Start with <code>--log-level DEBUG</code>.</td></tr>
+  <tr><td>Anything else</td><td>Rerun with <code>--log-level DEBUG</code> and attach the run log.</td></tr>
+</table></div>
+
+</div>
+</body>
+</html>

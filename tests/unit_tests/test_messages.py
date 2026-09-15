@@ -138,6 +138,9 @@ AN_OUTCOME = StepOutcome(
     step_id=STEP_ID,
     step_name="Measure voltage",
     result=ResultType.PASS,
+    inputs=(("channel", "1"),),
+    outputs=(("voltage", "12.1"),),
+    expectations=(("voltage", "range 11 .. 13"),),
 )
 
 #: One populated instance of every message type in the framework. Kept explicit

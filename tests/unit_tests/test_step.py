@@ -37,6 +37,7 @@ from pypts.step.step import (
     Step,
     StepResult,
     build_fail_reason,
+    describe_expectation,
     describe_failed_check,
     render_value,
     run_sequence,
@@ -501,6 +502,53 @@ def test_a_step_outcome_is_the_pickle_safe_projection():
     assert outcome == StepOutcome(
         step_id=result.step.id, step_name="works", result=ResultType.DONE, error_info=""
     )
+
+
+def test_a_passing_step_outcome_carries_its_values_as_text():
+    """M-3: the values reach the frontends on every verdict, not only in a FAIL reason."""
+    step = ReturnsDict(
+        step_name="Measure voltage",
+        payload={"voltage": 12.1, "label": "ch1"},
+        inputs={"channel": 1},
+        outputs={"voltage": {"type": "range", "min": "11", "max": "13"}},
+    )
+
+    outcome = step.run(Runtime()).to_outcome()
+
+    assert outcome.result is ResultType.PASS
+    assert outcome.inputs == (("channel", "1"),)
+    # Every returned value, declared or not; strings quoted as in a FAIL reason.
+    assert outcome.outputs == (("voltage", "12.1"), ("label", "'ch1'"))
+    assert outcome.expectations == (("voltage", "range 11 .. 13"),)
+
+
+def test_an_outcome_value_is_text_even_when_the_step_returned_an_object():
+    class Handle:
+        def __str__(self):
+            return "DMM on COM3"
+
+    step = ReturnsDict(step_name="connect", payload={"dmm": Handle()})
+
+    outcome = step.run(Runtime()).to_outcome()
+
+    assert outcome.outputs == (("dmm", "DMM on COM3"),)
+
+
+@pytest.mark.parametrize(
+    ("config", "text"),
+    [
+        ({"type": "range", "min": "11", "max": "13"}, "range 11 .. 13"),
+        ({"type": "equals", "value": 5}, "equals 5"),
+        ({"type": "equals", "value": "Yes"}, "equals 'Yes'"),
+        ({"type": "passfail"}, "must pass"),
+        ({"type": "global", "global_name": "serial_number"}, "stored as global serial_number"),
+        ({"type": "pass"}, "not judged"),
+        ({"type": "nonsense"}, ""),
+        ("not a mapping", ""),
+    ],
+)
+def test_describe_expectation_says_what_an_output_is_checked_against(config, text):
+    assert describe_expectation(config) == text
 
 
 def test_steps_are_testable_standalone_with_a_fake_context():

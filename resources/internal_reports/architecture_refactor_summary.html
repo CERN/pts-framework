@@ -86,14 +86,14 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
   <header>
     <h1>PyPTS – architecture_refactor: what has been done</h1>
-    <div class="meta">46 commits ahead of master • 2 September 2026</div>
+    <div class="meta">82 commits ahead of master • updated 15 September 2026 (first written 2 September)</div>
   </header>
 
   <div class="note">
-    Converted from <code>architecture_refactor_summary.rtf</code> (written 2 September 2026).
-    The original pointed to <code>resources/roadmap/pypts_roadmap.md</code> for status detail;
-    that content now lives in <code>pypts_implementation_status.html</code> at the repo root,
-    which is the current source of truth.
+    A summary, not the status. <code>pypts_implementation_status.html</code> at the repo root is
+    the source of truth for what is done and what is next; <code>usage_manual.html</code> says how
+    to use the application. The old porting-findings document (<code>migration_status.html</code>)
+    was removed on 15 September once its last open gaps (M-2b, M-3) were closed.
   </div>
 
   <h2>Short version</h2>
@@ -101,29 +101,34 @@ SPDX-License-Identifier: CC-BY-SA-4.0
     <li><strong>Architecture rebuilt</strong> – two processes (engine and operator frontend) plus
       a Logger process, with the Sequencer and Report as threads of the engine, and one launcher
       owning startup.</li>
-    <li><strong>Messaging replaced end to end</strong> – typed frozen messages, one module per
+    <li><strong>Messaging replaced end to end</strong> – typed dataclass messages, one module per
       link, one transport class, and handlers that raise on anything unexpected instead of
       dropping it.</li>
-    <li><strong>Health and error handling in place</strong> – heartbeats from every module,
-      timeout detection in the engine, and a uniform error report naming module, method and
-      exception.</li>
+    <li><strong>Health and error handling in place</strong> – heartbeats from every module, a
+      watchdog that ends a run when a module goes silent (configurable), and a uniform error
+      report naming module, method and exception.</li>
     <li><strong>Recipe layer rewritten</strong> – rules defined once in code, one validator for
       every step type, and a simplified format where optional fields can simply be left
       out.</li>
-    <li><strong>The engine runs recipes</strong> – five step types (Wait, PythonModule, Indexed,
-      UserInteraction, UserWrite), real sequence execution, and per-step
-      continue-on-error.</li>
+    <li><strong>The engine runs recipes</strong> – six step types (Wait, PythonModule, Indexed,
+      UserInteraction, UserWrite, UserLoading) – nothing left to port – real sequence execution,
+      and per-step continue-on-error.</li>
     <li><strong>Reporting produces artefacts</strong> – one folder per run, a CSV that grows
       during the run, an HTML report at the end, and the operator told where it is.</li>
     <li><strong>Logging centralised</strong> – a single writer process, a complete message trace
-      at DEBUG level, and a Debug Monitor that reads it back.</li>
-    <li><strong>Operator GUI rebuilt on PySide6</strong> – visual parity with the old screen:
-      four panels, live log, live step verdicts, light and dark themes.</li>
+      at DEBUG level, and a rewritten Debug Monitor that reads it back.</li>
+    <li><strong>Operator GUI rebuilt on PySide6</strong> – visual parity with the old screen,
+      a Settings dialog, and every step's measured values in the results tree.</li>
+    <li><strong>Four ways to run it</strong> – GUI, CLI, the <code>pypts.api</code> embedding
+      API, and a headless mode for CI that exits with a pass/fail code.</li>
     <li><strong>Configuration made proper</strong> – a singleton handler, a per-user config file
-      from a commented template, typed access, versioned and never silently repaired.</li>
+      from a commented template, typed access, versioned and never silently repaired, editable
+      from the GUI.</li>
     <li><strong>Cross-platform behaviour made deliberate</strong> – the same process-spawning
-      semantics everywhere and all paths resolved per platform; verified on Windows, a Linux run
-      still owed.</li>
+      semantics everywhere, all paths resolved per platform, a Linux compatibility pass done;
+      verified on Windows, a real Linux run still owed.</li>
+    <li><strong>Recipe Creator refactored</strong> – a new main window with undo/redo, three step
+      views and live validation.</li>
   </ul>
 
   <h2>Longer version</h2>
@@ -132,9 +137,13 @@ SPDX-License-Identifier: CC-BY-SA-4.0
     <h3>1. Groundwork: architecture, messaging, modules</h3>
     <ul>
       <li>Architecture rebuild finished.</li>
-      <li>Message layer implemented.</li>
-      <li>Heartbeats, watchdog timeout detection, and two error-handling decorators.</li>
-      <li>Safe abort and release on unexpected crash, with the full traceback logged.</li>
+      <li>Message layer implemented. Messages are plain dataclasses (no longer frozen), checked
+        for pickle safety at the process boundary.</li>
+      <li>CORE owns the loaded recipe; the frontends only ever see summaries.</li>
+      <li>Heartbeats, and a watchdog that acts: prolonged silence ends the run, and can be turned
+        off (<code>[watchdog] enabled</code>) for debugging with a breakpoint.</li>
+      <li>Two error-handling decorators; safe abort and release on unexpected crash, with the full
+        traceback logged.</li>
     </ul>
   </div>
 
@@ -146,8 +155,11 @@ SPDX-License-Identifier: CC-BY-SA-4.0
       <li>Format simplified – rules in one importable place, one validator for all step types,
         many fields made optional, slimmed-down required recipe format – less noise in
         <code>.yml</code>.</li>
-      <li>Five step types working: Wait, PythonModule, Indexed, UserInteraction and UserWrite.
-        (A few more still to implement.)</li>
+      <li>Six step types working: Wait, PythonModule, Indexed, UserInteraction, UserWrite and
+        UserLoading (pick a file or a folder). The remaining old types were deliberately dropped,
+        so the port is complete.</li>
+      <li>Every step's inputs, outputs and output checks reach the operator on every verdict,
+        not only on a FAIL (M-3) – no change needed in recipes or test code.</li>
       <li>Real sequence execution, plus demo recipes per step type.</li>
     </ul>
   </div>
@@ -167,50 +179,81 @@ SPDX-License-Identifier: CC-BY-SA-4.0
     <ul>
       <li>A single Logger process is the only writer of the run log; the level is resolved once
         by the launcher.</li>
+      <li>Two registers: INFO and above written for the technician, everything developer-facing at
+        DEBUG.</li>
       <li>Full message trace at DEBUG – every message logged by both sender and receiver.</li>
-      <li>Debug Monitor helper renders the trace, heartbeats and module liveness from a log file,
-        and is started beside the run – debugging only.</li>
+      <li>Debug Monitor rewritten: discovers message types from the trace instead of recognising a
+        fixed list, and shows the watchdog's fatal verdict – debugging only.</li>
     </ul>
   </div>
 
   <div class="section">
     <h3>5. GUI features</h3>
     <ul>
-      <li>Implemented a basic GUI with everything necessary for v1.0.0.</li>
       <li>Four panels: step table, live log tail, interaction panel and results summary.</li>
-      <li>Some new features added – the step table shows live verdicts and a syntax-coloured
-        YAML preview when hovering a step.</li>
-      <li>Operator interaction: images, buttons, keyboard navigation and free-text entry.</li>
+      <li>The step table shows live verdicts, the measured values on hover, and a syntax-coloured
+        YAML preview of each step.</li>
+      <li>The results panel is a tree: each step opens into its inputs and outputs, with each
+        output's check.</li>
+      <li>Operator interaction: images, buttons, keyboard navigation, free-text entry and a
+        file/folder picker, with an always-present Cancel.</li>
       <li>Full light and dark theming, working tooltips (including on disabled buttons), and a
         browse-and-pause mode.</li>
-      <li>File → Open Recent, and Edit → Remove Cache (recent-recipes cache + config file), which
-        names and sizes everything before deleting it.</li>
+      <li>File → Open Recent and Open Config; Edit → Settings (theme, window size, folders, log
+        level …) and Remove Cache. Opening a recipe is disabled during a run; the window title
+        names the loaded recipe.</li>
     </ul>
   </div>
 
   <div class="section">
-    <h3>6. Configuration</h3>
+    <h3>6. Running without the GUI</h3>
+    <ul>
+      <li>CLI mode: a text shell, Qt-free, which reacts to CORE shutting it down without waiting for
+        Enter.</li>
+      <li><code>pypts.api</code>: <code>Pts</code> drives the engine from Python code (load, run,
+        answer questions, get a result back); <code>open_gui()</code> opens the window with a
+        recipe loaded or started. Showcase: <code>api_showcase.py</code>.</li>
+      <li>Headless mode (M-2b): <code>python -m pypts --mode headless --recipe x.yml</code> runs
+        one recipe unattended and exits 0 passed / 1 failed / 2 error or stopped / 3 nothing
+        ran – ready for CI.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h3>7. Configuration</h3>
     <ul>
       <li>One configuration handler replaced the ad-hoc functions that wrote into the temp
         directory.</li>
-      <li>Automatic config file discovery or creation.</li>
-      <li>The config file now lives in the per-user config directory, created from a commented
-        template.</li>
-      <li>Typed access through a schema, with a single writer.</li>
+      <li>Automatic config file discovery or creation, in the per-user config directory, from a
+        commented template.</li>
+      <li>Typed access through a schema, with a single writer: CORE, which carries out changes the
+        operator makes in the GUI's Settings dialog (they apply from the next start).</li>
       <li>Versioned: a broken or mismatched file is discarded for that run, with a notice to the
         operator and an entry in the log – never silently repaired.</li>
     </ul>
   </div>
 
   <div class="section">
-    <h3>7. Cross-platform compatibility</h3>
+    <h3>8. Cross-platform compatibility</h3>
     <ul>
       <li>Process spawning pinned to the same method on every platform, so Windows and Linux
         behaviour is the same.</li>
       <li>Every per-user path (config, data, state, logs) resolved through one platform-aware
         place; no hardcoded locations.</li>
-      <li>Verified end to end on Windows; a Linux end-to-end run and a headless GUI test job are
-        still to be tested.</li>
+      <li>A static Linux compatibility pass is done. Verified end to end on Windows; a real Linux
+        run and a headless GUI test job are still owed.</li>
+    </ul>
+  </div>
+
+  <div class="section">
+    <h3>9. Helper applications and documentation</h3>
+    <ul>
+      <li>Recipe Creator refactored: a recipe model with undo/redo, list, card and panel step
+        views, a YAML editor, and live validation through the migrated recipe verificator.</li>
+      <li><code>usage_manual.html</code> (repo root): a short manual for users – modes, options,
+        answering prompts, where files go.</li>
+      <li>Every module has a context file beside its code; documentation, plans and TODOs
+        cleaned up.</li>
     </ul>
   </div>
 

@@ -568,6 +568,22 @@ nothing clears it between sequences of the same run. Nothing in the old `locals`
 real isolation either — F16 was exactly a re-run seeing the previous run's writes — but
 if isolation is ever wanted it has to be designed, not inherited.
 
+### 3.6 What a frontend sees of a step's values — done (M-3)
+
+`StepResult.to_outcome()` puts the step's values on `StepOutcome` **as text**, on every
+verdict, each field a tuple of `(name, text)` pairs (a message may not carry a dict):
+`inputs` and `outputs` (each value through `render_value()`, 80 characters at most, strings
+quoted) and `expectations` - each declared output's check, from
+`describe_expectation()`: `range 11 .. 13`, `equals 5`, `must pass`,
+`stored as global serial_number`, `not judged`. Text, because a step may return anything and
+only text is sure to cross the HMI boundary. No count cap here: `MAX_LISTED_ITEMS` guards a
+one-line reason, not a tree.
+
+Nothing for a recipe or a test module to do: the values are what the step was given and
+returned, the checks are the `outputs:` block. An object returned by a step shows as its
+`str()`. `build_fail_reason()` and `error_info` are unchanged - the FAIL log line and the CSV
+still need the sentence. The Report keeps the real values, from `StepExecuted`.
+
 ---
 
 ## 4. Adding a step type — the three edits

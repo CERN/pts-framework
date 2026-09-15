@@ -75,6 +75,15 @@ class StepOutcome:
     step_name: str
     result: ResultType
     error_info: str = ""
+    #: The inputs the step was given, as (name, value rendered as text) pairs.
+    #: Text, not the values: a step may touch anything, and only text is sure
+    #: to cross the boundary. Pairs, not a dict: a message is built from plain
+    #: values, tuples and dataclasses only (test_messages.py).
+    inputs: tuple[tuple[str, str], ...] = ()
+    #: What the step returned, the same way.
+    outputs: tuple[tuple[str, str], ...] = ()
+    #: What each declared output is checked against: ("voltage", "range 11 .. 13").
+    expectations: tuple[tuple[str, str], ...] = ()
 
 
 # --- Messages: on a link union, sent on their own -----------------------------

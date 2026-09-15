@@ -8,6 +8,7 @@ Small helpers with no home of their own.
 
 import contextlib
 import signal
+from collections.abc import Mapping
 
 
 def ignore_keyboard_interrupt() -> None:
@@ -57,3 +58,33 @@ def convert_string_to_int(value: str) -> int:
         raise ValueError(f"Cannot convert '{value}' to integer.") from None
     except TypeError:
         raise TypeError("Input must be a string or number.") from None
+
+
+def describe_value(name: str, value: str, expectation: str = "") -> str:
+    """`voltage = 12.1`, or `voltage = 12.1 (range 11 .. 13)` when there is a check."""
+    if expectation:
+        return f"{name} = {value} ({expectation})"
+    return f"{name} = {value}"
+
+
+def describe_step_values(
+    inputs: Mapping[str, str], outputs: Mapping[str, str], expectations: Mapping[str, str]
+) -> list[str]:
+    """
+    A step's values as the console and the step table's tooltip show them.
+
+    At most two lines - `inputs: a = 2, b = 3` and `outputs: sum = 5 (equals 5)` -
+    and none for a step with no values. The values are already text: they come
+    from StepOutcome, rendered by the step layer.
+    """
+    lines = []
+    if inputs:
+        described = [describe_value(name, value) for name, value in inputs.items()]
+        lines.append("inputs: " + ", ".join(described))
+    if outputs:
+        described = [
+            describe_value(name, value, expectations.get(name, ""))
+            for name, value in outputs.items()
+        ]
+        lines.append("outputs: " + ", ".join(described))
+    return lines

@@ -62,6 +62,20 @@ launcher (main process)
 - Never import `helper_applications/debug_monitor/`. The dependency runs one way only.
 - `stop_core()` is a pure function of its two arguments — no global state.
 
+## Arguments
+
+`--mode gui|cli|headless`, `--log-level`, `--debug-monitor/--no-debug-monitor`, and for
+headless mode only `--recipe` (required) and `--sequence`. The parser is `ArgumentParser`,
+which exits with `USAGE_EXIT_CODE` (3) on a bad command line instead of argparse's 2, because
+headless mode uses 2 for a run that ended in ERROR/STOP. `--debug-monitor` defaults to on in
+gui/cli and off in headless.
+
+## Headless mode
+
+`main()` hands over to `pypts.api.headless.headless_main()` and exits with its return code.
+The launcher starts no engine itself in this mode - `Pts` does. The import is inside the
+branch because `pypts.api` imports this module. Context: `api/api.md`.
+
 ## CLI mode
 
 The CLI (`hmi/cli/cli.py`) runs in the launcher process, not as a subprocess. It calls

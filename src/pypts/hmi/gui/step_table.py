@@ -35,6 +35,7 @@ from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
 from pypts.logger.log import log
 from pypts.messages.common_messages import StepOutcome
 from pypts.messages.run_events import SequenceSummary, StepStarted
+from pypts.utilities.common import describe_step_values
 
 #: What the two pre-verdict states say in the cell. Upper-cased and stripped of
 #: the dots, each is its own key in the chip table - so the Result column is
@@ -266,8 +267,15 @@ class StepTableContent(QWidget):
         if row is None:
             return
         item = self._state_item(str(outcome.result))
+        # The reason first, then the values - on every verdict, so a PASS row
+        # says what was measured too.
+        tooltip_lines = describe_step_values(
+            dict(outcome.inputs), dict(outcome.outputs), dict(outcome.expectations)
+        )
         if outcome.error_info:
-            item.setToolTip(outcome.error_info)
+            tooltip_lines.insert(0, outcome.error_info)
+        if tooltip_lines:
+            item.setToolTip("\n".join(tooltip_lines))
         self.table.setItem(row, 2, item)
 
     # --- Theme -----------------------------------------------------------------

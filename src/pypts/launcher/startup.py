@@ -47,7 +47,7 @@ import time
 from dataclasses import dataclass
 from multiprocessing import Process, Queue, get_start_method, set_start_method
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from pypts._version import __version__
 from pypts.config_handler import BootstrapOutcome, ConfigHandler
@@ -84,6 +84,12 @@ MONITOR_LOG_WAIT_S = 5.0
 #: is already there - costs one `exists()` and no sleep at all.
 MONITOR_LOG_POLL_S = 0.05
 
+#: The exit code of a command line argparse rejects. argparse's own is 2, which
+#: headless mode already uses for a run that ended in ERROR or STOP, so a bad
+#: argument exits with headless mode's "there was no run" instead
+#: (pypts.api.headless.EXIT_NOT_RUN - not imported, see main()).
+USAGE_EXIT_CODE = 3
+
 
 @dataclass
 class Engine:
@@ -108,13 +114,34 @@ class Engine:
     monitor_process: subprocess.Popen | None = None
 
 
+class ArgumentParser(argparse.ArgumentParser):
+    """argparse, exiting with USAGE_EXIT_CODE on a bad command line."""
+
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(USAGE_EXIT_CODE, f"{self.prog}: error: {message}\n")
+
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
+    parser = ArgumentParser(prog="python -m pypts")
     parser.add_argument(
         "--mode",
-        choices=["gui", "cli"],
+        choices=["gui", "cli", "headless"],
         default="gui",
-        help="Choose the app mode: GUI (default) or CLI",
+        help=(
+            "Choose the app mode: GUI (default), CLI, or headless - run one recipe "
+            "with nobody at the keyboard and exit with a code a CI pipeline can check"
+        ),
+    )
+    parser.add_argument(
+        "--recipe",
+        default=None,
+        help="Headless mode only, and required there: the recipe file to run.",
+    )
+    parser.add_argument(
+        "--sequence",
+        default=None,
+        help="Headless mode only: the sequence to run. Default: the recipe's main sequence.",
     )
     parser.add_argument(
         "--log-level",
@@ -129,11 +156,12 @@ def main() -> None:
     parser.add_argument(
         "--debug-monitor",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=None,
         help=(
-            "Open the Debug Monitor on this run's log. On by default, so plainly "
-            "running the launcher gives you the frontend and the Monitor together; "
-            "pass --no-debug-monitor for a run without it - a headless bench or CI, "
+            "Open the Debug Monitor on this run's log. On by default in gui and cli "
+            "mode, so plainly running the launcher gives you the frontend and the "
+            "Monitor together; off by default in headless mode. Pass "
+            "--no-debug-monitor for a run without it - a headless bench or CI, "
             "where there is no display to open a window on. It is a separate "
             "program that only reads the log file, so it changes nothing about the "
             "run, and it is left open when the run ends. Needs --log-level DEBUG to "
@@ -141,6 +169,25 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+
+    if args.mode == "headless":
+        if args.recipe is None:
+            parser.error("--mode headless needs --recipe")
+    elif args.recipe is not None or args.sequence is not None:
+        parser.error("--recipe and --sequence are for --mode headless only")
+
+    # None means the flag was not given: the Monitor is a window, and a
+    # headless run is the one kind that has nobody to look at it.
+    debug_monitor = args.debug_monitor
+    if debug_monitor is None:
+        debug_monitor = args.mode != "headless"
+
+    # Headless mode is pypts.api.Pts with a console, and Pts starts the engine
+    # itself. Imported here, not at the top: pypts.api imports this module.
+    if args.mode == "headless":
+        from pypts.api.headless import headless_main
+
+        sys.exit(headless_main(args.recipe, args.sequence, args.log_level, debug_monitor))
 
     # The GUI is imported only when one is going to be started. PySide6 is the
     # one heavy dependency in the tree and `pypts.hmi.gui.gui` is the only door
@@ -166,7 +213,7 @@ def main() -> None:
             )
             sys.exit(1)
 
-    engine = start_engine(args.mode, args.log_level, args.debug_monitor)
+    engine = start_engine(args.mode, args.log_level, debug_monitor)
     try:
         if args.mode == "gui":
             run_gui(engine)
@@ -205,10 +252,10 @@ def start_engine(
     Bring up everything a frontend talks to: configuration, Logger, CORE.
 
     Args:
-        mode: "gui", "cli" or "api". It decides how a configuration notice is
-            shown (a popup only in GUI mode) and whether the Logger also writes
-            to stdout (only in GUI mode - the CLI and the API have their own
-            console output), and it names the mode in the run log's first line.
+        mode: "gui", "cli", "api" or "headless". It decides how a configuration
+            notice is shown (a popup only in GUI mode) and whether the Logger also
+            writes to stdout (only in GUI mode - the others have their own console
+            output), and it names the mode in the run log's first line.
         log_level_name: overrides [logging] level in config.ini, as --log-level.
         debug_monitor: open the Debug Monitor on this run's log.
 

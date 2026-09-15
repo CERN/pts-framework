@@ -23,7 +23,7 @@ import queue
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from os import PathLike
 from pathlib import Path
 from typing import Any
@@ -107,6 +107,12 @@ class StepVerdict:
     result: ResultType
     #: Why it did not pass, or why it did not run; empty otherwise.
     info: str = ""
+    #: The inputs the step was given, name -> value as text.
+    inputs: dict[str, str] = field(default_factory=dict)
+    #: What the step returned, name -> value as text.
+    outputs: dict[str, str] = field(default_factory=dict)
+    #: What each declared output is checked against: `range 11 .. 13`.
+    expectations: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -244,7 +250,14 @@ class ApiClient(HmiClient):
                 started = True
             elif isinstance(message, StepFinished):
                 outcome = message.outcome
-                step = StepVerdict(outcome.step_name, outcome.result, outcome.error_info)
+                step = StepVerdict(
+                    outcome.step_name,
+                    outcome.result,
+                    outcome.error_info,
+                    dict(outcome.inputs),
+                    dict(outcome.outputs),
+                    dict(outcome.expectations),
+                )
                 steps.append(step)
                 if on_step is not None:
                     on_step(step)
@@ -352,6 +365,10 @@ class Pts:
     run log. close() puts back the handlers and the level it found.
     """
 
+    #: The mode start_engine() is given, which names it in the run log.
+    #: Headless mode (headless.py) says "headless".
+    MODE = "api"
+
     def __init__(self, log_level: str | None = None, debug_monitor: bool = False) -> None:
         """
         Args:
@@ -360,7 +377,7 @@ class Pts:
         """
         self._saved_logging = _save_root_logging()
         try:
-            self._engine = startup.start_engine("api", log_level, debug_monitor)
+            self._engine = startup.start_engine(self.MODE, log_level, debug_monitor)
         except BaseException:
             _restore_root_logging(self._saved_logging)
             raise

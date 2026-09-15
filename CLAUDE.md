@@ -45,8 +45,14 @@ implemented, what is still a stub, and what comes next.** It is a *living* docum
 **Read it before planning or starting any work.**
 
 Also at repo root: `recipe_guide.html` — the new-format recipe reference (step
-types, input/output mapping, verificator gaps). Open porting findings (the remaining R-* and
-M-* items) are in `migration_status.html` (repo root).
+types, input/output mapping, verificator gaps). `usage_manual.html` — the short user manual:
+modes (GUI, CLI, API, headless), options, where files go.
+
+**Everything that affects how a user uses the application goes into `usage_manual.html`**,
+in the same change: a new or changed mode, command-line option, CLI command, GUI button or
+menu, prompt behaviour, exit code, file location, setting, or helper tool. A change that alters
+what a user sees, types or gets back is not done until the manual says so. Keep it short and
+simple — what to do and what happens, not how it is built (that belongs in the context files).
 
 Keeping the roadmap current is part of every task:
 
@@ -86,8 +92,9 @@ Update the context file in the same change that touches the module.
 
 **Ephemeral generated HTML documents go in `resources/internal_reports/`.** Not the repo
 root, not next to the code they describe — the user opens these in a browser and expects every
-one of them in one folder. **Permanent project-reference HTML documents** (`migration_status.html`,
-`pypts_implementation_status.html`, `recipe_guide.html`, `migration_instructions.html`)
+one of them in one folder. **Permanent project-reference HTML documents** (
+`pypts_implementation_status.html`, `recipe_guide.html`, `migration_instructions.html`,
+`usage_manual.html`)
 live at the **repo root** alongside `TODO.txt`.
 
 - One self-contained file: inline CSS, no external assets, light *and* dark palettes.
@@ -134,8 +141,8 @@ resources/recipes/       example recipes (YAML, *.yml)
 tests/                   unit_tests/ + functional_tests/
 pypts_implementation_status.html  phased plan + implementation status (at repo root)
 recipe_guide.html        new-format recipe reference (at repo root)
+usage_manual.html        short user manual: modes, options, files (at repo root)
 migration_instructions.html  porting guide for old recipes (at repo root)
-migration_status.html    what still needs porting from old_code (at repo root)
 TODO.txt                 open task list (at repo root)
 plans/                   refactoring_progress.md (completed work log) + README.md
 ```
@@ -180,6 +187,9 @@ See `utilities/utilities.md` and `pypts_implementation_status.html` §1.10–§1
 ```bash
 python -m pypts                       # GUI mode (PySide6) - the default
 python -m pypts --mode cli            # CLI mode
+python -m pypts --mode headless --recipe x.yml [--sequence Name]
+                                      # one unattended run; exit 0 PASS/DONE, 1 FAIL,
+                                      # 2 ERROR/STOP/SKIP, 3 no run (api/api.md)
 python -m pypts --log-level DEBUG     # full message trace in the run log
 python -m pypts --no-debug-monitor    # without the Debug Monitor
 pytest tests                          # unit + functional tests

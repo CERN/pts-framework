@@ -12,6 +12,8 @@ per-user folders: there is no override for where those live
 """
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -44,3 +46,15 @@ def test_a_refused_recipe_raises_and_the_session_still_closes(tmp_path):
 
     with Pts() as pts, pytest.raises(PtsError, match="not loaded"):
         pts.load_recipe(broken)
+
+
+def test_the_headless_command_line_runs_a_recipe_and_exits_with_its_code():
+    completed = subprocess.run(
+        [sys.executable, "-m", "pypts", "--mode", "headless", "--recipe", str(WAIT_RECIPE)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "Run finished: DONE (2 steps)" in completed.stdout

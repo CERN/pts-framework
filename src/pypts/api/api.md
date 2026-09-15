@@ -16,6 +16,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 |------|------|
 | `__init__.py` | The public names. Callers import from `pypts.api` only. |
 | `embedding.py` | `Pts`, `open_gui()`, `ApiClient`, the result dataclasses, `PtsError` |
+| `headless.py` | `--mode headless`: `headless_main()`, exit codes (below) |
 
 ## The two doors
 
@@ -76,6 +77,31 @@ if __name__ == "__main__":
   is never started, and any other open before `RecipeLoaded` cancels the pending start
   (`hmi/gui/gui.md`).
 
+## Step values (M-3)
+
+`StepVerdict.inputs`, `.outputs` and `.expectations` are `dict[str, str]` - the step's values
+as text and each output's check (`range 11 .. 13`), copied from `StepOutcome`. Headless mode
+prints them under each step line. The real, typed values are in the run's report.
+
+## Headless mode (`headless.py`, M-2b)
+
+`python -m pypts --mode headless --recipe x.yml [--sequence Name]` - the launcher hands over
+to `headless_main()` (imported lazily: this package imports the launcher). It is `Pts` with a
+console: load, run, print each step, exit.
+
+- **`HeadlessPts(Pts)`** only sets `MODE = "headless"`, so the run log says HEADLESS, not API.
+- **Every question is declined** (`decline_question()`: a console line and a WARNING), so the
+  step is an ERROR - as in the CLI. No answers file, by decision.
+- **Exit codes:** `0` PASS/DONE · `1` FAIL · `2` ERROR, STOP or SKIP (not judged; also
+  Ctrl+C) · `3` no run - missing or refused recipe, unknown sequence, engine failed to start
+  or stopped mid-run. A rejected command line is `3` too (`startup.USAGE_EXIT_CODE`, not
+  argparse's `2`), in every mode.
+- The recipe file and the sequence name are checked before running; a missing file before
+  anything is started.
+- The Debug Monitor is **off** by default in this mode (`--debug-monitor` turns it on).
+- Tests: `tests/unit_tests/test_headless.py`; a real-process run is in
+  `test_api_processes.py` (opt-in).
+
 ## Rules and caveats
 
 - **Spawn.** Callers must create `Pts` / call `open_gui()` under `if __name__ == "__main__":`.
@@ -93,7 +119,3 @@ if __name__ == "__main__":
 
 - The Phase 2 plugin contract (step and driver base classes) - a different door, *extending*
   pypts rather than driving it. It may share the `pypts.api` package later.
-- A headless command line (`python -m pypts --recipe x.yml`, exit codes) - M-2b; it would be a
-  thin layer on `Pts`.
-- Live access to the step-level inputs/outputs - `StepVerdict.info` carries what the frontends
-  get (M-3).

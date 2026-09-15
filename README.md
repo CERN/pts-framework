@@ -28,8 +28,15 @@ Plain Python — no IDE, no launch configuration, no wrapper script:
 .venv\Scripts\python.exe -m pypts                     # GUI, plus the Debug Monitor
 .venv\Scripts\python.exe -m pypts --mode cli          # CLI, plus the Debug Monitor
 .venv\Scripts\python.exe -m pypts --no-debug-monitor  # without the Monitor
+.venv\Scripts\python.exe -m pypts --mode headless --recipe bench.yml   # unattended, for CI
 .venv\Scripts\python.exe -m pytest tests              # the test suite
 ```
+
+Headless mode runs one recipe (optionally `--sequence Name`) with no window and no prompts,
+and exits `0` passed, `1` failed, `2` error/stopped, `3` nothing ran.
+
+**How to use the app** - modes, options, answering prompts, where logs and reports go - is in
+[`usage_manual.html`](usage_manual.html). Writing recipes: [`recipe_guide.html`](recipe_guide.html).
 
 `src\pypts\launcher\startup.py` may be run directly instead of `-m pypts`; it is the same
 entry point. With the virtual environment activated, `python` replaces
