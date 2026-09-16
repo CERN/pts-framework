@@ -152,7 +152,7 @@ def _nothing_to_disconnect() -> None:
     """Stands in for the OS theme sync's disconnect when the theme is fixed."""
 
 
-#: The order the step counts are listed in on the status line: verdicts first.
+#: The order the step counts are listed in after a run: verdicts first.
 _SUMMARY_ORDER = (
     ResultType.PASS,
     ResultType.FAIL,
@@ -167,9 +167,10 @@ def run_summary(
     recipe_name: str, result: ResultType, outcomes: tuple[StepOutcome, ...]
 ) -> str:
     """
-    The status line a finished run leaves: how it ended, and how many steps
-    ended which way - "Done - demo: FAIL (5 steps: 3 PASS, 1 FAIL, 1 SKIP)",
-    or "Stopped - demo (2 steps: 2 PASS)" when the operator stopped it.
+    What the label above the step table says once a run is over: how it ended,
+    then how many steps ended which way - "Done - demo: FAIL" over
+    "5 steps: 3 PASS, 1 FAIL, 1 SKIP", or "Stopped - demo" when the operator
+    stopped it.
     """
     counts = []
     for result_type in _SUMMARY_ORDER:
@@ -188,8 +189,8 @@ def run_summary(
         steps = "no steps ran"
 
     if result == ResultType.STOP:
-        return f"Stopped - {recipe_name} ({steps})"
-    return f"Done - {recipe_name}: {result.name} ({steps})"
+        return f"Stopped - {recipe_name}\n{steps}"
+    return f"Done - {recipe_name}: {result.name}\n{steps}"
 
 
 def gui_main(
@@ -445,9 +446,9 @@ class GUI(HmiClient):
         self._pause_requested = False
         #: The running recipe's name, for the "Running ..." label a Resume puts back.
         self._running_recipe_name = ""
-        #: The status line the last finished run left, e.g. "Done - demo: FAIL
-        #: (3 steps: 2 PASS, 1 FAIL)". Empty from RunStarted until RunFinished.
-        self._run_summary = ""
+        #: The state word the status bar shows for the run: Running, Pausing,
+        #: Paused, Finished or Stopped. Empty until the first run.
+        self._run_state = ""
 
         # Build content widgets
         self.recent_recipes = RecentRecipes()
@@ -724,7 +725,7 @@ class GUI(HmiClient):
         self.pause_sequence()
         self._set_pause_requested(True)
         self.window.recipe_label.setText("Pausing after the current step...")
-        self.show_status("Pausing after the current step")
+        self._show_run_state("Pausing")
 
     def _start_or_resume(self, sequence_name: str) -> None:
         """
@@ -747,7 +748,12 @@ class GUI(HmiClient):
     def _show_run_moving(self) -> None:
         self._set_pause_requested(False)
         self.window.recipe_label.setText(f"Running {self._running_recipe_name}...")
-        self.show_status(f"Running {self._running_recipe_name}")
+        self._show_run_state("Running")
+
+    def _show_run_state(self, state: str) -> None:
+        """The status bar during and after a run: one state word, nothing more."""
+        self._run_state = state
+        self.show_status(state)
 
     # --- Sequence dropdown ------------------------------------------------------
 
@@ -813,23 +819,25 @@ class GUI(HmiClient):
         self.center.show_idle()
         self.window.left_stack.setCurrentIndex(_PAGE_LEFT_TABLE)
         self.window.recipe_label.setText(f"Running {recipe_name}...")
-        self._run_summary = ""
-        self.show_status(f"Running {recipe_name}")
+        self._show_run_state("Running")
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
         self._run_in_progress = False
         self._set_recipe_opening_enabled(True)
-        if self._pause_requested:
-            # A pause that lapsed, or a hold ended by Stop: the label must not
-            # go on saying "Pausing..." or "Paused..." once the run is over.
-            self._show_run_moving()
+        # A pause that lapsed, or a hold ended by Stop, is over with the run.
+        self._set_pause_requested(False)
         self.step_table.set_running(False)
         self.top_bar.show_run_finished()
         self.center.cancel_pending()
         self.center.show_idle()
         self.window.results_panel.set_results(outcomes)
-        self._run_summary = run_summary(self._running_recipe_name, result, outcomes)
-        self.show_status(self._run_summary)
+        self.window.recipe_label.setText(
+            run_summary(self._running_recipe_name, result, outcomes)
+        )
+        if result == ResultType.STOP:
+            self._show_run_state("Stopped")
+        else:
+            self._show_run_state("Finished")
 
     def show_run_paused(self, event: RunPaused) -> None:
         super().show_run_paused(event)
@@ -839,9 +847,7 @@ class GUI(HmiClient):
         self.window.recipe_label.setText(
             f"Paused before step {event.position}/{event.total} '{event.step_name}'"
         )
-        self.show_status(
-            f"Paused before step {event.position}/{event.total} - press Start to resume"
-        )
+        self._show_run_state("Paused")
 
     def show_run_resumed(self) -> None:
         super().show_run_resumed()
@@ -863,10 +869,10 @@ class GUI(HmiClient):
 
     def show_report_ready(self, event: ReportReady) -> None:
         self.report_dir = event.report_dir
-        if self._run_summary:
+        if self._run_state:
             # CORE's "Report generated: <path>" status line lands just before
-            # this; the run's summary is what the operator needs to keep seeing.
-            self.show_status(f"{self._run_summary} - report saved")
+            # this; the bar goes back to saying how the run ended.
+            self.show_status(self._run_state)
 
     # --- Settings ---------------------------------------------------------------
 

@@ -1698,7 +1698,7 @@ def test_clicking_pause_asks_the_engine_and_says_it_is_pausing(gui, inbox_run_st
     assert "Continue the run" in top.start_button.toolTip()
     assert "Start resumes it" in top.pause_button.toolTip()
     assert instance.window.recipe_label.text() == "Pausing after the current step..."
-    assert instance.status_label.text() == "Status: Pausing after the current step"
+    assert instance.status_label.text() == "Status: Pausing"
 
 
 def test_run_paused_names_the_step_the_run_is_held_before(gui, inbox_run_started):
@@ -1709,7 +1709,7 @@ def test_run_paused_names_the_step_the_run_is_held_before(gui, inbox_run_started
     instance.poll_core()
 
     assert instance.window.recipe_label.text() == "Paused before step 4/10 'measure'"
-    assert "Paused before step 4/10" in instance.status_label.text()
+    assert instance.status_label.text() == "Status: Paused"
     assert instance.top_bar.pause_button.isEnabled() is False
     assert instance.top_bar.start_button.accessibleName() == "Resume"
 
@@ -1732,7 +1732,7 @@ def test_clicking_start_while_paused_resumes_and_shows_the_run_moving(gui, inbox
     assert top.start_button.isEnabled() is False
     assert top.start_button.accessibleName() == "Start"
     assert instance.window.recipe_label.text() == "Running demo..."
-    assert instance.status_label.text() == "Status: Running demo"
+    assert instance.status_label.text() == "Status: Running"
 
 
 def test_run_resumed_puts_the_running_label_and_the_pause_button_back(gui, inbox_run_started):
@@ -1765,14 +1765,14 @@ def test_a_finished_run_forgets_it_was_paused(gui, inbox_run_started):
     assert top.pause_button.isEnabled() is False
     assert top.start_button.isEnabled() is True
     assert top.start_button.accessibleName() == "Start"
-    assert instance.window.recipe_label.text() == "Running demo..."
+    assert instance.window.recipe_label.text() == "Done - demo: PASS\nno steps ran"
 
 
 def an_outcome(result):
     return StepOutcome(step_id=uuid4(), step_name="step", result=result)
 
 
-def test_a_finished_run_leaves_its_summary_in_the_status_bar(gui, inbox_run_started):
+def test_a_finished_run_leaves_its_summary_above_the_table(gui, inbox_run_started):
     instance, _outbox, inbox = inbox_run_started
     outcomes = (
         an_outcome(ResultType.PASS),
@@ -1784,23 +1784,29 @@ def test_a_finished_run_leaves_its_summary_in_the_status_bar(gui, inbox_run_star
     inbox.send(RunFinished(result=ResultType.FAIL, outcomes=outcomes))
     instance.poll_core()
 
-    assert instance.status_label.text() == (
-        "Status: Done - demo: FAIL (4 steps: 2 PASS, 1 FAIL, 1 SKIP)"
+    assert instance.window.recipe_label.text() == (
+        "Done - demo: FAIL\n4 steps: 2 PASS, 1 FAIL, 1 SKIP"
     )
+    assert instance.status_label.text() == "Status: Finished"
 
 
-def test_a_stopped_run_says_so_in_the_status_bar(gui, inbox_run_started):
+def test_a_run_stopped_while_paused_shows_its_summary_not_running(gui, inbox_run_started):
+    """Stop during a hold sends RunResumed, then RunFinished(STOP); the label
+    must end on the summary, not on the "Running..." the RunResumed put back."""
     instance, _outbox, inbox = inbox_run_started
-
+    instance.top_bar.pause_button.click()
+    inbox.send(RunPaused(step_name="measure", position=2, total=3))
+    inbox.send(RunResumed())
     inbox.send(RunFinished(result=ResultType.STOP, outcomes=(an_outcome(ResultType.PASS),)))
     instance.poll_core()
 
-    assert instance.status_label.text() == "Status: Stopped - demo (1 step: 1 PASS)"
+    assert instance.window.recipe_label.text() == "Stopped - demo\n1 step: 1 PASS"
+    assert instance.status_label.text() == "Status: Stopped"
 
 
-def test_the_report_status_line_does_not_hide_the_run_summary(gui, inbox_run_started):
+def test_the_report_status_line_does_not_hide_the_run_state(gui, inbox_run_started):
     """CORE sends "Report generated: <path>" and then ReportReady, right after
-    RunFinished; the summary must still be what the status bar shows."""
+    RunFinished; the status bar goes back to how the run ended."""
     from pypts.messages.core_hmi_communication import ReportReady
 
     instance, _outbox, inbox = inbox_run_started
@@ -1809,9 +1815,8 @@ def test_the_report_status_line_does_not_hide_the_run_summary(gui, inbox_run_sta
     inbox.send(ReportReady(report_path="C:/r/report.html", report_dir="C:/r"))
     instance.poll_core()
 
-    assert instance.status_label.text() == (
-        "Status: Done - demo: PASS (1 step: 1 PASS) - report saved"
-    )
+    assert instance.status_label.text() == "Status: Finished"
+    assert instance.window.recipe_label.text() == "Done - demo: PASS\n1 step: 1 PASS"
 
 
 def test_a_new_run_starts_unpaused(gui, inbox_run_started):

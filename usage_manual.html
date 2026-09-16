@@ -151,16 +151,21 @@ it.</div>
 <div class="wrap"><table>
   <tr><th>Button</th><th>Does</th></tr>
   <tr><td>Open</td><td>Loads a recipe. Greyed out during a run.</td></tr>
-  <tr><td>Start</td><td>Runs the selected sequence.</td></tr>
-  <tr><td>Pause / Resume</td><td>Holds the run once the current step has finished. Until then
+  <tr><td>Start</td><td>Runs the selected sequence. While the run is paused it lights up again
+      and <strong>resumes</strong> the run instead.</td></tr>
+  <tr><td>Pause</td><td>Holds the run once the current step has finished. Until then
       the label reads <em>Pausing after the current step...</em>, then which step the run waits
-      before. If that step is a question, answer it first. The same button, now
-      <strong>Resume</strong>, carries on (or cancels a pause that hasn't begun). Stop still
+      before. If that step is a question, answer it first. Pause greys out; press
+      <strong>Start</strong> to carry on (or to cancel a pause that hasn't begun). Stop still
       works. Teardown steps are never held.</td></tr>
   <tr><td>Stop</td><td>Aborts the run. Steps that didn't run end as <code>STOP</code>.</td></tr>
   <tr><td>Report (far right)</td><td>Opens this run's report folder, or the reports folder if
       there hasn't been a run yet.</td></tr>
 </table></div>
+<p>When a run ends, the label above the step table shows a summary, e.g.
+<em>Done - demo: FAIL</em> / <em>5 steps: 3 PASS, 1 FAIL, 1 SKIP</em>, or
+<em>Stopped - demo</em> if you stopped it. The status bar at the bottom just names the
+state: Idle, Running, Pausing, Paused, Finished or Stopped.</p>
 <p>Hover over any button to see what it does, or why it's greyed out.
 Hover over a step's result to see why it failed (if it did) and the values it measured.
 Between runs, click a step's name or description to see that step's YAML; the row

@@ -919,7 +919,8 @@ except TimeoutError as exc:
 <p><strong>Verified:</strong> 513 passed / 43 skipped, <code>ruff</code>` and <code>mypy</code>` clean. 7 new tests in <code>test_hmi_gui.py</code>`: every control carries all three strings, the disabled reasons, the rewording on load and during a run, the Pause/Resume flip and its reset, and the disabled- button tooltip path. The last one has to <code>show()</code>` the window first — widgets in an unshown window have no laid-out geometry and <code>childAt()</code>` needs real coordinates.</p>
 <p><strong>New TODOs this opened:</strong></p>
 <ul>
-<li>[ ] <strong>TODO:</strong> the Pause button keeps the pause glyph while paused; only the words change.
+<li>[x] <strong>Done in §1.50:</strong> Pause now greys out while paused and the green Start (play) button resumes.
+<p>Original TODO: the Pause button keeps the pause glyph while paused; only the words change.</p>
 <p>A play glyph would say it without a hover.</p>
 </li>
 <li>[ ] <strong>TODO:</strong> the same disabled-tooltip trap applies anywhere else a disabled control needs
@@ -1429,6 +1430,18 @@ hal        dead      fatal                hal-&gt;core, core-&gt;hal
 <p><strong>And <code>start()</code> sends the goodbye from a <code>finally</code></strong> (the option taken, over the smaller one of just moving the decorator): a module whose loop died reports the failure <em>and</em> releases CORE's shutdown instead of costing it the full budget. <code>send_goodbye()</code> is guarded by a <code>goodbye_sent</code> flag, because on the ordinary path <code>stop()</code> has already sent it and a second copy would show up in every run's trace.</p>
 <p><strong>What it costs, and it is the only cost:</strong> <code>ModuleError.operation</code> now names the boundary (<code>Report.handle_core_message</code>) instead of the method that actually failed (<code>Report.record_step</code>). That field appears only at DEBUG, on the same record as the traceback, which names the failing method anyway — so it is recoverable from the log, but a report read without the traceback is one step less specific than it was. Two existing tests asserted the old names and were updated to the new ones rather than around them.</p>
 <p><strong>Tests.</strong> Four new, two per module: a loop that dies still sends its goodbye and reports through <code>start()</code>, and an ordinary shutdown sends exactly one goodbye (the guard). The two §1.48 tests were rewritten to drive through the inbox rather than calling <code>stop()</code> directly — with <code>stop()</code> no longer a boundary, calling it directly no longer exercises the real path.</p>
+<hr>
+<h3 id="1-50-start-resumes-status-bar-summary-done">1.50 Start resumes a paused run; a run summary above the table — <strong>done</strong></h3>
+<p>Requested 2026-09-16. A paused run left the Pause button lit (it had silently become Resume). A run stopped after a pause left "Running &lt;recipe&gt;..." above the table. The status bar said "Idle" through the whole run, then "Report generated: &lt;path&gt;".</p>
+<ul>
+<li><strong>Buttons.</strong> From the Pause click on, Pause is greyed and the green Start button reads <strong>Resume</strong> and sends <code>ResumeSequence</code> (<code>GUI._start_or_resume</code>). Resume, <code>RunResumed</code> and <code>RunFinished</code> put them back. <code>TopBarContent.set_paused()</code> switches the two enabled states while a run is on; <code>GUI._pause_requested</code> stays the one owner.</li>
+<li><strong>Label above the table.</strong> <code>RunFinished</code> sets it to <code>run_summary()</code> (<code>gui.py</code>): "Done - demo: FAIL" over "5 steps: 3 PASS, 1 FAIL, 1 SKIP", or "Stopped - demo" over the counts.</li>
+<li><strong>Status bar.</strong> One state word: Running, Pausing, Paused, Finished or Stopped. <code>ReportReady</code> puts the word back after CORE's "Report generated" line.</li>
+</ul>
+<p>Context: <code>gui.md</code> §13. Operator docs: <code>usage_manual.html</code> (toolbar). Tests: 5 pause tests rewritten, 3 run-end tests added in <code>test_hmi_gui.py</code>.</p>
+<ul>
+<li>[x] Checked by the user in a running GUI window, 2026-09-16.</li>
+</ul>
 <hr>
 <h2 id="todo-step-types-which-of-the-ten-are-ported-and-which-are-dropped">TODO — Step types: which of the ten are ported, and which are dropped</h2>
 <blockquote><p><strong>Status: decided 2026-09-01; <code>PythonModule</code>` finished, <code>UserInteraction</code>` ported (§1.28) and <code>UserWrite</code>` ported (§1.31) since.</strong> The catalogue, the per-type notes and the open questions live in <strong><code>src/pypts/step/step.md</code>`</strong> — that file is the authority on the step-type port, and this block only records the decisions so the phase plan above reads correctly.</p></blockquote>

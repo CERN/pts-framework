@@ -1037,23 +1037,34 @@ wins over all of them. The class was **copied** from
 
 ## 13. Pause and Resume
 
-One toolbar button, and a real hold: the engine stops *between* main steps, never
-inside one, and never in teardown. GUI only — the CLI and the API inherit the DEBUG
-hooks and offer no command.
+Pause holds, Start resumes, and a real hold: the engine stops *between* main steps,
+never inside one, and never in teardown. GUI only — the CLI and the API inherit the
+DEBUG hooks and offer no command.
 
-| When | Sent / received | Button | `recipe_label` |
+| When | Sent / received | Buttons | `recipe_label` / status bar |
 |---|---|---|---|
-| Pause clicked | sends `PauseSequence` (`pause_sequence()`) | Resume | "Pausing after the current step..." |
-| `RunPaused(step_name, position, total)` | the hold has begun | Resume | "Paused before step 4/10 'measure'" |
-| Resume clicked | sends `ResumeSequence` (`resume_sequence()`) | Pause | "Running {recipe}..." |
-| `RunResumed` | the hold ended (by Resume or Stop) | Pause | "Running {recipe}..." |
-| `RunStarted` / `RunFinished` | reset | Pause | `RunFinished` puts "Running {recipe}..." back only if a pause was still showing |
+| Pause clicked (`_pause`) | sends `PauseSequence` | Pause grey, Start = Resume | "Pausing after the current step..." |
+| `RunPaused(step_name, position, total)` | the hold has begun | Pause grey, Start = Resume | "Paused before step 4/10 'measure'" |
+| Start clicked while paused (`_start_or_resume`) | sends `ResumeSequence` | Pause lit, Start grey | "Running {recipe}..." |
+| `RunResumed` | the hold ended (by Resume or Stop) | Pause lit, Start grey | "Running {recipe}..." |
+| `RunStarted` / `RunFinished` | reset | `RunFinished`: Start lit, Pause grey | `RunFinished`: the run summary (below) |
 
 **One owner.** `GUI._pause_requested` is the only copy of the pause state;
-`TopBarContent.set_paused()` just renders it (`_shows_resume`) and never resets it
-itself. The button reads Resume from the click on, not from `RunPaused`, because the
-hold only begins when the current step ends — a long wait — and Resume is also how a
-pause that has not begun is cancelled (the engine answers that with no event).
+`TopBarContent.set_paused()` just renders it (`_shows_resume`, plus the Start/Pause
+enabled states while a run is on) and never resets it itself. Start is `_start_or_resume`:
+it sends `ResumeSequence` while `_pause_requested`, `StartSequence` otherwise. Start
+resumes from the click on, not from `RunPaused`, because the hold only begins when the
+current step ends — a long wait — and Resume is also how a pause that has not begun is
+cancelled (the engine answers that with no event).
+
+**Run summary.** `RunFinished` sets `recipe_label` (above the step table) to
+`run_summary()`: "Done - {recipe}: {result}" over "N steps: 3 PASS, 1 FAIL, ...", or
+"Stopped - {recipe}" for `STOP`; counts in the order PASS, FAIL, ERROR, DONE, SKIP, STOP,
+zeros left out. Whatever label a pause, a Resume or a `RunResumed` left is replaced.
+
+**Status bar.** One state word for the run (`_show_run_state`): Running, Pausing, Paused,
+Finished or Stopped. CORE's "Report generated: <path>" `StatusChanged` arrives right after
+`RunFinished`; the `ReportReady` behind it puts the state word back.
 
 **Crossing messages are self-correcting.** Resume sets the label on the click *and* on
 `RunResumed`. A `RunPaused` that crosses a Resume click sets Resume/"Paused..." again,
