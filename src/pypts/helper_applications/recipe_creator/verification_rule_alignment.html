@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Verificator Rule Alignment</title>
+<style>
+  :root {
+    --bg:         #f6f7f9;
+    --panel:      #ffffff;
+    --ink:        #1b1f24;
+    --ink-soft:   #4a5260;
+    --ink-faint:  #737d8c;
+    --rule:       #dfe3e8;
+    --accent:     #0b5fa5;
+    --accent-bg:  #e8f1fa;
+    --good:       #1d7a45;
+    --good-bg:    #e6f4ec;
+    --warn:       #9a6700;
+    --warn-bg:    #fdf4e3;
+    --bad:        #a32020;
+    --bad-bg:     #fbeaea;
+    --code-bg:    #f0f2f5;
+    --code-ink:   #24292f;
+    --shadow:     0 1px 3px rgba(0,0,0,.07), 0 6px 18px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:        #14171b;
+      --panel:     #1b1f24;
+      --ink:       #e6e9ee;
+      --ink-soft:  #b0b8c4;
+      --ink-faint: #838d9b;
+      --rule:      #2c323a;
+      --accent:    #6bb4f0;
+      --accent-bg: #16293b;
+      --good:      #5ec98a;
+      --good-bg:   #14291d;
+      --warn:      #e0b155;
+      --warn-bg:   #2c2416;
+      --bad:       #f08a8a;
+      --bad-bg:    #2e1a1a;
+      --code-bg:   #12151a;
+      --code-ink:  #d6dbe3;
+      --shadow:    0 1px 3px rgba(0,0,0,.4), 0 6px 18px rgba(0,0,0,.3);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 40px 24px 96px; }
+
+  header.doc {
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 28px 30px; box-shadow: var(--shadow); margin-bottom: 26px;
+  }
+  header.doc h1 { margin: 0 0 6px; font-size: 30px; letter-spacing: -.02em; line-height: 1.2; }
+  .sub { color: var(--ink-faint); font-size: 15px; margin-bottom: 18px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 10px 28px; font-size: 14px; }
+  .meta div { color: var(--ink-soft); }
+  .meta b { color: var(--ink); font-weight: 600; }
+
+  nav.toc {
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 18px 24px; margin-bottom: 28px; box-shadow: var(--shadow);
+  }
+  nav.toc h2 {
+    margin: 0 0 10px; font-size: 12px; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ink-faint); font-weight: 700;
+  }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 34px; }
+  nav.toc li { margin: 3px 0; break-inside: avoid; }
+  nav.toc a { color: var(--accent); text-decoration: none; }
+  nav.toc a:hover { text-decoration: underline; }
+
+  section {
+    background: var(--panel); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 24px 30px 28px; margin-bottom: 20px; box-shadow: var(--shadow);
+  }
+  h2.sec {
+    margin: 0 0 14px; font-size: 21px; letter-spacing: -.01em;
+    padding-bottom: 10px; border-bottom: 2px solid var(--rule);
+  }
+  h2.sec .n { color: var(--accent); font-variant-numeric: tabular-nums; margin-right: 10px; }
+  h3 { font-size: 16px; margin: 22px 0 8px; }
+  p { margin: 11px 0; }
+  ul, ol { margin: 11px 0; padding-left: 24px; }
+  li { margin: 6px 0; }
+  a { color: var(--accent); }
+
+  code {
+    background: var(--code-bg); color: var(--code-ink);
+    padding: .12em .38em; border-radius: 4px;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+    font-size: .88em; word-break: break-word;
+  }
+  pre {
+    background: var(--code-bg); color: var(--code-ink);
+    border: 1px solid var(--rule); border-radius: 8px;
+    padding: 14px 16px; overflow-x: auto; margin: 14px 0;
+    font-family: ui-monospace, SFMono-Regular, "SF Mono", Consolas, "Liberation Mono", monospace;
+    font-size: 13.5px; line-height: 1.55;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  table { border-collapse: collapse; width: 100%; margin: 16px 0; font-size: 14.5px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  th {
+    font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+    color: var(--ink-faint); font-weight: 700; border-bottom: 2px solid var(--rule);
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  .id { font-weight: 700; color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .tw { overflow-x: auto; }
+
+  .callout {
+    border-left: 4px solid var(--accent); background: var(--accent-bg);
+    padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 18px 0;
+  }
+  .callout.rule { border-left-color: var(--good); background: var(--good-bg); }
+  .callout.warn { border-left-color: var(--warn); background: var(--warn-bg); }
+  .callout.bad  { border-left-color: var(--bad);  background: var(--bad-bg); }
+  .callout p:first-child { margin-top: 0; }
+  .callout p:last-child  { margin-bottom: 0; }
+  .callout .lbl {
+    display: block; font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+    font-weight: 700; margin-bottom: 6px; color: var(--ink-faint);
+  }
+  .big { font-size: 17px; font-weight: 600; }
+
+  .tag {
+    display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .05em;
+    text-transform: uppercase; padding: 2px 8px; border-radius: 20px; white-space: nowrap;
+  }
+  .tag.err  { background: var(--bad-bg);  color: var(--bad); }
+  .tag.cln  { background: var(--warn-bg); color: var(--warn); }
+  .tag.dead { background: var(--code-bg); color: var(--ink-faint); }
+  .tag.done { background: var(--good-bg); color: var(--good); }
+  .tag.todo { background: var(--code-bg); color: var(--ink-faint); border: 1px solid var(--rule); }
+  h3 .tag { margin-right: 8px; vertical-align: 2px; }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; font-size: 13.5px; color: var(--ink-soft); margin: 4px 0 0; }
+
+  footer.doc {
+    margin-top: 34px; padding-top: 18px; border-top: 1px solid var(--rule);
+    color: var(--ink-faint); font-size: 13px; text-align: center;
+  }
+  @media (max-width: 680px) {
+    .wrap { padding: 24px 16px 64px; }
+    nav.toc ol { columns: 1; }
+    header.doc, section { padding-left: 18px; padding-right: 18px; }
+    header.doc h1 { font-size: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>Verificator Rule Alignment</h1>
+  <div class="sub">Making the Recipe Creator’s own checker agree with the framework, rule for rule.</div>
+  <div class="meta">
+    <div><b>Date</b> &nbsp;2026-09-16</div>
+    <div><b>Branch</b> &nbsp;<code>architecture_refactor</code></div>
+    <div><b>Fixes</b> &nbsp;roadmap item 4</div>
+    <div><b>Touches</b> &nbsp;one file, ~60 lines</div>
+    <div><b>Status</b> &nbsp;<b style="color:var(--good)">Drift A implemented</b> · B and C pending</div>
+  </div>
+</header>
+
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#s1">What this is and is not</a></li>
+    <li><a href="#s2">Drift A — case sensitivity</a></li>
+    <li><a href="#s3">Drift B — value rules</a></li>
+    <li><a href="#s4">Drift C — dead code</a></li>
+    <li><a href="#s5">Deliberately unchanged</a></li>
+    <li><a href="#s6">The fix</a></li>
+    <li><a href="#s7">Testing</a></li>
+    <li><a href="#s8">Deferred</a></li>
+  </ol>
+</nav>
+
+<section id="s1">
+  <h2 class="sec"><span class="n">1</span>What this is and is not</h2>
+
+  <p>The Recipe Creator has its own recipe checker — <code>recipe_verificator/verificator.py</code>, 1163 lines — separate from the one the framework uses to load a recipe (<code>src/pypts/recipe/</code>). The two have drifted. This work <b>aligns the Creator’s rules with the framework’s, as they stand today</b>.</p>
+
+  <div class="callout rule">
+    <span class="lbl">The shape of the change</span>
+    <p class="big">The verificator stays. Its rules change.</p>
+    <p>It keeps its size, its line numbers, its hints and its independence. No delegation to the framework, no attribution machinery, no final gate. One file, roughly sixty lines.</p>
+  </div>
+
+  <h3>Explicitly not doing</h3>
+  <ul>
+    <li><b>Not</b> changing <code>src/pypts/recipe/</code>. The framework is the reference; it is not touched.</li>
+    <li><b>Not</b> gutting the verificator so it calls the framework’s validator for its verdict. That was an earlier proposal and is dropped.</li>
+    <li><b>Not</b> building a guard against drift returning in future. Accepted, on the record: the two remain separate implementations that can drift again.</li>
+  </ul>
+
+  <p>The properties being restored are these two, and only these:</p>
+  <div class="callout">
+    <p><b>No false error</b> — the Creator must not report a problem in a recipe the application loads.<br>
+       <b>No false clean</b> — the Creator must not stay silent about a recipe the application refuses.</p>
+  </div>
+
+  <div class="legend">
+    <span><span class="tag err">false error</span> Creator complains, app accepts</span>
+    <span><span class="tag cln">false clean</span> Creator silent, app refuses</span>
+  </div>
+</section>
+
+<section id="s2">
+  <h2 class="sec"><span class="n">2</span>Drift A — case sensitivity</h2>
+
+  <div class="callout rule">
+    <span class="lbl">Implemented — 2026-09-16</span>
+    <p>All four consequences are fixed, by fixes 1–3 in §6. The verificator now normalizes with <code>recipe_parser.normalize_header()</code> and <code>normalize_sequence()</code> — the framework’s own helpers, not a second copy of the rule.</p>
+    <p><b>Verified:</b> 12 new tests pass; all 12 corpus recipes agree with the real load path (0 mismatches); <code>ruff</code> and <code>mypy</code> clean.</p>
+  </div>
+
+  <p>One root cause with four consequences. <b>The verificator never normalized its input.</b> The framework lowercases every mapping key before validating — <code>recipe_parser.py:303</code> (<code>_lowercase_keys</code>), applied recursively through sequences, steps, <code>inputs</code>/<code>outputs</code> entry configs, indexed templates and parameter sets. The recipe language is case-insensitive by design. The verificator reads raw keys.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>Where</th><th>What happens</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="id">A1</td>
+        <td>Every field check;<br>unknown-key check at <code>:684</code></td>
+        <td>Any mixed-case key — <code>Step_Name:</code>, <code>Global_Name:</code>, <code>Steptype:</code> — produces <b>two</b> wrong messages at once: a “missing required field” error, because the lowercase key is absent, and an “unknown key” warning, because the raw key is tested against <code>rules.py</code>’s lowercase sets.</td>
+        <td><span class="tag err">false error</span></td>
+      </tr>
+      <tr>
+        <td class="id">A2</td>
+        <td><code>:203</code></td>
+        <td><code>"name" in header_doc</code> is a raw-key test. A header written <code>Name:</code> is rejected as “not a recipe header” and verification stops before a single field is examined.</td>
+        <td><span class="tag err">false error</span></td>
+      </tr>
+      <tr>
+        <td class="id">A3</td>
+        <td><code>:932</code></td>
+        <td>Duplicate sequence names compared case-sensitively. The parser compares them <b>lowercased</b> (<code>recipe_parser.py:95</code>), so sequences named <code>Main</code> and <code>main</code> are a duplicate to the application and unique to the Creator.</td>
+        <td><span class="tag cln">false clean</span></td>
+      </tr>
+      <tr>
+        <td class="id">A4</td>
+        <td><code>:946</code></td>
+        <td><code>main_sequence</code> matched case-sensitively. The parser matches case-insensitively (<code>recipe_parser.py:105</code>), so <code>main_sequence: main</code> against a sequence named <code>Main</code> runs fine and the Creator calls it a broken reference.</td>
+        <td><span class="tag err">false error</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="s3">
+  <h2 class="sec"><span class="n">3</span>Drift B — load-time value rules</h2>
+
+  <p>Three rules are enforced by step constructors when the recipe loads. The verificator checks that these fields are <em>present</em>, but never what they <em>contain</em> — so each is a recipe the Creator passes and the application then refuses. Note that the framework’s own <code>validator.py</code> does not catch these either; it tests <code>is None</code>, and <code>""</code> and <code>[]</code> are not <code>None</code>.</p>
+
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>Rule</th><th>Enforced at</th><th>Slips through as</th><th></th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="id">B1</td>
+        <td><code>select</code> must be <code>file</code> or <code>folder</code>, case-insensitively</td>
+        <td><code>user_loading_step.py:77</code></td>
+        <td><code>select: sideways</code></td>
+        <td><span class="tag cln">false clean</span></td>
+      </tr>
+      <tr>
+        <td class="id">B2</td>
+        <td><code>method_name</code> may not be empty</td>
+        <td><code>python_module_step.py:116</code></td>
+        <td><code>method_name: ""</code></td>
+        <td><span class="tag cln">false clean</span></td>
+      </tr>
+      <tr>
+        <td class="id">B3</td>
+        <td><code>options</code> may not be empty</td>
+        <td><code>user_interaction_step.py:65</code></td>
+        <td><code>options: []</code></td>
+        <td><span class="tag cln">false clean</span></td>
+      </tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="s4">
+  <h2 class="sec"><span class="n">4</span>Drift C — dead code</h2>
+  <p><code>_header_required_hint</code> is defined <b>twice</b> in <code>verificator.py</code>, at lines 377 and 998. The bodies are <b>byte-identical</b>, so behaviour is unaffected — Python keeps the last definition, making line 377’s copy dead.</p>
+  <p>Line 377’s copy is deleted. Line 998’s is kept, because it sits with the other seven <code>_*_hint</code> functions in the hints section.</p>
+  <div class="callout warn">
+    <span class="lbl">Why it is in this document</span>
+    <p>It is not a drift, it is a symptom of the same cause: a 1163-line file nobody can hold in one head. It is listed because it is being removed in the same pass, not because it breaks anything.</p>
+  </div>
+</section>
+
+<section id="s5">
+  <h2 class="sec"><span class="n">5</span>Deliberately unchanged</h2>
+  <p><code>wait_step.py:40</code> refuses a negative <code>wait_time</code> — but it raises inside <code>_step()</code>, at <b>run</b> time, not on load. A recipe with <code>wait_time: -5</code> loads without complaint and fails when that step executes.</p>
+  <div class="callout">
+    <p>The verificator therefore stays silent about it, and that is <b>correct</b>. Flagging it would create a new false error: the Creator would refuse a recipe the application loads. Verification answers “will this load?”, not “will every step succeed?”.</p>
+  </div>
+</section>
+
+<section id="s6">
+  <h2 class="sec"><span class="n">6</span>The fix</h2>
+
+  <p><span class="tag done">done</span> Fixes 1–3 are implemented and verified. <span class="tag todo">to&nbsp;do</span> Fixes 4 and 5 are not started.</p>
+
+  <h3><span class="tag done">done</span> 1 &nbsp;Normalize in <code>_run</code>, before anything else</h3>
+  <p>Run each document through the parser’s own public helpers — <code>recipe_parser.normalize_header()</code> and <code>normalize_sequence()</code> (<code>recipe_parser.py:234,239</code>) — rather than reimplementing the lowercasing. Order matters: this must happen <b>before</b> the document-identification test at <code>:203</code>, or A2 survives.</p>
+  <p>Resolves <span class="id">A1</span> and <span class="id">A2</span>.</p>
+
+  <h3><span class="tag done">done</span> 2 &nbsp;Make <code>_LineMap</code> case-insensitive</h3>
+  <div class="callout bad">
+    <span class="lbl">The one subtlety in this change</span>
+    <p>The line map is built from the raw YAML node, which keeps original-case keys. Lowercase the documents without lowercasing the map and every mixed-case recipe verifies correctly but reports <b>no line numbers at all</b> — the error gutter goes blank and the fix looks like a regression.</p>
+    <p>Lowercase the map’s keys as it is built, so a lookup for <code>step_name</code> finds the line of <code>Step_Name:</code>.</p>
+  </div>
+
+  <h3><span class="tag done">done</span> 3 &nbsp;Lowercase both sides of the two name comparisons</h3>
+  <p>Sequence-name duplicate detection and the <code>main_sequence</code> lookup, matching <code>recipe_parser.py:95,105</code>. Sequence names keep their original case for display; only the comparison is lowered.</p>
+  <p>Resolves <span class="id">A3</span> and <span class="id">A4</span>.</p>
+
+  <h3><span class="tag todo">to do</span> 4 &nbsp;Add the three value checks</h3>
+  <p>Import <code>SELECT_VALUES</code> from <code>user_loading_step.py</code> rather than retyping the legal words — one fewer thing to drift. Empty-value checks for <code>method_name</code> and <code>options</code> alongside.</p>
+  <p>Resolves <span class="id">B1</span>, <span class="id">B2</span>, <span class="id">B3</span>.</p>
+
+  <h3><span class="tag todo">to do</span> 5 &nbsp;Delete the dead <code>_header_required_hint</code></h3>
+  <p>Line 377’s copy. Resolves <span class="id">C</span>.</p>
+</section>
+
+<section id="s7">
+  <h2 class="sec"><span class="n">7</span>Testing</h2>
+  <div class="tw">
+  <table>
+    <thead><tr><th>#</th><th>Test</th><th>Guards</th></tr></thead>
+    <tbody>
+      <tr><td class="id">1</td><td>A recipe written with <code>Steptype:</code>, <code>Step_Name:</code>, <code>Global_Name:</code> verifies clean. <b>Fails on today’s code.</b></td><td>A1 — acceptance test for roadmap item 4</td></tr>
+      <tr><td class="id">2</td><td>A header written <code>Name:</code> is identified as a header.</td><td>A2</td></tr>
+      <tr><td class="id">3</td><td>That same mixed-case recipe still reports <b>line numbers</b> on a genuine error.</td><td>the <code>_LineMap</code> trap in fix 2</td></tr>
+      <tr><td class="id">4</td><td>Sequences <code>Main</code> and <code>main</code> are reported as duplicates.</td><td>A3</td></tr>
+      <tr><td class="id">5</td><td><code>main_sequence: main</code> against sequence <code>Main</code> verifies clean.</td><td>A4</td></tr>
+      <tr><td class="id">6</td><td><code>select: sideways</code>, <code>method_name: ""</code> and <code>options: []</code> are each reported.</td><td>B1, B2, B3</td></tr>
+      <tr><td class="id">7</td><td><code>wait_time: -5</code> is <b>not</b> reported.</td><td>§5 — no new drift in the other direction</td></tr>
+      <tr><td class="id">8</td><td>All 7 recipes in <code>Development_recipes/</code> verify clean; all 5 in <code>Old_recipes/</code> behave as before.</td><td>no regression</td></tr>
+      <tr><td class="id">9</td><td><code>git diff --exit-code src/pypts/recipe/</code> is empty.</td><td>the framework is untouched</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Existing tests must stay green unmodified: <code>test_recipe.py</code> (67), <code>test_rc_model.py</code> (25), <code>test_console_output.py</code> (3). Quality gates: <code>pytest tests</code>, <code>ruff check src tests</code>, <code>mypy</code>.</p>
+
+  <h3>Results — 2026-09-16</h3>
+  <p>Tests 1–5 and 8 cover Drift A and are implemented in <code>tests/unit_tests/test_verificator_case_insensitivity.py</code>. Tests 6 and 7 belong to Drift B and are not written yet.</p>
+  <div class="tw">
+  <table>
+    <thead><tr><th>Gate</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>New tests — <code>test_verificator_case_insensitivity.py</code></td><td><b style="color:var(--good)">12 passed</b> (7 of them failed before the fix)</td></tr>
+      <tr><td>Corpus differential — all 12 recipes, verificator verdict vs the real load path</td><td><b style="color:var(--good)">0 mismatches</b></td></tr>
+      <tr><td><code>ruff check src tests</code></td><td><b style="color:var(--good)">All checks passed</b></td></tr>
+      <tr><td><code>mypy</code></td><td><b style="color:var(--good)">no issues in 29 source files</b></td></tr>
+      <tr><td><code>pytest tests/unit_tests</code></td><td>1040 passed, 22 skipped, <b style="color:var(--warn)">4 failed</b> — see below</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout warn">
+    <span class="lbl">The four failures are not from this change</span>
+    <p>All four are in <code>test_settings.py</code> (the GUI settings dialog). <b>Verified by stashing this change and re-running them: the same four fail without it.</b> They import only <code>config_handler</code>, <code>messages</code> and <code>hmi.gui</code> — there is no import path from the verificator to them.</p>
+    <p><code>pytest tests</code> in full (including <code>tests/functional_tests/</code>) was started and produced no output for several minutes; the unit-test run above was used instead. The functional suite is <b>not</b> confirmed for this change.</p>
+  </div>
+
+  <div class="callout">
+    <span class="lbl">Test-count note</span>
+    <p>CLAUDE.md records 408 passed / 43 skipped as of <code>exec/005-spawn</code>. The suite now stands at 1040 passed / 22 skipped — that growth is other work on this branch, not this change.</p>
+  </div>
+</section>
+
+<section id="s8">
+  <h2 class="sec"><span class="n">8</span>Deferred</h2>
+  <ul>
+    <li><b>Drift B — the three value rules</b> (§3) and <b>Drift C — the dead <code>_header_required_hint</code></b> (§4). Confirmed on the fix list, not yet implemented. Tests 6 and 7 go with them.</li>
+    <li><b><s>Moving <code>recipe_verificator/</code> into <code>recipe_creator/</code></s></b> — <b style="color:var(--good)">done, 2026-09-16</b>, as a separate step after the drift fix. <code>verificator.py</code>, <code>issue.py</code> and the context file moved in; the exports now live in <code>recipe_creator/__init__.py</code> and the old package is gone. Import path is <code>pypts.helper_applications.recipe_creator</code>. Updated: <code>rc_model.py</code>, <code>recipe_creator.py</code>, <code>recipe_creator_new.py</code>, <code>test_rc_model.py</code>, <code>test_console_output.py</code>, <code>test_verificator_case_insensitivity.py</code>, the CLAUDE.md module table and layout listing, and <code>recipe_creator.md</code>. Verified: 127 tests pass across the three affected test files.</li>
+    <li><b><code>recipe_creator.py</code></b> — 45 KB of dead code; <code>__main__.py</code> runs <code>recipe_creator_new.py</code>. Untouched.</li>
+    <li><b>Documentation</b> — <code>recipe_verificator.md</code>’s “sync rule” section is now the written form of this bug and should be revised, but the folder move will rewrite that file anyway. Roadmap item 4 is marked done as part of this change.</li>
+  </ul>
+</section>
+
+<footer class="doc">
+  PyPTS · <code>pts-framework</code> · Recipe Creator · fix list confirmed 2026-09-16, awaiting go-ahead
+</footer>
+
+</div>
+</body>
+</html>

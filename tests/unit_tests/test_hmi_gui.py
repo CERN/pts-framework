@@ -1680,19 +1680,25 @@ def test_during_a_run_open_says_it_must_wait(gui, inbox_run_started):
 
 def test_clicking_pause_asks_the_engine_and_says_it_is_pausing(gui, inbox_run_started):
     """The hold begins only when the current step ends, so the window has to
-    say something is coming - and the button already resumes, which is also
-    how a pause that has not begun is cancelled."""
+    say something is coming - and Start already resumes, which is also how a
+    pause that has not begun is cancelled."""
     instance, outbox, _inbox = inbox_run_started
+    top = instance.top_bar
     drain(outbox)
-    assert instance.top_bar.pause_button.accessibleName() == "Pause"
-    assert "current step has finished" in instance.top_bar.pause_button.toolTip()
+    assert top.pause_button.isEnabled() is True
+    assert top.start_button.isEnabled() is False
+    assert "current step has finished" in top.pause_button.toolTip()
 
-    instance.top_bar.pause_button.click()
+    top.pause_button.click()
 
     assert PauseSequence() in drain(outbox)
-    assert instance.top_bar.pause_button.accessibleName() == "Resume"
-    assert "Continue the run" in instance.top_bar.pause_button.toolTip()
+    assert top.pause_button.isEnabled() is False
+    assert top.start_button.isEnabled() is True
+    assert top.start_button.accessibleName() == "Resume"
+    assert "Continue the run" in top.start_button.toolTip()
+    assert "Start resumes it" in top.pause_button.toolTip()
     assert instance.window.recipe_label.text() == "Pausing after the current step..."
+    assert instance.status_label.text() == "Status: Pausing after the current step"
 
 
 def test_run_paused_names_the_step_the_run_is_held_before(gui, inbox_run_started):
@@ -1703,23 +1709,30 @@ def test_run_paused_names_the_step_the_run_is_held_before(gui, inbox_run_started
     instance.poll_core()
 
     assert instance.window.recipe_label.text() == "Paused before step 4/10 'measure'"
-    assert instance.top_bar.pause_button.accessibleName() == "Resume"
+    assert "Paused before step 4/10" in instance.status_label.text()
+    assert instance.top_bar.pause_button.isEnabled() is False
+    assert instance.top_bar.start_button.accessibleName() == "Resume"
 
 
-def test_clicking_resume_asks_the_engine_and_shows_the_run_moving(gui, inbox_run_started):
+def test_clicking_start_while_paused_resumes_and_shows_the_run_moving(gui, inbox_run_started):
     """Resume does not wait for a confirmation before the label changes: a
     cancelled pause that never began gets no RunResumed at all."""
     instance, outbox, inbox = inbox_run_started
-    instance.top_bar.pause_button.click()
+    top = instance.top_bar
+    top.pause_button.click()
     inbox.send(RunPaused(step_name="measure", position=4, total=10))
     instance.poll_core()
     drain(outbox)
 
-    instance.top_bar.pause_button.click()
+    top.start_button.click()
 
-    assert ResumeSequence() in drain(outbox)
-    assert instance.top_bar.pause_button.accessibleName() == "Pause"
+    # Resume, never a second StartSequence.
+    assert drain(outbox) == [ResumeSequence()]
+    assert top.pause_button.isEnabled() is True
+    assert top.start_button.isEnabled() is False
+    assert top.start_button.accessibleName() == "Start"
     assert instance.window.recipe_label.text() == "Running demo..."
+    assert instance.status_label.text() == "Status: Running demo"
 
 
 def test_run_resumed_puts_the_running_label_and_the_pause_button_back(gui, inbox_run_started):
@@ -1727,7 +1740,7 @@ def test_run_resumed_puts_the_running_label_and_the_pause_button_back(gui, inbox
     RunResumed the engine sends for that hold is what corrects it."""
     instance, _outbox, inbox = inbox_run_started
     instance.top_bar.pause_button.click()
-    instance.top_bar.pause_button.click()
+    instance.top_bar.start_button.click()
     inbox.send(RunPaused(step_name="measure", position=4, total=10))
     instance.poll_core()
 
@@ -1735,7 +1748,8 @@ def test_run_resumed_puts_the_running_label_and_the_pause_button_back(gui, inbox
     instance.poll_core()
 
     assert instance.window.recipe_label.text() == "Running demo..."
-    assert instance.top_bar.pause_button.accessibleName() == "Pause"
+    assert instance.top_bar.pause_button.isEnabled() is True
+    assert instance.top_bar.start_button.isEnabled() is False
 
 
 def test_a_finished_run_forgets_it_was_paused(gui, inbox_run_started):
@@ -1746,9 +1760,58 @@ def test_a_finished_run_forgets_it_was_paused(gui, inbox_run_started):
     inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
     instance.poll_core()
 
+    top = instance.top_bar
     assert instance._pause_requested is False
-    assert instance.top_bar.pause_button.accessibleName() == "Pause"
+    assert top.pause_button.isEnabled() is False
+    assert top.start_button.isEnabled() is True
+    assert top.start_button.accessibleName() == "Start"
     assert instance.window.recipe_label.text() == "Running demo..."
+
+
+def an_outcome(result):
+    return StepOutcome(step_id=uuid4(), step_name="step", result=result)
+
+
+def test_a_finished_run_leaves_its_summary_in_the_status_bar(gui, inbox_run_started):
+    instance, _outbox, inbox = inbox_run_started
+    outcomes = (
+        an_outcome(ResultType.PASS),
+        an_outcome(ResultType.PASS),
+        an_outcome(ResultType.FAIL),
+        an_outcome(ResultType.SKIP),
+    )
+
+    inbox.send(RunFinished(result=ResultType.FAIL, outcomes=outcomes))
+    instance.poll_core()
+
+    assert instance.status_label.text() == (
+        "Status: Done - demo: FAIL (4 steps: 2 PASS, 1 FAIL, 1 SKIP)"
+    )
+
+
+def test_a_stopped_run_says_so_in_the_status_bar(gui, inbox_run_started):
+    instance, _outbox, inbox = inbox_run_started
+
+    inbox.send(RunFinished(result=ResultType.STOP, outcomes=(an_outcome(ResultType.PASS),)))
+    instance.poll_core()
+
+    assert instance.status_label.text() == "Status: Stopped - demo (1 step: 1 PASS)"
+
+
+def test_the_report_status_line_does_not_hide_the_run_summary(gui, inbox_run_started):
+    """CORE sends "Report generated: <path>" and then ReportReady, right after
+    RunFinished; the summary must still be what the status bar shows."""
+    from pypts.messages.core_hmi_communication import ReportReady
+
+    instance, _outbox, inbox = inbox_run_started
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=(an_outcome(ResultType.PASS),)))
+    inbox.send(StatusChanged(text="Report generated: C:/r/report.html"))
+    inbox.send(ReportReady(report_path="C:/r/report.html", report_dir="C:/r"))
+    instance.poll_core()
+
+    assert instance.status_label.text() == (
+        "Status: Done - demo: PASS (1 step: 1 PASS) - report saved"
+    )
 
 
 def test_a_new_run_starts_unpaused(gui, inbox_run_started):
@@ -1828,12 +1891,12 @@ def test_the_toolbar_answers_tooltips_for_disabled_buttons(gui, qapp):
     top.event(QHelpEvent(QEvent.Type.ToolTip, centre, top.mapToGlobal(centre)))
 
 
-# --- The step table's YAML hover panel ----------------------------------------
+# --- The step table's YAML click panel ----------------------------------------
 #
-# What the operator gets between runs: the pointer on a row, and that step's
-# YAML beside it. The fragments themselves are the recipe layer's
-# (step_source.py, covered in test_recipe.py); these tests own the wiring, the
-# idle gate and the theme.
+# What the operator gets between runs: a click on a step's name or description,
+# and that step's YAML beside the pointer. The fragments themselves are the
+# recipe layer's (step_source.py, covered in test_recipe.py); these tests own
+# the wiring, the idle gate, the row highlight and the theme.
 
 
 A_FRAGMENT = "steptype: Wait\nstep_name: First wait\nwait_time: '0.01'"
@@ -1873,75 +1936,94 @@ def test_a_sequence_without_fragments_still_fills_the_table(qapp):
     assert content.table.rowCount() == 2
     assert content.table.item(0, 0).data(_YAML_ROLE) is None
 
-    content._hover_cell(0, 0)
-    content._show_hovered_yaml()
+    content._clicked_cell(0, 0)
     assert content.yaml_popup.isVisible() is False
 
 
-def test_hovering_a_row_shows_that_row_s_yaml(qapp):
+def test_clicking_a_row_shows_that_row_s_yaml(qapp):
     content, sources = a_table_with_yaml(qapp)
 
-    content._hover_cell(1, 0)
-    content._show_hovered_yaml()
+    content._clicked_cell(1, 0)
 
     assert content.yaml_popup.isVisible() is True
     assert content.yaml_popup.text_view.toPlainText() == sources[1]
 
 
-def test_the_panel_waits_for_the_pointer_to_rest(qapp):
-    """Dragging the eye down the table must show nothing: the panel opens on a
-    rest, not on a crossing."""
-    from pypts.hmi.gui.step_table import _HOVER_DELAY_MS
+def test_the_description_opens_the_panel_too_and_the_result_does_not(qapp):
+    """The two prose columns are the affordance; the Result column is a verdict
+    with its own tooltip, and a click there dismisses instead."""
+    content, _sources = a_table_with_yaml(qapp)
 
+    content._clicked_cell(0, 1)
+    assert content.yaml_popup.isVisible() is True
+
+    content._clicked_cell(0, 2)
+    assert content.yaml_popup.isVisible() is False
+
+
+def test_hovering_alone_shows_nothing(qapp):
+    """Dragging the eye down the table must show nothing at all now: the panel
+    opens on a click, never on a crossing."""
     content, _sources = a_table_with_yaml(qapp)
 
     content._hover_cell(0, 0)
+    content._hover_cell(1, 0)
 
     assert content.yaml_popup.isVisible() is False
-    assert content._hover_timer.isActive() is True
-    assert content._hover_timer.interval() == _HOVER_DELAY_MS
 
-    # Crossing to another row restarts the wait rather than opening on the first.
+
+def test_the_clicked_row_is_highlighted_and_the_verdict_chip_is_not(qapp):
+    """The row goes the row-number column's blue - but only the two prose
+    cells, so a PASS chip keeps the colour the palette gave it."""
+    from pypts.hmi.gui.palette import get_palette
+
+    content, _sources = a_table_with_yaml(qapp)
+    chip_before = content.table.item(0, 2).background().color().name()
+
+    content._clicked_cell(0, 0)
+
+    tint = get_palette(False).header_background.lower()
+    assert content.table.item(0, 0).background().color().name().lower() == tint
+    assert content.table.item(0, 1).background().color().name().lower() == tint
+    assert content.table.item(0, 2).background().color().name() == chip_before
+
+
+def test_moving_off_the_clicked_cell_hides_the_panel(qapp):
+    """The pointer leaving the field is the dismissal."""
+    from PySide6.QtCore import Qt
+
+    content, _sources = a_table_with_yaml(qapp)
+    content._clicked_cell(0, 0)
+
     content._hover_cell(1, 0)
+
     assert content.yaml_popup.isVisible() is False
-    assert content._hovered_row == 1
+    assert content._active_row == -1
+    assert content.table.item(0, 0).background().style() == Qt.BrushStyle.NoBrush
 
 
-def test_the_delay_really_opens_the_panel(qapp, qtbot):
-    """The timer is wired to the show, not merely armed. Run at 10 ms rather
-    than the real 1.5 s - the wiring is the same, the wait is not."""
-    content, sources = a_table_with_yaml(qapp)
-    content._hover_timer.setInterval(10)
+def test_moving_within_the_clicked_row_keeps_the_panel(qapp):
+    """Name to description is still the same field: one step, one panel."""
+    content, _sources = a_table_with_yaml(qapp)
+    content._clicked_cell(0, 0)
 
-    content._hover_cell(1, 0)
-    qtbot.waitUntil(content.yaml_popup.isVisible, timeout=1000)
-
-    assert content.yaml_popup.text_view.toPlainText() == sources[1]
-
-
-def test_an_open_panel_follows_the_pointer_without_waiting_again(qapp):
-    """Once it is up the operator has asked for it; another 1.5 s per row would
-    turn reading down the table into a series of pauses."""
-    content, sources = a_table_with_yaml(qapp)
-    content._hover_cell(0, 0)
-    content._show_hovered_yaml()
-
-    content._hover_cell(1, 0)
+    content._hover_cell(0, 1)
 
     assert content.yaml_popup.isVisible() is True
-    assert content.yaml_popup.text_view.toPlainText() == sources[1]
-    assert content._hover_timer.isActive() is False
 
 
-def test_hiding_the_panel_disarms_the_delay(qapp):
-    """A wait left running would open the panel after the pointer had gone."""
+def test_hiding_the_panel_drops_the_highlight(qapp):
+    """A tint left behind would mark a row for no reason once the panel is gone."""
+    from PySide6.QtCore import Qt
+
     content, _sources = a_table_with_yaml(qapp)
-    content._hover_cell(0, 0)
-    assert content._hover_timer.isActive() is True
+    content._clicked_cell(0, 0)
+    assert content._active_row == 0
 
     content.hide_yaml_popup()
 
-    assert content._hover_timer.isActive() is False
+    assert content._active_row == -1
+    assert content.table.item(0, 0).background().style() == Qt.BrushStyle.NoBrush
 
 
 def test_the_panel_is_suppressed_while_a_recipe_runs(qapp):
@@ -1949,21 +2031,17 @@ def test_the_panel_is_suppressed_while_a_recipe_runs(qapp):
     written to and read for verdicts, and must not be covered. A hold counts
     as running - set_running(False) only comes with RunFinished."""
     content, _sources = a_table_with_yaml(qapp)
-    content._hover_cell(0, 0)
-    content._show_hovered_yaml()
+    content._clicked_cell(0, 0)
     assert content.yaml_popup.isVisible() is True
 
     content.set_running(True)
     assert content.yaml_popup.isVisible() is False
 
-    content._hover_cell(1, 0)
-    assert content._hover_timer.isActive() is False
-    content._show_hovered_yaml()
+    content._clicked_cell(1, 0)
     assert content.yaml_popup.isVisible() is False
 
     content.set_running(False)
-    content._hover_cell(1, 0)
-    content._show_hovered_yaml()
+    content._clicked_cell(1, 0)
     assert content.yaml_popup.isVisible() is True
 
 
@@ -1971,8 +2049,7 @@ def test_leaving_the_table_hides_the_panel(qapp):
     from PySide6.QtCore import QEvent
 
     content, _sources = a_table_with_yaml(qapp)
-    content._hover_cell(0, 0)
-    content._show_hovered_yaml()
+    content._clicked_cell(0, 0)
     assert content.yaml_popup.isVisible() is True
 
     content.eventFilter(content.table.viewport(), QEvent(QEvent.Type.Leave))

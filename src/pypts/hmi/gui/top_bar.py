@@ -112,8 +112,9 @@ class TopBarContent(QToolBar):
         self._dark = False
         self._running = False
         self._metadata: dict[str, str] = {}
-        #: Rendering only: whether the Pause button currently reads Resume. The
-        #: GUI owns the pause state and sets this through set_paused().
+        #: Rendering only: whether the run is paused or pausing, so Start reads
+        #: Resume and Pause is greyed. The GUI owns the pause state and sets
+        #: this through set_paused().
         self._shows_resume = False
 
         self.open_button = QToolButton()
@@ -227,17 +228,16 @@ class TopBarContent(QToolBar):
             if self.open_button.isEnabled()
             else "Not while a run is in progress - stop the run first.",
         )
-        describe(
-            self.start_button,
-            "Start",
-            "Run the selected sequence from its first step."
-            if self.start_button.isEnabled()
-            else self._why_no_start(),
-        )
-        if not self.pause_button.isEnabled():
+        if self._running and self._shows_resume:
+            describe(self.start_button, "Resume", "Continue the run.")
+        elif self.start_button.isEnabled():
+            describe(self.start_button, "Start", "Run the selected sequence from its first step.")
+        else:
+            describe(self.start_button, "Start", self._why_no_start())
+        if self._running and self._shows_resume:
+            describe(self.pause_button, "Pause", "The run is paused - Start resumes it.")
+        elif not self.pause_button.isEnabled():
             describe(self.pause_button, "Pause", "Nothing is running.")
-        elif self._shows_resume:
-            describe(self.pause_button, "Resume", "Continue the run.")
         else:
             describe(
                 self.pause_button,
@@ -304,11 +304,15 @@ class TopBarContent(QToolBar):
 
     def set_paused(self, paused: bool) -> None:
         """
-        Paused, or pausing: the Pause button resumes, so it has to stop saying
-        "Pause". Only the GUI calls this - it owns the pause state, and resets it
-        on RunStarted and RunFinished as well.
+        Paused, or pausing: Pause greys out and Start lights up to resume. Only
+        the GUI calls this - it owns the pause state, and resets it on RunStarted
+        and RunFinished as well. Outside a run it only records the flag: the
+        buttons then belong to show_recipe_loaded() and show_run_finished().
         """
         self._shows_resume = paused
+        if self._running:
+            self.start_button.setEnabled(paused)
+            self.pause_button.setEnabled(not paused)
         self._refresh_controls()
 
     def choose_recipe_file(self) -> None:

@@ -290,8 +290,15 @@ class HmiClient:
         """
         log.debug("The frontend is stopping.")
         self.running = False
-        self.on_stop()
-        self.core.send(HmiStopped())
+        try:
+            self.on_stop()
+        finally:
+            # From a `finally` for the same reason as `Sequencer.stop()`: this
+            # method swallows, `on_stop()` is the frontend's own teardown (the
+            # GUI closes a window in it), and a CORE that never hears the
+            # goodbye waits out its whole shutdown budget and then names the
+            # frontend as a part that would not stop.
+            self.core.send(HmiStopped())
 
     def wait_until_stopped(self, grace_s: float = SHUTDOWN_GRACE_S) -> None:
         """

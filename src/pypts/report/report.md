@@ -44,6 +44,16 @@ failed `mkdir` leaves the Report in "no run open" state.
 CORE holds `StopReport` until `SequencerStopped` arrives (plan 002). This guarantees the
 aborted run's `StepExecuted` tail and the `RunFinished` reach the Report before it stops.
 
+`stop()` sends `ReportStopped` from a `finally`, through `send_goodbye()`, so closing the CSV
+— file I/O, and the likeliest thing here to raise — cannot cost CORE its whole shutdown budget
+and get the Report named as the module that hung. `start()` carries the same `finally` for a
+loop that dies rather than ends, and `send_goodbye()` is guarded so only one `ReportStopped`
+goes out. Same guarantee, and same reasons, as `Sequencer.stop()` / `Sequencer.start()`.
+
+`stop()` and the six per-message handlers (`start_run`, `record_step`, `record_metadata`,
+`finish_run`, `generate_report`, `export_report`) are **undecorated** — the error boundary is
+`handle_core_message()`. See `utilities/utilities.md` for the rule.
+
 ## Known gaps
 
 - `serial_number` column and TDMS export — planned (roadmap §1.19).

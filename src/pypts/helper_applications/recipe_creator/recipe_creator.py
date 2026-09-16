@@ -12,7 +12,7 @@ import re
 import os
 from pathlib import Path
 from pypts.hmi.gui.styles import get_stylesheet
-from pypts.helper_applications.recipe_verificator import verify_file, verify_string, ValidationIssue
+from pypts.helper_applications.recipe_creator import verify_file, verify_string, ValidationIssue
 import io
 from PySide6.QtWidgets import (
     QApplication,

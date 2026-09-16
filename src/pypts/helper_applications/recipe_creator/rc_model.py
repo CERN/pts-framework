@@ -13,7 +13,7 @@ from ruamel.yaml.error import YAMLError
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
-from pypts.helper_applications.recipe_verificator import verify_string
+from pypts.helper_applications.recipe_creator import verify_string
 from pypts.recipe.rules import (
     STEP_TYPE_REQUIRED,
     STEP_COMMON_DEFAULTS,

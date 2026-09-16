@@ -12,14 +12,14 @@ that id - so the table tolerates any event order, and a step is updated twice
 (Running... then the verdict) without anyone tracking a cursor.
 
 The second thing a name cell carries is that step's rendered YAML, which the
-hover panel shows (`step_yaml_popup.py`). It rides the same item as the id for
+click panel shows (`step_yaml_popup.py`). It rides the same item as the id for
 the same reason: one place per row, nothing parallel to keep in step with the
 rows, and it survives the theme repaint, which only rebuilds the Result column.
 """
 
 from uuid import UUID
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtGui import QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -55,11 +55,14 @@ _RESULT_WIDTH = 90
 #: on the name cell (column 0) - see the module docstring.
 _YAML_ROLE = Qt.ItemDataRole.UserRole + 1
 
-#: How long the pointer has to rest on a row before its YAML appears. Long
-#: enough that dragging the eye down the table shows nothing, which is the
-#: point: a panel that opened on every row crossed would be in the way rather
-#: than in reach.
-_HOVER_DELAY_MS = 1000
+#: The columns a click in opens the panel: the step name and the description.
+#: The Result column is left out on purpose - it carries its own tooltip with
+#: the measured values in it, and a click there is a click on a verdict.
+#:
+#: They are also the columns the row highlight paints, for the same reason from
+#: the other side: the Result cell's background *is* the verdict chip, so
+#: tinting it would make PASS a different green on whichever row was clicked.
+_POPUP_COLUMNS = (0, 1)
 
 
 def read_only(item: QTableWidgetItem) -> QTableWidgetItem:
@@ -85,6 +88,13 @@ class StepTableContent(QWidget):
         self.table.setColumnCount(3)
         self.table.setHorizontalHeaderLabels(["Step name", "Description", "Result"])
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+
+        # Qt's own selection is off: it paints the whole row, the Result cell
+        # included, and a selection tint over a verdict chip is a different
+        # PASS green on the row that happens to be selected. The click
+        # highlight below is painted per cell instead, so the chips are left
+        # exactly as `_state_item()` made them.
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
 
         # Long text wraps onto more lines instead of being cut off with an
         # ellipsis - which is what makes the row heights below worth having.
@@ -112,22 +122,20 @@ class StepTableContent(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.addWidget(self.table)
 
-        # The hover panel. Mouse tracking is what makes cellEntered fire without
-        # a button held down; the event filter is only for leaving the table,
-        # which cellEntered cannot tell us about.
+        # The panel. A click opens it; moving the pointer off the cell that was
+        # clicked closes it again. Mouse tracking is what makes cellEntered fire
+        # without a button held down, and the event filter is only for leaving
+        # the table, which cellEntered cannot tell us about.
         self.yaml_popup = StepYamlPopup(self)
         self.table.setMouseTracking(True)
         self.table.viewport().setMouseTracking(True)
+        self.table.cellClicked.connect(self._clicked_cell)
         self.table.cellEntered.connect(self._hover_cell)
         self.table.viewport().installEventFilter(self)
 
-        # The rest delay. Single-shot and restarted on every row change, so the
-        # row that finally shows is the row the pointer stopped on.
-        self._hovered_row = -1
-        self._hover_timer = QTimer(self)
-        self._hover_timer.setSingleShot(True)
-        self._hover_timer.setInterval(_HOVER_DELAY_MS)
-        self._hover_timer.timeout.connect(self._show_hovered_yaml)
+        # The row the panel is open on, and therefore the row the highlight is
+        # painted on: -1 for none. One row at a time - the panel shows one step.
+        self._active_row = -1
 
     # --- Filling ---------------------------------------------------------------
 
@@ -139,8 +147,8 @@ class StepTableContent(QWidget):
 
         `yaml_sources` is one rendered fragment per row, in the same order, from
         `recipe.step_source`. It is optional and may be short: a row without one
-        simply has no hover panel, which is what a recipe the GUI could not read
-        back off disk gets.
+        simply has no panel, which is what a recipe the GUI could not read back
+        off disk gets.
         """
         self.hide_yaml_popup()
         self.table.setRowCount(len(sequence.steps))
@@ -168,11 +176,11 @@ class StepTableContent(QWidget):
         for row in range(self.table.rowCount()):
             self.table.setItem(row, 2, self._pending_item())
 
-    # --- The hover panel -------------------------------------------------------
+    # --- The click panel -------------------------------------------------------
 
     def set_running(self, running: bool) -> None:
         """
-        Whether a recipe is executing. The hover panel is an idle-time affordance.
+        Whether a recipe is executing. The panel is an idle-time affordance.
 
         A run is when the table is being written to and read for verdicts, and
         the operator wants an unobstructed view of it - so the panel is
@@ -183,57 +191,69 @@ class StepTableContent(QWidget):
             self.hide_yaml_popup()
 
     def hide_yaml_popup(self) -> None:
-        """Close the panel and disarm the delay - one is not much use without."""
-        self._hover_timer.stop()
+        """Close the panel and drop the row highlight - they are one gesture."""
         self.yaml_popup.hide()
+        self._clear_highlight()
 
-    def _hover_cell(self, row: int, column: int) -> None:
+    def _clicked_cell(self, row: int, column: int) -> None:
         """
-        A row came under the pointer: arm the delay, or switch straight to it.
+        A click in the name or the description: highlight the row, show its YAML.
 
-        The delay is for *opening*. Once the panel is already up the operator
-        has asked for it, and making them wait another 1 s for each next row
-        would turn reading down the table into a series of pauses - so an open
-        panel follows the pointer immediately. This is how Qt's own tooltips
-        behave, and for the same reason.
-
-        `column` is unused - the whole row is one step, so the panel is the same
-        wherever in it the pointer is - but cellEntered sends both and the slot
-        has to take both.
+        The one place that opens the panel, so it carries the idle gate and the
+        no-fragment case too rather than trusting every caller to have checked.
+        A click anywhere else - the Result column - closes whatever is open,
+        which is also how the operator dismisses the panel without leaving the
+        table.
         """
-        if self._running:
+        if self._running or column not in _POPUP_COLUMNS:
             self.hide_yaml_popup()
             return
-        self._hovered_row = row
-        if self.yaml_popup.isVisible():
-            self._show_hovered_yaml()
-        else:
-            self._hover_timer.start()
-
-    def _show_hovered_yaml(self) -> None:
-        """
-        The delay elapsed, or the panel was already open: show the row.
-
-        The one place that opens the panel, so it carries the idle gate too
-        rather than trusting every caller to have checked - a run can start in
-        the 1 s the delay is running.
-        """
-        self._hover_timer.stop()
-        if self._running:
-            self.yaml_popup.hide()
-            return
-        item = self.table.item(self._hovered_row, 0)
+        item = self.table.item(row, 0)
         if item is None:
-            self.yaml_popup.hide()
+            self.hide_yaml_popup()
             return
         source = item.data(_YAML_ROLE)
         if not isinstance(source, str) or not source:
-            self.yaml_popup.hide()
+            self.hide_yaml_popup()
             return
-        # The cursor's position now, not where it was when the row was entered:
-        # the pointer may have travelled along the row while the delay ran.
+        self._highlight_row(row)
         at = QCursor.pos()
         self.yaml_popup.show_for(source, at.x(), at.y())
+
+    def _hover_cell(self, row: int, column: int) -> None:
+        """
+        The pointer moved onto another cell: the gesture the click started is over.
+
+        Moving off the cell that was clicked is the dismissal, so the panel
+        never outstays the pointer - and reading down the table does not drag a
+        panel along with it, because the next row has to be clicked in turn.
+        """
+        if row != self._active_row or column not in _POPUP_COLUMNS:
+            self.hide_yaml_popup()
+
+    def _highlight_row(self, row: int) -> None:
+        """
+        Tint the row the panel is open on, in the row-number column's own blue.
+
+        The Result cell is skipped - see `_POPUP_COLUMNS`.
+        """
+        self._clear_highlight()
+        tint = QColor(get_palette(self._dark).header_background)
+        for column in _POPUP_COLUMNS:
+            item = self.table.item(row, column)
+            if item is not None:
+                item.setBackground(tint)
+        self._active_row = row
+
+    def _clear_highlight(self) -> None:
+        """Back to the table's own painting: no brush at all, not a white one."""
+        if self._active_row < 0:
+            return
+        for column in _POPUP_COLUMNS:
+            item = self.table.item(self._active_row, column)
+            if item is not None:
+                item.setData(Qt.ItemDataRole.BackgroundRole, None)
+        self._active_row = -1
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt
         """
@@ -290,6 +310,10 @@ class StepTableContent(QWidget):
         each row is in is read back from the cell's own text: it is the verdict
         name, or Pending / Running..., which is exactly the chip key.
         """
+        # The click highlight is painted in the outgoing theme's blue, so it
+        # goes with the theme rather than being repainted: the panel it belongs
+        # to is a momentary thing, and a theme switch ends the gesture.
+        self.hide_yaml_popup()
         self._dark = dark
         self.yaml_popup.set_dark(dark)
         for row in range(self.table.rowCount()):

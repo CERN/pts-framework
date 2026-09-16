@@ -296,6 +296,60 @@ def test_run_dir_name_is_capped_and_never_empty(tmp_path):
         assert (run_dirs[0] / "report.csv").is_file()
 
 
+def test_report_stopped_is_sent_even_if_closing_the_csv_fails(tmp_path, monkeypatch):
+    """
+    Same guarantee as Sequencer.stop(): closing the CSV is file I/O, stop()
+    swallows what it raises, and a CORE that never hears ReportStopped waits out
+    its whole shutdown budget and then blames the Report for it.
+    """
+    report = build_report(tmp_path)
+
+    def fails():
+        raise OSError("the file would not close")
+
+    monkeypatch.setattr(report, "close_csv", fails)
+
+    drive(report, A_RUN, StopReport())
+
+    assert report.running is False
+    messages = sent_to_core(report)
+    assert isinstance(messages[-2], ReportStopped)
+    assert isinstance(messages[-1], ModuleError)
+    # The boundary is handle_core_message now, not stop() itself; the traceback
+    # in the same DEBUG record still names close_csv.
+    assert messages[-1].operation == "Report.handle_core_message"
+
+
+def test_a_loop_that_dies_still_reports_the_module_stopped(tmp_path, monkeypatch):
+    """
+    As in the Sequencer: the decorator is on `start()`, not on `main_loop()`, and
+    a loop that dies still owes CORE the goodbye.
+    """
+    report = build_report(tmp_path)
+
+    def the_loop_dies() -> None:
+        raise RuntimeError("the loop fell over")
+
+    monkeypatch.setattr(report, "main_loop", the_loop_dies)
+
+    report.start()
+
+    messages = sent_to_core(report)
+    assert isinstance(messages[-2], ReportStopped)
+    assert isinstance(messages[-1], ModuleError)
+    assert messages[-1].operation == "Report.start"
+
+
+def test_the_goodbye_is_sent_once_on_an_ordinary_shutdown(tmp_path):
+    """The guard in send_goodbye(): stop() and start()'s finally both call it."""
+    report = build_report(tmp_path)
+
+    drive(report, StopReport())
+    report.start()
+
+    assert len([m for m in sent_to_core(report) if isinstance(m, ReportStopped)]) == 1
+
+
 def test_stop_closes_the_csv_and_answers_report_stopped(tmp_path):
     report = build_report(tmp_path)
 

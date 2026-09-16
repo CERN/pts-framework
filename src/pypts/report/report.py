@@ -147,16 +147,41 @@ class Report:
         self.metadata: dict[str, str] = {}
         self.columns: tuple[str, ...] = CSV_COLUMNS
         self.run_started_at = ""
+        self.goodbye_sent = False
 
     @catch_and_report_errors()
     def start(self) -> None:
+        """
+        The thread's entry point, and the module's last-ditch error boundary.
+
+        The decorator stays here rather than moving to main_loop(): the `while`
+        is inside main_loop, so catching there would end the loop it looks like
+        it protects. See Sequencer.start() for the same reasoning at length.
+        """
         log.debug("REPORT module starting.")
         log.debug("Reports will be written under %s.", self.output_dir)
         log.info("REPORT module started.")
-        self.main_loop()
+        try:
+            self.main_loop()
+        finally:
+            # A loop that died instead of ending still owes CORE the goodbye, or
+            # CORE waits out its whole shutdown budget and then names this module
+            # as one that would not stop.
+            self.send_goodbye()
         log.info("REPORT module stopped.")
 
-    @catch_and_report_errors()
+    def send_goodbye(self) -> None:
+        """
+        Tell CORE this module has stopped - at most once.
+
+        Two callers: stop(), the ordinary way, and start()'s finally, for a loop
+        that died rather than ended.
+        """
+        if self.goodbye_sent:
+            return
+        self.goodbye_sent = True
+        self.core.send(ReportStopped())
+
     def main_loop(self) -> None:
         log.debug("REPORT entered its main event loop.")
         while self.running:
@@ -194,7 +219,6 @@ class Report:
 
     # --- The incremental CSV --------------------------------------------------
 
-    @catch_and_report_errors()
     def start_run(self, event: RunStarted) -> None:
         """Open this run's folder and its CSV, header written and flushed."""
         # Clear the previous run's state first: if make_run_dir() raises below,
@@ -243,7 +267,6 @@ class Report:
         run_dir.mkdir(parents=True)
         return run_dir
 
-    @catch_and_report_errors()
     def record_step(self, event: StepExecuted) -> None:
         """
         Append one row for one executed step, flushed immediately.
@@ -304,7 +327,6 @@ class Report:
             return ()
         return self.run_info.metadata_names
 
-    @catch_and_report_errors()
     def record_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
         """
         Take the run's metadata as the Sequencer reports it.
@@ -319,7 +341,6 @@ class Report:
             ", ".join(f"{name} = {value}" for name, value in values),
         )
 
-    @catch_and_report_errors()
     def finish_run(self, result: ResultType) -> None:
         """The run is over: keep its verdict, settle its CSV, name its folder."""
         if self.run_dir is None:
@@ -394,7 +415,6 @@ class Report:
 
     # --- Generation -----------------------------------------------------------
 
-    @catch_and_report_errors()
     def generate_report(self) -> None:
         """
         Build report.html from the recorded rows
@@ -507,7 +527,6 @@ tr.STOP td {{ background: #ece0f4; }}
 </html>
 """
 
-    @catch_and_report_errors()
     def export_report(self) -> None:
         """
         Write the generated report out in another format.
@@ -521,9 +540,13 @@ tr.STOP td {{ background: #ece0f4; }}
     def do_periodic_tasks(self) -> None:
         self.heartbeat_manager.tick()
 
-    @catch_and_report_errors()
     def stop(self) -> None:
         self.running = False
-        self.close_csv()
         log.debug("REPORT module stopping.")
-        self.core.send(ReportStopped())
+        try:
+            self.close_csv()
+        finally:
+            # As in Sequencer.stop(): closing the CSV is file I/O and can fail,
+            # the send is after it, and a failure there must not cost CORE its
+            # shutdown budget or get this module named as the one that hung.
+            self.send_goodbye()

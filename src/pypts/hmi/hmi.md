@@ -27,7 +27,11 @@ Owns:
 - **Sending** — `send(message)` wraps `self.core.send(message)`. All outbound messages
   go here.
 - **Handshake** — `wait_until_stopped(grace_s)` spins until `self.running` is `False`
-  (set by `stop()` when `StopHmi` is handled) or the grace period expires.
+  (set by `stop()` when `StopHmi` is handled) or the grace period expires. `stop()` sends
+  `HmiStopped` from a `finally`, because it swallows what `on_stop()` raises — the GUI closes
+  its window in there — and a CORE that never hears the goodbye waits out its whole shutdown
+  budget and then names the frontend as a part that would not stop. Same rule as
+  `Sequencer.stop()` and `Report.stop()`; roadmap §1.48.
 - **Pause / Resume** — `pause_sequence()` / `resume_sequence()` send `PauseSequence` /
   `ResumeSequence`; the confirmations arrive at `show_run_paused(event)` (passed whole) and
   `show_run_resumed()`. Only the GUI uses them (`gui/gui.md` §13); the CLI and the API

@@ -25,8 +25,8 @@ console is what keeps this test from being a blanket ban nobody would keep.
 
 Scope is the framework: `old_code/` is frozen and `helper_applications/` is
 pre-refactor and ported in Phase 6 - the same line ruff and mypy already draw.
-`recipe_verificator/verify_recipe.py` prints emoji from its `__main__` and would
-fail today; that is recorded as a roadmap TODO rather than fixed here.
+Helper applications that print emoji from a `__main__` would fail today; that is
+recorded as a roadmap TODO rather than fixed here.
 """
 
 import ast

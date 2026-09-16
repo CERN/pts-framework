@@ -109,8 +109,9 @@ SCHEMA: dict[str, dict[str, Field]] = {
         # Light unless the operator chooses otherwise; "system" follows the
         # operating system. Read by pypts' window and by the Recipe Creator.
         "theme": Field("str", "light", choices=("light", "dark", "system")),
-        # How the window opens. The width and height are the windowed size,
-        # also used when leaving full screen.
+        # How the window opens. "fullscreen" is a maximised window - the title
+        # bar and the taskbar stay on screen (see GUI._use_window). The width
+        # and height are the windowed size, also used when leaving full screen.
         "window_mode": Field("str", "windowed", choices=("windowed", "fullscreen")),
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),

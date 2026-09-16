@@ -148,7 +148,6 @@ logger-objects = ["pypts.logger.log.log"]
 # Silenced wholesale rather than half-fixed, so the rest of the tree has a clean
 # baseline; the outstanding findings are recorded in the roadmap.
 "src/pypts/helper_applications/recipe_creator/*" = ["ALL"]
-"src/pypts/helper_applications/recipe_verificator/*" = ["ALL"]
 "src/pypts/helper_applications/example_finder/*" = ["ALL"]
 
 # Qt overrides camelCase virtuals - the names are Qt's signature, not a choice.

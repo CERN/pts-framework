@@ -20,9 +20,9 @@ from typing import Any
 
 import yaml
 
-from pypts.recipe import rules
+from pypts.recipe import recipe_parser, rules
 from pypts.step import indexed_step
-from pypts.helper_applications.recipe_verificator.issue import ValidationIssue
+from pypts.helper_applications.recipe_creator.issue import ValidationIssue
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +122,26 @@ class _Context:
         )
 
 
+def _lower_path(path: tuple) -> tuple:
+    """The same path with its string components lowercased."""
+    return tuple(part.lower() if isinstance(part, str) else part for part in path)
+
+
 class _LineMap:
     """Maps YAML key paths (tuples) to 1-based line numbers."""
 
     def __init__(self, node: yaml.Node) -> None:
         self._map: dict[tuple, int] = {}
+        # The documents are normalized before they are checked, because the
+        # recipe language is case-insensitive - but the YAML node keeps the
+        # case the author wrote. Without this second map a lookup for
+        # `step_name` would not find `Step_Name:` and every issue in a
+        # mixed-case recipe would lose its line number.
+        #
+        # Exact matches are tried first, so `inputs`/`outputs` entry names -
+        # which keep their case, unlike the language's own keys - are
+        # unaffected. On a collision the first occurrence wins.
+        self._lower_map: dict[tuple, int] = {}
         self.document_line: int = node.start_mark.line + 1
         self._walk(node, ())
 
@@ -135,16 +150,23 @@ class _LineMap:
             for key_node, value_node in node.value:
                 key = key_node.value
                 child = path + (key,)
-                self._map[child] = key_node.start_mark.line + 1
+                self._record(child, key_node.start_mark.line + 1)
                 self._walk(value_node, child)
         elif isinstance(node, yaml.SequenceNode):
             for i, item_node in enumerate(node.value):
                 child = path + (i,)
-                self._map[child] = item_node.start_mark.line + 1
+                self._record(child, item_node.start_mark.line + 1)
                 self._walk(item_node, child)
 
+    def _record(self, path: tuple, line: int) -> None:
+        self._map[path] = line
+        self._lower_map.setdefault(_lower_path(path), line)
+
     def get(self, *path: str | int) -> int | None:
-        return self._map.get(path)
+        line = self._map.get(path)
+        if line is not None:
+            return line
+        return self._lower_map.get(_lower_path(path))
 
 
 def _run(content: str, ctx: _Context) -> None:
@@ -197,8 +219,20 @@ def _run(content: str, ctx: _Context) -> None:
     if not valid:
         return
 
-    header_doc, header_node = valid[0]
-    sequence_pairs = valid[1:]
+    # The recipe language is case-insensitive: the framework lowercases every
+    # mapping key before it validates anything (recipe_parser._lowercase_keys),
+    # so `Step_Name:` loads and runs exactly as `step_name:` does. Normalize
+    # with the parser's own helpers rather than repeating the rule here - a
+    # second copy of it is what drifted in the first place.
+    #
+    # This has to happen before the header is identified below, which is itself
+    # a raw-key test: a header written `Name:` was rejected as "not a header"
+    # before a single field was looked at.
+    header_doc = recipe_parser.normalize_header(valid[0][0])
+    header_node = valid[0][1]
+    sequence_pairs = [
+        (recipe_parser.normalize_sequence(doc), node) for doc, node in valid[1:]
+    ]
 
     # Confirm the first document is the header and not a sequence
     has_name = "name" in header_doc
@@ -925,24 +959,33 @@ def _check_cross_references(
     seq_names: list[str],
     ctx: _Context,
 ) -> None:
-    # Duplicate sequence names
+    # Duplicate sequence names. The parser compares them lowercased
+    # (recipe_parser.py:95): a sequence name keeps its case for display but
+    # must be unique without it, so that a case-insensitive main_sequence
+    # lookup can never be ambiguous. Compared exactly here, `Main` and `main`
+    # looked like two sequences and the recipe verified clean - then the
+    # framework refused to load it.
     seen: set[str] = set()
     for name in seq_names:
-        if name in seen:
+        lowered = str(name).lower()
+        if lowered in seen:
             ctx.error(
                 field="sequences",
                 message=f"Duplicate sequence name '{name}'.",
                 hint=(
-                    "Each sequence in a recipe must have a unique name. "
-                    "Rename one of the duplicates."
+                    "Each sequence in a recipe must have a unique name, "
+                    "regardless of case. Rename one of the duplicates."
                 ),
             )
-        seen.add(name)
+        seen.add(lowered)
 
-    # main_sequence must name an existing sequence
+    # main_sequence must name an existing sequence. The parser resolves it
+    # case-insensitively (recipe_parser.py:105), so `main_sequence: main`
+    # against a sequence called `Main` runs - matched exactly here, it was
+    # reported as a broken reference.
     main = header.get("main_sequence")
     if isinstance(main, str) and main.strip() and seq_names:
-        if main not in seq_names:
+        if main.lower() not in {str(name).lower() for name in seq_names}:
             available = ", ".join(f"'{n}'" for n in seq_names)
             ctx.error(
                 field="header.main_sequence",

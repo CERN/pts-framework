@@ -39,7 +39,7 @@ from pypts.helper_applications.recipe_creator.rc_widgets import (
     VerificationPanel,
     YamlEditor,
 )
-from pypts.helper_applications.recipe_verificator import verify_string
+from pypts.helper_applications.recipe_creator import verify_string
 from pypts.hmi.gui.gui_theme import (
     configured_theme,
     detect_system_dark_mode,

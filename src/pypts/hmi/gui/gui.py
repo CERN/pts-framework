@@ -152,6 +152,46 @@ def _nothing_to_disconnect() -> None:
     """Stands in for the OS theme sync's disconnect when the theme is fixed."""
 
 
+#: The order the step counts are listed in on the status line: verdicts first.
+_SUMMARY_ORDER = (
+    ResultType.PASS,
+    ResultType.FAIL,
+    ResultType.ERROR,
+    ResultType.DONE,
+    ResultType.SKIP,
+    ResultType.STOP,
+)
+
+
+def run_summary(
+    recipe_name: str, result: ResultType, outcomes: tuple[StepOutcome, ...]
+) -> str:
+    """
+    The status line a finished run leaves: how it ended, and how many steps
+    ended which way - "Done - demo: FAIL (5 steps: 3 PASS, 1 FAIL, 1 SKIP)",
+    or "Stopped - demo (2 steps: 2 PASS)" when the operator stopped it.
+    """
+    counts = []
+    for result_type in _SUMMARY_ORDER:
+        count = 0
+        for outcome in outcomes:
+            if outcome.result == result_type:
+                count += 1
+        if count:
+            counts.append(f"{count} {result_type.name}")
+
+    if len(outcomes) == 1:
+        steps = f"1 step: {counts[0]}"
+    elif outcomes:
+        steps = f"{len(outcomes)} steps: {', '.join(counts)}"
+    else:
+        steps = "no steps ran"
+
+    if result == ResultType.STOP:
+        return f"Stopped - {recipe_name} ({steps})"
+    return f"Done - {recipe_name}: {result.name} ({steps})"
+
+
 def gui_main(
     to_core: QueueWrapper[HmiToCore],
     from_core: QueueWrapper[CoreToHmi],
@@ -312,8 +352,9 @@ class PtsMainWindow(QMainWindow):
         view_menu = menu_bar.addMenu("View")
         # A shortcut into Settings, opened on its Appearance page.
         self.appearance_action = view_menu.addAction("Appearance")
-        # For the session only; Edit > Settings saves a window mode. The menu
-        # bar stays on screen in full screen, so this is always reachable.
+        # For the session only; Edit > Settings saves a window mode. Full screen
+        # here means maximised (see _use_window), so the menu bar and the
+        # window's own title bar both stay on screen and this stays reachable.
         self.full_screen_action = view_menu.addAction("Full Screen")
         self.full_screen_action.setCheckable(True)
         self.full_screen_action.setShortcut(QKeySequence("F11"))
@@ -404,6 +445,9 @@ class GUI(HmiClient):
         self._pause_requested = False
         #: The running recipe's name, for the "Running ..." label a Resume puts back.
         self._running_recipe_name = ""
+        #: The status line the last finished run left, e.g. "Done - demo: FAIL
+        #: (3 steps: 2 PASS, 1 FAIL)". Empty from RunStarted until RunFinished.
+        self._run_summary = ""
 
         # Build content widgets
         self.recent_recipes = RecentRecipes()
@@ -426,9 +470,9 @@ class GUI(HmiClient):
 
         self.top_bar = TopBarContent(
             on_open=self.open_recipe,
-            on_start=self.start_sequence,
+            on_start=self._start_or_resume,
             on_stop=self.stop_sequence,
-            on_pause=self._toggle_pause,
+            on_pause=self._pause,
             on_sequence_selected=self.show_selected_sequence,
             on_open_report=self.open_report_folder,
         )
@@ -634,10 +678,17 @@ class GUI(HmiClient):
         `width` x `height` - the minimum size still wins over a smaller one.
         Called by show() at startup, and by the Settings dialog, which tries a
         window on screen and puts the previous one back unless it is kept.
+
+        Full screen is *maximised*, not a true full screen: `showMaximized()`
+        rather than `showFullScreen()`. A true full screen takes the title bar
+        and the taskbar with it, and on a bench machine that leaves the
+        operator with no way to move, minimise or close the window and nothing
+        to switch to - the point of filling the screen is the room, not hiding
+        the desktop.
         """
         self._window_state = (mode, width, height)
         if mode == "fullscreen":
-            self.window.showFullScreen()
+            self.window.showMaximized()
         else:
             self.window.showNormal()
             self.window.resize(width, height)
@@ -648,9 +699,11 @@ class GUI(HmiClient):
         View > Full Screen (F11), for the session only. Leaving full screen goes
         back to the window mode in force - or a normal window, if that mode is
         full screen itself.
+
+        Maximised, not a true full screen - `_use_window()` says why.
         """
         if checked:
-            self.window.showFullScreen()
+            self.window.showMaximized()
             return
         mode, width, height = self._window_state
         if mode == "fullscreen":
@@ -659,33 +712,42 @@ class GUI(HmiClient):
 
     # --- Pause / Resume ---------------------------------------------------------
 
-    def _toggle_pause(self) -> None:
+    def _pause(self) -> None:
         """
-        The one Pause/Resume button.
+        The Pause button.
 
-        Pause says so at once, because the hold only begins once the current
-        step has finished - and that step may be a question the operator has to
-        answer first. Resume needs no wait: it also cancels a pause whose hold
-        has not begun, and the engine answers that with nothing at all.
+        Says so at once, because the hold only begins once the current step has
+        finished - and that step may be a question the operator has to answer
+        first. From the click on, Pause is greyed and Start resumes.
+        """
+        log.debug("The operator asked to pause the run.")
+        self.pause_sequence()
+        self._set_pause_requested(True)
+        self.window.recipe_label.setText("Pausing after the current step...")
+        self.show_status("Pausing after the current step")
+
+    def _start_or_resume(self, sequence_name: str) -> None:
+        """
+        The Start button: starts a sequence, or - while a pause is requested or
+        held - resumes the run. Resume needs no wait: it also cancels a pause
+        whose hold has not begun, and the engine answers that with nothing at all.
         """
         if self._pause_requested:
             log.debug("The operator asked to resume the run.")
             self.resume_sequence()
             self._show_run_moving()
         else:
-            log.debug("The operator asked to pause the run.")
-            self.pause_sequence()
-            self._set_pause_requested(True)
-            self.window.recipe_label.setText("Pausing after the current step...")
+            self.start_sequence(sequence_name)
 
     def _set_pause_requested(self, requested: bool) -> None:
         self._pause_requested = requested
-        # The button resumes while this is True, so it must stop describing itself as Pause.
+        # While this is True Pause is greyed and Start resumes.
         self.top_bar.set_paused(requested)
 
     def _show_run_moving(self) -> None:
         self._set_pause_requested(False)
         self.window.recipe_label.setText(f"Running {self._running_recipe_name}...")
+        self.show_status(f"Running {self._running_recipe_name}")
 
     # --- Sequence dropdown ------------------------------------------------------
 
@@ -751,6 +813,8 @@ class GUI(HmiClient):
         self.center.show_idle()
         self.window.left_stack.setCurrentIndex(_PAGE_LEFT_TABLE)
         self.window.recipe_label.setText(f"Running {recipe_name}...")
+        self._run_summary = ""
+        self.show_status(f"Running {recipe_name}")
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
         self._run_in_progress = False
@@ -764,6 +828,8 @@ class GUI(HmiClient):
         self.center.cancel_pending()
         self.center.show_idle()
         self.window.results_panel.set_results(outcomes)
+        self._run_summary = run_summary(self._running_recipe_name, result, outcomes)
+        self.show_status(self._run_summary)
 
     def show_run_paused(self, event: RunPaused) -> None:
         super().show_run_paused(event)
@@ -772,6 +838,9 @@ class GUI(HmiClient):
         self._set_pause_requested(True)
         self.window.recipe_label.setText(
             f"Paused before step {event.position}/{event.total} '{event.step_name}'"
+        )
+        self.show_status(
+            f"Paused before step {event.position}/{event.total} - press Start to resume"
         )
 
     def show_run_resumed(self) -> None:
@@ -794,6 +863,10 @@ class GUI(HmiClient):
 
     def show_report_ready(self, event: ReportReady) -> None:
         self.report_dir = event.report_dir
+        if self._run_summary:
+            # CORE's "Report generated: <path>" status line lands just before
+            # this; the run's summary is what the operator needs to keep seeing.
+            self.show_status(f"{self._run_summary} - report saved")
 
     # --- Settings ---------------------------------------------------------------
 

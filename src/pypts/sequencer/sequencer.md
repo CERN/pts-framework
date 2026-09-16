@@ -11,8 +11,14 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 ## What it owns
 
 - **Event loop** — `sequencer_main()` polls `from_core`, dispatches to handlers,
-  sends heartbeats. `@catch_and_report_errors()` on each handler keeps the loop alive
-  through individual message failures.
+  sends heartbeats. Four methods carry `@catch_and_report_errors()` and no others:
+  `poll_core()`, `handle_core_message()` (one bad message fails alone), `do_periodic_tasks()`
+  and the two thread entry points `start()` and `execute_sequence()`. The handlers below them
+  — `run_sequence()`, `stop_sequence()`, `pause_sequence()`, `resume_sequence()`, `stop()` —
+  are deliberately **undecorated**: their failures unwind to the per-message boundary instead
+  of being swallowed a frame deeper, where the caller would carry on as if the call had
+  worked. `start()` rather than `main_loop()` because the `while` is inside main_loop. The
+  rule, and why, is in `utilities/utilities.md`.
 - **Recipe execution** — `run_sequence()` starts a worker thread for `execute_sequence()`.
   The event loop keeps turning while the sequence thread runs; this is what lets
   heartbeats keep flowing and `StopSequence` be processed mid-run.
@@ -27,6 +33,13 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   up to `SEQUENCE_JOIN_TIMEOUT_S` (2 s). If the thread is still alive after that, it
   reports `CRITICAL` via `report_problem()` and continues the shutdown. `SequencerStopped`
   is sent after the join, so it always arrives after any `RunFinished` on the same queue.
+  The send sits in a `finally` and goes through `send_goodbye()`, because it comes *after* the
+  line that can fail: an exception on its way out to the per-message boundary would otherwise
+  skip it, and CORE would keep the module marked as running, hold `StopReport` until the
+  shutdown deadline, and name the Sequencer as a module that never stopped. The failure still
+  reaches CORE as a `ModuleError`, just behind the `SequencerStopped` rather than instead of
+  it. `start()` has the same `finally` for the loop that dies instead of ending;
+  `send_goodbye()` is guarded so only one `SequencerStopped` ever goes out.
 - **Pause / Resume** (GUI only) — `PauseSequence` sets `pause_requested` (ignored with no
   sequence running); `ResumeSequence` clears it. The step layer calls the Runtime seam
   `hold_if_paused(step_name, position, total)` before every main step; `Sequencer.hold_if_paused()`

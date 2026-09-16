@@ -219,7 +219,7 @@ def test_window_grays_out_the_tree_while_invalid(qapp):
 
 
 def test_to_yaml_produces_valid_recipe(model):
-    from pypts.helper_applications.recipe_verificator import verify_string
+    from pypts.helper_applications.recipe_creator import verify_string
 
     issues = verify_string(model.to_yaml())
     errors = [i for i in issues if i.is_error]

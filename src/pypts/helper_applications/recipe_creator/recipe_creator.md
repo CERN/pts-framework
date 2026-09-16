@@ -1,6 +1,13 @@
-# recipe_verificator module
+# recipe_creator module
 
-## What this module does
+The Recipe Creator application, and the verificator it is the only user of.
+
+The verificator lived in a sibling `recipe_verificator/` package until
+2026-09-16. Nothing in the framework ever imported it — only this application
+did — so it moved in here, and everything the Creator owns is now in one
+folder. Its import path is `pypts.helper_applications.recipe_creator`.
+
+## What the verificator does
 
 Validates a recipe YAML file or string and returns **every problem found in one
 pass** — no bail-out on first error. The result is a `list[ValidationIssue]`,
@@ -11,11 +18,59 @@ a line number.
 
 | File | Owns |
 |---|---|
+| `recipe_creator_new.py` | Entry point and main window — what `__main__.py` runs |
+| `rc_model.py` | `RecipeModel` and the `QUndoCommand` subclasses |
+| `rc_widgets.py` | The custom widgets |
+| `customGUIModules.py` | Editor widgets (YAML editor, highlighter) |
+| `styles.py` | Light and dark stylesheets |
+| `recipe_creator.py` | **Dead code.** `__main__.py` runs `recipe_creator_new.py` |
 | `issue.py` | `ValidationIssue` dataclass — the single result type |
 | `verificator.py` | Validation pipeline: `verify_file(path)` and `verify_string(content)` |
 | `__init__.py` | Public exports: `ValidationIssue`, `verify_file`, `verify_string` |
+| `verification_rule_alignment.html` | Why the verificator's rules drifted from the framework's, and what was done about it |
+
+## Case is the framework's business, not ours
+
+The recipe language is **case-insensitive**: `Step_Name:` loads and runs exactly
+as `step_name:` does. The verificator does not implement that rule — it calls
+`recipe_parser.normalize_header()` and `normalize_sequence()` in `_run`, before
+anything is checked, and compares sequence names and `main_sequence`
+lowercased, the way `recipe_parser.py:95,105` does.
+
+**Do not reimplement normalization here.** A second copy of that rule is exactly
+what drifted: the verificator used to read raw keys and reported "missing
+required field" for fields that were plainly present. See
+`verification_rule_alignment.html` and
+`tests/unit_tests/test_verificator_case_insensitivity.py`.
+
+`_LineMap` keeps an exact-case map **and** a lowercased fallback, exact matches
+first. Without the fallback a mixed-case recipe would get every verdict right
+and lose every line number, emptying the error gutter. Exact-first matters
+because `inputs`/`outputs` entry names keep their case while the language's own
+keys do not.
+
+## Known drift still open
+
+The verificator does **not** check three rules that step constructors enforce
+when a recipe loads, so it passes recipes the application then refuses:
+
+| Rule | Enforced at |
+|---|---|
+| `select` must be `file` or `folder` | `step/user_loading_step.py:77` |
+| `method_name` may not be empty | `step/python_module_step.py:116` |
+| `options` may not be empty | `step/user_interaction_step.py:65` |
+
+Negative `wait_time` is **not** in that list on purpose: `step/wait_step.py:40`
+raises at run time, not load time, so the recipe loads and the verificator is
+right to stay silent about it.
 
 ## The sync rule — **read this before touching either module**
+
+Scope, since 2026-09-16: this rule is about **vocabulary and wording**, not
+about how a recipe is read. Normalization and case comparison are delegated to
+the framework (see "Case is the framework's business" above) and must not be
+re-synced by hand. What still has to be kept in step is the hint strings and
+the key sets derived from `rules.py`.
 
 **`verificator.py` is the consumer of `pypts.recipe.rules`. When `rules.py`
 changes, `verificator.py` must be updated in the same commit.**
@@ -46,7 +101,7 @@ a corresponding update to `verificator.py` and its hint strings.**
 ## Public API
 
 ```python
-from pypts.helper_applications.recipe_verificator import (
+from pypts.helper_applications.recipe_creator import (
     verify_file,
     verify_string,
     ValidationIssue,

@@ -52,7 +52,7 @@ Both raise `RecipeError` on any failure — one exception type for CORE to catch
 
 1. Implement the class in `src/pypts/step/` (see `step/step.md`).
 2. Add `"StepTypeName": StepClass` to `STEP_TYPES` in `rules.py`.
-3. Add the type name to the verificator's allowed list (see `recipe_verificator/recipe_verificator.md`).
+3. Add hints for the new type's fields to the Recipe Creator's verificator (see the sync rule in `helper_applications/recipe_creator/recipe_creator.md`).
 
 ## Known gaps
 

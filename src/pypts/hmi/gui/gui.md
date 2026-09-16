@@ -823,8 +823,12 @@ Edit > Settings -> GUI._open_settings()
 through `GUI._use_window()`, so `window_mode` decides full screen or a normal
 window of `window_width` × `window_height` — `setMinimumSize(1000, 700)` still wins over
 anything smaller. **View → Full Screen (F11)** toggles full screen for the session only;
-leaving it returns to the mode in force (a normal window if that mode is full screen). The
-menu bar stays visible in full screen, so the toggle is always reachable. And
+leaving it returns to the mode in force (a normal window if that mode is full screen).
+**Full screen means maximised** — `showMaximized()`, not `showFullScreen()`: a true full
+screen takes the window's title bar and the taskbar with it, and on a bench machine that
+leaves the operator no way to move, minimise or close the window and nothing to switch to.
+The room is the point, not hiding the desktop. The menu bar and the title bar both stay on
+screen, so the toggle is always reachable. And
 `theme` goes through `GUI._use_theme()`. `light` (the shipped value) and `dark` are fixed and
 the OS sync is **not** installed, so the operator's choice is not overruled; `system` detects
 the OS scheme and installs the live OS sync. There is no View menu toggle for it any more:
@@ -885,10 +889,10 @@ return value proves nothing.
 
 ---
 
-## 12. The step table's YAML hover panel
+## 12. The step table's YAML click panel
 
-Between runs, resting the pointer on a step row pops up a small panel beside the
-cursor holding **that one step's YAML, syntax coloured**. It answers the question
+Between runs, clicking a step's **name or description** pops up a small panel beside
+the cursor holding **that one step's YAML, syntax coloured**. It answers the question
 the three columns cannot — which module, which inputs, what the output is checked
 against — without the operator leaving the GUI for a text editor.
 
@@ -963,26 +967,34 @@ Placement is `QCursor.pos()` plus a small offset, then clamped to
 `screenAt(cursor).availableGeometry()` — a row near the right or bottom edge flips
 the panel back over the cursor instead of hanging half off the display.
 
-### The gesture, and the idle gate
+### The gesture: click to open, move off to close
 
-`setMouseTracking(True)` on the table **and its viewport** is what makes
-`cellEntered` fire with no button held. That signal says which row was entered and
-never that the table was left, so the other half is an event filter on the viewport
-watching for `QEvent.Type.Leave`. The filter returns `False` throughout: it watches,
-it never consumes.
+**It opens on a click, never on a hover.** `cellClicked` → `_clicked_cell(row,
+column)` is the one place that opens the panel, so it carries the idle gate and the
+no-fragment case too. Only `_POPUP_COLUMNS` — `(0, 1)`, the step name and the
+description — count: the Result column is a verdict with its own tooltip on it
+(the reason and the measured values), and a click there closes whatever is open,
+which is how the panel is dismissed without leaving the table.
 
-**The panel opens on a rest, not on a crossing.** `_HOVER_DELAY_MS` (1000) sits on a
-single-shot `QTimer` restarted by every row change, so dragging the eye down the
-table shows nothing and the row that finally opens is the row the pointer stopped
-on. The delay is for *opening* only: once the panel is up the operator has asked for
-it, and another 1 s per row would turn reading down the table into a series of
-pauses, so `_hover_cell()` switches an already-visible panel immediately. Qt's own
-tooltips behave this way, for this reason.
+**Moving the pointer off the clicked cell closes it.** `setMouseTracking(True)` on
+the table **and its viewport** is what makes `cellEntered` fire with no button held;
+`_hover_cell()` now only hides — it hides unless the cell entered is still in the
+open row and still one of `_POPUP_COLUMNS`, so name→description keeps the panel and
+anything else ends the gesture. `cellEntered` never says the table was *left*, so
+the other half is an event filter on the viewport watching for `QEvent.Type.Leave`.
+The filter returns `False` throughout: it watches, it never consumes.
 
-`_show_hovered_yaml()` is the single place that opens the panel, so it carries the
-idle gate as well as `_hover_cell()` does — a run can start during the 1 s the
-delay is running. `hide_yaml_popup()` stops the timer as well as hiding, or a wait
-left running would open the panel after the pointer had gone.
+**The row highlight is painted per cell, not selected.** Qt's selection is off
+(`SelectionMode.NoSelection`): a selection tint covers the whole row, the Result
+cell included, which made a PASS chip a different green on the selected row.
+`_highlight_row()` instead sets the background of the two `_POPUP_COLUMNS` cells to
+`palette.header_background` — the row-number column's own pale blue, so the row
+reads as picked out without a new colour being invented — and leaves the Result
+cell exactly as `_state_item()` made it. `_clear_highlight()` clears the brush with
+`setData(BackgroundRole, None)` rather than painting white, so the alternating row
+colour comes back. Highlight and panel are one gesture: `hide_yaml_popup()` does
+both, and `set_dark()` hides first, because the tint would otherwise stay in the
+outgoing theme's blue.
 
 `set_running(bool)` is the gate — `gui.py` drives it from `RunStarted` /
 `RunFinished` only, and a hold counts as running, because a hold produces no
@@ -1051,7 +1063,7 @@ the state.
 
 **Prompts stay usable.** Nothing is blocked while pausing or paused — the step running
 when Pause is pressed may be a question that must be answered before the hold begins.
-Stop works in every state. The step table's hover gate (§12) stays on for the whole
+Stop works in every state. The step table's panel gate (§12) stays on for the whole
 run, a hold included.
 
 ---

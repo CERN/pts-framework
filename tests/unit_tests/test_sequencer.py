@@ -455,6 +455,74 @@ def test_a_stop_from_a_finished_sequence_does_not_abort_the_next_one(sequencer):
     release.set()
 
 
+def test_sequencer_stopped_is_sent_even_if_stopping_the_sequence_fails(sequencer, monkeypatch):
+    """
+    stop() carries @catch_and_report_errors(), which swallows. Without the
+    try/finally the goodbye was skipped on that path, so CORE kept the module
+    marked as running, held StopReport until the shutdown deadline, and then
+    logged the Sequencer as one of the parts that "did not stop in time" - the
+    one module whose loop had in fact ended.
+    """
+    instance, outbox, inbox = sequencer
+
+    def fails(*_args, **_kwargs):
+        raise RuntimeError("the join went wrong")
+
+    monkeypatch.setattr(instance, "stop_running_sequence", fails)
+
+    # Through the inbox, not by calling stop() directly: stop() is not itself an
+    # error boundary any more, so the real path is what has to be exercised.
+    inbox.put(StopSequencer())
+    instance.poll_core()
+
+    assert not instance.running
+    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
+    # The goodbye leaves first, from the finally; the failure is reported by the
+    # per-message boundary as the exception passes through it.
+    assert [type(m) for m in messages] == [SequencerStopped, ModuleError]
+    assert messages[1].operation == "Sequencer.handle_core_message"
+    assert "the join went wrong" in messages[1].message
+
+
+def test_a_loop_that_dies_still_reports_the_module_stopped(sequencer, monkeypatch):
+    """
+    The last-ditch boundary. `start()` carries the decorator, not `main_loop()`,
+    because the `while` is inside main_loop - catching there would end the loop
+    it looks like it protects. A loop that dies must still send its goodbye, or
+    CORE waits out its whole shutdown budget for a thread that has gone.
+    """
+    instance, outbox, _inbox = sequencer
+
+    def the_loop_dies() -> None:
+        raise RuntimeError("the loop fell over")
+
+    monkeypatch.setattr(instance, "main_loop", the_loop_dies)
+
+    # Returns rather than raising: start() is the thread's entry point, so an
+    # escaping exception would only reach the interpreter's default handler.
+    instance.start()
+
+    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
+    assert [type(m) for m in messages] == [SequencerStopped, ModuleError]
+    assert messages[1].operation == "Sequencer.start"
+    assert "the loop fell over" in messages[1].message
+
+
+def test_the_goodbye_is_sent_once_on_an_ordinary_shutdown(sequencer):
+    """
+    Both stop() and start()'s finally send it, so the guard in send_goodbye() is
+    what keeps an ordinary run from putting two of them on the link.
+    """
+    instance, outbox, inbox = sequencer
+
+    inbox.put(StopSequencer())
+    instance.poll_core()
+    instance.start()
+
+    goodbyes = [m for m in drain(outbox) if isinstance(m, SequencerStopped)]
+    assert len(goodbyes) == 1
+
+
 def test_an_abandoned_sequence_is_reported_critical_before_sequencer_stopped(
     sequencer, monkeypatch
 ):

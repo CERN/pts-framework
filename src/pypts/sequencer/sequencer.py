@@ -110,14 +110,44 @@ class Sequencer:
         self.heartbeat_manager = HeartbeatManager(self.core, SEQUENCER)
         self.sequence_thread: threading.Thread | None = None
         self.recipe: Recipe | None = None
-
-    def start(self) -> None:
-        log.debug("SEQUENCER module starting.")
-        log.info("SEQUENCER module started.")
-        self.main_loop()
-        log.info("SEQUENCER module stopped.")
+        self.goodbye_sent = False
 
     @catch_and_report_errors()
+    def start(self) -> None:
+        """
+        The thread's entry point, and the module's last-ditch error boundary.
+
+        The decorator sits here rather than on main_loop() because the `while`
+        is *inside* main_loop: catching there would end the loop it looks like
+        it protects, and then report a clean stop. Almost nothing can get this
+        far - poll_core() and do_periodic_tasks() are the loop body and both
+        carry their own net - so this is the net for the loop itself dying.
+        """
+        log.debug("SEQUENCER module starting.")
+        log.info("SEQUENCER module started.")
+        try:
+            self.main_loop()
+        finally:
+            # A loop that died instead of ending still owes CORE the goodbye:
+            # without it CORE waits out its whole shutdown budget and then names
+            # this module as one that would not stop. The ModuleError the
+            # decorator sends right behind this says it went badly.
+            self.send_goodbye()
+        log.info("SEQUENCER module stopped.")
+
+    def send_goodbye(self) -> None:
+        """
+        Tell CORE this module has stopped - at most once.
+
+        Two callers: stop(), which is how this normally happens, and start()'s
+        finally, for the loop that died rather than ended. CORE needs to hear it
+        once; a second copy would only show up in every ordinary run's trace.
+        """
+        if self.goodbye_sent:
+            return
+        self.goodbye_sent = True
+        self.core.send(SequencerStopped())
+
     def main_loop(self) -> None:
         log.debug("SEQUENCER entered its main event loop.")
         while self.running:
@@ -154,7 +184,6 @@ class Sequencer:
 
     # --- Execution ------------------------------------------------------------
 
-    @catch_and_report_errors()
     def run_sequence(self, sequence_name: str) -> None:
         """Start one named sequence on a thread of its own, so the event loop keeps turning."""
         if self.sequence_is_running():
@@ -340,7 +369,6 @@ class Sequencer:
             )
             self.core.send(RunMetadata(values=tuple(changed)))
 
-    @catch_and_report_errors()
     def stop_sequence(self) -> None:
         """
         Abort the running sequence, keeping the module alive.
@@ -353,7 +381,6 @@ class Sequencer:
         log.debug("The stop flag is set; the run ends at the next step boundary.")
         self.stop_requested = True
 
-    @catch_and_report_errors()
     def pause_sequence(self) -> None:
         """
         Ask the running sequence to hold before its next main step.
@@ -369,7 +396,6 @@ class Sequencer:
         log.debug("The pause flag is set; the run holds before its next main step.")
         self.pause_requested = True
 
-    @catch_and_report_errors()
     def resume_sequence(self) -> None:
         """
         End a hold, or cancel a pause whose hold has not begun yet.
@@ -484,15 +510,21 @@ class Sequencer:
     def do_periodic_tasks(self) -> None:
         self.heartbeat_manager.tick()
 
-    @catch_and_report_errors()
     def stop(self) -> None:
         """
         Shut the module down, bringing a running sequence with it.
         """
         self.running = False
         log.debug("SEQUENCER module stopping.")
-        self.stop_running_sequence()
-        self.core.send(SequencerStopped())
+        try:
+            self.stop_running_sequence()
+        finally:
+            # The goodbye is not optional, and the send is *after* the line that
+            # can fail: without the finally an exception on its way out to the
+            # per-message boundary would skip it, costing CORE its whole shutdown
+            # budget and having it name this module as the one that never
+            # answered - which it did not.
+            self.send_goodbye()
 
     def stop_running_sequence(self) -> None:
         """

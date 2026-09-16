@@ -100,6 +100,26 @@ def test_wait_until_stopped_gives_up_after_the_grace_period(client, caplog):
     assert drain(to_core) == [HmiStopped()]
 
 
+def test_hmi_stopped_is_sent_even_if_the_frontend_teardown_fails(client):
+    """
+    `on_stop()` is the frontend's own teardown - the GUI closes its window in it
+    - and stop() carries @catch_and_report_errors(), which swallows. Without the
+    try/finally a failure there took the goodbye with it, and CORE spent its
+    whole shutdown budget waiting for a frontend that had already gone.
+    """
+    instance, to_core = client
+
+    def fails():
+        raise RuntimeError("the window would not close")
+
+    instance.on_stop = fails
+
+    instance.stop()
+
+    assert instance.running is False
+    assert any(isinstance(message, HmiStopped) for message in drain(to_core))
+
+
 # --------------------------------------------------------------------------
 # Watching CORE: the orphan case
 # --------------------------------------------------------------------------

@@ -83,7 +83,7 @@ owns, the rules and decisions behind them, how to extend it, known gaps.
 | `hardware_layer/` | `hardware_layer/hal.md` |
 | `stream_handler/` | `stream_handler/stream_handler.md` |
 | `api/` | `api/api.md` |
-| `helper_applications/recipe_verificator/` | `recipe_verificator/recipe_verificator.md` |
+| `helper_applications/recipe_creator/` | `recipe_creator/recipe_creator.md` |
 
 The roadmap stays authority on *status and plan*; context files say *how it works*.
 Update the context file in the same change that touches the module.
@@ -133,7 +133,7 @@ src/pypts/
                          (context: utilities/utilities.md)
   hardware_layer/hal.py  HAL stub — Phase 3+ (context: hardware_layer/hal.md)
   stream_handler/        empty placeholder — Phase 3+ (context: stream_handler/stream_handler.md)
-  helper_applications/   debug_monitor, recipe_creator, recipe_verificator, example_finder
+  helper_applications/   debug_monitor, recipe_creator (incl. the verificator), example_finder
   old_code/              frozen legacy implementation — read only, never modify
 resources/internal_reports/  generated HTML documents (dev artifacts)
 resources/roadmap/       (roadmap content now in repo-root HTML files)
