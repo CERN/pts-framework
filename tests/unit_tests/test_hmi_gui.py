@@ -5,9 +5,9 @@
 """
 Unit tests for the GUI HMI (src/pypts/hmi/gui/).
 
-GUI tests need a display. On a headless machine (and on the GitLab runner) set
-QT_QPA_PLATFORM=offscreen; adding that to CI is an existing TODO. pytest-qt is
-already a test dependency.
+GUI tests run offscreen: tests/conftest.py sets QT_QPA_PLATFORM=offscreen unless
+it is already set, so no window reaches the screen. pytest-qt is already a test
+dependency.
 
 The GUI holds its widgets rather than inheriting from one. That is not a style
 choice: PySide6's QWidget.__init__ cooperatively calls the next __init__ in the
@@ -60,8 +60,6 @@ from pypts.messages.run_events import (
     UserTextRequest,
     UserTextResponse,
 )
-
-PLACEHOLDER = "placeholder - test not implemented yet"
 
 pytest.importorskip("PySide6", reason="the GUI is an optional extra")
 
@@ -346,6 +344,108 @@ def test_sequence_dropdown_refills_the_table(gui):
     table = instance.step_table.table
     assert table.rowCount() == 1
     assert table.item(0, 0).text() == "Only wait"
+
+
+# --------------------------------------------------------------------------
+# The run progress bar - GUI only, counted from the summary and StepFinished
+# --------------------------------------------------------------------------
+
+
+def a_nested_recipe_loaded():
+    """Main: a step, a call (group row) with two steps inside, and a teardown step."""
+    rows = (
+        StepSummary(step_id=uuid4(), step_name="Setup", description=""),
+        StepSummary(step_id=uuid4(), step_name="Sub", description="", is_group=True),
+        StepSummary(step_id=uuid4(), step_name="Inner one", description="", depth=1),
+        StepSummary(step_id=uuid4(), step_name="Inner two", description="", depth=1),
+        StepSummary(step_id=uuid4(), step_name="Teardown", description=""),
+    )
+    return RecipeLoaded(
+        recipe_name="Nested demo",
+        recipe_version="1.0.0",
+        main_sequence="Main",
+        sequences=(SequenceSummary(sequence_name="Main", steps=rows),),
+    )
+
+
+def finished(step, result=ResultType.PASS):
+    return StepFinished(
+        outcome=StepOutcome(step_id=step.step_id, step_name=step.step_name, result=result)
+    )
+
+
+def test_progress_text_counts_and_rounds_the_percentage_down():
+    from pypts.hmi.gui.run_progress import progress_text
+
+    assert progress_text(6, 15) == "6 / 15 (40 %)"
+    assert progress_text(2, 3) == "2 / 3 (66 %)"
+    assert progress_text(0, 0) == "0 / 0 (0 %)"
+
+
+def test_the_progress_bar_is_hidden_until_a_recipe_is_loaded(gui):
+    instance, _outbox, inbox = gui
+    progress = instance.window.run_progress
+    assert progress.isHidden()
+
+    load_demo_recipe(instance, inbox)
+
+    assert not progress.isHidden()
+    assert progress.label.text() == "0 / 2 (0 %)"
+
+
+def test_the_progress_bar_counts_nested_steps_but_not_call_rows(gui):
+    instance, _outbox, inbox = gui
+    event = a_nested_recipe_loaded()
+    inbox.send(event)
+    instance.poll_core()
+    setup, call, inner_one, inner_two, teardown = event.sequences[0].steps
+    progress = instance.window.run_progress
+    assert progress.label.text() == "0 / 4 (0 %)"
+
+    inbox.send(RunStarted(recipe_name="Nested demo", recipe_description=""))
+    inbox.send(finished(setup))
+    inbox.send(finished(inner_one))
+    inbox.send(finished(inner_two, ResultType.SKIP))
+    inbox.send(finished(call))
+    instance.poll_core()
+
+    assert progress.label.text() == "3 / 4 (75 %)"
+    assert progress.bar.value() == 3
+    assert progress.bar.maximum() == 4
+
+    inbox.send(finished(teardown, ResultType.STOP))
+    instance.poll_core()
+    assert progress.label.text() == "4 / 4 (100 %)"
+
+
+def test_a_step_finished_twice_is_counted_once(gui):
+    instance, _outbox, inbox = gui
+    event = load_demo_recipe(instance, inbox)
+    first = event.sequences[0].steps[0]
+
+    inbox.send(finished(first))
+    inbox.send(finished(first))
+    instance.poll_core()
+
+    assert instance.window.run_progress.label.text() == "1 / 2 (50 %)"
+
+
+def test_the_progress_bar_empties_on_run_start_and_on_a_new_selection(gui):
+    instance, _outbox, inbox = gui
+    event = load_demo_recipe(instance, inbox)
+    progress = instance.window.run_progress
+
+    inbox.send(finished(event.sequences[0].steps[0]))
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    instance.poll_core()
+    assert progress.label.text() == "1 / 2 (50 %)"
+
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    instance.poll_core()
+    assert progress.label.text() == "0 / 2 (0 %)"
+
+    instance.top_bar.sequence_combo.setCurrentText("Extra")
+    assert progress.label.text() == "0 / 1 (0 %)"
 
 
 # --------------------------------------------------------------------------
@@ -762,25 +862,6 @@ def test_a_path_request_supersedes_an_unanswered_text_request(gui):
 
 
 # --------------------------------------------------------------------------
-# Phase 3 placeholders
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_gui_survives_an_engine_crash_and_reports_it():
-    """The reason the GUI keeps its own process."""
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_widgets_are_resolved_by_step_or_stream_type():
-    """"Widgets can be expanded, but the GUI implementation stays the same"."""
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_view_refreshes_on_every_event():
-    """Known bug in TODO.txt: the GUI does not always refresh properly."""
-
-# --------------------------------------------------------------------------
 # The report button
 # --------------------------------------------------------------------------
 
@@ -1186,26 +1267,6 @@ def test_no_colour_literal_lives_outside_the_palette():
     assert not offenders, f"colour literals outside palette.py: {offenders}"
 
 
-# --------------------------------------------------------------------------
-# Settings > Storage - the panel on its own
-# --------------------------------------------------------------------------
-
-
-def an_item(key="state", label="Recent recipes", count=2, size=200, note=""):
-    from pypts.utilities.data_removal import RemovableItem
-
-    return RemovableItem(
-        key=key,
-        label=label,
-        detail="Every run folder.",
-        location="C:/pypts/reports",
-        targets=(),
-        size_bytes=size,
-        item_count=count,
-        kept_note=note,
-    )
-
-
 def test_the_window_title_names_the_loaded_recipe(gui):
     """Several bench windows are often open at once, and the taskbar shows only the title."""
     instance, _outbox, inbox = gui
@@ -1310,183 +1371,6 @@ def inbox_run_started(gui):
     inbox.send(RunStarted(recipe_name="demo", recipe_description="d"))
     instance.poll_core()
     return instance, outbox, inbox
-
-
-def four_items(**sizes):
-    """The four survey categories - the Storage panel must leave the configuration out."""
-    return [
-        an_item(key="state", label="Recent recipes", size=sizes.get("state", 800)),
-        an_item(key="config", label="Configuration", size=sizes.get("config", 200)),
-        an_item(key="reports", label="Reports", size=sizes.get("reports", 4000)),
-        an_item(key="logs", label="Run logs", size=sizes.get("logs", 1000)),
-    ]
-
-
-def a_panel(items, **options):
-    """A Storage panel over a fixed survey. It deletes nothing unless a test says so."""
-    from pypts.hmi.gui.storage_panel import StoragePanel
-    from pypts.utilities.data_removal import RemovalOutcome
-
-    options.setdefault("remover", lambda chosen: RemovalOutcome())
-    return StoragePanel(lambda: list(items), **options)
-
-
-def test_the_panel_lists_reports_logs_and_recents_with_their_sizes(qapp):
-    panel = a_panel(four_items())
-
-    shown = _all_text(panel)
-    assert any("Reports" in text for text in shown)
-    assert any("Run logs" in text for text in shown)
-    assert any("2 items" in text for text in shown)
-
-
-def test_the_configuration_is_not_offered(qapp):
-    """config.ini belongs to Settings > Advanced > Restore default settings."""
-    panel = a_panel(four_items())
-
-    assert "config" not in panel.checkboxes
-    assert not any("Configuration" in text for text in _all_text(panel))
-
-
-def test_the_recents_are_ticked_and_the_records_are_not(qapp):
-    """Removing test records stays a deliberate extra click."""
-    panel = a_panel(four_items())
-
-    assert panel.checkboxes["state"].isChecked() is True
-    assert panel.checkboxes["reports"].isChecked() is False
-    assert panel.checkboxes["logs"].isChecked() is False
-
-
-def test_the_total_counts_only_what_is_ticked(qapp):
-    panel = a_panel(four_items(state=1024))
-
-    assert panel.total_label.text() == "1.0 KB"
-
-
-def test_ticking_a_category_updates_the_total(qapp):
-    panel = a_panel(four_items(state=1024, reports=2048))
-    panel.checkboxes["reports"].setChecked(True)
-
-    assert panel.total_label.text() == "3.0 KB"
-
-
-def test_an_empty_category_cannot_be_ticked(qapp):
-    """Nothing there means nothing to choose."""
-    panel = a_panel([an_item(key="state", count=0, size=0), an_item(key="logs")])
-
-    assert panel.checkboxes["state"].isEnabled() is False
-    assert panel.checkboxes["state"].isChecked() is False
-
-
-def test_unticking_everything_disables_the_remove_button(qapp):
-    panel = a_panel(four_items())
-    panel.checkboxes["state"].setChecked(False)
-
-    assert panel.remove_button.isEnabled() is False
-
-
-def test_only_the_ticked_categories_are_removed(qapp):
-    from pypts.utilities.data_removal import RemovalOutcome
-
-    passed = []
-
-    def remover(items):
-        passed.extend(items)
-        return RemovalOutcome()
-
-    panel = a_panel(four_items(), remover=remover)
-    panel.checkboxes["logs"].setChecked(True)
-    panel.remove_button.click()
-
-    assert [item.key for item in passed] == ["state", "logs"]
-
-
-def test_removing_shows_the_result_and_says_something_was_removed(qapp):
-    from pypts.utilities.data_removal import RemovalOutcome
-
-    outcome = RemovalOutcome(removed_bytes=2048, removed_count=3)
-    removed = []
-    panel = a_panel(four_items(), remover=lambda items: outcome)
-    panel.removed.connect(lambda: removed.append(True))
-
-    panel.remove_button.click()
-
-    assert panel.outcome is outcome
-    assert panel.showing == "result"
-    shown = " ".join(_all_text(panel))
-    assert "3 items deleted" in shown
-    assert "2.0 KB freed" in shown
-    assert removed == [True]
-
-
-def test_the_result_names_what_could_not_be_removed(qapp):
-    from pypts.utilities.data_removal import RemovalOutcome
-
-    outcome = RemovalOutcome(removed_count=1, failures=("pypts_now.log: in use",))
-    panel = a_panel(four_items(), remover=lambda items: outcome)
-
-    panel.remove_button.click()
-
-    assert "pypts_now.log: in use" in " ".join(_all_text(panel))
-
-
-def test_the_kept_log_note_is_repeated_on_the_result(qapp):
-    """The operator has to learn why one log is still there."""
-    item = an_item(key="logs", label="Run logs", note="This run's log stays - it is in use.")
-    panel = a_panel([item])
-    panel.checkboxes["logs"].setChecked(True)
-
-    panel.remove_button.click()
-
-    assert "This run's log stays" in " ".join(_all_text(panel))
-
-
-def test_a_panel_with_nothing_to_remove_cannot_remove(qapp):
-    panel = a_panel([an_item(key="state", count=0, size=0)])
-
-    assert panel.remove_button.isEnabled() is False
-    assert panel.remove_button.text() == "Nothing to remove"
-
-
-def test_done_goes_back_to_a_fresh_survey(qapp):
-    """The sizes shown after a removal are the sizes now."""
-    from pypts.hmi.gui.storage_panel import StoragePanel
-    from pypts.utilities.data_removal import RemovalOutcome
-
-    surveys = []
-
-    def survey():
-        surveys.append(True)
-        return four_items()
-
-    panel = StoragePanel(survey, remover=lambda items: RemovalOutcome())
-    panel.remove_button.click()
-
-    panel.back_button.click()
-
-    assert panel.showing == "confirm"
-    assert len(surveys) == 2
-
-
-def test_nothing_can_be_removed_during_a_run_and_it_says_why(qapp):
-    """Emptying the reports folder under the Report thread would take the run down."""
-    panel = a_panel(
-        four_items(), blocked_reason="Not while a recipe is running - stop the run first."
-    )
-
-    assert panel.remove_button.isEnabled() is False
-    assert panel.checkboxes["reports"].isEnabled() is False
-    assert any("running" in text for text in _all_text(panel))
-
-
-def _all_text(widget):
-    """Every label *and* checkbox caption - category names are checkboxes now."""
-    from PySide6.QtWidgets import QCheckBox, QLabel
-
-    return [
-        child.text()
-        for child in widget.findChildren(QLabel) + widget.findChildren(QCheckBox)
-    ]
 
 
 def test_switching_theme_repaints_the_verdicts(gui):
@@ -1899,26 +1783,48 @@ def test_the_toolbar_answers_tooltips_for_disabled_buttons(gui, qapp):
 # --- The step table's YAML click panel ----------------------------------------
 #
 # What the operator gets between runs: a click on a step's name or description,
-# and that step's YAML beside the pointer. The fragments themselves are the
-# recipe layer's (step_source.py, covered in test_recipe.py); these tests own
-# the wiring, the idle gate, the row highlight and the theme.
+# and the whole sequence that step is in beside the pointer, the step picked out.
+# The sources themselves are the recipe layer's (step_source.py, covered in
+# test_recipe.py); these tests own the wiring, the idle gate, the gesture, the
+# row highlight and the theme.
 
 
 A_FRAGMENT = "steptype: Wait\nstep_name: First wait\nwait_time: '0.01'"
 
+#: A sequence document long enough to scroll, its second step on lines 40-42.
+A_LONG_SEQUENCE = "\n".join(
+    ["sequence_name: Main", "steps:"]
+    + [f"  # filler {n}" for n in range(38)]
+    + ["  - steptype: Wait", "    step_name: Deep step", "    wait_time: '0'"]
+    + [f"  # tail {n}" for n in range(60)]
+)
+
+
+def a_source(text=A_FRAGMENT, first_line=0, last_line=2):
+    from pypts.recipe.step_source import StepSource
+
+    return StepSource(text=text, first_line=first_line, last_line=last_line)
+
 
 def a_table_with_yaml(qapp):
-    """A step table filled from a sequence, every row carrying a fragment."""
+    """A step table filled from a sequence, every row carrying a source."""
     from pypts.hmi.gui.step_table import StepTableContent
 
     content = StepTableContent()
     sequence = a_recipe_loaded().sequences[0]
-    sources = tuple(f"{A_FRAGMENT}\n# row {row}" for row in range(len(sequence.steps)))
+    sources = tuple(
+        a_source(f"{A_FRAGMENT}\n# row {row}", 0, 2) for row in range(len(sequence.steps))
+    )
     content.show_sequence(sequence, sources)
     return content, sources
 
 
-def test_each_row_carries_its_own_yaml(qapp):
+def band_lines(popup):
+    """The block numbers the panel's step band covers."""
+    return sorted({s.cursor.blockNumber() for s in popup.text_view.extraSelections()})
+
+
+def test_each_row_carries_its_own_source(qapp):
     from pypts.hmi.gui.step_table import _YAML_ROLE
 
     content, sources = a_table_with_yaml(qapp)
@@ -1930,7 +1836,7 @@ def test_each_row_carries_its_own_yaml(qapp):
     assert stored == list(sources)
 
 
-def test_a_sequence_without_fragments_still_fills_the_table(qapp):
+def test_a_sequence_without_sources_still_fills_the_table(qapp):
     """A recipe the GUI could not read back off disk costs the panel, not the
     table - show_sequence's second argument is optional on purpose."""
     from pypts.hmi.gui.step_table import _YAML_ROLE, StepTableContent
@@ -1945,13 +1851,15 @@ def test_a_sequence_without_fragments_still_fills_the_table(qapp):
     assert content.yaml_popup.isVisible() is False
 
 
-def test_clicking_a_row_shows_that_row_s_yaml(qapp):
+def test_clicking_a_row_shows_its_sequence_with_the_step_picked_out(qapp):
     content, sources = a_table_with_yaml(qapp)
 
     content._clicked_cell(1, 0)
 
     assert content.yaml_popup.isVisible() is True
-    assert content.yaml_popup.text_view.toPlainText() == sources[1]
+    assert content.yaml_popup.text_view.toPlainText() == sources[1].text
+    assert band_lines(content.yaml_popup) == [0, 1, 2]
+    content.hide_yaml_popup()
 
 
 def test_the_description_opens_the_panel_too_and_the_result_does_not(qapp):
@@ -1966,13 +1874,14 @@ def test_the_description_opens_the_panel_too_and_the_result_does_not(qapp):
     assert content.yaml_popup.isVisible() is False
 
 
-def test_hovering_alone_shows_nothing(qapp):
-    """Dragging the eye down the table must show nothing at all now: the panel
-    opens on a click, never on a crossing."""
+def test_nothing_opens_without_a_click(qapp):
+    """Moving the pointer over the table shows nothing: the panel opens on a
+    click, never on a crossing."""
+    from PySide6.QtCore import QPoint
+
     content, _sources = a_table_with_yaml(qapp)
 
-    content._hover_cell(0, 0)
-    content._hover_cell(1, 0)
+    content.pointer_moved_to(QPoint(5, 5))
 
     assert content.yaml_popup.isVisible() is False
 
@@ -1991,43 +1900,77 @@ def test_the_clicked_row_is_highlighted_and_the_verdict_chip_is_not(qapp):
     assert content.table.item(0, 0).background().color().name().lower() == tint
     assert content.table.item(0, 1).background().color().name().lower() == tint
     assert content.table.item(0, 2).background().color().name() == chip_before
+    content.hide_yaml_popup()
 
 
-def test_moving_off_the_clicked_cell_hides_the_panel(qapp):
-    """The pointer leaving the field is the dismissal."""
+def shown_table_with_yaml(qapp):
+    """A table on screen, so its cells have global geometry, row 0 clicked."""
+    content, sources = a_table_with_yaml(qapp)
+    content.resize(600, 300)
+    content.show()
+    qapp.processEvents()
+    content._clicked_cell(0, 0)
+    return content, sources
+
+
+def global_centre_of(content, row, column):
+    item = content.table.item(row, column)
+    cell = content.table.visualItemRect(item)
+    return content.table.viewport().mapToGlobal(cell.center())
+
+
+def test_the_panel_stays_while_the_pointer_is_on_the_clicked_row(qapp):
+    """Name to description is still the same field: one step, one panel."""
+    content, _sources = shown_table_with_yaml(qapp)
+
+    content.pointer_moved_to(global_centre_of(content, 0, 1))
+
+    assert content.yaml_popup.isVisible() is True
+    content.hide()
+    content.hide_yaml_popup()
+
+
+def test_the_panel_stays_while_the_pointer_is_on_the_panel(qapp):
+    """Moving onto the panel is how its text gets scrolled with the wheel."""
+    content, _sources = shown_table_with_yaml(qapp)
+
+    content.pointer_moved_to(content.yaml_popup.frameGeometry().center())
+
+    assert content.yaml_popup.isVisible() is True
+    content.hide()
+    content.hide_yaml_popup()
+
+
+def test_moving_to_another_row_hides_the_panel_and_the_highlight(qapp):
+    """Reading down the table does not drag the panel along."""
     from PySide6.QtCore import Qt
 
-    content, _sources = a_table_with_yaml(qapp)
-    content._clicked_cell(0, 0)
+    content, _sources = shown_table_with_yaml(qapp)
+    far_away = content.yaml_popup.frameGeometry().bottomRight()
+    far_away.setX(far_away.x() + 500)
+    far_away.setY(far_away.y() + 500)
 
-    content._hover_cell(1, 0)
+    content.pointer_moved_to(far_away)
 
     assert content.yaml_popup.isVisible() is False
     assert content._active_row == -1
     assert content.table.item(0, 0).background().style() == Qt.BrushStyle.NoBrush
+    content.hide()
 
 
-def test_moving_within_the_clicked_row_keeps_the_panel(qapp):
-    """Name to description is still the same field: one step, one panel."""
-    content, _sources = a_table_with_yaml(qapp)
-    content._clicked_cell(0, 0)
-
-    content._hover_cell(0, 1)
-
-    assert content.yaml_popup.isVisible() is True
-
-
-def test_hiding_the_panel_drops_the_highlight(qapp):
+def test_hiding_the_panel_drops_the_highlight_and_stops_watching(qapp):
     """A tint left behind would mark a row for no reason once the panel is gone."""
     from PySide6.QtCore import Qt
 
     content, _sources = a_table_with_yaml(qapp)
     content._clicked_cell(0, 0)
     assert content._active_row == 0
+    assert content._pointer_timer.isActive() is True
 
     content.hide_yaml_popup()
 
     assert content._active_row == -1
+    assert content._pointer_timer.isActive() is False
     assert content.table.item(0, 0).background().style() == Qt.BrushStyle.NoBrush
 
 
@@ -2048,51 +1991,59 @@ def test_the_panel_is_suppressed_while_a_recipe_runs(qapp):
     content.set_running(False)
     content._clicked_cell(1, 0)
     assert content.yaml_popup.isVisible() is True
+    content.hide_yaml_popup()
 
 
-def test_leaving_the_table_hides_the_panel(qapp):
-    from PySide6.QtCore import QEvent
+def test_a_long_sequence_scrolls_to_the_clicked_step(qapp):
+    """A whole sequence is taller than the panel may be: it scrolls, and opens
+    with the clicked step in view rather than at the top of the document."""
+    from PySide6.QtGui import QGuiApplication
 
-    content, _sources = a_table_with_yaml(qapp)
-    content._clicked_cell(0, 0)
-    assert content.yaml_popup.isVisible() is True
-
-    content.eventFilter(content.table.viewport(), QEvent(QEvent.Type.Leave))
-
-    assert content.yaml_popup.isVisible() is False
-
-
-def test_a_long_fragment_is_cut_and_says_so(qapp):
-    """A Qt.ToolTip window sits under the pointer, so it cannot be scrolled -
-    truncation is honest where a scroll bar would be decoration."""
-    from pypts.hmi.gui.step_yaml_popup import _MAX_LINES, StepYamlPopup
+    from pypts.hmi.gui.step_yaml_popup import _CONTEXT_LINES, StepYamlPopup
 
     popup = StepYamlPopup()
-    popup.show_for("\n".join(f"key_{n}: {n}" for n in range(_MAX_LINES + 5)), 10, 10)
+    area = QGuiApplication.primaryScreen().availableGeometry()
+    popup.show_for(A_LONG_SEQUENCE, 40, 42, area.left() + 20, area.top() + 20)
 
-    shown = popup.text_view.toPlainText().split("\n")
-    assert len(shown) == _MAX_LINES + 1
-    assert shown[-1] == "# ... 5 more lines"
+    assert popup.text_view.toPlainText() == A_LONG_SEQUENCE
+    assert popup.height() <= area.height()
+    assert band_lines(popup) == [40, 41, 42]
+    bar = popup.text_view.verticalScrollBar()
+    if bar.maximum() > 0:
+        assert bar.value() == min(40 - _CONTEXT_LINES, bar.maximum())
     popup.hide()
 
 
-def test_an_empty_fragment_shows_nothing(qapp):
+def test_a_whole_sequence_shows_with_nothing_picked_out_from_the_top(qapp):
+    """A call's row shows the sequence it calls: no band, and the top of it."""
     from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
 
     popup = StepYamlPopup()
-    popup.show_for("   \n  ", 10, 10)
+    popup.show_for(A_LONG_SEQUENCE, -1, -1, 20, 20)
+
+    assert popup.isVisible() is True
+    assert popup.text_view.extraSelections() == []
+    assert popup.text_view.verticalScrollBar().value() == 0
+    popup.hide()
+
+
+def test_an_empty_text_shows_nothing(qapp):
+    from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
+
+    popup = StepYamlPopup()
+    popup.show_for("   \n  ", 0, 0, 10, 10)
 
     assert popup.isVisible() is False
 
 
-def test_switching_theme_recolours_the_yaml(qapp):
-    """Syntax colours are per-character QTextCharFormats, which no stylesheet
-    can reach - the same contract the log panel's backlog has."""
+def test_switching_theme_recolours_the_yaml_and_the_step_band(qapp):
+    """Syntax colours and the band are per-character and per-line formats, which
+    no stylesheet can reach - the same contract the log panel's backlog has."""
     from pypts.hmi.gui.palette import DARK, LIGHT
     from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
 
     popup = StepYamlPopup()
-    popup.show_for(A_FRAGMENT, 10, 10)
+    popup.show_for(A_FRAGMENT, 1, 1, 10, 10)
 
     def key_colour():
         # Every step held in a local: a highlighter's formats hang off the
@@ -2103,10 +2054,16 @@ def test_switching_theme_recolours_the_yaml(qapp):
         ranges = layout.formats()
         return ranges[0].format.foreground().color().name()
 
+    def band_colour():
+        selection = popup.text_view.extraSelections()[0]
+        return selection.format.background().color().name()
+
     assert key_colour().lower() == LIGHT.yaml_key.lower()
+    assert band_colour().lower() == LIGHT.yaml_step_highlight.lower()
 
     popup.set_dark(True)
     assert key_colour().lower() == DARK.yaml_key.lower()
+    assert band_colour().lower() == DARK.yaml_step_highlight.lower()
     popup.hide()
 
 
@@ -2118,19 +2075,20 @@ def test_the_step_table_carries_the_theme_into_the_panel(qapp):
     assert content.yaml_popup._dark is True
 
 
-def test_the_gui_reads_the_recipe_back_for_the_hover_panel(gui, tmp_path, monkeypatch):
+def test_the_gui_reads_the_recipe_back_for_the_click_panel(gui, tmp_path, monkeypatch):
     """The assembler's half: the path it asked CORE to open is the path it
-    reads the fragments from, once, when the recipe loads."""
+    reads the sources from, once, when the recipe loads."""
     from pypts.hmi.gui import gui as gui_module
     from pypts.hmi.gui.step_table import _YAML_ROLE
 
     asked = []
+    first = a_source("sequence_name: Main\nsteps: []", 1, 1)
 
     def fake_sources(path):
         asked.append(path)
-        return {"Main": ("steptype: Wait\nstep_name: First wait", "steptype: Wait")}
+        return {"Main": (first, a_source())}
 
-    monkeypatch.setattr(gui_module.step_source, "step_yaml_by_sequence", fake_sources)
+    monkeypatch.setattr(gui_module.step_source, "step_sources_by_sequence", fake_sources)
 
     instance, _outbox, inbox = gui
     instance._requested_recipe_path = str(tmp_path / "demo.yml")
@@ -2138,7 +2096,69 @@ def test_the_gui_reads_the_recipe_back_for_the_hover_panel(gui, tmp_path, monkey
 
     assert asked == [str(tmp_path / "demo.yml")]
     table = instance.step_table.table
-    assert table.item(0, 0).data(_YAML_ROLE) == "steptype: Wait\nstep_name: First wait"
+    assert table.item(0, 0).data(_YAML_ROLE) == first
+
+
+def test_the_preview_button_is_greyed_until_a_recipe_can_be_shown(gui):
+    instance, _outbox, _inbox = gui
+    button = instance.top_bar.preview_button
+
+    assert button.isEnabled() is False
+    assert "Open a recipe first" in button.toolTip()
+
+    instance.top_bar.set_preview_available(True)
+
+    assert button.isEnabled() is True
+    assert "Click anywhere outside it to close it" in button.toolTip()
+
+
+def test_the_preview_button_shows_the_whole_recipe_in_a_popup(gui, tmp_path, monkeypatch):
+    """The whole file, as written, in a Qt.Popup window - which Qt itself closes
+    on a click outside it, so nothing in pypts has to watch for that click."""
+    from PySide6.QtCore import Qt
+
+    from pypts.hmi.gui import gui as gui_module
+
+    recipe_text = "name: Wait demo\nversion: 0.2\n---\nsequence_name: Main\nsteps: []\n"
+    monkeypatch.setattr(gui_module.step_source, "step_sources_by_sequence", lambda path: {})
+    monkeypatch.setattr(gui_module.step_source, "recipe_file_text", lambda path: recipe_text)
+
+    instance, _outbox, inbox = gui
+    instance._requested_recipe_path = str(tmp_path / "demo.yml")
+    load_demo_recipe(instance, inbox)
+    assert instance.top_bar.preview_button.isEnabled() is True
+
+    instance.top_bar.preview_button.click()
+
+    preview = instance.recipe_preview
+    assert preview.isVisible() is True
+    assert preview.text_view.toPlainText() == recipe_text
+    assert preview.text_view.extraSelections() == []
+    assert preview.windowType() == Qt.WindowType.Popup
+    preview.hide()
+
+
+def test_a_recipe_that_cannot_be_read_back_has_no_preview(gui, tmp_path, monkeypatch):
+    from pypts.hmi.gui import gui as gui_module
+
+    monkeypatch.setattr(gui_module.step_source, "step_sources_by_sequence", lambda path: {})
+    monkeypatch.setattr(gui_module.step_source, "recipe_file_text", lambda path: "")
+
+    instance, _outbox, inbox = gui
+    instance._requested_recipe_path = str(tmp_path / "demo.yml")
+    load_demo_recipe(instance, inbox)
+
+    assert instance.top_bar.preview_button.isEnabled() is False
+    instance.show_recipe_preview()
+    assert instance.recipe_preview.isVisible() is False
+
+
+def test_the_theme_reaches_the_recipe_preview(gui):
+    instance, _outbox, _inbox = gui
+
+    instance._apply_theme(True)
+
+    assert instance.recipe_preview._dark is True
 
 
 def test_a_run_turns_the_hover_panel_off_and_the_end_of_it_back_on(gui):
@@ -2153,6 +2173,216 @@ def test_a_run_turns_the_hover_panel_off_and_the_end_of_it_back_on(gui):
     inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
     instance.poll_core()
     assert instance.step_table._running is False
+
+
+# --- Folding groups in the step table -----------------------------------------
+#
+# A row that stands for a called sequence folds the rows under it away. The rows
+# are only hidden, never removed, so everything keyed by step id keeps working.
+
+
+def a_nested_sequence():
+    """Main: a step, a group holding a step and a nested group, then a step.
+
+    Rows, depth-first as Sequence.to_summary() sends them:
+        0 Warm up          depth 0
+        1 PowerCycle       depth 0, group
+        2 Power off        depth 1
+        3 Settle           depth 1, group
+        4 Settle time      depth 2
+        5 Power on         depth 1
+        6 Final check      depth 0
+    """
+    rows = (
+        ("Warm up", 0, False),
+        ("PowerCycle", 0, True),
+        ("Power off", 1, False),
+        ("Settle", 1, True),
+        ("Settle time", 2, False),
+        ("Power on", 1, False),
+        ("Final check", 0, False),
+    )
+    steps = tuple(
+        StepSummary(
+            step_id=uuid4(), step_name=name, description=f"About {name}.",
+            depth=depth, is_group=is_group,
+        )
+        for name, depth, is_group in rows
+    )
+    return SequenceSummary(sequence_name="Main", steps=steps)
+
+
+def a_folding_table(qapp):
+    from pypts.hmi.gui.step_table import StepTableContent
+
+    content = StepTableContent()
+    sequence = a_nested_sequence()
+    content.show_sequence(sequence)
+    return content, sequence
+
+
+def visible_rows(content):
+    return [row for row in range(content.table.rowCount()) if not content.table.isRowHidden(row)]
+
+
+def test_groups_start_folded_with_an_arrow_and_indented_steps(qapp):
+    content, _sequence = a_folding_table(qapp)
+
+    assert visible_rows(content) == [0, 1, 6]
+    names = [content.table.item(row, 0).text() for row in range(7)]
+    assert names[0] == "Warm up"
+    assert names[1] == "\u25b8 PowerCycle"
+    assert names[2] == "    Power off"
+    assert names[3] == "    \u25b8 Settle"
+    assert names[4] == "        Settle time"
+
+
+def test_clicking_a_group_name_unfolds_one_level(qapp):
+    """Settle stays folded inside PowerCycle until it is opened itself."""
+    content, _sequence = a_folding_table(qapp)
+
+    content._clicked_cell(1, 0)
+
+    assert visible_rows(content) == [0, 1, 2, 3, 5, 6]
+    assert content.table.item(1, 0).text() == "\u25be PowerCycle"
+    assert content.yaml_popup.isVisible() is False
+
+    content._clicked_cell(3, 0)
+    assert visible_rows(content) == [0, 1, 2, 3, 4, 5, 6]
+
+    content._clicked_cell(1, 0)
+    assert visible_rows(content) == [0, 1, 6]
+
+
+def test_folding_an_outer_group_keeps_what_was_open_inside_it(qapp):
+    content, _sequence = a_folding_table(qapp)
+    content.set_expanded(1, True)
+    content.set_expanded(3, True)
+
+    content.set_expanded(1, False)
+    content.set_expanded(1, True)
+
+    assert visible_rows(content) == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_a_double_click_toggles_a_group_once(qapp):
+    """A double-click arrives as a click and then a double-click: on the name the
+    click toggled already; on the description the double-click does it."""
+    content, _sequence = a_folding_table(qapp)
+
+    content._clicked_cell(1, 0)
+    content._double_clicked_cell(1, 0)
+    assert content.is_expanded(1) is True
+
+    content._clicked_cell(1, 1)
+    content._double_clicked_cell(1, 1)
+    assert content.is_expanded(1) is False
+
+
+def test_the_description_of_a_group_still_opens_the_panel(qapp):
+    from pypts.hmi.gui.step_table import StepTableContent
+    from pypts.recipe.step_source import StepSource
+
+    content = StepTableContent()
+    sequence = a_nested_sequence()
+    sources = tuple(
+        StepSource(text=f"sequence_name: row {row}", first_line=-1, last_line=-1)
+        for row in range(len(sequence.steps))
+    )
+    content.show_sequence(sequence, sources)
+
+    content._clicked_cell(1, 1)
+
+    assert content.yaml_popup.isVisible() is True
+    assert content.is_expanded(1) is False
+    content.hide_yaml_popup()
+
+
+def test_expand_all_and_collapse_all(qapp):
+    content, _sequence = a_folding_table(qapp)
+
+    content.expand_all()
+    assert visible_rows(content) == list(range(7))
+    assert content.table.item(3, 0).text() == "    \u25be Settle"
+
+    content.collapse_all()
+    assert visible_rows(content) == [0, 1, 6]
+
+
+def test_a_step_that_is_not_a_group_does_not_fold(qapp):
+    content, _sequence = a_folding_table(qapp)
+
+    content.set_expanded(0, True)
+
+    assert content.is_expanded(0) is False
+    assert visible_rows(content) == [0, 1, 6]
+
+
+def test_a_folded_step_still_gets_its_verdict(qapp):
+    """Hidden, not removed: the row is found by step id and updated as ever, and
+    unfolding shows the verdict it already has."""
+    content, sequence = a_folding_table(qapp)
+    inner = sequence.steps[4]
+
+    content.mark_running(StepStarted(step_id=inner.step_id, step_name=inner.step_name))
+    content.show_outcome(
+        StepOutcome(step_id=inner.step_id, step_name=inner.step_name, result=ResultType.PASS)
+    )
+
+    assert content.table.isRowHidden(4) is True
+    assert content.table.item(4, 2).text() == "PASS"
+    assert content.is_expanded(1) is False
+    content.expand_all()
+    assert content.table.item(4, 2).text() == "PASS"
+
+
+def test_a_run_does_not_unfold_anything(qapp):
+    content, sequence = a_folding_table(qapp)
+    content.set_running(True)
+    inner = sequence.steps[2]
+
+    content.mark_running(StepStarted(step_id=inner.step_id, step_name=inner.step_name))
+
+    assert visible_rows(content) == [0, 1, 6]
+    assert content._visible_row_for(4) == 1
+
+
+def test_groups_can_be_folded_during_a_run(qapp):
+    content, _sequence = a_folding_table(qapp)
+    content.set_running(True)
+
+    content._clicked_cell(1, 0)
+
+    assert content.is_expanded(1) is True
+
+
+def test_a_new_sequence_starts_folded_again(qapp):
+    content, sequence = a_folding_table(qapp)
+    content.expand_all()
+
+    content.show_sequence(sequence)
+
+    assert visible_rows(content) == [0, 1, 6]
+
+
+def test_folding_away_the_row_the_panel_is_open_on_closes_the_panel(qapp):
+    from pypts.hmi.gui.step_table import StepTableContent
+    from pypts.recipe.step_source import StepSource
+
+    content = StepTableContent()
+    sequence = a_nested_sequence()
+    sources = tuple(
+        StepSource(text=f"sequence_name: row {row}", first_line=0, last_line=0)
+        for row in range(len(sequence.steps))
+    )
+    content.show_sequence(sequence, sources)
+    content.expand_all()
+    content._clicked_cell(2, 0)
+    assert content.yaml_popup.isVisible() is True
+
+    content.set_expanded(1, False)
+
+    assert content.yaml_popup.isVisible() is False
 
 
 # --- File > Open Config -------------------------------------------------------
@@ -2271,3 +2501,144 @@ def test_a_new_recipe_clears_the_metadata_of_the_last_run(gui):
 
     assert instance.top_bar.metadata_label.text() == ""
     assert not instance.top_bar.metadata_label.isVisibleTo(instance.top_bar)
+
+
+# --------------------------------------------------------------------------
+# The Run | Results tabs (gui.md section 14)
+# --------------------------------------------------------------------------
+
+
+def results_tree_rows(instance):
+    return instance.window.results_panel.tree_view.model().rowCount()
+
+
+def finish_a_step(instance, inbox, step):
+    inbox.send(StepFinished(outcome=a_measured_outcome(step.step_id)))
+    instance.poll_core()
+
+
+def test_the_left_pane_opens_on_the_run_tab(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RUN
+
+    instance, _outbox, _inbox = gui
+    tabs = instance.window.view_tabs
+
+    assert [tabs.tabText(index) for index in range(tabs.count())] == ["Run", "Results"]
+    assert tabs.currentIndex() == TAB_RUN
+    assert instance.window.left_stack.currentWidget() is instance.window.run_stack
+    assert tabs.pulsing_tab() is None
+
+
+def test_the_results_tab_shows_the_results_panel(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+
+    instance.window.view_tabs.setCurrentIndex(TAB_RESULTS)
+    assert instance.window.left_stack.currentWidget() is instance.window.results_panel
+
+    instance.window.view_tabs.setCurrentIndex(TAB_RUN)
+    assert instance.window.run_stack.currentWidget() is instance.step_table
+
+
+def test_the_results_fill_live_after_every_step(gui):
+    instance, _outbox, inbox = gui
+    event = load_demo_recipe(instance, inbox)
+    first, second = event.sequences[0].steps
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    instance.poll_core()
+
+    finish_a_step(instance, inbox, first)
+    assert results_tree_rows(instance) == 1
+    finish_a_step(instance, inbox, second)
+    assert results_tree_rows(instance) == 2
+    # Live filling does not ask for attention; the end of the run does.
+    assert instance.window.view_tabs.pulsing_tab() is None
+
+
+def test_a_finished_run_pulses_the_results_tab_until_it_is_opened(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=(a_measured_outcome(),)))
+    instance.poll_core()
+
+    tabs = instance.window.view_tabs
+    assert tabs.currentIndex() == TAB_RUN  # not switched to
+    assert tabs.pulsing_tab() == TAB_RESULTS
+
+    tabs.setCurrentIndex(TAB_RESULTS)
+    assert tabs.pulsing_tab() is None
+
+
+def test_a_run_finished_while_on_the_results_tab_does_not_pulse(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RESULTS
+
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    instance.poll_core()
+    instance.window.view_tabs.setCurrentIndex(TAB_RESULTS)
+
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=(a_measured_outcome(),)))
+    instance.poll_core()
+
+    assert instance.window.view_tabs.pulsing_tab() is None
+
+
+def test_a_run_with_no_results_does_not_pulse(gui):
+    instance, _outbox, inbox = gui
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    inbox.send(RunFinished(result=ResultType.STOP, outcomes=()))
+    instance.poll_core()
+
+    assert instance.window.view_tabs.pulsing_tab() is None
+
+
+def test_a_new_run_clears_the_results_stops_the_pulse_and_opens_run(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=(a_measured_outcome(),)))
+    instance.poll_core()
+    assert results_tree_rows(instance) == 1
+    assert instance.window.view_tabs.pulsing_tab() == TAB_RESULTS
+
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    instance.poll_core()
+
+    assert results_tree_rows(instance) == 0
+    assert instance.window.view_tabs.pulsing_tab() is None
+    assert instance.window.view_tabs.currentIndex() == TAB_RUN
+
+
+def test_loading_a_recipe_or_choosing_a_sequence_opens_the_run_tab(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+
+    instance, _outbox, inbox = gui
+    tabs = instance.window.view_tabs
+
+    tabs.setCurrentIndex(TAB_RESULTS)
+    load_demo_recipe(instance, inbox)
+    assert tabs.currentIndex() == TAB_RUN
+
+    tabs.setCurrentIndex(TAB_RESULTS)
+    instance.top_bar.sequence_combo.setCurrentText("Extra")
+    assert tabs.currentIndex() == TAB_RUN
+    assert instance.window.run_stack.currentWidget() is instance.step_table
+
+
+def test_loading_a_recipe_keeps_the_last_results(gui):
+    instance, _outbox, inbox = gui
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=(a_measured_outcome(),)))
+    instance.poll_core()
+
+    load_demo_recipe(instance, inbox)
+
+    assert results_tree_rows(instance) == 1

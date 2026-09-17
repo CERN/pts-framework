@@ -24,7 +24,7 @@ set, which it builds through `build_step()` like any other step.
 
 `inputs` are direct values and `expect` are `equals` checks - the terse
 spelling, because a parameter set is a test case and should read like a row of
-a table. A set that needs `range`, `passfail`, `local` or `global` cannot say so;
+a table. A set that needs `range`, `passfail` or `global` cannot say so;
 put the shared part on the `template`, which is an ordinary step mapping and
 takes the full `inputs` / `outputs` vocabulary. Set entries are merged
 **over** the template's, key by key.
@@ -44,6 +44,8 @@ Row-wise sets have neither problem: one set is one coherent case.
 """
 
 from typing import Any
+
+from pypts.step.sequence_step import is_sequence_step
 
 #: The steptype, lowercase as the registry and the rules spell them.
 INDEXED_STEPTYPE = "indexed"
@@ -100,6 +102,11 @@ def check_indexed_step(step_data: dict[str, Any]) -> list[str]:
             problems.append(f"'{TEMPLATE_KEY}' must be a step mapping")
         elif is_indexed_step(template):
             problems.append(f"an {INDEXED_STEPTYPE} step cannot be the '{TEMPLATE_KEY}'")
+        elif is_sequence_step(template):
+            problems.append(
+                f"a Sequence step cannot be the '{TEMPLATE_KEY}': a sequence is a group "
+                f"of steps and {INDEXED_STEPTYPE} parametrizes a single step"
+            )
         elif template.get("id") is not None:
             problems.append(f"the '{TEMPLATE_KEY}' cannot carry an 'id': it becomes N steps")
 

@@ -521,10 +521,6 @@ def core(tmp_path, monkeypatch):
     yield Core(
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
-        # Passed, not read from the configuration: outside a real run there is
-        # no launcher to have created a config.ini. Same reason the Report
-        # fixture below is told its output_dir.
-        watchdog_enabled=True,
     )
     ConfigHandler.reset_for_testing()
 

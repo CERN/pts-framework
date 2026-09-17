@@ -91,8 +91,6 @@ HALTING_RECIPE = FAILING_RECIPE.replace(
     "    wait_time: '-1'\n", "    wait_time: '-1'\n    continue_on_error: false\n"
 )
 
-PLACEHOLDER = "placeholder - test not implemented yet"
-
 #: How long a test waits for the sequence thread to reach a point. Generous,
 #: because a loaded CI runner is slow; nothing here waits for it on the happy
 #: path, so a passing run does not pay it.
@@ -729,6 +727,59 @@ def test_sequence_result_is_sent_once_at_the_end(sequencer):
     assert [o.step_name for o in run_finished[0].outcomes] == ["First wait", "Second wait"]
     # RunFinished is the last thing a run says.
     assert isinstance(messages[-1], RunFinished)
+
+
+#: Main calls a group of two waits between two waits of its own.
+GROUPED_RECIPE = f"""\
+name: Grouped
+version: {CURRENT_VERSION}
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: Wait
+    step_name: Before
+    wait_time: '0'
+  - steptype: Sequence
+    sequence_name: Group
+  - steptype: Wait
+    step_name: After
+    wait_time: '0'
+---
+sequence_name: Group
+steps:
+  - steptype: Wait
+    step_name: Inside one
+    wait_time: '0'
+  - steptype: Wait
+    step_name: Inside two
+    wait_time: '0'
+"""
+
+
+def test_run_finished_carries_every_real_step_and_no_group_rows(sequencer):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox, GROUPED_RECIPE)
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    finished = [m for m in messages if isinstance(m, StepFinished)]
+    run_finished = [m for m in messages if isinstance(m, RunFinished)]
+    assert [m.outcome.step_name for m in finished] == [
+        "Before",
+        "Inside one",
+        "Inside two",
+        "Group",
+        "After",
+    ]
+    assert run_finished[0].result is ResultType.DONE
+    assert [o.step_name for o in run_finished[0].outcomes] == [
+        "Before",
+        "Inside one",
+        "Inside two",
+        "After",
+    ]
 
 
 def test_running_without_a_recipe_is_refused_with_an_error(sequencer):

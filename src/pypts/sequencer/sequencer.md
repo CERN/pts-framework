@@ -24,7 +24,9 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   heartbeats keep flowing and `StopSequence` be processed mid-run.
 - **`execute_sequence()`** — resolves the sequence, builds a `Runtime`, emits
   `RunStarted`, calls `run_sequence_body()` from the step layer, emits `RunFinished`.
-  Also watches `report_metadata` globals and forwards `RunMetadata` updates to CORE.
+  `RunFinished.outcomes` and the run summary lines count **real steps** at every depth
+  (`real_step_results()`): the row of a called sequence is not counted, the steps inside it
+  are (`step/step.md` §2.8). Also watches `report_metadata` globals and forwards `RunMetadata` updates to CORE.
 - **Operator interaction** — `ask_operator()` puts a `UserPromptRequest`,
   `UserTextRequest` or `UserPathRequest` on the CORE link and blocks in `PendingRequests.wait()` until the
   response arrives. The event loop must keep turning; `ask_operator` runs on the sequence
@@ -42,12 +44,14 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   `send_goodbye()` is guarded so only one `SequencerStopped` ever goes out.
 - **Pause / Resume** (GUI only) — `PauseSequence` sets `pause_requested` (ignored with no
   sequence running); `ResumeSequence` clears it. The step layer calls the Runtime seam
-  `hold_if_paused(step_name, position, total)` before every main step; `Sequencer.hold_if_paused()`
+  `hold_if_paused(step_name, position, total)` before every main step - including a step
+  inside a called sequence, where `position`/`total` count within that sequence, but never
+  before the row of the call itself; `Sequencer.hold_if_paused()`
   returns at once unless a pause is pending, otherwise sends `RunPaused`, polls every
   `HOLD_POLL_S` until Resume or Stop, then sends `RunResumed` (whichever ended it). So the
   running step always finishes first, and a Stop during a hold ends the hold and then skips
-  the remaining steps as usual. `drop_pending_pause()` runs once after the main steps and
-  before teardown: a pause that found no step to hold before lapses there, with the INFO
+  the remaining steps as usual. `drop_pending_pause()` runs once after the run's main steps
+  (the first sequence's, never a called sequence's) and before teardown: a pause that found no step to hold before lapses there, with the INFO
   line "The run was not paused: no steps were left." (not logged if the run was stopped).
   Teardown is never held. A Resume before the hold began sends nothing. The Report never
   sees either event.

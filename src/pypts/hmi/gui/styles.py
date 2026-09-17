@@ -3,42 +3,56 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The two stylesheets, built from the tokens in palette.py.
+The stylesheet, built from the tokens in palette.py.
 
 Structure only: there is not one colour literal in this file, and there must
 never be. A colour to change is a token in palette.py; a *rule* to change is
 here. `python -m pypts.hmi.gui.palette` shows what the tokens look like.
 
-The light and dark sheets are still two texts rather than one template applied
-twice - they are nearly identical, but not quite (light styles a QTabBar that
-dark does not), and merging them would change how one of the two themes looks.
-That is a job of its own, not a side effect of moving the colours out.
+There is one template, applied to the palette of the theme in use, so a rule
+exists in both themes or in neither. Where the themes want a different colour
+for the same rule, that is one token with a different value in each palette -
+never a second copy of the rule.
 """
 
-from pypts.hmi.gui.palette import DARK, LIGHT
+from pypts.hmi.gui.palette import DARK, LIGHT, Palette, get_palette
 
-LIGHT_QSS = f"""
+
+def get_stylesheet(dark: bool = False) -> str:
+    """The stylesheet for one theme. Applied to the whole QApplication."""
+    return _build_qss(get_palette(dark))
+
+
+def _build_qss(palette: Palette) -> str:
+    """
+    The whole stylesheet, in the colours of one palette.
+
+    The theme swatches in the settings dialog are the one place that names
+    LIGHT and DARK directly: they picture both themes side by side, whichever
+    one is in use.
+    """
+    return f"""
 QMainWindow, QWidget {{
-    background-color: {LIGHT.window};
-    color: {LIGHT.text};
+    background-color: {palette.window};
+    color: {palette.text};
     font-family: "Segoe UI", "Inter", sans-serif;
     font-size: 12px;
 }}
 QMenuBar {{
-    background-color: {LIGHT.text_on_brand};
-    border-bottom: 1px solid {LIGHT.border};
+    background-color: {palette.menu_background};
+    border-bottom: 1px solid {palette.border};
     padding: 2px 0;
 }}
 QMenuBar::item {{
     padding: 5px 12px;
 }}
 QMenuBar::item:selected {{
-    background-color: {LIGHT.menu_highlight};
-    color: {LIGHT.brand};
+    background-color: {palette.menu_highlight};
+    color: {palette.menu_highlight_text};
 }}
 QMenu {{
-    background-color: {LIGHT.text_on_brand};
-    border: 1px solid {LIGHT.border};
+    background-color: {palette.menu_background};
+    border: 1px solid {palette.border};
     border-radius: 6px;
     padding: 4px 0;
 }}
@@ -46,36 +60,34 @@ QMenu::item {{
     padding: 7px 24px 7px 14px;
 }}
 QMenu::item:selected {{
-    background-color: {LIGHT.menu_highlight};
-    color: {LIGHT.brand};
+    background-color: {palette.menu_highlight};
+    color: {palette.menu_highlight_text};
 }}
 QToolBar {{
-    background-color: {LIGHT.toolbar_background};
-    border-bottom: 1px solid {LIGHT.border};
+    background-color: {palette.toolbar_background};
+    border-bottom: 1px solid {palette.border};
     padding: 4px 10px;
     spacing: 4px;
 }}
 QToolBar QToolButton {{
-
     border: none;
     border-radius: 6px;
     padding: 6px 14px;
     font-size: 11px;
-    color: {LIGHT.toolbutton};
+    color: {palette.toolbutton};
 }}
 QToolBar QToolButton:hover {{
-    background-color: {LIGHT.menu_highlight};
-    color: {LIGHT.brand};
+    background-color: {palette.toolbutton_hover};
+    color: {palette.toolbutton_hover_text};
 }}
 QToolBar QToolButton:disabled {{
-    color: {LIGHT.toolbutton_disabled};
+    color: {palette.toolbutton_disabled};
 }}
 QTabBar {{
-    background: {LIGHT.brand};
+    background: {palette.header_background};
 }}
 QTabBar::tab {{
-
-    color: {LIGHT.header_underline};
+    color: {palette.tab_text};
     padding: 6px 16px;
     font-size: 11px;
     border: none;
@@ -83,19 +95,19 @@ QTabBar::tab {{
     margin-right: 2px;
 }}
 QTabBar::tab:selected {{
-    background: {LIGHT.brand_accent};
-    color: {LIGHT.text_on_brand};
-    font-weight: 600;
+    background: {palette.tab_selected_background};
+    color: {palette.tab_selected_text};
 }}
 QTableWidget, QTreeView {{
-    background-color: {LIGHT.text_on_brand};
-    border: 1px solid {LIGHT.border};
+    background-color: {palette.table_background};
+    color: {palette.text};
+    border: 1px solid {palette.border};
     border-radius: 8px;
     font-size: 12px;
-    alternate-background-color: {LIGHT.row_alternate};
-    gridline-color: {LIGHT.grid_line};
-    selection-background-color: {LIGHT.selection_background};
-    selection-color: {LIGHT.text};
+    alternate-background-color: {palette.row_alternate};
+    gridline-color: {palette.grid_line};
+    selection-background-color: {palette.selection_background};
+    selection-color: {palette.selection_text};
 }}
 /* No QTableWidget::item rule, deliberately: an ::item rule hands item painting
    to the stylesheet, and the model's background brush is then ignored - which
@@ -105,13 +117,13 @@ QTableWidget, QTreeView {{
    instead. Restoring an ::item rule here means writing a QStyledItemDelegate
    for the verdict badges first - roadmap: the StepTable badge delegate TODO. */
 QHeaderView::section {{
-    background-color: {LIGHT.header_background};
-    color: {LIGHT.brand_accent};
+    background-color: {palette.header_background};
+    color: {palette.accent_text};
     font-size: 11px;
     font-weight: 600;
     padding: 9px 12px;
     border: none;
-    border-bottom: 2px solid {LIGHT.header_underline};
+    border-bottom: 2px solid {palette.header_underline};
 }}
 QTableWidget#stepTable {{
     font-size: 12px;
@@ -121,9 +133,9 @@ QTableWidget#stepTable QHeaderView::section {{
     padding: 4px 6px;
 }}
 QPlainTextEdit {{
-    background-color: {LIGHT.log_background};
-    color: {LIGHT.log_text};
-    border: 1px solid {LIGHT.border};
+    background-color: {palette.log_background};
+    color: {palette.log_text};
+    border: 1px solid {palette.border};
     border-radius: 6px;
     font-family: "Courier New", monospace;
     font-size: 11px;
@@ -134,135 +146,54 @@ QPushButton {{
     font-weight: 500;
     padding: 7px 18px;
     border-radius: 6px;
-    border: 1px solid {LIGHT.header_underline};
-    background-color: {LIGHT.menu_highlight};
-    color: {LIGHT.brand};
+    border: 1px solid {palette.button_border};
+    background-color: {palette.button_background};
+    color: {palette.button_text};
 }}
 QPushButton:hover {{
-    background-color: {LIGHT.button_hover};
+    background-color: {palette.button_hover};
 }}
 QPushButton#primaryBtn {{
-    background-color: {LIGHT.brand};
-    color: {LIGHT.text_on_brand};
+    background-color: {palette.brand};
+    color: {palette.text_on_brand};
     border: none;
 }}
 QPushButton#primaryBtn:hover {{
-    background-color: {LIGHT.brand_accent};
+    background-color: {palette.brand_accent};
 }}
 QPushButton#primaryBtn[promptSelected="false"] {{
-    background-color: {LIGHT.menu_highlight};
-    color: {LIGHT.brand};
-    border: 1px solid {LIGHT.header_underline};
+    background-color: {palette.button_background};
+    color: {palette.button_text};
+    border: 1px solid {palette.button_border};
 }}
 QPushButton[promptSelected="true"] {{
-    background-color: {LIGHT.brand};
-    color: {LIGHT.text_on_brand};
-    border: 1px solid {LIGHT.brand_dark};
+    background-color: {palette.brand};
+    color: {palette.text_on_brand};
+    border: 1px solid {palette.brand_dark};
 }}
 QPushButton#stopBtn {{
-    background-color: {LIGHT.danger_background};
-    color: {LIGHT.danger};
-    border: 1px solid {LIGHT.danger_border};
+    background-color: {palette.danger_background};
+    color: {palette.danger};
+    border: 1px solid {palette.danger_border};
 }}
-QDialog#cacheDialog {{
-    background-color: {LIGHT.menu_background};
-}}
-QLabel#cacheDialogTitle {{
-    font-size: 17px;
-    font-weight: 600;
-    color: {LIGHT.accent_text};
-}}
-QLabel#cacheDialogSubtitle {{
-    font-size: 12px;
-    color: {LIGHT.text_muted};
-    padding-top: 2px;
-}}
-QLabel#cacheDialogItemLabel {{
-    font-size: 13px;
-    font-weight: 600;
-    color: {LIGHT.text};
-}}
-QLabel#cacheDialogDetail {{
-    font-size: 11px;
-    color: {LIGHT.section_label};
-}}
-QLabel#cacheDialogSize {{
-    font-size: 12px;
-    font-weight: 600;
-    color: {LIGHT.accent_text};
-}}
-QLabel#cacheDialogSize[empty="true"] {{
-    font-weight: 400;
-    color: {LIGHT.toolbutton_disabled};
-}}
-QLabel#cacheDialogNote {{
-    font-size: 11px;
-    color: {LIGHT.accent_text};
-}}
-QFrame#cacheDialogSeparator {{
-    background-color: {LIGHT.border};
-    border: none;
-}}
-QLabel#cacheDialogTotalLabel {{
-    font-size: 12px;
-    font-weight: 600;
-    color: {LIGHT.text_muted};
-}}
-QLabel#cacheDialogTotal {{
-    font-size: 14px;
-    font-weight: 700;
-    color: {LIGHT.text};
-}}
-QLabel#cacheDialogFailure {{
-    font-size: 11px;
-    color: {LIGHT.danger};
-}}
-QCheckBox#cacheDialogCheck {{
-    font-size: 13px;
-    font-weight: 600;
-    color: {LIGHT.text};
-    spacing: 8px;
-}}
-QCheckBox#cacheDialogCheck:disabled {{
-    color: {LIGHT.toolbutton_disabled};
-    font-weight: 400;
-}}
-QCheckBox#cacheDialogCheck::indicator {{
-    width: 13px;
-    height: 13px;
-    border: 1px solid {LIGHT.button_border};
-    border-radius: 3px;
-    background-color: {LIGHT.table_background};
-}}
-QCheckBox#cacheDialogCheck::indicator:hover {{
-    border: 1px solid {LIGHT.brand_accent};
-}}
-QCheckBox#cacheDialogCheck::indicator:checked {{
-    border: 1px solid {LIGHT.brand_accent};
-    background-color: {LIGHT.brand_accent};
-}}
-QCheckBox#cacheDialogCheck::indicator:disabled {{
-    border: 1px solid {LIGHT.border};
-    background-color: {LIGHT.window};
-}}
-QPushButton#cacheDialogRemoveBtn {{
-    background-color: {LIGHT.danger_background};
-    color: {LIGHT.danger};
-    border: 1px solid {LIGHT.danger_border};
+QPushButton#settingsDangerBtn {{
+    background-color: {palette.danger_background};
+    color: {palette.danger};
+    border: 1px solid {palette.danger_border};
     font-weight: 600;
 }}
-QPushButton#cacheDialogRemoveBtn:hover {{
-    background-color: {LIGHT.danger_border};
+QPushButton#settingsDangerBtn:hover {{
+    background-color: {palette.danger_border};
 }}
-QPushButton#cacheDialogRemoveBtn:disabled {{
-    background-color: {LIGHT.window};
-    color: {LIGHT.toolbutton_disabled};
-    border: 1px solid {LIGHT.border};
+QPushButton#settingsDangerBtn:disabled {{
+    background-color: {palette.window};
+    color: {palette.toolbutton_disabled};
+    border: 1px solid {palette.border};
 }}
 QListWidget#settingsNav {{
-    background-color: {LIGHT.header_background};
+    background-color: {palette.panel_background};
     border: none;
-    border-right: 1px solid {LIGHT.border};
+    border-right: 1px solid {palette.border};
     padding: 14px 8px;
     font-size: 13px;
     outline: 0;
@@ -271,50 +202,50 @@ QListWidget#settingsNav::item {{
     padding: 9px 12px;
     margin-bottom: 2px;
     border-radius: 6px;
-    color: {LIGHT.text};
+    color: {palette.text};
 }}
 QListWidget#settingsNav::item:hover {{
-    background-color: {LIGHT.menu_highlight};
+    background-color: {palette.menu_highlight};
 }}
 QListWidget#settingsNav::item:selected {{
-    background-color: {LIGHT.brand_accent};
-    color: {LIGHT.text_on_brand};
+    background-color: {palette.brand_accent};
+    color: {palette.text_on_brand};
 }}
 QFrame#settingsFooter {{
-    border-top: 1px solid {LIGHT.border};
+    border-top: 1px solid {palette.border};
 }}
 QLabel#settingsFooterNote, QLabel#settingsSubtitle {{
     font-size: 12px;
-    color: {LIGHT.text_muted};
+    color: {palette.text_muted};
 }}
 QLabel#settingsPageTitle, QLabel#settingsResultTitle {{
     font-size: 18px;
     font-weight: 600;
-    color: {LIGHT.accent_text};
+    color: {palette.accent_text};
 }}
 QFrame#settingsCard {{
-    border: 1px solid {LIGHT.border};
+    border: 1px solid {palette.border};
     border-radius: 8px;
 }}
 QFrame#settingsCard[modified="true"] {{
-    border: 1px solid {LIGHT.brand_accent};
+    border: 1px solid {palette.brand_accent};
 }}
 QLabel#settingsCardTitle {{
     font-size: 13px;
     font-weight: 600;
-    color: {LIGHT.text};
+    color: {palette.text};
 }}
 QLabel#settingsCardHint {{
     font-size: 11px;
-    color: {LIGHT.section_label};
+    color: {palette.section_label};
 }}
 QLabel#settingsError, QLabel#settingsProblem, QLabel#settingsRefused {{
     font-size: 12px;
-    color: {LIGHT.danger};
+    color: {palette.danger};
 }}
 QLabel#settingsSaved {{
     font-size: 12px;
-    color: {LIGHT.text};
+    color: {palette.text};
 }}
 QPushButton#settingsReset {{
     background-color: transparent;
@@ -322,15 +253,15 @@ QPushButton#settingsReset {{
     padding: 2px 6px;
     font-size: 11px;
     font-weight: 600;
-    color: {LIGHT.accent_text};
+    color: {palette.accent_text};
 }}
 QPushButton#settingsReset:hover {{
-    color: {LIGHT.brand};
+    color: {palette.button_text};
 }}
 QPushButton#settingsSegment, QPushButton#settingsPreset {{
-    background-color: {LIGHT.window};
-    color: {LIGHT.text};
-    border: 1px solid {LIGHT.button_border};
+    background-color: {palette.window};
+    color: {palette.text};
+    border: 1px solid {palette.button_border};
     border-radius: 6px;
     padding: 4px 14px;
     font-size: 12px;
@@ -341,47 +272,47 @@ QPushButton#settingsPreset {{
     border-radius: 11px;
 }}
 QPushButton#settingsSegment:hover, QPushButton#settingsPreset:hover {{
-    border: 1px solid {LIGHT.brand_accent};
+    border: 1px solid {palette.brand_accent};
 }}
 QPushButton#settingsSegment:checked {{
-    background-color: {LIGHT.brand_accent};
-    color: {LIGHT.text_on_brand};
-    border: 1px solid {LIGHT.brand_accent};
+    background-color: {palette.brand_accent};
+    color: {palette.text_on_brand};
+    border: 1px solid {palette.brand_accent};
 }}
 QPushButton#settingsSwitch {{
-    background-color: {LIGHT.window};
-    color: {LIGHT.text_muted};
-    border: 1px solid {LIGHT.button_border};
+    background-color: {palette.window};
+    color: {palette.text_muted};
+    border: 1px solid {palette.button_border};
     border-radius: 15px;
     padding: 0;
     font-size: 12px;
     font-weight: 600;
 }}
 QPushButton#settingsSwitch:checked {{
-    background-color: {LIGHT.brand_accent};
-    color: {LIGHT.text_on_brand};
-    border: 1px solid {LIGHT.brand_accent};
+    background-color: {palette.brand_accent};
+    color: {palette.text_on_brand};
+    border: 1px solid {palette.brand_accent};
 }}
 QPushButton#settingsThemeCard {{
-    background-color: {LIGHT.window};
-    border: 2px solid {LIGHT.border};
+    background-color: {palette.window};
+    border: 2px solid {palette.border};
     border-radius: 10px;
     padding: 0;
 }}
 QPushButton#settingsThemeCard:hover {{
-    border: 2px solid {LIGHT.header_underline};
+    border: 2px solid {palette.button_border};
 }}
 QPushButton#settingsThemeCard:checked {{
-    border: 2px solid {LIGHT.brand_accent};
+    border: 2px solid {palette.brand_accent};
 }}
 QLabel#settingsThemeName {{
     font-size: 13px;
     font-weight: 600;
-    color: {LIGHT.text};
+    color: {palette.text};
 }}
 QLabel#settingsThemeHint {{
     font-size: 11px;
-    color: {LIGHT.section_label};
+    color: {palette.section_label};
 }}
 QFrame#themeSwatchLight {{
     background-color: {LIGHT.window};
@@ -400,33 +331,37 @@ QFrame#themeSwatchDarkBar {{
     border: none;
 }}
 QDialog#settingsDialog QLineEdit, QDialog#settingsDialog QSpinBox {{
-    background-color: {LIGHT.table_background};
-    color: {LIGHT.text};
-    border: 1px solid {LIGHT.button_border};
+    background-color: {palette.table_background};
+    color: {palette.text};
+    border: 1px solid {palette.button_border};
     border-radius: 4px;
     padding: 4px 6px;
 }}
 QDialog#settingsDialog QLineEdit:focus, QDialog#settingsDialog QSpinBox:focus {{
-    border: 1px solid {LIGHT.brand_accent};
+    border: 1px solid {palette.brand_accent};
 }}
 QDialog#settingsDialog QLineEdit:disabled, QDialog#settingsDialog QSpinBox:disabled {{
-    background-color: {LIGHT.window};
-    color: {LIGHT.toolbutton_disabled};
+    background-color: {palette.window};
+    color: {palette.toolbutton_disabled};
 }}
 QPushButton#settingsBrowse {{
     font-size: 12px;
     padding: 4px 12px;
 }}
 QDialog#settingsDialog QPushButton#primaryBtn:disabled {{
-    background-color: {LIGHT.window};
-    color: {LIGHT.toolbutton_disabled};
-    border: 1px solid {LIGHT.border};
+    background-color: {palette.window};
+    color: {palette.toolbutton_disabled};
+    border: 1px solid {palette.border};
+}}
+QLabel#idleHint {{
+    font-size: 12px;
+    color: {palette.section_label};
 }}
 QLabel#sectionLabel {{
     font-size: 10px;
     padding-left: 9px;
     font-weight: 600;
-    color: {LIGHT.section_label};
+    color: {palette.section_label};
     letter-spacing: 0.08em;
 }}
 QLabel#statusLabel {{
@@ -435,556 +370,82 @@ QLabel#statusLabel {{
 }}
 QLabel#versionLabel {{
     font-size: 10px;
-    color: {LIGHT.text_muted};
+    color: {palette.text_muted};
     padding-right: 10px;
 }}
-QLabel#recipeLabel {{
-    font-size: 12px;
-    font-weight: 500;
-    color: {LIGHT.brand_accent};
-}}
-QStatusBar {{
-    background-color: {LIGHT.header_background};
-    border-top: 1px solid {LIGHT.border};
-    color: {LIGHT.text_muted};
-    font-size: 10px;
-}}
-QSplitter::handle {{
-    background-color: {LIGHT.border};
-    width: 1px;
-}}
-QAbstractScrollArea {{
-    background-clip: padding;
-}}
-QScrollBar:vertical {{
-    background: {LIGHT.scroll_track};
-    width: 12px;
-    margin: 6px 4px 6px 0;
-    border-radius: 6px;
-}}
-QScrollBar::handle:vertical {{
-    background: {LIGHT.scroll_handle};
-    min-height: 32px;
-    border-radius: 6px;
-}}
-QScrollBar::handle:vertical:hover {{
-    background: {LIGHT.scroll_handle_hover};
-}}
-QScrollBar::handle:vertical:pressed {{
-    background: {LIGHT.scroll_handle_pressed};
-}}
-QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
-    height: 0px;
-}}
-QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-
-}}
-QScrollBar:horizontal {{
-    background: {LIGHT.scroll_track};
-    height: 12px;
-    margin: 0 6px 4px 6px;
-    border-radius: 6px;
-}}
-QScrollBar::handle:horizontal {{
-    background: {LIGHT.scroll_handle};
-    min-width: 32px;
-    border-radius: 6px;
-}}
-QScrollBar::handle:horizontal:hover {{
-    background: {LIGHT.scroll_handle_hover};
-}}
-QScrollBar::handle:horizontal:pressed {{
-    background: {LIGHT.scroll_handle_pressed};
-}}
-QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
-    width: 0px;
-}}
-QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
-
-}}
-"""
-
-DARK_QSS = f"""
-QMainWindow, QWidget {{
-    background-color: {DARK.window};
-    color: {DARK.text};
-    font-family: "Segoe UI", "Inter", sans-serif;
-    font-size: 12px;
-}}
-QMenuBar {{
-    background-color: {DARK.window};
-    border-bottom: 1px solid {DARK.border};
-}}
-QMenuBar::item {{
-    padding: 5px 12px;
-}}
-QMenuBar::item:selected {{
-    background-color: {DARK.menu_highlight};
-}}
-QMenu {{
-    background-color: {DARK.window};
-    border: 1px solid {DARK.border};
-    border-radius: 6px;
-    padding: 4px 0;
-}}
-QMenu::item {{
-    padding: 7px 24px 7px 14px;
-}}
-QMenu::item:selected {{
-    background-color: {DARK.menu_highlight};
-}}
-QToolBar {{
-    background-color: {DARK.toolbar_background};
-    border-bottom: 1px solid {DARK.border};
-    padding: 4px 10px;
-}}
-QToolBar QToolButton {{
-
+QProgressBar#runProgressBar {{
+    background-color: {palette.progress_track};
     border: none;
-    border-radius: 6px;
-    padding: 6px 14px;
-    font-size: 11px;
-    color: {DARK.text};
-}}
-QToolBar QToolButton:hover {{
-    background-color: {DARK.border};
-    color: {DARK.accent_text};
-}}
-QToolBar QToolButton:disabled {{
-    color: {DARK.toolbutton_disabled};
-}}
-QTabBar::tab {{
-
-    color: {DARK.tab_text};
-    padding: 6px 16px;
-    font-size: 11px;
-    border: none;
-    border-radius: 4px 4px 0 0;
-    margin-right: 2px;
-}}
-QTabBar::tab:selected {{
-    background: {DARK.brand_accent};
-    color: {DARK.text_on_brand};
-    font-weight: 600;
-}}
-QTableWidget, QTreeView {{
-    background-color: {DARK.table_background};
-    border: 1px solid {DARK.border};
-    border-radius: 8px;
-    font-size: 12px;
-    color: {DARK.text};
-    alternate-background-color: {DARK.row_alternate};
-    gridline-color: {DARK.grid_line};
-    selection-background-color: {DARK.selection_background};
-}}
-/* No QTableWidget::item rule, deliberately: an ::item rule hands item painting
-   to the stylesheet, and the model's background brush is then ignored - which
-   is what made every PASS/FAIL verdict render as plain text. The step table
-   sets those colours per item (step_table.py), so it must keep the default
-   painting path. Cell spacing comes from the font size and the row height
-   instead. Restoring an ::item rule here means writing a QStyledItemDelegate
-   for the verdict badges first - roadmap: the StepTable badge delegate TODO. */
-QHeaderView::section {{
-    background-color: {DARK.window};
-    color: {DARK.accent_text};
-    font-size: 11px;
-    font-weight: 600;
-    padding: 9px 12px;
-    border: none;
-    border-bottom: 2px solid {DARK.header_underline};
-}}
-QTableWidget#stepTable {{
-    font-size: 12px;
-}}
-QTableWidget#stepTable QHeaderView::section {{
-    font-size: 12px;
-    padding: 4px 6px;
-}}
-QPlainTextEdit {{
-    background-color: {DARK.log_background};
-    color: {DARK.log_text};
-    border: 1px solid {DARK.border};
-    border-radius: 6px;
-    font-family: "Courier New", monospace;
-    font-size: 11px;
-    padding: 6px 8px;
-}}
-QPushButton {{
-    font-size: 13px;
-    font-weight: 500;
-    padding: 7px 18px;
-    border-radius: 6px;
-    border: 1px solid {DARK.button_border};
-    background-color: {DARK.table_background};
-    color: {DARK.text};
-}}
-QPushButton:hover {{
-    background-color: {DARK.button_hover};
-}}
-QPushButton#primaryBtn {{
-    background-color: {DARK.brand};
-    color: {DARK.text_on_brand};
-    border: none;
-}}
-QPushButton#primaryBtn:hover {{
-    background-color: {DARK.brand_accent};
-}}
-QPushButton#primaryBtn[promptSelected="false"] {{
-    background-color: {DARK.table_background};
-    color: {DARK.text};
-    border: 1px solid {DARK.button_border};
-}}
-QPushButton[promptSelected="true"] {{
-    background-color: {DARK.brand};
-    color: {DARK.text_on_brand};
-    border: 1px solid {DARK.brand_accent};
-}}
-QPushButton#stopBtn {{
-    background-color: {DARK.danger_background};
-    color: {DARK.danger};
-    border: 1px solid {DARK.danger_border};
-}}
-QDialog#cacheDialog {{
-    background-color: {DARK.menu_background};
-}}
-QLabel#cacheDialogTitle {{
-    font-size: 17px;
-    font-weight: 600;
-    color: {DARK.accent_text};
-}}
-QLabel#cacheDialogSubtitle {{
-    font-size: 12px;
-    color: {DARK.text_muted};
-    padding-top: 2px;
-}}
-QLabel#cacheDialogItemLabel {{
-    font-size: 13px;
-    font-weight: 600;
-    color: {DARK.text};
-}}
-QLabel#cacheDialogDetail {{
-    font-size: 11px;
-    color: {DARK.section_label};
-}}
-QLabel#cacheDialogSize {{
-    font-size: 12px;
-    font-weight: 600;
-    color: {DARK.accent_text};
-}}
-QLabel#cacheDialogSize[empty="true"] {{
-    font-weight: 400;
-    color: {DARK.toolbutton_disabled};
-}}
-QLabel#cacheDialogNote {{
-    font-size: 11px;
-    color: {DARK.accent_text};
-}}
-QFrame#cacheDialogSeparator {{
-    background-color: {DARK.border};
-    border: none;
-}}
-QLabel#cacheDialogTotalLabel {{
-    font-size: 12px;
-    font-weight: 600;
-    color: {DARK.text_muted};
-}}
-QLabel#cacheDialogTotal {{
-    font-size: 14px;
-    font-weight: 700;
-    color: {DARK.text};
-}}
-QLabel#cacheDialogFailure {{
-    font-size: 11px;
-    color: {DARK.danger};
-}}
-QCheckBox#cacheDialogCheck {{
-    font-size: 13px;
-    font-weight: 600;
-    color: {DARK.text};
-    spacing: 8px;
-}}
-QCheckBox#cacheDialogCheck:disabled {{
-    color: {DARK.toolbutton_disabled};
-    font-weight: 400;
-}}
-QCheckBox#cacheDialogCheck::indicator {{
-    width: 13px;
-    height: 13px;
-    border: 1px solid {DARK.button_border};
-    border-radius: 3px;
-    background-color: {DARK.table_background};
-}}
-QCheckBox#cacheDialogCheck::indicator:hover {{
-    border: 1px solid {DARK.brand_accent};
-}}
-QCheckBox#cacheDialogCheck::indicator:checked {{
-    border: 1px solid {DARK.brand_accent};
-    background-color: {DARK.brand_accent};
-}}
-QCheckBox#cacheDialogCheck::indicator:disabled {{
-    border: 1px solid {DARK.border};
-    background-color: {DARK.window};
-}}
-QPushButton#cacheDialogRemoveBtn {{
-    background-color: {DARK.danger_background};
-    color: {DARK.danger};
-    border: 1px solid {DARK.danger_border};
-    font-weight: 600;
-}}
-QPushButton#cacheDialogRemoveBtn:hover {{
-    background-color: {DARK.danger_border};
-}}
-QPushButton#cacheDialogRemoveBtn:disabled {{
-    background-color: {DARK.window};
-    color: {DARK.toolbutton_disabled};
-    border: 1px solid {DARK.border};
-}}
-QListWidget#settingsNav {{
-    background-color: {DARK.log_background};
-    border: none;
-    border-right: 1px solid {DARK.border};
-    padding: 14px 8px;
-    font-size: 13px;
-    outline: 0;
-}}
-QListWidget#settingsNav::item {{
-    padding: 9px 12px;
-    margin-bottom: 2px;
-    border-radius: 6px;
-    color: {DARK.text};
-}}
-QListWidget#settingsNav::item:hover {{
-    background-color: {DARK.menu_highlight};
-}}
-QListWidget#settingsNav::item:selected {{
-    background-color: {DARK.brand_accent};
-    color: {DARK.text_on_brand};
-}}
-QFrame#settingsFooter {{
-    border-top: 1px solid {DARK.border};
-}}
-QLabel#settingsFooterNote, QLabel#settingsSubtitle {{
-    font-size: 12px;
-    color: {DARK.text_muted};
-}}
-QLabel#settingsPageTitle, QLabel#settingsResultTitle {{
-    font-size: 18px;
-    font-weight: 600;
-    color: {DARK.accent_text};
-}}
-QFrame#settingsCard {{
-    border: 1px solid {DARK.border};
-    border-radius: 8px;
-}}
-QFrame#settingsCard[modified="true"] {{
-    border: 1px solid {DARK.brand_accent};
-}}
-QLabel#settingsCardTitle {{
-    font-size: 13px;
-    font-weight: 600;
-    color: {DARK.text};
-}}
-QLabel#settingsCardHint {{
-    font-size: 11px;
-    color: {DARK.section_label};
-}}
-QLabel#settingsError, QLabel#settingsProblem, QLabel#settingsRefused {{
-    font-size: 12px;
-    color: {DARK.danger};
-}}
-QLabel#settingsSaved {{
-    font-size: 12px;
-    color: {DARK.text};
-}}
-QPushButton#settingsReset {{
-    background-color: transparent;
-    border: none;
-    padding: 2px 6px;
-    font-size: 11px;
-    font-weight: 600;
-    color: {DARK.accent_text};
-}}
-QPushButton#settingsReset:hover {{
-    color: {DARK.text};
-}}
-QPushButton#settingsSegment, QPushButton#settingsPreset {{
-    background-color: {DARK.window};
-    color: {DARK.text};
-    border: 1px solid {DARK.button_border};
-    border-radius: 6px;
-    padding: 4px 14px;
-    font-size: 12px;
-}}
-QPushButton#settingsPreset {{
-    padding: 3px 10px;
-    font-size: 11px;
-    border-radius: 11px;
-}}
-QPushButton#settingsSegment:hover, QPushButton#settingsPreset:hover {{
-    border: 1px solid {DARK.brand_accent};
-}}
-QPushButton#settingsSegment:checked {{
-    background-color: {DARK.brand_accent};
-    color: {DARK.text_on_brand};
-    border: 1px solid {DARK.brand_accent};
-}}
-QPushButton#settingsSwitch {{
-    background-color: {DARK.window};
-    color: {DARK.text_muted};
-    border: 1px solid {DARK.button_border};
-    border-radius: 15px;
-    padding: 0;
-    font-size: 12px;
-    font-weight: 600;
-}}
-QPushButton#settingsSwitch:checked {{
-    background-color: {DARK.brand_accent};
-    color: {DARK.text_on_brand};
-    border: 1px solid {DARK.brand_accent};
-}}
-QPushButton#settingsThemeCard {{
-    background-color: {DARK.window};
-    border: 2px solid {DARK.border};
-    border-radius: 10px;
-    padding: 0;
-}}
-QPushButton#settingsThemeCard:hover {{
-    border: 2px solid {DARK.button_border};
-}}
-QPushButton#settingsThemeCard:checked {{
-    border: 2px solid {DARK.brand_accent};
-}}
-QLabel#settingsThemeName {{
-    font-size: 13px;
-    font-weight: 600;
-    color: {DARK.text};
-}}
-QLabel#settingsThemeHint {{
-    font-size: 11px;
-    color: {DARK.section_label};
-}}
-QFrame#themeSwatchLight {{
-    background-color: {LIGHT.window};
-    border: 1px solid {LIGHT.border};
-}}
-QFrame#themeSwatchLightBar {{
-    background-color: {LIGHT.brand};
-    border: none;
-}}
-QFrame#themeSwatchDark {{
-    background-color: {DARK.window};
-    border: 1px solid {DARK.button_border};
-}}
-QFrame#themeSwatchDarkBar {{
-    background-color: {DARK.brand_accent};
-    border: none;
-}}
-QDialog#settingsDialog QLineEdit, QDialog#settingsDialog QSpinBox {{
-    background-color: {DARK.table_background};
-    color: {DARK.text};
-    border: 1px solid {DARK.button_border};
     border-radius: 4px;
-    padding: 4px 6px;
 }}
-QDialog#settingsDialog QLineEdit:focus, QDialog#settingsDialog QSpinBox:focus {{
-    border: 1px solid {DARK.brand_accent};
+QProgressBar#runProgressBar::chunk {{
+    background-color: {palette.progress_fill};
+    border-radius: 4px;
 }}
-QDialog#settingsDialog QLineEdit:disabled, QDialog#settingsDialog QSpinBox:disabled {{
-    background-color: {DARK.window};
-    color: {DARK.toolbutton_disabled};
-}}
-QPushButton#settingsBrowse {{
-    font-size: 12px;
-    padding: 4px 12px;
-}}
-QDialog#settingsDialog QPushButton#primaryBtn:disabled {{
-    background-color: {DARK.window};
-    color: {DARK.toolbutton_disabled};
-    border: 1px solid {DARK.border};
-}}
-QLabel#statusLabel {{
-    padding-left: 10px;
-    padding-bottom: 2px;
-}}
-QLabel#versionLabel {{
-    font-size: 10px;
-    color: {DARK.text_muted};
-    padding-right: 10px;
+QLabel#runProgressLabel {{
+    font-size: 11px;
+    color: {palette.text_muted};
 }}
 QLabel#recipeLabel {{
     font-size: 12px;
     font-weight: 500;
-    color: {DARK.accent_text};
-}}
-QLabel#sectionLabel {{
-    font-size: 10px;
-    padding-left: 9px;
-    font-weight: 600;
-    color: {DARK.text_muted};
-    letter-spacing: 0.08em;
+    color: {palette.accent_text};
 }}
 QStatusBar {{
-    background-color: {DARK.log_background};
-    border-top: 1px solid {DARK.border};
-    color: {DARK.text_muted};
+    background-color: {palette.status_background};
+    border-top: 1px solid {palette.border};
+    color: {palette.text_muted};
     font-size: 10px;
 }}
 QSplitter::handle {{
-    background-color: {DARK.border};
+    background-color: {palette.border};
     width: 1px;
 }}
 QAbstractScrollArea {{
     background-clip: padding;
 }}
 QScrollBar:vertical {{
-    background: {DARK.scroll_track};
+    background: {palette.scroll_track};
     width: 12px;
     margin: 6px 4px 6px 0;
     border-radius: 6px;
 }}
 QScrollBar::handle:vertical {{
-    background: {DARK.scroll_handle};
+    background: {palette.scroll_handle};
     min-height: 32px;
     border-radius: 6px;
 }}
 QScrollBar::handle:vertical:hover {{
-    background: {DARK.scroll_handle_hover};
+    background: {palette.scroll_handle_hover};
 }}
 QScrollBar::handle:vertical:pressed {{
-    background: {DARK.scroll_handle_pressed};
+    background: {palette.scroll_handle_pressed};
 }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
 }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
-
 }}
 QScrollBar:horizontal {{
-    background: {DARK.scroll_track};
+    background: {palette.scroll_track};
     height: 12px;
     margin: 0 6px 4px 6px;
     border-radius: 6px;
 }}
 QScrollBar::handle:horizontal {{
-    background: {DARK.scroll_handle};
+    background: {palette.scroll_handle};
     min-width: 32px;
     border-radius: 6px;
 }}
 QScrollBar::handle:horizontal:hover {{
-    background: {DARK.scroll_handle_hover};
+    background: {palette.scroll_handle_hover};
 }}
 QScrollBar::handle:horizontal:pressed {{
-    background: {DARK.scroll_handle_pressed};
+    background: {palette.scroll_handle_pressed};
 }}
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{
     width: 0px;
 }}
 QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {{
-
 }}
 """
-
-
-def get_stylesheet(dark: bool = False) -> str:
-    """The stylesheet for one theme. Applied to the whole QApplication."""
-    return DARK_QSS if dark else LIGHT_QSS

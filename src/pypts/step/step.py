@@ -10,11 +10,12 @@ old_code/recipe.py:
 
     resolve inputs  ->  _step()  ->  judge outputs  ->  StepResult
 
-A subclass overrides `_step()` and nothing else. `run()` turns whatever
-happens in there - a return value, an exception - into a StepResult, and
-emits StepStarted/StepFinished through the Runtime as it goes, so a nested
-sequence (a future SequenceStep) reports through the same channel it
-already holds.
+A subclass overrides `_step()` and nothing else - except a type that contains
+other steps (`contains_steps`, a SequenceStep), which also replaces
+`_verdict()` and `_skip_contents()`. `run()` turns whatever happens in there -
+a return value, an exception - into a StepResult, and emits
+StepStarted/StepFinished through the Runtime as it goes, so a called sequence
+reports through the same channel it already holds.
 
 This layer is `@report_and_reraise()` territory in spirit: a step failure
 must become data (`StepResult` with ResultType.ERROR and the traceback),
@@ -234,8 +235,8 @@ class StepResult:
     must never cross the HMI process boundary. `to_outcome()` is the
     pickle-safe projection that does.
 
-    `subresults` is kept for the nesting that SequenceStep and IndexedStep
-    bring later; nothing writes it yet.
+    `subresults` holds the results of the steps a Sequence step ran; empty
+    for every other step.
     """
 
     def __init__(self, step: "Step") -> None:
@@ -362,6 +363,11 @@ class Step:
     key is a TypeError at load time, not a surprise at run time.
     """
 
+    #: True for a step type that runs other steps - a Sequence step. The step
+    #: loops read it: a group is never held before (the hold lands before its
+    #: first step), and `skip: true` enters it so its teardown still runs.
+    contains_steps: bool = False
+
     def __init__(
         self,
         step_name: str,
@@ -388,6 +394,9 @@ class Step:
         # The old code accepted any string; a stable-string-id policy is a
         # recorded roadmap TODO for when the Report and the Creator need one.
         self.id: uuid.UUID = uuid.UUID(id) if id else uuid.uuid4()
+        #: The results of the steps this step ran, for a type that contains
+        #: steps; always empty for any other. run() copies it to subresults.
+        self.child_results: list[StepResult] = []
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}({self.name!r})"
@@ -404,6 +413,25 @@ class Step:
         into a StepResult with ResultType.ERROR.
         """
         raise NotImplementedError(f"{type(self).__name__} does not implement _step()")
+
+    def _verdict(
+        self, runtime: Runtime, step_output: dict[str, Any], failures: list[str] | None
+    ) -> ResultType:
+        """
+        The verdict for what _step() returned.
+
+        Every ordinary type judges its `outputs` mapping. A type that contains
+        steps replaces this: its verdict is its steps' verdict.
+        """
+        return self.process_outputs(runtime, step_output, failures)
+
+    def _skip_contents(self, runtime: Runtime, reason: str) -> None:
+        """
+        Settle the rows of whatever this step contains, when the run never reaches it.
+
+        Nothing to do for an ordinary step. A type that contains steps records
+        every one of them SKIP here, so their pre-filled rows do not stay pending.
+        """
 
     # --- input resolution ------------------------------------------------------
 
@@ -534,15 +562,20 @@ class Step:
         not entered, but it still emits the full trio, so a step the sequence
         never reached settles its row in the step table and gets its row in
         the CSV instead of staying pending forever. run_steps() is the only
-        caller that passes it.
+        caller that passes it. A step that contains steps settles their rows
+        too, through _skip_contents(). `skip: true` on such a step enters it
+        instead, so its teardown still runs.
         """
         step_result = StepResult(self)
         runtime.emit(StepStarted(step_id=self.id, step_name=self.name))
         started_at = time.time()
         work_began = time.perf_counter()
 
-        if self.skip or skip_reason:
+        if skip_reason:
             step_result.set_skip(skip_reason)
+            self._skip_contents(runtime, skip_reason)
+        elif self.skip and not self.contains_steps:
+            step_result.set_skip()
         else:
             step_input: dict[str, Any] = {}
             try:
@@ -567,7 +600,7 @@ class Step:
                     else:
                         step_output = {"output": raw_output}
                     failures: list[str] = []
-                    verdict = self.process_outputs(runtime, step_output, failures)
+                    verdict = self._verdict(runtime, step_output, failures)
                     # Only on FAIL: on any other verdict a failing check either
                     # did not decide the outcome (F6, last-wins) or there is
                     # nothing to explain, and a reason beside a PASS would
@@ -581,6 +614,7 @@ class Step:
                 else:
                     step_result.set_result(verdict, step_input, step_output, reason)
 
+        step_result.subresults = list(self.child_results)
         duration_s = time.perf_counter() - work_began
         runtime.emit(StepFinished(outcome=step_result.to_outcome()))
         runtime.emit(
@@ -592,6 +626,7 @@ class Step:
                 outputs=dict(step_result.outputs),
                 started_at=started_at,
                 duration_s=duration_s,
+                group_path=runtime.group_path,
             )
         )
         return step_result
@@ -602,6 +637,7 @@ class Step:
         steps: list["Step"],
         run_to_end: bool = False,
         phase: str = "Step",
+        skip_reason: str = "",
     ) -> list[StepResult]:
         """
         Run a list of steps in order; return one result per step, always.
@@ -634,17 +670,26 @@ class Step:
           with them. Teardown callers pass it: cleanup runs after an abort
           and after a halt, straight through without ever being held, and
           one failing cleanup step does not skip the rest of the cleanup -
-          which is the opposite of what teardown is for.
+          which is the opposite of what teardown is for,
+        - a halt is `runtime.halt_reason`, shared by every list of the run, so
+          a halt inside a called sequence skips the rest of every list around
+          it too. Teardown lists (`run_to_end`) never see it,
+        - a step that contains steps is never held before: the hold lands
+          before the first step inside it,
+        - a `skip_reason` given up front records every step SKIP with it -
+          a group marked `skip: true`, or one the run never reached.
 
         `phase` is only the word the operator's log lines start with, so that a
         teardown step reads as "Teardown step 1/2 'power_off'" rather than as a
         second step 1. It changes nothing about how a step is run.
         """
         step_results: list[StepResult] = []
-        skip_reason = ""
+        indent = "  " * runtime.depth
         total = len(steps)
         for position, step in enumerate(steps, start=1):
-            if not skip_reason and not run_to_end:
+            if not skip_reason and not run_to_end and runtime.halt_reason:
+                skip_reason = runtime.halt_reason
+            if not skip_reason and not run_to_end and not step.contains_steps:
                 # Before the stop check, not after it: a Stop pressed while
                 # the run is held ends the hold, and must then be seen here.
                 runtime.hold_if_paused(step.name, position, total)
@@ -652,7 +697,7 @@ class Step:
                 skip_reason = "Not run: the run was stopped by the operator."
                 log.debug("The stop flag is set; the remaining steps will be skipped.")
 
-            where = f"{phase} {position}/{total} '{step.name}'"
+            where = f"{indent}{phase} {position}/{total} '{step.name}'"
             # No "started" line for a step that is not going to run: it would
             # promise the operator work that never happens, and the SKIP line
             # right behind it says everything there is to say.
@@ -677,13 +722,15 @@ class Step:
             halting_verdict = step_result.result in (ResultType.ERROR, ResultType.FAIL)
             if not run_to_end and not step.continue_on_error and halting_verdict:
                 log.warning(
-                    "The sequence stops here: step '%s' came back %s and the recipe "
+                    "%sThe sequence stops here: step '%s' came back %s and the recipe "
                     "says not to carry on past it.",
+                    indent,
                     step.name,
                     step_result.result.name if step_result.result else "ERROR",
                 )
                 log.debug("Step '%s' has continue_on_error: false.", step.name)
-                skip_reason = f"Not run: the sequence stopped at step '{step.name}'."
+                runtime.halt_reason = f"Not run: the sequence stopped at step '{step.name}'."
+                skip_reason = runtime.halt_reason
         return step_results
 
 
@@ -713,6 +760,22 @@ def count_verdicts(step_results: list[StepResult]) -> dict[ResultType, int]:
         else:
             counts[step_result.result] += 1
     return counts
+
+
+def real_step_results(step_results: list[StepResult]) -> list[StepResult]:
+    """
+    Every step that did work of its own, at every depth, in execution order.
+
+    A group is replaced by the steps it ran, so a total counts real steps and
+    never the rows that only stand for a group.
+    """
+    real: list[StepResult] = []
+    for step_result in step_results:
+        if step_result.step.contains_steps:
+            real.extend(real_step_results(step_result.subresults))
+        else:
+            real.append(step_result)
+    return real
 
 
 def describe_counts(counts: dict[ResultType, int]) -> str:
@@ -758,7 +821,10 @@ def log_step_outcome(
         # `skip: true` gives none, and that case has its own sentence.
         reason = step_result.error_info or "marked to skip in the recipe."
         log.info("%s SKIP - %s", where, reason)
-    elif verdict is ResultType.ERROR:
+    elif verdict is ResultType.ERROR and (not step.contains_steps or step_result.error_summary):
+        # A group that ERRORs did run: the step inside it that could not run has
+        # already written its own ERROR line. Only a group whose own machinery
+        # raised carries an error_summary of its own.
         # error_summary is the exception and its message - the 'raw text' half
         # of the operator's sentence. error_info is the whole traceback, and
         # that belongs at DEBUG and nowhere else. A step that finished with no
@@ -789,48 +855,73 @@ def log_step_outcome(
     )
 
 
-def run_sequence(runtime: Runtime, sequence: "Sequence") -> tuple[ResultType, list[StepResult]]:
+def run_sequence(
+    runtime: Runtime, sequence: "Sequence", skip_reason: str = ""
+) -> tuple[ResultType, list[StepResult]]:
     """
     Run one sequence: its steps, then - always - its teardown steps.
 
-    This is the sequence *body*, free of any queue or thread, so the future
-    SequenceStep can call it for a nested sequence exactly as the Sequencer
-    calls it for the top one. Emits SequenceStarted/SequenceFinished; the
+    This is the sequence *body*, free of any queue or thread: the Sequencer
+    calls it for the run's first sequence and SequenceStep calls it for every
+    sequence a recipe calls. Emits SequenceStarted/SequenceFinished; the
     run-level pair (RunStarted/RunFinished) belongs to the Sequencer.
 
     It is also where the operator's sequence lines are written, because this is
     the only place that knows the step count, the aggregate verdict and the
-    wall clock across both lists.
-    """
-    log.info("Sequence '%s' started: %d steps.", sequence.name, len(sequence.steps))
-    log.debug(
-        "Sequence '%s' has %d steps and %d teardown steps.",
-        sequence.name,
-        len(sequence.steps),
-        len(sequence.teardown_steps),
-    )
-    began = time.perf_counter()
-    runtime.emit(SequenceStarted(sequence_name=sequence.name))
-    step_results: list[StepResult] = []
-    try:
-        step_results.extend(Step.run_steps(runtime, sequence.steps))
-    finally:
-        # The main steps are over, so a Pause still waiting for a step to
-        # hold before has none left: teardown is never held.
-        runtime.drop_pending_pause()
-        step_results.extend(
-            Step.run_steps(
-                runtime, sequence.teardown_steps, run_to_end=True, phase="Teardown step"
-            )
-        )
+    wall clock across both lists. Lines inside a called sequence are indented.
 
-    result = StepResult.evaluate_multiple_step_results(step_results)
-    log.info(
-        "Sequence '%s' finished: %s - %s, %.1f s.",
-        sequence.name,
-        result.name,
-        describe_counts(count_verdicts(step_results)),
-        time.perf_counter() - began,
-    )
-    runtime.emit(SequenceFinished(sequence_name=sequence.name, result=result))
+    Args:
+        skip_reason: records every main step SKIP with this reason and still
+            runs the teardown - a Sequence step marked `skip: true`.
+    """
+    with runtime.entering(sequence.name):
+        indent = "  " * runtime.depth
+        log.info("%sSequence '%s' started: %d steps.", indent, sequence.name, len(sequence.steps))
+        log.debug(
+            "Sequence '%s' (%s) has %d steps and %d teardown steps.",
+            sequence.name,
+            runtime.group_path,
+            len(sequence.steps),
+            len(sequence.teardown_steps),
+        )
+        began = time.perf_counter()
+        runtime.emit(SequenceStarted(sequence_name=sequence.name))
+        step_results: list[StepResult] = []
+        try:
+            # Inside a teardown list everything runs to the end, however deep.
+            step_results.extend(
+                Step.run_steps(
+                    runtime,
+                    sequence.steps,
+                    run_to_end=runtime.in_teardown,
+                    skip_reason=skip_reason,
+                )
+            )
+        finally:
+            # The run's main steps are over only when its first sequence's are:
+            # a Pause pressed during a called sequence's last step still holds
+            # before the next step of the sequence that called it.
+            if runtime.depth == 0:
+                runtime.drop_pending_pause()
+            outer_in_teardown = runtime.in_teardown
+            runtime.in_teardown = True
+            try:
+                step_results.extend(
+                    Step.run_steps(
+                        runtime, sequence.teardown_steps, run_to_end=True, phase="Teardown step"
+                    )
+                )
+            finally:
+                runtime.in_teardown = outer_in_teardown
+
+        result = StepResult.evaluate_multiple_step_results(step_results)
+        log.info(
+            "%sSequence '%s' finished: %s - %s, %.1f s.",
+            indent,
+            sequence.name,
+            result.name,
+            describe_counts(count_verdicts(real_step_results(step_results))),
+            time.perf_counter() - began,
+        )
+        runtime.emit(SequenceFinished(sequence_name=sequence.name, result=result))
     return result, step_results

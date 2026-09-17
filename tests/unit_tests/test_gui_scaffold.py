@@ -10,7 +10,7 @@ its upstream test suite, ported alongside it so the port stays honest - every
 behaviour upstream pins (panel wiring, style forwarding, set_content
 semantics, the deferred initial-sizing pass) is pinned here too.
 
-Like the other GUI tests: needs a display or QT_QPA_PLATFORM=offscreen;
+Like the other GUI tests: runs offscreen (tests/conftest.py);
 pytest-qt provides `qapp`.
 """
 

@@ -144,6 +144,7 @@ document 2..N     sequences       — each: locals + setup_steps / steps / teard
 <p>A <strong>sequence</strong> is an ordered list of <strong>steps</strong>. A <strong>step</strong> has a <code>steptype</code>` (which Python class runs it), an <code>input_mapping</code>` (where its arguments come from), and an <code>output_mapping</code>` (what to do with what it returned).</p>
 <p>Two variable scopes: <strong>globals</strong> (whole recipe) and <strong>locals</strong> (one dict per sequence). Steps never talk to each other directly — they communicate by writing and reading variables.</p>
 <p>Every step produces a <code>StepResult</code>` with one <code>ResultType</code>`. A sequence's result is the maximum severity of its children.</p>
+<p><strong>One main sequence, any number of groups.</strong> <code>main_sequence</code> is the sequence that runs. Every other sequence document is a group of steps that main — or another group — calls with a <code>steptype: Sequence</code> step, as often and as deep as needed (§10).</p>
 <pre><code>Recipe
 └── Sequence "Main"
     ├── setup_steps   ─┐
@@ -173,7 +174,7 @@ report_metadata: [serial_number] # optional; globals that become report columns
 globals:
   target_voltage: 5.0
   tolerance: 0.1</code></pre>
-<table><thead><tr><th>Field</th><th>Required</th><th>Purpose</th></tr></thead><tbody><tr><td><code>name</code>`</td><td>yes</td><td>GUI header, report metadata</td></tr><tr><td><code>description</code>`</td><td>yes</td><td>GUI, log</td></tr><tr><td><code>version</code>`</td><td>yes</td><td>report metadata</td></tr><tr><td><code>main_sequence</code>`</td><td>yes</td><td>sequence that the GUI/CLI starts by default</td></tr><tr><td><code>test_package</code>`</td><td>no</td><td>package root for <code>PythonModule</code>` file resolution (see §6.1)</td></tr><tr><td><code>report_metadata</code>`</td><td>no</td><td>list of global names to embed as CSV columns; defaults to <code>[serial_number]</code>`</td></tr><tr><td><code>globals</code>`</td><td>yes</td><td>flat <code>name: value</code>` dict; initial global variable store</td></tr></tbody></table>
+<table><thead><tr><th>Field</th><th>Required</th><th>Purpose</th></tr></thead><tbody><tr><td><code>name</code>`</td><td>yes</td><td>GUI header, report metadata</td></tr><tr><td><code>description</code>`</td><td>yes</td><td>GUI, log</td></tr><tr><td><code>version</code>`</td><td>yes</td><td>report metadata</td></tr><tr><td><code>main_sequence</code>`</td><td>yes</td><td>sequence that the GUI/CLI starts by default; the other sequences are groups it calls with <code>Sequence</code> steps (§10). No <code>Sequence</code> step may call it</td></tr><tr><td><code>test_package</code>`</td><td>no</td><td>package root for <code>PythonModule</code>` file resolution (see §6.1)</td></tr><tr><td><code>report_metadata</code>`</td><td>no</td><td>list of global names to embed as CSV columns; defaults to <code>[serial_number]</code>`</td></tr><tr><td><code>globals</code>`</td><td>yes</td><td>flat <code>name: value</code>` dict; initial global variable store</td></tr></tbody></table>
 <p><strong><code>serial_number</code>` is not injected.</strong> The engine has no concept of a serial number. Capture it with a <code>UserWrite</code>` step and store it in the <code>serial_number</code>` global; the framework picks it up through <code>report_metadata</code>`. See <code>best_practices.md</code>` §1.</p>
 <hr>
 <h2 id="4-sequence-document">4. Sequence document</h2>
@@ -251,7 +252,7 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
 <p>A stop request is checked <em>between</em> steps, never inside one, so a step can leave its hardware in a known state. Every step that did not run is still recorded as <code>SKIP</code>` with the reason "Not run: the run was stopped by the operator.", so the step table and the CSV have a row for each; the run's result is <code>STOP</code>`. Interactive steps poll for the stop every 100 ms while waiting for the operator.</p>
 <hr>
 <h2 id="10-step-type-catalogue">10. Step type catalogue</h2>
-<p>Five step types are available (plus <code>Indexed</code>`, which is expanded at load time). <code>steptype</code>` values are case-insensitive.</p>
+<p>Six step types are available (plus <code>Indexed</code>`, which is expanded at load time). <code>steptype</code>` values are case-insensitive.</p>
 <h3 id="pythonmodule-run-user-python"><code>PythonModule</code>` — run user Python</h3>
 <pre><code class="language-yaml">- steptype: PythonModule
   step_name: measure_voltage
@@ -325,9 +326,50 @@ teardown_steps: []           # required; [] if empty; runs even on failure/abort
 </li>
 <li>One request, one response: the old type's second value on the response queue is gone. Worked example: <code>resources/recipes/Development_recipes/userloadingstep_demo.yml</code>` (GUI mode — the CLI declines).
 </ul>
+<h3 id="sequence-call-a-group-of-steps"><code>Sequence</code> — call a group of steps</h3>
+<pre><code class="language-yaml">---
+sequence_name: Main
+steps:
+  - steptype: Sequence
+    sequence_name: PowerCycle    # required; case-insensitive
+    description: Before calibration   # optional; else PowerCycle's own description
+    skip: false                  # optional
+    continue_on_error: true      # optional
+teardown_steps:
+  - steptype: Sequence
+    sequence_name: Shutdown      # a group may be called from teardown too
+---
+sequence_name: PowerCycle
+description: Switch the unit off and on again
+steps:
+  - ...
+teardown_steps:
+  - ...</code></pre>
+<p>Group tests in sequence documents of their own and run them inside main. A <code>Sequence</code> step names the sequence it calls; that sequence is written exactly like any other sequence document.</p>
+<ul>
+<li><strong>No <code>step_name</code>, <code>inputs</code>, <code>outputs</code> or <code>id</code></strong> — all four are refused at load time. The row is named after the called sequence; a group shares the run's globals; its verdict comes from its steps; every call gets fresh ids.
+</li>
+<li><strong>Call as often and as deep as you like.</strong> A group may call other groups, and the same group may be called many times — each call is its own copy with its own rows. To run a group N times, write the call N times; there is no repeat key.
+</li>
+<li><strong>Refused at load time:</strong> a <code>sequence_name</code> no sequence has, a call to the main sequence, and a sequence that ends up calling itself (the error shows the chain, e.g. <code>Main -&gt; PowerCycle -&gt; Settle -&gt; PowerCycle</code>). A <code>Sequence</code> step cannot be the <code>template</code> of an <code>Indexed</code> step; an <code>Indexed</code> step <em>inside</em> a called sequence works as usual.
+</li>
+<li><strong>A group is one result.</strong> Its verdict is the worst of everything it ran, its own teardown included. Its steps follow its row in the step table.
+</li>
+<li><strong><code>skip: true</code></strong> records the group's steps <code>SKIP</code> and still runs its teardown. A group the run never reaches (after a Stop or a halt) is <code>SKIP</code> throughout, teardown included — nothing in it was set up.
+</li>
+<li><strong><code>continue_on_error: false</code> anywhere ends the whole run</strong>, not only the group: the rest is <code>SKIP</code>, every teardown on the way out still runs (innermost first), and the run ends <code>FAIL</code> or <code>ERROR</code>. On the <code>Sequence</code> step itself it halts on the group's verdict.
+</li>
+<li><strong>Stop, Pause and teardown work at every depth</strong>: Stop is checked before every step, Pause holds before a step inside a group, and anything called from <code>teardown_steps</code> runs to the end.
+</li>
+<li><strong>Totals count real steps.</strong> A group's row is not counted in the run's step counts; the steps inside it are. Log lines inside a group are indented.
+</li>
+<li>Worked example: <code>resources/recipes/Development_recipes/sequencestep_demo.yml</code> (runs headless).
+</li>
+</ul>
+<p><strong>Not yet in the frontends:</strong> the GUI and CLI still offer every sequence to start and show group rows without indentation; the report has no group column yet; the Recipe Creator and its verificator do not know the step yet. These follow in the next stages (roadmap).</p>
 <hr>
 <h2 id="11-step-types-not-yet-available">11. Step types not yet available</h2>
-<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not step types in the new architecture — becomes a framework facility (HAL or service, not decided; Phase 5)</td></tr><tr><td><code>SequenceStep</code>`</td><td>Dropped — no nested sequences</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated — use <code>UserInteraction</code>` + <code>PythonModule</code>` in sequence</td></tr><tr><td><code>IndexedStep</code>`</td><td>Available as <code>steptype: Indexed</code>` (<code>template</code>` + <code>parameter_sets</code>`), expanded at load time; the old <code>indexed: true</code>` input flag is gone</td></tr></tbody></table>
+<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not step types in the new architecture — becomes a framework facility (HAL or service, not decided; Phase 5)</td></tr><tr><td><code>SequenceStep</code>`</td><td>Available as <code>steptype: Sequence</code> (§10) — call another sequence of the recipe as a group, nested to any depth</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated — use <code>UserInteraction</code>` + <code>PythonModule</code>` in sequence</td></tr><tr><td><code>IndexedStep</code>`</td><td>Available as <code>steptype: Indexed</code>` (<code>template</code>` + <code>parameter_sets</code>`), expanded at load time; the old <code>indexed: true</code>` input flag is gone</td></tr></tbody></table>
 <hr>
 <h2 id="12-yaml-pitfalls">12. YAML pitfalls</h2>
 <ol>

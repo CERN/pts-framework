@@ -22,12 +22,15 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
+from pypts.messages.common_messages import ResultType
 from pypts.recipe import step_source
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
 from pypts.recipe.recipe_parser import current_recipe_version
 from pypts.step.python_module_step import PythonModuleStep
+from pypts.step.runtime import Runtime
+from pypts.step.sequence_step import SequenceStep
+from pypts.step.step import real_step_results, run_sequence
 from pypts.step.wait_step import WaitStep
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
@@ -38,8 +41,7 @@ USER_INTERACTION_DEMO = DEMOS / "userinteractionstep_demo.yml"
 USER_WRITE_DEMO = DEMOS / "userwritestep_demo.yml"
 USER_LOADING_DEMO = DEMOS / "userloadingstep_demo.yml"
 ALL_STEPTYPES_DEMO = DEMOS / "all_steptypes_demo.yml"
-
-PLACEHOLDER = "placeholder - test not implemented yet"
+SEQUENCE_DEMO = DEMOS / "sequencestep_demo.yml"
 
 #: The pypts this suite runs against, which is what a recipe declares to
 #: match it. Asked rather than written out, so the fixtures do not start
@@ -555,6 +557,52 @@ def test_the_user_loading_demo_recipe_parses():
     assert steps[3].inputs == {"path": {"type": "global", "global_name": "dump_folder"}}
 
 
+def test_the_sequence_demo_recipe_builds_its_call_tree():
+    """resources/recipes/Development_recipes/sequencestep_demo.yml is the Sequence
+    showcase: main calls groups, one of them twice, groups nest, an Indexed step
+    expands inside a group and a group is called from teardown."""
+    main = Recipe.from_file(str(SEQUENCE_DEMO)).sequences["Main"]
+
+    assert [step.name for step in main.steps] == [
+        "Warm up",
+        "PowerCycle",
+        "Calibrate",
+        "PowerCycle",
+        "Optional checks",
+    ]
+    first_cycle, calibrate, second_cycle = main.steps[1], main.steps[2], main.steps[3]
+    assert first_cycle.sequence is not second_cycle.sequence
+    assert [step.name for step in first_cycle.sequence.steps] == ["Power off", "Settle"]
+    assert calibrate.description.startswith("Written on the call")
+    assert len(calibrate.sequence.steps) == 3
+    assert [step.name for step in main.teardown_steps] == ["Shutdown"]
+
+
+def test_the_sequence_demo_recipe_runs_to_its_intended_verdicts():
+    """Headless, it runs end to end: every group passes except Calibrate, whose
+    deliberate FAIL makes the run FAIL; the skipped group still tidies up."""
+    recipe = Recipe.from_file(str(SEQUENCE_DEMO))
+    runtime = Runtime(base_dir=recipe.base_dir)
+
+    result, results = run_sequence(runtime, recipe.sequences["Main"])
+
+    assert result is ResultType.FAIL
+    assert [(r.step.name, r.result) for r in results] == [
+        ("Warm up", ResultType.DONE),
+        ("PowerCycle", ResultType.PASS),
+        ("Calibrate", ResultType.FAIL),
+        ("PowerCycle", ResultType.PASS),
+        ("Optional checks", ResultType.DONE),
+        ("Shutdown", ResultType.DONE),
+    ]
+    skipped = results[4].subresults
+    assert [(r.step.name, r.result) for r in skipped] == [
+        ("Even check", ResultType.SKIP),
+        ("Tidy up", ResultType.DONE),
+    ]
+    assert len(real_step_results(results)) == 15
+
+
 def test_the_all_steptypes_demo_recipe_builds_one_of_everything():
     """resources/recipes/Development_recipes/all_steptypes_demo.yml is the single run that
     exercises every steptype - the one to reach for when testing the engine
@@ -569,6 +617,7 @@ def test_the_all_steptypes_demo_recipe_builds_one_of_everything():
         "UserLoadingStep",
         "WaitStep",
         "PythonModuleStep",
+        "SequenceStep",
     }
     # Indexed is gone by build time: five sets became five ordinary steps.
     assert sum(step.name.startswith("Add numbers [") for step in sequence.steps) == 5
@@ -605,14 +654,6 @@ def test_invalid_recipe_never_reaches_the_sequencer(tmp_path):
     assert isinstance(to_hmi[0], ModuleErrorReported)
     assert "name" in to_hmi[0].error.message
     assert core.recipe is None
-
-
-@pytest.mark.skip(
-    reason="the example recipes use nine steptypes that are not ported yet - "
-    "unskip as the registry grows (roadmap Phase 1)"
-)
-def test_every_example_recipe_in_resources_parses():
-    ...
 
 
 def test_the_header_version_is_required():
@@ -789,15 +830,21 @@ def test_the_indexed_keys_are_case_insensitive_but_parameter_names_are_not():
     assert set(first.inputs) == {"a", "B"}
 
 
-# --- step_source.py: the YAML fragment behind each step table row -------------
+# --- step_source.py: the YAML behind each step table row ----------------------
 #
-# What the GUI's hover panel shows. The contract that matters is the *order*:
-# one fragment per row of the step table, which is `steps + teardown_steps`
-# with every Indexed step already expanded - exactly what to_summary() emits.
+# What the GUI's click panel shows: for every row, the sequence document the step
+# belongs to, as written, and the lines of the step in it. The contract that
+# matters is the *order*: one StepSource per row of the step table, exactly what
+# to_summary() emits.
 
 
-def test_one_yaml_fragment_per_step_table_row(tmp_path):
-    """The fragments line up with to_summary(), teardown steps included."""
+def highlighted(source):
+    """The lines a StepSource highlights."""
+    return source.text.split("\n")[source.first_line : source.last_line + 1]
+
+
+def test_one_step_source_per_step_table_row(tmp_path):
+    """The sources line up with to_summary(), teardown steps included."""
     text = (
         VALID
         + """\
@@ -810,75 +857,91 @@ teardown_steps:
     path = tmp_path / "recipe.yml"
     path.write_text(text, encoding="utf-8")
 
-    fragments = step_source.step_yaml_by_sequence(str(path))
+    sources = step_source.step_sources_by_sequence(str(path))
     rows = Recipe.from_yaml_text(text).to_summary()[0].steps
 
-    assert list(fragments) == ["Main"]
-    assert len(fragments["Main"]) == len(rows)
-    assert "Only wait" in fragments["Main"][0]
-    assert "Cool down" in fragments["Main"][1]
+    assert list(sources) == ["Main"]
+    assert len(sources["Main"]) == len(rows)
+    assert "step_name: Only wait" in highlighted(sources["Main"][0])[1]
+    assert "step_name: Cool down" in highlighted(sources["Main"][1])[1]
 
 
-def test_each_expanded_indexed_row_gets_its_own_fragment(tmp_path):
-    """The whole reason the fragment is the effective mapping and not a slice
-    of the file: the generated steps exist in no file, and the ten rows of an
-    Indexed step must not all show the same block."""
+def test_the_panel_text_is_the_whole_sequence_as_written(tmp_path):
+    """Comments, spelling and formatting are the author's - nothing is re-rendered."""
+    text = f"""\
+name: Commented
+version: {CURRENT_VERSION}
+---
+# Why this sequence exists.
+sequence_name: Main
+Steps:
+  # The only step.
+  - steptype: Wait
+    step_name: Only wait
+    wait_time: '0.01'
+
+  - steptype: Wait
+    step_name: Second
+    wait_time: '0'
+"""
+    path = tmp_path / "recipe.yml"
+    path.write_text(text, encoding="utf-8")
+
+    first, second = step_source.step_sources_by_sequence(str(path))["Main"]
+
+    assert first.text == text.split("---\n", 1)[1].rstrip("\n")
+    assert first.text.startswith("# Why this sequence exists.")
+    assert highlighted(first) == [
+        "  - steptype: Wait",
+        "    step_name: Only wait",
+        "    wait_time: '0.01'",
+    ]
+    assert highlighted(second)[0] == "  - steptype: Wait"
+    assert highlighted(second)[-1] == "    wait_time: '0'"
+
+
+def test_every_expanded_indexed_row_highlights_its_authored_block(tmp_path):
+    """The generated steps exist in no file, so each of them points at the one
+    Indexed block the author wrote."""
     path = tmp_path / "recipe.yml"
     path.write_text(INDEXED, encoding="utf-8")
 
-    fragments = step_source.step_yaml_by_sequence(str(path))["Main"]
+    first, second = step_source.step_sources_by_sequence(str(path))["Main"]
 
-    assert len(fragments) == 2
-    assert fragments[0] != fragments[1]
-    first = yaml.safe_load(fragments[0])
-    second = yaml.safe_load(fragments[1])
-    # A direct value is written as itself, so a generated step reads exactly
-    # as a hand-written one would.
-    assert first["inputs"]["a"] == 1
-    assert second["inputs"]["a"] == 2
-    assert first["outputs"]["sum"] == {"type": "equals", "value": 2}
-    assert second["outputs"]["sum"] == {"type": "equals", "value": 5}
-
-    # `Indexed` itself never reaches a row: what is shown is what will run.
-    # The steptype keeps the case the template wrote - only keys are lowercased.
-    assert first["steptype"] == "PythonModule"
+    assert first == second
+    block = highlighted(first)
+    assert block[0] == "  - steptype: Indexed"
+    assert block[-1] == "        expect: {sum: 5}"
 
 
-def test_a_fragment_is_valid_yaml_that_round_trips(tmp_path):
-    path = tmp_path / "recipe.yml"
-    path.write_text(VALID, encoding="utf-8")
-
-    fragment = step_source.step_yaml_by_sequence(str(path))["Main"][0]
-
-    assert yaml.safe_load(fragment) == {
-        "steptype": "Wait",
-        "step_name": "Only wait",
-        "wait_time": "0.01",
-    }
-
-
-def test_a_recipe_that_cannot_be_read_costs_only_the_fragments(tmp_path):
+def test_a_recipe_that_cannot_be_read_costs_only_the_panel(tmp_path):
     """A convenience view is never a reason a recipe fails to display."""
     missing = tmp_path / "not_here.yml"
     broken = tmp_path / "broken.yml"
     broken.write_text("name: Broken\n---\n  - this: is not a mapping\n", encoding="utf-8")
 
-    assert step_source.step_yaml_by_sequence(str(missing)) == {}
-    assert step_source.step_yaml_by_sequence(str(broken)) == {}
+    assert step_source.step_sources_by_sequence(str(missing)) == {}
+    assert step_source.step_sources_by_sequence(str(broken)) == {}
 
 
-def test_the_all_steptypes_demo_recipe_has_a_fragment_for_every_row():
+def test_the_all_steptypes_demo_recipe_has_a_source_for_every_row():
     """The everything recipe end to end - five of its rows come from one
-    Indexed step and exist in no file, so this is the real test of the
-    ordering contract."""
-    fragments = step_source.step_yaml_by_sequence(str(ALL_STEPTYPES_DEMO))
+    Indexed step and exist in no file, and a Sequence step's rows come from
+    another document, so this is the real test of the ordering contract."""
+    sources = step_source.step_sources_by_sequence(str(ALL_STEPTYPES_DEMO))
     recipe = Recipe.from_file(str(ALL_STEPTYPES_DEMO))
 
     for summary in recipe.to_summary():
-        rendered = fragments[summary.sequence_name]
-        assert len(rendered) == len(summary.steps)
-        for row, fragment in zip(summary.steps, rendered, strict=True):
-            assert yaml.safe_load(fragment)["step_name"] == row.step_name
+        rows = sources[summary.sequence_name]
+        assert len(rows) == len(summary.steps)
+        for row, source in zip(summary.steps, rows, strict=True):
+            block = "\n".join(highlighted(source))
+            if row.is_group:
+                # A call's row shows the sequence it calls, whole.
+                assert f"sequence_name: {row.step_name}" in source.text.split("\n")
+                assert source.highlights is False
+            elif not row.step_name.startswith("Add numbers ["):
+                assert f"step_name: {row.step_name}" in block
 
 
 def test_an_unknown_mapping_type_is_refused_when_the_recipe_loads():
@@ -926,3 +989,298 @@ def test_a_bare_input_value_names_no_type_and_is_accepted():
     )
     step = Recipe.from_yaml_text(text).sequences["Main"].steps[0]
     assert step.inputs == {"a": 2, "b": {"type": "global", "global_name": "rig"}}
+
+
+# --------------------------------------------------------------------------
+# Sequence steps - the shape of a call
+# --------------------------------------------------------------------------
+
+#: A tiny recipe with one call, for breaking one thing at a time.
+ONE_CALL = f"""\
+name: One call
+version: {CURRENT_VERSION}
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: Sequence
+    sequence_name: Group
+---
+sequence_name: Group
+steps:
+  - steptype: Wait
+    step_name: Inside
+    wait_time: '0'
+"""
+
+CALL_LINE = "  - steptype: Sequence\n    sequence_name: Group\n"
+
+
+@pytest.mark.parametrize(
+    ("key", "line"),
+    [
+        ("step_name", "    step_name: Cycle\n"),
+        ("inputs", "    inputs: {a: 1}\n"),
+        ("outputs", "    outputs: {x: {type: pass}}\n"),
+        ("id", "    id: 00000000-0000-0000-0000-000000000001\n"),
+    ],
+)
+def test_a_sequence_step_may_not_carry_a_step_name_inputs_outputs_or_id(key, line):
+    """A call is named after the sequence it calls, shares the run's globals,
+    takes its verdict from its steps and gets fresh ids per call."""
+    text = ONE_CALL.replace(CALL_LINE, CALL_LINE + line)
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert key in str(error.value)
+    assert "Sequence step" in str(error.value)
+
+
+def test_a_sequence_step_needs_no_step_name_but_needs_a_sequence_name():
+    text = ONE_CALL.replace("    sequence_name: Group\n", "")
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    message = str(error.value)
+    assert "sequence_name" in message
+    assert "step_name" not in message
+
+
+def test_a_sequence_step_cannot_be_the_template_of_an_indexed_step():
+    """A sequence is a group of steps; Indexed parametrizes one step. The two
+    do not mix."""
+    text = f"""\
+name: Mixed
+version: {CURRENT_VERSION}
+---
+sequence_name: Main
+steps:
+  - steptype: Indexed
+    step_name: Repeat the group
+    template:
+      steptype: Sequence
+      sequence_name: Group
+    parameter_sets:
+      - inputs: {{a: 1}}
+---
+sequence_name: Group
+steps:
+  - steptype: Wait
+    step_name: Inside
+    wait_time: '0'
+"""
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "Sequence step cannot be the 'template'" in str(error.value)
+
+
+# --------------------------------------------------------------------------
+# Sequence steps - the call tree built when the recipe loads
+# --------------------------------------------------------------------------
+
+NESTED = f"""\
+name: Nested demo
+version: {CURRENT_VERSION}
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: Sequence
+    sequence_name: PowerCycle
+  - steptype: Wait
+    step_name: Between
+    wait_time: '0'
+  - steptype: SEQUENCE
+    sequence_name: powercycle
+teardown_steps:
+  - steptype: Sequence
+    sequence_name: Shutdown
+---
+sequence_name: PowerCycle
+description: Power the DUT off and on again.
+steps:
+  - steptype: Wait
+    step_name: Power off
+    wait_time: '0'
+  - steptype: Sequence
+    sequence_name: Settle
+teardown_steps:
+  - steptype: Wait
+    step_name: Power on
+    wait_time: '0'
+---
+sequence_name: Settle
+steps:
+  - steptype: Wait
+    step_name: Settle wait
+    wait_time: '0'
+---
+sequence_name: Shutdown
+steps:
+  - steptype: Wait
+    step_name: Everything off
+    wait_time: '0'
+"""
+
+SETTLE_BODY = "    step_name: Settle wait\n    wait_time: '0'\n"
+SHUTDOWN_BODY = "    step_name: Everything off\n    wait_time: '0'\n"
+
+
+def main_rows(recipe):
+    for summary in recipe.to_summary():
+        if summary.sequence_name == "Main":
+            return summary.steps
+    raise AssertionError("no Main summary")
+
+
+def test_every_call_holds_its_own_copy_of_the_called_sequence():
+    main = Recipe.from_yaml_text(NESTED).sequences["Main"]
+    first, between, second = main.steps
+
+    assert isinstance(first, SequenceStep)
+    assert isinstance(second, SequenceStep)
+    assert (first.name, between.name, second.name) == ("PowerCycle", "Between", "PowerCycle")
+    assert first.description == "Power the DUT off and on again."
+    assert [step.name for step in first.sequence.steps] == ["Power off", "Settle"]
+    assert first.sequence is not second.sequence
+    assert not {s.id for s in first.sequence.steps} & {s.id for s in second.sequence.steps}
+
+
+def test_a_sequence_may_be_called_from_teardown():
+    main = Recipe.from_yaml_text(NESTED).sequences["Main"]
+    shutdown = main.teardown_steps[0]
+    assert isinstance(shutdown, SequenceStep)
+    assert [step.name for step in shutdown.sequence.steps] == ["Everything off"]
+
+
+def test_calling_the_same_sequence_many_times_is_not_a_cycle():
+    calls = "  - steptype: Sequence\n    sequence_name: Group\n" * 45
+    text = ONE_CALL.replace(CALL_LINE, calls)
+    main = Recipe.from_yaml_text(text).sequences["Main"]
+
+    assert len(main.steps) == 45
+    inner_ids = [step.sequence.steps[0].id for step in main.steps]
+    assert len(set(inner_ids)) == 45
+
+
+def test_the_summary_lists_the_call_tree_depth_first():
+    recipe = Recipe.from_yaml_text(NESTED)
+    rows = main_rows(recipe)
+
+    assert [(row.step_name, row.depth, row.is_group) for row in rows] == [
+        ("PowerCycle", 0, True),
+        ("Power off", 1, False),
+        ("Settle", 1, True),
+        ("Settle wait", 2, False),
+        ("Power on", 1, False),
+        ("Between", 0, False),
+        ("PowerCycle", 0, True),
+        ("Power off", 1, False),
+        ("Settle", 1, True),
+        ("Settle wait", 2, False),
+        ("Power on", 1, False),
+        ("Shutdown", 0, True),
+        ("Everything off", 1, False),
+    ]
+    assert len({row.step_id for row in rows}) == len(rows)
+
+
+def test_calling_a_sequence_that_does_not_exist_is_refused():
+    text = NESTED.replace("    sequence_name: Shutdown\n", "    sequence_name: Shutdwn\n")
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    message = str(error.value)
+    assert "no sequence called 'Shutdwn'" in message
+    assert "PowerCycle" in message
+
+
+def test_the_main_sequence_cannot_be_called():
+    call = "  - steptype: Sequence\n    sequence_name: Main\n"
+    text = NESTED.replace(SETTLE_BODY, SETTLE_BODY + call)
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "main sequence" in str(error.value)
+
+
+def test_a_sequence_that_ends_up_calling_itself_is_refused_with_the_chain():
+    call = "  - steptype: Sequence\n    sequence_name: PowerCycle\n"
+    text = NESTED.replace(SETTLE_BODY, SETTLE_BODY + call)
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "Main -> PowerCycle -> Settle -> PowerCycle" in str(error.value)
+
+
+def test_a_sequence_that_calls_itself_directly_is_refused():
+    call = "  - steptype: Sequence\n    sequence_name: Shutdown\n"
+    text = NESTED.replace(SHUTDOWN_BODY, SHUTDOWN_BODY + call)
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "Shutdown -> Shutdown" in str(error.value)
+
+
+def test_an_indexed_step_inside_a_called_sequence_is_expanded_as_usual():
+    indexed = """\
+  - steptype: Indexed
+    step_name: Add numbers
+    template:
+      steptype: PythonModule
+      module: example_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {a: 1, b: 1}
+      - inputs: {a: 2, b: 3}
+"""
+    text = NESTED.replace(SETTLE_BODY, SETTLE_BODY + indexed)
+    first = Recipe.from_yaml_text(text).sequences["Main"].steps[0]
+    settle = first.sequence.steps[1]
+
+    assert [step.name for step in settle.sequence.steps] == [
+        "Settle wait",
+        "Add numbers [a=1, b=1]",
+        "Add numbers [a=2, b=3]",
+    ]
+
+
+def test_a_row_inside_a_called_sequence_shows_that_sequence(tmp_path):
+    """The panel shows the sequence the clicked step is in - and a call's own row
+    shows what the call runs: the called sequence, whole, nothing picked out."""
+    path = tmp_path / "nested.yml"
+    path.write_text(NESTED, encoding="utf-8")
+
+    sources = step_source.step_sources_by_sequence(str(path))["Main"]
+    rows = main_rows(Recipe.from_file(str(path)))
+
+    assert len(sources) == len(rows)
+    # Row 0 is the call to PowerCycle: PowerCycle's document, no band.
+    assert sources[0].text.startswith("sequence_name: PowerCycle")
+    assert sources[0].highlights is False
+    # Row 1 is a step inside PowerCycle: the same document, that step banded.
+    assert sources[1].text == sources[0].text
+    assert "step_name: Power off" in highlighted(sources[1])[1]
+    # Row 2 calls Settle; row 3 is inside it.
+    assert sources[2].text.startswith("sequence_name: Settle")
+    assert sources[2].highlights is False
+    assert "step_name: Settle wait" in highlighted(sources[3])[1]
+    # Row 5 is a step of Main itself.
+    assert sources[5].text.startswith("sequence_name: Main")
+    assert "step_name: Between" in highlighted(sources[5])[1]
+    assert sources[-1].text.startswith("sequence_name: Shutdown")
+
+
+def test_the_recipe_preview_gets_the_whole_file_as_written(tmp_path):
+    path = tmp_path / "nested.yml"
+    path.write_text(NESTED, encoding="utf-8")
+
+    assert step_source.recipe_file_text(str(path)) == NESTED
+    assert step_source.recipe_file_text(str(tmp_path / "missing.yml")) == ""

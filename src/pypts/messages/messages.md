@@ -1,14 +1,34 @@
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # `pypts/messages` — the message catalogue
 
 Context file for this module, in the sense of `CLAUDE.md` → *Module context files*.
-It is the catalogue of **what each link carries**, lifted out of
-`resources/internal_reports/messaging_overview.html` (which keeps the structural picture: links,
-queues, transport, handlers, shutdown).
+It is the catalogue of **what each link carries**, plus the transport and the helpers beside
+it. The communication model itself (who talks to whom, why only CORE routes) is summarised in
+`CLAUDE.md` → *Communication model*; the shutdown choreography is in `core/core.md`.
 
-**Status: reference, not yet a contract to build on.** The structure — links, transport,
-handler placement — is settled. The individual messages below are *declared*; most of them
-have no sender yet, because the execution engine has not been ported. Reviewing and
-reworking this list is its own task, deliberately deferred.
+**Status: live contract.** Every message below has a sender and a receiver, except the
+Report link's export pair (`ExportReport` / `ReportExported`, marked **STUB**). Changing a
+message, a union or a field means changing this file in the same commit.
+
+## Files
+
+| File | Owns |
+|------|------|
+| `__init__.py` | Re-exports only `QueueWrapper`, `UnhandledMessage`, `unhandled`. Import a message from the link module that owns it. |
+| `queue_wrapper.py` | `QueueWrapper[Msg]`, `unhandled()`, `UnhandledMessage` — see *Transport* |
+| `links.py` | The link names used in trace lines: `HMI_TO_CORE`, `CORE_TO_HMI`, `CORE_TO_SEQUENCER`, `SEQUENCER_TO_CORE`, `CORE_TO_REPORT`, `REPORT_TO_CORE`, `ANY_TO_LOGGER`. Imports nothing. |
+| `common_messages.py` | `ModuleError`, `Heartbeat` and the payloads `ErrorSeverity`, `ResultType`, `StepOutcome` |
+| `run_events.py` | Run progress, operator commands about a run, the three operator questions, and the payloads `StepSummary`, `SequenceSummary` |
+| `core_hmi_communication.py` | `HmiToCore` / `CoreToHmi` and the messages only that link carries |
+| `core_sequencer_communication.py` | `CoreToSequencer` / `SequencerToCore`, `RunSequence`, `StopSequencer`, `SequencerStopped` |
+| `core_report_communication.py` | `CoreToReport` / `ReportToCore`, `GenerateReport`, `ExportReport`, `StopReport`, `ReportStopped`, `ReportGenerated`, `ReportExported` |
+| `to_logger_communication.py` | `LoggerControl`: `SetStdoutEnabled`, `StopLogger` |
+| `blocking_messages.py` | `PendingRequests` — the waiting half of a request/response pair; see *Waiting for an answer* |
 
 Every message is a plain **dataclass of plain values**. Each direction has a union type — that
 union *is* the contract.
@@ -107,9 +127,9 @@ reaches a union, which is what stops those comments from quietly going stale.
 | `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all three links. It also travels **one way back**, CORE→HMI, which is why it is on four unions and not three: the HMI is the only module in a process of its own, so it is the only one that can still be running with nothing at the other end of its link. The Sequencer and the Report are threads of CORE's process and die with it, so neither is sent one — a second and third reverse direction would watch for something that cannot happen and double the trace traffic doing it. |
 | `ModuleError(source, severity, message, exception, traceback, operation, error_type)` | EVT | A failure the sender wants CORE to know about. Sent by the two decorators in `utilities/error_handling.py` for what nobody expected, and by `report_error()` / `report_problem()` from a raise site that recognised the failure itself and rated it. `operation` names the method (`"Sequencer.poll_core"`), `error_type` the exception class — strings, because this crosses the pickled link. |
 | `ErrorSeverity` · `ResultType` · `StepOutcome` | — | **Payloads.** Enums and the pickle-safe summary of one executed step. `ErrorSeverity` is a field of `ModuleError`; `ResultType` of `RunFinished`, `SequenceFinished` and `StepOutcome`; `StepOutcome` of `StepFinished`, `StepExecuted` and `RunFinished`. `StepOutcome` carries the step's `inputs`, `outputs` and `expectations` as tuples of `(name, text)` pairs (M-3, `step/step.md` §3.6): text, so it stays pickle-safe whatever a step returned, and pairs rather than a dict because a message is built from plain values, tuples and dataclasses only. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
-| `StepSummary(step_id, step_name, description)` · `SequenceSummary(sequence_name, steps)` | — | **Payloads**, in `run_events.py`. The rows a frontend draws before a run: `StepSummary` is a field of `SequenceSummary`, which is a field of `RecipeLoaded`. Summaries, not the live `Step` and `Sequence` — those must never cross the HMI boundary. |
+| `StepSummary(step_id, step_name, description, depth=0, is_group=False)` · `SequenceSummary(sequence_name, steps)` | — | **Payloads**, in `run_events.py`. The rows a frontend draws before a run: `StepSummary` is a field of `SequenceSummary`, which is a field of `RecipeLoaded`. Rows are depth-first over called sequences: a row with `is_group` stands for a `Sequence` step and its own rows follow at `depth + 1`. Summaries, not the live `Step` and `Sequence` — those must never cross the HMI boundary. |
 | `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. CORE also forwards `RunStarted` and `SequenceStarted` to the Report, which needs the run brackets for its folder and its rows. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
-| `StepExecuted(outcome, step_type, inputs, outputs, started_at, duration_s)` | EVT | The rich sibling of `StepFinished`, emitted by `Step.run()` right after it: everything the Report writes about one executed step, including the resolved inputs, the judged outputs and the measured duration. **Engine-internal**: it rides Sequencer→CORE and CORE→Report only, two links that never leave the Core process — it must never join the HMI unions, whose flat `StepOutcome` is the projection that crosses the boundary. |
+| `StepExecuted(outcome, step_type, inputs, outputs, started_at, duration_s, group_path="")` | EVT | The rich sibling of `StepFinished`, emitted by `Step.run()` right after it: everything the Report writes about one executed step, including the resolved inputs, the judged outputs, the measured duration and `group_path` — the sequences it ran inside, `Main/PowerCycle`. **Engine-internal**: it rides Sequencer→CORE and CORE→Report only, two links that never leave the Core process — it must never join the HMI unions, whose flat `StepOutcome` is the projection that crosses the boundary. |
 | `UserPromptRequest/Response`, `UserTextRequest/Response`, `UserPathRequest/Response` | EVT | The three questions the engine asks the operator, joined by a `request_id` the asker generates. All three are live end to end: `UserInteractionStep` asks the first (a choice between the recipe's buttons), `UserWriteStep` the second (a line of typed text), `UserLoadingStep` the third — `UserPathRequest(request_id, message, select, image_path)` with `select` `"file"` or `"folder"` (always lowercase), answered by `UserPathResponse(request_id, path)`, `path` None if declined. The frontend hooks are `HmiClient.ask_user_path()` (the default declines with a WARNING) and `answer_user_path()`. There is deliberately **no message for a particular question** — an earlier `SerialNumberRequest` hard-coded one, so the engine fetched the serial number of the unit under test whether or not the recipe wanted one. Asking is the recipe's job. |
 | `RunPaused(step_name, position, total)` · `RunResumed()` | EVT | The operator's hold, confirmed. `RunPaused` is sent by the Sequencer when the hold actually **begins** — after the step that was running when Pause was pressed has finished — and names the main step the run is held before (`position`/`total` count main steps, 1-based). `RunResumed` is sent when a hold ends, by `ResumeSequence` or by `StopSequence`; never without a `RunPaused` before it. Never sent for teardown, which always runs straight through. CORE relays both to the HMI only — the Report does not record holds. |
 | `RunMetadata(values)` | EVT | What the run has learned about the unit on the bench: the globals the recipe named in its `report_metadata` header, as pairs, sent by the Sequencer whenever one appears or changes. The Report cannot read globals — it is a thread fed by events, while the globals live on the sequence thread — so the Sequencer wraps the Runtime's `emit` seam and sends them. CORE relays it to the Report (which stamps it on every CSV row) and to the HMI (whose top bar shows it). |
@@ -157,6 +177,23 @@ that stops being true.
 | `CoreToReport` (8) | **EVT** `RunStarted` (opens the run folder and the incremental CSV, its `metadata_names` deciding the columns) · `SequenceStarted` (names the rows that follow) · `StepExecuted` (one CSV row, flushed) · `RunMetadata` (the run's metadata globals, stamped on every row when the CSV is rewritten) · `RunFinished` (closes the CSV, backfills it and renames the run folder) — all forwarded from the Sequencer<br>**CMD** `GenerateReport()` (sent by CORE right behind `RunFinished`; one queue, so the order is guaranteed) · `ExportReport()` (STUB) · `StopReport()` |
 | `ReportToCore` (5) | **EVT** `ReportStopped()` · `ReportGenerated(report_path)` (answers `GenerateReport`; CORE relays it to the operator as `ReportReady`) · `ReportExported(report_path)` (STUB) · `Heartbeat` · `ModuleError`<br>The paths are absolute, and they are new: the old notifications carried nothing, so CORE learned a report existed but not where. |
 
+## Waiting for an answer — `blocking_messages.py`
+
+`PendingRequests` joins a `User*Request` to its `User*Response` by `request_id`. Fully wired
+in the Sequencer:
+
+- **Asking** — `Sequencer.ask_operator()` (the step layer's `Runtime.ask` seam) runs on the
+  *sequence worker thread*: `pending.start(request_id)` **before** sending the request (so a
+  fast answer cannot be lost), then `pending.wait(request_id, should_abort=...)`.
+- **Answering** — `Sequencer.deliver_response()` runs on the *event-loop thread* and calls
+  `pending.return_caller(request_id, value)`; `False` means nobody was waiting and is logged.
+
+`wait()` polls every `POLL_INTERVAL_S` (0.1 s) so an operator's Stop is honoured while a
+question is on screen, gives up after `DEFAULT_TIMEOUT_S` (300 s), and always cancels its slot.
+A timeout, an abort and a declined question all return `None` — deliberately the same to the
+asker. **The thread that calls `wait()` must never be the one draining the inbox**, or the
+answer cannot arrive.
+
 ## any → Logger — `to_logger_communication.py`
 
 | `LoggerControl` (2) | Meaning |
@@ -181,11 +218,6 @@ authority on when.
   follows the rule: the old "button, then path" pair is one `UserPathRequest` answered by
   one `UserPathResponse` carrying the path (see `step/step.md` §2.5). The IDN triple went
   with `UserWrite`'s dropped `ID` mode.
-- **`PendingRequests` is only half wired.** The Sequencer owns one and calls
-  `return_caller()` from `deliver_response()`, so answers coming back are handled. The
-  *asking* half — `start()` and `wait()` — lands with the execution engine, and it brings a
-  threading constraint with it: the thread that calls `wait()` must not be the one draining
-  the inbox.
 - **Now that the Sequencer is in-process**, the engine links no longer have to be
   pickle-safe. The choice was made with the first slice of the engine port: `RunSequence`
   carries the live `Recipe`, deliberately and documented on the message — and it does not

@@ -9,12 +9,13 @@ Layout:
 
   QMenuBar  File / Edit / View / About
   QToolBar  Open | Start | Pause | Stop  ··· Open report folder
-  recipe_label
+  recipe_label                                  run_progress
   ┌────────────────────────┬──────────────────────────────┐
-  │ left_stack (52%)       │ CenterContent (48%)          │
-  │  page 0: idle logo     │  InteractionPanel            │
-  │  page 1: StepTable     │  LogPanel                    │
-  │  page 2: ResultsPanel  │                              │
+  │ [ Run | Results ] (52%)│ CenterContent (48%)          │
+  │  Run: run_stack        │  InteractionPanel            │
+  │   idle logo, then      │  LogPanel                    │
+  │   StepTable            │                              │
+  │  Results: ResultsPanel │                              │
   └────────────────────────┴──────────────────────────────┘
   QStatusBar  status label
 
@@ -30,6 +31,7 @@ from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QSplitter,
@@ -44,13 +46,16 @@ from pypts.config_handler.configuration_schema import SCHEMA
 from pypts.hmi.gui.center_view import CenterContent
 from pypts.hmi.gui.gui_theme import detect_system_dark_mode, install_system_theme_sync
 from pypts.hmi.gui.log_tail import LogTail
-from pypts.hmi.gui.palette import LIGHT, get_palette
+from pypts.hmi.gui.palette import get_palette
 from pypts.hmi.gui.resources import load_cern_logo_pixmap
 from pypts.hmi.gui.results_panel import ResultsPanel
+from pypts.hmi.gui.run_progress import RunProgress
 from pypts.hmi.gui.settings_dialog import SettingsDialog, setting_text
 from pypts.hmi.gui.step_table import StepTableContent
+from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
 from pypts.hmi.gui.styles import get_stylesheet
 from pypts.hmi.gui.top_bar import TopBarContent
+from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN, ViewTabBar
 from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import DEFAULT_LOG_LEVEL, get_log_path, init_logging, log
 from pypts.messages import QueueWrapper
@@ -76,7 +81,6 @@ from pypts.messages.run_events import (
 )
 from pypts.recipe import step_source
 from pypts.utilities.common import RESTART_EXIT_CODE, ignore_keyboard_interrupt
-from pypts.utilities.data_removal import survey
 from pypts.utilities.error_handling import (
     catch_and_report_errors,
     report_error,
@@ -90,10 +94,6 @@ POLL_INTERVAL_MS = 50
 #: Slower than the message poll on purpose: this one touches a file, and the
 #: operator reads the panel rather than watching it.
 LOG_POLL_INTERVAL_MS = 200
-
-_PAGE_LEFT_IDLE = 0
-_PAGE_LEFT_TABLE = 1
-_PAGE_LEFT_RESULTS = 2
 
 #: Where the About menu sends the operator. The project moved off CERN GitLab;
 #: `pyproject.toml`'s `[project.urls]` still names the old repository.
@@ -245,7 +245,7 @@ class PtsMainWindow(QMainWindow):
     The application main window.
 
     Builds the menu bar, native toolbar, body splitter
-    (left stack 52% / right interaction 48%), and status bar.
+    (Run | Results tabs 52% / right interaction 48%), and status bar.
     Content widgets are injected; the window owns layout, not logic.
     [X] is intercepted: it issues a shutdown request and only really closes
     when CORE sends StopHmi.
@@ -264,6 +264,7 @@ class PtsMainWindow(QMainWindow):
         self._on_close_request = on_close_request
         self.allow_close = False
 
+        self.step_table = step_table
         self.results_panel = results_panel
         self.top_bar = top_bar
 
@@ -293,18 +294,39 @@ class PtsMainWindow(QMainWindow):
 
         self.recipe_label = QLabel("No recipe loaded")
         self.recipe_label.setObjectName("recipeLabel")
-        body_layout.addWidget(self.recipe_label)
+        # The run progress bar shares the label's row, at the window's right
+        # edge, so it neither moves with the label's text nor takes a row.
+        self.run_progress = RunProgress()
+        label_row = QHBoxLayout()
+        label_row.setContentsMargins(0, 0, 0, 0)
+        label_row.addWidget(self.recipe_label, stretch=1)
+        label_row.addWidget(self.run_progress, alignment=Qt.AlignmentFlag.AlignVCenter)
+        body_layout.addLayout(label_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
 
-        # Left stack: idle placeholder → step table → results panel
-        self.left_stack = QStackedWidget()
-        self.left_stack.addWidget(self._build_idle_placeholder())  # page 0
-        self.left_stack.addWidget(step_table)                       # page 1
-        self.left_stack.addWidget(results_panel)                    # page 2
+        # Left pane: the Run | Results tabs over the page each one shows.
+        # Run is the idle placeholder until a sequence is shown, then the table.
+        self.run_stack = QStackedWidget()
+        self.run_stack.addWidget(self._build_idle_placeholder())
+        self.run_stack.addWidget(step_table)
 
-        splitter.addWidget(self.left_stack)
+        self.left_stack = QStackedWidget()
+        self.left_stack.addWidget(self.run_stack)      # TAB_RUN
+        self.left_stack.addWidget(results_panel)       # TAB_RESULTS
+
+        self.view_tabs = ViewTabBar()
+        self.view_tabs.currentChanged.connect(self.left_stack.setCurrentIndex)
+
+        left_pane = QWidget()
+        left_layout = QVBoxLayout(left_pane)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(6)
+        left_layout.addWidget(self.view_tabs)
+        left_layout.addWidget(self.left_stack, stretch=1)
+
+        splitter.addWidget(left_pane)
         splitter.addWidget(center)
         splitter.setStretchFactor(0, 52)
         splitter.setStretchFactor(1, 48)
@@ -346,7 +368,7 @@ class PtsMainWindow(QMainWindow):
         edit_menu.addSeparator()
         self.settings_action = edit_menu.addAction("Settings")
         self.settings_action.setToolTip(
-            "Theme, window, folders, logging, the watchdog, stored data and the defaults."
+            "Theme, window, folders, logging, where data is stored, and the defaults."
         )
 
         # No dark mode toggle here: the theme is chosen, and previewed, in Settings.
@@ -388,11 +410,15 @@ class PtsMainWindow(QMainWindow):
 
         hint = QLabel("Open a YAML recipe to begin")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        hint.setStyleSheet(f"font-size:12px; color:{LIGHT.section_label};")
+        hint.setObjectName("idleHint")
         layout.addWidget(hint, alignment=Qt.AlignmentFlag.AlignCenter)
 
         layout.addStretch()
         return page
+
+    def show_tab(self, index: int) -> None:
+        """Open TAB_RUN or TAB_RESULTS, as a click on it would."""
+        self.view_tabs.setCurrentIndex(index)
 
     def paint_idle_logo(self, dark: bool) -> None:
         """
@@ -467,7 +493,10 @@ class GUI(HmiClient):
 
         #: Sequence name -> one rendered YAML fragment per step table row, read
         #: back off disk once per load for the step table's hover panel.
-        self._recipe_yaml: dict[str, tuple[str, ...]] = {}
+        self._recipe_yaml: dict[str, tuple[step_source.StepSource, ...]] = {}
+        #: The loaded recipe file as written, for the toolbar's preview. Read
+        #: back off disk once per load, like the step sources.
+        self._recipe_text = ""
 
         self.top_bar = TopBarContent(
             on_open=self.open_recipe,
@@ -476,11 +505,11 @@ class GUI(HmiClient):
             on_pause=self._pause,
             on_sequence_selected=self.show_selected_sequence,
             on_open_report=self.open_report_folder,
+            on_preview=self.show_recipe_preview,
         )
         self.step_table = StepTableContent()
         _results = ResultsPanel()
         self.center = CenterContent()
-        self.center.results = _results  # inject reference for update_results
 
         theme, window_mode, width, height = window_settings()
         #: The window as it is meant to be shown: (mode, width, height). What
@@ -493,6 +522,13 @@ class GUI(HmiClient):
             _results,
             self.center,
             window_size=(width, height),
+        )
+
+        #: The toolbar's recipe preview: a Qt.Popup, so a click anywhere outside
+        #: it - or Esc - closes it without any code here. Taller than the step
+        #: table's panel, because it holds the whole file.
+        self.recipe_preview = StepYamlPopup(
+            self.window, window_type=Qt.WindowType.Popup, max_screen_fraction=0.8
         )
 
         #: The Settings dialog while it is open, so CORE's answers can be handed
@@ -523,9 +559,8 @@ class GUI(HmiClient):
         #: start pypts again once everything has stopped - see restart().
         self.exit_code = 0
 
-        #: True between RunStarted and RunFinished. Settings refuses Storage
-        #: removal and Restore default settings meanwhile: emptying the reports
-        #: folder under the Report thread, or restarting, would take the run down.
+        #: True between RunStarted and RunFinished. Settings refuses Restore
+        #: default settings meanwhile: restarting would take the run down.
         self._run_in_progress = False
 
         # Theme, from [gui] theme; changed and previewed in Edit > Settings.
@@ -665,8 +700,10 @@ class GUI(HmiClient):
         self.top_bar.set_dark(dark)
         self.center.set_dark(dark)
         self.window.results_panel.set_dark(dark)
+        self.window.view_tabs.set_dark(dark)
         # These two colour themselves per item, which no stylesheet can reach.
         self.step_table.set_dark(dark)
+        self.recipe_preview.set_dark(dark)
         self.window.paint_idle_logo(dark)
 
     # --- Window mode and size ----------------------------------------------------
@@ -765,8 +802,32 @@ class GUI(HmiClient):
                 self.step_table.show_sequence(
                     sequence, self._recipe_yaml.get(sequence_name, ())
                 )
-                self.window.left_stack.setCurrentIndex(_PAGE_LEFT_TABLE)
+                self.window.run_progress.show_sequence(sequence)
+                self.window.run_stack.setCurrentWidget(self.step_table)
+                self.window.show_tab(TAB_RUN)
                 return
+
+    def show_recipe_preview(self) -> None:
+        """
+        The toolbar's magnifier: the whole loaded recipe, under the button.
+
+        Closing needs nothing here - the panel is a Qt.Popup, which Qt hides on
+        the next click outside it, and on Esc.
+        """
+        if not self._recipe_text.strip():
+            log.debug("Recipe preview asked for, but there is no recipe text to show.")
+            return
+        button = self.top_bar.preview_button
+        corner = button.mapToGlobal(button.rect().bottomLeft())
+        self.recipe_preview.show_for(
+            self._recipe_text,
+            step_source.NO_LINE,
+            step_source.NO_LINE,
+            corner.x(),
+            corner.y(),
+            offset=(0, 2),
+        )
+        log.debug("Recipe preview shown.")
 
     # --- Presentation hooks -----------------------------------------------------
 
@@ -783,17 +844,21 @@ class GUI(HmiClient):
     def show_recipe_loaded(self, event: RecipeLoaded) -> None:
         self.current_recipe = event
         self._recipe_yaml = {}
+        self._recipe_text = ""
+        self.recipe_preview.hide()
         if self._requested_recipe_path is not None:
             # Only now, with CORE's confirmation that the file parsed: a path
             # that does not load is not one to offer again.
             self.recent_recipes.remember(self._requested_recipe_path, event.recipe_name)
             self._loaded_recipe_path = self._requested_recipe_path
-            self._recipe_yaml = step_source.step_yaml_by_sequence(
+            self._recipe_yaml = step_source.step_sources_by_sequence(
                 self._requested_recipe_path
             )
+            self._recipe_text = step_source.recipe_file_text(self._requested_recipe_path)
             self._requested_recipe_path = None
         self.step_table.set_running(False)
         self.top_bar.show_recipe_loaded(event)
+        self.top_bar.set_preview_available(bool(self._recipe_text.strip()))
         self.show_selected_sequence(event.main_sequence)
         self.window.recipe_label.setText(
             f"Loaded {event.recipe_name}\nReady to start"
@@ -816,8 +881,13 @@ class GUI(HmiClient):
         self._set_pause_requested(False)
         self.step_table.set_running(True)
         self.step_table.reset_to_pending()
+        self.window.run_progress.reset()
         self.center.show_idle()
-        self.window.left_stack.setCurrentIndex(_PAGE_LEFT_TABLE)
+        # The last run's results go, and the operator is taken to this run.
+        self.window.results_panel.set_results(())
+        self.window.view_tabs.stop_pulse()
+        self.window.run_stack.setCurrentWidget(self.step_table)
+        self.window.show_tab(TAB_RUN)
         self.window.recipe_label.setText(f"Running {recipe_name}...")
         self._show_run_state("Running")
 
@@ -831,6 +901,9 @@ class GUI(HmiClient):
         self.center.cancel_pending()
         self.center.show_idle()
         self.window.results_panel.set_results(outcomes)
+        if outcomes:
+            # Not switched to: the Results tab pulses until it is opened.
+            self.window.view_tabs.start_pulse(TAB_RESULTS)
         self.window.recipe_label.setText(
             run_summary(self._running_recipe_name, result, outcomes)
         )
@@ -864,8 +937,10 @@ class GUI(HmiClient):
 
     def show_step_finished(self, outcome: StepOutcome) -> None:
         self.step_table.show_outcome(outcome)
+        self.window.run_progress.step_finished(outcome)
         self._run_outcomes.append(outcome)
-        self.center.update_results(tuple(self._run_outcomes))
+        # Live: the Results tab can be opened during the run.
+        self.window.results_panel.set_results(tuple(self._run_outcomes))
 
     def show_report_ready(self, event: ReportReady) -> None:
         self.report_dir = event.report_dir
@@ -880,13 +955,13 @@ class GUI(HmiClient):
     def _open_settings(self, page: str | None = None) -> None:
         """
         Edit > Settings - or View > Appearance, with `page` "Appearance": show
-        the settings, save the changed ones via CORE, and offer the Storage page
-        and Restore default settings.
+        the settings, save the changed ones via CORE, and offer the Storage page,
+        Clear recent recipes and Restore default settings.
 
         The values shown are the ones this process read at startup, with the
         changes CORE confirmed this session laid over them. The dialog previews
-        a theme through `_use_theme()` and a window through `_use_window()`.
-        After it closes: a Storage removal rebuilds the recents list, and a
+        a theme through `_use_theme()` and a window through `_use_window()`, and
+        clears the recents through `_clear_recent_recipes()`. After it closes, a
         confirmed Restore default settings restores them. Decorated to report
         and continue: a dialog that cannot be built must not take the window down.
         """
@@ -924,7 +999,8 @@ class GUI(HmiClient):
             parent=self.window,
             preview_theme=self._use_theme,
             preview_window=self._use_window,
-            storage_survey=survey,
+            offer_storage=True,
+            clear_recent_recipes=self._clear_recent_recipes,
             offer_restore=True,
             blocked_reason=blocked_reason,
             open_page=page,
@@ -939,11 +1015,8 @@ class GUI(HmiClient):
         if dialog.saved:
             # The dialog closes on a clean save rather than showing a result page.
             self.show_status("Settings saved; they apply from the next start")
-        if dialog.storage_changed:
-            # The store still holds the list it read at start-up and would write
-            # it straight back on the next load. Rebuild it from the file as it is.
-            self.recent_recipes = RecentRecipes()
-            self.show_status("Stored data removed")
+        if dialog.recents_cleared:
+            self.show_status("Recent recipes list cleared")
         if dialog.restore_requested:
             self._restore_default_settings()
 

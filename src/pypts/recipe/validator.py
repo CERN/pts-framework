@@ -23,7 +23,7 @@ the whole file in hand.
 from typing import Any
 
 from pypts.recipe import rules
-from pypts.step import indexed_step
+from pypts.step import indexed_step, sequence_step
 
 
 def validate_header(header: dict[str, Any]) -> list[str]:
@@ -86,12 +86,16 @@ def validate_step(step_data: Any) -> list[str]:
     if not isinstance(step_data, dict):
         return ["a step must be a mapping of keys to values"]
 
+    steptype = step_data.get("steptype")
+    unnamed = isinstance(steptype, str) and steptype.lower() in rules.UNNAMED_STEP_TYPES
+
     problems = []
     for field in rules.STEP_REQUIRED:
+        if field == "step_name" and unnamed:
+            continue
         if step_data.get(field) is None:
             problems.append(f"missing the required key '{field}'")
 
-    steptype = step_data.get("steptype")
     if steptype is None:
         return problems
     type_required = rules.STEP_TYPE_REQUIRED.get(str(steptype).lower())
@@ -105,13 +109,18 @@ def validate_step(step_data: Any) -> list[str]:
 
     problems.extend(_check_mappings(step_data))
 
+    if sequence_step.is_sequence_step(step_data):
+        problems.extend(sequence_step.check_sequence_step(step_data))
+
     # An indexed step is checked twice over: its own shape here, and its
     # template as the ordinary step it will be expanded into. Both before
     # anything is built, so the author sees every problem in one error.
     if indexed_step.is_indexed_step(step_data):
         problems.extend(indexed_step.check_indexed_step(step_data))
         template = step_data.get(indexed_step.TEMPLATE_KEY)
-        if isinstance(template, dict):
+        # A Sequence template is already refused by check_indexed_step(); probing
+        # it as a step would only add a second, less helpful sentence.
+        if isinstance(template, dict) and not sequence_step.is_sequence_step(template):
             # The template is checked as the step it will become, so it is
             # given the name expansion will give it: a template states what
             # every generated step shares, and the name is not shared - each

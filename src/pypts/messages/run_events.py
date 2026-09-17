@@ -44,11 +44,20 @@ class StepSummary:
     `step_id` is the same UUID the step's StepStarted/StepFinished will carry,
     which is what lets a frontend find the row again. A summary, not the Step:
     the live object must never cross the HMI boundary.
+
+    Rows are in run order, depth-first: a called sequence's row is followed by
+    its own rows.
     """
 
     step_id: UUID
     step_name: str
     description: str
+    #: How deep the row sits in the call tree: 0 for a step of the sequence
+    #: itself, 1 for a step of a sequence it calls, and so on.
+    depth: int = 0
+    #: True for a row that stands for a called sequence (a Sequence step); its
+    #: steps follow it, one level deeper.
+    is_group: bool = False
 
 
 @dataclass
@@ -168,7 +177,7 @@ class RunMetadata:
     `report_metadata` appears or changes, so a run that sets its serial
     number in step 1 has it from step 1 on.
 
-    Pairs rather than a dict, so the message stays a frozen value that
+    Pairs rather than a dict, so the message stays a plain value that
     compares and pickles like every other one.
     """
 
@@ -223,7 +232,8 @@ class StepExecuted:
 
     `started_at` is epoch seconds (time.time()); `duration_s` is measured with
     a monotonic clock around the whole lifecycle - resolve inputs, _step(),
-    judge outputs.
+    judge outputs. `group_path` names the sequence the step ran in, and every
+    sequence around it.
     """
 
     outcome: StepOutcome
@@ -232,6 +242,9 @@ class StepExecuted:
     outputs: dict[str, Any]
     started_at: float
     duration_s: float
+    #: Where the step ran: the sequence names from the run's first sequence down,
+    #: joined with "/" - `Main/PowerCycle`.
+    group_path: str = ""
 
 
 # --- Commands the operator gives about a run ----------------------------------

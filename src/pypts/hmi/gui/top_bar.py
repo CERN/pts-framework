@@ -38,6 +38,13 @@ _FOLDER_SVG = (
     '<path d="M2 12V5a1 1 0 011-1h3.5l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1z"/>'
     "</svg>"
 )
+_MAGNIFIER_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"'
+    ' fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">'
+    '<circle cx="6.5" cy="6.5" r="4.5"/>'
+    '<path d="M10 10l4.5 4.5"/>'
+    "</svg>"
+)
 _REPORT_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"'
     ' fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round"'
@@ -87,7 +94,7 @@ def describe(widget: QWidget, title: str, detail: str) -> None:
 
 
 class TopBarContent(QToolBar):
-    """Open / sequence chooser / Start / Pause / Stop. A native QToolBar."""
+    """Open / Preview / sequence chooser / Start / Pause / Stop. A native QToolBar."""
 
     def __init__(
         self,
@@ -97,6 +104,7 @@ class TopBarContent(QToolBar):
         on_pause: Callable[[], None],
         on_sequence_selected: Callable[[str], None],
         on_open_report: Callable[[], None],
+        on_preview: Callable[[], None] = lambda: None,
     ) -> None:
         super().__init__()
         self.setMovable(False)
@@ -109,6 +117,7 @@ class TopBarContent(QToolBar):
         self._on_pause = on_pause
         self._on_sequence_selected = on_sequence_selected
         self._on_open_report = on_open_report
+        self._on_preview = on_preview
         self._dark = False
         self._running = False
         self._metadata: dict[str, str] = {}
@@ -122,6 +131,14 @@ class TopBarContent(QToolBar):
         self.open_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.open_button.setIconSize(QSize(16, 16))
         self.open_button.clicked.connect(self.choose_recipe_file)
+
+        # The whole loaded recipe, read-only. Allowed during a run too: looking
+        # changes nothing. Greyed until there is a recipe to look at.
+        self.preview_button = QToolButton()
+        self.preview_button.setAutoRaise(True)
+        self.preview_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.preview_button.setIconSize(QSize(16, 16))
+        self.preview_button.clicked.connect(lambda _checked=False: self._on_preview())
 
         self.start_button = QToolButton()
         self.start_button.setAutoRaise(True)
@@ -171,6 +188,7 @@ class TopBarContent(QToolBar):
         self.report_button.clicked.connect(self._on_open_report)
 
         self.addWidget(self.open_button)
+        self.addWidget(self.preview_button)
         self.addWidget(self.start_button)
         self.addWidget(self.pause_button)
         self.addWidget(self.stop_button)
@@ -180,6 +198,7 @@ class TopBarContent(QToolBar):
         self.addWidget(self.report_button)
 
         self.sequence_combo.setEnabled(False)
+        self.preview_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.pause_button.setEnabled(False)
         self.stop_button.setEnabled(False)
@@ -200,6 +219,8 @@ class TopBarContent(QToolBar):
         icon_color = palette.accent_text if self._dark else palette.toolbutton
         disabled = palette.icon_disabled
         self.open_button.setIcon(_svg_icon(_FOLDER_SVG.format(color=icon_color)))
+        preview_color = icon_color if self.preview_button.isEnabled() else disabled
+        self.preview_button.setIcon(_svg_icon(_MAGNIFIER_SVG.format(color=preview_color)))
         can_start = self.start_button.isEnabled()
         can_pause = self.pause_button.isEnabled()
         can_stop = self.stop_button.isEnabled()
@@ -227,6 +248,13 @@ class TopBarContent(QToolBar):
             "Choose a YAML recipe file to load."
             if self.open_button.isEnabled()
             else "Not while a run is in progress - stop the run first.",
+        )
+        describe(
+            self.preview_button,
+            "Preview recipe",
+            "Show the whole loaded recipe file. Click anywhere outside it to close it."
+            if self.preview_button.isEnabled()
+            else "Open a recipe first.",
         )
         if self._running and self._shows_resume:
             describe(self.start_button, "Resume", "Continue the run.")
@@ -322,6 +350,11 @@ class TopBarContent(QToolBar):
         )
         if path:
             self._on_open(path)
+
+    def set_preview_available(self, available: bool) -> None:
+        """Whether there is recipe text to preview - the GUI knows, from the file."""
+        self.preview_button.setEnabled(available)
+        self._refresh_controls()
 
     def _sequence_changed(self, sequence_name: str) -> None:
         if sequence_name:

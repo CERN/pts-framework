@@ -17,12 +17,14 @@ groundwork laid before it).
 
 Status of the code beside this file: **the operator screen has visual parity
 with the master-branch GIF reference.** `gui.py` is the assembler;
-`PtsMainWindow(QMainWindow)` owns the native menu bar, `QToolBar`, full-width
-state-indicator tab bar, left/right `QSplitter`, and `QStatusBar`. Panel
+`PtsMainWindow(QMainWindow)` owns the native menu bar, `QToolBar`, left/right
+`QSplitter` (the left pane under Run | Results tabs), and `QStatusBar`. Panel
 contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
-`step_table.py` (left stack page 1), `results_panel.py` (left stack page 2),
+`view_tabs.py` (`ViewTabBar` — the Run | Results tabs, §14),
+`step_table.py` (Run tab), `results_panel.py` (Results tab),
 `center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel`),
-`log_tail.py` (what fills that panel — §8).
+`log_tail.py` (what fills that panel — §8),
+`run_progress.py` (`RunProgress` — the progress bar in the recipe label row, §15).
 Styling: `palette.py` — **every colour the GUI uses, and the only file allowed a
 hex literal** (§10) — plus `styles.py` (the light/dark QSS built from those
 tokens) and `resources.py` (logo loaders). The vendored scaffold in `scaffold/` is no longer used by the
@@ -266,13 +268,13 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Settings → §10c, with the Storage page and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
-| `screen_tab_bar` (`QTabBar`, CERN Blue bg) | Full-width state indicator: Idle \| Running \| Prompt \| Results |
-| `recipe_label` (`QLabel`) | "Loaded…" / "Running…" below the tab bar |
-| `QSplitter` 52/48 | left: `left_stack` (`QStackedWidget`, 3 pages); right: `CenterContent` |
-| `left_stack` page 0 | idle placeholder (CERN logo + "Open a YAML recipe…") |
-| `left_stack` page 1 | `StepTableContent` |
-| `left_stack` page 2 | `ResultsPanel` (badges + `QTreeView`) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
+| `recipe_label` (`QLabel`) | "Loaded…" / "Running…" / the run summary, above the splitter; stretches across its row |
+| `run_progress` (`RunProgress`) | the same row, at the window's right edge — the green run progress bar and `6 / 15 (40 %)` (§15) |
+| `QSplitter` 52/48 | left: `view_tabs` over `left_stack`; right: `CenterContent` |
+| `view_tabs` (`ViewTabBar`) | Run \| Results; `currentChanged` drives `left_stack` (§14) |
+| `left_stack` `TAB_RUN` | `run_stack`: the idle placeholder (CERN logo + "Open a YAML recipe…") until a sequence is shown, then `StepTableContent` |
+| `left_stack` `TAB_RESULTS` | `ResultsPanel` (badges + `QTreeView`) |
 | `QStatusBar` | status label (stretch=1) |
 
 ---
@@ -310,7 +312,11 @@ Read that code before touching any widget in this folder.
 
 ### Styling tokens (from `old_code/hmi/gui_components/styles.py`)
 
-- CERN Blue `#0033A0` — tab bar background, primary buttons
+- CERN Blue `#0033A0` — primary buttons
+- Light tab bar: `header_background` `#F0F4FA` behind the tabs, `text_muted` `#718096`
+  for an unselected tab — a quiet backdrop. Selected tab: `tab_selected_background` /
+  `tab_selected_text` — light `#D6E6F7` / `#005BAC`, dark `#005BAC` / `#ffffff`. Colour
+  only, never a font weight: a bold selected tab is wider, and the tabs jump on every click
 - MTA Blue `#005BAC` — selected tab, header text
 - Full light QSS + full dark QSS; `detect_system_dark_mode()` + OS live-sync
   (`install_system_theme_sync` via `styleHints().colorSchemeChanged`)
@@ -663,11 +669,16 @@ look.
 
 ### What `styles.py` is now
 
-Structure only: the two stylesheets, built from tokens, with **no colour literal
-of their own**. Light and dark are still two texts rather than one template
-applied twice — they are nearly identical but not quite (light styles a `QTabBar`
-that dark does not), and merging them would change how one of the two themes
-looks. That is a job of its own, not a side effect of moving the colours out.
+Structure only: **one** stylesheet template, `_build_qss(palette)`, with **no
+colour literal of its own**. `get_stylesheet(dark)` fills it from
+`get_palette(dark)`, so a rule exists in both themes or in neither — add a rule
+once. Where the themes want a different colour for the same rule, that is a token
+with a different value in each palette, never a second copy of the rule:
+`menu_highlight_text`, `toolbutton_hover_text` and `button_text` are brand blue on
+light and plain text (or `accent_text`) on dark. Every rule reads the token named
+for its job (`menu_background`, `button_background`, `status_background`, …), not
+one that happens to hold the same hex. The theme swatches in the settings dialog
+are the one exception: they picture both themes, so they name `LIGHT` and `DARK`.
 
 `STATUS_COLORS` (which `styles.py` used to hold) and `result_colors.py` were the
 *same table said twice*, in two shapes, plus a third copy of PENDING/RUNNING
@@ -681,20 +692,23 @@ change.
 
 ---
 
-## 10. Settings → Storage, and Advanced → Restore default settings
+## 10. Settings → Storage, Advanced → Clear recent recipes and Restore default settings
 
-What used to be one Edit → Remove Cache dialog is two things now, both inside Settings
-(§10c), because they are two different decisions.
+What used to be one Edit → Remove Cache dialog is now three plain things inside Settings
+(§10c). **pypts deletes no reports and no run logs.** They are test records — a report is the
+evidence that a unit passed — so which of them may go is the operator's decision, made in the
+file manager.
 
-**Storage** is the last page of Settings (`storage_panel.py`, `StoragePanel`). It removes
-what pypts has stored on this machine: the recent recipes list, every report, every run log.
-One checkbox per category (`STORAGE_KEYS`); `data_removal.survey()` also lists
-`config.ini`, and the panel leaves it out. Only the recents list is a cache; reports and run
-logs are *test records* — a report is the evidence that a unit passed — so only `state` is
-**ticked** when the page opens (`DEFAULT_SELECTION`) and removing records is one deliberate
-extra click. A category with nothing in it has a disabled box. The total and **Remove
-selected** follow the ticks; the result view says what went and what could not, and **Done**
-surveys again so the sizes are the sizes now. Nothing on this page restarts pypts.
+**Storage** is the last page of Settings (`offer_storage=True`). One card: the base folder in
+force when the dialog opened (`paths.base_dir`) and **Open**, which shows it in the file
+manager through `QDesktopServices`. Open is disabled when the folder is not there. The page
+deletes nothing.
+
+**Clear recent recipes** is a card on the Advanced page (`clear_recent_recipes=` a callable).
+Clear calls it at once — no question, and it is allowed during a run, because the list is only
+a convenience — then reads *Cleared* and disables itself. The GUI passes its own
+`_clear_recent_recipes()`, the same method File → Open Recent → Clear list uses, so the store
+held in memory and the file on disk are cleared together and nothing needs rebuilding.
 
 **Restore default settings** is the last card of the Advanced page. It asks first
 (`confirm_restore_defaults()`, Cancel is the default), then closes Settings with
@@ -703,40 +717,26 @@ surveys again so the sizes are the sizes now. Nothing on this page restarts pypt
 values in force — the bootstrap already does both, with this machine's paths filled in.
 Unsaved changes in the dialog are lost, and the question says so.
 
-**The split.** `utilities/data_removal.py` decides *what* (no Qt); `storage_panel.py` shows
-it (no deleting — it is handed a `survey` and a `remover` callable, so the tests drive it
-without deleting a file); `settings_dialog.py` hosts both; `gui.py` acts after the dialog
-closes.
-
 ```
 Edit > Settings (or View > Appearance) -> GUI._open_settings()
    SettingsDialog
-     Storage page, first opened -> StoragePanel(survey)   what is there, how big
-          Remove selected       -> data_removal.remove()  -> result view -> Done
+     Storage page: Open            -> the base folder in the file manager
+     Advanced page: Clear          -> GUI._clear_recent_recipes()  (at once)
      Advanced page: Restore defaults -> confirm -> accept() with restore_requested
    after exec():
-     storage_changed   -> RecentRecipes() rebuilt, status "Stored data removed"
+     recents_cleared   -> status "Recent recipes list cleared"
      restore_requested -> delete config.ini -> GUI.restart()
                           -> shutdown, exit code 75 -> launcher starts pypts again
 ```
 
 **Decisions worth not undoing:**
 
-- **Both are refused during a run**, with the reason shown in place (`blocked_reason`).
-  Emptying the reports folder while the Report thread writes into it, or restarting, would
-  take the run down.
-- **The Storage survey waits until the page is opened.** It walks the reports and logs
-  folders; Settings must not wait for that to open.
-- **This run's log is never offered.** The Logger holds an open handler on it for as long as
-  pypts is up, so on Windows it cannot be deleted at all. It is excluded from the survey and
-  the page says why it is staying.
-- **Named files and directory *contents*, never a directory.** On Windows `state_dir()`,
-  `config_dir()` and the default `base_dir` are all `%LOCALAPPDATA%\\pypts` — deleting a
-  directory would take everything at once. `data_removal` also refuses a `reports_dir` or
-  `logs_dir` that resolves to a filesystem root or the user's home, because those are values
-  in an INI file somebody may edit.
-- **The GUI rebuilds `RecentRecipes` after a removal.** The old store still held the list in
-  memory and would have written it straight back on the next load.
+- **No automatic removal of folder contents.** The removal backend it replaced
+  (`utilities/data_removal.py`) had to guard against a `paths.reports_dir` edited to a drive
+  root or the home folder, and its guard failed open when a path could not be resolved. A page
+  that only opens the folder has nothing to guard.
+- **Restore default settings is refused during a run**, with the reason shown in place
+  (`blocked_reason`): restarting would take the run down. Clearing the recents is not.
 - **The restart exit code reaches the launcher through `gui_main()`**, which exits with
   `GUI.exit_code` once `app.exec()` returns — not through `QApplication.exit(code)` in
   `on_stop()`, which, called while no event loop runs (every test that stops a GUI), leaves
@@ -749,8 +749,11 @@ Edit > Settings (or View > Appearance) -> GUI._open_settings()
 `Edit → Settings` shows every setting in `config.ini` an operator may change and saves the
 ones they changed. `settings_dialog.py` is the dialog; `gui.py` wires it.
 
-**What it looks like.** A page list on the left — Folders, Appearance, Logging, Report,
-Advanced (`PAGES`), then Storage — and the page's settings on the right, one card each.
+**What it looks like.** A page list on the left — Folders, Appearance, Logging, Report
+(`PAGES`), then Advanced and Storage — and the page's settings on the right, one card each.
+Advanced holds no setting, only the Clear recent recipes and Restore default settings
+actions, so the dialog adds it only when one of them is offered. Ending the run when a module
+stops responding is not a setting: it is fixed behaviour (`core/core.md`).
 Edit → Settings opens on Folders, the first page; View → Appearance opens on Appearance. The control fits
 the value, not the file: the theme is three picture cards (a thumbnail of the window in that
 theme; System shows light and dark side by side), a short list of choices is a row of
@@ -891,115 +894,143 @@ return value proves nothing.
 
 ## 12. The step table's YAML click panel
 
-Between runs, clicking a step's **name or description** pops up a small panel beside
-the cursor holding **that one step's YAML, syntax coloured**. It answers the question
-the three columns cannot — which module, which inputs, what the output is checked
-against — without the operator leaving the GUI for a text editor.
+Between runs, clicking a step's **name or description** pops up a panel beside the cursor
+holding **the whole sequence that step belongs to, exactly as the recipe file has it, syntax
+coloured, with the clicked step's lines on a band and scrolled into view**. It answers the
+question the three columns cannot — which module, which inputs, what the output is checked
+against, and what surrounds the step — without the operator leaving the GUI for a text editor.
 
 Three files, each with one job:
 
 | File | Owns |
 |---|---|
-| `recipe/step_source.py` | `step_yaml_by_sequence(path)` — the file on disk to rendered text, keyed by sequence name, one fragment per row |
+| `recipe/step_source.py` | `step_sources_by_sequence(path)` — the file on disk to one `StepSource(text, first_line, last_line)` per row, keyed by sequence name |
 | `yaml_highlighter.py` | `YamlHighlighter` — the colours, from `palette.py` |
-| `step_yaml_popup.py` | `StepYamlPopup` — the frame, its sizing and its placement |
+| `step_yaml_popup.py` | `StepYamlPopup` — the frame, the step band, scrolling, sizing and placement |
 
 `step_table.py` is the trigger and `gui.py` the wiring: the GUI calls
-`step_yaml_by_sequence` **once**, when `RecipeLoaded` arrives, and hands the right
-sequence's tuple to `show_sequence()`. Each fragment is stored on its row's name
-cell under `_YAML_ROLE` (`UserRole + 1`), beside the step id — one place per row,
-nothing parallel to keep in step, and it survives `set_dark()`, which only rebuilds
-the Result column.
+`step_sources_by_sequence` **once**, when `RecipeLoaded` arrives, and hands the right
+sequence's tuple to `show_sequence()`. Each `StepSource` is stored on its row's name cell under
+`_YAML_ROLE` (`UserRole + 1`), beside the step id — one place per row, nothing parallel to keep
+in step, and it survives `set_dark()`, which only rebuilds the Result column.
 
-### What the panel shows, and why it is not the file's own text
+### What the panel shows (changed 2026-09-17)
 
-**The effective step mapping**, re-rendered — not a slice of the recipe file.
-`steptype: Indexed` is expanded at load time into one ordinary step per parameter
-set (§1.23 in the roadmap, `step/indexed_step.py`), so the ten
-`Add numbers [a=…, b=…]` rows in `indexedstep_demo.yml` **exist in no file**: a text
-slice would show all ten of them the same thirty-line block. Rendering the mapping
-the engine actually built gives every row its own fragment and shows what will run
-rather than what was typed.
+**The sequence document as written**, from just after its `---` to just before the next —
+comments, key spelling and formatting are the author's. It used to be one step's *effective
+mapping*, re-rendered (lowercased keys, comments gone), because the rows an `Indexed` step
+expands into exist in no file. That problem is now solved by pointing, not rendering: every row
+an `Indexed` step produced highlights **the authored `Indexed` block** it came from.
 
-The cost is fidelity — the keys have been lowercased by `normalize_sequence()` and
-the author's comments are gone. Values keep their case, so `steptype: PythonModule`
-still reads as written, and `default_flow_style=None` keeps a leaf mapping on one
-line, so an output check renders `voltage: {type: range, min: '11', max: '13'}`
-exactly as the recipe spells it.
+**Which sequence:** the one the clicked step is in. A row inside a called sequence (a
+`Sequence` step's group) shows *that* sequence's document. **The call row itself shows the
+sequence it calls, whole, with no band** (changed 2026-09-17, at the operator's request):
+clicking a call is asking what it runs, not where it is written. `StepSource.first_line` is
+then `step_source.NO_LINE` (-1), `highlights` is False, and the panel opens at the top.
+
+Line positions come from `yaml.compose_all` nodes. A list item is bounded by the next item's
+first line, with the blank lines and comments in front of that item trimmed off, so a band
+covers the step and nothing of its neighbour.
 
 ### Why the GUI reads the recipe file
 
-This is the one thing here that argues with §3, where "the old GUI parsed the
-recipe itself" is defect #1 — the reason `RecipeLoaded` was given the whole recipe
-summary in the first place (roadmap §1.15). The objection is answered by keeping it
-narrow: **the GUI does not learn the recipe format.** Every bit of that stays in
-`recipe/step_source.py`, which reuses the parser's own `normalize_sequence()`,
-`apply_defaults()` and `_expand_indexed_steps()` so the two can never disagree; the
-GUI receives pre-rendered strings and only indexes a tuple. It is the same shape as
-the LOG OUTPUT panel (§8), which reads the run log off disk rather than routing it
-through messages.
+This is the one thing here that argues with §3, where "the old GUI parsed the recipe itself" is
+defect #1 — the reason `RecipeLoaded` was given the whole recipe summary in the first place
+(roadmap §1.15). The objection is answered by keeping it narrow: **the GUI does not learn the
+recipe format.** Every bit of that stays in `recipe/step_source.py`, which reuses the parser's
+own `normalize_sequence()`, `apply_defaults()` and `indexed_step.expand_indexed_step()` to count
+rows the way the parser builds them; the GUI receives text and three numbers per row and only
+indexes a tuple. It is the same shape as the LOG OUTPUT panel (§8), which reads the run log off
+disk rather than routing it through messages.
 
-**The ordering contract** is what makes indexing safe: `step_source` builds its row
-list exactly as `recipe_parser._build_sequence()` does — steps, then
-teardown_steps, each expanded — because that is the order `Sequence.to_summary()`
-emits and therefore the order of the table's rows. `test_recipe.py` pins the two
-together against `all_steptypes_demo.yml`, whose rows include five from one Indexed
-step.
+**The ordering contract** is what makes indexing safe: `step_source` produces rows in the order
+`Sequence.to_summary()` emits them — steps, then teardown, an `Indexed` step once per parameter
+set, each `Sequence` step followed by the rows of the sequence it calls. `test_recipe.py` pins
+the two together against `all_steptypes_demo.yml`, whose rows include five from one Indexed step
+and two from a called sequence.
 
-One limitation, accepted: the file is read **once, at load**. Editing the `.yml`
-afterwards makes the panel show the new file while the engine runs the old one.
+One limitation, accepted: the file is read **once, at load**. Editing the `.yml` afterwards
+makes the panel show the new file while the engine runs the old one.
 
-### The widget, and two decisions inside it
+### The widget
 
-**A `QFrame` borrowing the `Qt.ToolTip` window flag, not a `QToolTip`.** A real
-tooltip is Qt's to size, time and dismiss, and cannot hold a `QSyntaxHighlighter`.
-The flag alone gives what is wanted: a top level that takes no focus, never steals
-the click, and is not a dialog — nothing here blocks the GUI thread (§3).
+**A `QFrame` borrowing the `Qt.ToolTip` window flag, not a `QToolTip`.** A real tooltip is Qt's
+to size, time and dismiss, and cannot hold a `QSyntaxHighlighter`. The flag alone gives what is
+wanted: a top level that takes no focus, never steals the click, and is not a dialog — nothing
+here blocks the GUI thread (§3).
 
-**The text is truncated, not scrolled.** The panel sits under the pointer and the
-pointer is over the table, so a wheel event goes to the table beneath and a scroll
-bar would be decoration. Past `_MAX_LINES` (30) the fragment is cut and given a
-final `# ... N more lines`, which the highlighter paints as the comment it is.
-Rendered mappings run five to fifteen lines, so this guards a pathological recipe
-rather than the normal case.
+**It scrolls** (it used to truncate at 30 lines). The panel is sized to its text, capped at
+`_MAX_COLUMNS` (100) characters wide and `_MAX_SCREEN_FRACTION` (60 %) of the screen's height,
+and scrolls past that. Width is measured in the polished monospace font — before polishing,
+Qt measures the default font and every long line is cut. After `show()` the application
+stylesheet can still take a few pixels, so `_grow_to_fit()` reads what the scroll bars still hide
+and takes that room too, within the caps. On opening it scrolls so the step's first line has
+`_CONTEXT_LINES` (3) above it — but only when the step would not already be in view from the top,
+so a short sequence keeps its `sequence_name` header on screen.
 
-Placement is `QCursor.pos()` plus a small offset, then clamped to
-`screenAt(cursor).availableGeometry()` — a row near the right or bottom edge flips
-the panel back over the cursor instead of hanging half off the display.
+**The step band** is one `QTextEdit.ExtraSelection` per line with `FullWidthSelection`, in the
+palette's `yaml_step_highlight` token. Its own token because the light theme's panel background
+and table header are the same pale blue, so neither could mark a line.
 
-### The gesture: click to open, move off to close
+Placement is the cursor plus a small offset, clamped to `screenAt(cursor).availableGeometry()` —
+a row near the right edge flips the panel back over the cursor, and a tall panel near the bottom
+is pushed up rather than hanging off the display.
 
-**It opens on a click, never on a hover.** `cellClicked` → `_clicked_cell(row,
-column)` is the one place that opens the panel, so it carries the idle gate and the
-no-fragment case too. Only `_POPUP_COLUMNS` — `(0, 1)`, the step name and the
-description — count: the Result column is a verdict with its own tooltip on it
-(the reason and the measured values), and a click there closes whatever is open,
-which is how the panel is dismissed without leaving the table.
+### The gesture: click to open, move away to close
 
-**Moving the pointer off the clicked cell closes it.** `setMouseTracking(True)` on
-the table **and its viewport** is what makes `cellEntered` fire with no button held;
-`_hover_cell()` now only hides — it hides unless the cell entered is still in the
-open row and still one of `_POPUP_COLUMNS`, so name→description keeps the panel and
-anything else ends the gesture. `cellEntered` never says the table was *left*, so
-the other half is an event filter on the viewport watching for `QEvent.Type.Leave`.
-The filter returns `False` throughout: it watches, it never consumes.
+**It opens on a click, never on a hover.** `cellClicked` → `_clicked_cell(row, column)` is the one
+place that opens the panel, so it carries the idle gate and the no-source case too, each with a
+DEBUG line saying why nothing opened. Only `_POPUP_COLUMNS` — `(0, 1)`, the step name and the
+description — count: the Result column is a verdict with its own tooltip on it (the reason and
+the measured values), and a click there closes whatever is open.
+
+**It closes when the pointer is somewhere the gesture does not allow** (changed 2026-09-17).
+While the panel is open a `QTimer` (`_POINTER_CHECK_MS`, 100 ms) hands `QCursor.pos()` to
+`pointer_moved_to()`, which keeps the panel while the pointer is on the clicked row's name or
+description cell, on the panel itself — so the wheel can scroll it — or in the corridor between the
+click and the panel's nearest corner (`_CORRIDOR_SLACK`, 12 px), so the way there does not close
+it. Anywhere else hides it. This **replaced** `cellEntered` tracking plus a `Leave` event filter
+on the viewport: moving onto the panel is a window change, which is exactly a leave the table would
+have acted on, and a position check does not depend on the order in which Windows delivers
+enter and leave events. `hide_yaml_popup()` stops the timer.
+
+A report of the old panel not opening at all right after a recipe was loaded (2026-09-17) could
+not be reproduced here — the table, the full GUI and the real load path all opened it on a
+simulated click; real OS clicks could not be driven from the test harness. The enter/leave
+dismissal was the most fragile part of that path and is gone; whether that was the cause is
+**unconfirmed** until checked on a bench.
 
 **The row highlight is painted per cell, not selected.** Qt's selection is off
-(`SelectionMode.NoSelection`): a selection tint covers the whole row, the Result
-cell included, which made a PASS chip a different green on the selected row.
-`_highlight_row()` instead sets the background of the two `_POPUP_COLUMNS` cells to
-`palette.header_background` — the row-number column's own pale blue, so the row
-reads as picked out without a new colour being invented — and leaves the Result
+(`SelectionMode.NoSelection`): a selection tint covers the whole row, the Result cell included,
+which made a PASS chip a different green on the selected row. `_highlight_row()` instead sets the
+background of the two `_POPUP_COLUMNS` cells to `palette.header_background` and leaves the Result
 cell exactly as `_state_item()` made it. `_clear_highlight()` clears the brush with
-`setData(BackgroundRole, None)` rather than painting white, so the alternating row
-colour comes back. Highlight and panel are one gesture: `hide_yaml_popup()` does
-both, and `set_dark()` hides first, because the tint would otherwise stay in the
-outgoing theme's blue.
+`setData(BackgroundRole, None)` rather than painting white, so the alternating row colour comes
+back. Highlight and panel are one gesture: `hide_yaml_popup()` does both, and `set_dark()` hides
+first, because the tint would otherwise stay in the outgoing theme's blue.
 
-`set_running(bool)` is the gate — `gui.py` drives it from `RunStarted` /
-`RunFinished` only, and a hold counts as running, because a hold produces no
-`RunFinished` (`RunPaused` / `RunResumed` do not touch the gate). During a run the table is being written to and read for verdicts, and
-the operator wants an unobstructed view of it.
+`set_running(bool)` is the gate — `gui.py` drives it from `RunStarted` / `RunFinished` only, and
+a hold counts as running, because a hold produces no `RunFinished` (`RunPaused` / `RunResumed` do
+not touch the gate). During a run the table is being written to and read for verdicts, and the
+operator wants an unobstructed view of it.
+
+### The recipe preview (toolbar magnifier, 2026-09-17)
+
+`TopBarContent.preview_button` sits right after Open, with a magnifier icon. It calls the
+GUI's `show_recipe_preview()`, which shows **the whole recipe file as written** — read once per
+load by `step_source.recipe_file_text(path)` into `GUI._recipe_text` — in a second
+`StepYamlPopup`, `GUI.recipe_preview`, placed just under the button.
+
+The same widget, built with two constructor options: `window_type=Qt.WindowType.Popup` and
+`max_screen_fraction=0.8`. The `Qt.Popup` window type is the whole of the closing logic —
+Qt hides a popup on the next mouse press outside it and on Esc — so there is no pointer
+check and no event filter for it. `show_for(..., offset=(0, 2))` puts its corner at the
+button instead of beside a cursor, and a negative `first_line` means no band.
+
+The button is greyed until there is text to show: `show_recipe_loaded()` calls
+`top_bar.set_preview_available(bool(text))`, so a recipe that loaded but could not be read back
+off disk has no preview. It stays usable during a run — looking changes nothing. A new load
+hides an open preview. The theme reaches it through `_apply_theme()`.
 
 ### Theming
 
@@ -1009,15 +1040,16 @@ that is **required, not a preference**: the blanket `QMainWindow, QWidget` rule 
 the `QPlainTextEdit` rule in both sheets reach this widget and would otherwise paint
 it as a log panel.
 
-The syntax colours are per-character `QTextCharFormat`s, so they are the fourth
+The syntax colours are per-character `QTextCharFormat`s (and the step band a per-line
+extra selection, repainted by `StepYamlPopup.set_dark()`), so they are the fourth
 member of the list in §10 that a stylesheet cannot reach at all —
 `YamlHighlighter.set_dark()` rebuilds every format and calls `rehighlight()`, the
 same contract that made `LogPanel` re-append its backlog. `StepTableContent.set_dark()`
 forwards to the popup, so the existing `gui.py::_apply_theme` fan-out already carries
 it; nothing was added there.
 
-The seven tokens are `yaml_key`, `yaml_string`, `yaml_number`, `yaml_boolean`,
-`yaml_null`, `yaml_comment` and `yaml_punctuation` — flat `str` fields on `Palette`
+The eight tokens are `yaml_key`, `yaml_string`, `yaml_number`, `yaml_boolean`,
+`yaml_null`, `yaml_comment`, `yaml_punctuation` and `yaml_step_highlight` (the band) — flat `str` fields on `Palette`
 rather than one `dict` field, so `token_names()` picks them up and
 `test_both_themes_define_every_token` and `test_every_token_is_a_hex_colour` cover
 them for free. A `dict` would have had to join `NON_COLOUR_FIELDS` next to `verdicts`
@@ -1034,6 +1066,46 @@ wins over all of them. The class was **copied** from
 `hmi/` imports `helper_applications/`, and the dependency would run the wrong way.
 
 ---
+
+## 12b. Folding groups in the step table (2026-09-17)
+
+A row that stands for a called sequence — `StepSummary.is_group`, one per `Sequence` step —
+folds the rows under it away. **GUI only**: the engine already sends everything needed. Rows
+arrive depth-first (`Sequence.to_summary()`) and each carries `depth`, so a group's rows are
+exactly the rows after it that are deeper than it. No message, engine, report or CLI change.
+
+**Hidden, never removed.** Folding is `QTableWidget.setRowHidden()`; the table stays a flat
+`QTableWidget` rather than becoming a tree. Every row keeps its step id, so `mark_running()`,
+`show_outcome()`, the YAML panel and the theme repaint work unchanged on a folded row, and
+unfolding shows the verdict it already has. Rebuilding as a `QTreeWidget` was considered and not
+needed.
+
+The name cell carries, beside the id and the `StepSource`: `_DEPTH_ROLE`, `_GROUP_ROLE`,
+`_EXPANDED_ROLE` and `_NAME_ROLE` (the bare name). Its text is `_name_text()`: four spaces per
+depth level, and a group gets `▸` folded / `▾` unfolded before its name. A plain top-level step
+reads exactly as its name. (`▶`/`▼` and `►` were tried: in the table font the pair renders at
+different sizes.)
+
+`_apply_folding()` is one pass down the table: after a folded group, every deeper row is hidden
+until a row at its depth or shallower. Folding an outer group keeps the state of the groups
+inside it, so unfolding it again shows them as they were. If the row the YAML panel is open on
+gets folded away, the panel closes.
+
+**Decisions (operator, 2026-09-17):**
+- **Groups start folded** — every `show_sequence()` (a load, a sequence switch) folds all.
+- **A run unfolds nothing.** `mark_running()` scrolls to `_visible_row_for(row)`: the row, or
+  the nearest showing group above it. Folding and unfolding still work during a run.
+- **Toggle:** a click on a group's **name** (arrow included) toggles it; a **double-click**
+  anywhere on the row toggles it once. A double-click arrives as `cellClicked` then
+  `cellDoubleClicked` (checked): on the name the click already toggled, so
+  `_double_clicked_cell()` ignores column 0; on the description the click opened the YAML
+  panel, so the double-click closes it and toggles. A click on a group's **description** opens
+  the YAML panel with the called sequence (§12).
+- **Right-click** on the table: *Expand all* / *Collapse all* (`expand_all()` /
+  `collapse_all()`).
+
+The row numbers in the vertical header are the real row positions, so they skip the folded
+rows (1, 2, 8, 12…); left as is.
 
 ## 13. Pause and Resume
 
@@ -1076,6 +1148,69 @@ the state.
 when Pause is pressed may be a question that must be answered before the hold begins.
 Stop works in every state. The step table's panel gate (§12) stays on for the whole
 run, a hold included.
+
+## 14. The Run | Results tabs
+
+The left pane has two tabs, `ViewTabBar` in `view_tabs.py`; the right column (prompts,
+log) is never covered by them. `TAB_RUN` shows `run_stack` — the idle placeholder, then
+the step table from the first `show_selected_sequence()` on. `TAB_RESULTS` shows the
+`ResultsPanel`. `PtsMainWindow.show_tab()` opens one, as a click would.
+
+| When | Results panel | Tab |
+|---|---|---|
+| Recipe loaded / sequence chosen (`show_selected_sequence`) | kept | Run |
+| `RunStarted` | emptied (`set_results(())`) | Run; any pulse stops |
+| `StepFinished` | rebuilt from `_run_outcomes` — live, openable during the run | unchanged |
+| `RunFinished` | `set_results(outcomes)` | unchanged; if `outcomes` is not empty, Results pulses |
+
+**The pulse.** The GUI never jumps to Results by itself; it asks for a look instead.
+`ViewTabBar.start_pulse(index)` fades that tab's background from nothing up to the
+selected-tab background (`tab_selected_background`) at `PULSE_PEAK` (0.8) opacity and back,
+`PULSE_PERIOD_MS` (2400) per cycle, eased — a `QVariantAnimation` looping forever and a
+`paintEvent` that fills the tab *before* the stylesheet paints it. An unselected tab has
+no background of its own, so the fill shows through and the label is the stylesheet's own
+— only the background pulses, and it never quite reaches the selected look. It stops
+(`stop_pulse()`) when that tab is opened, by a click or `show_tab()`, and at `RunStarted`.
+A tab already open does not pulse. The fill copies the tab's box from `styles.py`
+(`_TAB_RADIUS`, `_TAB_MARGIN_RIGHT`) — change those with the `QTabBar::tab` rules, and
+give an unselected tab a background there and the pulse is hidden under it.
+Colours come from `palette.py`, and `set_dark()` follows the theme.
+
+## 15. The run progress bar (2026-09-17)
+
+`run_progress.py`, `RunProgress`, built by `PtsMainWindow` as `run_progress` in the same
+`QHBoxLayout` as `recipe_label`: the label stretches, the bar sits at the window's right
+edge, so it never moves when the label's text changes. A `QProgressBar` (`runProgressBar`,
+180×8, no text of its own) and a `QLabel` (`runProgressLabel`) reading
+`progress_text(done, total)` — `6 / 15 (40 %)`, the percentage rounded down.
+
+**GUI only.** No message was added and CORE is not involved: the total comes from the
+`SequenceSummary` the step table is filled from, the ticks from the `StepFinished` events
+the table already receives.
+
+| When | `RunProgress` |
+|---|---|
+| `show_selected_sequence()` (a recipe loaded, or the combo changed) | `show_sequence(summary)` — counts the rows, back to 0 |
+| `RunStarted` | `reset()` — back to 0 on the sequence already shown |
+| `StepFinished` | `step_finished(outcome)` — one tick if the row counts |
+| `RunFinished` | nothing — the bar keeps its final fill until the next run or selection |
+
+**What counts: every row whose `StepSummary.is_group` is False**, at any depth — steps of
+called sequences and teardown steps included, whether their group is folded in the table
+or not (§12b; the count comes from the summary, not from the table). A `Sequence` call row
+does not count: it finishes only after everything inside it, so it would be a tick for
+nothing new.
+
+**Every verdict counts**, SKIP and STOP included. The engine sends one `StepFinished` per
+row even for a row it never ran (`Step.run_steps` with a skip reason), so a stopped run
+still fills the bar. Finished ids are kept in a set, so an event seen twice is one tick.
+
+**Hidden until there is something to count** — at startup, and for a sequence with no
+counted rows, where a `0..0` range would turn the bar into Qt's busy indicator.
+
+**Always green.** The fill is `progress_fill` on a `progress_track` groove, both themed
+tokens in `palette.py`, applied by the stylesheet rules in `styles.py`. Nothing is painted
+per item, so a theme change needs no `set_dark()` here.
 
 ---
 

@@ -24,6 +24,7 @@ failure is a RecipeError - one type for CORE to catch.
 from typing import Any
 
 from pypts.messages.run_events import SequenceSummary, StepSummary
+from pypts.step.sequence_step import SequenceStep
 from pypts.step.step import Step
 
 
@@ -53,13 +54,28 @@ class Sequence:
         """
         The pickle-safe projection a frontend receives, mirroring
         StepResult.to_outcome(). One row per step that will emit events during
-        a run - which includes the teardown steps, at the end.
+        a run - which includes the teardown steps, at the end, and every step
+        of every sequence it calls, right after the row of the call.
         """
-        rows = tuple(
-            StepSummary(step_id=step.id, step_name=step.name, description=step.description)
-            for step in self.steps + self.teardown_steps
-        )
-        return SequenceSummary(sequence_name=self.name, steps=rows)
+        return SequenceSummary(sequence_name=self.name, steps=tuple(self.summary_rows(0)))
+
+    def summary_rows(self, depth: int) -> list[StepSummary]:
+        """This sequence's rows at `depth`, each call followed by its own rows."""
+        rows = []
+        for step in self.steps + self.teardown_steps:
+            is_group = isinstance(step, SequenceStep)
+            rows.append(
+                StepSummary(
+                    step_id=step.id,
+                    step_name=step.name,
+                    description=step.description,
+                    depth=depth,
+                    is_group=is_group,
+                )
+            )
+            if isinstance(step, SequenceStep):
+                rows.extend(step.sequence.summary_rows(depth + 1))
+        return rows
 
 
 class Recipe:

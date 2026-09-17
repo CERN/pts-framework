@@ -29,9 +29,15 @@ dict for the whole run. It is the only scope. A per-sequence `locals` frame
 existed and was dropped (2026-09-02): it was global in reach and merely
 shorter-lived, which is a distinction a recipe author had to think about for
 no gain. Anything narrower than the run is a step's own `inputs`/`outputs`.
+
+Beside the seams, four plain attributes say where the step lists are running,
+because a sequence may call another (step/sequence_step.py): `group_path` and
+`depth` (set by `entering()`), `in_teardown`, and `halt_reason`, which is how a
+`continue_on_error: false` halt inside a called sequence ends the whole run.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import Any
 
 
@@ -67,7 +73,7 @@ def _nothing_to_drop() -> None:
 
 
 class Runtime:
-    """One variable scope plus the five seams to the Sequencer, nothing else."""
+    """One variable scope, the five seams to the Sequencer, and where the step lists run."""
 
     def __init__(
         self,
@@ -115,6 +121,23 @@ class Runtime:
             drop_pending_pause = _nothing_to_drop
         self.drop_pending_pause: Callable[[], None] = drop_pending_pause
 
+        # --- where the step lists are running: plain state, not seams --------
+        #: The sequence names from the run's first sequence down to the one
+        #: running now, joined with "/": `Main/PowerCycle`. Empty outside any
+        #: sequence. Set by entering(); rides on every StepExecuted.
+        self.group_path = ""
+        #: How deep the running sequence is called: 0 for the run's first
+        #: sequence, 1 for a sequence it calls. Indents the operator's lines.
+        self.depth = 0
+        #: True while a teardown list runs, at any depth. A sequence called from
+        #: teardown inherits it, so everything in it runs to the end.
+        self.in_teardown = False
+        #: Why the rest of the run is skipped after a `continue_on_error: false`
+        #: step came back ERROR or FAIL; empty while nothing has halted. Shared
+        #: by every step list of the run, so a halt inside a called sequence
+        #: ends the whole run and not only the list it happened in.
+        self.halt_reason = ""
+
     # --- globals: one flat dict for the whole run -----------------------------
 
     def get_global(self, name: str) -> Any:
@@ -122,3 +145,27 @@ class Runtime:
 
     def set_global(self, name: str, value: Any) -> None:
         self.globals[name] = value
+
+    # --- nesting ----------------------------------------------------------------
+
+    @contextmanager
+    def entering(self, sequence_name: str) -> Iterator[None]:
+        """
+        Run the block inside `sequence_name`: path extended, one level deeper.
+
+        The first sequence of a run starts the path and stays at depth 0; a
+        sequence entered inside another is one level deeper. Both are restored
+        when the block ends, however it ends.
+        """
+        outer_path = self.group_path
+        outer_depth = self.depth
+        if outer_path:
+            self.group_path = f"{outer_path}/{sequence_name}"
+            self.depth = outer_depth + 1
+        else:
+            self.group_path = sequence_name
+        try:
+            yield
+        finally:
+            self.group_path = outer_path
+            self.depth = outer_depth

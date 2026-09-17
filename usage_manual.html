@@ -140,17 +140,37 @@ it.</div>
       file. The step table fills in, and the window title shows the recipe name.</li>
   <li>Pick a <strong>sequence</strong> in the drop-down. The recipe's main sequence is
       selected by default.</li>
-  <li><strong>Start</strong>. Each row goes <em>Pending → Running... → verdict</em>.</li>
+  <li><strong>Start</strong>. Each row goes <em>Pending → Running... → verdict</em>.
+      The small green bar at the right of the line above the table shows how far the run
+      is, e.g. <code>6 / 15 (40 %)</code>. It counts every step, including the steps inside
+      groups and skipped ones, but not the group rows themselves. It keeps its final value
+      when the run ends, and starts again from 0 on the next run.</li>
   <li>When a step asks something, answer it in the right-hand panel (see below).</li>
-  <li>When the run ends, the <strong>Results</strong> tab shows PASS/FAIL counts and a
-      result tree. Each step opens into its <strong>Inputs</strong> and <strong>Outputs</strong>,
-      e.g. <code>voltage = 12.1</code> with its check (<code>range 11 .. 13</code>).</li>
+  <li>The left side has two tabs. <strong>Run</strong> shows the step table.
+      <strong>Results</strong> shows PASS/FAIL counts and a result tree. Each step opens into
+      its <strong>Inputs</strong> and <strong>Outputs</strong>, e.g. <code>voltage = 12.1</code>
+      with its check (<code>range 11 .. 13</code>). It fills in as each step finishes, so you
+      can look during a run.</li>
+  <li>When the run ends, the <strong>Results</strong> tab pulses gently until you click it.
+      The window doesn't switch tabs for you. Starting a run clears the results and goes back to
+      <strong>Run</strong>, and so do opening a recipe and picking a sequence (those two keep the
+      last results).</li>
 </ol>
+
+<p><strong>Groups in the step table.</strong> A row with a small triangle
+(<code>&#x25B8;</code>) is a <code>Sequence</code> step: a group of steps from another
+sequence of the recipe. Groups start folded. Click the group's name (or double-click the row)
+to unfold it and see its steps, indented under it; click again to fold it. Right-click the
+table for <em>Expand all</em> / <em>Collapse all</em>. A folded group still gets its result
+during a run, and so do the steps inside it; nothing unfolds by itself.</p>
 
 <h3>The toolbar</h3>
 <div class="wrap"><table>
   <tr><th>Button</th><th>Does</th></tr>
   <tr><td>Open</td><td>Loads a recipe. Greyed out during a run.</td></tr>
+  <tr><td>Preview (magnifying glass)</td><td>Shows the whole loaded recipe file, as written,
+      in a scrollable panel under the button. Click anywhere outside it, or press Esc, to close
+      it. Works during a run too. Greyed out until a recipe is loaded.</td></tr>
   <tr><td>Start</td><td>Runs the selected sequence. While the run is paused it lights up again
       and <strong>resumes</strong> the run instead.</td></tr>
   <tr><td>Pause</td><td>Holds the run once the current step has finished. Until then
@@ -168,8 +188,12 @@ it.</div>
 state: Idle, Running, Pausing, Paused, Finished or Stopped.</p>
 <p>Hover over any button to see what it does, or why it's greyed out.
 Hover over a step's result to see why it failed (if it did) and the values it measured.
-Between runs, click a step's name or description to see that step's YAML; the row
-goes pale blue while the panel is up, and moving the mouse off the field closes it.</p>
+Between runs, click a step's name or description to see the whole sequence that step
+belongs to, exactly as it is written in the recipe file, with the clicked step
+highlighted and scrolled into view. For a step inside a called sequence, that is the
+called sequence. Clicking a group's description shows the sequence it calls, whole (clicking its name
+folds or unfolds it). The row goes pale blue while the panel is up. Move the mouse onto the
+panel to scroll it with the wheel; moving the mouse anywhere else closes it.</p>
 
 <h3>Answering questions</h3>
 <p>A step can ask one of three things:</p>
@@ -191,7 +215,7 @@ the sequence continues with the next step.</p>
   <tr><td>Edit</td><td><strong>Edit Recipe</strong> (opens the Recipe Creator, on the loaded
       recipe if there is one; save there, then open the recipe again here to run it) ·
       <strong>Settings</strong>: theme, window, folders, log level…; changes apply at the <em>next</em> start, except the theme and the window mode and size, which you try straight away — keep a window within 15 seconds or it goes back; Keep saves it. Save closes Settings once
-everything is saved, and only stays open to tell you about a setting that could not be saved. The <strong>Storage</strong> page removes the recent recipes list, reports and run logs. <strong>Advanced → Restore default settings</strong> puts every setting back and restarts pypts. Neither works during a run.</td></tr>
+everything is saved, and only stays open to tell you about a setting that could not be saved. The <strong>Storage</strong> page shows the base folder and opens it in the file manager with <strong>Open</strong>; pypts never deletes reports or run logs, so remove what you no longer need there. <strong>Advanced → Clear recent recipes</strong> empties the Open Recent list straight away. <strong>Advanced → Restore default settings</strong> puts every setting back and restarts pypts; it does not work during a run.</td></tr>
   <tr><td>View</td><td><strong>Appearance</strong> (opens Settings on its Appearance page) · <strong>Full Screen</strong> (<kbd>F11</kbd>) for this session only — the window fills the screen but keeps its title bar</td></tr>
   <tr><td>About</td><td>Links to GitHub and the wiki</td></tr>
 </table></div>

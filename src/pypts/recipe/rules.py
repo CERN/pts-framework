@@ -52,8 +52,9 @@ SEQUENCE_REQUIRED: tuple[str, ...] = ("sequence_name", "steps")
 #: nothing. Three keys were removed rather than kept:
 #:   `setup_steps`  ran in front of `steps` and meant nothing else, so those
 #:                  steps belong at the front of `steps`;
-#:   `parameters` / `outputs`  the declared interface of a subsequence, and
-#:                  `SequenceStep` is dropped (step.md 2.8);
+#:   `parameters` / `outputs`  a declared interface for a called sequence. A
+#:                  Sequence step calls another sequence without one: the
+#:                  group shares the run's globals (step.md 2.8);
 #:   `locals`       a scope per sequence - global in reach, but only for as
 #:                  long as one sequence ran, which is neither one thing nor
 #:                  the other. There is **one** scope now: `globals`, for the
@@ -66,6 +67,10 @@ SEQUENCE_DEFAULTS: dict[str, Any] = {
 
 #: What every step must carry, whatever its type.
 STEP_REQUIRED: tuple[str, ...] = ("steptype", "step_name")
+
+#: Steptypes that take no `step_name`: they are named by something else. A
+#: Sequence step is named after the sequence it calls (step/sequence_step.py).
+UNNAMED_STEP_TYPES: tuple[str, ...] = ("sequence",)
 
 #: Steptypes that are expanded when the recipe loads and never run as a step of
 #: their own, so they exist in the rules below but not in the step registry.
@@ -81,6 +86,7 @@ STEP_TYPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "userwrite": ("message",),
     "userloading": ("message",),
     "wait": ("wait_time",),
+    "sequence": ("sequence_name",),
     "indexed": ("template", "parameter_sets"),
 }
 
@@ -139,6 +145,9 @@ STEP_TYPE_DEFAULTS: dict[str, dict[str, Any]] = {
     # step's constructor when the recipe loads. The chosen path is the output.
     "userloading": {"select": "file", "image_path": None, "outputs": {}},
     "wait": {},
+    # A Sequence step owns no mappings: a called sequence shares the run's
+    # globals and takes its verdict from its own steps.
+    "sequence": {},
     # An Indexed step owns no mappings of its own: what every generated step
     # shares goes on the `template`, what differs goes in a `parameter_sets`
     # entry. It is gone before anything is built.

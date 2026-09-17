@@ -1,0 +1,509 @@
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PyPTS — SequenceStep design</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg:      #ffffff;
+      --surface: #f6f8fa;
+      --border:  #d0d7de;
+      --text:    #1f2328;
+      --muted:   #656d76;
+      --accent:  #005096;
+      --code-bg: #eef1f4;
+      --note-bg: #fffbef;
+      --note-brd:#ffe58f;
+      --bad:     #b42318;
+      --good:    #1a7f37;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg:      #0d1117;
+        --surface: #161b22;
+        --border:  #30363d;
+        --text:    #e6edf3;
+        --muted:   #8d96a0;
+        --accent:  #6cb6ff;
+        --code-bg: #1f2630;
+        --note-bg: #272115;
+        --note-brd:#6b5310;
+        --bad:     #ff7b72;
+        --good:    #56d364;
+      }
+    }
+    body {
+      margin: 0;
+      padding: 2.5rem 1rem 4rem;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.6 "Segoe UI", Calibri, system-ui, -apple-system, sans-serif;
+    }
+    main { max-width: 52rem; margin: 0 auto; }
+    header { text-align: center; margin-bottom: 2rem; }
+    h1 { color: var(--accent); font-size: 1.9rem; margin: 0 0 .3rem; }
+    .meta { color: var(--muted); font-size: .9rem; }
+    h2 {
+      color: var(--accent);
+      font-size: 1.35rem;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: .3rem;
+      margin: 2.5rem 0 1rem;
+    }
+    h3 { color: var(--accent); font-size: 1.05rem; margin: 1.6rem 0 .4rem; }
+    ul, ol { margin: .3rem 0; padding-left: 1.4rem; }
+    li { margin: .3rem 0; }
+    li::marker { color: var(--muted); }
+    code {
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: .88em;
+      background: var(--code-bg);
+      padding: .1em .35em;
+      border-radius: 4px;
+    }
+    pre {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .8rem 1rem;
+      overflow-x: auto;
+      font-size: .85rem;
+      line-height: 1.45;
+    }
+    pre code { background: none; padding: 0; font-size: 1em; }
+    .note {
+      background: var(--note-bg);
+      border: 1px solid var(--note-brd);
+      border-radius: 6px;
+      padding: .7rem 1rem;
+      margin: 1rem 0;
+    }
+    nav.toc {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: .7rem 1.2rem;
+    }
+    nav.toc a { color: var(--accent); text-decoration: none; }
+    nav.toc a:hover { text-decoration: underline; }
+    table { border-collapse: collapse; width: 100%; margin: .8rem 0; font-size: .92rem; }
+    th, td { border: 1px solid var(--border); padding: .4rem .6rem; text-align: left; vertical-align: top; }
+    th { background: var(--surface); }
+    .bad { color: var(--bad); font-weight: 600; }
+    .good { color: var(--good); font-weight: 600; }
+    .stage { font-weight: 600; color: var(--accent); }
+  </style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>SequenceStep — nested sequences under one main sequence</h1>
+  <div class="meta">Design agreed 2026-09-16 · not yet implemented · source: <code>plans/sequence_step_design.md</code></div>
+</header>
+
+<div class="note">
+  This <strong>reverses</strong> the 2026-09-01 decision “SequenceStep — to be dropped”
+  (<code>step/step.md</code> §2.8). The docs must say the decision changed, with the date and the
+  reason, not silently contradict it. Status and stage tracking live in
+  <code>pypts_implementation_status.html</code> (TODO — Nested sequences).
+</div>
+
+<nav class="toc">
+  <ol>
+    <li><a href="#goal">Goal</a></li>
+    <li><a href="#format">Recipe format and loading</a></li>
+    <li><a href="#execution">Execution</a></li>
+    <li><a href="#messages">Messages, entry point, frontends, report</a></li>
+    <li><a href="#creator">Recipe Creator and verificator</a></li>
+    <li><a href="#docs">Documentation</a></li>
+    <li><a href="#tests">Tests</a></li>
+    <li><a href="#stages">Delivery stages</a></li>
+  </ol>
+</nav>
+
+<!-- ------------------------------------------------------------------ -->
+<h2 id="goal">1. Goal</h2>
+<ul>
+  <li>A recipe has exactly <strong>one executable sequence: <code>main_sequence</code></strong>.
+    Nothing else can be started (GUI, CLI, API, headless).</li>
+  <li>Every other sequence document is a <strong>group of steps</strong> that main may call with a
+    <code>steptype: Sequence</code> step. Groups may call groups, to any depth.</li>
+  <li>A group is a <strong>real group at run time</strong>: its own verdict, its own
+    <code>teardown_steps</code>, its own row in the step table with its children indented under it.</li>
+  <li>Full flexibility of calls: a sequence may be called any number of times, from any
+    <code>steps</code> or <code>teardown_steps</code> list (e.g. <code>Sequence3</code> ×45, then
+    <code>Sequence2</code> ×2, then <code>Sequence3</code> again). Repetition is written as repeated
+    <code>Sequence</code> steps. <strong>No <code>repeat</code> key</strong> — added only if asked for.</li>
+  <li><code>Indexed</code> and <code>Sequence</code> <strong>do not mix</strong>: a sequence is a group,
+    <code>Indexed</code> is parametrization. An <code>Indexed</code> step inside a called sequence works as
+    today; an <code>Indexed</code> whose <code>template</code> is a <code>Sequence</code> step is refused.</li>
+</ul>
+
+<pre><code>Main
+├─ get_serial_number          PASS
+├─ PowerCycle      [group]    FAIL
+│   ├─ power_off              DONE
+│   ├─ measure_v              FAIL
+│   ├─ Settle      [group]    DONE
+│   │   └─ wait_2s            DONE
+│   └─ power_on  (teardown)   DONE
+├─ PowerCycle      [group]    PASS     ← second call, its own copy
+└─ final_check                PASS</code></pre>
+
+<!-- ------------------------------------------------------------------ -->
+<h2 id="format">2. Recipe format and loading</h2>
+
+<h3>2.1 Format</h3>
+<p>Every sequence is its own YAML document with today's structure (<code>sequence_name</code>,
+<code>description</code>, <code>steps</code>, <code>teardown_steps</code>). A call:</p>
+<pre><code>---
+sequence_name: Main
+description: The suite
+steps:
+  - steptype: Sequence
+    sequence_name: PowerCycle      # required; matched case-insensitively
+    description: optional          # row shows this, else the called sequence's description
+    skip: false                    # optional (common default)
+    continue_on_error: true        # optional; false = group ERROR/FAIL halts the run
+  - steptype: Wait
+    step_name: settle
+    wait_time: 1
+---
+sequence_name: PowerCycle
+description: Power the DUT off and on again
+steps:
+  - steptype: PythonModule
+    ...
+teardown_steps:
+  - ...</code></pre>
+<p>Refused on a <code>Sequence</code> step (<code>RecipeError</code>): <code>step_name</code>,
+<code>inputs</code>, <code>outputs</code>, <code>id</code>. The group's name everywhere — table row,
+log, <code>group_path</code> — is its <code>sequence_name</code>.</p>
+
+<h3>2.2 Loading (<code>recipe/recipe_parser.py</code>)</h3>
+<ol>
+  <li>All documents are read, normalized and validated as today; duplicate sequence names refused.</li>
+  <li><strong>Only <code>main_sequence</code> is built</strong>, recursively. At every
+    <code>Sequence</code> step (in <code>steps</code> or <code>teardown_steps</code>) the parser builds a
+    <strong>fresh copy</strong> of the called sequence — new <code>Step</code> objects, new UUIDs —
+    wrapped in a <code>SequenceStep</code>. Two calls = two independent copies.</li>
+  <li>Refused with a <code>RecipeError</code> naming sequence, position and chain:
+    <ul>
+      <li>a call to the main sequence (<code>main sequence 'Main' cannot be called</code>);</li>
+      <li>an unknown <code>sequence_name</code> (lists the sequences that exist);</li>
+      <li>recursion — a sequence reaching itself directly or indirectly
+        (<code>Main -&gt; A -&gt; B -&gt; A</code>). Repeated, non-recursive calls are
+        <strong>not</strong> a cycle;</li>
+      <li>an <code>Indexed</code> step whose <code>template</code> is a <code>Sequence</code> step.</li>
+    </ul>
+  </li>
+  <li>Sequences never reached from main (directly or indirectly): <strong>WARNING</strong>, the
+    recipe still loads.</li>
+  <li><code>Indexed</code> steps inside any sequence are expanded as today, before that sequence's
+    copy is built.</li>
+</ol>
+
+<h3>2.3 What loading produces</h3>
+<ul>
+  <li><code>Recipe.main_sequence</code> is the root of the tree that runs.</li>
+  <li><code>Recipe.sequences</code> still holds every sequence as written (Creator, verificator);
+    only main's tree executes.</li>
+  <li><code>Recipe.to_summary()</code> returns <strong>main only</strong>, depth-first. Each
+    <code>StepSummary</code> carries <code>depth</code> and <code>is_group</code>. A group's teardown
+    children come after its step children, as today.</li>
+</ul>
+
+<!-- ------------------------------------------------------------------ -->
+<h2 id="execution">3. Execution</h2>
+
+<p>Design choice <strong>A</strong> (agreed over B — a <code>SequenceStep</code> with its own
+<code>run()</code>): the step lifecycle stays written once.</p>
+
+<table>
+  <thead><tr><th></th><th>A — shared context + verdict method (chosen)</th><th>B — group step does it all itself</th></tr></thead>
+  <tbody>
+    <tr><td>Pros</td>
+      <td>Lifecycle (events, skip, error net, report record) in one place; halt is one flag beside the
+        Stop check at every depth; small diff.</td>
+      <td><code>Step</code> untouched; all group logic in one file.</td></tr>
+    <tr><td>Cons</td>
+      <td><code>step.md</code> §4 rule widened; <code>Runtime</code> gains state beside its seams, set and
+        restored around each group.</td>
+      <td>A second copy of the step lifecycle that must be kept identical by hand; halt/context as extra
+        arguments on <code>run()</code> / <code>run_steps()</code> / <code>run_sequence()</code>.</td></tr>
+  </tbody>
+</table>
+
+<ul>
+  <li><code>Runtime</code> gains plain <strong>state</strong> (not seams): <code>halted</code>, and a
+    nesting context — <code>depth</code>, <code>group_path</code>, <code>in_teardown</code> — that
+    <code>SequenceStep</code> enters and leaves around its child (context manager, restored on exit).</li>
+  <li><code>Step</code> gains one replaceable method: <strong>“decide my verdict”</strong> (default =
+    today's <code>process_outputs</code> judging). <code>SequenceStep</code> replaces
+    <code>_step()</code> and that method.</li>
+  <li><code>step.md</code> §4 rule becomes: a type replaces <code>_step()</code>; a type that contains
+    other steps may also replace the verdict method.</li>
+  <li><code>StepResult.subresults</code> is written by <code>SequenceStep</code> (the child results).</li>
+</ul>
+
+<h3>3.1 A group running</h3>
+<p><code>SequenceStep.run()</code> (inherited) emits <code>StepStarted</code> (row shows running),
+enters the group (depth + 1, path <code>Main/PowerCycle</code>), runs its copy through the existing
+<code>run_sequence()</code> — steps, then teardown — and leaves. Verdict: <strong>worst of all
+children, teardown included</strong> (the same rule as <code>run_sequence()</code> today; all SKIP →
+SKIP). Then <code>StepFinished</code> and <code>StepExecuted</code>.</p>
+
+<h3>3.2 Halt (<code>continue_on_error: false</code>)</h3>
+<ul>
+  <li>The failing step sets <code>runtime.halted</code>. Every step loop at every depth checks it
+    beside the stop check: the rest of the group, every enclosing group and the rest of main are
+    recorded SKIP (<code>Not run: the sequence stopped at step 'measure_v'.</code>).</li>
+  <li>Teardowns still run, <strong>innermost first</strong>: the group's, each enclosing group's,
+    then main's.</li>
+  <li>A halt is <strong>never STOP</strong>: the run ends with its real ERROR/FAIL
+    (<code>test_a_step_that_halts_the_run_reports_error_not_stop</code> stays valid).</li>
+  <li>The same flag on a <code>Sequence</code> step halts the run on the group's verdict.</li>
+</ul>
+<pre><code>Main
+├─ PowerCycle [group]   FAIL
+│   ├─ power_off        DONE
+│   ├─ measure_v        FAIL   (continue_on_error: false)
+│   ├─ check_i          SKIP
+│   └─ (td) power_on    DONE   ← teardown still runs
+├─ final_check          SKIP
+└─ (td main) ...        runs</code></pre>
+
+<h3>3.3 Stop</h3>
+<p>Unchanged semantics, checked between steps at every depth; remaining steps SKIP, all teardowns
+run, the run ends STOP.</p>
+
+<h3>3.4 Pause</h3>
+<ul>
+  <li>Held before the next real step at <strong>any depth</strong>; not before a group row itself
+    (the group's first child is where it holds).</li>
+  <li>Never held inside teardown at any depth, including a group called from teardown.</li>
+  <li>A pause with no step left to hold before lapses <strong>only when main's steps end</strong>
+    (<code>drop_pending_pause</code> at depth 0 only), not at a group's end.</li>
+</ul>
+
+<h3>3.5 Teardown</h3>
+<p>Everything under a <code>teardown_steps</code> list, at any depth, runs to the end: no hold, no
+Stop, no halt, and a failing step does not skip its siblings. <code>in_teardown</code> is inherited
+by groups called from teardown.</p>
+
+<h3>3.6 <code>skip: true</code> on a Sequence step</h3>
+<p>The group's main steps are recorded SKIP at every depth; its <strong>teardown still runs</strong>.
+The group verdict is the normal aggregate (a DONE teardown → DONE; no teardown → SKIP).</p>
+
+<h3>3.6a A group the run never reaches <small>(added 2026-09-17)</small></h3>
+<p>When Stop or a halt happened before a group, the group row, every row inside it at every depth
+<strong>and its teardown rows</strong> are recorded SKIP with the run's reason. Nothing inside runs —
+nothing was set up. (Unlike <code>skip: true</code>, which is the author's decision and still runs the
+teardown.)</p>
+
+<h3>3.6b Counting <small>(added 2026-09-17)</small></h3>
+<p>Totals count <strong>real steps only</strong>, at every depth; group rows are not counted: the
+<code>Sequence '…' finished</code> log line, the run summary and <code>RunFinished.outcomes</code>
+(every real step, flat, in execution order).</p>
+
+<h3>3.6c Step-layer hooks, as implemented</h3>
+<p>Design A needs one more hook than first described, because a group the run never reaches must still
+settle its children's rows. A type that contains steps sets <code>contains_steps = True</code> and
+replaces <code>_step()</code>, <code>_verdict()</code> and <code>_skip_contents()</code>; it keeps its
+child results on <code>child_results</code>, which <code>run()</code> copies to
+<code>StepResult.subresults</code>.</p>
+
+<h3>3.7 Logs</h3>
+<p>Wording unchanged, indented two spaces per depth level:</p>
+<pre><code>Step 2/3 'PowerCycle' started.
+  Sequence 'PowerCycle' started: 2 steps.
+  Step 1/2 'power_off' DONE (0.2 s).
+  Step 2/2 'measure_v' FAIL (1.1 s) - measure_v = 4.2, expected between 4.9 and 5.1 ...
+  Teardown step 1/1 'power_on' DONE (0.3 s).
+  Sequence 'PowerCycle' finished: FAIL - 2 completed, 1 failed, 1.6 s.
+Step 2/3 'PowerCycle' FAIL (1.6 s).</code></pre>
+<p><code>SequenceStarted</code> / <code>SequenceFinished</code> are still emitted per group (they come
+from <code>run_sequence()</code>); frontends log them at DEBUG only.</p>
+
+<!-- ------------------------------------------------------------------ -->
+<h2 id="messages">4. Messages, entry point, frontends, report</h2>
+
+<h3>4.1 Messages (<code>messages/</code> — plain values, pickle-safe)</h3>
+<table>
+  <thead><tr><th>Message</th><th>Change</th></tr></thead>
+  <tbody>
+    <tr><td><code>StepSummary</code></td><td>gains <code>depth: int</code>, <code>is_group: bool</code>; a group row's <code>step_name</code> is its <code>sequence_name</code></td></tr>
+    <tr><td><code>StepExecuted</code></td><td>gains <code>group_path: str</code> (e.g. <code>Main/PowerCycle</code>)</td></tr>
+    <tr><td><code>StepStarted</code>, <code>StepFinished</code>, <code>StepOutcome</code></td><td>unchanged; rows still keyed by <code>step_id</code></td></tr>
+    <tr><td><code>StartSequence(sequence_name)</code></td><td>→ <strong><code>StartRun()</code></strong>, no fields</td></tr>
+    <tr><td><code>RunSequence(recipe, sequence_name)</code></td><td>→ <strong><code>RunSequence(recipe)</code></strong></td></tr>
+    <tr><td><code>RecipeLoaded</code></td><td>carries <code>main_sequence</code> and a single <code>SequenceSummary</code> — main's tree</td></tr>
+  </tbody>
+</table>
+<p>Unions, <code>match</code> handlers, <code>messages.md</code> and <code>test_messages.py</code> follow.</p>
+
+<h3>4.2 Entry point</h3>
+<p>CORE and the Sequencer always run <code>recipe.main_sequence</code>. The “no such sequence” branch
+in <code>Sequencer.execute_sequence()</code> goes.</p>
+
+<h3>4.3 GUI</h3>
+<ul>
+  <li><code>top_bar.py</code>: sequence combo removed; Start runs main.</li>
+  <li><code>gui.py</code>: <code>show_selected_sequence</code> removed; on <code>RecipeLoaded</code> the
+    table shows main's tree; <code>open_recipe_and_start()</code> loses its sequence argument.</li>
+  <li><code>step_table.py</code>: still a <code>QTableWidget</code>. Group rows bold; name indented by
+    <code>depth</code>. Group rows go running → verdict like any row. Hover YAML and highlighting per
+    row as today.</li>
+</ul>
+<pre><code>Step                         Result
+------------------------------------
+get_serial_number            PASS
+▼ PowerCycle                 FAIL
+    power_off                DONE
+    measure_v                FAIL
+    ▼ Settle                 DONE
+        wait_2s              DONE
+    power_on (teardown)      DONE
+final_check                  PASS</code></pre>
+
+<h3>4.4 CLI</h3>
+<p><code>start_sequence &lt;name&gt;</code> → <code>start</code>. The recipe summary lists main only.
+Step lines are indented by depth (the CLI keeps a <code>step_id → depth</code> map from
+<code>RecipeLoaded</code>).</p>
+
+<h3>4.5 API and launcher — <span class="bad">breaking change</span></h3>
+<p><code>--sequence</code> removed (<code>startup.py</code>, headless). <code>Pts.run()</code> and
+<code>open_gui()</code> lose <code>sequence_name</code>. <code>api_showcase.py</code> and
+<code>api.md</code> updated.</p>
+
+<h3>4.6 Report (<code>report/report.py</code>)</h3>
+<ul>
+  <li>New column <strong><code>group_path</code></strong> after <code>sequence_name</code>, from
+    <code>StepExecuted</code>.</li>
+  <li><strong>Leaf rows only</strong>: a <code>StepExecuted</code> whose <code>step_type</code> is
+    <code>SequenceStep</code> is not written.</li>
+  <li><code>sequence_name</code> on a row = the sequence the step is defined in (last element of
+    <code>group_path</code>), no longer “the last <code>SequenceStarted</code>” (wrong after a group
+    ends).</li>
+  <li><code>report.html</code> shows <code>group_path</code>; regenerating the HTML from the CSV still
+    works.</li>
+</ul>
+<pre><code>group_path            step_name     result
+Main                  get_serial    PASS
+Main/PowerCycle       power_off     DONE
+Main/PowerCycle       measure_v     FAIL</code></pre>
+
+<h3>4.7 GUI results panel <small>(added 2026-09-17)</small></h3>
+<p>The results tree nests steps under <strong>group nodes</strong>: a group is a node with its verdict
+chip; its steps and nested groups are its children, each step keeping Inputs / Outputs as today. The
+panel learns groups and depth from the <code>StepSummary</code> rows of <code>RecipeLoaded</code>.
+PASS / FAIL / TOTAL badges count real steps only.</p>
+
+<!-- ------------------------------------------------------------------ -->
+<h2 id="creator">5. Recipe Creator and verificator</h2>
+
+<h3>5.1 Verificator (<code>verificator.py</code>, per the sync rule in <code>recipe_creator.md</code>)</h3>
+<table>
+  <thead><tr><th>Check</th><th>Severity</th></tr></thead>
+  <tbody>
+    <tr><td><code>sequence_name</code> required; <code>step_name</code> / <code>inputs</code> / <code>outputs</code> / <code>id</code> refused</td><td class="bad">error</td></tr>
+    <tr><td>Unknown <code>sequence_name</code></td><td class="bad">error</td></tr>
+    <tr><td>Call to the main sequence</td><td class="bad">error</td></tr>
+    <tr><td>Recursion (with the chain)</td><td class="bad">error</td></tr>
+    <tr><td><code>Indexed</code> template is a <code>Sequence</code> step</td><td class="bad">error</td></tr>
+    <tr><td>Sequence never reached from main</td><td>warning</td></tr>
+  </tbody>
+</table>
+<p>Line numbers point at the <code>sequence_name:</code> line.</p>
+
+<h3>5.2 Creator UI</h3>
+<ul>
+  <li>The add-step menu lists <code>STEP_TYPE_REQUIRED</code> already → <code>Sequence</code> appears.</li>
+  <li><code>rc_model._default_step()</code> and <code>ListStepView</code> / <code>CardStepView</code> /
+    <code>PanelsStepView</code> assume <code>step_name</code>; for a <code>Sequence</code> step they show
+    <code>[Sequence] PowerCycle</code> and the default step writes no <code>step_name</code>.</li>
+  <li><code>StepFormWidget</code>: <code>sequence_name</code> is a dropdown of the recipe's other
+    sequence names (main excluded).</li>
+  <li><strong>Call-tree preview</strong>: read-only panel, main → groups → nested groups, rebuilt on
+    model change; repeated calls listed each time; recursion marked red.</li>
+  <li><strong>Go to called sequence</strong>: a button on the Sequence step form, and double-click in
+    the tree, switch the editor to that sequence document.</li>
+</ul>
+
+<!-- ------------------------------------------------------------------ -->
+<h2 id="docs">6. Documentation</h2>
+<p>Updated in the same change as the code it describes.</p>
+<ul>
+  <li><code>step.md</code> §1 table, §2.8 (dropped → implemented, dated, why), §3.1 / §3.7 (halt,
+    pause at depth), §4 (widened rule).</li>
+  <li><code>recipe.md</code>, <code>sequencer.md</code>, <code>messages.md</code>, <code>gui.md</code>,
+    <code>hmi.md</code>, <code>api.md</code>, <code>launcher.md</code>, <code>report.md</code>,
+    <code>recipe_creator.md</code>.</li>
+  <li><code>rules.py</code> comments (the <code>SEQUENCE_DEFAULTS</code> note on
+    <code>SequenceStep</code> being dropped).</li>
+  <li><code>recipe_guide.html</code> (new Sequence step section; §12), <code>usage_manual.html</code>
+    (no dropdown, <code>start</code>, no <code>--sequence</code>, <code>group_path</code> column),
+    <code>migration_instructions.html</code> (old <code>sequence: {type: internal, name}</code> → new
+    form), roadmap status.</li>
+  <li>Demo recipe <code>resources/recipes/sequencestep_demo.yml</code>: main calls a group twice, a
+    nested group, a group in teardown, an <code>Indexed</code> inside a group.</li>
+</ul>
+
+<!-- ------------------------------------------------------------------ -->
+<h2 id="tests">7. Tests</h2>
+<ul>
+  <li><strong>Parser:</strong> tree built; fresh UUIDs per call; repeated calls allowed; refusals
+    (unknown, main, recursion, Indexed template); unreachable warning.</li>
+  <li><strong>Step layer:</strong> group verdict incl. teardown; halt at depth (teardowns innermost
+    first, real ERROR/FAIL not STOP); Stop at depth; pause at depth, lapsing only at main's end; skip
+    with teardown running; a group in teardown runs to the end; log indentation.</li>
+  <li><strong>Elsewhere:</strong> summary <code>depth</code> / <code>is_group</code>; messages
+    round-trip; report <code>group_path</code>, leaf rows only, <code>sequence_name</code> correct
+    after a group; CLI <code>start</code>; verificator; Creator model.</li>
+  <li>All three quality gates: <code>pytest tests</code>, <code>ruff check src tests</code>,
+    <code>mypy</code>.</li>
+</ul>
+
+<!-- ------------------------------------------------------------------ -->
+<h2 id="stages">8. Delivery stages</h2>
+<p>Each stage passes the quality gates, is reviewable alone, and updates its module context files.
+Nothing is committed by Claude; the user reviews and commits each stage.</p>
+<p>Stage 1 is transitional in two ways, both closed by stage 2: every sequence document is still built
+(each as the root of its own tree), so the existing sequence dropdown keeps working; and the “never
+called from main” warning is added in stage 2, when only main can start.</p>
+<table>
+  <thead><tr><th>Stage</th><th>Scope</th></tr></thead>
+  <tbody>
+    <tr><td class="stage">1 — Engine</td>
+      <td>Rules, parser, <code>SequenceStep</code>, Runtime context, verdict method, halt, pause, logs;
+        the payload fields the engine fills (<code>StepSummary.depth</code> / <code>is_group</code>,
+        <code>StepExecuted.group_path</code>, defaulted so existing senders keep working); tests;
+        <code>step.md</code>, <code>recipe.md</code>, <code>messages.md</code>.</td></tr>
+    <tr><td class="stage">2 — Only main starts</td>
+      <td><code>StartRun</code>, <code>RunSequence(recipe)</code>, CORE / Sequencer,
+        <code>hmi_client</code>, GUI combo and <code>open_recipe_and_start</code>, CLI <code>start</code>,
+        API / launcher / headless. One stage because removing <code>StartSequence</code> breaks every
+        caller at once.</td></tr>
+    <tr><td class="stage">3 — Display + report</td>
+      <td>Step table indentation and bold groups, CLI indentation, report <code>group_path</code> /
+        leaf rows / <code>sequence_name</code>.</td></tr>
+    <tr><td class="stage">4 — Verificator + Creator UI</td>
+      <td>Verificator rules; Sequence step form with dropdown, call-tree preview, go to called
+        sequence.</td></tr>
+    <tr><td class="stage">5 — Docs sweep + demo</td>
+      <td><code>recipe_guide.html</code>, <code>usage_manual.html</code>,
+        <code>migration_instructions.html</code>, roadmap; demo recipe.</td></tr>
+  </tbody>
+</table>
+
+</main>
+</body>
+</html>

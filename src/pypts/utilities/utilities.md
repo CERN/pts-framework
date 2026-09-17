@@ -21,7 +21,21 @@ Two decorators, two functions — pick carefully:
 | `report_error(self, exc, severity=…)` | Recognised exceptions | Sends `ModuleError`, does not raise |
 | `report_problem(self, message, severity=…)` | Refusals / bad state | Sends `ModuleError`, does not raise |
 
-All four require the decorated/calling class to have a `core: QueueWrapper` attribute.
+All four send through the instance's `core` attribute (its `QueueWrapper` outbox to CORE),
+via `send_module_error()`. An instance **without** `core` does not raise: the failure is
+written straight to the log instead (an ERROR line plus the DEBUG details and traceback), so
+a driver or a half-built object under test still records what went wrong.
+
+Both decorators take two optional arguments: `module_name` (the `ModuleError.source`;
+defaults to the decorated function's module, resolved once at decoration time) and
+`severity` (default `ErrorSeverity.ERROR`). `operation` is always the function's
+`__qualname__`. `report_error()` / `report_problem()` take `severity`, `source` and
+`operation` as keyword arguments; `source` defaults to the instance's class module.
+`report_error()` must be called inside the `except` block — the traceback comes from
+`traceback.format_exc()`.
+
+Nothing here writes the operator's line in the normal path: CORE logs the `ModuleError` it
+receives (`core/core.md` → *Error reporting*). `message` is therefore operator-facing text.
 
 The decorators are the net for **unexpected** failures. For **recognised** failures, handle
 them with `except SpecificError:` and call `report_error` / `report_problem` explicitly.
@@ -51,19 +65,38 @@ Two rules that follow from it:
 
 ### `heartbeat_manager.py`
 
-- `HeartbeatManager` — sends a `Heartbeat` at `DEFAULT_INTERVAL_S` (1.0 s). Each module
-  that needs to be watched creates one and calls `tick()` in its event loop.
-- Module name constants: `HMI`, `SEQUENCER`, `REPORT` — these must match the keys in
-  CORE's heartbeat tables. They are defined here (not in core.py) so the Debug Monitor can
-  import just the constants without pulling in the whole engine.
-- Timeout constants: `HEARTBEAT_TIMEOUT_S` (5.0 s), `HEARTBEAT_SILENCE_LIMIT_S` (15.0 s).
+Both halves of the heartbeat protocol, kept together so they cannot drift.
+
+- `HeartbeatManager(outbox, source, interval_s=DEFAULT_INTERVAL_S)` — the sending half.
+  `tick()` is cheap enough to call every loop iteration and sends a `Heartbeat` at most once
+  per `DEFAULT_INTERVAL_S` (1.0 s). Used by the Sequencer, the Report and the HMI towards
+  CORE, and by CORE towards the HMI.
+- `HeartbeatWatch(source=CORE, timeout_s=HEARTBEAT_TIMEOUT_S, fatal_s=HEARTBEAT_FATAL_S)` —
+  the receiving half used by the **HMI** to watch CORE (`HmiClient.check_core_is_alive()`).
+  `note()` on each beat, `silent_for()`, `is_silent()` (past the timeout — worth reporting),
+  `is_lost()` (past the fatal limit — worth acting on) and a `reported` flag for one report
+  per outage. It starts counting at construction, not at the epoch. CORE does not use it: it
+  tracks its three modules in its own `_ModuleState` table.
+- Module name constants: `HMI`, `SEQUENCER`, `REPORT` (the modules CORE watches, and the keys
+  of its table) and `CORE` (the source of CORE's own heartbeat to the HMI). Defined here, not
+  in `core.py`, so the Debug Monitor can import them without loading the engine.
+- Timeout constants: `HEARTBEAT_TIMEOUT_S` (5.0 s — a WARNING, costs nothing if wrong) and
+  `HEARTBEAT_FATAL_S` (15.0 s — ends the run). Deliberately different numbers: the two
+  thresholds do different jobs.
 
 ### `local_storage.py`
 
-- `get_log_file_path(logs_dir)` — returns the timestamped log file path for this run.
+Naming the files pypts writes; it no longer decides *where* they go (that is the
+configuration's `paths.logs_dir`, passed in by the caller, so this module stays free of the
+configuration).
+
+- `get_log_file_path(logs_dir)` — creates `logs_dir` and returns
+  `<logs_dir>/pypts_<YYYYmmdd_HHMMSS>.log` as a string, in naive local time (the Logger and
+  the Debug Monitor both use local time). `LOG_FILE_PREFIX = "pypts"`.
 - `ensure_folder_exists(path)` — `os.makedirs(..., exist_ok=True)` wrapper.
-- The name and location of the log file are set once by the launcher and shared with all
-  processes. `local_storage` must not be called more than once per run for the log path.
+- The timestamp is taken at call time, so the launcher calls `get_log_file_path()` exactly
+  once per run (`launcher/startup.py`) and hands the path to every process. The Debug
+  Monitor's log discovery (`debug_monitor/log_source.py`) relies on this naming.
 
 ### `common.py`
 
@@ -73,19 +106,28 @@ neither side may import the other), `ignore_keyboard_interrupt()`, `convert_stri
 and `describe_value()` / `describe_step_values()` - a step's text values as the CLI, headless
 mode and the step table's tooltip show them (`outputs: voltage = 12.1 (range 11 .. 13)`, M-3).
 
-### `data_removal.py`
-
-Utilities for sanitising step inputs before they appear in the log or CSV — placeholder;
-the redaction seam is not yet designed (see `plans/README.md` deferred items).
-
 ### `recent_recipes.py`
 
-Maintains a list of recently opened recipe file paths in local storage. Used by the GUI to
-populate the "recent recipes" menu.
+`RecentRecipes` — the GUI's "recent recipes" list. The GUI builds one and keeps it; it holds
+no Qt and no messages.
+
+- **State, not a cache**: stored as JSON at `file_locations.recent_recipes_path()` (under
+  `state_dir()`), not in a cache directory that cleanup tools may wipe.
+- **References, not copies**: each `RecentEntry(path, recipe_name, opened_at)` is a resolved
+  path; opening one re-reads the file from disk. At most `MAX_ENTRIES` (10), newest first.
+- `entries()`, `remember(path, name)` (called only after CORE answered `RecipeLoaded`),
+  `forget(path)` (a remembered file that is gone), `clear()`.
+- **Discarded, never repaired**: an unreadable file, or one whose `version` is not
+  `STORE_VERSION` (1), is dropped for the run with a WARNING; one unusable entry costs only
+  itself. Saves are atomic (temporary file + `os.replace`). **Nothing here raises.**
 
 ## Rules
 
-- None of these files may import from `core/`, `sequencer/`, `report/`, `hmi/`, or
-  `launcher/`. They are infrastructure; they must not depend on business modules.
-- `heartbeat_manager.py` imports almost nothing on purpose — the Debug Monitor needs its
-  constants without loading the rest of the engine.
+- None of these files may import from `core/`, `sequencer/`, `report/`, `recipe/`, `step/`,
+  `hmi/`, `api/` or `launcher/`. They are infrastructure; they must not depend on business
+  modules. What they do import today: `logger/log.py` (`error_handling`, `recent_recipes`),
+  `messages/common_messages.py` (`error_handling`, `heartbeat_manager`) and
+  `config_handler/file_locations.py` (`recent_recipes`).
+- `heartbeat_manager.py` imports nothing of pypts but `common_messages` on purpose — the
+  Debug Monitor needs its constants without loading the rest of the engine.
+- `common.py` and `local_storage.py` import nothing of pypts.

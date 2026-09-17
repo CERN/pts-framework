@@ -15,6 +15,7 @@ step type that blocks on a person: UserInteractionStep asks through
 Runtime.ask, so a test hands it a callable that answers.
 """
 
+import logging
 import uuid
 
 import pytest
@@ -31,14 +32,17 @@ from pypts.messages.run_events import (
 from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
+from pypts.step.sequence_step import SequenceStep
 from pypts.step.step import (
     MAX_LISTED_ITEMS,
     MAX_VALUE_CHARS,
     Step,
     StepResult,
     build_fail_reason,
+    count_verdicts,
     describe_expectation,
     describe_failed_check,
+    real_step_results,
     render_value,
     run_sequence,
 )
@@ -86,11 +90,11 @@ class Notes(Step):
 
 
 class FakeSequence:
-    """The four attributes run_sequence() reads off a Sequence, and nothing else."""
+    """The attributes run_sequence() and SequenceStep read off a Sequence, and nothing else."""
 
-    def __init__(self, name="Main", steps=(), teardown_steps=()):
+    def __init__(self, name="Main", steps=(), teardown_steps=(), description=""):
         self.name = name
-        self.locals = locals if locals is not None else {}
+        self.description = description
         self.steps = list(steps)
         self.teardown_steps = list(teardown_steps)
 
@@ -989,6 +993,415 @@ def test_a_sequence_writes_the_runs_globals_and_nothing_else():
     run_sequence(runtime, sequence)
     assert runtime.globals == {"counter": 1}
     assert not hasattr(runtime, "local_stack")
+
+
+class SeesTeardown(Step):
+    """Records whether it ran inside a teardown list."""
+
+    def __init__(self, seen, **kwargs):
+        super().__init__(**kwargs)
+        self.seen = seen
+
+    def _step(self, runtime, step_input):
+        self.seen.append((self.name, runtime.in_teardown))
+        return {}
+
+
+# --------------------------------------------------------------------------
+# Nesting state - what a step list needs to know about where it runs
+# --------------------------------------------------------------------------
+
+
+def test_a_bare_runtime_is_inside_no_sequence():
+    runtime = Runtime()
+    assert runtime.group_path == ""
+    assert runtime.depth == 0
+    assert runtime.in_teardown is False
+    assert runtime.halt_reason == ""
+
+
+def test_entering_a_sequence_extends_the_path_and_the_depth():
+    """The run's first sequence is depth 0; every sequence it calls is one deeper."""
+    runtime = Runtime()
+    with runtime.entering("Main"):
+        assert (runtime.group_path, runtime.depth) == ("Main", 0)
+        with runtime.entering("PowerCycle"):
+            assert (runtime.group_path, runtime.depth) == ("Main/PowerCycle", 1)
+        assert (runtime.group_path, runtime.depth) == ("Main", 0)
+    assert (runtime.group_path, runtime.depth) == ("", 0)
+
+
+def test_entering_restores_the_context_when_the_block_raises():
+    runtime = Runtime()
+    with pytest.raises(RuntimeError), runtime.entering("Main"):
+        raise RuntimeError("boom")
+    assert (runtime.group_path, runtime.depth) == ("", 0)
+
+
+def test_a_step_record_says_which_sequence_it_ran_in():
+    events = []
+    runtime = Runtime(emit=events.append)
+    sequence = FakeSequence(name="Main", steps=[ReturnsDict(step_name="one", payload={})])
+    run_sequence(runtime, sequence)
+
+    executed = [event for event in events if isinstance(event, StepExecuted)]
+    assert executed[0].group_path == "Main"
+
+
+def test_a_halt_is_seen_by_every_later_step_list_sharing_the_runtime():
+    """A halt inside a group must end the run, not just the group's list."""
+    ran = []
+    runtime = Runtime()
+    Step.run_steps(runtime, [Raises(step_name="critical", continue_on_error=False)])
+    results = Step.run_steps(runtime, [Notes(ran, step_name="later")])
+
+    assert ran == []
+    assert results[0].result is ResultType.SKIP
+    assert "stopped at step 'critical'" in results[0].error_info
+
+
+def test_a_halt_never_reaches_a_teardown_list():
+    ran = []
+    runtime = Runtime()
+    runtime.halt_reason = "Not run: the sequence stopped at step 'critical'."
+    Step.run_steps(runtime, [Notes(ran, step_name="cleanup")], run_to_end=True)
+    assert ran == ["cleanup"]
+
+
+def test_a_skip_reason_given_up_front_records_every_step_skip():
+    ran = []
+    results = Step.run_steps(
+        Runtime(),
+        [Notes(ran, step_name="one"), Notes(ran, step_name="two")],
+        skip_reason="Not run: because.",
+    )
+    assert ran == []
+    assert [r.result for r in results] == [ResultType.SKIP, ResultType.SKIP]
+    assert [r.error_info for r in results] == ["Not run: because.", "Not run: because."]
+
+
+def test_teardown_state_is_set_while_teardown_runs_and_restored_after():
+    seen = []
+    runtime = Runtime()
+    sequence = FakeSequence(
+        steps=[SeesTeardown(seen, step_name="main")],
+        teardown_steps=[SeesTeardown(seen, step_name="cleanup")],
+    )
+    run_sequence(runtime, sequence)
+
+    assert seen == [("main", False), ("cleanup", True)]
+    assert runtime.in_teardown is False
+
+
+def test_a_sequence_run_inside_teardown_runs_to_the_end():
+    """A group called from teardown inherits run-to-end: Stop does not skip it."""
+    ran = []
+    runtime = Runtime(should_stop=lambda: True)
+    runtime.in_teardown = True
+    run_sequence(runtime, FakeSequence(steps=[Notes(ran, step_name="inside teardown")]))
+    assert ran == ["inside teardown"]
+
+
+def test_only_the_runs_first_sequence_drops_a_pending_pause():
+    """A pause pressed during a group's last step still holds before main's next step."""
+    happened = []
+    runtime = Runtime(drop_pending_pause=lambda: happened.append("drop"))
+    inner = FakeSequence(name="Inner", steps=[Notes(happened, step_name="inner")])
+    with runtime.entering("Main"):
+        run_sequence(runtime, inner)
+    assert happened == ["inner"]
+
+
+def test_lines_inside_a_called_sequence_are_indented(caplog):
+    runtime = Runtime()
+    inner = FakeSequence(name="Inner", steps=[ReturnsDict(step_name="one", payload={})])
+    with caplog.at_level(logging.INFO), runtime.entering("Main"):
+        run_sequence(runtime, inner)
+    messages = [record.getMessage() for record in caplog.records]
+
+    assert "  Sequence 'Inner' started: 1 steps." in messages
+    assert any(message.startswith("  Step 1/1 'one' DONE") for message in messages)
+    assert any(message.startswith("  Sequence 'Inner' finished: DONE") for message in messages)
+
+
+def test_real_step_results_of_plain_steps_are_the_steps_themselves():
+    results = Step.run_steps(Runtime(), [Notes([], step_name="a"), Notes([], step_name="b")])
+    assert real_step_results(results) == results
+
+
+# --------------------------------------------------------------------------
+# SequenceStep - a called sequence runs as one group
+# --------------------------------------------------------------------------
+
+
+def group(name, steps=(), teardown_steps=(), description="", **kwargs):
+    """What the parser builds for one call: a SequenceStep over its own copy."""
+    sequence = FakeSequence(
+        name=name, steps=steps, teardown_steps=teardown_steps, description=description
+    )
+    return SequenceStep(sequence_name=name.lower(), sequence=sequence, **kwargs)
+
+
+def test_a_sequence_step_is_named_after_the_sequence_and_borrows_its_description():
+    step = group("PowerCycle", description="Off and on again.")
+    assert step.name == "PowerCycle"
+    assert step.description == "Off and on again."
+    assert step.contains_steps is True
+
+
+def test_a_description_on_the_call_wins_over_the_sequences():
+    sequence = FakeSequence(name="PowerCycle", description="Off and on again.")
+    step = SequenceStep(sequence_name="PowerCycle", sequence=sequence, description="Before cal.")
+    assert step.description == "Before cal."
+
+
+@pytest.mark.parametrize("key", ["step_name", "inputs", "outputs", "id"])
+def test_a_sequence_step_refuses_the_keys_a_call_cannot_carry(key):
+    with pytest.raises(TypeError):
+        SequenceStep(sequence_name="G", sequence=FakeSequence(name="G"), **{key: "x"})
+
+
+def test_the_registry_builds_a_sequence_step():
+    step = build_step(
+        {"steptype": "Sequence", "sequence_name": "g", "sequence": FakeSequence(name="G")}
+    )
+    assert isinstance(step, SequenceStep)
+    assert step.name == "G"
+
+
+def test_a_group_reports_as_one_row_around_its_own_steps():
+    events = []
+    runtime = Runtime(emit=events.append)
+    step = group(
+        "G",
+        steps=[ReturnsDict(step_name="inner", payload={})],
+        teardown_steps=[ReturnsDict(step_name="cleanup", payload={})],
+    )
+    Step.run_steps(runtime, [step])
+
+    order = []
+    for event in events:
+        if isinstance(event, StepStarted):
+            order.append(("started", event.step_name))
+        elif isinstance(event, StepFinished):
+            order.append(("finished", event.outcome.step_name))
+    assert order == [
+        ("started", "G"),
+        ("started", "inner"),
+        ("finished", "inner"),
+        ("started", "cleanup"),
+        ("finished", "cleanup"),
+        ("finished", "G"),
+    ]
+
+
+def test_a_group_verdict_is_the_worst_of_its_steps_including_teardown():
+    passes = ReturnsDict(
+        step_name="ok", payload={"ok": True}, outputs={"ok": {"type": "passfail"}}
+    )
+    step = group("G", steps=[passes], teardown_steps=[Raises(step_name="bad cleanup")])
+    results = Step.run_steps(Runtime(), [step])
+
+    assert results[0].result is ResultType.ERROR
+    assert [r.result for r in results[0].subresults] == [ResultType.PASS, ResultType.ERROR]
+
+
+def test_a_failing_group_says_which_step_failed():
+    results = Step.run_steps(Runtime(), [group("G", steps=[fails("measure_v")])])
+    assert results[0].result is ResultType.FAIL
+    assert "'measure_v' FAIL" in results[0].error_info
+
+
+def test_a_halt_inside_a_group_ends_the_run_and_every_teardown_still_runs():
+    ran = []
+    inner = group(
+        "PowerCycle",
+        steps=[fails("measure_v", continue_on_error=False), Notes(ran, step_name="check_i")],
+        teardown_steps=[Notes(ran, step_name="power_on")],
+    )
+    main = FakeSequence(
+        steps=[inner, Notes(ran, step_name="final_check")],
+        teardown_steps=[Notes(ran, step_name="main cleanup")],
+    )
+    result, results = run_sequence(Runtime(), main)
+
+    assert ran == ["power_on", "main cleanup"]
+    assert result is ResultType.FAIL
+    assert [r.result for r in results] == [ResultType.FAIL, ResultType.SKIP, ResultType.DONE]
+    assert [r.result for r in results[0].subresults] == [
+        ResultType.FAIL,
+        ResultType.SKIP,
+        ResultType.DONE,
+    ]
+    assert "stopped at step 'measure_v'" in results[1].error_info
+
+
+def test_continue_on_error_false_on_a_group_halts_on_the_groups_verdict():
+    ran = []
+    halting_group = group("G", steps=[fails("x")], continue_on_error=False)
+    results = Step.run_steps(Runtime(), [halting_group, Notes(ran, step_name="later")])
+
+    assert ran == []
+    assert "stopped at step 'G'" in results[1].error_info
+
+
+class PressesStop(Step):
+    """A step that presses Stop while it runs, through a flag the test owns."""
+
+    def __init__(self, stopped, **kwargs):
+        super().__init__(**kwargs)
+        self.stopped = stopped
+
+    def _step(self, runtime, step_input):
+        self.stopped.append(True)
+        return {}
+
+
+def test_a_stop_inside_a_group_skips_the_rest_everywhere_and_runs_every_teardown():
+    ran = []
+    stopped = []
+    inner = group(
+        "G",
+        steps=[PressesStop(stopped, step_name="presses stop"), Notes(ran, step_name="inner two")],
+        teardown_steps=[Notes(ran, step_name="inner cleanup")],
+    )
+    main = FakeSequence(
+        steps=[inner, Notes(ran, step_name="outer two")],
+        teardown_steps=[Notes(ran, step_name="outer cleanup")],
+    )
+    run_sequence(Runtime(should_stop=lambda: bool(stopped)), main)
+
+    assert ran == ["inner cleanup", "outer cleanup"]
+
+
+def test_the_run_is_held_before_steps_inside_a_group_but_not_before_the_group():
+    holds = []
+    runtime = Runtime(hold_if_paused=lambda step_name, position, total: holds.append(step_name))
+    inner = group(
+        "G", steps=[Notes([], step_name="inner")], teardown_steps=[Notes([], step_name="c")]
+    )
+    main = FakeSequence(steps=[Notes([], step_name="one"), inner])
+    run_sequence(runtime, main)
+    assert holds == ["one", "inner"]
+
+
+def test_a_pending_pause_lapses_only_when_the_runs_main_steps_end():
+    happened = []
+    runtime = Runtime(drop_pending_pause=lambda: happened.append("drop"))
+    main = FakeSequence(
+        steps=[
+            group(
+                "G",
+                steps=[Notes(happened, step_name="inner")],
+                teardown_steps=[Notes(happened, step_name="inner cleanup")],
+            )
+        ],
+        teardown_steps=[Notes(happened, step_name="outer cleanup")],
+    )
+    run_sequence(runtime, main)
+    assert happened == ["inner", "inner cleanup", "drop", "outer cleanup"]
+
+
+def test_a_group_called_from_teardown_runs_to_the_end_and_is_never_held():
+    ran = []
+    holds = []
+    runtime = Runtime(
+        should_stop=lambda: True,
+        hold_if_paused=lambda step_name, position, total: holds.append(step_name),
+    )
+    main = FakeSequence(
+        steps=[Notes(ran, step_name="main")],
+        teardown_steps=[
+            group(
+                "Shutdown",
+                steps=[
+                    Raises(step_name="bad", continue_on_error=False),
+                    Notes(ran, step_name="after bad"),
+                ],
+            )
+        ],
+    )
+    run_sequence(runtime, main)
+
+    assert ran == ["after bad"]
+    assert holds == ["main"]
+
+
+def test_skip_true_on_a_group_skips_its_steps_but_runs_its_teardown():
+    ran = []
+    step = group(
+        "G",
+        steps=[Notes(ran, step_name="inner")],
+        teardown_steps=[Notes(ran, step_name="cleanup")],
+        skip=True,
+    )
+    results = Step.run_steps(Runtime(), [step])
+
+    assert ran == ["cleanup"]
+    assert results[0].result is ResultType.DONE
+    assert [r.result for r in results[0].subresults] == [ResultType.SKIP, ResultType.DONE]
+    assert "marked to skip" in results[0].subresults[0].error_info
+
+
+def test_a_group_the_run_never_reaches_settles_every_row_and_runs_nothing():
+    ran = []
+    events = []
+    nested = group("Nested", steps=[Notes(ran, step_name="deep")])
+    steps = [
+        Raises(step_name="critical", continue_on_error=False),
+        group(
+            "G",
+            steps=[Notes(ran, step_name="inner"), nested],
+            teardown_steps=[Notes(ran, step_name="cleanup")],
+        ),
+    ]
+    Step.run_steps(Runtime(emit=events.append), steps)
+
+    finished = [event.outcome for event in events if isinstance(event, StepFinished)]
+    assert ran == []
+    assert [outcome.step_name for outcome in finished] == [
+        "critical",
+        "inner",
+        "deep",
+        "Nested",
+        "cleanup",
+        "G",
+    ]
+    assert all(outcome.result is ResultType.SKIP for outcome in finished[1:])
+
+
+def test_rows_inside_a_group_say_where_they_ran():
+    events = []
+    main = FakeSequence(
+        name="Main", steps=[group("G", steps=[ReturnsDict(step_name="inner", payload={})])]
+    )
+    run_sequence(Runtime(emit=events.append), main)
+
+    paths = {e.outcome.step_name: e.group_path for e in events if isinstance(e, StepExecuted)}
+    assert paths == {"inner": "Main/G", "G": "Main"}
+
+
+def test_totals_count_the_steps_inside_groups_and_not_the_groups():
+    steps = [
+        group("G", steps=[Notes([], step_name="a"), fails("b")]),
+        Notes([], step_name="c"),
+    ]
+    results = Step.run_steps(Runtime(), steps)
+    real = real_step_results(results)
+
+    assert [r.step.name for r in real] == ["a", "b", "c"]
+    counts = count_verdicts(real)
+    assert counts[ResultType.DONE] == 2
+    assert counts[ResultType.FAIL] == 1
+
+
+def test_a_group_line_never_says_the_group_could_not_run(caplog):
+    with caplog.at_level(logging.INFO):
+        Step.run_steps(Runtime(), [group("G", steps=[Raises(step_name="inner")])])
+    messages = [record.getMessage() for record in caplog.records]
+
+    assert any("'inner' could not run" in message for message in messages)
+    assert not any("'G' could not run" in message for message in messages)
 
 
 # --------------------------------------------------------------------------

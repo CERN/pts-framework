@@ -20,6 +20,7 @@ same table.
 from typing import Any
 
 from pypts.step.python_module_step import PythonModuleStep
+from pypts.step.sequence_step import SequenceStep
 from pypts.step.step import Step
 from pypts.step.user_interaction_step import UserInteractionStep
 from pypts.step.user_loading_step import UserLoadingStep
@@ -37,6 +38,7 @@ STEP_TYPES: dict[str, type[Step]] = {
     "userwrite": UserWriteStep,
     "userloading": UserLoadingStep,
     "wait": WaitStep,
+    "sequence": SequenceStep,
 }
 
 

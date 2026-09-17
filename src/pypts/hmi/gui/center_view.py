@@ -5,9 +5,8 @@
 """
 The right-side content: InteractionPanel (idle / prompt / text / path) + LogPanel.
 
-The left side (idle placeholder / step table / results) is owned by
-PtsMainWindow and managed via _switch_screen(). This widget manages only the
-right column and the exact-once answer contract:
+The left side (the Run | Results tabs) is owned by PtsMainWindow. This widget
+manages only the right column and the exact-once answer contract:
 
   - A new request first declines any unanswered one.
   - Answering clears the pending pair *before* invoking the callback.
@@ -28,17 +27,11 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from pypts.hmi.gui.interaction_panel import InteractionPanel
 from pypts.hmi.gui.log_panel import LogPanel
-from pypts.messages.common_messages import StepOutcome
 from pypts.messages.run_events import UserPathRequest, UserPromptRequest, UserTextRequest
 
 
 class CenterContent(QWidget):
-    """Right-side column: the interaction panel + the log panel.
-
-    `results` is injected by the assembler (gui.py) after construction so that
-    update_results() can call set_results() on the ResultsPanel that lives in
-    the left stack.
-    """
+    """Right-side column: the interaction panel + the log panel."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -47,9 +40,6 @@ class CenterContent(QWidget):
         self.interaction = InteractionPanel()
         self.interaction.response_given.connect(self._on_interaction_response)
         self.interaction.cancelled.connect(self.cancel_pending)
-
-        # results is set by gui.py after construction
-        self.results = None
 
         log_label = QLabel("LOG OUTPUT")
         log_label.setObjectName("sectionLabel")
@@ -109,11 +99,6 @@ class CenterContent(QWidget):
 
     def show_idle(self) -> None:
         self.interaction.set_idle()
-
-    def update_results(self, outcomes: tuple[StepOutcome, ...]) -> None:
-        """Incremental update during a run; forwarded to the left-stack ResultsPanel."""
-        if self.results is not None:
-            self.results.set_results(outcomes)
 
     def cancel_pending(self) -> None:
         """Decline whatever question is still open. Idempotent."""

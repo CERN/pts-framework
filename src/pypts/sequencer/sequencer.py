@@ -49,7 +49,7 @@ from pypts.step.runtime import Runtime
 
 # Aliased: run_sequence() here is the loop-thread method that *starts* a run;
 # the step layer's run_sequence() is the sequence body itself.
-from pypts.step.step import StepResult, count_verdicts, describe_counts
+from pypts.step.step import StepResult, count_verdicts, describe_counts, real_step_results
 from pypts.step.step import run_sequence as run_sequence_body
 from pypts.utilities.error_handling import catch_and_report_errors, report_error, report_problem
 from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
@@ -247,22 +247,24 @@ class Sequencer:
             self.recipe.name,
         )
         run_began = time.perf_counter()
+        # One dict for the whole run: the Runtime writes into it and the
+        # metadata watcher reads it, so the two see the same values.
+        run_globals = dict(self.recipe.globals)
+        metadata_names = self.recipe.report_metadata
+        reported_metadata: dict[str, str] = {}
         runtime = Runtime(
-            globals=dict(self.recipe.globals),
-            emit=self.core.send,
+            globals=run_globals,
+            # The Report cannot read globals - it is a thread fed by events -
+            # so the emit seam is wrapped to notice when one the recipe named
+            # in report_metadata changes, and to send it on. The step layer
+            # knows nothing about this: it emits what it always emitted.
+            emit=self.make_metadata_watcher(run_globals, metadata_names, reported_metadata),
             should_stop=lambda: self.stop_requested,
             ask=self.ask_operator,
             base_dir=self.recipe.base_dir,
             hold_if_paused=self.hold_if_paused,
             drop_pending_pause=self.drop_pending_pause,
         )
-        # The Report cannot read globals - it is a thread fed by events - so
-        # the emit seam is wrapped to notice when one the recipe named in
-        # report_metadata changes, and to send it on. The step layer knows
-        # nothing about this: it emits what it always emitted.
-        metadata_names = self.recipe.report_metadata
-        reported_metadata: dict[str, str] = {}
-        runtime.emit = self.make_metadata_watcher(runtime, metadata_names, reported_metadata)
         self.core.send(
             RunStarted(
                 recipe_name=self.recipe.name,
@@ -274,7 +276,7 @@ class Sequencer:
         )
         # A metadata global may be set in the recipe's own header rather than
         # by a step, so the first look happens before anything runs.
-        self.send_changed_metadata(runtime, metadata_names, reported_metadata)
+        self.send_changed_metadata(run_globals, metadata_names, reported_metadata)
         step_results: list[StepResult] = []
         try:
             result, step_results = run_sequence_body(runtime, sequence)
@@ -283,13 +285,19 @@ class Sequencer:
             result = ResultType.ERROR
         if self.stop_requested:
             result = ResultType.STOP
+        # Totals count real steps: a called sequence's row only stands for the
+        # steps inside it, which are listed themselves.
+        real_results = real_step_results(step_results)
         self.core.send(
-            RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in step_results))
+            RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in real_results))
         )
-        self.log_run_summary(sequence_name, result, step_results, time.perf_counter() - run_began)
+        self.log_run_summary(
+            self.recipe.name, sequence_name, result, real_results, time.perf_counter() - run_began
+        )
 
     def log_run_summary(
         self,
+        recipe_name: str,
         sequence_name: str,
         result: ResultType,
         step_results: list[StepResult],
@@ -304,12 +312,12 @@ class Sequencer:
         See logging_rules.md section 6.
 
         Args:
+            recipe_name: the recipe the run came from.
             sequence_name: the sequence that was run.
             result: the verdict the whole run aggregated to.
-            step_results: every step that produced one, in order.
+            step_results: every real step that produced one, at every depth, in order.
             elapsed_s: wall clock across the whole run.
         """
-        recipe_name = self.recipe.name if self.recipe is not None else "unknown"
         log.info("Run summary: %s.", result.name)
         log.info(
             "Run summary: %s of %d steps in %.1f s.",
@@ -323,7 +331,7 @@ class Sequencer:
 
     def make_metadata_watcher(
         self,
-        runtime: Runtime,
+        run_globals: dict[str, Any],
         metadata_names: tuple[str, ...],
         reported: dict[str, str],
     ) -> Callable[[Any], None]:
@@ -338,13 +346,13 @@ class Sequencer:
         def emit(event: Any) -> None:
             self.core.send(event)
             if metadata_names:
-                self.send_changed_metadata(runtime, metadata_names, reported)
+                self.send_changed_metadata(run_globals, metadata_names, reported)
 
         return emit
 
     def send_changed_metadata(
         self,
-        runtime: Runtime,
+        run_globals: dict[str, Any],
         metadata_names: tuple[str, ...],
         reported: dict[str, str],
     ) -> None:
@@ -357,9 +365,9 @@ class Sequencer:
         """
         changed = []
         for name in metadata_names:
-            if name not in runtime.globals:
+            if name not in run_globals:
                 continue
-            value = str(runtime.globals[name])
+            value = str(run_globals[name])
             if reported.get(name) != value:
                 reported[name] = value
                 changed.append((name, value))

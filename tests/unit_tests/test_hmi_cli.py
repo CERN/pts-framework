@@ -5,21 +5,16 @@
 """
 Unit tests for the CLI HMI (src/pypts/hmi/cli/).
 
-Mostly placeholders declaring intended coverage. The CLI runs in the
-launcher process; only the GUI keeps a process boundary.
+The CLI runs in the launcher process; only the GUI keeps a process boundary.
 """
 
 import queue
 import threading
 import time
 
-import pytest
-
 from pypts.messages import QueueWrapper
 from pypts.messages.core_hmi_communication import LoadRecipe, ShutdownRequested, StartSequence
 from pypts.messages.run_events import StopSequence
-
-PLACEHOLDER = "placeholder - test not implemented yet"
 
 
 def test_known_commands_are_dispatched_to_core(monkeypatch):
@@ -54,16 +49,6 @@ def test_known_commands_are_dispatched_to_core(monkeypatch):
         StopSequence(),
         ShutdownRequested(),
     ]
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_unknown_command_is_reported_without_crashing():
-    ...
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_eof_on_stdin_is_treated_as_exit():
-    """Non interactive stdin - a pipe or a CI run - must shut down cleanly."""
 
 
 def test_stop_from_core_ends_the_cli_without_waiting_for_input(monkeypatch):
@@ -113,16 +98,6 @@ def test_nothing_is_read_after_exit(monkeypatch):
     time.sleep(0.3)
 
     assert asked == ["pypts> "]
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_exit_codes_follow_the_specification():
-    """0/1/2/3 per the CLI module page."""
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_version_flag_prints_the_package_version():
-    ...
 
 
 def test_report_ready_is_printed_with_its_path(capsys):

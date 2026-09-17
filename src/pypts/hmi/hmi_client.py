@@ -113,9 +113,7 @@ class HmiClient:
 
         Two thresholds, doing two different jobs. The first is a warning and
         costs nothing if it is wrong; the second ends the session, so it waits
-        three times as long - see HEARTBEAT_FATAL_S. Not gated by
-        [watchdog] enabled: that flag is about CORE ending a *run*, and a
-        frontend with no engine behind it has nothing left to do either way.
+        three times as long - see HEARTBEAT_FATAL_S.
 
         Silent while stopping. A normal shutdown ends with CORE leaving its
         event loop, so its heartbeats stop by design - and the GUI's QTimer goes

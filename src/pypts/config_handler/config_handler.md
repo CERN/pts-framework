@@ -103,7 +103,11 @@ Sections currently in the schema:
 | `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
 | `report` | `type` (`html`/`csv`), `theme` |
 | `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
-| `watchdog` | `enabled` (bool) - whether prolonged heartbeat silence *ends the run* or is only reported. Off is for a developer with a debugger attached to CORE, where a breakpoint in an event loop is indistinguishable from an event loop that has died. It gates the acting half only: a module that goes quiet is reported at WARNING either way |
+
+`[watchdog] enabled` was removed in September 2026: a module that stops responding always
+ends the run. An older `config.ini` that still has the section is used as usual; the section
+is reported once at WARNING as not part of the schema until it is removed by hand or the file
+is recreated. The config version did not change - removing a key adds nothing mandatory.
 
 That is the whole schema — a flat list of named sections, nothing generated or matched by
 pattern. `READ_ONLY_SECTIONS` (`meta`, `operating_system`) names the two that are not
@@ -274,7 +278,7 @@ Two file-format details worth knowing:
 |---|---|
 | `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.logs_dir`, `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
-| `core/core.py` | `open_for_writing()` in `core_main()`; `watchdog.enabled`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
+| `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
 | `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` when the window opens (template defaults if there is no config); `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
 | `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
 

@@ -103,7 +103,7 @@ Read-only: no code was changed.</p>
 <div class="note">
 <b>How this was done.</b> Six reviewers each read one area of the code in full, including the module's
 <code>.md</code> context file. They checked every "unused" or "duplicated" claim with a search across
-the repo. Findings 2 and 3 in the config/verificator section were reproduced by running the code.
+the repo. The verificator's <code>description: 5</code> difference was reproduced by running the code.
 A green <span class="badge ver">verified</span> badge means the finding was also checked again against the
 source while this report was written. Line numbers are as of this commit.<br>
 The project's load-bearing constructs were deliberately <i>not</i> flagged: <code>match</code>/<code>unhandled()</code>,
@@ -136,11 +136,11 @@ error-handling split is readable. Most of its findings are <b>drift</b>: context
 describing constants, data flows and features that no longer exist.</p>
 <p>The weight of the problems sits at the <b>edges</b>:</p>
 <ul>
-  <li>The <b>GUI</b> promises behaviour it doesn't have. Pause doesn't pause, the results page can't be reached, and Edit Recipe does nothing.</li>
+  <li>The <b>GUI</b> promises behaviour it doesn't have. The results page can't be reached, and Edit Recipe does nothing.</li>
   <li>The two <b>GUI stylesheets</b> are about 480-line copies of each other.</li>
   <li>The <b>recipe verificator</b> is a parallel copy of <code>recipe/validator.py</code> and has already drifted from it.</li>
   <li>About <b>1,300 lines of dead legacy code</b> sit in <code>recipe_creator/</code>. Ruff's blanket <code>"ALL"</code> exemption hides that some of it no longer runs.</li>
-  <li>The <b>test suite</b> is well written, but about 44 permanent placeholder skips (some with false reasons) and five copies of the same helpers cloud it.</li>
+  <li>The <b>test suite</b> is well written, but five copies of the same helpers clutter it.</li>
 </ul>
 <p>Deleting dead code and generating the stylesheet from the palette would remove well over 2,000 lines
 without changing what the operator sees.</p>
@@ -149,26 +149,14 @@ without changing what the operator sees.</p>
 <p>Ranked by user impact and risk, then by how much simpler the code gets.</p>
 <div class="wrap"><table>
 <tr><th>#</th><th>What</th><th>Where</th><th>Why first</th><th>Status</th></tr>
-<tr><td>1</td><td>Pause button changes only the GUI; nothing is sent to CORE. The tooltip, gui.md and usage_manual all promise it holds the run.</td><td><code>hmi/gui/gui.py:616</code></td><td>The operator is misled during a live test.</td><td class="status"><span class="badge status-done">Implemented, waiting for tests</span></td></tr>
-<tr><td>2</td><td>Config rewrite writes a second <code>[gui]</code>-style header for extra keys, so the next start <b>discards the user's config file</b>.</td><td><code>config_handler/template_writer.py:129-137</code></td><td>Silent data loss. Reproduced.</td><td class="status"><span class="badge status-done">Implemented, waiting for tests</span></td></tr>
-<tr><td>3</td><td>Recipe Creator text editor: parse errors are swallowed and the text is overwritten with the last good dump. List and mapping fields are saved as Python repr strings.</td><td><code>recipe_creator/rc_model.py:258-270</code>, <code>rc_widgets.py:900-906</code></td><td>Corrupts the recipes users are writing.</td><td class="status"><span class="badge status-done">Text editor part implemented, waiting for tests</span> <span class="badge status-todo">repr-string part not implemented</span></td></tr>
-<tr><td>4</td><td>The verificator is case-sensitive while the parser isn't. Valid mixed-case recipes get errors.</td><td><code>recipe_verificator/verificator.py</code></td><td>Wrong verdicts. Root cause is duplicated logic.</td><td class="status"><span class="badge status-todo">not implemented</span></td></tr>
-<tr><td>5</td><td>If <code>Sequencer.stop()</code> raises, its own decorator swallows the error and <code>SequencerStopped</code> is never sent.</td><td><code>sequencer/sequencer.py:513-525</code></td><td>Shutdown then waits out the full timeout.</td><td class="status"><span class="badge status-done">Implemented, with tests</span></td></tr>
-<tr><td>6</td><td>The Remove Cache guard <b>fails open</b>: when a path can't be resolved it returns "" (allowed).</td><td><code>utilities/data_removal.py:263-266</code></td><td>Code that deletes test records should refuse when unsure.</td><td class="status"><span class="badge status-todo">not implemented</span></td></tr>
-<tr><td>7</td><td>Delete dead code: <code>recipe_creator.py</code>, most of <code>customGUIModules.py</code>, creator <code>styles.py</code>, <code>hmi/gui/scaffold/</code>, <code>example_finder/</code> (PyQt5).</td><td>several</td><td>Largest simplicity win, low risk. Ask before deleting.</td><td class="status"><span class="badge status-todo">not implemented</span></td></tr>
-<tr><td>8</td><td>Sync the context <code>.md</code> files with the code: core, utilities, messages, recipe, report, hal, stream_handler.</td><td>module <code>.md</code> files</td><td>CLAUDE.md makes them required reading, so wrong ones mislead every future change.</td><td class="status"><span class="badge status-todo">not implemented</span></td></tr>
-<tr><td>9</td><td>Remove the placeholder test skips and move the intended coverage into the roadmap as TODOs.</td><td><code>tests/</code></td><td>Real skips then become visible again.</td><td class="status"><span class="badge status-todo">not implemented</span></td></tr>
+<tr><td>1</td><td>Recipe Creator: list and mapping fields are saved as Python repr strings.</td><td><code>rc_widgets.py:900-906</code></td><td>Corrupts the recipes users are writing.</td><td class="status"><span class="badge status-todo">not implemented</span></td></tr>
 </table></div>
 
 <h2 id="themes">3. Cross-cutting themes</h2>
 <ul>
-  <li><b>Prose drift.</b> Context files and docstrings name constants that don't exist (<code>HEARTBEAT_SILENCE_LIMIT_S</code>, <code>POLL_TIMEOUT_S</code>). They describe dropped features (SequenceStep, the <code>local</code> scope, "frozen" messages, "engine not ported"), point to files that were moved (<code>resources/roadmap/pypts_roadmap.md</code>), and list old report columns.</li>
+  <li><b>Prose drift.</b> Context files and docstrings describe dropped features (SequenceStep, the <code>local</code> scope, "frozen" messages, "engine not ported"), point to files that were moved (<code>resources/roadmap/pypts_roadmap.md</code>), and list old report columns.</li>
   <li><b>Conditional expressions against the style guide.</b> <code>SIM108</code> is off on purpose, yet <code>x if c else y</code> appears in nearly every module. The worst are nested inside call arguments (<code>top_bar.py:224-268</code>) and repeated five times in one dict literal (<code>report.py:290-295</code>).</li>
   <li><b>Blanket lint exemptions hide real bugs.</b> <code>pyproject.toml:146-152</code> exempts <code>recipe_creator/*</code>, <code>recipe_verificator/*</code> and <code>example_finder/*</code> from <b>all</b> ruff rules. That hid undefined names (F821), a duplicated function definition, unused imports, and <code>noqa</code> comments for rules that are switched off. Much of that code is new, not "pre-refactor".</li>
-  <li><b>Magic strings for closed sets.</b> Launch mode (<code>"gui"/"cli"/"api"/"headless"</code>), theme, window mode, dialog states, the interaction panel's <code>_mode</code>, debug-monitor verdicts and schema <code>type</code>. A <code>Literal</code> or <code>StrEnum</code> would let mypy catch typos. Today an unknown value silently falls through to a default.</li>
-  <li><b>Duplicated knowledge.</b> The verificator copies the validator. <code>step_source</code> copies the parser pipeline through a private function. <code>READS_A_VALUE</code> copies <code>OUTPUT_TYPES</code>. Recipe Creator widgets hard-code the per-type keys from <code>rules</code>. There are two YAML highlighters, two stylesheets, and "None means ERROR" in three places.</li>
-  <li><b><code>Any</code> and untyped public seams.</b> Operator request/answer seams, <code>log_queue</code>, <code>QueueWrapper.__init__(queue)</code>, <code>HeartbeatManager(outbox)</code>, and widget <code>model</code> parameters. The concrete types are known in every case.</li>
-  <li><b>Speculative generality.</b> Decorator parameters used only by tests, <code>SetStdoutEnabled</code> with no production sender, a label/value dict protocol where label always equals value, and template-writer continuation handling for multi-line values that never occur.</li>
 </ul>
 
 <div class="filters" id="filters">
@@ -187,52 +175,11 @@ without changing what the operator sees.</p>
 <h2 id="engine">4. Engine: core, sequencer, launcher, logger, messages, utilities</h2>
 <p class="lead">Overall: good. Explicit routing, single-path shutdown and clear per-module state. The findings are mostly prose drift and small duplication.</p>
 
-<div class="card high" data-sev="high" data-cat="explicitness">
-<h4>A failing <code>stop()</code> suppresses <code>SequencerStopped</code>; error decorators stacked three deep</h4>
-<div class="meta"><span class="badge status-done">Implemented, with tests</span><span class="badge high">high</span><span class="badge cat">explicitness</span><span class="badge ver">verified</span><code>sequencer/sequencer.py:116-147, 513-525</code></div>
-<p><code>main_loop</code>, <code>poll_core</code>, <code>handle_core_message</code>, <code>run_sequence</code>, <code>stop_sequence</code>, <code>stop</code> and <code>do_periodic_tasks</code> are all <code>@catch_and_report_errors()</code>. The inner ones add nothing the outer ones don't already catch, and they hide which layer is the real boundary. If <code>stop_running_sequence()</code> raises, <code>self.core.send(SequencerStopped())</code> never runs, so CORE waits out its 5 s budget.</p>
-<p class="fix">Decorate only the per-message boundary and <code>do_periodic_tasks</code>. Send <code>SequencerStopped</code> from a <code>finally</code>.</p>
-<p class="fix"><b>Done 2026-09-16 — the <code>finally</code> half.</b> The send moved into a <code>finally</code> in <code>Sequencer.stop()</code>, and the review of the other two links found the same shape twice more: <code>Report.stop()</code> sends <code>ReportStopped</code> after <code>close_csv()</code> (file I/O, the likeliest of the three to raise), and <code>HmiClient.stop()</code> sends <code>HmiStopped</code> after <code>on_stop()</code> — the GUI's own teardown, which closes a window. All three are fixed the same way, with one regression test each (<code>test_sequencer.py</code>, <code>test_report.py</code>, <code>test_hmi_client.py</code>). The exception still reaches CORE as a <code>ModuleError</code>; the goodbye simply leaves first. Written up as §1.48 of <code>pypts_implementation_status.html</code>.<br><b>Both halves done 2026-09-16 (roadmap §1.49).</b> The rule adopted: <i>the error boundary is the loop tick, not the call chain.</i> A method carries the decorator only when a failure inside it has nowhere else to go — <code>poll_core()</code>, <code>handle_core_message()</code>, <code>do_periodic_tasks()</code>, and a thread entry point. Twelve decorators came off (five in the Sequencer, seven in the Report); every one was called from exactly one place with nothing after the call, so the swallow just moved one frame up. <code>HmiClient</code> was already this shape and kept its <code>stop()</code> decorator, since <code>wait_until_stopped()</code> calls it with no net above. <b>The sharpest find:</b> the decorator on <code>main_loop()</code> never protected the loop — the <code>while</code> is inside it, so catching there <i>ended</i> the loop and reported a clean stop while CORE went on believing the module was alive. It moved to <code>start()</code>, which sends the goodbye from a <code>finally</code> so a dead loop does not cost CORE its shutdown budget either. <b>One cost, accepted:</b> <code>ModuleError.operation</code> now names the boundary rather than the method that failed; it is a DEBUG-only field and the traceback on the same record still names the method.</p>
-</div>
-
-<div class="card high" data-sev="high" data-cat="explicitness">
-<h4>Remove Cache guard fails open</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge high">high</span><span class="badge cat">explicitness</span><code>utilities/data_removal.py:263-266</code></div>
-<pre>try: resolved = directory.resolve()
-except OSError: return ""      # "" means "may remove"</pre>
-<p>A guard that can't decide says OK. <code>RemovableItem(key, label, detail, "", (), 0, 0, "Location unknown.")</code> is also built with 8 positional arguments (149-192), so you can't tell which <code>0</code> is size and which is count.</p>
-<p class="fix">On <code>OSError</code>, return a refusal. Use keyword arguments, as lines 153 and 200 already do.</p>
-</div>
-
-<div class="card medium" data-sev="medium" data-cat="explicitness">
-<h4>Context files name constants that don't exist, and describe recipe routing backwards</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>core/core.md:24-26, 43-45</code> · <code>utilities/utilities.md:36</code></div>
-<ul>
-<li><code>HEARTBEAT_SILENCE_LIMIT_S</code> is really <code>HEARTBEAT_FATAL_S</code>. <code>POLL_TIMEOUT_S</code> doesn't exist (<code>core.py:402</code> hard-codes <code>time.sleep(0.01)</code>). <code>SHUTDOWN_TIMEOUT_S</code> is a class attribute, not a module constant.</li>
-<li>core.md says <code>RecipeLoaded</code> is forwarded "to the Sequencer". <code>core.py:548</code> says "The Sequencer is told nothing".</li>
-</ul>
-<p class="fix">Rename the entries. State that the recipe reaches the Sequencer only inside <code>RunSequence</code>.</p>
-</div>
-
-<div class="card medium" data-sev="medium" data-cat="explicitness">
-<h4>utilities.md calls the file-deleting backend a "placeholder"</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>utilities/utilities.md:51-54</code></div>
-<p>It describes <code>data_removal.py</code> as a "placeholder for sanitising step inputs". It is really the fully implemented Remove Cache backend that deletes operator records. The file also leaves out <code>HeartbeatWatch</code> and <code>CORE</code>.</p>
-<p class="fix">Rewrite the section: survey/remove, the root/home refusal, never offers the live log.</p>
-</div>
-
 <div class="card medium" data-sev="medium" data-cat="explicitness">
 <h4>The messages layer still describes itself as "not yet wired" and "frozen"</h4>
 <div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>messages/messages.md:8-11, 182-186</code> · <code>core_hmi_communication.py:8</code> · <code>run_events.py:141</code> · <code>recent_recipes.py:61</code></div>
 <p>messages.md says "most have no sender yet" and that <code>PendingRequests</code> is "half wired", but <code>sequencer.py:350-352</code> already calls <code>start()</code>/<code>wait()</code>. Three docstrings still say "frozen dataclass", but frozen was dropped.</p>
 <p class="fix">Delete the stale status paragraphs. Say "plain dataclass of plain values".</p>
-</div>
-
-<div class="card medium" data-sev="medium" data-cat="explicitness">
-<h4>A comment calls the version notice a "warning"; the code sends ERROR</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>core/core.py:568-580</code></div>
-<p>ERROR is probably deliberate, because only non-WARNING errors reach the HMI dialog, but nothing says so.</p>
-<p class="fix">Say "ERROR, not WARNING, so it reaches the operator". Make the comment and the severity agree.</p>
 </div>
 
 <div class="card medium" data-sev="medium" data-cat="simplicity">
@@ -250,13 +197,6 @@ except Exception as error:  # noqa: BLE001
 <div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>core/core.py:112-157</code></div>
 <p><code>FRIENDLY_SOURCE_NAME</code>, <code>FRIENDLY_MODULE_NAME</code> and <code>MODULE_SOURCE</code> repeat the same paths with slightly different wording. <code>.get(source, "the software")</code> means a renamed module fails silently.</p>
 <p class="fix">Use one table. Add a test that every key is importable (<code>find_spec</code>), and log at DEBUG when the fallback is used.</p>
-</div>
-
-<div class="card low" data-sev="low" data-cat="explicitness">
-<h4>Runtime is built with one <code>emit</code> seam that is replaced two lines later</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge low">low</span><span class="badge cat">explicitness</span><code>sequencer/sequencer.py:199-213, 260</code></div>
-<p><code>Runtime(..., emit=self.core.send)</code>, then <code>runtime.emit = self.make_metadata_watcher(...)</code>. Also <code>recipe_name = self.recipe.name if self.recipe is not None else "unknown"</code> guards a None that the caller has already ruled out.</p>
-<p class="fix">Assign the watcher once, with its comment. Pass <code>recipe_name</code> in.</p>
 </div>
 
 <div class="card low" data-sev="low" data-cat="explicitness">
@@ -328,12 +268,6 @@ except Exception as error:  # noqa: BLE001
 <p class="fix">Rewrite from step.md §3.1 and delete the SequenceStep references.</p>
 </div>
 
-<div class="card medium" data-sev="medium" data-cat="explicitness">
-<h4>The removed <code>local</code> scope still appears in docstrings</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>user_interaction_step.py:26</code> · <code>user_write_step.py:21</code> · <code>indexed_step.py:27</code> · <code>operator_prompt.py:6-12</code></div>
-<p><code>operator_prompt</code> also says "the two step types", but UserLoading uses it too, so there are three.</p>
-</div>
-
 <div class="card medium" data-sev="medium" data-cat="simplicity">
 <h4>Dead state in <code>StepResult</code></h4>
 <div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">simplicity</span><code>step/step.py:237-252, 317-319</code></div>
@@ -374,16 +308,6 @@ except Exception as error:  # noqa: BLE001
 </ul>
 </div>
 
-<div class="card medium" data-sev="medium" data-cat="explicitness">
-<h4>recipe.md and report.md disagree with the code</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>recipe/recipe.md:19, 48-62</code> · <code>rules.py:10</code> · <code>report/report.md:20, 28-29, 49</code> · <code>report.py:108-123</code></div>
-<ul>
-<li>recipe.md says <code>step_source.py</code> "resolves module paths". It really renders YAML for the hover panel.</li>
-<li>recipe.md says <code>STEP_TYPES</code> is in rules.py; it is in <code>step/registry.py</code>. The "adding a step type" steps differ from step.md. It still mentions <code>parameters</code>/<code>outputs</code> and <code>test_package</code>.</li>
-<li>report.md lists the wrong CSV column names, leaves out <code>duration_s</code>, and says ExportReport copies files, although it only logs "not available yet". It also lists <code>serial_number</code> as planned, but it is already delivered.</li>
-</ul>
-</div>
-
 <div class="card low" data-sev="low" data-cat="explicitness">
 <h4>Loose types and duplicated vocabulary on step seams</h4>
 <div class="meta"><span class="badge status-todo">not implemented</span><span class="badge low">low</span><span class="badge cat">explicitness</span><code>step.py:72</code> · <code>python_module_step.py:109-124</code> · <code>operator_prompt.py:40-54</code> · <code>api/embedding.py:152, 302-307, 323</code> · <code>user_loading_step.py:52</code></div>
@@ -421,35 +345,17 @@ except Exception as error:  # noqa: BLE001
 <h2 id="hmi">6. HMI: client, CLI, GUI</h2>
 <p class="lead">Overall: <code>hmi_client.py</code>, <code>cli.py</code>, <code>log_tail.py</code> and <code>step_table.py</code> are models of clarity. The outer GUI layer promises features it lacks and carries large duplication.</p>
 
-<div class="card high" data-sev="high" data-cat="explicitness">
-<h4>The Pause button pauses nothing</h4>
-<div class="meta"><span class="badge status-done">Implemented, waiting for tests</span><span class="badge high">high</span><span class="badge cat">explicitness</span><span class="badge ver">verified</span><code>hmi/gui/gui.py:616-620</code> · <code>top_bar.py:131-135, 242-248</code></div>
-<pre>def _toggle_pause(self) -&gt; None:
-    self._paused = not self._paused
-    self.center.set_auto_switch(not self._paused)
-    self.top_bar.set_paused(self._paused)</pre>
-<p>Nothing is sent to CORE, and <code>messages/</code> has no pause message. The tooltip ("Hold the run before the next step"), gui.md §7 and <code>usage_manual.html</code> all promise a hold. It only makes the interaction rows ignore the mouse.</p>
-<p><i>Correction, found after the review:</i> the master GUI never held the run either. Its Pause was a "browse mode" (<code>old_code/hmi/gui.py:322-331</code>), whose tabs were never ported. So the fault is an unfinished port with over-promising docs, not a lost feature. A real hold is now being implemented.</p>
-<p class="fix">Hide or disable it until a real pause message exists, or rename it to what it does. Add a roadmap TODO and fix the manual in the same change.</p>
-</div>
-
 <div class="card high" data-sev="high" data-cat="simplicity">
 <h4>ResultsPanel is rebuilt on every step, but can never be shown</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge high">high</span><span class="badge cat">simplicity</span><span class="badge ver">verified</span><code>gui.py:92-94, 406-408, 632, 683, 695-709</code> · <code>center_view.py:38-53, 119-122</code></div>
+<div class="meta"><span class="badge status-done">implemented</span><span class="badge high">high</span><span class="badge cat">simplicity</span><span class="badge ver">verified</span><code>gui.py:92-94, 406-408, 632, 683, 695-709</code> · <code>center_view.py:38-53, 119-122</code></div>
 <p><code>_PAGE_LEFT_IDLE</code> and <code>_PAGE_LEFT_RESULTS</code> are never referenced. <code>setCurrentIndex</code> is only ever called with <code>_PAGE_LEFT_TABLE</code>. Even so, <code>show_step_finished</code> rebuilds a whole <code>StepResultModel</code> every step. There are two paths to the panel: an untyped back-reference injected into <code>CenterContent</code>, and <code>window.results_panel</code>. gui.md §6 describes a <code>screen_tab_bar</code> that doesn't exist.</p>
 <p class="fix">Decide: add the switch (e.g. on RunFinished), or delete the wiring. Either way, remove <code>CenterContent.results</code> and <code>update_results</code>.</p>
-</div>
-
-<div class="card medium" data-sev="medium" data-cat="explicitness">
-<h4>"Edit Recipe" menu item does nothing; menu wiring is split across two classes</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><span class="badge ver">verified</span><code>gui.py:264-315, 288, 443-452</code></div>
-<p><code>edit_menu.addAction("Edit Recipe")</code> is never connected. <code>PtsMainWindow</code> says it "owns layout, not logic", but it wires three actions while <code>GUI</code> wires the rest.</p>
-<p class="fix">Make <code>_build_menu</code> only create actions, and do all <code>.connect</code> calls in one <code>GUI._connect_menu()</code>. Remove Edit Recipe, or disable it with a "not implemented" tooltip.</p>
+<p class="fix"><strong>Done:</strong> the switch was added as Run | Results tabs over the left pane (<code>view_tabs.py</code>, gui.md §14). <code>CenterContent.results</code>, <code>update_results</code> and the unused page constants are gone; <code>window.results_panel</code> is the only path. The GUI does not jump to Results; the tab pulses when a run ends.</p>
 </div>
 
 <div class="card medium" data-sev="medium" data-cat="simplicity">
 <h4>Two hand-copied ~480-line stylesheets, with misused and unused tokens</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">simplicity</span><code>hmi/gui/styles.py:20-500 vs 502-975</code> · <code>palette.py:125-151</code></div>
+<div class="meta"><span class="badge status-done">implemented</span><span class="badge medium">medium</span><span class="badge cat">simplicity</span><code>hmi/gui/styles.py:20-500 vs 502-975</code> · <code>palette.py:125-151</code></div>
 <p><code>LIGHT_QSS</code> and <code>DARK_QSS</code> are about 90% identical apart from <code>LIGHT.</code>/<code>DARK.</code>. The light sheet uses tokens whose names don't match the job (<code>QMenuBar { background: {LIGHT.text_on_brand} }</code>, <code>QTabBar::tab { color: {LIGHT.header_underline} }</code>), while <code>menu_background</code>, <code>tab_text</code> and others exist for exactly these rules. <code>toolbutton_hover</code>, <code>button_background</code>, <code>status_background</code> and <code>selection_text</code> are unused.</p>
 <p class="fix">Point each rule at its own token and delete the unused ones. Then write one <code>_build_qss(p: Palette)</code>; Palette is a frozen dataclass, so a token missing from one theme is caught automatically.</p>
 </div>
@@ -470,7 +376,7 @@ except Exception as error:  # noqa: BLE001
 
 <div class="card medium" data-sev="medium" data-cat="explicitness">
 <h4>The idle hint label is always painted with the LIGHT palette</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>gui.py:330-333</code></div>
+<div class="meta"><span class="badge status-done">implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>gui.py:330-333</code></div>
 <pre>hint.setStyleSheet(f"font-size:12px; color:{LIGHT.section_label};")</pre>
 <p class="fix">Give it an object name and put the rule in the stylesheet, or repaint it in <code>paint_idle_logo(dark)</code>.</p>
 </div>
@@ -544,21 +450,11 @@ except Exception as error:  # noqa: BLE001
 <h2 id="config">7. Config handler, recipe verificator, debug monitor, example finder</h2>
 <p class="lead">Overall: config_handler and debug_monitor are careful and well documented. The verificator is the weakest area in the codebase. example_finder is dead.</p>
 
-<div class="card high" data-sev="high" data-cat="explicitness">
-<h4>An extra key in a known section duplicates the section header, so the next start discards the config</h4>
-<div class="meta"><span class="badge status-done">Implemented, waiting for tests</span><span class="badge high">high</span><span class="badge cat">explicitness</span><span class="badge ver">verified</span><code>config_handler/template_writer.py:104-138</code></div>
-<pre>for section, keys in extra_keys.items():
-    lines.append("")
-    lines.append(f"[{section}]")      # [gui] already written above</pre>
-<p>Reproduced: add <code>extra_key = 1</code> under <code>[gui]</code>, then change a setting. The file gets two <code>[gui]</code> headers, and the next <code>bootstrap()</code> gives DISCARDED ("section 'gui' already exists"). Nothing warns when the file is written. The two loops (130-133, 134-137) are byte-identical.</p>
-<p class="fix">Write unknown keys at the end of their own section in <code>render()</code>, and keep the banner only for unknown sections. Add a round-trip regression test.</p>
-</div>
-
 <div class="card high" data-sev="high" data-cat="simplicity">
 <h4>The verificator re-implements validation and has drifted from the parser</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge high">high</span><span class="badge cat">simplicity</span><code>recipe_verificator/verificator.py</code> (whole file) vs <code>recipe/validator.py</code>, <code>recipe_parser.py:71-105</code></div>
-<p>The parser lowercases keys first; the verificator doesn't. Reproduced: <code>Sequence_Name:</code> / <code>Steps:</code> / <code>StepType: Wait</code> loads through <code>parse_recipe()</code>, but the verificator reports 2 errors and 2 warnings. Duplicate-name and <code>main_sequence</code> checks are case-sensitive only in the verificator. <code>description: 5</code> is an error in one and allowed by the other. recipe_verificator.md itself admits the two need a manual "sync rule".</p>
-<p class="fix">Build it on <code>normalize_*</code> and <code>validate_*</code>, and have the validator return structured problems (path + message). Keep only what the verificator really adds: line numbers, hints and unknown-key warnings. Stopgap: lowercase keys first.</p>
+<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge high">high</span><span class="badge cat">simplicity</span><code>recipe_creator/verificator.py</code> (whole file) vs <code>recipe/validator.py</code>, <code>recipe_parser.py:71-105</code></div>
+<p>Case is no longer part of the drift: the verificator now normalizes through the parser's <code>normalize_header()</code>/<code>normalize_sequence()</code>. What is left: <code>description: 5</code> is an error in the verificator and allowed by the parser, and recipe_creator.md still needs a manual "sync rule" to keep the two in step.</p>
+<p class="fix">Build it on <code>normalize_*</code> and <code>validate_*</code>, and have the validator return structured problems (path + message). Keep only what the verificator really adds: line numbers, hints and unknown-key warnings.</p>
 </div>
 
 <div class="card high" data-sev="high" data-cat="simplicity">
@@ -668,16 +564,6 @@ except Exception as error:  # noqa: BLE001
 </div>
 
 <div class="card high" data-sev="high" data-cat="explicitness">
-<h4>Text-editor edits fail silently and get overwritten</h4>
-<div class="meta"><span class="badge status-done">Implemented, waiting for tests</span><span class="badge high">high</span><span class="badge cat">explicitness</span><code>rc_model.py:258-270</code> · <code>recipe_creator_new.py:290-299, 337-341</code></div>
-<pre>try: self._model._docs = list(self._model._yaml.load_all(self._new_text))
-except Exception: pass
-self._model._notify()      # window then writes model.to_yaml() back into the editor</pre>
-<p>This is the chain as it reads in the code (not run). A 400 ms pause while half-typed YAML is invalid → the parse error is swallowed → <code>changed</code> fires anyway → the editor is overwritten with the last good dump, a no-op lands on the undo stack, and the cursor resets. Verification runs on the model, not on what the user typed, so the error is never shown.</p>
-<p class="fix">Parse before pushing the command. On failure push nothing and show <code>verify_string(editor_text)</code>. Don't write the text back when the change came from the editor.</p>
-</div>
-
-<div class="card high" data-sev="high" data-cat="explicitness">
 <h4>List and mapping step fields are turned into strings</h4>
 <div class="meta"><span class="badge status-todo">not implemented</span><span class="badge high">high</span><span class="badge cat">explicitness</span><code>rc_widgets.py:890-906</code> · <code>rc_model.py:115-117</code></div>
 <pre>edit = QLineEdit(str(step.get(field) or ""))   # options, template, parameter_sets
@@ -736,29 +622,6 @@ step[field] = ""                                  # default for every required f
 <h2 id="tests">9. Test suite</h2>
 <p class="lead">Overall: the real tests are good. They are behaviour-focused, well named, strongly asserted and use few mocks. The problems are clutter and lack of structure. There are 29 files, ~14,350 lines and 784 test functions, and no <code>conftest.py</code>.</p>
 
-<div class="card high" data-sev="high" data-cat="simplicity">
-<h4>About 44 permanent placeholder skips</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge high">high</span><span class="badge cat">simplicity</span><code>functional_tests/test_launcher.py</code>, <code>test_recipe_execution.py</code>, <code>test_run_logging.py</code> · <code>unit_tests/test_hardware_layer.py</code>, <code>test_stream_handler.py</code>, + 6 files</div>
-<pre>PLACEHOLDER = "placeholder - test not implemented yet"   # redefined in 11 files
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_...(): ...</pre>
-<p>This accounts for all but 3 of the "43 skipped". The skip count becomes noise that hides skips that matter, and it forms a second roadmap in test bodies. <code>test_sequencer.py:89</code> defines the constant but never uses it.</p>
-<p class="fix">Delete the placeholders and move them into <code>pypts_implementation_status.html</code> as TODOs. Or use one registered <code>planned</code> marker.</p>
-</div>
-
-<div class="card high" data-sev="high" data-cat="explicitness">
-<h4>Stale or wrong skip reasons</h4>
-<div class="meta"><span class="badge status-todo">not implemented</span><span class="badge high">high</span><span class="badge cat">explicitness</span><code>test_recipe.py:610</code> · <code>test_utilities.py:347, 357</code> · <code>test_hmi_cli.py:5-9, 118, 123</code> · <code>test_recipe_execution.py:8-9</code> · <code>test_launcher.py:41-45</code></div>
-<ul>
-<li>"nine steptypes not ported yet", but step.md says "Nothing left to port".</li>
-<li><code>test_catch_and_report_errors_does_not_swallow_the_exception</code>: the decorator is <i>designed</i> to swallow, so implementing this as named would assert the opposite.</li>
-<li><code>test_eof_on_stdin_is_treated_as_exit</code> is already implemented (<code>cli.py:77</code>), but the test is still skipped.</li>
-<li>CLI "exit codes 0/1/2/3" belong to headless mode, which <code>test_headless.py</code> already tests.</li>
-<li>"Nothing here can pass until the engine is ported out of old_code": it is ported.</li>
-</ul>
-<p class="fix">Write each test or delete it. Never keep a skip whose reason is false.</p>
-</div>
-
 <div class="card medium" data-sev="medium" data-cat="simplicity">
 <h4>Helpers copied between files; config isolation written five ways</h4>
 <div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">simplicity</span><code>drain()</code>: test_hmi_client:48, test_hmi_gui:139, test_sequencer:124, test_settings:99, test_startup:151</div>
@@ -790,6 +653,7 @@ def test_...(): ...</pre>
 <div class="meta"><span class="badge status-todo">not implemented</span><span class="badge medium">medium</span><span class="badge cat">explicitness</span><code>.gitlab-ci.yml:76</code> · <code>test_hmi_gui.py:8-10</code></div>
 <p>Only <code>test_hmi_gui.py</code> is <code>--ignore</code>d. <code>test_settings.py</code> (842 lines) and <code>test_gui_scaffold.py</code> also create widgets. <code>QT_QPA_PLATFORM=offscreen</code> has to be set by hand.</p>
 <p class="fix">In a conftest, call <code>os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")</code> and drop the ignore, or apply one <code>gui</code> marker consistently.</p>
+<p class="fix"><strong>Partly done:</strong> <code>tests/conftest.py</code> sets the offscreen default. The CI <code>--ignore</code> is still there; dropping it needs a run on the Linux runner.</p>
 </div>
 
 <div class="card medium" data-sev="medium" data-cat="simplicity">

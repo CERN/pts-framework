@@ -86,7 +86,39 @@ owns, the rules and decisions behind them, how to extend it, known gaps.
 | `helper_applications/recipe_creator/` | `recipe_creator/recipe_creator.md` |
 
 The roadmap stays authority on *status and plan*; context files say *how it works*.
-Update the context file in the same change that touches the module.
+
+## Documentation moves with the code — non-negotiable
+
+Context files are required reading, so **a wrong context file misleads every future change**
+— it is worse than a missing one. Drift is a bug, not a chore for later.
+
+**A change is not done until the documentation describes the code as it now is, in the same
+change.** Whenever you add, change, rename or remove any of these, update the docs that
+mention it:
+
+- a file, class, public function, constant (name *or* value), setting or CLI option;
+- a message, a field, a union member, or where CORE routes something;
+- a behaviour, rule, threshold, state, error path or log line other tools read;
+- what is implemented versus stubbed.
+
+Which document:
+
+| What changed | Update |
+|---|---|
+| How a module works | its `<module>.md` (table above) — and any *other* context file that describes it (e.g. a routing change touches `core/core.md` **and** `messages/messages.md`) |
+| Status, plan, TODOs | `pypts_implementation_status.html` |
+| What a user sees, types or gets back | `usage_manual.html` |
+| The recipe format | `recipe_guide.html` and the verificator sync rule (`recipe_creator/recipe_creator.md`) |
+| A docstring or comment describing the old behaviour | the docstring or comment |
+
+Rules:
+
+- **Write what the code does, verified in the source** — never what it was planned to do, and
+  never from memory. Name real identifiers; a name in a context file must exist.
+- **Delete what is no longer true.** Do not leave a stale sentence beside a corrected one.
+- A reference to another file must point at a file that exists.
+- If you find drift you were not asked to fix, **say so** in your report (and ask before a
+  large fix) — do not silently leave it, and do not silently widen scope.
 
 ## Where generated HTML documents go
 
@@ -131,7 +163,7 @@ src/pypts/
   logger/log.py          Logger process: single run-log writer (context: logger/logging_rules.md)
   utilities/             error_handling, heartbeat_manager, local_storage, common
                          (context: utilities/utilities.md)
-  hardware_layer/hal.py  HAL stub — Phase 3+ (context: hardware_layer/hal.md)
+  hardware_layer/hal.py  HAL, no code yet — Phase 5 (context: hardware_layer/hal.md)
   stream_handler/        empty placeholder — Phase 3+ (context: stream_handler/stream_handler.md)
   helper_applications/   debug_monitor, recipe_creator (incl. the verificator), example_finder
   old_code/              frozen legacy implementation — read only, never modify
@@ -220,13 +252,18 @@ whether a change qualifies, ask.
 
 ## Quality gates
 
-All three must pass before any change is called done:
+All four must pass before any change is called done:
 
 ```bash
 pytest tests                 # 408 passed, 43 skipped as of exec/005-spawn
 ruff check src tests         # rules and line-length 100 in [tool.ruff] in pyproject.toml
 mypy                         # scope is [tool.mypy]: messages/ and the handler modules
 ```
+
+4. **Documentation check** — re-read the context file of every module you touched (and the
+   roadmap / manual rows in *Documentation moves with the code*) against the final code. Every
+   identifier, constant, value, route and status it states about your change must be true.
+   Say in your report which documents you updated, or why none needed it.
 
 The `# noqa:` codes name rules that config actually enables — do not add a `noqa` for a
 rule that is off, and do not silence a rule without saying why in the same line.

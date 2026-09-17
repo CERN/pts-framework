@@ -5,8 +5,8 @@
 """
 Every colour the GUI uses, in one file.
 
-Nothing else in `hmi/gui/` may write a hex literal. `styles.py` builds the two
-stylesheets out of these tokens, and the widgets that colour something
+Nothing else in `hmi/gui/` may write a hex literal. `styles.py` builds the
+stylesheet out of these tokens, and the widgets that colour something
 themselves - the verdict chips in the step table, the level prefixes in the log
 panel, the toolbar icons - read them from here too. Changing how the GUI looks is
 therefore an edit to this file and to nothing else.
@@ -115,6 +115,9 @@ class Palette:
     #: `brand_accent` - a saturated blue is unreadable on charcoal.
     accent_text: str
     tab_text: str
+    #: The selected Run/Results tab, and the look its pulse fades towards.
+    tab_selected_background: str
+    tab_selected_text: str
 
     # Surfaces, from the back of the window forwards.
     window: str
@@ -132,6 +135,11 @@ class Palette:
     text_muted: str
     text_on_brand: str
     section_label: str
+    #: Text on a highlighted menu entry, a hovered tool button and a push
+    #: button. Brand blue on light; on dark, plain text or the accent.
+    menu_highlight_text: str
+    toolbutton_hover_text: str
+    button_text: str
     toolbutton: str
     toolbutton_disabled: str
     log_text: str
@@ -174,6 +182,11 @@ class Palette:
     icon_stop: str
     icon_disabled: str
 
+    #: The run progress bar beside the recipe label (run_progress.py): the
+    #: groove, and the green that fills it.
+    progress_track: str
+    progress_fill: str
+
     # The step table's hover panel, which shows one step's YAML syntax
     # coloured (step_yaml_popup.py). Themed rather than shared with
     # LOG_LEVEL_COLORS: these are six colours side by side on one small
@@ -187,6 +200,10 @@ class Palette:
     yaml_null: str
     yaml_comment: str
     yaml_punctuation: str
+    #: The band behind the clicked step's lines when the panel shows its whole
+    #: sequence. Its own token: the panel's background and the table header
+    #: are the same pale blue in the light theme, so neither can mark a line.
+    yaml_step_highlight: str
 
     #: What the CERN logo is recoloured to, or None to draw the artwork as it
     #: is. The file is a dark blue line drawing: correct on white, nearly
@@ -203,7 +220,10 @@ LIGHT = Palette(
     brand_dark="#002080",
     brand_accent="#005BAC",
     accent_text="#005BAC",
-    tab_text="#B3CFF0",
+    tab_text="#718096",
+    # A pale fill on the pale tab bar: the tab is marked, not shouted.
+    tab_selected_background="#D6E6F7",
+    tab_selected_text="#005BAC",
     window="#f5f7fa",
     menu_background="#ffffff",
     toolbar_background="#F8FAFC",
@@ -217,6 +237,9 @@ LIGHT = Palette(
     text_muted="#718096",
     text_on_brand="#ffffff",
     section_label="#94a3b8",
+    menu_highlight_text="#0033A0",
+    toolbutton_hover_text="#0033A0",
+    button_text="#0033A0",
     toolbutton="#424242",
     toolbutton_disabled="#BDBDBD",
     log_text="#333333",
@@ -245,6 +268,8 @@ LIGHT = Palette(
     icon_pause="#E65100",
     icon_stop="#CC0000",
     icon_disabled="#BDBDBD",
+    progress_track="#e2e8f0",
+    progress_fill="#43A047",
     yaml_key="#0B5394",
     yaml_string="#1B7F4B",
     yaml_number="#8C4A00",
@@ -252,6 +277,7 @@ LIGHT = Palette(
     yaml_null="#7A7A7A",
     yaml_comment="#6B7A8C",
     yaml_punctuation="#94a3b8",
+    yaml_step_highlight="#D6E6F7",
     logo_tint=None,
     verdicts=LIGHT_VERDICTS,
 )
@@ -265,6 +291,8 @@ DARK = Palette(
     brand_accent="#005BAC",
     accent_text="#7AABDF",
     tab_text="#B3CFF0",
+    tab_selected_background="#005BAC",
+    tab_selected_text="#ffffff",
     window="#2b2b2b",
     menu_background="#2b2b2b",
     toolbar_background="#232323",
@@ -278,6 +306,9 @@ DARK = Palette(
     text_muted="#AFBAC6",
     text_on_brand="#ffffff",
     section_label="#AFBAC6",
+    menu_highlight_text="#f0f0f0",
+    toolbutton_hover_text="#7AABDF",
+    button_text="#f0f0f0",
     toolbutton="#f0f0f0",
     toolbutton_disabled="#555555",
     log_text="#DEE4EB",
@@ -288,7 +319,7 @@ DARK = Palette(
     header_underline="#005BAC44",
     button_border="#5a5a5a",
     menu_highlight="#444444",
-    toolbutton_hover="#3a3a3a",
+    toolbutton_hover="#4d565f",
     button_background="#3c3f41",
     button_hover="#5c5c5c",
     selection_background="#1a2840",
@@ -305,6 +336,8 @@ DARK = Palette(
     icon_pause="#FFA726",
     icon_stop="#EF5350",
     icon_disabled="#6E7681",
+    progress_track="#3c3f41",
+    progress_fill="#57C25E",
     yaml_key="#9CC3F0",
     yaml_string="#6abf69",
     yaml_number="#F0A868",
@@ -312,6 +345,7 @@ DARK = Palette(
     yaml_null="#9AA5B1",
     yaml_comment="#8894A3",
     yaml_punctuation="#7D8894",
+    yaml_step_highlight="#2E4A68",
     logo_tint="#9CC3F0",
     verdicts=DARK_VERDICTS,
 )

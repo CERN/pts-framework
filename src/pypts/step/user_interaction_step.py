@@ -23,12 +23,12 @@ wait_time does rather than the way PythonModuleStep's `inputs` entries do:
         output: {type: equals, value: Yes}
 
 The chosen option comes back as the step's output, so the ordinary
-outputs vocabulary judges it (`equals`) or stores it (`local`,
-`global`) with no machinery of its own.
+outputs vocabulary judges it (`equals`) or stores it (`global`) with no
+machinery of its own.
 
 **Not answering is an ERROR.** Timed out, Cancel pressed, run stopped - one
 rule, no special cases, applied by `operator_prompt.ask_or_raise` for this
-type and for UserWrite alike.
+type, UserWrite and UserLoading alike.
 """
 
 import uuid

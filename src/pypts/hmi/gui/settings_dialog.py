@@ -5,9 +5,10 @@
 """
 The Settings dialog: Edit -> Settings.
 
-A list of pages on the left - Folders, Appearance, Logging, Report, Advanced -
-and the page's settings on the right, one card each. Controls are chosen for
-the value, not for the file: the theme is three picture cards, a short list of
+A list of pages on the left - Folders, Appearance, Logging, Report, then
+Advanced and Storage when offered - and the page's settings on the right, one
+card each. Controls are chosen for the value, not for the file: the theme is
+three picture cards, a short list of
 choices a row of buttons, a yes/no setting an On/Off switch, the window one card
 with its mode, its size, an Apply button and presets, a folder a path with
 Browse and Open. A card whose value differs from the one the dialog opened with
@@ -32,21 +33,22 @@ straight away - no Save needed. Every way out of the dialog goes through
 `done()`, which puts back whatever was previewed and will not be in force at
 the next start.
 
-**Two pages are actions, not settings.** Storage, the last page, removes the
-recent recipes list, reports and run logs (`storage_panel.py`). Advanced ends
-with Restore default settings, which - once confirmed - closes the dialog with
-`restore_requested`; the GUI deletes config.ini and restarts pypts, so the
-file is recreated from the template.
+**Some cards are actions, not settings.** Advanced ends with Clear recent
+recipes, which empties the File > Open Recent list at once, and Restore default
+settings, which - once confirmed - closes the dialog with `restore_requested`;
+the GUI deletes config.ini and restarts pypts, so the file is recreated from the
+template. Storage, the last page, only shows the base folder and opens it in the
+file manager: pypts deletes no reports or run logs itself - the operator decides
+what goes, in the file manager.
 
 **No setting is left out.** PAGES places the keys it knows; any other key of the
 schema (outside `READ_ONLY_SECTIONS`) gets a page named after its section and a
 control chosen from its type, so a key added to `configuration_schema.py` shows
 up with no change here.
 
-Pure presentation, like `storage_panel.py`: handed the values in force, the
-`send` callable and the preview callables, so a test drives the whole dialog with
-no CORE and no file. Styling lives in `styles.py` (object names `settings*` and
-`themeSwatch*`).
+Pure presentation: handed the values in force, the `send` callable and the
+preview callables, so a test drives the whole dialog with no CORE and no file.
+Styling lives in `styles.py` (object names `settings*` and `themeSwatch*`).
 """
 
 from collections.abc import Callable, Mapping, Sequence
@@ -81,9 +83,7 @@ from pypts.config_handler.configuration_schema import (
     TRUE_VALUES,
     Field,
 )
-from pypts.hmi.gui.storage_panel import StoragePanel, count_of
 from pypts.messages.core_hmi_communication import ConfigParameterResult
-from pypts.utilities.data_removal import RemovableItem, RemovalOutcome, remove
 
 #: How long the dialog waits for CORE's answers before it gives up on them.
 #: CORE answers within one turn of its event loop; five seconds is the heartbeat
@@ -105,10 +105,13 @@ WINDOW_MODE_KEY = "gui.window_mode"
 WIDTH_KEY = "gui.window_width"
 HEIGHT_KEY = "gui.window_height"
 
-#: The last page: not a setting but an action on the installation (storage_panel.py).
+#: The last page: not a setting, but where pypts keeps its data, and a way to look.
 STORAGE_PAGE = "Storage"
 
-#: The page Restore default settings is offered on.
+#: The folder the Storage page shows.
+BASE_DIR_KEY = "paths.base_dir"
+
+#: The page Clear recent recipes and Restore default settings are offered on.
 ADVANCED_PAGE = "Advanced"
 
 #: The keys the window card edits together, in the order `preview_window` takes them.
@@ -123,7 +126,6 @@ PAGES = (
     ("Appearance", (THEME_KEY, WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)),
     ("Logging", ("logging.level",)),
     ("Report", ("report.type", "report.theme")),
-    (ADVANCED_PAGE, ("watchdog.enabled",)),
 )
 
 #: Page title for a section PAGES does not place.
@@ -132,7 +134,6 @@ SECTION_TITLES = {
     "logging": "Logging",
     "report": "Report",
     "gui": "Window",
-    "watchdog": "Watchdog",
 }
 
 #: Card title for each key. A key missing here shows its own name.
@@ -147,7 +148,6 @@ LABELS = {
     "gui.window_mode": "Window mode",
     "gui.window_width": "Window width",
     "gui.window_height": "Window height",
-    "watchdog.enabled": "End the run when a module stops responding",
 }
 
 #: The line under a card's title, where a key needs explaining.
@@ -159,7 +159,6 @@ HINTS = {
     "report.type": "Not used yet.",
     "report.theme": "Not used yet.",
     "gui.theme": "Used by pypts and the Recipe Creator. Previewed as you pick it.",
-    "watchdog.enabled": "Turn off only while debugging the engine.",
 }
 
 #: Name and one line for each theme card.
@@ -193,6 +192,11 @@ NO_ANSWER_REASON = "The engine did not answer, so this change may not have been 
 
 #: The multiplication sign between a width and a height.
 TIMES = "×"  # noqa: RUF001 - the multiplication sign, deliberately, defined once here
+
+
+def count_of(number: int, noun: str) -> str:
+    """"1 change" / "3 changes". A page nobody wants to read twice says it once."""
+    return f"{number} {noun}" if number == 1 else f"{number} {noun}s"
 
 
 def setting_text(value: Any) -> str:
@@ -769,8 +773,8 @@ class SettingsDialog(QDialog):
         preview_theme: Callable[[str], None] | None = None,
         preview_window: Callable[[str, int, int], None] | None = None,
         confirm_window: Callable[[str], bool] | None = None,
-        storage_survey: Callable[[], Sequence[RemovableItem]] | None = None,
-        storage_remover: Callable[[Sequence[RemovableItem]], RemovalOutcome] = remove,
+        offer_storage: bool = False,
+        clear_recent_recipes: Callable[[], None] | None = None,
         offer_restore: bool = False,
         confirm_restore: Callable[[], bool] | None = None,
         blocked_reason: str | None = None,
@@ -794,14 +798,15 @@ class SettingsDialog(QDialog):
             confirm_window: asked whether to keep a previewed window, with its
                 description; True keeps it. None: `confirm_window_settings()`,
                 the countdown dialog.
-            storage_survey: what the Storage page offers. Given, the dialog ends
-                with a Storage page, surveyed only when first opened. None: no page.
-            storage_remover: deletes what the Storage page was asked to remove.
+            offer_storage: end with a Storage page that shows the base folder
+                and opens it in the file manager. It deletes nothing.
+            clear_recent_recipes: called when the operator presses Clear on the
+                Advanced page's Clear recent recipes card. None: no card.
             offer_restore: show Restore default settings on the Advanced page.
             confirm_restore: asked before restoring; True restores. None:
                 `confirm_restore_defaults()`, a Cancel / Restore question.
-            blocked_reason: why neither removing stored data nor restoring the
-                defaults is allowed now (a run is in progress), or None.
+            blocked_reason: why restoring the defaults is not allowed now (a run
+                is in progress), or None. Clearing the recents is always allowed.
             open_page: the page title to open on, e.g. "Appearance". None, or a
                 title there is no page for: the first page.
         """
@@ -843,19 +848,18 @@ class SettingsDialog(QDialog):
         #: True once CORE confirmed saving the theme, so leaving keeps it.
         self._theme_saved = False
 
-        self._storage_survey = storage_survey
-        self._storage_remover = storage_remover
+        self._offer_storage = offer_storage
+        self._clear_recent_recipes = clear_recent_recipes
         self._offer_restore = offer_restore
         self._confirm_restore = confirm_restore
         self.blocked_reason = blocked_reason
         self._open_page = open_page
-        #: The Storage panel, once its page has been opened. None before.
-        self.storage_panel: StoragePanel | None = None
-        self._storage_row: int | None = None
-        self._storage_column: QVBoxLayout | None = None
-        #: True once the Storage page has removed something - the GUI then
-        #: rebuilds the recents list it holds in memory.
-        self.storage_changed = False
+        #: The Storage page's Open button, when the page is offered.
+        self.open_base_folder_button: QPushButton | None = None
+        #: The Clear recent recipes button, when offered.
+        self.clear_recents_button: QPushButton | None = None
+        #: True once the operator cleared the recent recipes list here.
+        self.recents_cleared = False
         #: The Restore default settings button, when offered.
         self.restore_button: QPushButton | None = None
         #: True if the operator confirmed Restore default settings; the dialog
@@ -916,13 +920,18 @@ class SettingsDialog(QDialog):
             self._page_keys.append(keys)
             self.nav.addItem(title)
             self.pages.addWidget(self._build_page(title, keys, values))
-        if self._storage_survey is not None:
-            self._storage_row = self.nav.count()
+        # Advanced holds no setting, only actions, so it exists only when one is offered.
+        if self._clear_recent_recipes is not None or self._offer_restore:
+            self._page_titles.append(ADVANCED_PAGE)
+            self._page_keys.append(())
+            self.nav.addItem(ADVANCED_PAGE)
+            self.pages.addWidget(self._build_page(ADVANCED_PAGE, (), values))
+        if self._offer_storage:
             self._page_titles.append(STORAGE_PAGE)
             self._page_keys.append(())
             self.nav.addItem(STORAGE_PAGE)
-            self.pages.addWidget(self._build_storage_page())
-        self.nav.currentRowChanged.connect(self._show_page)
+            self.pages.addWidget(self._build_storage_page(values))
+        self.nav.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.nav.setCurrentRow(self._row_for(self._open_page))
 
         middle.addWidget(self.nav)
@@ -963,6 +972,8 @@ class SettingsDialog(QDialog):
                 column.addWidget(self._window_card(values))
             else:
                 column.addWidget(self._single_card(key, values))
+        if title == ADVANCED_PAGE and self._clear_recent_recipes is not None:
+            column.addWidget(self._clear_recents_card())
         if title == ADVANCED_PAGE and self._offer_restore:
             column.addWidget(self._restore_card())
         column.addStretch()
@@ -973,11 +984,14 @@ class SettingsDialog(QDialog):
         scroll.setWidget(content)
         return scroll
 
-    def _build_storage_page(self) -> QWidget:
+    def _build_storage_page(self, values: Mapping[str, str]) -> QWidget:
         """
-        The Storage page's frame. The panel itself comes in _show_page(), the
-        first time the page is shown: its survey walks the reports and logs
-        folders, and Settings must not wait for that to open.
+        Where pypts keeps its data, and an Open button - nothing more.
+
+        pypts does not delete reports or run logs: they are test records, and
+        which of them may go is the operator's decision, made in the file
+        manager. The folder shown is the base folder in force when the dialog
+        opened, not an unsaved edit on the Folders page.
         """
         content = QWidget()
         column = QVBoxLayout(content)
@@ -986,7 +1000,40 @@ class SettingsDialog(QDialog):
         heading = QLabel(STORAGE_PAGE)
         heading.setObjectName("settingsPageTitle")
         column.addWidget(heading)
-        self._storage_column = column
+
+        folder = values.get(BASE_DIR_KEY, "")
+        body = QWidget()
+        row = QHBoxLayout(body)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        path_label = QLabel(folder)
+        path_label.setObjectName("settingsCardTitle")
+        path_label.setWordWrap(True)
+        path_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        row.addWidget(path_label, stretch=1)
+        self.open_base_folder_button = QPushButton("Open")
+        self.open_base_folder_button.setObjectName("settingsBrowse")
+        self.open_base_folder_button.setAutoDefault(False)
+        self.open_base_folder_button.setMinimumHeight(_INPUT_HEIGHT)
+        self.open_base_folder_button.setToolTip("Show this folder in the file manager.")
+        self.open_base_folder_button.setEnabled(
+            folder != "" and Path(folder).is_absolute() and Path(folder).is_dir()
+        )
+        self.open_base_folder_button.clicked.connect(
+            lambda _checked=False: QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+        )
+        row.addWidget(self.open_base_folder_button)
+
+        column.addWidget(
+            SettingCard(
+                "Base folder",
+                "Reports and run logs go here, unless the Folders page says otherwise. "
+                "pypts never deletes them; remove what you no longer need in the file "
+                "manager.",
+                body,
+            )
+        )
+        column.addStretch()
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -999,22 +1046,32 @@ class SettingsDialog(QDialog):
             return self._page_titles.index(title)
         return 0
 
-    def _show_page(self, row: int) -> None:
-        self.pages.setCurrentIndex(row)
-        if row != self._storage_row or self.storage_panel is not None:
-            return
-        if self._storage_survey is None or self._storage_column is None:
-            return
-        panel = StoragePanel(
-            self._storage_survey, self._storage_remover, blocked_reason=self.blocked_reason
+    def _clear_recents_card(self) -> SettingCard:
+        """Clear recent recipes, on the Advanced page. Harmless, so no question and no block."""
+        body = QWidget()
+        row = QHBoxLayout(body)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addStretch()
+        self.clear_recents_button = QPushButton("Clear")
+        self.clear_recents_button.setObjectName("settingsBrowse")
+        self.clear_recents_button.setAutoDefault(False)
+        self.clear_recents_button.setMinimumHeight(_INPUT_HEIGHT)
+        self.clear_recents_button.clicked.connect(self._clear_recents)
+        row.addWidget(self.clear_recents_button)
+        # Not registered with a key: it edits nothing, so it is never "modified".
+        return SettingCard(
+            "Clear recent recipes",
+            "Empties the File > Open Recent list. The recipe files are not touched.",
+            body,
         )
-        panel.removed.connect(self._on_storage_removed)
-        self.storage_panel = panel
-        self._storage_column.addWidget(panel)
-        self._storage_column.addStretch()
 
-    def _on_storage_removed(self) -> None:
-        self.storage_changed = True
+    def _clear_recents(self) -> None:
+        if self._clear_recent_recipes is None or self.clear_recents_button is None:
+            return
+        self._clear_recent_recipes()
+        self.recents_cleared = True
+        self.clear_recents_button.setText("Cleared")
+        self.clear_recents_button.setEnabled(False)
 
     def _restore_card(self) -> SettingCard:
         """Restore default settings, at the end of the Advanced page."""
@@ -1023,7 +1080,7 @@ class SettingsDialog(QDialog):
         row.setContentsMargins(0, 0, 0, 0)
         row.addStretch()
         self.restore_button = QPushButton("Restore defaults")
-        self.restore_button.setObjectName("cacheDialogRemoveBtn")
+        self.restore_button.setObjectName("settingsDangerBtn")
         self.restore_button.setAutoDefault(False)
         self.restore_button.setEnabled(self.blocked_reason is None)
         self.restore_button.clicked.connect(self._restore_defaults)

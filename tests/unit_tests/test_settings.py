@@ -126,7 +126,6 @@ def settings_in_force(tmp_path):
         "gui.window_mode": "windowed",
         "gui.window_width": "1280",
         "gui.window_height": "720",
-        "watchdog.enabled": "true",
     }
 
 
@@ -160,7 +159,7 @@ def test_the_settings_are_grouped_into_pages(qapp, tmp_path):
     dialog = a_settings_dialog(tmp_path)
 
     titles = [dialog.nav.item(row).text() for row in range(dialog.nav.count())]
-    assert titles == ["Folders", "Appearance", "Logging", "Report", "Advanced"]
+    assert titles == ["Folders", "Appearance", "Logging", "Report"]
     assert dialog.nav.currentItem().text() == "Folders"
 
     dialog.nav.setCurrentRow(1)
@@ -259,15 +258,33 @@ def test_the_log_level_is_a_row_of_buttons(qapp, tmp_path):
     dialog.close()
 
 
-def test_the_watchdog_is_an_on_off_switch(qapp, tmp_path):
-    dialog = a_settings_dialog(tmp_path)
-    switch = dialog.editors["watchdog.enabled"].button
+def test_a_yes_no_setting_is_an_on_off_switch(qapp):
+    """No yes/no key is in the schema today; the control stays for the next one."""
+    from pypts.hmi.gui.settings_dialog import OnOffSwitch
 
-    assert switch.text() == "On"
-    switch.click()
+    switch = OnOffSwitch("true")
 
-    assert dialog.text_of("watchdog.enabled") == "false"
-    assert switch.text() == "Off"
+    assert switch.button.text() == "On"
+    switch.button.click()
+
+    assert switch.value() == "false"
+    assert switch.button.text() == "Off"
+
+
+def test_the_watchdog_is_not_a_setting(qapp, tmp_path):
+    """Ending the run when a module stops responding is fixed behaviour."""
+    dialog = a_settings_dialog(tmp_path, clear_recent_recipes=lambda: None, offer_restore=True)
+
+    assert not [key for key in dialog.editors if key.startswith("watchdog.")]
+    assert "watchdog" not in " ".join(all_text(dialog)).lower()
+    dialog.close()
+
+
+def test_advanced_is_offered_only_with_its_actions(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path, offer_restore=True, offer_storage=True)
+
+    titles = [dialog.nav.item(row).text() for row in range(dialog.nav.count())]
+    assert titles[-2:] == ["Advanced", "Storage"]
     dialog.close()
 
 
@@ -302,12 +319,12 @@ def test_save_sends_only_what_changed(qapp, tmp_path):
     sent = []
     dialog = a_settings_dialog(tmp_path, sent)
     dialog.set_value("gui.window_width", "1600")
-    dialog.editors["watchdog.enabled"].button.click()
+    dialog.set_value("logging.level", "DEBUG")
 
     assert dialog.save_button.text() == "Save 2 changes"
     dialog.save_button.click()
 
-    assert sent == [("gui.window_width", "1600"), ("watchdog.enabled", "false")]
+    assert sent == [("gui.window_width", "1600"), ("logging.level", "DEBUG")]
     assert dialog.showing == "saving"
     assert dialog.cards["gui.window_width"].body.isEnabled() is False
     dialog.close()
@@ -797,72 +814,116 @@ def test_without_a_configuration_the_window_uses_the_template_defaults(gui_facto
 
 
 # --------------------------------------------------------------------------
-# Storage, and Restore default settings
+# Storage, Clear recent recipes, and Restore default settings
 # --------------------------------------------------------------------------
 
 
-def storage_items(tmp_path, state_file=None):
-    """A survey of the recents list, pointing at a real file so the real remover can run."""
-    from pypts.utilities.data_removal import RemovableItem
-
-    if state_file is None:
-        state_file = tmp_path / "recent.json"
-    if not state_file.exists():
-        state_file.parent.mkdir(parents=True, exist_ok=True)
-        state_file.write_text("[]", encoding="utf-8")
-    return [
-        RemovableItem(
-            key="state",
-            label="Recent recipes",
-            detail="The recent list.",
-            location=str(state_file),
-            targets=(state_file,),
-            size_bytes=state_file.stat().st_size,
-            item_count=1,
-        )
-    ]
+def page_named(dialog, title):
+    """The page widget whose entry in the list reads `title`."""
+    for row in range(dialog.nav.count()):
+        if dialog.nav.item(row).text() == title:
+            return dialog.pages.widget(row)
+    raise AssertionError(f"no page named {title!r}")
 
 
-def test_storage_is_the_last_page_and_waits_until_it_is_opened(qapp, tmp_path):
-    """The survey walks the reports and logs folders; Settings must not wait for it."""
-    surveyed = []
-
-    def survey():
-        surveyed.append(True)
-        return storage_items(tmp_path)
-
-    dialog = a_settings_dialog(tmp_path, storage_survey=survey)
+def test_storage_is_the_last_page_and_shows_the_base_folder(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path, offer_storage=True)
     last = dialog.nav.count() - 1
 
     assert dialog.nav.item(last).text() == "Storage"
-    assert surveyed == []
-    assert dialog.storage_panel is None
+    assert str(tmp_path) in all_text(dialog.pages.widget(last))
+    dialog.close()
 
-    dialog.nav.setCurrentRow(last)
 
-    assert surveyed == [True]
-    assert dialog.storage_panel is not None
+def test_storage_is_not_offered_unless_asked_for(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path)
+
+    assert dialog.open_base_folder_button is None
+    assert "Storage" not in [dialog.nav.item(row).text() for row in range(dialog.nav.count())]
+    dialog.close()
+
+
+def test_storage_opens_the_base_folder_in_the_file_manager(qapp, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from PySide6.QtGui import QDesktopServices
+
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+    dialog = a_settings_dialog(tmp_path, offer_storage=True)
+
+    dialog.open_base_folder_button.click()
+
+    assert [Path(url.toLocalFile()) for url in opened] == [tmp_path]
+    dialog.close()
+
+
+def test_storage_cannot_open_a_base_folder_that_is_not_there(qapp, tmp_path):
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+
+    values = settings_in_force(tmp_path)
+    values["paths.base_dir"] = str(tmp_path / "gone")
+    dialog = SettingsDialog(values, lambda key, value: None, offer_storage=True)
+
+    assert dialog.open_base_folder_button.isEnabled() is False
+    dialog.close()
+
+
+def test_storage_deletes_nothing(qapp, tmp_path):
+    """Reports and run logs are test records: the operator removes them, not pypts."""
+    from PySide6.QtWidgets import QPushButton
+
+    dialog = a_settings_dialog(tmp_path, offer_storage=True)
+    buttons = page_named(dialog, "Storage").findChildren(QPushButton)
+
+    assert [button.text() for button in buttons if not button.isHidden()] == ["Open"]
     dialog.close()
 
 
 def test_settings_can_open_on_a_named_page(qapp, tmp_path):
-    dialog = a_settings_dialog(
-        tmp_path, storage_survey=lambda: storage_items(tmp_path), open_page="Storage"
-    )
+    dialog = a_settings_dialog(tmp_path, offer_storage=True, open_page="Storage")
 
     assert dialog.nav.currentItem().text() == "Storage"
-    assert dialog.storage_panel is not None
+    assert dialog.pages.currentWidget() is page_named(dialog, "Storage")
     dialog.close()
 
 
-def test_removing_stored_data_is_remembered_for_the_gui(qapp, tmp_path):
+def test_clear_recent_recipes_is_offered_on_the_advanced_page(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path, clear_recent_recipes=lambda: None)
+
+    assert dialog.clear_recents_button is not None
+    advanced = page_named(dialog, "Advanced")
+    assert dialog.clear_recents_button in advanced.findChildren(type(dialog.clear_recents_button))
+    dialog.close()
+
+
+def test_clear_recent_recipes_is_not_offered_unless_asked_for(qapp, tmp_path):
+    dialog = a_settings_dialog(tmp_path)
+
+    assert dialog.clear_recents_button is None
+    dialog.close()
+
+
+def test_clear_recent_recipes_clears_at_once_without_asking(qapp, tmp_path):
+    cleared = []
+    dialog = a_settings_dialog(tmp_path, clear_recent_recipes=lambda: cleared.append(True))
+
+    dialog.clear_recents_button.click()
+
+    assert cleared == [True]
+    assert dialog.recents_cleared is True
+    assert dialog.clear_recents_button.isEnabled() is False
+    dialog.close()
+
+
+def test_clear_recent_recipes_is_allowed_during_a_run(qapp, tmp_path):
     dialog = a_settings_dialog(
-        tmp_path, storage_survey=lambda: storage_items(tmp_path), open_page="Storage"
+        tmp_path,
+        clear_recent_recipes=lambda: None,
+        blocked_reason="Not while a recipe is running - stop the run first.",
     )
 
-    dialog.storage_panel.remove_button.click()
-
-    assert dialog.storage_changed is True
+    assert dialog.clear_recents_button.isEnabled() is True
     dialog.close()
 
 
@@ -952,28 +1013,27 @@ def test_view_appearance_opens_settings_on_the_appearance_page(gui_factory, monk
     assert seen["page"] == "Appearance"
 
 
-def test_storage_and_restore_are_refused_during_a_run(gui_factory, monkeypatch, tmp_path):
-    from pypts.hmi.gui import gui as gui_module
+def test_restore_is_refused_during_a_run_and_clearing_the_recents_is_not(
+    gui_factory, monkeypatch
+):
     from pypts.hmi.gui.settings_dialog import SettingsDialog
     from pypts.messages.run_events import RunStarted
 
     a_config_file()
     instance, _outbox, inbox = gui_factory()
-    monkeypatch.setattr(gui_module, "survey", lambda: storage_items(tmp_path))
     inbox.send(RunStarted(recipe_name="demo", recipe_description="d"))
     instance.poll_core()
     seen = {}
 
-    def open_the_storage_page(dialog):
-        dialog.nav.setCurrentRow(dialog.nav.count() - 1)
-        seen["can_remove"] = dialog.storage_panel.remove_button.isEnabled()
+    def look_at_the_advanced_page(dialog):
+        seen["can_clear"] = dialog.clear_recents_button.isEnabled()
         seen["can_restore"] = dialog.restore_button.isEnabled()
         return 0
 
-    monkeypatch.setattr(SettingsDialog, "exec", open_the_storage_page)
+    monkeypatch.setattr(SettingsDialog, "exec", look_at_the_advanced_page)
     instance.window.settings_action.trigger()
 
-    assert seen["can_remove"] is False
+    assert seen["can_clear"] is True
     assert seen["can_restore"] is False
 
 
@@ -1000,11 +1060,12 @@ def test_restoring_the_defaults_deletes_the_config_and_restarts_pypts(gui_factor
     assert any(isinstance(message, ShutdownRequested) for message in drain(outbox))
 
 
-def test_removing_the_recents_resets_them_without_a_restart(gui_factory, monkeypatch, tmp_path):
-    """The store held the old list in memory and would write it straight back."""
-    from pypts.hmi.gui import gui as gui_module
+def test_clearing_the_recents_in_settings_empties_the_list_without_a_restart(
+    gui_factory, monkeypatch, tmp_path
+):
     from pypts.hmi.gui.settings_dialog import SettingsDialog
     from pypts.messages.core_hmi_communication import ShutdownRequested
+    from pypts.utilities.recent_recipes import RecentRecipes
 
     config_file = a_config_file()
     instance, outbox, _inbox = gui_factory()
@@ -1012,21 +1073,17 @@ def test_removing_the_recents_resets_them_without_a_restart(gui_factory, monkeyp
     recipe.write_text("name: bench\n", encoding="utf-8")
     instance.recent_recipes.remember(str(recipe), "Bench")
     assert instance.recent_recipes.entries() != []
-    state_file = file_locations.recent_recipes_path()
-    monkeypatch.setattr(
-        gui_module, "survey", lambda: storage_items(tmp_path, state_file=state_file)
-    )
 
-    def remove_the_recents(dialog):
-        dialog.nav.setCurrentRow(dialog.nav.count() - 1)
-        dialog.storage_panel.remove_button.click()
+    def clear_the_recents(dialog):
+        dialog.clear_recents_button.click()
         dialog.accept()
         return 0
 
-    monkeypatch.setattr(SettingsDialog, "exec", remove_the_recents)
+    monkeypatch.setattr(SettingsDialog, "exec", clear_the_recents)
     instance.window.settings_action.trigger()
 
     assert instance.recent_recipes.entries() == []
+    assert RecentRecipes().entries() == []
     assert config_file.exists()
     assert instance.exit_code == 0
     assert not any(isinstance(message, ShutdownRequested) for message in drain(outbox))

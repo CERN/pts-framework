@@ -18,7 +18,7 @@ reading off an instrument that has no interface.
         output: {type: global, global_name: serial_number}
 
 The typed string is the step's output, so the ordinary outputs
-vocabulary stores it (`global`, `local`) or judges it (`equals`, `passfail`)
+vocabulary stores it (`global`) or judges it (`equals`, `passfail`)
 with no machinery of its own.
 
 **The framework has no opinion about what is being asked for.** An earlier

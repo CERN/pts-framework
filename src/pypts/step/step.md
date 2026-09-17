@@ -21,7 +21,7 @@ recipe terms, and is worth reading before porting one.
 ## 1. The catalogue
 
 Ten classes existed in `old_code/steps.py` (the whole file is commented out — it is read,
-never run). Six are ported; the other four are not wanted.
+never run). Seven are ported; the other three are not wanted.
 
 | # | Old class | YAML today | Status | Decision |
 |---|---|---|---|---|
@@ -33,12 +33,13 @@ never run). Six are ported; the other four are not wanted.
 | 6 | `UserRunMethodStep` | — | ❌ missing | **deprecated — to be dropped** |
 | 7 | `SSHConnectStep` | — | ❌ missing | **not a step type — moves into the framework** |
 | 8 | `SSHCloseStep` | — | ❌ missing | **not a step type — moves into the framework** |
-| 9 | `SequenceStep` | — | ❌ missing | **to be dropped** |
+| 9 | `SequenceStep` | `Sequence` | ✅ **engine done (stage 1)** | dropped 2026-09-01, **reversed 2026-09-16** — §2.8 |
 | 10 | `IndexedStep` | `Indexed` | ✅ **done, reshaped** | replaced by load-time expansion — §2.9 |
 
-Decisions recorded 2026-09-01; `UserWrite` landed 2026-09-02, `UserLoading` 2026-09-15.
-Nothing left to port; four types will never appear in `STEP_TYPES` — plus `Indexed`, which is in the rules but never in the registry
-because it is gone before anything is built.
+Decisions recorded 2026-09-01; `UserWrite` landed 2026-09-02, `UserLoading` 2026-09-15,
+`Sequence` (engine) 2026-09-17. Nothing left to port; three types will never appear in
+`STEP_TYPES` — plus `Indexed`, which is in the rules but never in the registry because it is
+gone before anything is built.
 
 ---
 
@@ -103,7 +104,7 @@ way a PythonModule's `inputs` entries do. Only the *answer* goes through a mappi
 ```
 
 The step returns the chosen string, which `Step.run()` wraps as `{"output": choice}` — so
-`equals` judges it, `local`/`global` store it, and no output type was added for it.
+`equals` judges it, `global` stores it, and no output type was added for it.
 
 **The `ask` seam.** The step layer reached CORE through `Runtime.emit` alone, which is
 one-way. `Runtime` now carries a third seam, `ask`, which the Sequencer fills with
@@ -290,23 +291,69 @@ Open for the implementation session:
 - **A live paramiko client cannot cross a process boundary.** It works today because the
   whole engine is one process; nothing about it may ever be put on the HMI link.
 
-### 2.8 `SequenceStep` — to be dropped
+### 2.8 `SequenceStep` → `Sequence` — reversed 2026-09-16, engine done (stage 1)
 
-Run another sequence as a single step. **Dropped.**
+Call another sequence of the same recipe as a group. **Dropped on 2026-09-01, brought back
+on 2026-09-16**: a recipe needs one executable sequence (`main_sequence`) and a way to group
+tests below it, in other sequence documents, run as nested groups inside main — to any depth.
+The design is `plans/sequence_step_design.md` (HTML: `resources/internal_reports/`); this
+section says how the engine does it. `sequence_step.py`.
 
-Note what this leaves behind, so it is not mistaken for an oversight:
+```yaml
+- steptype: Sequence
+  sequence_name: PowerCycle     # required, matched case-insensitively
+  description: optional         # else the called sequence's own description
+  skip: false                   # optional
+  continue_on_error: true       # optional
+```
 
-- `step.step.run_sequence()` is deliberately free of threads and queues, and the emission
-  model (a step emits its own events through `Runtime.emit`) was designed so a nested
-  sequence would report through the channel it already holds. That shape is still correct
-  for the top-level sequence; it simply has no second caller now.
-- `StepResult.subresults` was kept for this and for `IndexedStep`. With both dropped,
-  **nothing writes it** — drop the attribute too when the decision is implemented, or the
-  next reader will assume nesting is coming.
-- The old engine wrapped `main_sequence` in a synthetic `SequenceStep`. The new Sequencer
-  calls the sequence body directly instead, so nothing depends on it.
-- The old type was itself unfinished: sub-sequences were parsed and then never referenced
-  again (recipe_guide §12).
+**The call.** Named after the sequence it calls, so a Sequence step **refuses** `step_name`
+(`rules.UNNAMED_STEP_TYPES` exempts it from the common requirement); it also refuses
+`inputs` (a called sequence shares the run's globals — §3.5), `outputs` (its verdict is its
+steps') and `id` (every call gets ids of its own). `check_sequence_step()` holds those
+sentences; the validator calls it. An `Indexed` step whose `template` is a Sequence step is
+refused too: a sequence is a group, `Indexed` parametrizes one step, and the two do not mix.
+An `Indexed` step *inside* a called sequence is expanded as usual.
+
+**Built at load, a fresh copy per call.** `recipe_parser._build_steps()` gives every Sequence
+step its own `Sequence`, built from the called document exactly as any sequence is — new
+`Step` objects, new UUIDs. A sequence may be called any number of times, from `steps` or
+`teardown_steps`, and no two calls share a row. Refused with the sequence, the position and
+the chain: a `sequence_name` no document has; the main sequence; and recursion — a sequence
+reaching itself directly or indirectly (`Main -> PowerCycle -> Settle -> PowerCycle`). Calling
+one sequence many times one after another is not recursion. There is no `repeat` key.
+
+**At run time it is an ordinary step.** `SequenceStep` sets `contains_steps = True` and
+replaces three things (§4): `_step()` runs its copy through `run_sequence()`, `_verdict()`
+returns the worst of everything it ran — teardown included, the rule a sequence already
+aggregates by — and names each failing step inside for the FAIL reason, and
+`_skip_contents()` settles its rows when the run never reaches it. `run()` copies
+`child_results` to `StepResult.subresults`, which is its one writer. So a call has a real row:
+`StepStarted` before its steps' events, `StepFinished` after them.
+
+- **`skip: true`** records the group's steps SKIP and **still runs its teardown**.
+- **A group the run never reaches** (a Stop or a halt came first): every row inside it,
+  teardown rows included, is SKIP with the run's reason, and nothing runs — nothing was set up.
+- **A halt anywhere ends the run** (§3.1): teardowns run innermost first, and the run ends with
+  its real ERROR or FAIL, never STOP. `continue_on_error: false` on the call halts on the
+  group's verdict.
+- **Stop** is checked before every step at every depth; all teardowns run.
+- **Pause** holds before any step at any depth, never before a group row (§3.7).
+- **Teardown** is inherited: a sequence called from a teardown list runs to the end.
+- **Totals count real steps** — `real_step_results()` replaces a group by its contents — in
+  the `Sequence '…' finished` line, the run summary and `RunFinished.outcomes`.
+- **Log lines** keep their wording and are indented two spaces per level (`runtime.depth`).
+
+**The `Runtime` nesting state** (plain attributes, not seams): `group_path` and `depth`, set
+by `entering()`, which `run_sequence()` wraps itself in — the run's first sequence is depth 0
+and starts the path; `in_teardown`; and `halt_reason`. `StepExecuted.group_path` carries the
+path (`Main/PowerCycle`) for the Report.
+
+**Stage 1 is transitional.** Every sequence document is still built, each as the root of its
+own tree, so the sequence dropdown keeps working; only-main-runs, the "never called from main"
+warning, the step table's indentation, the report's `group_path` column and the verificator /
+Recipe Creator follow in stages 2–5 (roadmap). Until stage 4 the Creator's add-step menu offers
+`Sequence` but writes a `step_name` the parser refuses.
 
 ### 2.9 `IndexedStep` → `Indexed` — done, in a different shape
 
@@ -335,8 +382,8 @@ parameter set, and everything downstream deals with plain steps:
   coherent case, so the old "iterate to the length of the shortest list, silently
   truncating" cannot happen.
 - `inputs` are direct values; `expect` are `equals` checks. Terse on purpose — a set is a
-  test case and should read like a table row. Anything needing `range`, `passfail`,
-  `local` or `global` goes on the `template`, which takes the full mapping vocabulary;
+  test case and should read like a table row. Anything needing `range`, `passfail`
+  or `global` goes on the `template`, which takes the full mapping vocabulary;
   set entries are merged over it, key by key.
 - Generated steps are named after their parameters — `Add numbers [a=2, b=3]` — so a
   failed row explains itself without opening the recipe. A set with no `inputs` falls back
@@ -449,6 +496,10 @@ not details:
   sequence aggregates to. **The operator's Stop does the same**, for the same reason, with
   its own reason text — before this, both simply dropped the remaining steps and left their
   rows pending forever.
+- **A halt ends the whole run, at any depth.** Halting sets `runtime.halt_reason`, which every
+  step list of the run checks beside the stop flag — so a halt inside a called sequence skips
+  the rest of that sequence *and* of every sequence around it (§2.8). Teardown lists never
+  look at it.
 - **Ignored in teardown.** `run_sequence()` passes `run_to_end=True`, which disables both
   early exits: cleanup runs after an abort *and* after a halt, and one failing cleanup step
   does not skip the rest of the cleanup. That parameter replaced `honour_stop` — one name
@@ -491,9 +542,9 @@ step and the key. Loud, and the fix is a rename.
 - **`method` input type** — went with `UserRunMethodStep` (§2.6).
 - **`indexed: true`** — the old per-input flag is gone; `parameter_sets` replaced it (§2.9).
 - **`__result` and the `passthrough` output type** — the structural types' aggregate
-  output, propagated as the step's own verdict. Gone: `SequenceStep` was dropped and
-  `Indexed` no longer aggregates anything, so nothing produced a `ResultType` to
-  propagate. `pass` took its place in the vocabulary — same idea of an output that is
+  output, propagated as the step's own verdict. Gone: `Indexed` no longer aggregates
+  anything, and the returned `Sequence` step takes its verdict from `_verdict()`, not
+  from an output. `pass` took its place in the vocabulary — same idea of an output that is
   not a measurement, without the propagation (§3.4).
 
 ### 3.4 `inputs` and `outputs` — done
@@ -555,8 +606,7 @@ The reason it went: a local was **global in reach and merely shorter-lived**. Ev
 in the running sequence could read and write it exactly as it could a global; all the
 scope bought was that the value vanished when the sequence ended. That is a distinction a
 recipe author had to think about on every stored value, for no protection — two names for
-one idea. With `SequenceStep` dropped (§2.8) the stack never held more than one frame
-either, so the machinery was carrying a case that could not arise.
+one idea. A called sequence (§2.8) shares the same globals; it does not bring a frame back.
 
 What is left is deliberately two things and not three: **`globals` for anything that
 outlives a step**, and a step's own **`inputs`/`outputs`** for everything else. A step
@@ -594,10 +644,14 @@ is never interrupted. The step layer knows only two `Runtime` seams, both no-ops
   main step that is about to run for real (`not run_to_end and not skip_reason`), with the
   same 1-based numbers as the `Step 4/10 'name'` log line. It blocks while the run is held.
   It is called **before** the stop check, so a Stop that ends a hold is seen at once and the
-  remaining steps are recorded SKIP as usual.
-- **`drop_pending_pause()`** - called once by `run_sequence()` after the main steps and
-  before teardown (first thing in the `finally`). A pause that found no step to hold before
-  - pressed during the last step, or after a `continue_on_error: false` halt - lapses here.
+  remaining steps are recorded SKIP as usual. Steps inside a called sequence are held before
+  too, at any depth; a group row (`contains_steps`) is not — the hold lands before its first
+  step.
+- **`drop_pending_pause()`** - called by `run_sequence()` after the main steps and before
+  teardown (first thing in the `finally`), **only at depth 0** — the run's first sequence. A
+  pause that found no step to hold before - pressed during the last step, or after a
+  `continue_on_error: false` halt - lapses here; one pressed during a called sequence's last
+  step still holds before the caller's next step.
 
 **Teardown is never held**: `run_to_end=True` skips the hold with the two early exits. What
 a hold *is* - the flag, the `RunPaused`/`RunResumed` events, the log lines - belongs to the
@@ -607,7 +661,9 @@ Sequencer (`sequencer/sequencer.md`).
 
 ## 4. Adding a step type — the three edits
 
-1. The class in `step/<name>_step.py`: subclass `Step`, override `_step()` and nothing else.
+1. The class in `step/<name>_step.py`: subclass `Step`, override `_step()` and nothing else —
+   except a type that contains other steps (`contains_steps = True`), which also replaces
+   `_verdict()` and `_skip_contents()` and fills `child_results` (§2.8).
    A type that has to ask the operator something calls `runtime.ask(request)` from inside
    `_step()` — never a queue, never `PendingRequests` directly (§2.3) — and reaches for
    `operator_prompt.ask_or_raise()` and `resolve_image_path()` rather than repeating them

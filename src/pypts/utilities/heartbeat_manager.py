@@ -42,8 +42,9 @@ HEARTBEAT_TIMEOUT_S = 5.0
 #: afford to be wrong. This one aborts a technician's test, so it must not be.
 #: Five seconds of silence is a stall (a large recipe parsed inline in CORE's
 #: loop, a native dialog starving a timer, a machine that swapped); fifteen is a
-#: module that is not coming back. Anything acting on this reports at ERROR and
-#: names what went quiet - see Core.do_periodic_tasks() and roadmap 1.38.
+#: module that is not coming back. Anything acting on this reports at ERROR or above
+#: (CORE: CRITICAL, the HMI: ERROR) and names what went quiet - see
+#: Core.do_periodic_tasks() and roadmap 1.38.
 HEARTBEAT_FATAL_S = 15.0
 
 #: The names CORE knows the modules by. Each module puts its own name on every

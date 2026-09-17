@@ -169,7 +169,6 @@ class _ModuleState:
     last_heartbeat: float | None = None  # None = never heard from
     heartbeat_lost: bool = False
     start_reported: bool = False
-    watchdog_suppressed: bool = False
 
 
 def core_main(
@@ -239,15 +238,7 @@ class Core:
         self,
         to_hmi: QueueWrapper[CoreToHmi],
         from_hmi: QueueWrapper[HmiToCore],
-        watchdog_enabled: bool | None = None,
     ) -> None:
-        """
-        Args:
-            watchdog_enabled: whether prolonged silence ends the run. None asks
-                the configuration, which is what a real run does; a test passes
-                the value, the way the Report is passed its output_dir, because
-                outside a run there is no launcher to have created a config.
-        """
         self.to_hmi = to_hmi
         self.from_hmi = from_hmi
 
@@ -313,14 +304,6 @@ class Core:
         #: watching for a CORE that has gone would be watching for something
         #: that cannot happen - and would double the trace traffic doing it.
         self.hmi_heartbeat = HeartbeatManager(self.to_hmi, CORE)
-
-        #: Whether prolonged silence ends the run, or is only reported. Off is
-        #: for a developer with a debugger attached: a breakpoint in an event
-        #: loop is indistinguishable from an event loop that has died.
-        if watchdog_enabled is None:
-            self.watchdog_enabled = ConfigHandler().get_parameter("watchdog.enabled")
-        else:
-            self.watchdog_enabled = watchdog_enabled
 
     # --- Startup --------------------------------------------------------------
 
@@ -582,8 +565,10 @@ class Core:
         self.recipe = recipe
         # The parser knows the format and has already logged its verdict;
         # CORE owns the channel to the operator, so the sentence is shown
-        # from here. A version mismatch never stops a run - it is a warning
-        # that the recipe may expect a framework this is not.
+        # from here. A version mismatch never stops a run: the recipe loads
+        # anyway, but may expect a framework this is not. It is sent as ERROR,
+        # not WARNING, so it reaches the operator - handle_module_error() only
+        # logs a WARNING and never shows it on the HMI.
         if recipe.version_notice:
             self.handle_module_error(
                 ModuleError(
@@ -761,7 +746,6 @@ class Core:
             # The Monitor's other machine-read line - see do_periodic_tasks().
             log.debug("Module is responding again: %s", beat.source)
             state.heartbeat_lost = False
-            state.watchdog_suppressed = False
 
         state.last_heartbeat = beat.timestamp
 
@@ -836,21 +820,15 @@ class Core:
                 )
                 state.heartbeat_lost = True
 
+            # Always acts: there is deliberately no setting to turn this off. A
+            # run that carries on past a dead module produces a record nobody
+            # can trust.
             if silent_for > HEARTBEAT_FATAL_S:
-                if self.watchdog_enabled:
-                    self.end_run_for_silent_module(name, silent_for)
-                    # Every module has just been asked to stop; there is nothing
-                    # to be learned by measuring the other two against a clock
-                    # they were never going to answer.
-                    return
-                if not state.watchdog_suppressed:
-                    state.watchdog_suppressed = True
-                    log.debug(
-                        "The %s passed the fatal threshold of %.1f s, but "
-                        "[watchdog] enabled is off, so the run continues.",
-                        name,
-                        HEARTBEAT_FATAL_S,
-                    )
+                self.end_run_for_silent_module(name, silent_for)
+                # Every module has just been asked to stop; there is nothing
+                # to be learned by measuring the other two against a clock
+                # they were never going to answer.
+                return
 
     def note_a_module_has_not_started(self, name: str, state: _ModuleState) -> None:
         """

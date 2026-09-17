@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-ResultsPanel: the post-run summary view in the CenterView.
+ResultsPanel: the run's results, on the left pane's Results tab.
 
 Adapted from old_code/hmi/gui_components/results_panel.py. The key change:
 StepResultModel works from StepOutcome (pickle-safe) instead of

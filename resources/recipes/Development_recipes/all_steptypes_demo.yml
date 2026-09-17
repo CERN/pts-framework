@@ -11,11 +11,12 @@
 #   UserInteraction ask the operator to choose, and use their answer
 #   UserWrite       ask the operator to type, and use what they typed
 #   UserLoading     ask the operator to pick a file or folder, and use the path
+#   Sequence        call a group of steps defined in a sequence of its own
 #
 # Each of those has a demo of its own in this folder - pythonmodulestep_demo,
 # indexedstep_demo, userinteractionstep_demo, userwritestep_demo,
-# userloadingstep_demo, wait_recipe - and this file is the six of them
-# together, trimmed.
+# userloadingstep_demo, sequencestep_demo, wait_recipe - and this file is the
+# seven of them together, trimmed.
 #
 # **GUI mode** (`python -m pypts`), because of the UserInteraction, UserWrite
 # and UserLoading steps: the CLI frontend declines every question it is asked,
@@ -25,7 +26,7 @@
 # Expect a mixed verdict on purpose: two steps are written to FAIL so the
 # report and the step table have something other than green to show.
 name: All steptypes demo
-description: Wait, PythonModule, Indexed, UserInteraction, UserWrite and UserLoading in one run.
+description: Wait, PythonModule, Indexed, UserInteraction, UserWrite, UserLoading and Sequence in one run.
 version: 0.2
 
 # The default, spelled out because this recipe is a showcase: the serial_number
@@ -134,6 +135,12 @@ steps:
       - inputs: {a: 6, b: 7}
         expect: {sum: 12}
 
+  # --- Sequence: a group of steps kept in a sequence document of its own ---
+  # Named after the sequence it calls, so no step_name. It shows as one row
+  # with its own verdict, the group's steps under it.
+  - steptype: Sequence
+    sequence_name: Self check
+
   # --- The answer from the top, read back out of the globals --------------
   - steptype: PythonModule
     step_name: Report the port
@@ -183,3 +190,23 @@ teardown_steps:
     step_name: Power down
     description: Stand in for the shutdown a real bench would do.
     wait_time: '0.5'
+---
+# Called from Main by the Sequence step above; never started on its own.
+sequence_name: Self check
+description: A small group of checks, reusable from any sequence.
+steps:
+  - steptype: PythonModule
+    step_name: Even check
+    description: 4 is even.
+    module: example_tests.py
+    method_name: is_even
+    inputs:
+      number: 4
+    outputs:
+      even: {type: passfail}
+
+teardown_steps:
+  - steptype: Wait
+    step_name: Self check done
+    description: The group's own teardown.
+    wait_time: '0.1'

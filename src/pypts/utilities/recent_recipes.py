@@ -58,7 +58,7 @@ STORE_VERSION = 1
 
 @dataclass(frozen=True, slots=True)
 class RecentEntry:
-    """One remembered recipe. Frozen, like every other value in pypts."""
+    """One remembered recipe. Frozen: an entry is replaced, never edited."""
 
     path: str
     recipe_name: str

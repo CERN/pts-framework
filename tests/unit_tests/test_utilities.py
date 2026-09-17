@@ -45,8 +45,6 @@ from pypts.utilities.error_handling import (
 )
 from pypts.utilities.heartbeat_manager import HeartbeatManager
 
-PLACEHOLDER = "placeholder - test not implemented yet"
-
 
 class FakeModule:
     """The minimum a decorated class has to look like: something with `core`."""
@@ -342,21 +340,6 @@ def test_convert_string_to_int_rejects_non_numeric_input():
 
     with pytest.raises(TypeError):
         convert_string_to_int(None)
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_catch_and_report_errors_does_not_swallow_the_exception():
-    ...
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_catch_and_report_errors_works_without_a_core_attribute():
-    ...
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_local_storage_paths_are_platform_neutral():
-    ...
 
 
 # --------------------------------------------------------------------------

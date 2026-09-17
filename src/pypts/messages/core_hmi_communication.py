@@ -5,7 +5,7 @@
 """
 The HMI <-> CORE link. The only process boundary in the framework.
 
-Everything below is pickled, so it must stay a frozen dataclass of plain values
+Everything below is pickled, so it must stay a plain dataclass of plain values
 - no live queues, no Qt objects, no device handles. test_messages.py round-trips
 every member of both unions and fails if one stops being pickle-safe.
 """

@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-What the two step types that put a question on the operator's screen share.
+What the three step types that put a question on the operator's screen share.
 
-`UserInteraction` asks for a choice and `UserWrite` asks for a line of text,
-but they resolve their picture the same way and they treat an unanswered
-question the same way. Both live here as plain functions rather than as a
-base class, so the rule in step.md section 4 still holds: a step type
-subclasses Step, overrides `_step()` and nothing else.
+`UserInteraction` asks for a choice, `UserWrite` for a line of text and
+`UserLoading` for a file or a folder, but they resolve their picture the same
+way and they treat an unanswered question the same way. Both helpers live here
+as plain functions rather than as a base class, so the rule in step.md
+section 4 still holds: a step type subclasses Step, overrides `_step()` and
+nothing else.
 """
 
 from pathlib import Path

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-YAML syntax colouring for the step table's hover panel.
+YAML syntax colouring for the step table's click panel.
 
 Adapted from the working highlighter in
 `helper_applications/recipe_creator/customGUIModules.py`. **Copied, not
@@ -14,7 +14,7 @@ way, from the framework into a helper app.
 Two things changed in the move. The colours come from `palette.py` instead of
 being written here, because no file in `hmi/gui/` may hold a hex literal and a
 unit test enforces it; and the rules were tightened for what this panel
-actually shows. A rendered step mapping (`recipe/step_source.py`) is mostly
+actually shows. A recipe's sequence document (`recipe/step_source.py`) is mostly
 *unquoted* scalars - `module: example_tests.py`, `step_name: Add numbers` - and
 the original's rules coloured the key and left every one of those values plain.
 

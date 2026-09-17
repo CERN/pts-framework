@@ -34,9 +34,10 @@ Where the hardware actually lives today
 ---------------------------------------
 Nowhere in this module, which is why the framework hard-depends on `nidmm`,
 `hightime`, `nptdms`, `pyserial` and `paramiko`. A recipe reaches an instrument
-in one of two ways: a `PythonModuleStep` calls into the user's own test package,
-which imports the driver itself, or `SSHConnectStep` speaks paramiko directly
-and publishes the session as a global. Phase 5 is where those dependencies leave
+only through a `PythonModuleStep`, which calls into the user's own test package,
+which imports the driver itself. The old engine's `SSHConnectStep` was not
+ported as a step type: SSH becomes part of the framework (HAL or a service, not
+decided). Phase 5 is where those dependencies leave
 the core - drivers become pip-installable plugin packages depending only on
 `pypts.api`, and the core ships with none of them.
 

@@ -5,12 +5,8 @@
 """
 Unit tests for the CORE module (src/pypts/core/).
 
-SKELETON ONLY - placeholders declaring intended coverage. See
-resources/roadmap/pypts_roadmap.md.
-
-Note the agreed topology change: Sequencer and Report become *threads* inside
-the engine process, with the same interface classes. Tests written here should
-address the interfaces, not multiprocessing, so they survive that change.
+Sequencer and Report are *threads* inside the engine process. Tests here
+address the interfaces, not the threading.
 """
 
 import logging
@@ -21,13 +17,6 @@ import pytest
 
 from pypts.messages.common_messages import ErrorSeverity
 
-PLACEHOLDER = "placeholder - test not implemented yet"
-
-
-@pytest.mark.skip(reason=PLACEHOLDER)
-def test_core_starts_its_submodules():
-    ...
-
 
 def build_core_that_spawns_nothing():
     """
@@ -37,12 +26,6 @@ def build_core_that_spawns_nothing():
     the Sequencer and the Report threads. So a test can construct a Core, put a
     message on one of its links by hand and drive a single handler, with no
     thread running behind it.
-
-    `watchdog_enabled` is passed rather than left to the configuration, for the
-    same reason the Report fixture passes `output_dir`: outside a real run there
-    is no launcher to have created a config.ini, and the handler refuses to
-    invent one. True, because on it is what a bench does - a test wanting the
-    switch off says so.
     """
     from pypts.core.core import Core
     from pypts.messages import QueueWrapper
@@ -50,7 +33,6 @@ def build_core_that_spawns_nothing():
     return Core(
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
-        watchdog_enabled=True,
     )
 
 
@@ -840,28 +822,19 @@ def test_the_watchdog_does_not_re_report_a_module_it_has_already_acted_on(caplog
     assert len(stopping) == 1, f"expected one report, got {len(stopping)}"
 
 
-def test_the_watchdog_can_be_switched_off():
+def test_the_watchdog_cannot_be_switched_off():
     """
-    Off is for a developer with a debugger attached: a breakpoint in an event
-    loop is indistinguishable from an event loop that has died. The *reporting*
-    half is not gated - only the acting.
+    Prolonged silence always ends the run: there is no setting, no argument and
+    no attribute that would let it carry on past a dead module.
     """
-    from pypts.core.core import HEARTBEAT_FATAL_S, SEQUENCER, Core
-    from pypts.messages import QueueWrapper
+    import inspect
 
-    core = Core(
-        to_hmi=QueueWrapper(queue.Queue()),
-        from_hmi=QueueWrapper(queue.Queue()),
-        watchdog_enabled=False,
-    )
-    silence(core, SEQUENCER, HEARTBEAT_FATAL_S + 1)
+    from pypts.config_handler.configuration_schema import SCHEMA
+    from pypts.core.core import Core
 
-    core.do_periodic_tasks()
-
-    assert not core.shutting_down
-    assert core.running
-    # Reported all the same.
-    assert core.modules[SEQUENCER].heartbeat_lost is True
+    assert "watchdog" not in SCHEMA
+    assert "watchdog_enabled" not in inspect.signature(Core.__init__).parameters
+    assert not hasattr(build_core_that_spawns_nothing(), "watchdog_enabled")
 
 
 def test_a_module_that_has_reported_itself_stopped_is_not_watched():

@@ -1,0 +1,149 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The Sequence showcase - group tests in sequences of their own and run them,
+# nested, inside the one main sequence.
+#
+# A recipe has one main sequence (`main_sequence`). Every other sequence
+# document is a group of steps that main - or another group - calls with a
+# `steptype: Sequence` step, as often as it likes and as deep as it likes.
+# Each call is a real group: its own row, its own verdict (the worst of its
+# steps, teardown included) and its own teardown.
+#
+# Runs headless - only Wait and PythonModule steps:
+#   python -m pypts --mode headless --recipe resources/recipes/Development_recipes/sequencestep_demo.yml
+#
+# Expect FAIL on purpose: one addition inside Calibrate expects the wrong sum,
+# so the Calibrate group, and the run, show a FAIL among the passes.
+#
+# One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
+name: Sequence demo
+description: A main sequence built from nested, reusable groups of steps.
+version: 0.2
+report_metadata: []
+---
+sequence_name: Main
+description: The whole test - every group is called from here.
+steps:
+  - steptype: Wait
+    step_name: Warm up
+    description: A step of main itself, before any group.
+    wait_time: '0.1'
+
+  # A Sequence step names the sequence it calls and nothing else it must have.
+  # It takes no step_name - the row is named after the sequence - and no
+  # inputs or outputs: a group shares the run's globals and takes its verdict
+  # from its own steps.
+  - steptype: Sequence
+    sequence_name: PowerCycle
+    description: First power cycle, before calibration.
+
+  - steptype: Sequence
+    sequence_name: Calibrate
+    description: Written on the call, this wins over the sequence's own description.
+
+  # The same group again. Every call gets its own copy of the steps, so the
+  # step table and the report keep the two apart. To run a group many times,
+  # write the call many times.
+  - steptype: Sequence
+    sequence_name: PowerCycle
+    description: Second power cycle, after calibration.
+
+  # skip: true skips the group's steps but still runs its teardown.
+  - steptype: Sequence
+    sequence_name: Optional checks
+    description: Not needed on this bench - skipped.
+    skip: true
+
+teardown_steps:
+  # A group may be called from teardown too; everything in it then runs to the
+  # end, even after a Stop.
+  - steptype: Sequence
+    sequence_name: Shutdown
+    description: Always leave the bench safe, whatever happened above.
+---
+sequence_name: PowerCycle
+description: Switch the unit off, let it settle, switch it back on.
+steps:
+  - steptype: Wait
+    step_name: Power off
+    description: Stand in for switching the supply off.
+    wait_time: '0.1'
+
+  # Groups nest: PowerCycle calls Settle, which is one level deeper again.
+  - steptype: Sequence
+    sequence_name: Settle
+    description: Nested one level deeper - PowerCycle calls Settle.
+
+teardown_steps:
+  # The group's own teardown runs after its steps, however they ended.
+  - steptype: Wait
+    step_name: Power on
+    description: Stand in for switching the supply back on.
+    wait_time: '0.1'
+---
+sequence_name: Settle
+description: Wait for the rails to settle, then read one back.
+steps:
+  - steptype: Wait
+    step_name: Settle time
+    description: Give the rails time to settle.
+    wait_time: '0.1'
+
+  - steptype: PythonModule
+    step_name: Measure voltage
+    description: The reading must sit between 11 and 13 volts.
+    module: example_tests.py
+    method_name: measure_voltage
+    outputs:
+      voltage: {type: range, min: '11', max: '13'}
+---
+sequence_name: Calibrate
+description: A group of parameterized additions.
+steps:
+  # Indexed works inside a group exactly as it does anywhere: one authored
+  # step, one real step per parameter set. (An Indexed step cannot *repeat* a
+  # group - a sequence is a group of steps, Indexed parametrizes one step.)
+  - steptype: Indexed
+    step_name: Add numbers
+    description: Three additions, one of them expecting the wrong sum.
+    template:
+      steptype: PythonModule
+      module: example_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {a: 1, b: 1}
+        expect: {sum: 2}
+      - inputs: {a: 2, b: 3}
+        expect: {sum: 5}
+      # The deliberate FAIL: 6 + 7 is 13, not 12.
+      - inputs: {a: 6, b: 7}
+        expect: {sum: 12}
+---
+sequence_name: Optional checks
+description: Skipped from Main - its steps show SKIP, its teardown still runs.
+steps:
+  - steptype: PythonModule
+    step_name: Even check
+    description: Never runs here - the group is skipped.
+    module: example_tests.py
+    method_name: is_even
+    inputs:
+      number: 4
+    outputs:
+      even: {type: passfail}
+
+teardown_steps:
+  - steptype: Wait
+    step_name: Tidy up
+    description: The skipped group's teardown still runs.
+    wait_time: '0.1'
+---
+sequence_name: Shutdown
+description: Leave the bench safe.
+steps:
+  - steptype: Wait
+    step_name: Everything off
+    description: Stand in for switching every supply off.
+    wait_time: '0.1'

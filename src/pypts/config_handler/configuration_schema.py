@@ -116,13 +116,6 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
     },
-    "watchdog": {
-        # Gates the *acting* half only. A module that goes quiet is reported at
-        # WARNING either way; this decides whether prolonged silence also ends
-        # the run. Off is for a developer with a debugger attached to CORE,
-        # where a breakpoint is indistinguishable from a dead event loop.
-        "enabled": Field("bool", "true"),
-    },
 }
 
 #: Sections that are not settings. `meta` is managed by pypts - a hand-picked

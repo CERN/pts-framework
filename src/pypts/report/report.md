@@ -6,43 +6,72 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # report — builds the run artefacts
 
-`report.py` is the only file. Runs as a **thread of the Core process**.
+`report.py` is the only file. `report_main()` runs `Report(...).start()` as a **thread of the
+Core process**; everything it knows arrives as messages forwarded by CORE. The output folder
+is `paths.reports_dir` from the configuration (a test may pass `output_dir`).
 
 ## What it owns
 
-- **Run lifecycle** — `start_run()` creates `<reports_dir>/<timestamp>_<name>/report.csv`
-  and writes the header. `finish_run()` records the overall result. `generate_report()`
-  writes `report.html` and sends `ReportGenerated` back to CORE.
-- **Incremental CSV** — one row per step, written and flushed immediately on each
-  `StepExecuted` message. The CSV file is the record of truth; the HTML is derived from it.
-- **Metadata tracking** — `RunMetadata` messages from the Sequencer update per-run metadata
-  columns (e.g. `serial_number`) that are stamped on every subsequent row.
-- **Export** — `ExportReport` copies the run folder to a configurable export destination.
+- **Run folder** — on `RunStarted`, `start_run()` creates
+  `<reports_dir>/<YYYYmmdd_HHMMSS>_<recipe name>/` (`make_run_dir()`: non-alphanumerics become
+  `_`, at most 60 characters, `recipe` if nothing is left, `_2`, `_3`… if it already exists)
+  and opens `report.csv` with the header row written and flushed. The folder path is logged
+  at INFO.
+- **Incremental CSV** — `record_step()` appends one row per `StepExecuted`, flushed
+  immediately, and keeps it in `self.rows`. `SequenceStarted` sets the `sequence_name`
+  stamped on the rows that follow. A `StepExecuted` with no run open is a WARNING and is
+  dropped.
+- **Metadata** — `RunMetadata` updates `self.metadata` (`record_metadata()`), the recipe's
+  `report_metadata` globals as the run learns them. Rows already written keep their blanks
+  until the run ends.
+- **End of run** — on `RunFinished`, `finish_run()` stores the verdict, closes the CSV, then:
+  - `rewrite_csv()` writes `report.csv` once more with every row's run-level cells
+    (`run_result`, metadata) filled in;
+  - `rename_run_dir()` appends the non-empty metadata values to the folder name
+    (`<timestamp>_<recipe>_<serial>`). A target that exists or a failed rename is a WARNING
+    and the original name is kept.
+- **HTML** — CORE sends `GenerateReport` right behind `RunFinished`. `generate_report()` writes
+  a self-contained `report.html` (header with metadata, recipe, verdict, start time and pypts
+  version; a per-result summary; one table row per step, coloured by result) and sends
+  `ReportGenerated(report_path)`. With no run recorded it is a WARNING and nothing is sent.
+- **Regenerable from the CSV alone** — every run-level value is on every row, so
+  `render_html()` needs only rows; `rows_from_csv(path)` reads a past run's CSV back into
+  them. A run in which no step executed has no rows to regenerate from.
+- **Export** — `ExportReport` is a **stub at both ends**: `export_report()` only logs a
+  WARNING, and nothing sends the message.
 
 ## CSV columns
 
-Run-level columns (repeated on every row): `recipe_name`, `recipe_description`,
-`recipe_version`, `pypts_version`, `run_started_at`, `run_result`, plus any
-`report_metadata` names from the recipe.
+`columns_for(metadata_names)` = `RUN_COLUMNS` + the recipe's `report_metadata` names +
+`STEP_COLUMNS`. `CSV_COLUMNS` is the set for a run that declares no metadata.
 
-Step-level columns: `sequence_name`, `step_name`, `step_id`, `step_type`, `step_started_at`,
-`step_result`, `step_inputs`, `step_outputs`, `step_error`.
+| Group | Columns |
+|-------|---------|
+| `RUN_COLUMNS` (repeated on every row) | `recipe_name`, `recipe_description`, `recipe_version`, `pypts_version`, `run_started_at`, `run_result` |
+| metadata | one column per `report_metadata` name, in recipe order |
+| `STEP_COLUMNS` | `sequence_name`, `step_name`, `step_id`, `step_type`, `result`, `inputs`, `outputs`, `error_info`, `started_at`, `duration_s` |
 
-## State machine
+`inputs` / `outputs` are JSON (`default=str`); times are local `YYYY-mm-dd HH:MM:SS`;
+`run_result` and metadata cells are empty in the flushed rows until `rewrite_csv()`.
+
+## State
 
 | State | Condition |
 |-------|-----------|
-| No run open | `run_dir is None` — guards in `record_step`, `finish_run`, `generate_report` return early |
-| Run open | `run_dir` is set, CSV is open |
+| No run open | `run_dir is None` — `finish_run` returns early, `generate_report` warns; `record_step` warns whenever `csv_writer is None` |
+| Run open | `run_dir` set, CSV open and growing |
+| Run finished | `run_dir` set (possibly renamed), CSV closed and rewritten, `run_result` set |
 | Stopped | `running = False`, CSV closed |
 
-`start_run()` clears all per-run state *before* calling `make_run_dir()` (plan 001), so a
-failed `mkdir` leaves the Report in "no run open" state.
+`start_run()` clears all per-run state *before* calling `make_run_dir()`, so a failed `mkdir`
+leaves the Report in "no run open" rather than attributing the new run to the previous
+run's folder.
 
-## Shutdown
+## Error boundary and shutdown
 
-CORE holds `StopReport` until `SequencerStopped` arrives (plan 002). This guarantees the
-aborted run's `StepExecuted` tail and the `RunFinished` reach the Report before it stops.
+CORE holds `StopReport` until `SequencerStopped` arrives (`core/core.md` → *Shutdown*). This
+guarantees the aborted run's `StepExecuted` tail, `RunFinished` and `GenerateReport` reach the
+Report before it stops.
 
 `stop()` sends `ReportStopped` from a `finally`, through `send_goodbye()`, so closing the CSV
 — file I/O, and the likeliest thing here to raise — cannot cost CORE its whole shutdown budget
@@ -50,11 +79,14 @@ and get the Report named as the module that hung. `start()` carries the same `fi
 loop that dies rather than ends, and `send_goodbye()` is guarded so only one `ReportStopped`
 goes out. Same guarantee, and same reasons, as `Sequencer.stop()` / `Sequencer.start()`.
 
-`stop()` and the six per-message handlers (`start_run`, `record_step`, `record_metadata`,
-`finish_run`, `generate_report`, `export_report`) are **undecorated** — the error boundary is
-`handle_core_message()`. See `utilities/utilities.md` for the rule.
+Decorated with `@catch_and_report_errors()`: `start()`, `poll_core()`,
+`handle_core_message()`, `do_periodic_tasks()` (the heartbeat). `stop()` and the per-message
+handlers (`start_run`, `record_step`, `record_metadata`, `finish_run`, `generate_report`,
+`export_report`) are **undecorated** — the error boundary is `handle_core_message()`. See
+`utilities/utilities.md` for the rule.
 
 ## Known gaps
 
-- `serial_number` column and TDMS export — planned (roadmap §1.19).
-- `ExportReport` destination is configured but not fully exercised in tests.
+- `ExportReport` / `ReportExported` — stub, no trigger anywhere.
+- TDMS plots, configurable templates, `report.type` / `report.theme` — planned (roadmap §1.19,
+  Phase 4).
