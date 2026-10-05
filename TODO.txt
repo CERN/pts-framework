@@ -1,0 +1,67 @@
+todo: 
+
+1. Fix the recipe verification tool - in progress
+2. Then make proper recipe creation tool - in progress
+
+3. XY graph integration
+4. Linux/Windows compatibilty tests
+5. How to properly deploy it?
+6. SSH steps - create the HAL layer, move the SSH there
+
+
+
+
+
+Running the sequence in the sequence
+nested sequences
+
+main:
+    temp_tests
+
+    HAL,.chamber, settemo
+    temp_tests
+
+HAL,.chamber, settemo
+    temp_tests
+    HAL,.chamber, settemo
+    temp_tests
+    HAL,.chamber, settemo
+    temp_tests
+    HAL,.chamber, settemo
+    temp_tests
+    HAL,.chamber, settemo
+    temp_tests
+    HAL,.chamber, settemo
+    temp_tests
+    HAL,.chamber, settemo
+    temp_tests
+    HAL,.chamber, settemo
+    temp_tests
+    
+    for x in 10000000
+    asdtemp_tests
+
+
+temp_tests: (sequence)
+sequecne1 (sequence)
+ste[p2
+ste[p3]]
+
+how to decide what widget to load?
+based on the recipe definition
+
+stop button testing
+
+
+
+
+
+
+@loop
+    framework related decorators availability - looping for example
+
+
+
+
+
+
