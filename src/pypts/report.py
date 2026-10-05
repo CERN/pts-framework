@@ -359,8 +359,18 @@ def generate_html_report(csv_path: Path, html_path: Path, output_dir: Path = Non
             html_content += "<p><strong>Run Context:</strong> No results data found.</p>"
 
         total_steps = len(results)
+        status_counts = {}
+        for row in results:
+            status = str(row.get('result', 'Unknown')).split('.')[-1].lower()
+            status_counts[status] = status_counts.get(status, 0) + 1
+
         html_content += "<h2>Summary</h2>"
         html_content += f"<p>Total steps: {total_steps}</p>"
+        html_content += "<ul>"
+        for status, count in status_counts.items():
+            css_class = f"status-{status}" if status in ['pass', 'fail', 'error', 'skip'] else "status-unknown"
+            html_content += f'<li class="{css_class}"><strong>{status.upper()}:</strong> {count}</li>'
+        html_content += "</ul>"
 
         html_content += "<h2>Details</h2>"
         html_content += "<table>"
