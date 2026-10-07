@@ -5,13 +5,6 @@
 API
 ===
 
-The old public API (``pypts.pts.run_pts``, ``pypts.startup.create_and_start_gui``,
-``pypts.recipe``, ``pypts.steps``, ``pypts.report``) no longer exists. Those modules
-were part of the pre-refactor single-process architecture.
-
-Driving pypts from Python: ``pypts.api``
------------------------------------------
-
 ``pypts.api`` starts the same Logger and CORE processes as ``python -m pypts`` and
 exposes two doors:
 
@@ -38,21 +31,8 @@ exposes two doors:
   folder). ``answer`` is called for every operator question and returns the button or
   the text; without it every question is declined.
 - ``Pts.stop()`` aborts the running sequence and is safe to call from another thread.
-- The calling script must create ``Pts`` / call ``open_gui()`` under
-  ``if __name__ == "__main__":`` - pypts starts its processes with spawn.
+- Create ``Pts`` / call ``open_gui()`` under ``if __name__ == "__main__":`` — pypts
+  starts its processes with spawn.
 
-Every case is shown in ``api_showcase.py`` at the repository root. Module context:
-``src/pypts/api/api.md``.
-
-Running pypts directly
-----------------------
-
-.. code-block:: text
-
-   python -m pypts [--mode gui|cli] [--log-level LEVEL]
-
-A plugin API for new step types and drivers is planned for Phase 2 (see roadmap §3);
-it is separate from the embedding API above.
-
-For the message protocol used between CORE and the HMI, see
-``src/pypts/messages/messages.md``.
+Every case is shown in ``api_showcase.py`` at the repository root; the module context
+is ``src/pypts/api/api.md``.

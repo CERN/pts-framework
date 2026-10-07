@@ -5,45 +5,22 @@
 Architecture
 ============
 
-**Two processes, threads inside the engine.**
+The launcher (``python -m pypts``) starts three processes, always with ``spawn``:
 
-The launcher (``python -m pypts``) creates two processes and a Logger:
+- **CORE** — the mediator. Runs the Sequencer and the Report as threads and owns all
+  execution state. A sequence runs on a worker thread of its own, so the event loop
+  keeps turning (heartbeats, stop, pause) while it does.
+- **HMI** — the frontend: GUI (PySide6) or CLI.
+- **Logger** — the single writer of the run log.
 
-- **CORE process** — runs the Sequencer and Report as threads; owns all execution state.
-- **HMI process** — GUI (PySide6) or CLI; the operator-facing frontend.
-- **Logger process** — single writer of the run log.
+All communication is by typed dataclass messages on a ``QueueWrapper``. Modules never
+call each other and never touch queues directly; everything goes through CORE, except
+log records, which go straight to the Logger. Only the HMI↔CORE link crosses a process
+boundary. Every message handler is a ``match`` closed with ``unhandled()``, so a
+forgotten message raises instead of being silently dropped.
 
-All communication is message-based. Modules never call each other and never touch
-queues directly. Every message is a typed dataclass on a ``QueueWrapper``. The HMI↔CORE
-boundary is the only one that crosses a process boundary (pickled); the four
-engine links (CORE↔Sequencer, CORE↔Report, heartbeats, Logger) are plain
-``queue.Queue`` threads.
+Where to read more:
 
-Layout::
-
-   src/pypts/
-     launcher/startup.py      entry point; creates queues, spawns Logger + CORE + HMI
-     core/core.py             mediator: routes every link, manages Sequencer + Report threads
-     sequencer/               event loop + execute_sequence(); runs sequences on a worker thread
-     recipe/ step/            recipe data layer + step types (ported from old_code)
-     report/                  incremental CSV + HTML, one folder per run
-     hmi/hmi_client.py        protocol half every frontend shares
-     hmi/cli/  hmi/gui/       CLI and PySide6 GUI
-     messages/                all typed message dataclasses, one module per link
-     config_handler/          per-user config.ini (INI template, versioned, never migrated)
-     logger/log.py            Logger process: single log-file writer
-     hardware_layer/hal.py    HAL stub (Phase 3+)
-
-Key design rules
-----------------
-
-- A sequence runs on its own worker thread inside CORE. The event loop keeps
-  turning while it does (heartbeats, ``StopSequence`` delivery).
-- Every ``match``/``case`` handler is closed with ``unhandled()``, so a forgotten
-  message raises instead of being silently dropped.
-- ``@catch_and_report_errors()`` swallows and reports (event loops);
-  ``@report_and_reraise()`` reports and re-raises (step execution layer).
-- Multiprocessing is pinned to ``"spawn"`` on every platform (plan 005).
-
-For the full message catalogue see ``src/pypts/messages/messages.md``.
-For module-level detail see the ``<module>.md`` context files beside each module.
+- ``src/pypts/messages/messages.md`` — every link and message.
+- ``src/pypts/<module>/<module>.md`` — the context file beside each module.
+- ``pypts_implementation_status.html`` — status and roadmap.

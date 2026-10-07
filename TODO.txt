@@ -1,67 +1,37 @@
+
+
 todo: 
 
-1. Fix the recipe verification tool - in progress
-2. Then make proper recipe creation tool - in progress
+- Fix the recipe verification tool - in progress
+- Then make proper recipe creation tool - in progress
 
-3. XY graph integration
-4. Linux/Windows compatibilty tests
-5. How to properly deploy it?
-6. SSH steps - create the HAL layer, move the SSH there
-
-
+- XY graph integration
+- Linux/Windows compatibilty tests
+- How to properly deploy it?
+- SSH steps - create the HAL layer, move the SSH there
 
 
-
-Running the sequence in the sequence
-nested sequences
-
-main:
-    temp_tests
-
-    HAL,.chamber, settemo
-    temp_tests
-
-HAL,.chamber, settemo
-    temp_tests
-    HAL,.chamber, settemo
-    temp_tests
-    HAL,.chamber, settemo
-    temp_tests
-    HAL,.chamber, settemo
-    temp_tests
-    HAL,.chamber, settemo
-    temp_tests
-    HAL,.chamber, settemo
-    temp_tests
-    HAL,.chamber, settemo
-    temp_tests
-    HAL,.chamber, settemo
-    temp_tests
-    
-    for x in 10000000
-    asdtemp_tests
+- Make it possible to run the sequence inside of the sequence. The main should be the only one to execute, while it should be able nest sequences.
+Ideally, we want to be able to define a sequence below main and put it as a group of tests inside the main. Should be also possible to nest sequence inside sequence inside the sequence.
+Do you understand? Firstly ask me about it as we would be in the plan mode. Then we decide what to do with it.
+Then we need to resurrect the SequenceStep type - so the whole pipeline of adding it and documenting have to happen. Interrogate me so u understand it very well. Also, before we start, tell me if our architecture is actually prepared for that or we need to dso a lot of patching.
+Eventually, it can flatten at loading. Idk how we do with indexed step - u tell
 
 
-temp_tests: (sequence)
-sequecne1 (sequence)
-ste[p2
-ste[p3]]
+- Is our project running the python 3.12? 
 
 how to decide what widget to load?
 based on the recipe definition
 
-stop button testing
+Move the yaml recipe schema to the pydantic framework?
+rules are already in recipe_parser.py on master branch
+
+Selecting steps for executing only those ones. - for development purposes
+
+Checkbox for overriding the continue_on_error
 
 
-
-
-
-
-@loop
-    framework related decorators availability - looping for example
-
-
-
-
-
-
+the YAML key - naming.
+The steptype: Sequence - this if fine.
+sequence_name - PowerCycle
+description - blah blah. I want it to have the same structure as our "main" sequence have now. But instead of running the suite as main or othewr sequences. I want to have main as only executable, while I can still group tests in other sequences and execute them as nested in main

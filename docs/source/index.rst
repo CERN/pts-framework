@@ -8,10 +8,12 @@ pypts
 pypts is a CERN hardware-oriented test framework. Recipes (YAML files) define
 sequences of steps that run against hardware and produce CSV + HTML reports.
 
-Running::
+These pages are an entry point only. The detail lives in the repository:
 
-   python -m pypts          # GUI (default)
-   python -m pypts --mode cli
+- ``usage_manual.html`` — how to run it: modes, options, exit codes, where files go.
+- ``recipe_guide.html`` — the recipe format and every step type.
+- ``pypts_implementation_status.html`` — what is implemented and what comes next.
+- ``src/pypts/<module>/<module>.md`` — how each module works.
 
 .. toctree::
    :caption: Getting started
@@ -24,11 +26,6 @@ Running::
    :caption: Reference
    :maxdepth: 1
 
-   yaml_format
    architecture
-   gui_event_handling
-   report_generation
    api
-   dependency_license_analysis
-   pre_refactoring
    genindex
