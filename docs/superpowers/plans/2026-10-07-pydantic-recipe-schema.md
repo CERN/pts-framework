@@ -8,6 +8,14 @@
 
 **Tech Stack:** Pydantic ≥ 2.0, Python 3.11+, PyYAML (unchanged), pytest
 
+## Status & Resume
+
+- **Design spec (approved):** `docs/superpowers/specs/2026-10-07-pydantic-recipe-schema-design.md` (commit `4b5f896`). The spec is the authority on the design; this plan implements it.
+- **Branch:** `architecture_refactor`.
+- **Execution state: not started.** No implementation task (1-6) has been executed — all checkboxes below are unchecked and are the single source of truth for progress. Mark each step `- [x]` as it completes.
+- **To resume on any machine:** open this file and run the superpowers:subagent-driven-development skill (or superpowers:executing-plans) on it, starting at the first task with unchecked steps. Tasks must run in order — each builds on the previous one.
+- The SDD scratch workspace (`.superpowers/sdd/…`) is git-ignored and machine-local; it is recreated automatically and holds nothing that is not also recoverable from this file and `git log`.
+
 ## Global Constraints
 
 - Python ≥ 3.11 required
