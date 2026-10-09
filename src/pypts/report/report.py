@@ -36,6 +36,7 @@ from pypts.messages.run_events import (
 )
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import REPORT, HeartbeatManager
+from pypts.utilities.local_storage import make_run_folder
 
 #: One flat row per executed step. report.csv is the whole record of a run -
 #: there is no second file - so the run-level facts are repeated on every row
@@ -74,11 +75,6 @@ CSV_COLUMNS = RUN_COLUMNS + STEP_COLUMNS
 def columns_for(metadata_names: tuple[str, ...]) -> tuple[str, ...]:
     """The header row of one run: the run-level columns, its metadata, the step ones."""
     return RUN_COLUMNS + tuple(metadata_names) + STEP_COLUMNS
-
-
-def safe_name_part(value: str) -> str:
-    """One folder-name component: alphanumerics kept, everything else an underscore."""
-    return "".join(c if c.isalnum() else "_" for c in value)[:60]
 
 
 def rows_from_csv(csv_path: Path) -> list[dict[str, str]]:
@@ -221,7 +217,7 @@ class Report:
 
     def start_run(self, event: RunStarted) -> None:
         """Open this run's folder and its CSV, header written and flushed."""
-        # Clear the previous run's state first: if make_run_dir() raises below,
+        # Clear the previous run's state first: if make_run_folder() raises below,
         # the decorator swallows it, and stale state would silently attribute
         # this run's verdict and HTML to the previous run's folder.
         self.close_csv()
@@ -233,7 +229,12 @@ class Report:
         self.metadata = {}
         self.run_started_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
-        self.run_dir = self.make_run_dir(event.recipe_name)
+        # The Sequencer made the folder, and the run log is already in it. Only
+        # where it could not - or the Report is driven directly - is one made here.
+        if event.run_dir:
+            self.run_dir = Path(event.run_dir)
+        else:
+            self.run_dir = make_run_folder(self.output_dir, event.recipe_name)
         self.run_info = event
         # The names are known now even though the values are not, which is what
         # lets the header row be written once and stay correct for the run.
@@ -250,22 +251,6 @@ class Report:
         # be able to find the run's files without asking anyone.
         log.info("Results will be written to: %s", self.run_dir)
         log.debug("The run's CSV is %s with columns %s.", csv_path, ", ".join(self.columns))
-
-    def make_run_dir(self, recipe_name: str) -> Path:
-        """
-        One folder per run: <reports_dir>/<timestamp>_<recipe name>.
-        """
-        safe_name = safe_name_part(recipe_name)
-        if not safe_name:
-            safe_name = "recipe"
-        base = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + "_" + safe_name
-        run_dir = self.output_dir / base
-        suffix = 1
-        while run_dir.exists():
-            suffix += 1
-            run_dir = self.output_dir / f"{base}_{suffix}"
-        run_dir.mkdir(parents=True)
-        return run_dir
 
     def record_step(self, event: StepExecuted) -> None:
         """
@@ -342,14 +327,13 @@ class Report:
         )
 
     def finish_run(self, result: ResultType) -> None:
-        """The run is over: keep its verdict, settle its CSV, name its folder."""
+        """The run is over: keep its verdict and settle its CSV."""
         if self.run_dir is None:
             log.debug("RunFinished arrived with no run open; there is nothing to close.")
             return
         self.run_result = result
         self.close_csv()
         self.rewrite_csv()
-        self.rename_run_dir()
 
     def rewrite_csv(self) -> None:
         """
@@ -370,42 +354,6 @@ class Report:
             writer = csv.DictWriter(handle, fieldnames=list(self.columns))
             writer.writeheader()
             writer.writerows(self.rows)
-
-    def rename_run_dir(self) -> None:
-        """
-        Append the run's metadata to the folder name, so a season of runs is
-        browsable by eye: <timestamp>_<recipe>_<serial>.
-
-        It happens here because the folder is created on RunStarted, before any
-        step has run - the serial number simply does not exist yet at that
-        point. A rename that fails (the operator has the folder open, say) is a
-        WARNING and the original folder is kept: losing the run over a cosmetic
-        name would be a poor trade.
-        """
-        if self.run_dir is None:
-            return
-        suffix_parts = []
-        for name in self.metadata_names():
-            value = self.metadata.get(name, "")
-            if value:
-                suffix_parts.append(safe_name_part(value))
-        if not suffix_parts:
-            return
-        target = self.run_dir.with_name(self.run_dir.name + "_" + "_".join(suffix_parts))
-        if target.exists():
-            log.warning("The results folder kept its name: '%s' already exists.", target.name)
-            log.debug("Wanted to rename %s to %s.", self.run_dir, target)
-            return
-        try:
-            self.run_dir.rename(target)
-        except OSError as error:
-            log.warning(
-                "The results folder could not be renamed to '%s': %s", target.name, error
-            )
-            log.debug("Keeping the results in %s.", self.run_dir)
-            return
-        self.run_dir = target
-        log.info("Results are in: %s", self.run_dir)
 
     def close_csv(self) -> None:
         if self.csv_file is not None:

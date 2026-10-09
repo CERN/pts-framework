@@ -29,10 +29,7 @@ requires-python = ">=3.11"
 
 # The core dependencies of the project.
 dependencies = [
-  "hightime==0.2.2",
   "matplotlib",
-  "nidmm==1.4.8",
-  "nptdms==1.10.0",
   "numpy",
   # Per-user config/data directories, so config.ini and the run output land
   # where the platform expects rather than in the temp directory.
@@ -41,8 +38,6 @@ dependencies = [
   "pydantic>=2.6",
   "PyYAML==6.0.2",
   "ruamel.yaml",
-  "pyserial",
-  "paramiko"
 ]
 
 [project.optional-dependencies]
@@ -50,12 +45,20 @@ dependencies = [
 test = [
   "pytest",
   "pytest-qt",
+  # The SSH driver's tests run against a mocked client, but import paramiko.
+  "paramiko",
 ]
 doc = [
   "Sphinx",
   "sphinx",
   "acc-py-sphinx",
 ]
+# Hardware drivers. The core ships none of their libraries; a bench installs
+# what its drivers need: pip install pts-framework[ssh], or [hardware] for all.
+ssh = ["paramiko"]
+ni = ["nidmm==1.4.8", "hightime==0.2.2"]
+serial = ["pyserial"]
+hardware = ["pts-framework[ssh,ni,serial]"]
 dev = [
   # Dependencies for development of the project, such as type checkers,
   # linters, etc.
@@ -151,15 +154,6 @@ logger-objects = ["pypts.logger.log.log"]
 "src/pypts/helper_applications/recipe_creator/*" = ["ALL"]
 "src/pypts/helper_applications/example_finder/*" = ["ALL"]
 
-# Qt overrides camelCase virtuals - the names are Qt's signature, not a choice.
-"src/pypts/helper_applications/debug_monitor/trace_model.py" = ["N802"]
-"src/pypts/helper_applications/debug_monitor/main_window.py" = ["N802"]
-
-# Sample log records, quoted verbatim from a real run log. Wrapping them would
-# make the sample a worse copy of the thing it exists to describe or check.
-"tests/unit_tests/test_debug_monitor.py" = ["E501"]
-"src/pypts/helper_applications/debug_monitor/trace_parser.py" = ["E501"]
-
 [tool.ruff.lint.isort]
 known-first-party = ["pypts"]
 
@@ -187,6 +181,7 @@ files = [
   "src/pypts/utilities",
   "src/pypts/hmi/hmi_client.py",
   "src/pypts/api",
+  "src/pypts/hal",
 ]
 
 # Deliberately not `strict`. The value here is in the message contract being
@@ -207,6 +202,18 @@ ignore_missing_imports = true
 # missing PyYAML is fine. TODO: install types or the package in that job and
 # drop this.
 module = ["yaml", "yaml.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Same reason as yaml above: the recipe layer validates with pydantic, and the
+# CI typecheck job does not install it.
+module = ["pydantic", "pydantic.*", "pydantic_core", "pydantic_core.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# The SSH driver imports paramiko, which ships no type information, and the CI
+# typecheck job installs only mypy.
+module = ["paramiko", "paramiko.*"]
 ignore_missing_imports = true
 
 [tool.acc_py_template]

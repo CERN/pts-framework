@@ -104,7 +104,6 @@ def test_creation_fills_in_the_paths_for_this_platform(config):
     base = config.get_parameter("paths.base_dir")
 
     assert base.is_absolute()
-    assert config.get_parameter("paths.logs_dir") == base / "logs"
     assert config.get_parameter("paths.reports_dir") == base / "reports"
 
 
@@ -149,17 +148,17 @@ def test_a_reader_will_not_create_the_file(config_path):
 
 def test_values_come_back_as_their_declared_type(config):
     assert config.get_parameter("gui.window_width") == 1280
-    # DEBUG while the refactor is on - see the note in config_template.ini.
-    assert config.get_parameter("logging.level") == "DEBUG"
-    assert config.get_parameter("paths.logs_dir").is_absolute()
+    # TRACE while the refactor is on - see the note in config_template.ini.
+    assert config.get_parameter("logging.level") == "TRACE"
+    assert config.get_parameter("paths.reports_dir").is_absolute()
 
 
 def test_unknown_key_raises_and_says_what_the_section_holds(config):
     with pytest.raises(ConfigKeyError) as error:
-        config.get_parameter("paths.logs_dr")
+        config.get_parameter("paths.reports_dr")
 
-    assert "paths.logs_dr" in str(error.value)
-    assert "logs_dir" in str(error.value)
+    assert "paths.reports_dr" in str(error.value)
+    assert "reports_dir" in str(error.value)
 
 
 def test_unknown_section_raises(config):
@@ -441,12 +440,40 @@ def test_a_reader_applies_the_same_discard_rule(config, config_path):
 
 def test_a_user_added_section_is_kept_as_text_and_reported(config, config_path, caplog):
     """
-    The schema is a flat list of named sections; a hardware section is not one of
-    them, and what a bench looks like is Phase 5's question. Until it is answered
-    an added section is neither typed nor discarded: its values come back exactly
-    as they were written, and it is reported once, because a section nothing
-    reads may equally well be a typo.
+    A section the schema does not know may be a typo, and a typo that silently
+    does nothing is worse than one that is mentioned: its values come back
+    exactly as written, and it is reported once.
     """
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8") + "\n[gui_extra]\ntimeout_s = 2.5\n",
+        encoding="utf-8",
+    )
+    ConfigHandler.reset_for_testing()
+
+    with caplog.at_level(logging.WARNING):
+        reopened = ConfigHandler.bootstrap()
+
+    assert reopened.get_parameter("gui_extra.timeout_s") == "2.5"
+    assert "[gui_extra] is not part of the schema" in caplog.text
+
+
+def test_a_retired_logs_dir_line_is_kept_and_warned_about_once(config, config_path, caplog):
+    """Run logs now live in reports_dir; an old file still saying logs_dir loads."""
+    text = config_path.read_text(encoding="utf-8")
+    config_path.write_text(
+        text.replace("[paths]\n", "[paths]\nlogs_dir = C:/old/logs\n", 1), encoding="utf-8"
+    )
+    ConfigHandler.reset_for_testing()
+
+    with caplog.at_level(logging.WARNING):
+        reopened = ConfigHandler.bootstrap()
+
+    assert reopened.bootstrap_outcome is not BootstrapOutcome.DISCARDED
+    assert caplog.text.count("'paths.logs_dir' is not part of the schema") == 1
+
+
+def test_a_hardware_section_is_kept_as_text_without_a_warning(config, config_path, caplog):
+    """`[hardware.<name>]` declares a device: the hardware layer reads it, untyped."""
     config_path.write_text(
         config_path.read_text(encoding="utf-8")
         + "\n[hardware.dmm1]\ndriver = nidmm\nresource = PXI1Slot2\ntimeout_s = 2.5\n",
@@ -459,7 +486,43 @@ def test_a_user_added_section_is_kept_as_text_and_reported(config, config_path, 
 
     assert reopened.get_parameter("hardware.dmm1.driver") == "nidmm"
     assert reopened.get_parameter("hardware.dmm1.timeout_s") == "2.5"
-    assert "[hardware.dmm1] is not part of the schema" in caplog.text
+    assert "hardware.dmm1" not in caplog.text
+
+
+def test_a_secret_is_masked_in_the_active_configuration_lines(config, config_path, caplog):
+    """Review Focus 5: a password in config.ini never reaches the run log."""
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n[hardware.ssh1]\ndriver = x.Y\npassword = hunter2\n",
+        encoding="utf-8",
+    )
+    ConfigHandler.reset_for_testing()
+
+    with caplog.at_level(logging.DEBUG):
+        reopened = ConfigHandler.bootstrap()
+
+    assert reopened.get_parameter("hardware.ssh1.password") == "hunter2"
+    assert "hunter2" not in caplog.text
+    assert "hunter2" not in reopened.dump()
+    assert "hardware.ssh1.password = ******" in caplog.text
+
+
+def test_a_secret_set_through_set_parameter_is_not_logged(config, config_path, caplog):
+    """The change itself is logged at INFO, and the new secret must not be in that line."""
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8")
+        + "\n[hardware.ssh1]\ndriver = x.Y\npassword = old\n",
+        encoding="utf-8",
+    )
+    ConfigHandler.reset_for_testing()
+    reopened = ConfigHandler.bootstrap()
+
+    with caplog.at_level(logging.DEBUG):
+        reopened.set_parameter("hardware.ssh1.password", "s3cret-new")
+
+    assert reopened.get_parameter("hardware.ssh1.password") == "s3cret-new"
+    assert "s3cret-new" not in caplog.text
+    assert "Setting 'hardware.ssh1.password' changed to '******'." in caplog.text
 
 
 def test_a_user_added_device_survives_a_rewrite(config, config_path):
@@ -654,7 +717,7 @@ def test_every_value_in_force_is_logged_at_debug(config, caplog):
     with caplog.at_level(logging.DEBUG):
         handler.replay_bootstrap_log()
 
-    assert "Configuration value paths.logs_dir = " in caplog.text
+    assert "Configuration value paths.reports_dir = " in caplog.text
     assert "Configuration value gui.window_width = 1280" in caplog.text
     assert "Configuration value report.type = html" in caplog.text
 

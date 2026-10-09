@@ -15,10 +15,13 @@ from collections.abc import Iterator
 from queue import Empty
 from typing import Generic, Never, NoReturn, TypeVar
 
+from pypts.logger.levels import TRACE
+
 #: The union this wrapper carries, e.g. QueueWrapper[HmiToCore].
 Msg = TypeVar("Msg")
 
 # Own logger, not `from pypts.logger.log import log`: log.py imports this module.
+# Logged at TRACE, below DEBUG: the trace is asked for with --log-level TRACE.
 _trace = logging.getLogger("pypts.trace")
 
 
@@ -56,7 +59,7 @@ class QueueWrapper(Generic[Msg]):
     def send(self, message: Msg) -> None:
         """Hand one message to the other end. Never blocks, never inspects it."""
         # Traced before the put, so a message that fails to pickle is still recorded.
-        _trace.debug("send %s %r", self.link or "?", message)
+        _trace.log(TRACE, "send %s %r", self.link or "?", message)
         self._queue.put(message)
         self.sent += 1
 
@@ -73,5 +76,5 @@ class QueueWrapper(Generic[Msg]):
                 return
             # Counted and traced on hand-over, not on dequeue.
             self.received += 1
-            _trace.debug("recv %s %r", self.link or "?", message)
+            _trace.log(TRACE, "recv %s %r", self.link or "?", message)
             yield message

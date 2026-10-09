@@ -25,9 +25,9 @@ message, a union or a field means changing this file in the same commit.
 | `common_messages.py` | `ModuleError`, `Heartbeat` and the payloads `ErrorSeverity`, `ResultType`, `StepOutcome` |
 | `run_events.py` | Run progress, operator commands about a run, the three operator questions, and the payloads `StepSummary`, `SequenceSummary` |
 | `core_hmi_communication.py` | `HmiToCore` / `CoreToHmi` and the messages only that link carries |
-| `core_sequencer_communication.py` | `CoreToSequencer` / `SequencerToCore`, `RunSequence`, `StopSequencer`, `SequencerStopped` |
+| `core_sequencer_communication.py` | `CoreToSequencer` / `SequencerToCore`, `RunSequence`, `ForgetRecipe`, `StopSequencer`, `SequencerStopped` |
 | `core_report_communication.py` | `CoreToReport` / `ReportToCore`, `GenerateReport`, `ExportReport`, `StopReport`, `ReportStopped`, `ReportGenerated`, `ReportExported` |
-| `to_logger_communication.py` | `LoggerControl`: `SetStdoutEnabled`, `StopLogger` |
+| `to_logger_communication.py` | `LoggerControl`: `SetStdoutEnabled`, `SwitchLogFile`, `StartRunLog`, `EndRunLog`, `StopLogger` |
 | `blocking_messages.py` | `PendingRequests` — the waiting half of a request/response pair; see *Waiting for an answer* |
 
 Every message is a plain **dataclass of plain values**. Each direction has a union type — that
@@ -74,8 +74,8 @@ is there at that moment and returns; a message sent between two ticks arrives on
 `DEFAULT_BATCH = 64` caps one `receive()` so a busy link cannot starve the other inboxes the
 same loop tick has to service.
 
-**The trace.** `send()` and `receive()` each log one DEBUG line, so a run log at DEBUG holds
-every message twice — once where it was sent, once where it was taken off the queue. The
+**The trace.** `send()` and `receive()` each log one line at `TRACE` (5, below DEBUG; defined
+in `logger/levels.py`), so a run log at TRACE holds every message twice — once where it was sent, once where it was taken off the queue. The
 pair is the point: *sent but never received* is the failure worth seeing, and it is invisible
 to anything that only logs on arrival. Because the trace sits on the one object every message
 already passes through, no module has to remember to log and no new message can escape it.
@@ -87,7 +87,8 @@ Sequencer and the Report in the log at all, since they are threads of the Core p
 Two details that look like accidents and are not:
 
 - `_trace` is obtained with `logging.getLogger()` rather than imported from `logger/log.py`,
-  because `log.py` imports this module — importing it back would be a cycle.
+  because `log.py` imports this module — importing it back would be a cycle. `TRACE` comes
+  from `logger/levels.py`, which imports nothing of pypts for the same reason.
 - The trace line precedes the `put()`, so a message that then fails to pickle is still
   recorded; `sent` is incremented after, so a failed send is not counted as a delivery.
 
@@ -128,7 +129,7 @@ reaches a union, which is what stops those comments from quietly going stale.
 | `ModuleError(source, severity, message, exception, traceback, operation, error_type)` | EVT | A failure the sender wants CORE to know about. Sent by the two decorators in `utilities/error_handling.py` for what nobody expected, and by `report_error()` / `report_problem()` from a raise site that recognised the failure itself and rated it. `operation` names the method (`"Sequencer.poll_core"`), `error_type` the exception class — strings, because this crosses the pickled link. |
 | `ErrorSeverity` · `ResultType` · `StepOutcome` | — | **Payloads.** Enums and the pickle-safe summary of one executed step. `ErrorSeverity` is a field of `ModuleError`; `ResultType` of `RunFinished`, `SequenceFinished` and `StepOutcome`; `StepOutcome` of `StepFinished`, `StepExecuted` and `RunFinished`. `StepOutcome` carries the step's `inputs`, `outputs` and `expectations` as tuples of `(name, text)` pairs (M-3, `step/step.md` §3.6): text, so it stays pickle-safe whatever a step returned, and pairs rather than a dict because a message is built from plain values, tuples and dataclasses only. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
 | `StepSummary(step_id, step_name, description, depth=0, is_group=False)` · `SequenceSummary(sequence_name, steps)` | — | **Payloads**, in `run_events.py`. The rows a frontend draws before a run: `StepSummary` is a field of `SequenceSummary`, which is a field of `RecipeLoaded`. Rows are depth-first over called sequences: a row with `is_group` stands for a `Sequence` step and its own rows follow at `depth + 1`. Summaries, not the live `Step` and `Sequence` — those must never cross the HMI boundary. |
-| `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. CORE also forwards `RunStarted` and `SequenceStarted` to the Report, which needs the run brackets for its folder and its rows. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
+| `RecipeLoaded`, `RunStarted`, `RunFinished`, `SequenceStarted`, `SequenceFinished`, `StepStarted`, `StepFinished` | EVT | Run progress — a one-for-one port of the nine Qt signals in `old_code/event_proxy.py`. Live since the first engine slice: emitted by the Sequencer and the step layer on every run, forwarded unchanged by CORE to the HMI. CORE also forwards `RunStarted` and `SequenceStarted` to the Report, which needs the run brackets for its folder and its rows. `RunStarted.run_dir` is the run folder the Sequencer made and `run_log_path` the run log inside it (`""` when not made); the HMI client hands the latter to `follow_run_log()`. `RecipeLoaded` comes from CORE itself and carries the whole pickle-safe summary of the file — `main_sequence` plus a `SequenceSummary` per sequence holding `StepSummary(step_id, step_name, description)` rows — which is what fills a frontend's sequence chooser and pre-fills its step table. |
 | `StepExecuted(outcome, step_type, inputs, outputs, started_at, duration_s, group_path="")` | EVT | The rich sibling of `StepFinished`, emitted by `Step.run()` right after it: everything the Report writes about one executed step, including the resolved inputs, the judged outputs, the measured duration and `group_path` — the sequences it ran inside, `Main/PowerCycle`. **Engine-internal**: it rides Sequencer→CORE and CORE→Report only, two links that never leave the Core process — it must never join the HMI unions, whose flat `StepOutcome` is the projection that crosses the boundary. |
 | `UserPromptRequest/Response`, `UserTextRequest/Response`, `UserPathRequest/Response` | EVT | The three questions the engine asks the operator, joined by a `request_id` the asker generates. All three are live end to end: `UserInteractionStep` asks the first (a choice between the recipe's buttons), `UserWriteStep` the second (a line of typed text), `UserLoadingStep` the third — `UserPathRequest(request_id, message, select, image_path)` with `select` `"file"` or `"folder"` (always lowercase), answered by `UserPathResponse(request_id, path)`, `path` None if declined. The frontend hooks are `HmiClient.ask_user_path()` (the default declines with a WARNING) and `answer_user_path()`. There is deliberately **no message for a particular question** — an earlier `SerialNumberRequest` hard-coded one, so the engine fetched the serial number of the unit under test whether or not the recipe wanted one. Asking is the recipe's job. |
 | `RunPaused(step_name, position, total)` · `RunResumed()` | EVT | The operator's hold, confirmed. `RunPaused` is sent by the Sequencer when the hold actually **begins** — after the step that was running when Pause was pressed has finished — and names the main step the run is held before (`position`/`total` count main steps, 1-based). `RunResumed` is sent when a hold ends, by `ResumeSequence` or by `StopSequence`; never without a `RunPaused` before it. Never sent for teardown, which always runs straight through. CORE relays both to the HMI only — the Report does not record holds. |
@@ -136,9 +137,10 @@ reaches a union, which is what stops those comments from quietly going stale.
 
 ## CORE ↔ HMI — `core_hmi_communication.py` (the only process boundary)
 
-| `HmiToCore` (13) | Kind | Meaning |
+| `HmiToCore` (14) | Kind | Meaning |
 |---|---|---|
 | `LoadRecipe(recipe_path)` | CMD | Load and validate a recipe. CORE answers `RecipeLoaded` or `ModuleError`. |
+| `UnloadRecipe()` | CMD | Forget the loaded recipe. CORE clears its copy, sends `ForgetRecipe` to the Sequencer and answers `RecipeUnloaded` — also when nothing was loaded. Not checked against a run: the frontend not offering it during one is the rule, as for `LoadRecipe`. **GUI only** (the toolbar's × and File → Unload Recipe). |
 | `StartSequence(sequence_name)` | CMD | Run one named sequence of the loaded recipe. |
 | `StopSequence()` | CMD | Abort the running sequence; the application stays up. Defined in `run_events.py` because it rides two links: CORE relays the same object to the Sequencer, and the confirmation is the run's own `RunFinished(STOP)`. |
 | `PauseSequence()` · `ResumeSequence()` | CMD | Hold the run before its next main step / end the hold (or cancel a pause whose hold has not begun). Defined in `run_events.py` and relayed unchanged, like `StopSequence`. Confirmed by `RunPaused` / `RunResumed`. If no main step is left the pause lapses — teardown is never held. **GUI only**: the CLI and the API do not send them. |
@@ -148,9 +150,10 @@ reaches a union, which is what stops those comments from quietly going stale.
 | `UserPromptResponse`, `UserTextResponse`, `UserPathResponse` | EVT | The operator's answers; CORE relays them to the Sequencer. |
 | `Heartbeat`, `ModuleError` | EVT | Shared vocabulary, as above. |
 
-| `CoreToHmi` (19) | Kind | Meaning |
+| `CoreToHmi` (20) | Kind | Meaning |
 |---|---|---|
 | `StopHmi()` | CMD | Close the frontend. It answers `HmiStopped`. |
+| `RecipeUnloaded()` | EVT | CORE holds no recipe any more — the answer to `UnloadRecipe`. Hook `HmiClient.show_recipe_unloaded()`; the GUI returns to its startup look on it and switches the run log to a new file. |
 | `ConfigParameterResult(key, value, accepted, reason)` | EVT | CORE's answer to one `SetConfigParameter`. `accepted` means the value is in the file now; otherwise nothing was written and `reason` says why (wrong type, unknown key, a read-only section, a file discarded at startup). `key`/`value` repeat the request so a frontend waiting on several answers can tell them apart. |
 | `StatusChanged(text)` | EVT | One line of free text for the frontend's status bar. Anything with structure has its own message now. **Not logged above DEBUG**: the fact behind it was already written to the run log by whichever module owns it, so logging the status text too would say it twice - see `logger/logging_rules.md` section 5. |
 | `ModuleErrorReported(error)` | EVT | An error CORE decided the operator should see (severity above WARNING). |
@@ -167,14 +170,14 @@ that stops being true.
 
 | Direction | Messages |
 |---|---|
-| `CoreToSequencer` (8) | **CMD** `RunSequence(recipe, sequence_name)` (the live, validated Recipe *and* the sequence to run - the one message carrying a rich object, allowed because this link never leaves the Core process; CORE owns the loaded recipe and hands it over per run, so the Sequencer holds none between runs) · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `PauseSequence()` · `ResumeSequence()` (hold the run before its next main step / end the hold; relayed the same way) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `UserTextResponse` · `UserPathResponse` — answers relayed back from the HMI |
+| `CoreToSequencer` (9) | **CMD** `RunSequence(recipe, sequence_name)` (the live, validated Recipe *and* the sequence to run - the one message carrying a rich object, allowed because this link never leaves the Core process; CORE owns the loaded recipe and hands it over per run, so the Sequencer keeps only its last run's) · `ForgetRecipe()` (the operator unloaded the recipe: drop the last run's recipe and the test modules loaded from files; refused with an ERROR while a sequence runs; no answer) · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `PauseSequence()` · `ResumeSequence()` (hold the run before its next main step / end the hold; relayed the same way) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `UserTextResponse` · `UserPathResponse` — answers relayed back from the HMI |
 | `SequencerToCore` (16) | **EVT** `SequencerStopped()` · the 6 run-progress events · `RunPaused` · `RunResumed` (routed to the HMI only) · `StepExecuted` (routed to the Report, never the HMI) · `RunMetadata` (routed to both) · the 3 operator requests · `Heartbeat` · `ModuleError` |
 
 ## CORE ↔ Report — `core_report_communication.py` (thread of the Core process)
 
 | Direction | Messages |
 |---|---|
-| `CoreToReport` (8) | **EVT** `RunStarted` (opens the run folder and the incremental CSV, its `metadata_names` deciding the columns) · `SequenceStarted` (names the rows that follow) · `StepExecuted` (one CSV row, flushed) · `RunMetadata` (the run's metadata globals, stamped on every row when the CSV is rewritten) · `RunFinished` (closes the CSV, backfills it and renames the run folder) — all forwarded from the Sequencer<br>**CMD** `GenerateReport()` (sent by CORE right behind `RunFinished`; one queue, so the order is guaranteed) · `ExportReport()` (STUB) · `StopReport()` |
+| `CoreToReport` (8) | **EVT** `RunStarted` (names the run folder - `run_dir` - and opens the incremental CSV in it, its `metadata_names` deciding the columns) · `SequenceStarted` (names the rows that follow) · `StepExecuted` (one CSV row, flushed) · `RunMetadata` (the run's metadata globals, stamped on every row when the CSV is rewritten) · `RunFinished` (closes the CSV and backfills it) — all forwarded from the Sequencer<br>**CMD** `GenerateReport()` (sent by CORE right behind `RunFinished`; one queue, so the order is guaranteed) · `ExportReport()` (STUB) · `StopReport()` |
 | `ReportToCore` (5) | **EVT** `ReportStopped()` · `ReportGenerated(report_path)` (answers `GenerateReport`; CORE relays it to the operator as `ReportReady`) · `ReportExported(report_path)` (STUB) · `Heartbeat` · `ModuleError`<br>The paths are absolute, and they are new: the old notifications carried nothing, so CORE learned a report existed but not where. |
 
 ## Waiting for an answer — `blocking_messages.py`
@@ -196,9 +199,12 @@ answer cannot arrive.
 
 ## any → Logger — `to_logger_communication.py`
 
-| `LoggerControl` (2) | Meaning |
+| `LoggerControl` (5) | Meaning |
 |---|---|
 | `SetStdoutEnabled(enabled)` | The Logger owns the console handler, so console echo is an application-wide message, not a local handler change. |
+| `SwitchLogFile(log_file_path)` | Close the run log and carry on in a new file. Sent by the GUI (through `log.switch_log_file()`) when the operator unloads the recipe; the sender picks the path. Queued, so every record already on the queue lands in the old file. If the new file cannot be opened, the Logger keeps the old one and says so on stderr. While a run log is open it moves the remembered session log instead, and `EndRunLog` returns there. |
+| `StartRunLog(log_file_path)` | Carry on in a run's own log, inside its run folder. Sent by the Sequencer (through `log.start_run_log()`) before `RunStarted`. The Logger remembers the file it was writing - the session log, wherever an unload has put it - and returns to it on `EndRunLog`. The sender's `get_log_path()` does not change. |
+| `EndRunLog()` | Close the run log and carry on in the remembered session log, appending. Sent by the Sequencer (`log.end_run_log()`) after the run summary and before `RunFinished`. Without a run log open it changes nothing. |
 | `StopLogger()` | Sent last, by the launcher. Queued rather than immediate, so everything already in flight is written first. |
 
 ---

@@ -198,6 +198,8 @@ _build/html/spikes/scope/SCOPE_documentation.html
 
 # pypts specific
 drivers
+# ...except the drivers the hardware layer ships.
+!/src/pypts/hal/drivers/
 # Start of .gitignore content managed by acc-py
 
 # Project artefacts.

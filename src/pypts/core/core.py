@@ -43,12 +43,14 @@ from pypts.messages.core_hmi_communication import (
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
+    RecipeUnloaded,
     ReportReady,
     SetConfigParameter,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
     StopHmi,
+    UnloadRecipe,
 )
 from pypts.messages.core_report_communication import (
     CoreToReport,
@@ -61,6 +63,7 @@ from pypts.messages.core_report_communication import (
 )
 from pypts.messages.core_sequencer_communication import (
     CoreToSequencer,
+    ForgetRecipe,
     RunSequence,
     SequencerStopped,
     SequencerToCore,
@@ -97,7 +100,7 @@ from pypts.messages.run_events import (
 from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.report.report import report_main
 from pypts.sequencer.sequencer import sequencer_main
-from pypts.utilities.common import ignore_keyboard_interrupt
+from pypts.utilities.common import MASK, ignore_keyboard_interrupt, is_secret_key
 
 # The heartbeat protocol - the timeout CORE applies and the names it knows the
 # modules by - is declared with the sender's half in heartbeat_manager.py, so
@@ -140,7 +143,6 @@ FRIENDLY_SOURCE_NAME = {
     "pypts.report.report": "the report writer",
     "pypts.recipe.recipe": "the recipe reader",
     "pypts.recipe.recipe_parser": "the recipe reader",
-    "pypts.recipe.validator": "the recipe checker",
     "pypts.hmi.hmi_client": "the operator interface",
     "pypts.hmi.gui.gui": "the operator interface",
     "pypts.hmi.cli.cli": "the operator interface",
@@ -268,7 +270,8 @@ class Core:
 
         #: The loaded recipe, and the only copy of it: CORE owns it, and hands
         #: it to the Sequencer with each RunSequence. None until one is loaded,
-        #: which is what makes StartSequence refusable here.
+        #: and again after UnloadRecipe, which is what makes StartSequence
+        #: refusable here.
         self.recipe: Recipe | None = None
 
         #: When CORE stops waiting for the modules it asked to stop. None until
@@ -429,6 +432,8 @@ class Core:
                 self.modules[HMI].running = False
             case LoadRecipe(recipe_path=recipe_path):
                 self.load_recipe(recipe_path)
+            case UnloadRecipe():
+                self.unload_recipe()
             case StartSequence(sequence_name=sequence_name):
                 self.start_sequence(sequence_name)
             case StopSequence():
@@ -601,6 +606,22 @@ class Core:
             names = ", ".join("'" + name + "'" for name in recipe.sequences)
             log.info("Sequences available: %s.", names)
 
+    def unload_recipe(self) -> None:
+        """
+        Forget the loaded recipe, and have the Sequencer forget the last run's.
+
+        After this a StartSequence is refused as it is before the first load.
+        The HMI is answered either way - with nothing loaded there is nothing
+        to forget, but the frontend still returns to its no-recipe state.
+        """
+        if self.recipe is None:
+            log.debug("Unload asked with no recipe loaded; nothing to forget.")
+        else:
+            log.info('Recipe "%s" unloaded.', self.recipe.name)
+            self.recipe = None
+        self.to_sequencer.send(ForgetRecipe())
+        self.to_hmi.send(RecipeUnloaded())
+
     def start_sequence(self, sequence_name: str) -> None:
         """
         Ask the Sequencer to run a sequence, handing over the recipe with it.
@@ -663,7 +684,11 @@ class Core:
     def refuse_config_parameter(self, key: str, value: str, reason: str) -> None:
         """Log a refused SetConfigParameter and answer it, naming why."""
         log.warning("The setting '%s' was not changed: %s", key, reason)
-        log.debug("The refused change was %s = %r.", key, value)
+        if is_secret_key(key.rpartition(".")[2]):
+            shown = MASK
+        else:
+            shown = value
+        log.debug("The refused change was %s = %r.", key, shown)
         self.to_hmi.send(
             ConfigParameterResult(key=key, value=value, accepted=False, reason=reason)
         )
@@ -743,7 +768,6 @@ class Core:
         # one line, so the log says the outage ended instead of just going quiet.
         if state.heartbeat_lost:
             log.info("The %s is responding again.", FRIENDLY_MODULE_NAME[beat.source])
-            # The Monitor's other machine-read line - see do_periodic_tasks().
             log.debug("Module is responding again: %s", beat.source)
             state.heartbeat_lost = False
 
@@ -808,10 +832,8 @@ class Core:
                 # without the mechanism - logging_rules.md section 7.1. Everything
                 # measurable about it is on the DEBUG line under it.
                 log.warning("The %s has stopped responding.", FRIENDLY_MODULE_NAME[name])
-                # Machine-read: the Debug Monitor's liveness tab matches this
-                # line on its prefix and takes the rest as the module name, so
-                # it carries nothing else and ends without a full stop. See
-                # helper_applications/debug_monitor/liveness.py.
+                # The mechanism, for the developer: which module, on its own
+                # line, with the measurements below it.
                 log.debug("Heartbeat timeout for module: %s", name)
                 log.debug(
                     "It had been silent for %.1f s; the timeout is %.1f s.",
@@ -839,7 +861,8 @@ class Core:
         spoken was never responding. On a bench where a frontend takes a while to
         come up this is the normal state of affairs for the first few seconds, so
         it waits out the same reporting threshold the timeout uses and is said
-        once, not once per tick.
+        once, not once per tick. It is DEBUG: a slow GUI start (PySide6 takes
+        seconds to import) is routine and tells the technician nothing.
 
         It does not end the run. A module that never starts at all is caught
         where it can be caught properly: the launcher's `ui_process.join()`
@@ -852,9 +875,9 @@ class Core:
             return
 
         state.start_reported = True
-        log.warning("The %s has not started yet.", FRIENDLY_MODULE_NAME[name])
         log.debug(
-            "No heartbeat from %s in the %.1f s since CORE was built.",
+            "The %s has not started yet: no heartbeat from %s in the %.1f s since CORE was built.",
+            FRIENDLY_MODULE_NAME[name],
             name,
             HEARTBEAT_TIMEOUT_S,
         )
@@ -887,10 +910,8 @@ class Core:
         # handle_module_error() below, from the ModuleError - saying it here as
         # well would tell them the same thing twice, which logging_rules.md
         # section 5 is explicit about.
-        # Machine-read, and shaped the way the timeout line above is shaped: the
-        # prefix, then nothing but the module name. The Debug Monitor takes
-        # everything after the prefix as the name, so the measurements go on
-        # their own line below. See helper_applications/debug_monitor/liveness.py.
+        # Shaped like the timeout line above: the prefix and the module name,
+        # with the measurements on their own line below.
         log.debug("Heartbeat fatal for module: %s", name)
         log.debug(
             "It had been silent for %.1f s; the limit is %.1f s.",

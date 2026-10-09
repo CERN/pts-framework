@@ -9,7 +9,7 @@ Every argument is passed straight through to the launcher:
 
     python run_pypts.py
     python run_pypts.py --mode cli
-    python run_pypts.py --log-level DEBUG --no-debug-monitor
+    python run_pypts.py --log-level DEBUG
 
 `src` is put on the path first, so this works from a checkout even where pypts
 has not been installed into the interpreter running it.

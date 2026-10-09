@@ -18,8 +18,8 @@ UTF-8 terminal sees an em-dash, and the technician on a C-locale bench loses
 the record that line was supposed to be.
 
 **Log calls and `print()` only.** Qt widget text is deliberately not checked -
-the Debug Monitor's window titles and column placeholders are full of em-dashes
-and arrows, they never touch a byte stream, and Qt has handled Unicode natively
+window titles and column placeholders may carry em-dashes and arrows, they never
+touch a byte stream, and Qt has handled Unicode natively
 since long before this project existed. Narrowing to what actually reaches a
 console is what keeps this test from being a blanket ban nobody would keep.
 
@@ -134,7 +134,7 @@ def test_the_scan_catches_a_planted_offence(tmp_path):
     planted.write_text(
         'log.info("The File → Open Recent list.")\n'
         'print("plain ascii is fine")\n'
-        'widget.setWindowTitle("Monitor — not checked, never printed")\n',
+        'widget.setWindowTitle("Window — not checked, never printed")\n',
         encoding="utf-8",
     )
 

@@ -7,16 +7,19 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 # report — builds the run artefacts
 
 `report.py` is the only file. `report_main()` runs `Report(...).start()` as a **thread of the
-Core process**; everything it knows arrives as messages forwarded by CORE. The output folder
-is `paths.reports_dir` from the configuration (a test may pass `output_dir`).
+Core process**; everything it knows arrives as messages forwarded by CORE. The run folder
+comes on `RunStarted`; `paths.reports_dir` (or a test's `output_dir`) is only where the Report
+makes one itself when `RunStarted` names none.
 
 ## What it owns
 
-- **Run folder** — on `RunStarted`, `start_run()` creates
-  `<reports_dir>/<YYYYmmdd_HHMMSS>_<recipe name>/` (`make_run_dir()`: non-alphanumerics become
-  `_`, at most 60 characters, `recipe` if nothing is left, `_2`, `_3`… if it already exists)
-  and opens `report.csv` with the header row written and flushed. The folder path is logged
-  at INFO.
+- **Run folder** — on `RunStarted`, `start_run()` writes into `RunStarted.run_dir`, the
+  folder the Sequencer made (`sequencer/sequencer.md`), where the run's log is already being
+  written. Only when that is `""` - the Sequencer could not make it, or the Report is driven
+  directly - does it make one itself with `utilities.local_storage.make_run_folder()`
+  (`<reports_dir>/<YYYYmmdd_HHMMSS>_<recipe name>/`: non-alphanumerics become `_`, at most 60
+  characters, `recipe` if nothing is left, `_2`, `_3`… if it already exists). It opens
+  `report.csv` with the header row written and flushed, and logs the folder at INFO.
 - **Incremental CSV** — `record_step()` appends one row per `StepExecuted`, flushed
   immediately, and keeps it in `self.rows`. `SequenceStarted` sets the `sequence_name`
   stamped on the rows that follow. A `StepExecuted` with no run open is a WARNING and is
@@ -26,10 +29,11 @@ is `paths.reports_dir` from the configuration (a test may pass `output_dir`).
   until the run ends.
 - **End of run** — on `RunFinished`, `finish_run()` stores the verdict, closes the CSV, then:
   - `rewrite_csv()` writes `report.csv` once more with every row's run-level cells
-    (`run_result`, metadata) filled in;
-  - `rename_run_dir()` appends the non-empty metadata values to the folder name
-    (`<timestamp>_<recipe>_<serial>`). A target that exists or a failed rename is a WARNING
-    and the original name is kept.
+    (`run_result`, metadata) filled in.
+
+  The folder keeps its name: it is not renamed with the metadata any more (2026-10-09),
+  because the run log is open inside it for the whole run, and Windows will not rename a
+  folder with an open file in it.
 - **HTML** — CORE sends `GenerateReport` right behind `RunFinished`. `generate_report()` writes
   a self-contained `report.html` (header with metadata, recipe, verdict, start time and pypts
   version; a per-result summary; one table row per step, coloured by result) and sends
@@ -60,10 +64,10 @@ is `paths.reports_dir` from the configuration (a test may pass `output_dir`).
 |-------|-----------|
 | No run open | `run_dir is None` — `finish_run` returns early, `generate_report` warns; `record_step` warns whenever `csv_writer is None` |
 | Run open | `run_dir` set, CSV open and growing |
-| Run finished | `run_dir` set (possibly renamed), CSV closed and rewritten, `run_result` set |
+| Run finished | `run_dir` set, CSV closed and rewritten, `run_result` set |
 | Stopped | `running = False`, CSV closed |
 
-`start_run()` clears all per-run state *before* calling `make_run_dir()`, so a failed `mkdir`
+`start_run()` clears all per-run state *before* making the folder, so a failed `mkdir`
 leaves the Report in "no run open" rather than attributing the new run to the previous
 run's folder.
 

@@ -31,7 +31,7 @@ from pypts.step.wait_step import WaitStep
 #: case-insensitive (the old factory lower-cased eight of ten types and
 #: forgot the SSH two, which therefore only worked in exact case). The YAML
 #: names drop the class names' Step suffix: `PythonModule`, `Wait`. The keys
-#: must match pypts.recipe.rules.STEP_TYPE_REQUIRED - a unit test pins that.
+#: must match pypts.recipe.recipe_schema.STEP_TYPE_REQUIRED - a unit test pins that.
 STEP_TYPES: dict[str, type[Step]] = {
     "pythonmodule": PythonModuleStep,
     "userinteraction": UserInteractionStep,

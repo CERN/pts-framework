@@ -75,6 +75,7 @@ see <a href="recipe_guide.html">recipe_guide.html</a>.</p>
   <li><a href="#api">From Python code (API)</a></li>
   <li><a href="#headless">Headless / CI mode</a></li>
   <li><a href="#files">Where files go</a></li>
+  <li><a href="#hardware">Hardware devices</a></li>
   <li><a href="#tools">Helper tools</a></li>
   <li><a href="#trouble">Troubleshooting</a></li>
 </ol></nav>
@@ -95,9 +96,6 @@ python -m pypts --mode cli   # text shell instead of a window</code></pre>
 <p>On Windows you can also double-click <code>run_pypts.bat</code>, or run it from a shell with
 the same options, e.g. <code>run_pypts.bat --mode cli</code>. It uses the repository's
 <code>.venv</code> when there is one.</p>
-<div class="note">During the refactor the <strong>Debug Monitor</strong> window opens next to
-every run. It's a developer tool, so add <code>--no-debug-monitor</code> if you don't want
-it.</div>
 <p>To try it out, load the smallest demo recipe:
 <code>resources/recipes/Development_recipes/wait_recipe.yml</code> (two short waits).</p>
 
@@ -124,11 +122,10 @@ it.</div>
   <tr><td><code>--recipe PATH</code></td><td>Headless only (and required there): the recipe to run.</td></tr>
   <tr><td><code>--sequence NAME</code></td><td>Headless only: which sequence. Default: the recipe's main one.</td></tr>
   <tr><td><code>--log-level LEVEL</code></td>
-      <td><code>DEBUG</code>, <code>INFO</code>, <code>WARNING</code>, <code>ERROR</code> or
-      <code>CRITICAL</code>. Overrides the level in <code>config.ini</code>. <code>DEBUG</code>
-      also records every internal message, which is useful for bug reports.</td></tr>
-  <tr><td><code>--no-debug-monitor</code> / <code>--debug-monitor</code></td><td>Don't / do open the Debug
-      Monitor. Default: on in GUI and CLI, off in headless.</td></tr>
+      <td><code>TRACE</code>, <code>DEBUG</code>, <code>INFO</code>, <code>WARNING</code>,
+      <code>ERROR</code> or <code>CRITICAL</code>. Overrides the level in <code>config.ini</code>.
+      <code>DEBUG</code> adds developer detail; <code>TRACE</code> also records every internal
+      message, which is useful for bug reports.</td></tr>
   <tr><td><code>-h</code></td><td>Show the options.</td></tr>
 </table></div>
 
@@ -151,7 +148,7 @@ it.</div>
       its <strong>Inputs</strong> and <strong>Outputs</strong>, e.g. <code>voltage = 12.1</code>
       with its check (<code>range 11 .. 13</code>). It fills in as each step finishes, so you
       can look during a run.</li>
-  <li>When the run ends, the <strong>Results</strong> tab pulses gently until you click it.
+  <li>When the run ends, the <strong>Results</strong> tab pulses blue until you click it.
       The window doesn't switch tabs for you. Starting a run clears the results and goes back to
       <strong>Run</strong>, and so do opening a recipe and picking a sequence (those two keep the
       last results).</li>
@@ -168,6 +165,11 @@ during a run, and so do the steps inside it; nothing unfolds by itself.</p>
 <div class="wrap"><table>
   <tr><th>Button</th><th>Does</th></tr>
   <tr><td>Open</td><td>Loads a recipe. Greyed out during a run.</td></tr>
+  <tr><td>Unload (×, next to Open)</td><td>Closes the loaded recipe: the window goes back to how
+      it looked at start-up (no recipe, no results, status Idle), and the run log carries on in a
+      new file, so the log panel starts empty. Test modules the recipe loaded are read again the
+      next time they are used, so edits to them take effect without restarting. Greyed out when
+      no recipe is loaded and during a run.</td></tr>
   <tr><td>Preview (magnifying glass)</td><td>Shows the whole loaded recipe file, as written,
       in a scrollable panel under the button. Click anywhere outside it, or press Esc, to close
       it. Works during a run too. Greyed out until a recipe is loaded.</td></tr>
@@ -210,7 +212,8 @@ the sequence continues with the next step.</p>
 <h3>Menus</h3>
 <div class="wrap"><table>
   <tr><th>Menu</th><th>Items</th></tr>
-  <tr><td>File</td><td>Open Recipe · Open Recent (last 10 recipes that loaded) · Open Config
+  <tr><td>File</td><td>Open Recipe · Open Recent (last 10 recipes that loaded) · Unload Recipe
+      (the same as the × button) · Open Config
       (opens <code>config.ini</code> in your editor) · Exit</td></tr>
   <tr><td>Edit</td><td><strong>Edit Recipe</strong> (opens the Recipe Creator, on the loaded
       recipe if there is one; save there, then open the recipe again here to run it) ·
@@ -247,8 +250,7 @@ Use the GUI or the API for recipes that ask questions. Also, <code>stop</code> e
 program. To abort a run, type <code>stop_sequence</code>.</div>
 
 <h3>Without Qt</h3>
-<p>CLI mode doesn't need PySide6, so it works on a bench with no display. Add
-<code>--no-debug-monitor</code> there too.</p>
+<p>CLI mode doesn't need PySide6, so it works on a bench with no display.</p>
 
 <h2 id="api">7. From Python code (API)</h2>
 <p>Use <code>pypts.api</code> to run recipes from your own script. Always put the code under
@@ -301,25 +303,60 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
   <tr><th>What</th><th>Windows</th><th>Linux</th></tr>
   <tr><td>Settings (<code>config.ini</code>)</td><td><code>%LOCALAPPDATA%\pypts\config.ini</code></td>
       <td><code>~/.config/pypts/config.ini</code></td></tr>
-  <tr><td>Run logs</td><td><code>%LOCALAPPDATA%\pypts\logs</code></td>
-      <td><code>~/.local/share/pypts/logs</code></td></tr>
-  <tr><td>Reports</td><td><code>%LOCALAPPDATA%\pypts\reports</code></td>
+  <tr><td>Reports and logs</td><td><code>%LOCALAPPDATA%\pypts\reports</code></td>
       <td><code>~/.local/share/pypts/reports</code></td></tr>
 </table></div>
-<p>These are the defaults. You can change the log and report folders in
-<em>Edit → Settings</em> or in <code>config.ini</code>.</p>
+<p>These are the defaults. You can change the reports folder in
+<em>Edit → Settings</em> or in <code>config.ini</code>; the logs go with it.</p>
 <ul>
   <li><strong>Report</strong>: each run gets one folder, <code>&lt;timestamp&gt;_&lt;recipe&gt;</code>,
-      containing <code>report.csv</code> (written step by step) and <code>report.html</code>.</li>
-  <li><strong>Run log</strong>: one file per run. Its first lines give the version, the user and
-      the machine, which makes it useful to attach to a bug report.</li>
+      containing <code>report.csv</code> (written step by step), <code>report.html</code> and the
+      run's own log, <code>pypts_&lt;timestamp&gt;.log</code>, with every line of that run.</li>
+  <li><strong>Session log</strong>: one file in the reports folder each time PyPTS starts, and a
+      new one each time you unload the recipe. It holds everything outside the runs and names
+      each run's log. Its first lines give the version, the user and the machine, which makes
+      it useful to attach to a bug report. After an unload, the end of the old file names the new
+      one, and the top of the new one names the old one.</li>
   <li><strong>config.ini</strong>: created on the first start. If it's broken or from an incompatible
       version (a different major number in <code>config_version</code>), PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
       Fix the file, or delete it to have it recreated. Saving in <em>Edit → Settings</em> changes only
       that setting's line; your comments and anything you added by hand stay where they are.</li>
 </ul>
 
-<h2 id="tools">10. Helper tools</h2>
+<h2 id="hardware">10. Hardware devices</h2>
+<p>Test code reaches a device by a <strong>logical name</strong>; <code>config.ini</code> says what
+that name is. Each device runs its driver in a process of its own, opened the first time a run
+asks for it and closed when the run ends.</p>
+<pre><code>[hardware.ssh1]
+driver = pypts.hal.drivers.ssh.SshDriver
+host = 192.168.0.10
+username = tester
+key_filename = C:\Users\tester\.ssh\id_ed25519</code></pre>
+<pre><code>from pypts.hal import get_device
+
+def read_kernel():
+    result = get_device("ssh1").execute("uname -r")
+    return {"kernel": result["stdout"].strip()}</code></pre>
+<ul>
+  <li><strong>Install the driver's library</strong>: <code>pip install pts-framework[ssh]</code>
+      (also <code>[ni]</code>, <code>[serial]</code>, or <code>[hardware]</code> for all).</li>
+  <li><strong>Optional key</strong>: <code>call_timeout_s</code> (longest one call may take,
+      default 60). Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
+  <li><strong>Edits and defaults</strong>: device sections are read from the configuration PyPTS loaded at start, so a hand edit of <code>config.ini</code> applies from the next start. <strong>Restore default settings</strong> recreates <code>config.ini</code> and removes the <code>[hardware.*]</code> sections too: copy them first.</li>
+  <li><strong>SSH</strong>: an unknown host key is refused; add the host to your
+      <code>known_hosts</code>, name a file with <code>known_hosts =</code>, or set
+      <code>accept_unknown_host = true</code>. A <code>password</code> key works, but the file is
+      plain text: prefer <code>key_filename</code>. Keys named like a password are masked in the log lines PyPTS writes about configuration and device connections.</li>
+  <li><strong>No hardware?</strong> <code>driver = pypts.hal.drivers.loopback.LoopbackDriver</code>
+      answers with whatever it is sent; <code>resources/recipes/Development_recipes/hal_demo.yml</code>
+      uses it.</li>
+  <li><strong>Outside PyPTS</strong>: <code>with LocalSetup.from_ini("bench.ini"):</code> (from
+      <code>pypts.hal</code>) makes <code>get_device()</code> work in a script of your own. Put that code under
+      <code>if __name__ == "__main__":</code>: each device's process starts by re-reading your script.</li>
+  <li>Headless and API runs get the same devices.</li>
+</ul>
+
+<h2 id="tools">11. Helper tools</h2>
 <div class="wrap"><table>
   <tr><th>Tool</th><th>Start with</th><th>For</th></tr>
   <tr><td>Recipe Creator</td>
@@ -329,13 +366,9 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       and the validation pane are grayed out, the text stays as you typed it, and the log says why.
       Fix it in the editor, press <em>Undo</em>, or press <em>Undo to Last Valid</em>.
       <em>Save</em> still writes the text as it is. A broken file opens the same way.</td></tr>
-  <tr><td>Debug Monitor</td>
-      <td>opens with every run, or<br><code>python -m pypts.helper_applications.debug_monitor</code></td>
-      <td>Developers: watching internal messages. Only shows something with
-      <code>--log-level DEBUG</code>. On its own it opens the newest log.</td></tr>
 </table></div>
 
-<h2 id="trouble">11. Troubleshooting</h2>
+<h2 id="trouble">12. Troubleshooting</h2>
 <div class="wrap"><table>
   <tr><th>You see</th><th>Do</th></tr>
   <tr><td>"GUI mode needs PySide6…"</td><td>Install PySide6, or start with <code>--mode cli</code>.</td></tr>
@@ -345,8 +378,7 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       see every issue at once.</td></tr>
   <tr><td>A step that asks a question ends <code>ERROR</code> in the CLI</td><td>That's expected, see
       <a href="#cli">§6</a>. Use the GUI or the API.</td></tr>
-  <tr><td>Debug Monitor is empty</td><td>Start with <code>--log-level DEBUG</code>.</td></tr>
-  <tr><td>Anything else</td><td>Rerun with <code>--log-level DEBUG</code> and attach the run log.</td></tr>
+  <tr><td>Anything else</td><td>Rerun with <code>--log-level TRACE</code> and attach the run log.</td></tr>
 </table></div>
 
 </div>

@@ -80,8 +80,11 @@ passed as keyword arguments.
   used to run the file again for every step, which silently reset that state. Two recipes
   with an `example_tests.py` in different folders stay separate; a file that fails to load
   is not remembered, so fixing it takes effect on the next step. The cost: an edit to a test
-  module takes effect only after restarting pypts. A dotted name goes through
-  `importlib.import_module`, which `sys.modules` already caches.
+  module takes effect only after the operator unloads the recipe or restarts pypts —
+  `forget_loaded_modules()` empties `_loaded_modules`, and the Sequencer calls it on
+  `ForgetRecipe`, never during a run. A dotted name goes through `importlib.import_module`,
+  which `sys.modules` already caches; an unload leaves those alone, so an edit to one still
+  needs a restart.
 
 ### 2.3 `UserInteractionStep` → `UserInteraction` — done
 
@@ -280,16 +283,13 @@ and remember a matching close step in `teardown_steps` is the old design's worka
 not having anywhere else to put it. So: no `SSHConnect` / `SSHClose` entries in
 `STEP_TYPES`.
 
-Open for the implementation session:
-
-- **Where it lands** — `hardware_layer/hal.py` is the obvious candidate (it is an empty
-  stub today), but a plain framework service is also defensible. Not decided.
-- **Credentials** — they move into the Config Handler. A plaintext SSH password currently
-  sits in `resources/recipes/comprehensive_recipe.yml:20` (§16 F22).
-- **Lifecycle** — whatever owns the session has to close it on abort and on shutdown, which
-  is exactly what the old `teardown_steps` rule was standing in for.
-- **A live paramiko client cannot cross a process boundary.** It works today because the
-  whole engine is one process; nothing about it may ever be put on the HMI link.
+**Landed 2026-10-08 (roadmap §1.54).** SSH is the hardware layer's `SshDriver`
+(`pypts.hal.drivers.ssh`), reached from test code with `pypts.hal.get_device("<name>")`.
+Credentials live in `[hardware.<name>]` in `config.ini`, masked in the log. The session belongs
+to the run's local setup, which closes it after the teardown steps on every outcome, abort included —
+what the old `teardown_steps` rule stood in for. The live client stays in the driver's own
+process; only picklable values cross. Details: `hal/hal.md`. A recipe-level `devices:` key is planned,
+not built.
 
 ### 2.8 `SequenceStep` → `Sequence` — reversed 2026-09-16, engine done (stage 1)
 
@@ -403,11 +403,13 @@ iterations) — each generated step now stands on its own, and the sequence verd
 aggregates them like any other steps. F25 (the wrapper's `outputs` discarded) cannot
 recur, because there is no wrapper.
 
-Where the rules live: `STEP_TYPE_REQUIRED["indexed"]` in `recipe/rules.py`, listed in
-`EXPANDED_STEP_TYPES` so the registry-vs-rules pinning test knows it is parse-time only;
-the shape checks in `indexed_step.check_indexed_step()`, called by `recipe/validator.py`,
-which also validates the `template` as the step it will become; the expansion itself in
-`recipe_parser._expand_indexed_steps()`, between defaults and build.
+Where the rules live: `STEP_TYPE_REQUIRED["indexed"]` in `recipe/recipe_schema.py`,
+listed in `EXPANDED_STEP_TYPES` so the registry-vs-rules pinning test knows it is
+parse-time only; the shape checks in `recipe_schema.IndexedStepSchema` (with
+`ParameterSet`), which also validates the `template` as the step it will become;
+`indexed_step.check_indexed_step()` repeats them as the guard of
+`expand_indexed_step()`; the expansion itself in
+`recipe_parser._expand_indexed_steps()`, between validation and build.
 
 ---
 
@@ -673,8 +675,10 @@ Sequencer (`sequencer/sequencer.md`).
 2. Its entry in `STEP_TYPES` (`step/registry.py`), keyed **lowercase** — the YAML spelling
    is case-insensitive and drops the class's `Step` suffix (`Wait`, not `WaitStep`).
 3. Its required and optional fields in `STEP_TYPE_REQUIRED` / `STEP_TYPE_DEFAULTS`
-   (`recipe/rules.py`). A unit test pins those keys against the registry's, so a type
-   registered in only one of the two places fails the suite.
+   (`recipe/recipe_schema.py`), and its Pydantic model in the same file, added to the
+   `AnyStepSchema` union (`recipe/recipe.md`, Adding a step type). Unit tests pin those
+   keys against the registry's and against the model, so a type registered in only one
+   place fails the suite.
 
 **Only what is genuinely the type's own goes in `STEP_TYPE_DEFAULTS`.** The fields every
 step accepts whatever its type — `description`, `skip`, `continue_on_error` — are the

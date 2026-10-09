@@ -6,9 +6,9 @@
 ViewTabBar: the Run | Results tabs above the left pane.
 
 A plain QTabBar, plus one thing a stylesheet cannot do: make a single tab pulse.
-When a run ends with results the operator has not looked at, the Results tab's
-background breathes slowly towards the selected-tab colour until the tab is
-opened (gui.md §14).
+When a run ends with results the operator has not looked at, the Results tab
+takes the selected-tab background and breathes slowly to a darker blue and
+back until the tab is opened (gui.md §14).
 """
 
 from PySide6.QtCore import QEasingCurve, QRect, Qt, QVariantAnimation
@@ -23,10 +23,6 @@ TAB_RESULTS = 1
 #: One fade in and out, in milliseconds. Slow on purpose: it is a reminder,
 #: not an alarm.
 PULSE_PERIOD_MS = 2400
-
-#: How opaque the selected-tab background gets at the top of the pulse.
-#: Below 1.0 so the pulsing tab never looks the same as the selected one.
-PULSE_PEAK = 0.8
 
 #: The tab's box as styles.py draws it: `border-radius: 4px 4px 0 0`,
 #: `margin-right: 2px`. The pulse paints under a tab, so it has to know the
@@ -48,12 +44,12 @@ class ViewTabBar(QTabBar):
         self._dark = False
         #: The tab that is pulsing, or None.
         self._pulsing_tab: int | None = None
-        #: The pulse's current background opacity: 0.0 to PULSE_PEAK.
+        #: How far the pulse is from the base colour to the dark one: 0.0 to 1.0.
         self._pulse_level = 0.0
 
         self._pulse = QVariantAnimation(self)
         self._pulse.setStartValue(0.0)
-        self._pulse.setKeyValueAt(0.5, PULSE_PEAK)
+        self._pulse.setKeyValueAt(0.5, 1.0)
         self._pulse.setEndValue(0.0)
         self._pulse.setDuration(PULSE_PERIOD_MS)
         self._pulse.setEasingCurve(QEasingCurve.Type.InOutSine)
@@ -96,16 +92,23 @@ class ViewTabBar(QTabBar):
         """
         The pulse paints under one tab; the stylesheet then paints the tabs.
 
-        Only the background pulses: the selected-tab background, at the pulse's
-        opacity. An unselected tab has no background of its own, so the fill
-        shows through and the label stays as the stylesheet draws it - one
-        label, not a second one fading in on top.
+        Only the background pulses: the selected-tab background, blended
+        towards `tab_pulse_background` by the pulse's level. An unselected tab
+        has no background of its own, so the fill shows through and the label
+        stays as the stylesheet draws it - one label, not a second one fading
+        in on top.
         """
-        if self._pulsing_tab is not None and self._pulse_level > 0.0:
+        if self._pulsing_tab is not None:
             palette = get_palette(self._dark)
             rect = self.tabRect(self._pulsing_tab).adjusted(0, 0, -_TAB_MARGIN_RIGHT, 0)
-            background = QColor(palette.tab_selected_background)
-            background.setAlphaF(self._pulse_level)
+            base = QColor(palette.tab_selected_background)
+            peak = QColor(palette.tab_pulse_background)
+            level = self._pulse_level
+            background = QColor.fromRgbF(
+                base.redF() + (peak.redF() - base.redF()) * level,
+                base.greenF() + (peak.greenF() - base.greenF()) * level,
+                base.blueF() + (peak.blueF() - base.blueF()) * level,
+            )
 
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)

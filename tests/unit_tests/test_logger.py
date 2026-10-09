@@ -41,6 +41,7 @@ import sys
 import pytest
 
 from pypts.logger import log as log_module
+from pypts.logger.levels import TRACE
 from pypts.logger.log import (
     DEFAULT_LOG_LEVEL,
     Logger,
@@ -221,8 +222,8 @@ def test_init_logging_installs_exactly_one_queue_handler(pristine_root_logger):
     handler = root.handlers[0]
     assert isinstance(handler, logging.handlers.QueueHandler)
     assert handler.queue is log_queue
-    # INFO, not DEBUG: DEBUG now means the full message trace, which is a thing
-    # to ask for rather than a thing to get from a caller that said nothing.
+    # INFO, not DEBUG: DEBUG is developer detail, and TRACE the full message
+    # trace - things to ask for rather than get from a caller that said nothing.
     assert root.level == DEFAULT_LOG_LEVEL == logging.INFO
 
 
@@ -490,3 +491,197 @@ def test_get_log_path_is_none_when_no_log_file_was_given(pristine_root_logger):
     init_logging()
 
     assert log_module.get_log_path() is None
+
+
+# --------------------------------------------------------------------------
+# Switching to a new run log (the operator unloaded the recipe)
+# --------------------------------------------------------------------------
+
+
+def _record(message):
+    return logging.LogRecord(
+        name="test", level=logging.INFO, pathname=__file__, lineno=1,
+        msg=message, args=None, exc_info=None,
+    )
+
+
+def test_switch_log_file_cuts_the_log_between_two_records(tmp_path):
+    """Before the switch goes to the old file, after it to the new one - and
+    the old file is not touched again."""
+    from pypts.messages.to_logger_communication import SwitchLogFile
+
+    old_file = tmp_path / "pypts_old.log"
+    new_file = tmp_path / "pypts_new.log"
+    logger = Logger(queue_module.Queue(), str(old_file), stdout_enabled=False)
+
+    logger.handle_item(_record("before"))
+    logger.handle_item(SwitchLogFile(log_file_path=str(new_file)))
+    logger.handle_item(_record("after"))
+    logger.close()
+
+    assert [entry["message"] for entry in parse_log(old_file)] == ["before"]
+    assert [entry["message"] for entry in parse_log(new_file)] == ["after"]
+    assert logger.log_file_path == str(new_file)
+
+
+def test_a_switch_to_a_file_that_cannot_be_opened_keeps_the_old_one(tmp_path):
+    from pypts.messages.to_logger_communication import SwitchLogFile
+
+    old_file = tmp_path / "pypts_old.log"
+    logger = Logger(queue_module.Queue(), str(old_file), stdout_enabled=False)
+
+    logger.handle_item(SwitchLogFile(log_file_path=str(tmp_path / "missing" / "new.log")))
+    logger.handle_item(_record("still here"))
+    logger.close()
+
+    assert [entry["message"] for entry in parse_log(old_file)] == ["still here"]
+    assert logger.log_file_path == str(old_file)
+
+
+def test_switch_log_file_queues_the_switch_and_names_the_new_path(
+    pristine_root_logger, tmp_path
+):
+    from pypts.messages.to_logger_communication import SwitchLogFile
+
+    log_queue = queue_module.Queue()
+    init_logging(log_queue, logging.INFO, str(tmp_path / "pypts_old.log"))
+    new_path = str(tmp_path / "pypts_new.log")
+
+    assert log_module.switch_log_file(new_path) is True
+
+    assert log_module.get_log_path() == new_path
+    assert log_queue.get_nowait() == SwitchLogFile(log_file_path=new_path)
+
+
+def test_switch_log_file_does_nothing_without_a_logger_process(pristine_root_logger):
+    init_logging()
+
+    assert log_module.switch_log_file("anything.log") is False
+    assert log_module.get_log_path() is None
+
+
+def test_the_run_log_header_is_three_info_lines_from_the_caller(caplog):
+    from pypts._version import __version__
+
+    with caplog.at_level(logging.INFO):
+        log_module.log_run_log_header("gui", "C:/logs/pypts_1.log")
+
+    assert caplog.messages[0] == f"PyPTS {__version__} started in GUI mode."
+    assert caplog.messages[1].startswith("Started by ")
+    assert caplog.messages[2] == "Run log: C:/logs/pypts_1.log"
+    # stacklevel=2: the lines name whoever wrote the header, not the helper.
+    assert {record.funcName for record in caplog.records} == {
+        "test_the_run_log_header_is_three_info_lines_from_the_caller"
+    }
+
+
+def test_trace_is_a_level_below_debug_with_its_own_name():
+    """The message trace has a level of its own, under DEBUG."""
+    assert TRACE < logging.DEBUG
+    assert logging.getLevelName(TRACE) == "TRACE"
+    assert parse_log_level("TRACE") == TRACE
+    assert parse_log_level("trace") == TRACE
+
+
+# --------------------------------------------------------------------------
+# A run log: one run's lines in its own file, then back to the session log
+# --------------------------------------------------------------------------
+
+
+def test_a_run_log_takes_the_run_and_the_session_log_carries_on_after_it(tmp_path):
+    from pypts.messages.to_logger_communication import EndRunLog, StartRunLog
+
+    session_file = tmp_path / "pypts_session.log"
+    run_file = tmp_path / "run" / "pypts_run.log"
+    run_file.parent.mkdir()
+    logger = Logger(queue_module.Queue(), str(session_file), stdout_enabled=False)
+
+    logger.handle_item(_record("before"))
+    logger.handle_item(StartRunLog(log_file_path=str(run_file)))
+    logger.handle_item(_record("during"))
+    logger.handle_item(EndRunLog())
+    logger.handle_item(_record("after"))
+    logger.close()
+
+    assert [entry["message"] for entry in parse_log(session_file)] == ["before", "after"]
+    assert [entry["message"] for entry in parse_log(run_file)] == ["during"]
+    assert logger.log_file_path == str(session_file)
+
+
+def test_a_run_log_returns_to_the_session_log_an_unload_switched_to(tmp_path):
+    """The Logger, not the sender, knows which file the session is in now."""
+    from pypts.messages.to_logger_communication import EndRunLog, StartRunLog, SwitchLogFile
+
+    first = tmp_path / "pypts_first.log"
+    second = tmp_path / "pypts_second.log"
+    run_file = tmp_path / "pypts_run.log"
+    logger = Logger(queue_module.Queue(), str(first), stdout_enabled=False)
+
+    logger.handle_item(SwitchLogFile(log_file_path=str(second)))
+    logger.handle_item(StartRunLog(log_file_path=str(run_file)))
+    logger.handle_item(EndRunLog())
+    logger.handle_item(_record("after the run"))
+    logger.close()
+
+    assert [entry["message"] for entry in parse_log(second)] == ["after the run"]
+    assert parse_log(first) == []
+
+
+def test_ending_a_run_log_that_was_never_started_changes_nothing(tmp_path):
+    from pypts.messages.to_logger_communication import EndRunLog
+
+    session_file = tmp_path / "pypts_session.log"
+    logger = Logger(queue_module.Queue(), str(session_file), stdout_enabled=False)
+
+    logger.handle_item(EndRunLog())
+    logger.handle_item(_record("still here"))
+    logger.close()
+
+    assert [entry["message"] for entry in parse_log(session_file)] == ["still here"]
+    assert logger.log_file_path == str(session_file)
+
+
+def test_start_and_end_run_log_queue_the_requests_and_keep_the_session_path(
+    pristine_root_logger, tmp_path
+):
+    """get_log_path() keeps naming the session log: the GUI's unload relies on it."""
+    from pypts.messages.to_logger_communication import EndRunLog, StartRunLog
+
+    log_queue = queue_module.Queue()
+    session_path = str(tmp_path / "pypts_session.log")
+    init_logging(log_queue, logging.INFO, session_path)
+    run_path = str(tmp_path / "pypts_run.log")
+
+    assert log_module.start_run_log(run_path) is True
+    assert log_module.end_run_log() is True
+
+    assert log_queue.get_nowait() == StartRunLog(log_file_path=run_path)
+    assert log_queue.get_nowait() == EndRunLog()
+    assert log_module.get_log_path() == session_path
+
+
+def test_start_and_end_run_log_do_nothing_without_a_logger_process(pristine_root_logger):
+    init_logging()
+
+    assert log_module.start_run_log("anything.log") is False
+    assert log_module.end_run_log() is False
+
+
+def test_an_unload_during_a_run_log_becomes_the_session_log_to_return_to(tmp_path):
+    """A SwitchLogFile while a run log is open moves the session, not the run."""
+    from pypts.messages.to_logger_communication import EndRunLog, StartRunLog, SwitchLogFile
+
+    first = tmp_path / "pypts_first.log"
+    second = tmp_path / "pypts_second.log"
+    run_file = tmp_path / "pypts_run.log"
+    logger = Logger(queue_module.Queue(), str(first), stdout_enabled=False)
+
+    logger.handle_item(StartRunLog(log_file_path=str(run_file)))
+    logger.handle_item(SwitchLogFile(log_file_path=str(second)))
+    logger.handle_item(_record("still the run"))
+    logger.handle_item(EndRunLog())
+    logger.handle_item(_record("after the run"))
+    logger.close()
+
+    assert [entry["message"] for entry in parse_log(run_file)] == ["still the run"]
+    assert [entry["message"] for entry in parse_log(second)] == ["after the run"]

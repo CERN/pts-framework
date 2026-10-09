@@ -19,9 +19,6 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 - **Spawn pinning** — pins `multiprocessing.set_start_method("spawn")` as the first
   statement of `main()`, before the first `Queue()`. This makes Linux behave like Windows
   and avoids the Qt fork hazard (plan 005).
-- **Debug Monitor** — starts `pypts.helper_applications.debug_monitor` via
-  `subprocess.Popen` (never as an import). On by default during the refactor;
-  `--no-debug-monitor` turns it off.
 - **Shutdown** — `stop_core()` sends `HmiStopped` + `ShutdownRequested` to CORE, joins
   up to `CORE_SHUTDOWN_TIMEOUT_S` (5.0 s), and terminates if CORE does not stop in time.
 
@@ -32,7 +29,7 @@ starts exactly what `python -m pypts` starts:
 
 | Function | Does |
 |----------|------|
-| `start_engine(mode, log_level_name, debug_monitor)` | pins spawn, bootstraps config, starts the Logger, `init_logging()`, starts CORE; returns an `Engine` (the processes and both HMI links). Stops what it started if it fails. `mode` is `gui` / `cli` / `api`. |
+| `start_engine(mode, log_level_name)` | pins spawn, bootstraps config, starts the Logger, `init_logging()`, starts CORE; returns an `Engine` (the processes and both HMI links). Stops what it started if it fails. `mode` is `gui` / `cli` / `api`. |
 | `run_gui(engine, recipe_path, start, sequence_name)` | spawns the GUI process and joins it. The last three are for `pypts.api.open_gui()`. Returns True if the GUI exited with `RESTART_EXIT_CODE`; `main()` acts on it, the API ignores it. |
 | `stop_engine(engine)` | `stop_core()`, then `StopLogger` and the Logger join. |
 
@@ -54,21 +51,18 @@ launcher (main process)
 |------|-------|---------|
 | `CORE_SHUTDOWN_TIMEOUT_S` | 5.0 s | Join timeout before CORE is terminated |
 | `LOGGER_SHUTDOWN_TIMEOUT_S` | 5.0 s | Logger drain budget |
-| `MONITOR_LOG_WAIT_S` | 5.0 s | How long to wait for the log file before giving up on the Monitor |
 
 ## Rules
 
 - Must stay **the simplest component**. If something can be done in a child, do it there.
-- Never import `helper_applications/debug_monitor/`. The dependency runs one way only.
 - `stop_core()` is a pure function of its two arguments — no global state.
 
 ## Arguments
 
-`--mode gui|cli|headless`, `--log-level`, `--debug-monitor/--no-debug-monitor`, and for
-headless mode only `--recipe` (required) and `--sequence`. The parser is `ArgumentParser`,
+`--mode gui|cli|headless`, `--log-level`, and for headless mode only `--recipe` (required)
+and `--sequence`. The parser is `ArgumentParser`,
 which exits with `USAGE_EXIT_CODE` (3) on a bad command line instead of argparse's 2, because
-headless mode uses 2 for a run that ended in ERROR/STOP. `--debug-monitor` defaults to on in
-gui/cli and off in headless.
+headless mode uses 2 for a run that ended in ERROR/STOP.
 
 ## Restart
 
@@ -85,7 +79,7 @@ line in a fresh process, so every singleton starts empty and the normal bootstra
 the file. It **waits** for the new pypts and exits with its code, because a console opened by
 `run_pypts.bat` closes when this process ends and would take the new one with it; each
 restart therefore leaves one idle launcher underneath. The same command line means the same
-flags - a Debug Monitor opens again on the new run log; the old window stays open.
+flags.
 
 ## Headless mode
 

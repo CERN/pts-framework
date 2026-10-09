@@ -12,7 +12,7 @@
 
 - **Design spec (approved):** `docs/superpowers/specs/2026-10-07-pydantic-recipe-schema-design.md` (commit `4b5f896`). The spec is the authority on the design; this plan implements it.
 - **Branch:** `architecture_refactor`.
-- **Execution state: not started.** No implementation task (1-6) has been executed — all checkboxes below are unchecked and are the single source of truth for progress. Mark each step `- [x]` as it completes.
+- **Execution state: implemented 2026-10-08, uncommitted** (the user commits). Every step is ticked except the `Commit` steps. The code deviates from this plan's listings on the user's decisions of 2026-10-08: steps refuse unknown keys and accept `id`; an Indexed template may omit `step_name`; numbers are read as text in text fields while mapping keys and global names stay as written; sequences are handed on as `model_dump(exclude_unset=True)`; errors are Pydantic's messages with a readable location (`recipe_parser._describe_problem`). `recipe/recipe.md` describes the result, and the status file has it as §1.52.
 - **To resume on any machine:** open this file and run the superpowers:subagent-driven-development skill (or superpowers:executing-plans) on it, starting at the first task with unchecked steps. Tasks must run in order — each builds on the previous one.
 - The SDD scratch workspace (`.superpowers/sdd/…`) is git-ignored and machine-local; it is recreated automatically and holds nothing that is not also recoverable from this file and `git log`.
 
@@ -40,7 +40,7 @@
 **Interfaces:**
 - Produces: `pydantic` importable in all subsequent tasks
 
-- [ ] **Step 1: Add pydantic to dependencies**
+- [x] **Step 1: Add pydantic to dependencies**
 
 In `pyproject.toml`, in the `[project] dependencies` list (currently ends with `"paramiko"`), add:
 
@@ -61,7 +61,7 @@ dependencies = [
 ]
 ```
 
-- [ ] **Step 2: Install and verify**
+- [x] **Step 2: Install and verify**
 
 ```bash
 pip install -e ".[dev]"
@@ -70,7 +70,7 @@ python -c "import pydantic; print(pydantic.VERSION)"
 
 Expected: Pydantic 2.x version printed.
 
-- [ ] **Step 3: Run tests to confirm baseline is green**
+- [x] **Step 3: Run tests to confirm baseline is green**
 
 ```bash
 pytest tests -q
@@ -96,7 +96,7 @@ git commit -m "deps: add pydantic>=2.0"
 - Produces: All constants from `rules.py` available as `from pypts.recipe.recipe_schema import <NAME>`
 - `rules.py` is **not touched** in this task — it stays as-is
 
-- [ ] **Step 1: Create recipe_schema.py with the constants block**
+- [x] **Step 1: Create recipe_schema.py with the constants block**
 
 Create `src/pypts/recipe/recipe_schema.py` with exactly this content (constants copied verbatim from `rules.py`, Pydantic models to follow in later tasks):
 
@@ -184,7 +184,7 @@ STEP_TYPE_DEFAULTS: dict[str, dict[str, Any]] = {
 }
 ```
 
-- [ ] **Step 2: Verify the constants are importable**
+- [x] **Step 2: Verify the constants are importable**
 
 ```bash
 python -c "from pypts.recipe.recipe_schema import STEP_TYPE_REQUIRED; print(list(STEP_TYPE_REQUIRED))"
@@ -192,7 +192,7 @@ python -c "from pypts.recipe.recipe_schema import STEP_TYPE_REQUIRED; print(list
 
 Expected: prints the list of steptypes.
 
-- [ ] **Step 3: Run tests**
+- [x] **Step 3: Run tests**
 
 ```bash
 pytest tests -q
@@ -222,7 +222,7 @@ git commit -m "feat(recipe): add recipe_schema.py with constants"
   - `AnyStepSchema` — type alias for the discriminated step union
   - All schema classes have `.model_dump() -> dict[str, Any]`
 
-- [ ] **Step 1: Write failing tests for HeaderSchema**
+- [x] **Step 1: Write failing tests for HeaderSchema**
 
 Create `tests/unit_tests/test_recipe_schema.py`:
 
@@ -333,7 +333,7 @@ def test_sequence_bare_teardown_steps_becomes_empty_list():
     assert s.teardown_steps == []
 ```
 
-- [ ] **Step 2: Run tests — confirm they fail (HeaderSchema, SequenceSchema not yet defined)**
+- [x] **Step 2: Run tests — confirm they fail (HeaderSchema, SequenceSchema not yet defined)**
 
 ```bash
 pytest tests/unit_tests/test_recipe_schema.py -q
@@ -341,7 +341,7 @@ pytest tests/unit_tests/test_recipe_schema.py -q
 
 Expected: ImportError or NameError — `HeaderSchema` / `SequenceSchema` not found.
 
-- [ ] **Step 3: Add output entry models and step models to recipe_schema.py**
+- [x] **Step 3: Add output entry models and step models to recipe_schema.py**
 
 Append the following to the bottom of `src/pypts/recipe/recipe_schema.py`, after the constants block:
 
@@ -668,7 +668,7 @@ class HeaderSchema(BaseModel):
         return v
 ```
 
-- [ ] **Step 4: Run the failing tests — confirm they pass now**
+- [x] **Step 4: Run the failing tests — confirm they pass now**
 
 ```bash
 pytest tests/unit_tests/test_recipe_schema.py -q
@@ -676,7 +676,7 @@ pytest tests/unit_tests/test_recipe_schema.py -q
 
 Expected: all pass.
 
-- [ ] **Step 5: Extend test_recipe_schema.py with step model tests**
+- [x] **Step 5: Extend test_recipe_schema.py with step model tests**
 
 Append to `tests/unit_tests/test_recipe_schema.py`:
 
@@ -818,7 +818,7 @@ def test_model_dump_produces_plain_dicts():
     assert dumped["teardown_steps"] == []
 ```
 
-- [ ] **Step 6: Run all new tests**
+- [x] **Step 6: Run all new tests**
 
 ```bash
 pytest tests/unit_tests/test_recipe_schema.py -v
@@ -826,7 +826,7 @@ pytest tests/unit_tests/test_recipe_schema.py -v
 
 Expected: all pass.
 
-- [ ] **Step 7: Run the full test suite**
+- [x] **Step 7: Run the full test suite**
 
 ```bash
 pytest tests -q
@@ -834,7 +834,7 @@ pytest tests -q
 
 Expected: all pass (rules.py and validator.py untouched).
 
-- [ ] **Step 8: Ruff and mypy**
+- [x] **Step 8: Ruff and mypy**
 
 ```bash
 ruff check src/pypts/recipe/recipe_schema.py tests/unit_tests/test_recipe_schema.py
@@ -870,7 +870,7 @@ The key changes to `parse_recipe`:
 5. Remove the `_report_metadata` call (inline it as `tuple(header["report_metadata"])`)
 6. Remove the import of `validator`
 
-- [ ] **Step 1: Write a failing test that proves the new validation path runs**
+- [x] **Step 1: Write a failing test that proves the new validation path runs**
 
 Add to `tests/unit_tests/test_recipe.py` (find the section with validation tests, e.g., around `test_recipe_is_rejected_when_...`):
 
@@ -900,7 +900,7 @@ pytest tests/unit_tests/test_recipe.py::test_steptype_value_is_case_insensitive_
 
 Expected: PASS (it already passes, because the registry already does `step_type.lower()` in `build_step`). This test pins the behavior we must keep.
 
-- [ ] **Step 2: Extend _normalize_step to lowercase the steptype value**
+- [x] **Step 2: Extend _normalize_step to lowercase the steptype value**
 
 In `src/pypts/recipe/recipe_parser.py`, find `_normalize_step`:
 
@@ -928,7 +928,7 @@ def _normalize_step(step_data: Any) -> Any:
         ...
 ```
 
-- [ ] **Step 3: Add the _validate_schema helper to recipe_parser.py**
+- [x] **Step 3: Add the _validate_schema helper to recipe_parser.py**
 
 In `recipe_parser.py`, add this function (place it near the top of the module, after imports):
 
@@ -958,7 +958,7 @@ def _validate_schema(
         return problems, None
 ```
 
-- [ ] **Step 4: Replace the validator calls in parse_recipe**
+- [x] **Step 4: Replace the validator calls in parse_recipe**
 
 Find the current validation block in `parse_recipe` (around lines 76-87):
 
@@ -1015,7 +1015,7 @@ sequence_documents = [
 ]
 ```
 
-- [ ] **Step 5: Remove the apply_defaults(header, ...) call and simplify _report_metadata**
+- [x] **Step 5: Remove the apply_defaults(header, ...) call and simplify _report_metadata**
 
 Find and remove this line that comes after the version check:
 
@@ -1033,7 +1033,7 @@ report_metadata=tuple(header["report_metadata"]),
 
 The `_report_metadata` function can now be deleted from `recipe_parser.py` (it is superseded by `HeaderSchema._validate_report_metadata`).
 
-- [ ] **Step 6: Remove the import of validator**
+- [x] **Step 6: Remove the import of validator**
 
 Find:
 
@@ -1043,7 +1043,7 @@ from pypts.recipe import validator
 
 Delete this line.
 
-- [ ] **Step 7: Run the full test suite**
+- [x] **Step 7: Run the full test suite**
 
 ```bash
 pytest tests -q
@@ -1051,13 +1051,13 @@ pytest tests -q
 
 Expected: all pass. If any test references `validator` directly, it will be caught here.
 
-- [ ] **Step 8: Delete validator.py**
+- [x] **Step 8: Delete validator.py**
 
 ```bash
 git rm src/pypts/recipe/validator.py
 ```
 
-- [ ] **Step 9: Run the full test suite again**
+- [x] **Step 9: Run the full test suite again**
 
 ```bash
 pytest tests -q
@@ -1093,7 +1093,7 @@ git commit -m "feat(recipe): wire recipe_parser to Pydantic schema; delete valid
 
 All changes in this task are mechanical one-line import substitutions. The constant names are identical.
 
-- [ ] **Step 1: Update step_source.py**
+- [x] **Step 1: Update step_source.py**
 
 Find:
 ```python
@@ -1104,7 +1104,7 @@ Replace with:
 from pypts.recipe.recipe_schema import SEQUENCE_DEFAULTS
 ```
 
-- [ ] **Step 2: Update rc_model.py**
+- [x] **Step 2: Update rc_model.py**
 
 Find:
 ```python
@@ -1125,7 +1125,7 @@ from pypts.recipe.recipe_schema import (
 )
 ```
 
-- [ ] **Step 3: Update rc_widgets.py**
+- [x] **Step 3: Update rc_widgets.py**
 
 Find:
 ```python
@@ -1136,7 +1136,7 @@ Replace with:
 from pypts.recipe.recipe_schema import INPUT_TYPES, OUTPUT_TYPES, STEP_TYPE_REQUIRED
 ```
 
-- [ ] **Step 4: Update recipe_creator_new.py**
+- [x] **Step 4: Update recipe_creator_new.py**
 
 Find:
 ```python
@@ -1147,7 +1147,7 @@ Replace with:
 from pypts.recipe.recipe_schema import STEP_TYPE_REQUIRED
 ```
 
-- [ ] **Step 5: Update verificator.py**
+- [x] **Step 5: Update verificator.py**
 
 Find:
 ```python
@@ -1161,7 +1161,7 @@ from pypts.recipe import recipe_schema as rules
 
 This keeps all `rules.SEQUENCE_REQUIRED`, `rules.STEP_TYPE_REQUIRED`, etc. references inside `verificator.py` unchanged — they now read from `recipe_schema` transparently.
 
-- [ ] **Step 6: Update test_step.py (two import lines)**
+- [x] **Step 6: Update test_step.py (two import lines)**
 
 Find (at line ~141):
 ```python
@@ -1179,7 +1179,7 @@ from pypts.recipe.recipe_schema import EXPANDED_STEP_TYPES, STEP_TYPE_REQUIRED
 from pypts.recipe.recipe_schema import EXPANDED_STEP_TYPES
 ```
 
-- [ ] **Step 7: Update test_rc_model.py**
+- [x] **Step 7: Update test_rc_model.py**
 
 Find (at line ~231):
 ```python
@@ -1190,7 +1190,7 @@ Replace with:
 from pypts.recipe.recipe_schema import STEP_TYPE_REQUIRED
 ```
 
-- [ ] **Step 8: Run full test suite before deleting rules.py**
+- [x] **Step 8: Run full test suite before deleting rules.py**
 
 ```bash
 pytest tests -q
@@ -1199,13 +1199,13 @@ ruff check src tests
 
 Expected: all pass.
 
-- [ ] **Step 9: Delete rules.py**
+- [x] **Step 9: Delete rules.py**
 
 ```bash
 git rm src/pypts/recipe/rules.py
 ```
 
-- [ ] **Step 10: Run full test suite after deletion**
+- [x] **Step 10: Run full test suite after deletion**
 
 ```bash
 pytest tests -q
@@ -1229,7 +1229,7 @@ git commit -m "refactor(recipe): migrate all rules.py imports to recipe_schema; 
 **Files:**
 - Modify: `src/pypts/recipe/recipe.md`
 
-- [ ] **Step 1: Update the Files table in recipe.md**
+- [x] **Step 1: Update the Files table in recipe.md**
 
 In the `## Files` table, replace the `rules.py` and `validator.py` rows:
 
@@ -1243,7 +1243,7 @@ Add a row for `recipe_schema.py`:
 | `recipe_schema.py` | The recipe format constants (same names as the old `rules.py`) and Pydantic models (`HeaderSchema`, `SequenceSchema`, `AnyStepSchema` and per-steptype models) used by `recipe_parser.py` for validation. Not imported outside the `recipe/` package except by `recipe_creator/` for the constants. |
 ```
 
-- [ ] **Step 2: Update the load pipeline description**
+- [x] **Step 2: Update the load pipeline description**
 
 In `## The load pipeline (recipe_parser.py)`, step 4 currently reads:
 
@@ -1253,11 +1253,11 @@ Replace with:
 
 > **Validate** (`recipe_schema.py`) — `HeaderSchema.model_validate()` on the header, `SequenceSchema.model_validate()` on every sequence document. Each call is wrapped in a try/except; all `ValidationError` detail lines are collected and raised as one `RecipeError`, so the author fixes the file in one round. Defaults are applied as part of validation; `model_dump()` replaces `apply_defaults()`.
 
-- [ ] **Step 3: Update the Format rules section**
+- [x] **Step 3: Update the Format rules section**
 
 The section `## Format rules (rules.py)` — change its heading to `## Format rules (recipe_schema.py)` and update the first sentence from "live in `rules.py`" to "live in `recipe_schema.py`".
 
-- [ ] **Step 4: Run tests one final time**
+- [x] **Step 4: Run tests one final time**
 
 ```bash
 pytest tests -q

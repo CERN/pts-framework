@@ -30,6 +30,7 @@ from pypts.messages.run_events import (
     SequenceStarted,
     StepExecuted,
 )
+from pypts.report import report as report_module
 from pypts.report.report import Report, rows_from_csv
 from pypts.step.wait_step import WaitStep
 
@@ -254,10 +255,10 @@ def test_a_failed_run_dir_does_not_resurrect_the_previous_run(tmp_path, monkeypa
     first_html = (first_run_dir / "report.html").read_text(encoding="utf-8")
     sent_to_core(report)  # drain what the first run said, so what follows is new
 
-    def refuse_to_make_a_run_dir(recipe_name):
+    def refuse_to_make_a_run_dir(reports_dir, recipe_name):
         raise OSError("disk says no")
 
-    monkeypatch.setattr(report, "make_run_dir", refuse_to_make_a_run_dir)
+    monkeypatch.setattr(report_module, "make_run_folder", refuse_to_make_a_run_dir)
 
     drive(
         report,
@@ -465,8 +466,8 @@ def test_a_metadata_name_the_recipe_never_sets_stays_blank(tmp_path):
     assert [m for m in sent_to_core(report) if isinstance(m, ModuleError)] == []
 
 
-def test_the_run_folder_is_renamed_with_the_metadata(tmp_path):
-    """The folder is made before any step runs, so the serial can only join it here."""
+def test_the_run_folder_keeps_its_name_at_the_end_of_the_run(tmp_path):
+    """No rename: the run log is open inside the folder for the whole run."""
     report = build_report(tmp_path)
 
     drive(
@@ -474,30 +475,35 @@ def test_the_run_folder_is_renamed_with_the_metadata(tmp_path):
         A_RUN_WITH_METADATA,
         RunMetadata(values=(("serial_number", "SN-0042"),)),
         a_step_executed(),
-        RunFinished(result=ResultType.DONE),
     )
-
-    run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
-    assert run_dir.name.endswith("_SN_0042")
-    assert report.run_dir == run_dir
-    assert (run_dir / "report.csv").is_file()
-
-
-def test_a_run_folder_that_cannot_be_renamed_is_kept(tmp_path, monkeypatch):
-    """Losing a run over a cosmetic name would be a poor trade."""
-    report = build_report(tmp_path)
-    drive(report, A_RUN_WITH_METADATA, RunMetadata(values=(("serial_number", "SN-1"),)))
     original = report.run_dir
-
-    def refuse(self, target):
-        raise OSError("the folder is open in another window")
-
-    monkeypatch.setattr("pathlib.Path.rename", refuse)
-    drive(report, a_step_executed(), RunFinished(result=ResultType.DONE))
+    drive(report, RunFinished(result=ResultType.DONE))
 
     assert report.run_dir == original
-    assert original.is_dir()
-    assert csv_rows(original)[0]["serial_number"] == "SN-1"
+    assert "SN_0042" not in original.name
+    assert csv_rows(original)[0]["serial_number"] == "SN-0042"
+
+
+def test_the_report_writes_into_the_folder_the_sequencer_made(tmp_path):
+    """RunStarted names the folder; the Report makes none of its own."""
+    reports = tmp_path / "reports"
+    reports.mkdir()
+    run_dir = reports / "20261009_093012_demo"
+    run_dir.mkdir()
+    report = build_report(reports)
+
+    drive(
+        report,
+        RunStarted(recipe_name="demo", recipe_description="", run_dir=str(run_dir)),
+        SequenceStarted(sequence_name="Main"),
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+        GenerateReport(),
+    )
+
+    assert [path.name for path in reports.iterdir()] == [run_dir.name]
+    assert (run_dir / "report.csv").is_file()
+    assert (run_dir / "report.html").is_file()
 
 
 def test_the_html_header_shows_the_metadata(tmp_path):

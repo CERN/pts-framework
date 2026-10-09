@@ -122,7 +122,7 @@ WINDOW_KEYS = (WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)
 PAGES = (
     # Folders first: where logs and reports go is what a bench is set up for,
     # so it is the page Edit > Settings opens on.
-    ("Folders", ("paths.logs_dir", "paths.reports_dir", "paths.base_dir")),
+    ("Folders", ("paths.reports_dir", "paths.base_dir")),
     ("Appearance", (THEME_KEY, WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)),
     ("Logging", ("logging.level",)),
     ("Report", ("report.type", "report.theme")),
@@ -139,7 +139,6 @@ SECTION_TITLES = {
 #: Card title for each key. A key missing here shows its own name.
 LABELS = {
     "paths.base_dir": "Base folder",
-    "paths.logs_dir": "Run logs folder",
     "paths.reports_dir": "Reports folder",
     "logging.level": "Log level",
     "report.type": "Report type",
@@ -153,9 +152,8 @@ LABELS = {
 #: The line under a card's title, where a key needs explaining.
 HINTS = {
     "paths.base_dir": "The folder pypts keeps its own data in.",
-    "paths.logs_dir": "Every run writes its log here.",
-    "paths.reports_dir": "Every run gets a report folder here.",
-    "logging.level": "How much goes into the run log. DEBUG adds the full message trace.",
+    "paths.reports_dir": "Every run gets a folder here, with its report and its log.",
+    "logging.level": "How much goes into the run log. TRACE adds the full message trace.",
     "report.type": "Not used yet.",
     "report.theme": "Not used yet.",
     "gui.theme": "Used by pypts and the Recipe Creator. Previewed as you pick it.",
@@ -744,7 +742,8 @@ def confirm_restore_defaults(parent: QWidget | None = None) -> bool:
         "Restore default settings",
         "Put every setting back to its default value?\n\n"
         "config.ini is recreated from the template and pypts restarts. "
-        "Changes not saved yet are lost.",
+        "Changes not saved yet are lost. The devices declared in [hardware.*] sections "
+        "are removed too, so copy them first.",
         QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.RestoreDefaults,
         QMessageBox.StandardButton.Cancel,
     )

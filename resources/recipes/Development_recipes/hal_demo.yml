@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The hardware layer showcase: test code asks for a device by its logical name,
+# PyPTS opens it on first use and closes it when the run ends. The devices are
+# declared in config.ini (File -> Open Config), not in the recipe:
+#
+#   [hardware.loop1]
+#   driver = pypts.hal.drivers.loopback.LoopbackDriver
+#
+#   [hardware.ssh1]
+#   driver = pypts.hal.drivers.ssh.SshDriver
+#   host = <a machine you can reach>
+#   username = <you>
+#   key_filename = <your private key>
+#
+# Without [hardware.ssh1] the second step ends ERROR with "No device 'ssh1' is
+# configured" - which is itself what that looks like. The SSH driver needs
+# pip install pts-framework[ssh].
+name: HAL demo
+description: Two devices reached by logical name from test code.
+version: 0.2
+---
+sequence_name: Main
+description: A loopback device, then a remote shell.
+steps:
+  - steptype: PythonModule
+    step_name: Loopback echo
+    description: The device sends the text back.
+    module: hal_demo_tests.py
+    method_name: loopback_echo
+    inputs:
+      text: hello
+    outputs:
+      echoed: {type: equals, value: hello}
+  - steptype: PythonModule
+    step_name: Remote system name
+    description: uname -a on the SSH host must succeed.
+    module: hal_demo_tests.py
+    method_name: ssh_uname
+    outputs:
+      exit_code: {type: equals, value: 0}

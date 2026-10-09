@@ -43,7 +43,7 @@ import yaml
 
 from pypts.helper_applications.recipe_creator.customGUIModules import ScintillaYamlEditor
 from pypts.hmi.gui.palette import get_palette
-from pypts.recipe.rules import INPUT_TYPES, OUTPUT_TYPES, STEP_TYPE_REQUIRED
+from pypts.recipe.recipe_schema import INPUT_TYPES, OUTPUT_TYPES, STEP_TYPE_REQUIRED
 
 
 # ── PaletteYamlHighlighter ────────────────────────────────────────────────────

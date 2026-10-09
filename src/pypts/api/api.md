@@ -36,7 +36,7 @@ if __name__ == "__main__":
 
 | Call | Blocks until | Raises |
 |------|--------------|--------|
-| `Pts(log_level=None, debug_monitor=False)` | Logger and CORE are started | whatever `start_engine()` raises |
+| `Pts(log_level=None)` | Logger and CORE are started | whatever `start_engine()` raises |
 | `load_recipe(path)` | `RecipeLoaded`, or CORE's refusal | `PtsError` with CORE's reason; timeout 30 s |
 | `run(sequence=None, answer=None, on_step=None)` | `RunFinished`, then `ReportReady` (15 s budget) | `PtsError` if the start is refused or the engine stops |
 | `stop()` | — (sends `StopSequence`; thread-safe) | — |
@@ -98,7 +98,6 @@ console: load, run, print each step, exit.
   argparse's `2`), in every mode.
 - The recipe file and the sequence name are checked before running; a missing file before
   anything is started.
-- The Debug Monitor is **off** by default in this mode (`--debug-monitor` turns it on).
 - Tests: `tests/unit_tests/test_headless.py`; a real-process run is in
   `test_api_processes.py` (opt-in).
 

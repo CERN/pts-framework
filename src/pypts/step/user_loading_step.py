@@ -48,7 +48,7 @@ from pypts.step.operator_prompt import ask_or_raise, resolve_image_path
 from pypts.step.runtime import Runtime
 from pypts.step.step import Step
 
-#: What `select:` may say. The first is the default (recipe/rules.py).
+#: What `select:` may say. The first is the default (recipe/recipe_schema.py).
 SELECT_FILE = "file"
 SELECT_FOLDER = "folder"
 SELECT_VALUES: tuple[str, ...] = (SELECT_FILE, SELECT_FOLDER)

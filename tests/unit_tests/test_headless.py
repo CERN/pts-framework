@@ -200,8 +200,8 @@ def test_an_unknown_option_exits_three(monkeypatch):
 def test_headless_mode_hands_over_to_headless_main(monkeypatch):
     calls = []
 
-    def fake_headless_main(recipe, sequence, log_level, debug_monitor):
-        calls.append((recipe, sequence, log_level, debug_monitor))
+    def fake_headless_main(recipe, sequence, log_level):
+        calls.append((recipe, sequence, log_level))
         return 1
 
     monkeypatch.setattr(headless, "headless_main", fake_headless_main)
@@ -212,12 +212,29 @@ def test_headless_mode_hands_over_to_headless_main(monkeypatch):
     )
 
     assert code == 1
-    # Off by default in headless mode: there is nobody to look at the window.
-    assert calls == [("b.yml", "Cal", "INFO", False)]
+    assert calls == [("b.yml", "Cal", "INFO")]
 
-    calls.clear()
-    run_main(monkeypatch, "--mode", "headless", "--recipe", "b.yml", "--debug-monitor")
-    assert calls == [("b.yml", None, None, True)]
+
+def test_trace_is_an_accepted_log_level(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        headless, "headless_main", lambda *arguments: calls.append(arguments) or 0
+    )
+
+    code = run_main(
+        monkeypatch, "--mode", "headless", "--recipe", "b.yml", "--log-level", "TRACE"
+    )
+
+    assert code == 0
+    assert calls == [("b.yml", None, "TRACE")]
+
+
+@pytest.mark.parametrize("flag", ["--debug-monitor", "--no-debug-monitor"])
+def test_the_removed_debug_monitor_flag_is_a_usage_error(monkeypatch, flag):
+    # A run that got as far as headless_main would exit 0, so 3 can only be argparse.
+    monkeypatch.setattr(headless, "headless_main", lambda *arguments: 0)
+
+    assert run_main(monkeypatch, "--mode", "headless", "--recipe", "b.yml", flag) == 3
 
 
 def test_the_headless_mode_does_not_import_qt():

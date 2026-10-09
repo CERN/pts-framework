@@ -233,6 +233,11 @@ class StepTableContent(QWidget):
         # stretch column still has its pre-layout width.
         self.table.resizeRowsToContents()
 
+    def clear(self) -> None:
+        """No rows at all - the recipe was unloaded."""
+        self.hide_yaml_popup()
+        self.table.setRowCount(0)
+
     # --- Folding ---------------------------------------------------------------
 
     def is_group_row(self, row: int) -> bool:

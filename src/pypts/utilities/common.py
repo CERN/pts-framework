@@ -9,6 +9,7 @@ Small helpers with no home of their own.
 import contextlib
 import signal
 from collections.abc import Mapping
+from typing import Any
 
 #: The exit code the GUI process ends with when it wants pypts started again -
 #: after Settings > Advanced > Restore default settings deleted config.ini, so
@@ -97,3 +98,28 @@ def describe_step_values(
         ]
         lines.append("outputs: " + ", ".join(described))
     return lines
+
+
+#: Words that mark a configuration key as a secret. A key that contains one of
+#: them - `password`, `ssh_password`, `key_passphrase` - is never written to a log.
+SECRET_KEY_WORDS = ("password", "passphrase", "secret", "token")
+
+#: What a log shows in place of a secret.
+MASK = "******"
+
+
+def is_secret_key(key: str) -> bool:
+    """Whether a configuration key holds a secret, by its name."""
+    lowered = key.lower()
+    return any(word in lowered for word in SECRET_KEY_WORDS)
+
+
+def masked(settings: Mapping[str, Any]) -> dict[str, Any]:
+    """A copy of `settings` fit for a log: every secret value replaced by MASK."""
+    result: dict[str, Any] = {}
+    for key, value in settings.items():
+        if is_secret_key(key):
+            result[key] = MASK
+        else:
+            result[key] = value
+    return result

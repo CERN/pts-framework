@@ -315,7 +315,8 @@ Read that code before touching any widget in this folder.
 - CERN Blue `#0033A0` — primary buttons
 - Light tab bar: `header_background` `#F0F4FA` behind the tabs, `text_muted` `#718096`
   for an unselected tab — a quiet backdrop. Selected tab: `tab_selected_background` /
-  `tab_selected_text` — light `#D6E6F7` / `#005BAC`, dark `#005BAC` / `#ffffff`. Colour
+  `tab_selected_text` — light `#D6E6F7` / `#005BAC`, dark `#005BAC` / `#ffffff`. A pulsing
+  tab fades to `tab_pulse_background` — light `#9CC3F0`, dark `#0033A0` (§14). Colour
   only, never a font weight: a bold selected tab is wider, and the tabs jump on every click
 - MTA Blue `#005BAC` — selected tab, header text
 - Full light QSS + full dark QSS; `detect_system_dark_mode()` + OS live-sync
@@ -459,11 +460,12 @@ The chain, launcher first:
 
 | Where | What |
 |---|---|
-| `startup.py` | decides the run log path once (`get_log_file_path()`), and passes it to `gui_main` alongside the log queue |
+| `startup.py` | decides the run log path at startup (`get_log_file_path()`), and passes it to `gui_main` alongside the log queue. After that only an unload changes it (§16) |
 | `gui_main()` | hands it to `init_logging(log_queue, log_level, log_file_path)` |
 | `logger/log.py` | remembers it; `get_log_path()` hands it back to whoever in this process wants to read the log |
 | `GUI.start_log_tail()` | opens a `LogTail` on that path and starts a second `QTimer` at `LOG_POLL_INTERVAL_MS` (200 ms) |
 | `GUI.poll_log()` | appends what `LogTail.new_lines()` returns to `CenterContent.log_panel` |
+| `GUI.follow_run_log()` / `run_log_finished()` | during a run, also follow the run's own log (below) |
 
 `log_tail.py` owns the reading and the presentation of a record:
 
@@ -473,23 +475,34 @@ The chain, launcher first:
 - **A torn record is never shown.** A read can land between the Logger's `write()`
   and its flush; anything not ending in a newline is held back until the rest
   arrives.
-- **Filtered to `PANEL_LOG_LEVEL` (INFO).** `config.ini` ships DEBUG for the
+- **Filtered to `PANEL_LOG_LEVEL` (INFO).** `config.ini` ships TRACE for the
   refactor, so the file carries the full message trace — every message twice,
-  sent and received. That is the Debug Monitor's job; the operator's panel would
-  be nothing but `QueueWrapper` traces. Traceback lines are shown or dropped with
+  sent and received. Unfiltered, the operator's panel would be nothing but
+  `QueueWrapper` traces. Traceback lines are shown or dropped with
   the record they hang under.
 - **Rendered `LEVEL     HH:MM:SS  message`.** Level first because that is what
   `LogPanel.append_line()` colours on. Process name and `file:func` are dropped —
-  again, the Monitor is where you go for those.
+  they are developer detail, read in the log file.
 
 Two things follow from the path being *passed in* rather than looked up:
 
 - A GUI built without one — a test, or a frontend started by hand — has no log to
   follow. It says `No run log to follow.` in the panel and starts no timer. The
   window is otherwise unaffected.
-- Nothing here imports `helper_applications/debug_monitor/`, which has a similar
-  follower of its own. The dependency rule is one-way, and the Monitor is
-  temporary; the duplication is deliberate and dies with it.
+- When an unload switches the run log, `start_new_log_file()` empties the panel and
+  `poll_log()` waits for the new file through `_wait_for_new_log()` (§16).
+
+**A run is logged in its own folder, and the panel follows it without clearing.**
+`RunStarted.run_log_path` reaches `follow_run_log()`; the panel opens that file as
+`run_log_tail` once the Logger has created it (`_open_run_log()`, the same bounded wait as an
+unload's new file, then `Could not open the run log: …`). `get_log_path()` keeps naming the
+session log throughout. The Logger writes one file at a time, so `_read_in_order()` reads
+session-then-run until the run log has shown a line, and run-then-session from then on (or
+after `run_log_finished()`) - decided by the files, because the Logger is back in the session
+log before `RunFinished` reaches the GUI; when the
+second file of a tick has grown, the first is read once more to its end first, so a line
+written across the switch is never shown out of order. Once the session log grows after the
+run, the run log is complete and is closed.
 
 A `DEBUG`-level toggle for this panel is not implemented. If it is ever wanted,
 it is `LogTail.min_level` plus a checkable item in the View menu — nothing else.
@@ -547,8 +560,8 @@ it selects the sequence (the main one when none was named), shows its table and 
 recipe does not have is reported instead of started; any other open before `RecipeLoaded`
 cancels the pending start; and it fires once, not on later loads.
 
-**The window title names the loaded recipe** (2026-09-15): `pyPTS` at start,
-`pyPTS: <recipe name>` from `show_recipe_loaded()` on. The old engine did the same
+**The window title names the loaded recipe** (2026-09-15): `pyPTS` at start and again
+after an unload (§16), `pyPTS: <recipe name>` from `show_recipe_loaded()` on. The old engine did the same
 (`PTS: <name>`); several bench windows are often open at once and the taskbar shows only
 the title.
 
@@ -890,6 +903,13 @@ the toolbar never sees the event.
 `QWidget` implementation accepts a `ToolTip` event whichever branch ran, so its
 return value proves nothing.
 
+**Unavailable looks unavailable** (2026-10-09). Every toolbar icon that can be disabled —
+Open, ×, preview, Start, Pause, Stop — is redrawn in `icon_disabled` by `_refresh_icons()`
+while it is; the report button is never disabled. The menus follow the same rule in
+`styles.py`: `QMenu::item:disabled` (also when hovered, so a disabled entry does not light
+up as if it could be clicked) and `QMenuBar::item:disabled` use `toolbutton_disabled`. That
+covers File → Unload Recipe with nothing loaded, and Open Recipe / Open Recent during a run.
+
 ---
 
 ## 12. The step table's YAML click panel
@@ -1164,16 +1184,18 @@ the step table from the first `show_selected_sequence()` on. `TAB_RESULTS` shows
 | `RunFinished` | `set_results(outcomes)` | unchanged; if `outcomes` is not empty, Results pulses |
 
 **The pulse.** The GUI never jumps to Results by itself; it asks for a look instead.
-`ViewTabBar.start_pulse(index)` fades that tab's background from nothing up to the
-selected-tab background (`tab_selected_background`) at `PULSE_PEAK` (0.8) opacity and back,
-`PULSE_PERIOD_MS` (2400) per cycle, eased — a `QVariantAnimation` looping forever and a
-`paintEvent` that fills the tab *before* the stylesheet paints it. An unselected tab has
-no background of its own, so the fill shows through and the label is the stylesheet's own
-— only the background pulses, and it never quite reaches the selected look. It stops
-(`stop_pulse()`) when that tab is opened, by a click or `show_tab()`, and at `RunStarted`.
-A tab already open does not pulse. The fill copies the tab's box from `styles.py`
-(`_TAB_RADIUS`, `_TAB_MARGIN_RIGHT`) — change those with the `QTabBar::tab` rules, and
-give an unselected tab a background there and the pulse is hidden under it.
+`ViewTabBar.start_pulse(index)` gives that tab the selected-tab background
+(`tab_selected_background`, the open Run tab's colour) and fades it to
+`tab_pulse_background` and back — light `#D6E6F7` → `#9CC3F0`, dark `#005BAC` →
+`#0033A0`, blue to a deeper blue — `PULSE_PERIOD_MS` (2400) per cycle, eased: a
+`QVariantAnimation` looping forever and a `paintEvent` that fills the tab *before* the
+stylesheet paints it. An unselected tab has no background of its own, so the fill shows
+through and the label is the stylesheet's own (`tab_text`, not the selected text colour)
+— only the background pulses. It stops (`stop_pulse()`) when that tab is opened, by a
+click or `show_tab()`, and at `RunStarted`. A tab already open does not pulse. The fill
+copies the tab's box from
+`styles.py` (`_TAB_RADIUS`, `_TAB_MARGIN_RIGHT`) — change those with the `QTabBar::tab`
+rules, and give an unselected tab a background there and the pulse is hidden under it.
 Colours come from `palette.py`, and `set_dark()` follows the theme.
 
 ## 15. The run progress bar (2026-09-17)
@@ -1194,6 +1216,7 @@ the table already receives.
 | `RunStarted` | `reset()` — back to 0 on the sequence already shown |
 | `StepFinished` | `step_finished(outcome)` — one tick if the row counts |
 | `RunFinished` | nothing — the bar keeps its final fill until the next run or selection |
+| `RecipeUnloaded` | `clear()` — nothing counted, so the bar hides |
 
 **What counts: every row whose `StepSummary.is_group` is False**, at any depth — steps of
 called sequences and teardown steps included, whether their group is folded in the table
@@ -1211,6 +1234,53 @@ counted rows, where a `0..0` range would turn the bar into Qt's busy indicator.
 **Always green.** The fill is `progress_fill` on a `progress_track` groove, both themed
 tokens in `palette.py`, applied by the stylesheet rules in `styles.py`. Nothing is painted
 per item, so a theme change needs no `set_dark()` here.
+
+## 16. Unloading the recipe (2026-10-09)
+
+**Two ways in, one funnel.** The toolbar's `unload_button` — a small × (`_CROSS_SVG`), right
+after the Open folder — and File → `Unload Recipe` (`unload_recipe_action`, under Open
+Recent) both call the inherited `HmiClient.unload_recipe()`, which sends `UnloadRecipe`. Both
+are enabled only with a recipe loaded and no run in progress: the top bar tracks
+`_recipe_loaded` (set by `show_recipe_loaded()`, cleared by `show_recipe_unloaded()`) and
+greys the × in `show_run_started()`; the menu entry follows through
+`_set_recipe_opening_enabled()` and `show_recipe_loaded()`. The × is drawn in the toolbar
+icon colour, `icon_disabled` when greyed, and its tooltip says why (`No recipe is loaded.` /
+`Not while a run is in progress - stop the run first.`). No confirmation dialog.
+
+**The GUI resets on CORE's answer, not on the click.** `show_recipe_unloaded()` runs on
+`RecipeUnloaded` and puts the window back as it opened:
+
+| What | Back to |
+|---|---|
+| GUI state | `current_recipe`, `_requested_recipe_path`, `_loaded_recipe_path`, `_recipe_yaml`, `_recipe_text`, `_run_outcomes`, `_running_recipe_name`, `_run_state`, `report_dir`, a pending start and the pause flag all cleared |
+| Top bar | `TopBarContent.show_recipe_unloaded()` — combo emptied and greyed, Start / Pause / Stop / preview / × greyed, run metadata cleared; Open stays enabled |
+| Left pane | `step_table.clear()` (no rows, popup closed), `run_progress.clear()` (hidden), results emptied, pulse stopped, `run_stack` on the idle logo, the Run tab open |
+| Centre | `center.cancel_pending()` + `show_idle()` |
+| Labels | `No recipe loaded`, title `pyPTS`, `Status: Idle` |
+
+The recents list stays — it is the operator's history, not the recipe's.
+
+**Then the run log carries on in a new file** — `start_new_log_file()`:
+
+1. `next_log_file_path(get_log_path())` names a new file beside the old one
+   (`utilities/utilities.md`).
+2. INFO `Run log continues in <new file name>` — still on the old file.
+3. `log.switch_log_file(path)` queues `SwitchLogFile` to the Logger and makes
+   `get_log_path()` name the new file. The Logger opens the new file, then closes the old one.
+4. `log_run_log_header("gui", path)` — the three startup lines, word for word — and INFO
+   `Run log continues from <old file name>`: the top of the new file.
+5. The tail stops, the panel empties, and `poll_log()` calls `_wait_for_new_log()` each tick
+   until the file exists, then `start_log_tail()`. If it has not appeared within
+   `NEW_LOG_WAIT_S` (5 s) — the Logger could not open it and kept the old one — the panel says
+   `Could not open the run log: <path>` and a WARNING is logged.
+
+Steps 2–4 travel on the one log queue from one process, so their order is the files' order.
+With no run log (a test, a frontend started by hand) the switch is skipped and the panel is
+left alone. Only the GUI process learns the new path: the launcher's `Engine.log_file_path`
+keeps naming the first file, which nothing reads after startup.
+
+The engine side — CORE dropping `Core.recipe`, the Sequencer dropping its last recipe and the
+cached test modules — is in `core/core.md` and `sequencer/sequencer.md`.
 
 ---
 

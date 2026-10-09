@@ -14,11 +14,6 @@ that does not match the key in CORE's tables is a heartbeat CORE cannot place.
 The names in particular used to be spelled four times: once in each of the
 three modules and again as three constants in `core.py`. Nothing checked that
 they agreed.
-
-This module imports almost nothing on purpose. The Debug Monitor needs the
-timeout and the names to fold liveness out of a run log, and it used to reach
-them through `pypts.core.core` - which loads the Sequencer, the Report, the
-configuration and every link module, thirty in all, for four constants.
 """
 
 import time

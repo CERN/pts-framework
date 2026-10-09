@@ -50,6 +50,9 @@ QMenuBar::item:selected {{
     background-color: {palette.menu_highlight};
     color: {palette.menu_highlight_text};
 }}
+QMenuBar::item:disabled {{
+    color: {palette.toolbutton_disabled};
+}}
 QMenu {{
     background-color: {palette.menu_background};
     border: 1px solid {palette.border};
@@ -62,6 +65,14 @@ QMenu::item {{
 QMenu::item:selected {{
     background-color: {palette.menu_highlight};
     color: {palette.menu_highlight_text};
+}}
+/* An entry that cannot be used now - Unload Recipe with nothing loaded, Open
+   Recipe during a run - is greyed, and hovering it does not light it up as if
+   it could be clicked. After :selected, so it wins for a disabled entry. */
+QMenu::item:disabled,
+QMenu::item:disabled:selected {{
+    background-color: transparent;
+    color: {palette.toolbutton_disabled};
 }}
 QToolBar {{
     background-color: {palette.toolbar_background};
@@ -97,8 +108,7 @@ QTabBar::tab {{
 QTabBar::tab:selected {{
     background: {palette.tab_selected_background};
     color: {palette.tab_selected_text};
-}}
-QTableWidget, QTreeView {{
+}}QTableWidget, QTreeView {{
     background-color: {palette.table_background};
     color: {palette.text};
     border: 1px solid {palette.border};

@@ -7,9 +7,9 @@ Unit tests for the Recipe module (src/pypts/recipe/).
 
 The layer under test is pure data: parse a multi-document YAML file into
 Recipe -> Sequence -> Step objects, refuse anything malformed, execute
-nothing. The format rules live in rules.py (required fields, optional
-fields and their defaults), the validator checks them, and the parser
-raises one RecipeError naming every problem at once - so CORE has exactly
+nothing. The format rules live in recipe_schema.py (the constants and
+the Pydantic models that check them), and the parser raises one
+RecipeError naming every problem at once - so CORE has exactly
 one type to catch, and every one of the old loader's silent mistakes
 (skipped unnamed sequences, last-wins duplicates) is a loud error here.
 
@@ -42,6 +42,7 @@ USER_WRITE_DEMO = DEMOS / "userwritestep_demo.yml"
 USER_LOADING_DEMO = DEMOS / "userloadingstep_demo.yml"
 ALL_STEPTYPES_DEMO = DEMOS / "all_steptypes_demo.yml"
 SEQUENCE_DEMO = DEMOS / "sequencestep_demo.yml"
+HAL_DEMO = DEMOS / "hal_demo.yml"
 
 #: The pypts this suite runs against, which is what a recipe declares to
 #: match it. Asked rather than written out, so the fixtures do not start
@@ -146,7 +147,7 @@ def test_globals_that_are_not_a_mapping_are_refused_at_load(written):
     """`globals: 5` used to load and only fail when a run started."""
     text = VALID.replace("name: ", f"globals: {written}\nname: ", 1)
 
-    with pytest.raises(RecipeError, match="'globals' must be a mapping"):
+    with pytest.raises(RecipeError, match="header: globals: Input should be a valid dictionary"):
         Recipe.from_yaml_text(text)
 
 
@@ -167,7 +168,7 @@ def test_a_single_value_header_field_written_as_a_list_is_refused(field):
     lines = [line for line in VALID.splitlines() if not line.startswith(f"{field}:")]
     text = "\n".join([f"{field}: [a, b]", *lines])
 
-    with pytest.raises(RecipeError, match=f"'{field}' must be a single value"):
+    with pytest.raises(RecipeError, match=f"header: {field}: Input should be a valid string"):
         Recipe.from_yaml_text(text)
 
 
@@ -177,8 +178,8 @@ def test_every_header_problem_is_named_in_one_error():
     with pytest.raises(RecipeError) as raised:
         Recipe.from_yaml_text(text)
 
-    assert "'name' must be a single value" in str(raised.value)
-    assert "'globals' must be a mapping" in str(raised.value)
+    assert "header: name: Input should be a valid string" in str(raised.value)
+    assert "header: globals: Input should be a valid dictionary" in str(raised.value)
 
 
 def test_a_recipe_may_name_its_own_report_metadata():
@@ -323,7 +324,7 @@ def test_a_missing_main_sequence_is_refused():
 
 def test_an_unknown_steptype_names_itself_and_the_sequence():
     broken = VALID.replace("steptype: Wait", "steptype: PythonModul")
-    with pytest.raises(RecipeError, match="PythonModul") as excinfo:
+    with pytest.raises(RecipeError, match="pythonmodul") as excinfo:
         Recipe.from_yaml_text(broken)
     assert "Main" in str(excinfo.value)
 
@@ -344,12 +345,12 @@ def test_a_sequence_missing_its_steps_is_refused():
 def test_a_sequence_with_an_empty_step_list_is_refused():
     """A sequence exists to run something - `steps: []` is not a sequence."""
     broken = VALID.split("---")[0] + "---\nsequence_name: Main\nsteps: []\n"
-    with pytest.raises(RecipeError, match="at least one step"):
+    with pytest.raises(RecipeError, match="steps: List should have at least 1 item"):
         Recipe.from_yaml_text(broken)
 
 
 def test_steptype_specific_required_fields_are_enforced():
-    """rules.STEP_TYPE_REQUIRED: a Wait needs wait_time, a PythonModule
+    """recipe_schema.STEP_TYPE_REQUIRED: a Wait needs wait_time, a PythonModule
     needs module and method_name."""
     broken = VALID.replace("    wait_time: '0.01'\n", "")
     with pytest.raises(RecipeError, match="wait_time"):
@@ -416,6 +417,174 @@ def test_every_problem_is_reported_in_one_error():
     message = str(excinfo.value)
     assert "name" in message
     assert "wait_time" in message
+
+
+def test_steptype_value_is_case_insensitive_pascal_case():
+    """PythonModule (Pascal case) must parse the same as pythonmodule (lowercase)."""
+    text = f"""\
+name: Demo
+version: {CURRENT_VERSION}
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: Mod
+    module: example_tests.py
+    method_name: add
+"""
+    recipe = Recipe.from_yaml_text(text)
+    assert recipe.sequences["Main"].steps[0].name == "Mod"
+
+
+# How a problem reads: Pydantic's own message, with a location an author can
+# find - steps counted from 1 as the step table counts them, the step named.
+
+
+def _problem(text: str) -> str:
+    with pytest.raises(RecipeError) as excinfo:
+        Recipe.from_yaml_text(text)
+    return str(excinfo.value)
+
+
+def test_a_step_problem_names_the_sequence_the_position_and_the_step():
+    message = _problem(VALID.replace("    wait_time: '0.01'\n", ""))
+    assert "sequence 'Main', steps[1] 'Only wait': wait_time: Field required" in message
+
+
+def test_a_header_problem_names_the_field():
+    message = _problem(VALID.replace("name: Wait demo", "name: [a]", 1))
+    assert "header: name: Input should be a valid string" in message
+
+
+def test_an_unknown_steptype_lists_the_ones_that_exist():
+    message = _problem(VALID.replace("steptype: Wait", "steptype: PythonModul"))
+    expected = "sequence 'Main', steps[1] 'Only wait': steptype 'pythonmodul' is not one of: "
+    assert expected in message
+    assert "'pythonmodule'" in message
+
+
+def test_a_typo_in_a_step_key_is_named_before_anything_is_built():
+    typo = "step_name: Only wait\n    skipp: true"
+    message = _problem(VALID.replace("step_name: Only wait", typo))
+    assert "steps[1] 'Only wait': skipp: Extra inputs are not permitted" in message
+
+
+def test_a_nested_problem_reads_without_the_union_tag():
+    output = "    outputs:\n      r: {type: range, min: 1}\n"
+    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n" + output)
+    assert "steps[1] 'Only wait': outputs -> r -> max: Field required" in _problem(text)
+
+
+def test_an_output_named_like_its_type_keeps_its_name():
+    output = "    outputs:\n      range: {type: range, min: 1}\n"
+    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n" + output)
+    assert "steps[1] 'Only wait': outputs -> range -> max: Field required" in _problem(text)
+
+
+def test_a_template_problem_reads_as_the_template_s():
+    text = INDEXED.replace("      method_name: add\n", "")
+    assert "steps[1] 'Add numbers': template -> method_name: Field required" in _problem(text)
+
+
+def test_a_numeric_output_name_reads_as_a_name():
+    """`1:` under outputs is a key, not a list position - and its union tag still goes."""
+    output = "    outputs:\n      1: {type: equals}\n"
+    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n" + output)
+    assert "steps[1] 'Only wait': outputs -> 1 -> value: Field required" in _problem(text)
+
+
+def test_steps_written_without_the_dash_are_not_a_list():
+    """recipe_guide.html §12: forgetting `-` turns the step into the list's own mapping."""
+    text = VALID.replace("  - steptype: Wait\n    step_name", "  steptype: Wait\n  step_name")
+    text = text.replace("    wait_time: '0.01'", "  wait_time: '0.01'")
+    assert "sequence 'Main': steps: Input should be a valid list" in _problem(text)
+
+
+def test_the_recipe_guide_s_example_recipe_loads():
+    """recipe_guide.html §2 shows one whole recipe; an author copies it, so it must load."""
+    import html
+    import re
+
+    guide = (Path(__file__).parents[2] / "recipe_guide.html").read_text(encoding="utf-8")
+    found = re.search(r'<code class="language-yaml" id="guide-example">(.*?)</code>', guide, re.S)
+    assert found, "recipe_guide.html has no example marked id=\"guide-example\""
+    recipe = Recipe.from_yaml_text(html.unescape(found.group(1)))
+    assert list(recipe.sequences) == ["Main", "Power off"]
+    assert recipe.main_sequence == "Main"
+
+
+def test_a_bare_steptype_reads_as_a_missing_one():
+    """`steptype:` with nothing after it is not a steptype called 'None'."""
+    text = VALID.replace("steptype: Wait", "steptype:")
+    assert "steps[1] 'Only wait': steptype: Field required" in _problem(text)
+
+
+def test_a_bare_output_type_reads_as_a_missing_one():
+    output = "    outputs:\n      r: {type: }\n"
+    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n" + output)
+    assert "steps[1] 'Only wait': outputs -> r -> type: Field required" in _problem(text)
+
+
+def test_a_parameter_set_that_is_not_a_mapping_names_no_python_class():
+    second_set = "      - inputs: {a: 2, b: 3}\n        expect: {sum: 5}\n"
+    message = _problem(INDEXED.replace(second_set, "      - 5\n"))
+    assert "parameter_sets[2]: Input should be a valid dictionary" in message
+    assert "ParameterSet" not in message
+
+
+def test_a_parameter_set_is_counted_from_one():
+    text = INDEXED.replace("      - inputs: {a: 2, b: 3}\n", "      - bogus: {a: 2, b: 3}\n")
+    message = _problem(text)
+    assert "steps[1] 'Add numbers': parameter_sets[2] -> bogus: Extra inputs" in message
+
+
+def test_a_sequence_step_names_the_sequence_it_calls():
+    text = VALID + "  - steptype: Sequence\n    sequence_name: Other\n    step_name: x\n"
+    assert "steps[2] 'Other': step_name: a Sequence step is named after" in _problem(text)
+
+
+def test_a_problem_in_a_document_without_a_name_says_which_document():
+    message = _problem(VALID.replace("sequence_name: Main", "description_only: oops"))
+    assert "document 2: sequence_name: Field required" in message
+
+
+def test_a_numeric_version_loads():
+    """`version: 0.2` is a float to YAML - every demo recipe writes it that way."""
+    text = VALID.replace(f"version: {CURRENT_VERSION}", "version: 0.2", 1)
+    assert Recipe.from_yaml_text(text).version == "0.2"
+
+
+def test_a_numeric_global_name_is_the_same_global_everywhere():
+    """A global is looked up by plain dict key, so a name is kept as written - in the
+    header, in an input and in an output alike - or the run misses what the file says."""
+    text = f"""\
+name: Demo
+version: {CURRENT_VERSION}
+globals: {{7: start}}
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: p
+    module: m.py
+    method_name: f
+    inputs: {{x: {{type: global, global_name: 7}}}}
+    outputs: {{0: {{type: global, global_name: 7}}}}
+"""
+    recipe = Recipe.from_yaml_text(text)
+    step = recipe.sequences["Main"].steps[0]
+
+    assert step.process_inputs(Runtime(globals=dict(recipe.globals))) == {"x": "start"}
+    assert step.outputs == {0: {"type": "global", "global_name": 7}}
+
+
+def test_a_bare_skip_on_an_indexed_step_leaves_the_template_s_own():
+    """A bare `skip:` is no skip; the generated steps keep whatever the template says."""
+    text = INDEXED.replace(
+        "      method_name: add\n", "      method_name: add\n      skip: true\n"
+    ).replace("    step_name: Add numbers\n", "    step_name: Add numbers\n    skip:\n")
+    steps = Recipe.from_yaml_text(text).sequences["Main"].steps
+    assert [step.skip for step in steps] == [True, True]
 
 
 def test_to_summary_covers_every_step_that_will_emit_events():
@@ -971,7 +1140,7 @@ def test_a_mapping_entry_missing_the_key_its_type_needs_is_refused():
         "    outputs:\n"
         "      sum: {type: range, min: 1}\n",
     )
-    with pytest.raises(RecipeError, match="needs 'max'"):
+    with pytest.raises(RecipeError, match="outputs -> sum -> max: Field required"):
         Recipe.from_yaml_text(text)
 
 
@@ -1284,3 +1453,13 @@ def test_the_recipe_preview_gets_the_whole_file_as_written(tmp_path):
 
     assert step_source.recipe_file_text(str(path)) == NESTED
     assert step_source.recipe_file_text(str(tmp_path / "missing.yml")) == ""
+
+
+def test_the_hal_demo_recipe_parses():
+    """resources/recipes/Development_recipes/hal_demo.yml shows test code reaching
+    devices by logical name; running it needs [hardware.loop1] (and ssh1) in config.ini."""
+    recipe = Recipe.from_file(str(HAL_DEMO))
+
+    assert recipe.name == "HAL demo"
+    names = [step.name for step in recipe.sequences["Main"].steps]
+    assert names == ["Loopback echo", "Remote system name"]

@@ -12,15 +12,26 @@ the Logger drains that queue and writes the records out.
 
 """
 
+import getpass
 import logging
 import logging.handlers
+import platform
 import sys
 from queue import Empty
 from typing import get_args
 
+from pypts._version import __version__
+from pypts.logger.levels import TRACE  # noqa: F401 - registers the TRACE level name
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.links import ANY_TO_LOGGER
-from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
+from pypts.messages.to_logger_communication import (
+    EndRunLog,
+    LoggerControl,
+    SetStdoutEnabled,
+    StartRunLog,
+    StopLogger,
+    SwitchLogFile,
+)
 from pypts.utilities.common import ignore_keyboard_interrupt
 
 DEFAULT_LOG_LEVEL = logging.INFO
@@ -123,6 +134,95 @@ def get_log_path() -> str | None:
     return _log_file_path
 
 
+def switch_log_file(log_file_path: str) -> bool:
+    """
+    Have the Logger carry on in a new run log, and read that one from now on.
+
+    The switch is queued behind every record this process has already logged,
+    so those land in the old file; get_log_path() names the new one at once,
+    although the Logger may not have created it yet. Only this process learns
+    the new path - any other that was handed the old one keeps it.
+
+    Returns:
+      False, and nothing changes, where there is no Logger process to switch -
+      a standalone tool or a test.
+    """
+    global _log_file_path
+
+    if _logger_control is None:
+        return False
+    _logger_control.send(SwitchLogFile(log_file_path))
+    _log_file_path = log_file_path
+    return True
+
+
+def start_run_log(log_file_path: str) -> bool:
+    """
+    Have the Logger write the coming run into its own file, until end_run_log().
+
+    Queued like switch_log_file(), so what this process logged before lands in
+    the session log. Unlike it, get_log_path() keeps naming the session log:
+    the run log is a detour, and the GUI's unload and log panel work from the
+    session path.
+
+    Returns:
+      False, and nothing changes, where there is no Logger process.
+    """
+    if _logger_control is None:
+        return False
+    _logger_control.send(StartRunLog(log_file_path))
+    return True
+
+
+def end_run_log() -> bool:
+    """
+    Have the Logger close the run log and carry on in the session log.
+
+    Returns:
+      False, and nothing changes, where there is no Logger process.
+    """
+    if _logger_control is None:
+        return False
+    _logger_control.send(EndRunLog())
+    return True
+
+
+def describe_operator() -> str:
+    """
+    Who is running this, for the second line of the run log.
+
+    getpass.getuser() reads the environment before it asks the system, and on a
+    machine where none of the usual variables is set it raises rather than
+    returning anything: OSError where there is no password database entry, and
+    KeyError from the pwd lookup underneath it. A run log that cannot name its
+    operator is still a perfectly good run log, so the failure is worth a word
+    and nothing more.
+    """
+    try:
+        return getpass.getuser()
+    except (OSError, KeyError):
+        return "an unknown user"
+
+
+def log_run_log_header(mode: str, log_file_path: str) -> None:
+    """
+    The first three lines of every run log: what this is, who ran it, and
+    where the file they are reading lives (logging_rules.md section 6).
+
+    Written by the launcher at startup, and again by the GUI at the top of the
+    new file when an unload switches the run log. `stacklevel=2`, so each line
+    names the caller as its source, not this helper.
+    """
+    log.info("PyPTS %s started in %s mode.", __version__, mode.upper(), stacklevel=2)
+    log.info(
+        "Started by %s on %s.",
+        describe_operator(),
+        platform.node() or "an unknown host",
+        stacklevel=2,
+    )
+    log.info("Run log: %s", log_file_path, stacklevel=2)
+
+
 def set_stdout_logging_enabled(enabled: bool):
     """
     Enables or disables echoing log records to the console
@@ -164,6 +264,8 @@ class Logger:
     def __init__(self, log_queue, log_file_path: str, stdout_enabled: bool = True):
         self.log_queue = log_queue
         self.log_file_path = log_file_path
+        #: The session log while a run log is open (StartRunLog), else None.
+        self.session_log_file_path: str | None = None
         self.stdout_enabled = stdout_enabled
         self.running = True
 
@@ -236,10 +338,62 @@ class Logger:
         match message:
             case SetStdoutEnabled(enabled=enabled):
                 self.stdout_enabled = enabled
+            case SwitchLogFile(log_file_path=log_file_path):
+                if self.session_log_file_path is not None:
+                    # An unload landing while a run log is open moves the
+                    # session, not the run: the end of the run goes there.
+                    self.session_log_file_path = log_file_path
+                else:
+                    self.switch_file(log_file_path)
+            case StartRunLog(log_file_path=log_file_path):
+                self.start_run_log(log_file_path)
+            case EndRunLog():
+                self.end_run_log()
             case StopLogger():
                 self.running = False
             case _:
                 unhandled(message)  # unreachable; keeps mypy's exhaustiveness check live
+
+    def start_run_log(self, log_file_path: str):
+        """
+        Remember the session log and carry on in the run log.
+
+        A second StartRunLog without an EndRunLog keeps the first session path,
+        so the end still returns to the session log rather than to a run log.
+        """
+        session = self.session_log_file_path
+        if session is None:
+            session = self.log_file_path
+        self.switch_file(log_file_path)
+        if self.log_file_path == log_file_path:
+            self.session_log_file_path = session
+
+    def end_run_log(self):
+        """Back to the session log the run log started from, appending to it."""
+        session = self.session_log_file_path
+        if session is None:
+            return
+        self.switch_file(session)
+        if self.log_file_path == session:
+            self.session_log_file_path = None
+
+    def switch_file(self, log_file_path: str):
+        """
+        Close the run log and carry on writing in `log_file_path`.
+
+        The new file is opened before the old one is closed: if it cannot be
+        opened, the Logger keeps writing where it was rather than nowhere.
+        """
+        try:
+            new_handler = logging.FileHandler(log_file_path, mode="a", encoding="utf-8")
+        except OSError as exc:
+            self._report(f"Could not open the new log file {log_file_path}: {exc!r}")
+            return
+        new_handler.setFormatter(build_formatter())
+        self.file_handler.close()
+        self.file_handler = new_handler
+        self.log_file_path = log_file_path
+        self._report(f"Logging to file: {self.log_file_path}")
 
     def write_record(self, record):
         """

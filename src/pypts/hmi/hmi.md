@@ -68,16 +68,20 @@ PySide6 application. Full context in `hmi/gui/gui.md`. Key points:
 
 ## Key messages (HMI → CORE)
 
-`LoadRecipe`, `StartSequence`, `StopSequence`, `PauseSequence` / `ResumeSequence` (GUI only),
+`LoadRecipe`, `UnloadRecipe` (sent by `unload_recipe()`; GUI only), `StartSequence`,
+`StopSequence`, `PauseSequence` / `ResumeSequence` (GUI only),
 `ShutdownRequested`, `UserPromptResponse`, `UserTextResponse`,
 `UserPathResponse` (sent by `answer_user_path()`), `HmiStopped`, `SetConfigParameter` (sent by `set_config_parameter()`; only the GUI's
 Settings dialog calls it — the CLI has no command for it).
 
 ## Key messages (CORE → HMI)
 
-`RecipeLoaded`, `RunStarted`, `RunPaused` / `RunResumed` (hooks `show_run_paused()` /
+`RecipeLoaded`, `RecipeUnloaded` (hook `show_recipe_unloaded()`; the default logs at DEBUG),
+`RunStarted` (also hook `follow_run_log(path)` when it names a run log; the default logs at
+DEBUG), `RunPaused` / `RunResumed` (hooks `show_run_paused()` /
 `show_run_resumed()`; the defaults log at DEBUG), `SequenceStarted`, `StepStarted`, `StepFinished`,
-`SequenceFinished`, `RunFinished`, `ReportReady`, `UserPromptRequest`, `UserTextRequest`,
+`SequenceFinished`, `RunFinished` (also hook `run_log_finished()`; the default does
+nothing), `ReportReady`, `UserPromptRequest`, `UserTextRequest`,
 `UserPathRequest` (hook `ask_user_path()`; the default declines with a WARNING, like
 `ask_user_text()`), `ModuleErrorReported`, `StatusChanged`, `StopHmi`, `ConfigParameterResult` (hook
 `show_config_parameter_result()`; the default logs at DEBUG).

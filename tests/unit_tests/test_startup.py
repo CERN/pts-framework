@@ -202,8 +202,8 @@ def a_main_that_runs_nothing(monkeypatch, restart, calls):
     """main() with the engine and the GUI replaced by recorders."""
     pytest.importorskip("PySide6", reason="GUI mode checks the GUI can be imported")
     monkeypatch.setattr(sys, "argv", ["pypts"])
-    monkeypatch.setattr(sys, "orig_argv", ["python", "-m", "pypts", "--no-debug-monitor"])
-    monkeypatch.setattr(startup, "start_engine", lambda mode, level, monitor: "engine")
+    monkeypatch.setattr(sys, "orig_argv", ["python", "-m", "pypts", "--mode", "gui"])
+    monkeypatch.setattr(startup, "start_engine", lambda mode, level: "engine")
     monkeypatch.setattr(startup, "run_gui", lambda engine: restart)
     monkeypatch.setattr(startup, "stop_engine", lambda engine: calls.append("stopped"))
     monkeypatch.setattr(
@@ -218,7 +218,7 @@ def test_main_restarts_pypts_with_the_same_command_line_once_it_has_stopped(monk
     with pytest.raises(SystemExit) as exit_info:
         startup.main()
 
-    assert calls == ["stopped", [sys.executable, "-m", "pypts", "--no-debug-monitor"]]
+    assert calls == ["stopped", [sys.executable, "-m", "pypts", "--mode", "gui"]]
     assert exit_info.value.code == 0
 
 
@@ -280,34 +280,6 @@ def test_stop_core_with_no_process_is_a_no_op():
     startup.stop_core(None, to_core)
 
     assert drain(sent) == []
-
-
-def test_start_debug_monitor_gives_up_when_the_log_never_appears(
-    tmp_path, monkeypatch, caplog
-):
-    """
-    The Monitor exits on a path that is not yet a file, so the launcher waits
-    for the Logger to create it - bounded, because the Monitor is a developer
-    convenience and must never be able to hold up a run.
-    """
-    monkeypatch.setattr(startup, "MONITOR_LOG_WAIT_S", 0.1)
-
-    def must_not_spawn(*args, **kwargs):
-        raise AssertionError("the Monitor must not be started without its log")
-
-    monkeypatch.setattr(startup.subprocess, "Popen", must_not_spawn)
-
-    missing_log = tmp_path / "never_created.log"
-
-    with caplog.at_level(logging.WARNING):
-        monitor_process = startup.start_debug_monitor(str(missing_log), logging.DEBUG)
-
-    assert monitor_process is None
-    assert [
-        r
-        for r in caplog.records
-        if "Debug Monitor did not start" in r.getMessage()
-    ]
 
 
 # --------------------------------------------------------------------------

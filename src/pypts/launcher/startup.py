@@ -21,39 +21,27 @@ The engine half - configuration, Logger, CORE and the links - is start_engine()
 and stop_engine(), separate from main() so that pypts.api can start the very
 same engine under code instead of under a frontend. run_gui() is the GUI half,
 shared the same way.
-
-The Debug Monitor is started beside the run, and it is **on by default**: running
-this file with no arguments at all gives you the frontend and the Monitor
-together, which is what a developer wants during the refactor and is the only way
-to get it without a launcher script or an IDE configuration. `--no-debug-monitor`
-turns it off for the runs that cannot use it - a headless bench, CI - and roadmap
-§1.4.1 holds the revert TODO for v1.0, where it goes back to opt-in.
-
-It is the one thing the launcher starts that is not part of the framework, and it
-is started the way you would start it by hand - `subprocess.Popen` on `python -m
-pypts.helper_applications.debug_monitor <this run's log>` - so that nothing here
-imports the tool and the tool still cannot affect the run. See
-`start_debug_monitor()` for what that costs and what it deliberately does not do.
 """
 
 import argparse
-import getpass
 import importlib
 import logging
-import platform
 import subprocess
 import sys
-import time
 from dataclasses import dataclass
 from multiprocessing import Process, Queue, get_start_method, set_start_method
-from pathlib import Path
 from typing import Any, NoReturn
 
-from pypts._version import __version__
 from pypts.config_handler import BootstrapOutcome, ConfigHandler
 from pypts.core.core import core_main
 from pypts.hmi.cli.cli import cli_main
-from pypts.logger.log import init_logging, log, logger_main, parse_log_level
+from pypts.logger.log import (
+    init_logging,
+    log,
+    log_run_log_header,
+    logger_main,
+    parse_log_level,
+)
 from pypts.messages import QueueWrapper
 from pypts.messages.core_hmi_communication import (
     CoreToHmi,
@@ -71,19 +59,6 @@ CORE_SHUTDOWN_TIMEOUT_S = 5.0
 
 #: How long the Logger gets to drain whatever is still queued.
 LOGGER_SHUTDOWN_TIMEOUT_S = 5.0
-
-#: The Debug Monitor's entry point, spelled as `-m` takes it. A string rather
-#: than an import: the launcher must not import the tool. See §1.4.
-DEBUG_MONITOR_MODULE = "pypts.helper_applications.debug_monitor"
-
-#: How long the launcher waits for the Logger to create the run log before it
-#: gives up on starting the Monitor. The Monitor refuses a path that is not yet
-#: a file, and the file is created by the Logger process, not by this one.
-MONITOR_LOG_WAIT_S = 5.0
-
-#: How often it looks while waiting. Short enough that the usual case - the file
-#: is already there - costs one `exists()` and no sleep at all.
-MONITOR_LOG_POLL_S = 0.05
 
 #: The exit code of a command line argparse rejects. argparse's own is 2, which
 #: headless mode already uses for a run that ended in ERROR or STOP, so a bad
@@ -112,7 +87,6 @@ class Engine:
     to_hmi: QueueWrapper[CoreToHmi]
     #: Held for the lifetime of the run. Nothing waits on it but stop_engine().
     core_process: Process | None = None
-    monitor_process: subprocess.Popen | None = None
 
 
 class ArgumentParser(argparse.ArgumentParser):
@@ -146,27 +120,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--log-level",
-        choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
+        choices=["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         default=None,
         help=(
-            "Minimum level written to the run log. DEBUG adds the message trace: "
+            "Minimum level written to the run log. TRACE adds the message trace: "
             "every message on every link, as it is sent and as it is received. "
+            "DEBUG is the developer detail without it. "
             "Overrides [logging] level in config.ini."
-        ),
-    )
-    parser.add_argument(
-        "--debug-monitor",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help=(
-            "Open the Debug Monitor on this run's log. On by default in gui and cli "
-            "mode, so plainly running the launcher gives you the frontend and the "
-            "Monitor together; off by default in headless mode. Pass "
-            "--no-debug-monitor for a run without it - a headless bench or CI, "
-            "where there is no display to open a window on. It is a separate "
-            "program that only reads the log file, so it changes nothing about the "
-            "run, and it is left open when the run ends. Needs --log-level DEBUG to "
-            "have a message trace to show."
         ),
     )
     args = parser.parse_args()
@@ -177,26 +137,19 @@ def main() -> None:
     elif args.recipe is not None or args.sequence is not None:
         parser.error("--recipe and --sequence are for --mode headless only")
 
-    # None means the flag was not given: the Monitor is a window, and a
-    # headless run is the one kind that has nobody to look at it.
-    debug_monitor = args.debug_monitor
-    if debug_monitor is None:
-        debug_monitor = args.mode != "headless"
-
     # Headless mode is pypts.api.Pts with a console, and Pts starts the engine
     # itself. Imported here, not at the top: pypts.api imports this module.
     if args.mode == "headless":
         from pypts.api.headless import headless_main
 
-        sys.exit(headless_main(args.recipe, args.sequence, args.log_level, debug_monitor))
+        sys.exit(headless_main(args.recipe, args.sequence, args.log_level))
 
     # The GUI is imported only when one is going to be started. PySide6 is the
     # one heavy dependency in the tree and `pypts.hmi.gui.gui` is the only door
     # to it - nothing in CORE, the Logger, the messages or the engine imports Qt
     # at all. As a module-level import this line made `--mode cli` fail outright
     # on a headless bench with no Qt system libraries, for a frontend that run
-    # was never going to open. That bench is exactly what --no-debug-monitor
-    # exists for, so it has to be able to run.
+    # was never going to open. A CLI run on such a bench has to be able to start.
     #
     # Nothing has been created yet at this point, so a missing PySide6 is a
     # plain message and an exit rather than a traceback over a half-built run.
@@ -214,7 +167,7 @@ def main() -> None:
             )
             sys.exit(1)
 
-    engine = start_engine(args.mode, args.log_level, debug_monitor)
+    engine = start_engine(args.mode, args.log_level)
     restart = False
     try:
         if args.mode == "gui":
@@ -244,8 +197,8 @@ def restart_pypts() -> int:
     settings deleted config.ini. A fresh process rather than a second pass through
     main(): every singleton (the configuration, logging) starts empty, exactly
     as when an operator starts pypts by hand, so config.ini is recreated from
-    the template by the bootstrap that already does it, and a new run log and
-    Debug Monitor come with it.
+    the template by the bootstrap that already does it, and a new run log comes
+    with it.
 
     Waiting rather than exiting straight away: the console a .bat file opened
     closes when this process ends, and would take the new pypts with it. The
@@ -279,9 +232,7 @@ def pin_spawn_start_method() -> None:
         set_start_method("spawn")
 
 
-def start_engine(
-    mode: str, log_level_name: str | None = None, debug_monitor: bool = False
-) -> Engine:
+def start_engine(mode: str, log_level_name: str | None = None) -> Engine:
     """
     Bring up everything a frontend talks to: configuration, Logger, CORE.
 
@@ -291,7 +242,6 @@ def start_engine(
             writes to stdout (only in GUI mode - the others have their own console
             output), and it names the mode in the run log's first line.
         log_level_name: overrides [logging] level in config.ini, as --log-level.
-        debug_monitor: open the Debug Monitor on this run's log.
 
     If anything fails after the Logger is up, what was started is stopped again
     before the exception leaves.
@@ -330,7 +280,7 @@ def start_engine(
     # parallel writes are made to the log file.
 
     log_queue = Queue()
-    log_file_path = get_log_file_path(config.get_parameter("paths.logs_dir"))
+    log_file_path = get_log_file_path(config.get_parameter("paths.reports_dir"))
 
     configured_level = log_level_name or config.get_parameter("logging.level")
     log_level = parse_log_level(configured_level)
@@ -370,9 +320,7 @@ def start_engine(
         # The first three lines of every run log: what this is, who ran it,
         # and where the file they are reading lives. A log taken out of context
         # for a support ticket still answers all three - logging_rules.md section 6.
-        log.info("PyPTS %s started in %s mode.", __version__, mode.upper())
-        log.info("Started by %s on %s.", describe_operator(), platform.node() or "an unknown host")
-        log.info("Run log: %s", log_file_path)
+        log_run_log_header(mode, log_file_path)
 
         log.debug("Logging at %s.", logging.getLevelName(log_level))
         if not level_was_understood:
@@ -387,11 +335,6 @@ def start_engine(
             config.get_parameter("operating_system.version"),
             config.get_parameter("operating_system.architecture"),
         )
-
-        # Debug monitor is a developer-only helper application to trace and
-        # simulate queue communication. To be removed after reaching stable build.
-        if debug_monitor:
-            engine.monitor_process = start_debug_monitor(log_file_path, log_level)
 
         engine.core_process = Process(
             target=core_main,
@@ -458,15 +401,6 @@ def stop_engine(engine: Engine) -> None:
     """CORE first, then the Logger - so the records explaining the shutdown reach the file."""
     stop_core(engine.core_process, engine.to_core)
 
-    # Deliberately not stopped with the rest - for debugging purposes.
-    # To be removed after reaching stable build.
-    monitor_process = engine.monitor_process
-    if monitor_process is not None and monitor_process.poll() is None:
-        log.debug(
-            "Debug Monitor (pid %d) left running; close its window when you are done.",
-            monitor_process.pid,
-        )
-
     log.info("PyPTS has finished.")
     log.debug("Stopping the Logger.")
     # A queued message, so the Logger acts on it only after writing
@@ -475,23 +409,6 @@ def stop_engine(engine: Engine) -> None:
     engine.logger_process.join(timeout=LOGGER_SHUTDOWN_TIMEOUT_S)
     if engine.logger_process.is_alive():
         engine.logger_process.terminate()
-
-
-def describe_operator() -> str:
-    """
-    Who is running this, for the second line of the run log.
-
-    getpass.getuser() reads the environment before it asks the system, and on a
-    machine where none of the usual variables is set it raises rather than
-    returning anything: OSError where there is no password database entry, and
-    KeyError from the pwd lookup underneath it. A run log that cannot name its
-    operator is still a perfectly good run log, so the failure is worth a word
-    and nothing more.
-    """
-    try:
-        return getpass.getuser()
-    except (OSError, KeyError):
-        return "an unknown user"
 
 
 def show_config_popup(mode: str, title: str, text: str, *, warning: bool) -> None:
@@ -531,54 +448,6 @@ def _print_config_banner(title: str, text: str) -> None:
     print()
     print(text)
     print(line)
-
-
-def start_debug_monitor(log_file_path: str, log_level: int) -> subprocess.Popen | None:
-    """
-    Open the Debug Monitor
-    This application is purely used for troubleshooting by the developer.
-    To be removed after reaching stable run.
-
-    Args:
-        log_file_path: the run log the Monitor is to follow. It may not exist
-            yet; this waits up to `MONITOR_LOG_WAIT_S` for the Logger to create
-            it, since the Monitor exits rather than opening a window onto a path
-            that is not a file.
-        log_level: the level this run was resolved to, used only to warn when it
-            is above DEBUG - the trace is written at DEBUG and nowhere else, so
-            the Monitor would open onto an empty table and not say why.
-
-    Returns:
-        The child process, or None if it could not be started. The caller holds
-        the handle so that it is not collected while the child lives; it is
-        never waited on and never killed.
-    """
-    if log_level > logging.DEBUG:
-        log.warning(
-            "The Debug Monitor was asked for, but this run records at %s: its Trace "
-            "tab will stay empty. Start with --log-level DEBUG to fill it.",
-            logging.getLevelName(log_level),
-        )
-
-    path = Path(log_file_path)
-    deadline = time.monotonic() + MONITOR_LOG_WAIT_S
-    while not path.is_file():
-        if time.monotonic() >= deadline:
-            log.warning("The Debug Monitor did not start: the run log was not created in time.")
-            log.debug("Waited %.1f s for %s.", MONITOR_LOG_WAIT_S, path)
-            return None
-        time.sleep(MONITOR_LOG_POLL_S)
-
-    try:
-        monitor_process = subprocess.Popen(
-            [sys.executable, "-m", DEBUG_MONITOR_MODULE, str(path)]
-        )
-    except OSError as error:
-        log.warning("The Debug Monitor could not be started: %s", error)
-        return None
-
-    log.debug("Debug Monitor started (pid %d), reading %s.", monitor_process.pid, path)
-    return monitor_process
 
 
 def stop_core(core_process: Process | None, to_core: QueueWrapper[HmiToCore]) -> None:

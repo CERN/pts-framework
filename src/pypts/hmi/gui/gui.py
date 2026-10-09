@@ -8,7 +8,7 @@ The PySide6 frontend: the operator screen.
 Layout:
 
   QMenuBar  File / Edit / View / About
-  QToolBar  Open | Start | Pause | Stop  ··· Open report folder
+  QToolBar  Open | Unload | Preview | Start | Pause | Stop  ··· Open report folder
   recipe_label                                  run_progress
   ┌────────────────────────┬──────────────────────────────┐
   │ [ Run | Results ] (52%)│ CenterContent (48%)          │
@@ -24,6 +24,7 @@ HmiClient owns the protocol; GUI is the assembler (gui.md §6).
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
@@ -57,7 +58,14 @@ from pypts.hmi.gui.styles import get_stylesheet
 from pypts.hmi.gui.top_bar import TopBarContent
 from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN, ViewTabBar
 from pypts.hmi.hmi_client import HmiClient
-from pypts.logger.log import DEFAULT_LOG_LEVEL, get_log_path, init_logging, log
+from pypts.logger.log import (
+    DEFAULT_LOG_LEVEL,
+    get_log_path,
+    init_logging,
+    log,
+    log_run_log_header,
+    switch_log_file,
+)
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import (
     ErrorSeverity,
@@ -86,6 +94,7 @@ from pypts.utilities.error_handling import (
     report_error,
     report_problem,
 )
+from pypts.utilities.local_storage import next_log_file_path
 from pypts.utilities.recent_recipes import RecentRecipes
 
 POLL_INTERVAL_MS = 50
@@ -95,14 +104,17 @@ POLL_INTERVAL_MS = 50
 #: operator reads the panel rather than watching it.
 LOG_POLL_INTERVAL_MS = 200
 
+#: How long the LOG OUTPUT panel waits for the Logger to create the new run log
+#: after an unload, before it says it could not.
+NEW_LOG_WAIT_S = 5.0
+
 #: Where the About menu sends the operator. The project moved off CERN GitLab;
 #: `pyproject.toml`'s `[project.urls]` still names the old repository.
 _REPOSITORY_URL = "https://github.com/CERN/pts-framework"
 _DOCUMENTATION_URL = "https://cern.github.io/pts-framework/"
 
 #: What Edit > Edit Recipe starts, spelled as `-m` takes it. A string rather than
-#: an import, like the launcher's Debug Monitor: the operator screen must not
-#: import the helper applications.
+#: an import: the operator screen must not import the helper applications.
 RECIPE_CREATOR_MODULE = "pypts.helper_applications.recipe_creator"
 
 
@@ -351,6 +363,14 @@ class PtsMainWindow(QMainWindow):
         self.recent_menu = file_menu.addMenu("Open Recent")
         self.recent_menu.setToolTipsVisible(True)
 
+        # The toolbar's X, in words. Follows that button's enabled state.
+        self.unload_recipe_action = file_menu.addAction("Unload Recipe")
+        self.unload_recipe_action.setToolTip(
+            "Close the loaded recipe and clear the window. "
+            "The run log carries on in a new file."
+        )
+        self.unload_recipe_action.setEnabled(False)
+
         file_menu.addSeparator()
         self.open_config_action = file_menu.addAction("Open Config")
         self.open_config_action.setToolTip(str(file_locations.config_file_path()))
@@ -506,6 +526,7 @@ class GUI(HmiClient):
             on_sequence_selected=self.show_selected_sequence,
             on_open_report=self.open_report_folder,
             on_preview=self.show_recipe_preview,
+            on_unload=self.unload_recipe,
         )
         self.step_table = StepTableContent()
         _results = ResultsPanel()
@@ -577,6 +598,9 @@ class GUI(HmiClient):
             lambda _checked=False: self._open_settings("Appearance")
         )
         self.window.edit_recipe_action.triggered.connect(self.open_recipe_creator)
+        self.window.unload_recipe_action.triggered.connect(
+            lambda _checked=False: self.unload_recipe()
+        )
         self.window.open_config_action.triggered.connect(self.open_config_file)
 
         # Rebuilt every time it opens rather than kept in step with the store,
@@ -585,6 +609,21 @@ class GUI(HmiClient):
 
         # The LOG OUTPUT panel, on its own slower timer.
         self.log_tail: LogTail | None = None
+        #: Set while the panel waits for the Logger to create the run log an
+        #: unload switched to (start_new_log_file); None the rest of the time.
+        self._new_log_deadline: float | None = None
+        #: The run's own log, followed beside the session log while a run is
+        #: logged in its folder (follow_run_log). None outside a run.
+        self.run_log_tail: LogTail | None = None
+        #: A run log announced but not created by the Logger yet, and how long
+        #: the panel waits for it.
+        self._run_log_pending: str | None = None
+        self._run_log_deadline: float | None = None
+        #: True from RunFinished until the run log has been read to its end.
+        self._run_log_finished = False
+        #: True once the run log has shown a line: from then on the Logger can
+        #: only go back to the session log, so the run log is read first.
+        self._run_log_written = False
         self.log_timer = QTimer()
         self.log_timer.timeout.connect(self.poll_log)
         self.start_log_tail()
@@ -644,11 +683,15 @@ class GUI(HmiClient):
         fails once will fail every 200 ms, so the follower is dropped rather than
         left to report the same failure forever.
         """
-        if self.log_tail is None:
+        if self._run_log_pending is not None:
+            self._open_run_log()
+        if self.log_tail is None and self.run_log_tail is None:
+            if self._new_log_deadline is not None:
+                self._wait_for_new_log()
             return
 
         try:
-            new_lines = self.log_tail.new_lines()
+            new_lines = self._read_in_order()
         except OSError:
             self.stop_log_tail()
             raise
@@ -656,12 +699,167 @@ class GUI(HmiClient):
         for line in new_lines:
             self.center.log_panel.append_line(line)
 
+    def _read_in_order(self) -> list[str]:
+        """
+        This tick's new lines from the session log and the run log, in the
+        order the Logger wrote them.
+
+        The Logger writes one file at a time, so the files never interleave:
+        into a run it is session then run, out of it run then session. What
+        needs care is a switch between the two reads of one tick - lines of
+        the first file written after it was read. Seeing the second file grow
+        proves the switch happened, so the first is read once more, to its end,
+        before the second's lines are shown.
+
+        Which way the switch goes is decided by the files, not by RunFinished:
+        the Logger is back in the session log before RunFinished reaches this
+        process, so once the run log has had a line, it is read first.
+        """
+        if self._run_log_finished or self._run_log_written:
+            lines = self._new_lines(self.run_log_tail)
+            session_lines = self._new_lines(self.log_tail)
+            if session_lines:
+                # Back in the session log, so the run log is complete - and
+                # exists, even when a short run ended before it was opened.
+                if self._run_log_pending is not None:
+                    self._open_run_log()
+                lines += self._new_lines(self.run_log_tail)
+                self._close_run_log()
+                self._run_log_pending = None
+                self._run_log_deadline = None
+            return lines + session_lines
+        lines = self._new_lines(self.log_tail)
+        run_lines = self._new_lines(self.run_log_tail)
+        if run_lines:
+            lines += self._new_lines(self.log_tail)
+            self._run_log_written = True
+        return lines + run_lines
+
+    @staticmethod
+    def _new_lines(tail: LogTail | None) -> list[str]:
+        if tail is None:
+            return []
+        return tail.new_lines()
+
+    def follow_run_log(self, run_log_path: str) -> None:
+        """
+        RunStarted: the run is logged in its own file. Follow it as well.
+
+        The panel is not cleared - the run reads on from the session log. The
+        Logger creates the file a moment after the switch was queued, so it is
+        opened once it exists, as an unload's new file is.
+        """
+        super().follow_run_log(run_log_path)
+        if self.run_log_tail is not None:
+            # A previous run log never saw its session lines; finish it.
+            for line in self._new_lines(self.run_log_tail):
+                self.center.log_panel.append_line(line)
+            self._close_run_log()
+        self._run_log_finished = False
+        self._run_log_pending = run_log_path
+        self._run_log_deadline = time.monotonic() + NEW_LOG_WAIT_S
+        if not self.log_timer.isActive():
+            self.log_timer.start(LOG_POLL_INTERVAL_MS)
+
+    def run_log_finished(self) -> None:
+        """RunFinished: what follows the run log's last line is in the session log."""
+        if self.run_log_tail is None and self._run_log_pending is None:
+            # No run log was ever followed, so there is nothing to finish reading.
+            return
+        self._run_log_finished = True
+
+    def _open_run_log(self) -> None:
+        """One tick of waiting for the Logger to create the run log."""
+        path = self._run_log_pending
+        if path is None:
+            return
+        if Path(path).exists():
+            self._run_log_pending = None
+            self._run_log_deadline = None
+            tail = LogTail(path)
+            try:
+                tail.open()
+            except OSError as exc:
+                report_error(
+                    self, exc, severity=ErrorSeverity.WARNING, operation="GUI.follow_run_log"
+                )
+                self.center.log_panel.append_line(f"Could not open the run log: {path}")
+                return
+            log.debug("The log panel is following the run log at %s.", path)
+            self.run_log_tail = tail
+            return
+        if self._run_log_deadline is not None and time.monotonic() > self._run_log_deadline:
+            self._run_log_pending = None
+            self._run_log_deadline = None
+            log.warning("The log panel could not find the run's log.")
+            log.debug("No file appeared at %s within %.1f s.", path, NEW_LOG_WAIT_S)
+            self.center.log_panel.append_line(f"Could not open the run log: {path}")
+
+    def _close_run_log(self) -> None:
+        if self.run_log_tail is not None:
+            self.run_log_tail.close()
+            self.run_log_tail = None
+        self._run_log_finished = False
+        self._run_log_written = False
+
     def stop_log_tail(self) -> None:
-        """Stop following the log and release the file. Safe to call twice."""
+        """Stop following the logs and release the files. Safe to call twice."""
         self.log_timer.stop()
         if self.log_tail is not None:
             self.log_tail.close()
             self.log_tail = None
+        self._close_run_log()
+        self._run_log_pending = None
+        self._run_log_deadline = None
+
+    def start_new_log_file(self) -> None:
+        """
+        Carry the run log on in a new file - the operator unloaded the recipe.
+
+        The GUI decides the new path and asks the Logger to switch; it does not
+        write the file. The order on the one log queue is what makes the cut
+        clean: the "continues in" line is queued before the switch and lands in
+        the old file, the startup header and the "continues from" line after it
+        and open the new one. The panel empties and follows the new file once
+        the Logger has created it.
+        """
+        old_path = get_log_path()
+        if old_path is None:
+            log.debug("No run log to switch, so the log panel stays as it is.")
+            return
+        new_path = next_log_file_path(old_path)
+        log.info("Run log continues in %s", Path(new_path).name)
+        if not switch_log_file(new_path):
+            log.debug("No Logger process to switch, so the run log stays in %s.", old_path)
+            return
+        log_run_log_header("gui", new_path)
+        log.info("Run log continues from %s", Path(old_path).name)
+
+        self.stop_log_tail()
+        self.center.log_panel.clear()
+        self._new_log_deadline = time.monotonic() + NEW_LOG_WAIT_S
+        self.log_timer.start(LOG_POLL_INTERVAL_MS)
+
+    def _wait_for_new_log(self) -> None:
+        """
+        One tick of waiting for the Logger to create the new run log.
+
+        The switch is queued behind whatever the Logger has still to write, so
+        the file appears a moment after start_new_log_file(). If it never does -
+        the Logger could not open it, and kept writing to the old one - the
+        panel says so instead of waiting forever.
+        """
+        log_path = get_log_path()
+        if log_path is not None and Path(log_path).exists():
+            self._new_log_deadline = None
+            self.start_log_tail()
+            return
+        if self._new_log_deadline is not None and time.monotonic() > self._new_log_deadline:
+            self._new_log_deadline = None
+            self.log_timer.stop()
+            log.warning("The log panel could not find the new run log.")
+            log.debug("No file appeared at %s within %.1f s.", log_path, NEW_LOG_WAIT_S)
+            self.center.log_panel.append_line(f"Could not open the run log: {log_path}")
 
     # --- Theme ------------------------------------------------------------------
 
@@ -859,6 +1057,7 @@ class GUI(HmiClient):
         self.step_table.set_running(False)
         self.top_bar.show_recipe_loaded(event)
         self.top_bar.set_preview_available(bool(self._recipe_text.strip()))
+        self.window.unload_recipe_action.setEnabled(not self._run_in_progress)
         self.show_selected_sequence(event.main_sequence)
         self.window.recipe_label.setText(
             f"Loaded {event.recipe_name}\nReady to start"
@@ -867,6 +1066,46 @@ class GUI(HmiClient):
         self.window.setWindowTitle(f"pyPTS: {event.recipe_name}")
         if self._start_when_loaded:
             self._start_pending_sequence(event)
+
+    def show_recipe_unloaded(self) -> None:
+        """
+        CORE holds no recipe any more: back to the window as it opened, and on
+        to a fresh run log.
+
+        Everything the GUI kept about the recipe goes - the path, the step
+        sources, the text, the last run's results and report folder. The
+        recents list stays: it is the operator's history, not the recipe's.
+        """
+        log.debug("RecipeUnloaded received.")
+        self.current_recipe = None
+        self._requested_recipe_path = None
+        self._loaded_recipe_path = None
+        self._start_when_loaded = False
+        self._sequence_to_start = None
+        self._recipe_yaml = {}
+        self._recipe_text = ""
+        self._run_outcomes = []
+        self._running_recipe_name = ""
+        self._run_state = ""
+        self.report_dir = None
+        self._set_pause_requested(False)
+
+        self.recipe_preview.hide()
+        self.top_bar.show_recipe_unloaded()
+        self.window.unload_recipe_action.setEnabled(False)
+        self.step_table.clear()
+        self.window.run_progress.clear()
+        self.center.cancel_pending()
+        self.center.show_idle()
+        self.window.results_panel.set_results(())
+        self.window.view_tabs.stop_pulse()
+        self.window.run_stack.setCurrentIndex(0)
+        self.window.show_tab(TAB_RUN)
+        self.window.recipe_label.setText("No recipe loaded")
+        self.window.setWindowTitle("pyPTS")
+        self.status_label.setText("Status: Idle")
+
+        self.start_new_log_file()
 
     def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
         super().show_run_metadata(values)
@@ -1047,10 +1286,9 @@ class GUI(HmiClient):
         there is one.
 
         Its own process, started the way it is started by hand (`python -m
-        pypts.helper_applications.recipe_creator [recipe]`), as the launcher
-        starts the Debug Monitor: neither window can take the other down, and
-        nothing in the operator screen imports the tool. It is never waited on
-        and never stopped - closing pypts leaves it open. A recipe saved there
+        pypts.helper_applications.recipe_creator [recipe]`): neither window can
+        take the other down, and nothing in the operator screen imports the tool.
+        It is never waited on and never stopped - closing pypts leaves it open. A recipe saved there
         is not reloaded here; open it again to run what was saved. Decorated to
         report and continue: a tool that will not start must not take the
         window with it.
@@ -1126,6 +1364,8 @@ class GUI(HmiClient):
         """
         self.window.open_recipe_action.setEnabled(enabled)
         self.window.recent_menu.menuAction().setEnabled(enabled)
+        # Unloading follows the same rule, and needs a recipe to unload.
+        self.window.unload_recipe_action.setEnabled(enabled and self.current_recipe is not None)
 
     def open_recipe(self, recipe_path: str) -> None:
         """

@@ -46,7 +46,7 @@ from pypts.hmi.gui.gui_theme import (
     install_system_theme_sync,
 )
 from pypts.hmi.gui.styles import get_stylesheet
-from pypts.recipe.rules import STEP_TYPE_REQUIRED
+from pypts.recipe.recipe_schema import STEP_TYPE_REQUIRED
 
 
 class RecipeCreatorNewWindow(QMainWindow):

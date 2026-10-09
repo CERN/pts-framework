@@ -49,6 +49,17 @@ class LoadRecipe:
 
 
 @dataclass
+class UnloadRecipe:
+    """
+    Forget the loaded recipe. CORE answers with RecipeUnloaded.
+
+    Only offered while no run is in progress - CORE does not check, the
+    frontend not offering it is the rule, as for LoadRecipe (roadmap §1.42).
+    Asking with nothing loaded is harmless and answered the same way.
+    """
+
+
+@dataclass
 class StartSequence:
     """Run one named sequence of the loaded recipe."""
 
@@ -110,6 +121,16 @@ class ModuleErrorReported:
 
 
 @dataclass
+class RecipeUnloaded:
+    """
+    CORE holds no recipe any more: the answer to UnloadRecipe.
+
+    The frontend returns to its no-recipe state on this, not on its own
+    click, so what it shows always matches what CORE holds.
+    """
+
+
+@dataclass
 class ReportReady:
     """
     The report of the run that just finished is on disk.
@@ -150,6 +171,7 @@ class ConfigParameterResult:
 
 HmiToCore = (
     LoadRecipe
+    | UnloadRecipe
     | StartSequence
     | StopSequence
     | PauseSequence
@@ -171,6 +193,7 @@ CoreToHmi = (
     | ReportReady
     | ConfigParameterResult
     | RecipeLoaded
+    | RecipeUnloaded
     | RunStarted
     | RunFinished
     | RunPaused

@@ -31,10 +31,14 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   to the operator as a `ModuleError` (severity ERROR) — the recipe still loads. On failure
   (`RecipeError`, or any other exception out of the parser) nothing is kept and the error
   goes out through `report_own_error()`.
+- **Recipe unloading** — `unload_recipe()` handles `UnloadRecipe`: it sets `self.recipe` to
+  None (INFO `Recipe "<name>" unloaded.`; DEBUG only when nothing was loaded), sends the
+  Sequencer `ForgetRecipe`, and answers the HMI `RecipeUnloaded` either way. It does not check
+  for a run in progress — the frontend does not offer it then, as for `LoadRecipe`.
 - **Starting a run** — `start_sequence()` answers `StartSequence` by sending
   `RunSequence(self.recipe, sequence_name)`. That is the **only** way the recipe reaches the
-  Sequencer — it holds nothing between runs. With no recipe loaded CORE refuses it itself
-  and tells the operator.
+  Sequencer, which keeps only the last run's until `ForgetRecipe`. With no recipe loaded —
+  before the first load or after an unload — CORE refuses it itself and tells the operator.
 - **Error reporting** — `handle_module_error()` logs every `ModuleError` twice
   (`logger/logging_rules.md` §7): one operator line at the level in `LOG_LEVEL_FOR_SEVERITY`,
   naming the part of the software through `describe_source()` / `FRIENDLY_SOURCE_NAME`
@@ -49,16 +53,16 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   - *Watchdog*: `self.modules` holds one `_ModuleState` per watched module (HMI, Sequencer,
     Report): `running`, `last_heartbeat` (None until first heard from), `heartbeat_lost`,
     `start_reported`. For modules still running: never heard from past `HEARTBEAT_TIMEOUT_S`
-    → one WARNING "has not started yet" (does not end the run); silent past
+    → one DEBUG "has not started yet" (does not end the run; DEBUG because a slow GUI
+    start is routine); silent past
     `HEARTBEAT_TIMEOUT_S` → one WARNING per outage, cleared when it answers again (INFO
     "responding again"); silent past `HEARTBEAT_FATAL_S` → `end_run_for_silent_module()`
     reports a CRITICAL `ModuleError` (source from `MODULE_SOURCE`) **then** runs the ordinary
     `stop_all_modules()`. There is no setting to turn this off. The watchdog stops checking
     once `shutting_down` is set.
-  - Operator lines use `FRIENDLY_MODULE_NAME`. Three DEBUG lines are **machine-read** by the
-    Debug Monitor (`helper_applications/debug_monitor/liveness.py`) — keep their prefix and
-    shape: `Heartbeat timeout for module: <name>`, `Heartbeat fatal for module: <name>`,
-    `Module is responding again: <name>`.
+  - Operator lines use `FRIENDLY_MODULE_NAME`. The developer's DEBUG lines name the module
+    alone, measurements on a line of their own: `Heartbeat timeout for module: <name>`,
+    `Heartbeat fatal for module: <name>`, `Module is responding again: <name>`.
 - **Shutdown choreography** — `stop_all_modules()` is idempotent (the frontend and the
   launcher both ask). It starts the `SHUTDOWN_TIMEOUT_S` deadline and sends `StopSequencer` +
   `StopHmi`. `StopReport` is held (`stop_report_pending`) until `SequencerStopped` arrives,
@@ -82,6 +86,7 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
 | Message | Goes to |
 |---|---|
 | `StopSequence`, `PauseSequence`, `ResumeSequence`, the three `User*Response` | Sequencer |
+| `UnloadRecipe` | handled by CORE, which then sends `ForgetRecipe` to the Sequencer and `RecipeUnloaded` to the HMI |
 | `RunStarted`, `SequenceStarted`, `RunMetadata` | Report **and** HMI |
 | `RunFinished` | Report (followed by `GenerateReport` on the same queue) and HMI |
 | `SequenceFinished`, `StepStarted`, `StepFinished`, `RunPaused`, `RunResumed`, the three `User*Request` | HMI only |
@@ -90,7 +95,7 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
 | `ReportExported` (not sent yet) | HMI, as `StatusChanged` |
 
 Handled by CORE itself: `ShutdownRequested`, `HmiStopped` / `SequencerStopped` /
-`ReportStopped`, `LoadRecipe`, `StartSequence`, `SetConfigParameter`, `Heartbeat`,
+`ReportStopped`, `LoadRecipe`, `UnloadRecipe`, `StartSequence`, `SetConfigParameter`, `Heartbeat`,
 `ModuleError`. `RunPaused` / `RunResumed` skip the Report: a hold changes when steps run, not
 what they produce.
 

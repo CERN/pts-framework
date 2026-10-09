@@ -25,9 +25,8 @@ Hardware-oriented testing framework developed by BE-CEM-MTA.
 Plain Python — no IDE, no launch configuration, no wrapper script:
 
 ```bash
-.venv\Scripts\python.exe -m pypts                     # GUI, plus the Debug Monitor
-.venv\Scripts\python.exe -m pypts --mode cli          # CLI, plus the Debug Monitor
-.venv\Scripts\python.exe -m pypts --no-debug-monitor  # without the Monitor
+.venv\Scripts\python.exe -m pypts                     # GUI
+.venv\Scripts\python.exe -m pypts --mode cli          # CLI
 .venv\Scripts\python.exe -m pypts --mode headless --recipe bench.yml   # unattended, for CI
 .venv\Scripts\python.exe -m pytest tests              # the test suite
 ```
@@ -40,7 +39,6 @@ and exits `0` passed, `1` failed, `2` error/stopped, `3` nothing ran.
 
 `src\pypts\launcher\startup.py` may be run directly instead of `-m pypts`; it is the same
 entry point. With the virtual environment activated, `python` replaces
-`.venv\Scripts\python.exe`. The Debug Monitor opens beside the run by default during the
-refactor and is deliberately left open when the run ends.
+`.venv\Scripts\python.exe`.
 
 For full documentation, please visit [PTS Framework Documentation](https://acc-py.web.cern.ch/gitlab/pts/framework/pypts/docs/stable/).

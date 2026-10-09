@@ -13,10 +13,10 @@ Data only. The objects the Sequencer executes:
 A Step belongs to pypts.step; a Sequence only holds them. This module
 executes nothing, touches no queue and does not import the Sequencer.
 
-The rest of the package: `rules.py` holds the format definitions,
-`validator.py` the mandatory-field checks, `recipe_parser.py` the whole
-loading pipeline (read, normalize, validate, version-check, defaults,
-build). `Recipe.from_file()` / `Recipe.from_yaml_text()` are thin facades
+The rest of the package: `recipe_schema.py` holds the format constants and
+the Pydantic models every document is validated with, `recipe_parser.py`
+the whole loading pipeline (read, normalize, validate, version-check,
+expand, build). `Recipe.from_file()` / `Recipe.from_yaml_text()` are thin facades
 over that parser, so callers keep one obvious entry point; every load
 failure is a RecipeError - one type for CORE to catch.
 """

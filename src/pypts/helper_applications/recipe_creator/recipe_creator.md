@@ -11,8 +11,28 @@ folder. Its import path is `pypts.helper_applications.recipe_creator`.
 
 Validates a recipe YAML file or string and returns **every problem found in one
 pass** — no bail-out on first error. The result is a `list[ValidationIssue]`,
-each carrying a severity, a dotted field path, a short message, a fix hint, and
-a line number.
+each carrying a severity, a location, a short message, a fix hint, and a line
+number.
+
+**The verdict is the framework's.** Errors come from the framework's own
+validation — `recipe_parser.validate_document()` against `HeaderSchema` /
+`SequenceSchema` in `recipe/recipe_schema.py` — worded exactly as the framework
+words them. Once those pass, the verificator runs the framework's real load,
+`recipe_parser.parse_recipe(content, check_version=False)`, and a `RecipeError`
+from it (a `select` that is neither file nor folder, an empty `method_name`, a
+call of a sequence that does not exist or of the main sequence) is one more
+error. So a recipe verifies without errors exactly when the framework would
+load it. `check_version=False` keeps the framework's version check — a log line
+for the technician — out of a check that runs on every edit.
+
+What is the verificator's own: the line of every issue (`_LineMap.nearest()` —
+a missing field points at the step or document it is missing from), the hint
+(`_hint()`, chosen by where the problem is and Pydantic's error type), the
+structural pre-checks (not YAML, empty, a document that is not a mapping, a
+first document that is not a header), the cross-document checks (duplicate
+sequence names, `main_sequence` naming nothing — both also refused by the
+load, but named here with a hint and alongside everything else), and the
+warnings: what loads but looks wrong.
 
 ## Files
 
@@ -35,7 +55,7 @@ The recipe language is **case-insensitive**: `Step_Name:` loads and runs exactly
 as `step_name:` does. The verificator does not implement that rule — it calls
 `recipe_parser.normalize_header()` and `normalize_sequence()` in `_run`, before
 anything is checked, and compares sequence names and `main_sequence`
-lowercased, the way `recipe_parser.py:95,105` does.
+lowercased, the way `recipe_parser.parse_recipe()` does.
 
 **Do not reimplement normalization here.** A second copy of that rule is exactly
 what drifted: the verificator used to read raw keys and reported "missing
@@ -49,54 +69,23 @@ and lose every line number, emptying the error gutter. Exact-first matters
 because `inputs`/`outputs` entry names keep their case while the language's own
 keys do not.
 
-## Known drift still open
-
-The verificator does **not** check three rules that step constructors enforce
-when a recipe loads, so it passes recipes the application then refuses:
-
-| Rule | Enforced at |
-|---|---|
-| `select` must be `file` or `folder` | `step/user_loading_step.py:77` |
-| `method_name` may not be empty | `step/python_module_step.py:116` |
-| `options` may not be empty | `step/user_interaction_step.py:65` |
-
-Negative `wait_time` is **not** in that list on purpose: `step/wait_step.py:40`
-raises at run time, not load time, so the recipe loads and the verificator is
-right to stay silent about it.
-
 ## The sync rule — **read this before touching either module**
 
-Scope, since 2026-09-16: this rule is about **vocabulary and wording**, not
-about how a recipe is read. Normalization and case comparison are delegated to
-the framework (see "Case is the framework's business" above) and must not be
-re-synced by hand. What still has to be kept in step is the hint strings and
-the key sets derived from `rules.py`.
+There is no second copy of the format rules to keep in step: the verificator
+validates with the framework's models and loads with the framework's parser.
+What still has to follow a format change by hand is **wording**:
 
-**`verificator.py` is the consumer of `pypts.recipe.rules`. When `rules.py`
-changes, `verificator.py` must be updated in the same commit.**
-
-Specifically, if you:
-
-- Add a step type to `STEP_TYPE_REQUIRED` → add a hint in `_step_field_hint`
-  and ensure `_STEP_TYPE_VALID` (derived automatically from `STEP_TYPE_REQUIRED`
-  and `STEP_TYPE_DEFAULTS`) covers every key the new type accepts.
-- Add optional fields to a step type in `STEP_TYPE_DEFAULTS` → nothing extra is
-  required; `_STEP_TYPE_VALID` is derived at import time and will pick them up.
-- Add a new input type to `INPUT_TYPES` → add a hint branch in
-  `_input_type_hint`.
-- Add a new output type to `OUTPUT_TYPES` → add a hint branch in
+- A new step type → a hint in `_step_field_hint` for each required field, and a
+  rename entry in `_unknown_steptype_hint` if it replaces an old name. Its valid
+  keys come from `recipe_schema.STEP_SCHEMAS` by themselves.
+- A new input or output type → a hint branch in `_input_type_hint`, or in
   `_output_type_hint` and `_output_unknown_type_hint`.
-- Add a new header field to `HEADER_REQUIRED` → add a hint in
-  `_header_required_hint`.
-- Add a new sequence field to `SEQUENCE_REQUIRED` or `SEQUENCE_DEFAULTS` →
-  add the corresponding check in `_check_sequence` and add the key to
-  `_KNOWN_SEQUENCE_KEYS`.
-- Remove a field that existed before → add it to `_REMOVED_SEQUENCE_KEYS`
-  (sequence level) or add an entry to `_unknown_steptype_hint` (step type
-  level) so authors get a targeted message instead of a generic "unknown key".
+- A new header or sequence field → a hint in `_DOCUMENT_FIELD_HINTS`.
+- A sequence key removed from the format → an entry in `_REMOVED_SEQUENCE_KEYS`,
+  so authors get a targeted warning instead of a generic "unknown key" one.
 
-The rule in one sentence: **every change to `rules.py` is incomplete without
-a corresponding update to `verificator.py` and its hint strings.**
+A missing hint is never a wrong verdict — the fallback hint points at
+`recipe_guide.html`.
 
 ## Public API
 
@@ -117,13 +106,14 @@ Results are sorted: errors first (by line number), then warnings.
 
 ```python
 issue.severity  # "error" | "warning"
-issue.field     # dotted path: "header.name", "sequence 'Main'.steps[2].wait_time"
-issue.message   # short description of what is wrong
+issue.field     # where: "header", "sequence 'Main', steps[1] 'Pause'", "recipe" (a load
+                #   refusal); a warning keeps the dotted form "sequence 'Main'.locals"
+issue.message   # what is wrong; for an error, `f"{field}: {message}"` is the framework's sentence
 issue.hint      # fix suggestion, with a YAML example where useful
 issue.line      # 1-based line number in the YAML source, or None
 issue.is_error  # True if severity == "error"
 issue.is_warning
-str(issue)      # "[ERROR] (line 12) header.name: Missing required field 'name'."
+str(issue)      # "[ERROR] (line 2) header: version: Field required"
 ```
 
 ## Integration with recipe_creator
@@ -135,28 +125,22 @@ The verificator never prints to stdout.
 
 ## What is checked
 
-**Header:** `name` and `version` required; `description`, `main_sequence`,
-`globals`, `report_metadata` optional with type checks.
+**Errors — whatever the framework refuses:** everything `HeaderSchema` and
+`SequenceSchema` check (`recipe/recipe.md`, Format rules: required fields, value
+types, unknown step keys, the input/output vocabulary, Sequence and Indexed step
+shapes), then everything the framework's load refuses. Plus duplicate sequence
+names and a `main_sequence` that names nothing, named with a hint.
 
-**Sequences:** `sequence_name` and `steps` (non-empty) required; `teardown_steps`
-optional; specific warnings for removed keys (`setup_steps`, `parameters`,
-`outputs`, `locals`); generic warnings for truly unknown keys.
-
-**Steps:** `steptype` and `step_name` required on every step; type-specific
-required fields from `rules.STEP_TYPE_REQUIRED`; `skip` and `continue_on_error`
-type-checked; `inputs` / `outputs` vocabulary validated against
-`rules.INPUT_TYPES` and `rules.OUTPUT_TYPES`; unknown keys warned.
-
-**Indexed steps:** delegated to `indexed_step.check_indexed_step` plus the
-template is validated as an ordinary step.
-
-**Cross-references:** `main_sequence` names an existing sequence; duplicate
-sequence names.
+**Warnings — what loads but looks wrong:** a `version` written as a number, an
+empty `name`/`version`, a removed sequence key (`setup_steps`, `parameters`,
+`outputs`, `locals`), an unknown sequence key (ignored by the framework).
 
 ## Known limitations
 
-- Indexed step template line numbers are best-effort (use the wrapper step's
-  line when the template's specific field line is not tracked).
+- A load refusal (pass 6) has no line: the framework's `RecipeError` names the
+  sequence and step in its text, counted after Indexed expansion.
+- Load refusals are found one at a time, and only once every validation error
+  is fixed — the framework's load stops at its first problem.
 - Global variable forward-reference checking (warning when a `{type: global}`
   input names a variable not in `globals`) is not implemented; an earlier step
   may set it dynamically.

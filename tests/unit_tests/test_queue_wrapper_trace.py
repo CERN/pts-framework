@@ -6,13 +6,14 @@
 Unit tests for the message trace (src/pypts/messages/queue_wrapper.py).
 
 The trace is the whole-system view of the framework. Core <-> Sequencer and
-Core <-> Report never leave the engine process, so a run log at DEBUG is the
+Core <-> Report never leave the engine process, so a run log at TRACE is the
 only place their traffic can be seen at all - which is why these tests are less
 about formatting than about three properties the diagnosis rests on:
 
   - both directions are recorded, so a message sent and never received is
     visible as a `send` with no matching `recv`;
-  - nothing is recorded above DEBUG, so the trace costs a normal run nothing;
+  - nothing is recorded above TRACE, so a run at DEBUG or higher is not
+    flooded by it;
   - a message is delivered whatever the trace does, including nothing.
 
 Everything asserts through `caplog.at_level(..., logger="pypts.trace")` rather
@@ -26,6 +27,7 @@ import queue
 
 import pytest
 
+from pypts.logger.levels import TRACE
 from pypts.messages import QueueWrapper
 from pypts.messages.core_hmi_communication import StatusChanged
 from pypts.messages.links import CORE_TO_HMI
@@ -47,7 +49,7 @@ def test_send_is_traced_with_its_link_and_message(caplog):
     """One line per send, naming the direction and the message itself."""
     wrapper = build_wrapper()
 
-    with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
+    with caplog.at_level(TRACE, logger=TRACE_LOGGER):
         wrapper.send(StatusChanged("ready"))
 
     lines = trace_lines(caplog)
@@ -58,15 +60,27 @@ def test_send_is_traced_with_its_link_and_message(caplog):
     assert "ready" in lines[0]
 
 
-def test_send_is_traced_at_debug(caplog):
-    """The trace is DEBUG, which is what makes one --log-level enough to gate it."""
+def test_send_is_traced_at_trace(caplog):
+    """The trace is TRACE, below DEBUG, so one --log-level gates it."""
+    wrapper = build_wrapper()
+
+    with caplog.at_level(TRACE, logger=TRACE_LOGGER):
+        wrapper.send(StatusChanged("ready"))
+
+    records = [r for r in caplog.records if r.name == TRACE_LOGGER]
+    assert records[0].levelno == TRACE
+    assert records[0].levelname == "TRACE"
+
+
+def test_nothing_is_traced_at_debug(caplog):
+    """DEBUG keeps the developer detail without the message trace."""
     wrapper = build_wrapper()
 
     with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
         wrapper.send(StatusChanged("ready"))
+        list(wrapper.receive())
 
-    records = [r for r in caplog.records if r.name == TRACE_LOGGER]
-    assert records[0].levelno == logging.DEBUG
+    assert trace_lines(caplog) == []
 
 
 def test_receive_is_traced_once_per_message(caplog):
@@ -75,7 +89,7 @@ def test_receive_is_traced_once_per_message(caplog):
     wrapper.send(StatusChanged("one"))
     wrapper.send(StatusChanged("two"))
 
-    with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
+    with caplog.at_level(TRACE, logger=TRACE_LOGGER):
         drained = list(wrapper.receive())
 
     assert len(drained) == 2
@@ -97,7 +111,7 @@ def test_a_message_left_on_the_queue_is_not_traced_as_received(caplog):
     wrapper.send(StatusChanged("one"))
     wrapper.send(StatusChanged("two"))
 
-    with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
+    with caplog.at_level(TRACE, logger=TRACE_LOGGER):
         first = next(iter(wrapper.receive()))
 
     assert first == StatusChanged("one")
@@ -106,8 +120,8 @@ def test_a_message_left_on_the_queue_is_not_traced_as_received(caplog):
     assert "one" in received[0]
 
 
-def test_nothing_is_traced_above_debug(caplog):
-    """The one-dial guarantee: at the default level a run carries no trace."""
+def test_nothing_is_traced_at_info(caplog):
+    """The one-dial guarantee: at INFO a run carries no trace."""
     wrapper = build_wrapper()
 
     with caplog.at_level(logging.INFO, logger=TRACE_LOGGER):
@@ -123,7 +137,7 @@ def test_the_message_is_not_formatted_when_the_trace_is_off(caplog):
 
     This is what %-style arguments buy over an f-string, and it is the reason
     the trace can sit on the path of every message in the framework. The day
-    someone tidies `_trace.debug("send %s %r", ...)` into an f-string, every run
+    someone tidies `_trace.log(TRACE, "send %s %r", ...)` into an f-string, every run
     starts formatting every message at every level, and this test is what says
     so.
     """
@@ -144,7 +158,7 @@ def test_the_message_is_not_formatted_when_the_trace_is_off(caplog):
     assert quiet.reprs == 0, "the message was formatted even though the trace was off"
 
     loud = CountingMessage()
-    with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
+    with caplog.at_level(TRACE, logger=TRACE_LOGGER):
         wrapper.send(loud)
     # Not an exact count: every handler that renders the record calls repr, and
     # under pytest there are several. One or more is the whole claim - the
@@ -176,7 +190,7 @@ def broken_log_queue_handler():
     handler = logging.handlers.QueueHandler(BrokenQueue())
     logger = logging.getLogger(TRACE_LOGGER)
     logger.addHandler(handler)
-    logger.setLevel(logging.DEBUG)
+    logger.setLevel(TRACE)
     try:
         yield handler
     finally:
@@ -205,7 +219,7 @@ def test_an_unnamed_wrapper_still_delivers(caplog):
     """`QueueWrapper(queue)` with no link is legal, and traces as "?" rather than raising."""
     wrapper = QueueWrapper(queue.Queue())
 
-    with caplog.at_level(logging.DEBUG, logger=TRACE_LOGGER):
+    with caplog.at_level(TRACE, logger=TRACE_LOGGER):
         wrapper.send(StatusChanged("ready"))
         drained = list(wrapper.receive())
 

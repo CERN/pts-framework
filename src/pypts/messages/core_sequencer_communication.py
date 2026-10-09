@@ -47,9 +47,10 @@ class RunSequence:
     Run one named sequence of the recipe carried with the command.
 
     CORE owns the loaded recipe: it is loaded and validated once, kept there,
-    and handed over here per run. So the Sequencer holds no recipe between
-    runs, and cannot be asked to run one it was never given - loading a recipe
-    reaches the engine only when the operator starts something.
+    and handed over here per run. The Sequencer keeps only the recipe its last
+    run was given (until ForgetRecipe), and cannot be asked to run one it was
+    never given - loading a recipe reaches the engine only when the operator
+    starts something.
 
     The one message in the system that carries a rich object rather than
     plain values - allowed because this link never leaves the Core process,
@@ -59,6 +60,18 @@ class RunSequence:
 
     recipe: Recipe
     sequence_name: str
+
+
+@dataclass
+class ForgetRecipe:
+    """
+    The operator unloaded the recipe: drop what the last run left behind.
+
+    That is the recipe the last RunSequence carried, and the test modules its
+    steps loaded from files beside it - so an edited test file is read afresh
+    the next time a recipe uses it. Refused while a sequence is running. No
+    answer: CORE has already forgotten its own copy and told the HMI.
+    """
 
 
 @dataclass
@@ -78,6 +91,7 @@ class SequencerStopped:
 
 CoreToSequencer = (
     RunSequence
+    | ForgetRecipe
     | StopSequence
     | PauseSequence
     | ResumeSequence

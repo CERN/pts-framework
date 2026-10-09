@@ -32,6 +32,9 @@ from uuid import uuid4
 import pytest
 
 from pypts._version import __version__
+from pypts.hal import DriverError, get_device
+from pypts.hal import local_setup as hal_local_setup
+from pypts.hal.connection_driver import ConnectionDriver
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType
 from pypts.messages.core_sequencer_communication import (
@@ -98,17 +101,19 @@ REACHED_TIMEOUT_S = 5.0
 
 
 @pytest.fixture
-def sequencer():
+def sequencer(tmp_path):
     """
     A Sequencer wired to plain queues, plus those queues.
 
     `outbox` is what the Sequencer sends to CORE; `inbox` is what CORE sends it.
     Returned raw so a test can put a command in and read the answers out without
-    going through the module under test.
+    going through the module under test. Its run folders go under tmp_path, not
+    into the reports folder of whoever runs the tests.
     """
     outbox: queue.Queue = queue.Queue()
     inbox: queue.Queue = queue.Queue()
     instance = Sequencer(QueueWrapper(outbox), QueueWrapper(inbox))
+    instance.reports_dir = lambda: str(tmp_path / "reports")
 
     yield instance, outbox, inbox
 
@@ -393,6 +398,39 @@ def test_a_second_run_sequence_is_refused_rather_than_queued(sequencer):
     assert len(errors) == 1
     assert "already running" in errors[0].message
     assert errors[0].source == "pypts.sequencer.sequencer"
+
+
+def test_forget_recipe_drops_the_recipe_and_the_loaded_test_modules(sequencer, monkeypatch):
+    from pypts.messages.core_sequencer_communication import ForgetRecipe
+    from pypts.step import python_module_step
+
+    instance, _outbox, inbox = sequencer
+    instance.recipe = wait_recipe()
+    cache = {Path("tests.py"): object()}
+    monkeypatch.setattr(python_module_step, "_loaded_modules", cache)
+
+    inbox.put(ForgetRecipe())
+    instance.poll_core()
+
+    assert instance.recipe is None
+    assert cache == {}
+
+
+def test_forget_recipe_is_refused_while_a_sequence_runs(sequencer):
+    from pypts.messages.core_sequencer_communication import ForgetRecipe
+
+    instance, outbox, inbox = sequencer
+    release = start_a_blocking_sequence(instance, inbox)
+    running_recipe = instance.recipe
+
+    inbox.put(ForgetRecipe())
+    instance.poll_core()
+    release.set()
+
+    assert instance.recipe is running_recipe
+    errors = [message for message in drain(outbox) if isinstance(message, ModuleError)]
+    assert len(errors) == 1
+    assert "Cannot unload the recipe" in errors[0].message
 
 
 def test_stop_reports_stopped_only_after_the_sequence_thread_has_ended(sequencer):
@@ -1161,3 +1199,177 @@ def test_pause_and_resume_with_nothing_running_are_harmless(sequencer):
     send_command(instance, inbox, ResumeSequence())
 
     assert [m for m in drain(outbox) if not isinstance(m, Heartbeat)] == []
+
+
+# --- the hardware layer: one local setup per run -------------------------------------
+
+LOOPBACK_SECTIONS = {"loop1": {"driver": "pypts.hal.drivers.loopback.LoopbackDriver"}}
+
+BENCH_CODE = '''
+from pypts.hal import get_device
+
+
+def echo_twice(text):
+    device = get_device("loop1")
+    return device.echo(text) + device.echo(text)
+
+
+def use_a_missing_device():
+    get_device("nothing_here")
+'''
+
+BENCH_RECIPE = f"""\
+name: Bench run
+version: {CURRENT_VERSION}
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: Missing device
+    module: bench_code.py
+    method_name: use_a_missing_device
+  - steptype: PythonModule
+    step_name: Echo through the device
+    module: bench_code.py
+    method_name: echo_twice
+    inputs:
+      text: hi
+    outputs:
+      output: {{type: equals, value: hihi}}
+"""
+
+
+def write_bench_recipe(tmp_path):
+    (tmp_path / "bench_code.py").write_text(BENCH_CODE, encoding="utf-8")
+    recipe_path = tmp_path / "bench.yml"
+    recipe_path.write_text(BENCH_RECIPE, encoding="utf-8")
+    return Recipe.from_file(str(recipe_path))
+
+
+def test_a_run_reaches_its_devices_and_closes_them_at_the_end(sequencer, tmp_path, monkeypatch):
+    instance, outbox, _ = sequencer
+    opened = []
+
+    class RecordingConnection(ConnectionDriver):
+        def open(self):
+            super().open()
+            opened.append(self)
+
+    monkeypatch.setattr(hal_local_setup, "ConnectionDriver", RecordingConnection)
+    instance.read_hardware_sections = lambda: LOOPBACK_SECTIONS
+    instance.recipe = write_bench_recipe(tmp_path)
+
+    instance.execute_sequence("Main")
+
+    finished = {}
+    for message in drain(outbox):
+        if isinstance(message, StepFinished):
+            finished[message.outcome.step_name] = message.outcome
+    assert finished["Missing device"].result is ResultType.ERROR
+    assert finished["Echo through the device"].result is ResultType.PASS
+    assert len(opened) == 1
+    assert not opened[0].is_open()
+    with pytest.raises(DriverError, match="No local setup is active"):
+        get_device("loop1")
+
+
+def test_a_run_that_uses_no_device_never_reads_the_hardware_sections(sequencer):
+    instance, outbox, inbox = sequencer
+
+    def must_not_be_called():
+        raise AssertionError("the hardware sections were read")
+
+    instance.read_hardware_sections = must_not_be_called
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Main")
+
+    finished = [m.outcome for m in drain(outbox) if isinstance(m, StepFinished)]
+    assert all(o.result is ResultType.DONE for o in finished)
+
+
+def test_the_default_reads_config_ini(sequencer):
+    instance, _, _ = sequencer
+    assert instance.read_hardware_sections is hal_local_setup.hardware_sections_from_config
+
+
+# --------------------------------------------------------------------------
+# The run folder and the run log
+# --------------------------------------------------------------------------
+
+
+def test_run_started_names_the_run_folder_the_sequencer_made(sequencer, tmp_path):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Main")
+
+    started = next(m for m in drain(outbox) if isinstance(m, RunStarted))
+    run_dir = Path(started.run_dir)
+    assert run_dir.is_dir()
+    assert run_dir.parent == tmp_path / "reports"
+    # No Logger process in a unit test, so no run log was started.
+    assert started.run_log_path == ""
+
+
+def test_the_run_log_spans_exactly_the_run(sequencer, monkeypatch, caplog):
+    """
+    Started before RunStarted, ended before RunFinished and after the summary,
+    so every line of the run - its summary included - is in the run's folder.
+    """
+    from pypts.sequencer import sequencer as sequencer_module
+
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+    events = []
+
+    def fake_start(path):
+        events.append(("start", path))
+        return True
+
+    def fake_end():
+        summary_logged = any("Run summary" in r.getMessage() for r in caplog.records)
+        events.append(("end", summary_logged))
+        return True
+
+    monkeypatch.setattr(sequencer_module, "start_run_log", fake_start)
+    monkeypatch.setattr(sequencer_module, "end_run_log", fake_end)
+    real_send = instance.core.send
+
+    def recording_send(message):
+        events.append(("send", type(message).__name__))
+        real_send(message)
+
+    monkeypatch.setattr(instance.core, "send", recording_send)
+
+    with caplog.at_level(logging.INFO):
+        instance.execute_sequence("Main")
+
+    kinds = [event[0] if event[0] != "send" else event[1] for event in events]
+    assert kinds.index("start") < kinds.index("RunStarted")
+    assert kinds.index("RunStarted") < kinds.index("end") < kinds.index("RunFinished")
+    assert ("end", True) in events
+
+    started = next(m for m in drain(outbox) if isinstance(m, RunStarted))
+    run_log = Path(events[0][1])
+    assert started.run_log_path == str(run_log)
+    assert run_log.parent == Path(started.run_dir)
+    assert run_log.name.startswith("pypts_")
+
+
+def test_a_run_folder_that_cannot_be_made_does_not_stop_the_run(sequencer, tmp_path):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+    not_a_folder = tmp_path / "a_file"
+    not_a_folder.write_text("", encoding="utf-8")
+    instance.reports_dir = lambda: str(not_a_folder)
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    started = next(m for m in messages if isinstance(m, RunStarted))
+    assert started.run_dir == ""
+    assert started.run_log_path == ""
+    assert [m for m in messages if isinstance(m, RunFinished)]
+    problems = [m for m in messages if isinstance(m, ModuleError)]
+    assert problems and "results folder" in problems[0].message

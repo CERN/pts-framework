@@ -10,12 +10,13 @@ This module owns the whole loading pipeline, in order:
     read the file              (load_recipe only)
     parse the YAML             document 1 is the header, the rest are sequences
     normalize                  the recipe language is case-insensitive
-    validate                   every mandatory field, via validator.py against
-                               rules.py - all problems in one RecipeError
+    validate                   every document against the Pydantic models in
+                               recipe_schema.py - all problems in one RecipeError;
+                               the header comes back with its defaults filled in,
+                               each sequence with exactly the keys it wrote
     check version              warn-only: a recipe written for another pypts is
                                an ERROR in the log and a notice to the operator,
                                and still loads (hard refusal ~v1.0)
-    apply the defaults         every absent optional field gets its rules.py value
     expand                     an Indexed step becomes one ordinary step mapping
                                per parameter set (pypts.step.indexed_step)
     build                      Recipe -> Sequences -> Steps (via the step registry);
@@ -29,16 +30,24 @@ machinery.
 """
 
 import re
+from dataclasses import dataclass
 from importlib import metadata
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import yaml
+from pydantic import BaseModel, ValidationError
+from pydantic_core import ErrorDetails
 
 from pypts.logger.log import log
-from pypts.recipe import validator
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
-from pypts.recipe.rules import HEADER_DEFAULTS, SEQUENCE_DEFAULTS
+from pypts.recipe.recipe_schema import (
+    OUTPUT_TYPES,
+    SEQUENCE_DEFAULTS,
+    STEP_TYPE_REQUIRED,
+    HeaderSchema,
+    SequenceSchema,
+)
 from pypts.step import indexed_step, sequence_step
 from pypts.step.registry import build_step
 from pypts.step.step import Step
@@ -55,8 +64,15 @@ def load_recipe(path: str) -> Recipe:
     return recipe
 
 
-def parse_recipe(text: str, file_name: str = "") -> Recipe:
-    """Parse recipe YAML: document 1 is the header, the rest are sequences."""
+def parse_recipe(text: str, file_name: str = "", check_version: bool = True) -> Recipe:
+    """
+    Parse recipe YAML: document 1 is the header, the rest are sequences.
+
+    `check_version=False` is for a tool that only asks whether a recipe would
+    load - the Recipe Creator's verificator, on every edit. The version check
+    is part of really loading one: it logs for the technician and sets the
+    operator's notice, so it is skipped and `version_notice` stays empty.
+    """
     try:
         documents = list(yaml.safe_load_all(text))
     except yaml.YAMLError as error:
@@ -72,22 +88,36 @@ def parse_recipe(text: str, file_name: str = "") -> Recipe:
     # are lowercased here, once, so everything downstream stays strict.
     header = normalize_header(header)
 
-    # Every mandatory-field problem in the whole file, reported at once.
-    problems = validator.validate_header(header)
-    sequence_documents = []
+    # Every problem in the whole file, reported at once.
+    header_problems, header_schema = validate_document(header, HeaderSchema, "header")
+    problems = [str(problem) for problem in header_problems]
+    sequence_schemas = []
     for number, document in enumerate(documents[1:], start=2):
         if not isinstance(document, dict):
             problems.append(f"document {number} is not a mapping")
-        else:
-            document = normalize_sequence(document)
-            sequence_documents.append(document)
-            problems.extend(validator.validate_sequence(document))
-    if problems:
+            continue
+        document = normalize_sequence(document)
+        sequence_problems, sequence_schema = validate_document(
+            document, SequenceSchema, sequence_context(document, number)
+        )
+        problems.extend(str(problem) for problem in sequence_problems)
+        sequence_schemas.append(sequence_schema)
+    if problems or header_schema is None:
         listed = "; ".join(problems)
         raise RecipeError(f"Recipe '{file_name}' is invalid: {listed}")
 
-    version_notice = _check_framework_version(header, file_name)
-    header = apply_defaults(header, HEADER_DEFAULTS)
+    # The header with every default filled in. A sequence keeps only what the
+    # recipe wrote - the step constructors own their defaults, and an Indexed
+    # step must still see that its wrapper said nothing about `skip`.
+    header = header_schema.model_dump()
+    sequence_documents = []
+    for sequence_schema in sequence_schemas:
+        if sequence_schema is not None:
+            sequence_documents.append(sequence_schema.model_dump(exclude_unset=True))
+
+    version_notice = ""
+    if check_version:
+        version_notice = _check_framework_version(header, file_name)
 
     # Sequence names keep their case but must be unique without it, so a
     # case-insensitive lookup - main_sequence, or a Sequence step's
@@ -125,37 +155,184 @@ def parse_recipe(text: str, file_name: str = "") -> Recipe:
         version=str(header["version"]),
         globals=header["globals"],
         main_sequence=main_sequence,
-        report_metadata=_report_metadata(header, file_name),
+        report_metadata=tuple(header["report_metadata"]),
         version_notice=version_notice,
         sequences=sequences,
         file_name=file_name,
     )
 
 
-def _report_metadata(header: dict[str, Any], file_name: str) -> tuple[str, ...]:
-    """
-    The `report_metadata` header field: the globals the Report stamps on
-    every row of report.csv and in report.html's header.
+_Schema = TypeVar("_Schema", bound=BaseModel)
 
-    A list of names, refused here rather than half-applied later: the
-    Report writes these as CSV columns and a column called `{}` or `3`
-    would be nonsense. An empty list is legal and means no metadata.
+
+@dataclass(frozen=True)
+class SchemaProblem:
     """
-    declared = header["report_metadata"]
-    if isinstance(declared, str) or not isinstance(declared, (list, tuple)):
-        raise RecipeError(
-            f"Recipe '{file_name}': report_metadata must be a list of global "
-            f"names, not {type(declared).__name__}."
-        )
-    names = []
-    for name in declared:
-        if not isinstance(name, str) or not name.strip():
-            raise RecipeError(
-                f"Recipe '{file_name}': report_metadata entry {name!r} is not a "
-                f"global name."
+    One problem validation found in a recipe document.
+
+    `where` and `message` are the two halves of the sentence a RecipeError
+    carries. `path` and `kind` are for a tool that points into the file: the
+    Recipe Creator's verificator turns them into a line number and a hint.
+    """
+
+    #: "header", or "sequence 'Main', steps[1] 'Pause'".
+    where: str
+    #: The field and Pydantic's message: "wait_time: Field required".
+    message: str
+    #: Where in the document, nested as the YAML is, without union tags:
+    #: ("steps", 0, "wait_time"). Positions count from 0.
+    path: tuple[int | str, ...]
+    #: Pydantic's error type: "missing", "extra_forbidden", "union_tag_invalid"...
+    kind: str
+
+    def __str__(self) -> str:
+        return f"{self.where}: {self.message}"
+
+
+def validate_document(
+    raw: dict[str, Any], schema_cls: type[_Schema], context: str
+) -> tuple[list[SchemaProblem], _Schema | None]:
+    """
+    One normalized document against its model: ([], the model) or (every
+    problem, None). `context` names the document, as sequence_context() does.
+    """
+    try:
+        return [], schema_cls.model_validate(raw)
+    except ValidationError as error:
+        return [_describe_problem(context, raw, detail) for detail in error.errors()], None
+
+
+def sequence_context(document: dict[str, Any], number: int) -> str:
+    """How a problem names sequence document `number` (counted from 1, header included)."""
+    name = document.get("sequence_name")
+    if isinstance(name, str) and name:
+        return f"sequence '{name}'"
+    return f"document {number}"
+
+
+def _describe_problem(
+    context: str, document: dict[str, Any], detail: ErrorDetails
+) -> SchemaProblem:
+    """
+    Pydantic's message, at a location an author can find in the file.
+
+    Steps are counted from 1, as the step table counts them, and named; the
+    union tag Pydantic puts in the path (`steps -> 0 -> wait -> wait_time`)
+    is the steptype the author already wrote, so it is left out.
+    """
+    location = list(detail["loc"])
+    message = detail["msg"]
+    context_values = detail.get("ctx") or {}
+    kind = detail["type"]
+    if kind == "union_tag_invalid":
+        field = str(context_values["discriminator"]).strip("'")
+        # Pydantic picks the model by the tag before any model sees the data,
+        # so a bare `steptype:` arrives here as a tag of None. A bare key is
+        # an absent one everywhere else, and reads the same here.
+        tagged = _value_at(document, _document_path(location))
+        if isinstance(tagged, dict) and tagged.get(field) is None:
+            kind = "union_tag_not_found"
+        else:
+            message = (
+                f"{field} '{context_values['tag']}' is not one of: "
+                f"{context_values['expected_tags']}"
             )
-        names.append(name.strip())
-    return tuple(names)
+    if kind == "union_tag_not_found":
+        location.append(str(context_values["discriminator"]).strip("'"))
+        message = "Field required"
+    elif kind == "model_type":
+        # "...or instance of ParameterSet" names a Python class, not a recipe word.
+        message = "Input should be a valid dictionary"
+
+    path = _document_path(location)
+    parts = _readable_parts(path, document)
+    where = context
+    if len(path) >= 2 and path[0] in _STEP_LISTS and isinstance(path[1], int):
+        where = f"{context}, {parts.pop(0)}"
+        steps = document.get(str(path[0]))
+        if isinstance(steps, list) and path[1] < len(steps):
+            label = _step_label(steps[path[1]])
+            if label:
+                where = f"{where} '{label}'"
+
+    if parts:
+        message = f"{' -> '.join(parts)}: {message}"
+    return SchemaProblem(where=where, message=message, path=path, kind=kind)
+
+
+#: The lists that hold steps, in a sequence document.
+_STEP_LISTS = ("steps", "teardown_steps")
+
+
+def _document_path(location: list[int | str]) -> tuple[int | str, ...]:
+    """
+    Pydantic's location without its union tags. A tag can only follow a step
+    (a list position or `template`) or an outputs entry - whatever its name,
+    `1:` included - and is dropped there.
+    """
+    path: list[int | str] = []
+    position = 0
+    while position < len(location):
+        part = location[position]
+        previous = location[position - 1] if position > 0 else None
+        path.append(part)
+
+        following = location[position + 1] if position + 1 < len(location) else None
+        is_step = part == "template" or (isinstance(part, int) and previous in _STEP_LISTS)
+        is_output = previous == "outputs"
+        if (is_step and following in STEP_TYPE_REQUIRED) or (
+            is_output and following in OUTPUT_TYPES
+        ):
+            position += 1
+        position += 1
+    return tuple(path)
+
+
+def _readable_parts(path: tuple[int | str, ...], document: dict[str, Any]) -> list[str]:
+    """
+    The path as an author reads it: a list position joins its list as `[n]`,
+    counted from 1. Pydantic writes a position and a number key (`outputs:
+    {1: ...}`) alike, so the document says which one it is.
+    """
+    parts: list[str] = []
+    container: Any = document
+    for part in path:
+        if isinstance(part, int) and parts and not isinstance(container, dict):
+            parts[-1] = f"{parts[-1]}[{part + 1}]"
+        else:
+            parts.append(str(part))
+        container = _child(container, part)
+    return parts
+
+
+def _value_at(document: dict[str, Any], path: tuple[int | str, ...]) -> Any:
+    """What the document holds at `path`, or None when there is nothing there."""
+    value: Any = document
+    for part in path:
+        value = _child(value, part)
+    return value
+
+
+def _child(container: Any, part: int | str) -> Any:
+    """The value at `part` in a mapping or a list, or None when there is none."""
+    if isinstance(container, dict):
+        return container.get(part)
+    if isinstance(container, list) and isinstance(part, int) and 0 <= part < len(container):
+        return container[part]
+    return None
+
+
+def _step_label(step_data: Any) -> str:
+    """The name the operator knows a step by: a Sequence step is named after its call."""
+    if not isinstance(step_data, dict):
+        return ""
+    if sequence_step.is_sequence_step(step_data):
+        name = step_data.get("sequence_name")
+    else:
+        name = step_data.get("step_name")
+    if name is None:
+        return ""
+    return str(name)
 
 
 def _check_framework_version(header: dict[str, Any], file_name: str) -> str:
@@ -258,10 +435,13 @@ def normalize_sequence(document: dict[str, Any]) -> dict[str, Any]:
 
 
 def _normalize_step(step_data: Any) -> Any:
-    """One step mapping; anything malformed is left for the validator to name."""
+    """One step mapping; anything malformed is left for validation to name."""
     if not isinstance(step_data, dict):
         return step_data
     step_data = _lowercase_keys(step_data)
+    # The models pick a step's schema by its lowercase steptype.
+    if isinstance(step_data.get("steptype"), str):
+        step_data["steptype"] = step_data["steptype"].lower()
     for mapping_name in ("inputs", "outputs"):
         mapping = step_data.get(mapping_name)
         if isinstance(mapping, dict):

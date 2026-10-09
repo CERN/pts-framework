@@ -8,7 +8,7 @@ Configuration for the whole framework.
     from pypts.config_handler import ConfigHandler
 
     ConfigHandler.bootstrap()                        # launcher, once, first
-    ConfigHandler().get_parameter("paths.logs_dir")  # anywhere, any process
+    ConfigHandler().get_parameter("paths.reports_dir")  # anywhere, any process
 
 The file lives in the per-user configuration directory of the platform
 (`%LOCALAPPDATA%\\pypts` on Windows, `~/.config/pypts` on Linux) and is created

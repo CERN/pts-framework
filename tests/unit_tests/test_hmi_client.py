@@ -266,3 +266,33 @@ def test_the_default_pause_hooks_only_log(client, caplog):
     assert "held before step 4/10 'measure'" in caplog.text
     assert "RunResumed received" in caplog.text
     assert drain(to_core) == []
+
+
+def test_a_run_log_is_handed_to_the_frontend_to_follow(client, monkeypatch):
+    """RunStarted names the run log; RunFinished says it is over."""
+    from pypts.messages.common_messages import ResultType
+    from pypts.messages.run_events import RunFinished, RunStarted
+
+    instance, _ = client
+    calls = []
+    monkeypatch.setattr(instance, "follow_run_log", lambda path: calls.append(("follow", path)))
+    monkeypatch.setattr(instance, "run_log_finished", lambda: calls.append(("finished",)))
+
+    instance.handle_core_message(
+        RunStarted(recipe_name="demo", recipe_description="", run_log_path="/r/pypts_1.log")
+    )
+    instance.handle_core_message(RunFinished(result=ResultType.DONE))
+
+    assert calls == [("follow", "/r/pypts_1.log"), ("finished",)]
+
+
+def test_a_run_without_a_run_log_asks_nothing_to_be_followed(client, monkeypatch):
+    from pypts.messages.run_events import RunStarted
+
+    instance, _ = client
+    calls = []
+    monkeypatch.setattr(instance, "follow_run_log", lambda path: calls.append(path))
+
+    instance.handle_core_message(RunStarted(recipe_name="demo", recipe_description=""))
+
+    assert calls == []

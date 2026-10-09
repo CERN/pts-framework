@@ -72,9 +72,10 @@ def check_indexed_step(step_data: dict[str, Any]) -> list[str]:
     """
     Everything about an indexed step's own shape, as a list of problems.
 
-    Called by the validator, so the recipe author gets every problem in the file
-    at once. The *template* is validated by the validator itself - it is an
-    ordinary step mapping and the validator already knows how to check one.
+    The guard expand_indexed_step() runs before it expands anything. A recipe
+    file meets the same rules earlier, in recipe_schema.IndexedStepSchema, with
+    every other problem in the file; the *template* is checked there as the
+    ordinary step it becomes.
 
     Returns:
         Human-readable problems; an empty list means the shape is fine.
@@ -157,9 +158,9 @@ def expand_indexed_step(step_data: dict[str, Any]) -> list[dict[str, Any]]:
     of not writing them out by hand.
 
     Raises:
-        ValueError: if the shape is wrong. The validator has normally reported
-            it already and the parser never gets here; this is the guard for a
-            caller that skipped validation.
+        ValueError: if the shape is wrong. Validation (recipe_schema) has
+            normally reported it already and the parser never gets here; this is
+            the guard for a caller that skipped validation.
     """
     problems = check_indexed_step(step_data)
     if problems:

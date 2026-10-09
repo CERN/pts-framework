@@ -228,7 +228,7 @@ def test_to_yaml_produces_valid_recipe(model):
 
 def test_default_step_has_required_fields(qapp):
     from pypts.helper_applications.recipe_creator.rc_model import RecipeModel
-    from pypts.recipe.rules import STEP_TYPE_REQUIRED
+    from pypts.recipe.recipe_schema import STEP_TYPE_REQUIRED
 
     m = RecipeModel()
     for steptype in STEP_TYPE_REQUIRED:

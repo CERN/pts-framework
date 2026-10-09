@@ -16,16 +16,19 @@ A sequence runs on a thread of its own, not on the event loop.
 
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from pypts._version import __version__
-from pypts.logger.log import log
+from pypts.config_handler import ConfigHandler
+from pypts.hal.local_setup import LocalSetup, hardware_sections_from_config
+from pypts.logger.log import end_run_log, log, start_run_log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
 from pypts.messages.common_messages import ErrorSeverity, ResultType
 from pypts.messages.core_sequencer_communication import (
     CoreToSequencer,
+    ForgetRecipe,
     PauseSequence,
     ResumeSequence,
     RunSequence,
@@ -44,7 +47,8 @@ from pypts.messages.run_events import (
     UserPromptResponse,
     UserTextResponse,
 )
-from pypts.recipe.recipe import Recipe
+from pypts.recipe.recipe import Recipe, Sequence
+from pypts.step.python_module_step import forget_loaded_modules
 from pypts.step.runtime import Runtime
 
 # Aliased: run_sequence() here is the loop-thread method that *starts* a run;
@@ -53,6 +57,13 @@ from pypts.step.step import StepResult, count_verdicts, describe_counts, real_st
 from pypts.step.step import run_sequence as run_sequence_body
 from pypts.utilities.error_handling import catch_and_report_errors, report_error, report_problem
 from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
+from pypts.utilities.local_storage import get_log_file_path, make_run_folder
+
+
+def reports_dir_from_config() -> str:
+    """Where run folders go - `paths.reports_dir` of this process's config.ini."""
+    return str(ConfigHandler().get_parameter("paths.reports_dir"))
+
 
 #: How long stop() waits for a sequence that is still running.
 SEQUENCE_JOIN_TIMEOUT_S = 2.0
@@ -91,9 +102,12 @@ class Sequencer:
         sequence_thread: the thread a sequence is running on, or None if none
               has been started yet.
         recipe: the validated Recipe that came with the last RunSequence, or
-              None until one has. A live object, not a copy - the two threads
-              share one process. CORE holds the loaded recipe; this is only
-              what the current run was given.
+              None until one has, and again after ForgetRecipe. A live object,
+              not a copy - the two threads share one process. CORE holds the
+              loaded recipe; this is only what the current run was given.
+        read_hardware_sections: returns the device sections of config.ini by
+              logical name; handed to the LocalSetup each run builds.
+        reports_dir: returns the folder each run's folder is made in.
     """
 
     def __init__(
@@ -111,6 +125,16 @@ class Sequencer:
         self.sequence_thread: threading.Thread | None = None
         self.recipe: Recipe | None = None
         self.goodbye_sent = False
+        #: Where a run's devices are declared - the [hardware.<name>] sections
+        #: of config.ini. Read only when test code first asks for a device, so
+        #: a run that uses none never reads them. Tests replace it.
+        self.read_hardware_sections: Callable[[], Mapping[str, Mapping[str, Any]]] = (
+            hardware_sections_from_config
+        )
+        #: Where each run's folder is made - `paths.reports_dir`. Read once per
+        #: run. Tests replace it, so a test run does not write into the reports
+        #: folder of whoever runs the tests.
+        self.reports_dir: Callable[[], str] = reports_dir_from_config
 
     @catch_and_report_errors()
     def start(self) -> None:
@@ -169,6 +193,8 @@ class Sequencer:
                 # recipe its own command carried.
                 self.recipe = recipe
                 self.run_sequence(sequence_name)
+            case ForgetRecipe():
+                self.forget_recipe()
             case StopSequence():
                 self.stop_sequence()
             case PauseSequence():
@@ -207,6 +233,26 @@ class Sequencer:
             daemon=True,
         )
         self.sequence_thread.start()
+
+    def forget_recipe(self) -> None:
+        """
+        Drop the last run's recipe and the test modules its steps loaded.
+
+        Refused while a sequence runs: the sequence thread is using both, and
+        the module cache has no lock because only that thread touches it.
+        The frontend does not offer an unload during a run, so this is a guard,
+        not a path anyone is expected to take.
+        """
+        if self.sequence_is_running():
+            report_problem(
+                self,
+                "Cannot unload the recipe: a test is running. Stop the running test first.",
+                operation="Sequencer.forget_recipe",
+            )
+            return
+        self.recipe = None
+        dropped = forget_loaded_modules()
+        log.debug("Sequencer forgot its recipe and %d loaded test module(s).", dropped)
 
     def sequence_is_running(self) -> bool:
         """Whether a sequence thread exists and has not finished."""
@@ -265,6 +311,9 @@ class Sequencer:
             hold_if_paused=self.hold_if_paused,
             drop_pending_pause=self.drop_pending_pause,
         )
+        # Before RunStarted, so every line of the run - from its first - is in
+        # the run log, and the Report can write into the same folder.
+        run_dir, run_log_path = self.start_run_folder(self.recipe.name, sequence_name)
         self.core.send(
             RunStarted(
                 recipe_name=self.recipe.name,
@@ -272,28 +321,88 @@ class Sequencer:
                 recipe_version=self.recipe.version,
                 pypts_version=__version__,
                 metadata_names=metadata_names,
+                run_dir=run_dir,
+                run_log_path=run_log_path,
             )
         )
+        try:
+            result, real_results = self.run_body(
+                runtime, sequence, run_globals, metadata_names, reported_metadata
+            )
+            self.log_run_summary(
+                self.recipe.name,
+                sequence_name,
+                result,
+                real_results,
+                time.perf_counter() - run_began,
+            )
+        finally:
+            # Before RunFinished: the summary above is the run log's last line,
+            # and whatever follows the run is the session's again.
+            if run_log_path:
+                end_run_log()
+                log.info("The run's log is %s", run_log_path)
+        self.core.send(
+            RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in real_results))
+        )
+
+    def start_run_folder(self, recipe_name: str, sequence_name: str) -> tuple[str, str]:
+        """
+        Make this run's folder and start the run log in it.
+
+        A folder that cannot be made is a WARNING, not the end of the run: the
+        run goes on, logged in the session log, and the Report makes a folder
+        of its own if it can.
+
+        Returns:
+            (run folder, run log path), each "" when it was not made. No run
+            log without a Logger process - a unit test, a standalone tool.
+        """
+        try:
+            run_dir = make_run_folder(self.reports_dir(), recipe_name)
+        except OSError as error:
+            report_problem(
+                self,
+                f"The results folder could not be created: {error}",
+                severity=ErrorSeverity.WARNING,
+                operation="Sequencer.start_run_folder",
+            )
+            return "", ""
+        run_log_path = get_log_file_path(run_dir)
+        if not start_run_log(run_log_path):
+            log.debug("No Logger process, so this run has no log file of its own.")
+            return str(run_dir), ""
+        # The run log's first line.
+        log.info("Run log of recipe '%s', sequence '%s'.", recipe_name, sequence_name)
+        return str(run_dir), run_log_path
+
+    def run_body(
+        self,
+        runtime: Runtime,
+        sequence: Sequence,
+        run_globals: dict[str, Any],
+        metadata_names: tuple[str, ...],
+        reported_metadata: dict[str, str],
+    ) -> tuple[ResultType, list[StepResult]]:
+        """Everything between RunStarted and the summary: the steps, and their verdict."""
         # A metadata global may be set in the recipe's own header rather than
         # by a step, so the first look happens before anything runs.
         self.send_changed_metadata(run_globals, metadata_names, reported_metadata)
         step_results: list[StepResult] = []
-        try:
-            result, step_results = run_sequence_body(runtime, sequence)
-        except Exception as error:  # noqa: BLE001 - step failures must not crash the sequencer
-            report_error(self, error, operation="Sequencer.execute_sequence")
-            result = ResultType.ERROR
+        # The run's devices: opened by test code on first use, all closed when
+        # this block ends - after the teardown steps, which may use them too,
+        # and before RunFinished, so a run that has ended holds no device open.
+        with LocalSetup(self.read_hardware_sections):
+            try:
+                result, step_results = run_sequence_body(runtime, sequence)
+            except Exception as error:  # noqa: BLE001 - step failures must not crash the sequencer
+                report_error(self, error, operation="Sequencer.execute_sequence")
+                result = ResultType.ERROR
         if self.stop_requested:
             result = ResultType.STOP
         # Totals count real steps: a called sequence's row only stands for the
         # steps inside it, which are listed themselves.
-        real_results = real_step_results(step_results)
-        self.core.send(
-            RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in real_results))
-        )
-        self.log_run_summary(
-            self.recipe.name, sequence_name, result, real_results, time.perf_counter() - run_began
-        )
+        return result, real_step_results(step_results)
 
     def log_run_summary(
         self,
@@ -307,8 +416,8 @@ class Sequencer:
         The three lines that close the operator's account of the run.
 
         Three records rather than one multi-line record: each then carries its
-        own timestamp, and neither the GUI's log panel nor the Debug Monitor
-        has to treat the second and third as continuations of a traceback.
+        own timestamp, and the GUI's log panel does not have to treat the
+        second and third as continuations of a traceback.
         See logging_rules.md section 6.
 
         Args:

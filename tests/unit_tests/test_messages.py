@@ -53,12 +53,14 @@ from pypts.messages.core_hmi_communication import (
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
+    RecipeUnloaded,
     ReportReady,
     SetConfigParameter,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
     StopHmi,
+    UnloadRecipe,
 )
 from pypts.messages.core_report_communication import (
     CoreToReport,
@@ -72,6 +74,7 @@ from pypts.messages.core_report_communication import (
 )
 from pypts.messages.core_sequencer_communication import (
     CoreToSequencer,
+    ForgetRecipe,
     RunSequence,
     SequencerStopped,
     SequencerToCore,
@@ -101,7 +104,14 @@ from pypts.messages.run_events import (
     UserTextRequest,
     UserTextResponse,
 )
-from pypts.messages.to_logger_communication import LoggerControl, SetStdoutEnabled, StopLogger
+from pypts.messages.to_logger_communication import (
+    EndRunLog,
+    LoggerControl,
+    SetStdoutEnabled,
+    StartRunLog,
+    StopLogger,
+    SwitchLogFile,
+)
 from pypts.recipe.recipe import Recipe, Sequence
 from pypts.report.report import Report
 from pypts.sequencer.sequencer import Sequencer
@@ -215,6 +225,8 @@ EXAMPLES = {
     UserPathResponse: UserPathResponse(request_id=REQUEST_ID, path="/tmp/cal/unit_7.csv"),
     # core_hmi_communication
     LoadRecipe: LoadRecipe(recipe_path="resources/recipes/example.yaml"),
+    UnloadRecipe: UnloadRecipe(),
+    RecipeUnloaded: RecipeUnloaded(),
     StartSequence: StartSequence(sequence_name="Main"),
     SetConfigParameter: SetConfigParameter(key="report.theme", value="dark"),
     ShutdownRequested: ShutdownRequested(),
@@ -233,6 +245,7 @@ EXAMPLES = {
     ),
     # core_sequencer_communication
     RunSequence: RunSequence(recipe=A_RECIPE, sequence_name="Main"),
+    ForgetRecipe: ForgetRecipe(),
     StopSequence: StopSequence(),
     PauseSequence: PauseSequence(),
     ResumeSequence: ResumeSequence(),
@@ -247,6 +260,11 @@ EXAMPLES = {
     ReportExported: ReportExported(report_path="/tmp/run/report.html"),
     # to_logger_communication
     SetStdoutEnabled: SetStdoutEnabled(enabled=False),
+    # A folder that does not exist: the handler test must not leave a file
+    # behind, and a Logger that cannot open the new file keeps the old one.
+    SwitchLogFile: SwitchLogFile(log_file_path="/no_such_folder/pypts_20261009_093012.log"),
+    StartRunLog: StartRunLog(log_file_path="/no_such_folder/run/pypts_20261009_093012.log"),
+    EndRunLog: EndRunLog(),
     StopLogger: StopLogger(),
 }
 

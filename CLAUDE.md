@@ -23,7 +23,7 @@ distribution `pts-framework`, Python ≥ 3.11, LGPL-2.1-or-later, REUSE complian
 header. Anything outside its globs does — typically `resources/**` and repo-root HTML
 (`CC-BY-SA-4.0`).
 
-Still stubs: `hardware_layer/hal.py` (design notes only) and `stream_handler/` (empty).
+Still a stub: `stream_handler/` (empty).
 
 ## Where things are documented
 
@@ -43,7 +43,7 @@ Module context files — **read before touching the module**:
 | `api/` | `api/api.md` |
 | `config_handler/` | `config_handler/config_handler.md` |
 | `core/` | `core/core.md` |
-| `hardware_layer/` | `hardware_layer/hal.md` |
+| `hal/` | `hal/hal.md` |
 | `hmi/` (shared client, CLI) | `hmi/hmi.md` |
 | `hmi/gui/` | `hmi/gui/gui.md` |
 | `launcher/` | `launcher/launcher.md` |
@@ -87,7 +87,7 @@ src/pypts/
   launcher/      entry point (python -m pypts): pins spawn, parses args, spawns Logger + CORE + frontend
   core/          mediator: routes every link, runs Sequencer + Report as threads, heartbeats, shutdown
   sequencer/     event loop; run_sequence() starts execute_sequence() on a worker thread
-  recipe/        recipe data layer: parser, rules, validator
+  recipe/        recipe data layer: parser, schema (Pydantic models), validation
   step/          step types (PythonModule, UserInteraction, UserWrite, UserLoading, Wait, Sequence,
                  Indexed — expanded at load time), Runtime seams, step.run_sequence()
   report/        report.csv (incremental) + report.html, one folder per run
@@ -97,8 +97,9 @@ src/pypts/
   config_handler/ per-user config.ini
   logger/        Logger process: the single run-log writer
   utilities/     error handling, heartbeats, local storage, recent recipes
-  hardware_layer/ stream_handler/   stubs
-  helper_applications/  debug_monitor, recipe_creator (incl. verificator), example_finder
+  hal/           hardware layer: devices by logical name, one driver process each, SSH driver
+  stream_handler/   stub
+  helper_applications/  recipe_creator (incl. verificator), example_finder
 resources/recipes/Development_recipes/   one demo recipe per step type
 ```
 
@@ -124,13 +125,9 @@ recipient's handler (`mypy` and `test_messages.py` catch the gap). Catalogue:
 python -m pypts                       # GUI (default)
 python -m pypts --mode cli            # CLI
 python -m pypts --mode headless --recipe x.yml [--sequence Name]   # exit codes: api/api.md
-python -m pypts --log-level DEBUG     # adds the full message trace to the run log
-python -m pypts --no-debug-monitor    # Monitor is on by default in gui/cli, off in headless
-python -m pypts.helper_applications.debug_monitor   # Monitor alone, on the newest log
+python -m pypts --log-level TRACE     # adds the full message trace to the run log
 python run_pypts.py / run_recipe_creator.py         # same, with src on the path (.bat wrappers too)
 ```
-
-Nothing in the framework may import `helper_applications/debug_monitor/`.
 
 Config: `%LOCALAPPDATA%\pypts\config.ini` / `~/.config/pypts/config.ini`. **Never change
 `CONFIG_VERSION` on your own** — only when a change adds something mandatory, and ask if

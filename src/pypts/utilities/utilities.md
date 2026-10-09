@@ -79,24 +79,35 @@ Both halves of the heartbeat protocol, kept together so they cannot drift.
   tracks its three modules in its own `_ModuleState` table.
 - Module name constants: `HMI`, `SEQUENCER`, `REPORT` (the modules CORE watches, and the keys
   of its table) and `CORE` (the source of CORE's own heartbeat to the HMI). Defined here, not
-  in `core.py`, so the Debug Monitor can import them without loading the engine.
+  in `core.py`, so the names are spelled once for CORE and the three modules alike.
 - Timeout constants: `HEARTBEAT_TIMEOUT_S` (5.0 s — a WARNING, costs nothing if wrong) and
   `HEARTBEAT_FATAL_S` (15.0 s — ends the run). Deliberately different numbers: the two
   thresholds do different jobs.
 
 ### `local_storage.py`
 
-Naming the files pypts writes; it no longer decides *where* they go (that is the
-configuration's `paths.logs_dir`, passed in by the caller, so this module stays free of the
-configuration).
+Naming the files and folders pypts writes; it does not decide *where* they go (that is the
+configuration's `paths.reports_dir`, passed in by the caller, so this module stays free of
+the configuration).
 
-- `get_log_file_path(logs_dir)` — creates `logs_dir` and returns
-  `<logs_dir>/pypts_<YYYYmmdd_HHMMSS>.log` as a string, in naive local time (the Logger and
-  the Debug Monitor both use local time). `LOG_FILE_PREFIX = "pypts"`.
+- `get_log_file_path(folder)` — creates `folder` and returns
+  `<folder>/pypts_<YYYYmmdd_HHMMSS>.log` as a string, in naive local time (the Logger
+  uses local time too). `LOG_FILE_PREFIX = "pypts"`. The launcher calls it with the reports
+  folder (the session log), the Sequencer with a run folder (the run log).
+- `make_run_folder(reports_dir, recipe_name)` — creates and returns
+  `<reports_dir>/<YYYYmmdd_HHMMSS>_<recipe name>` (`safe_name_part()`: non-alphanumerics
+  become `_`, at most 60 characters; `recipe` if nothing is left; `_2`, `_3`… in the same
+  second). Raises `OSError` if it cannot. Called by the Sequencer at every run start, and by
+  the Report only when `RunStarted` names no folder.
+- `next_log_file_path(current)` — a new run log beside `current`, named by
+  `get_log_file_path()`; if that name is `current` or already exists (same second), `_2`,
+  `_3`… is added, so the Logger never just appends to an old file. The GUI calls it when the
+  operator unloads the recipe.
 - `ensure_folder_exists(path)` — `os.makedirs(..., exist_ok=True)` wrapper.
-- The timestamp is taken at call time, so the launcher calls `get_log_file_path()` exactly
-  once per run (`launcher/startup.py`) and hands the path to every process. The Debug
-  Monitor's log discovery (`debug_monitor/log_source.py`) relies on this naming.
+- The timestamp is taken at call time. The launcher calls `get_log_file_path()` once at
+  startup (`launcher/startup.py`) and hands the path to every process; after that only an
+  unload starts a new session file (`next_log_file_path()`). A run's own log is a detour
+  the Logger takes and returns from (`logger/log.py` `start_run_log()` / `end_run_log()`).
 
 ### `common.py`
 
@@ -105,6 +116,9 @@ asking the launcher to start pypts again, see `launcher/launcher.md` → *Restar
 neither side may import the other), `ignore_keyboard_interrupt()`, `convert_string_to_int()`,
 and `describe_value()` / `describe_step_values()` - a step's text values as the CLI, headless
 mode and the step table's tooltip show them (`outputs: voltage = 12.1 (range 11 .. 13)`, M-3).
+Also `SECRET_KEY_WORDS`, `MASK`, `is_secret_key()` and `masked()`: which configuration keys
+are secrets, and a copy of a mapping fit for a log (the config dump, the hardware layer's call
+trace).
 
 ### `recent_recipes.py`
 
@@ -128,6 +142,5 @@ no Qt and no messages.
   modules. What they do import today: `logger/log.py` (`error_handling`, `recent_recipes`),
   `messages/common_messages.py` (`error_handling`, `heartbeat_manager`) and
   `config_handler/file_locations.py` (`recent_recipes`).
-- `heartbeat_manager.py` imports nothing of pypts but `common_messages` on purpose — the
-  Debug Monitor needs its constants without loading the rest of the engine.
+- `heartbeat_manager.py` imports nothing of pypts but `common_messages`.
 - `common.py` and `local_storage.py` import nothing of pypts.

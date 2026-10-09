@@ -76,6 +76,11 @@ class RunProgress(QWidget):
                 self._counted.add(step.step_id)
         self.reset()
 
+    def clear(self) -> None:
+        """No sequence on show - the recipe was unloaded. Hides the bar."""
+        self._counted = set()
+        self.reset()
+
     def reset(self) -> None:
         """Back to empty - a run is starting on the sequence already shown."""
         self._finished = set()

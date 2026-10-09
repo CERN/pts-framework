@@ -21,15 +21,19 @@ Two things need care:
 * **Torn records.** A record is one `write()` followed by a flush, but a read can
   land between them and return half a line. Anything not ending in a newline is
   held back until the rest arrives, so a caller never sees half a record.
-* **Volume.** `config.ini` ships DEBUG for the refactor, so the file carries the
-  full message trace - every message twice, sent and received. That is what the
-  Debug Monitor is for; the operator panel filters to `PANEL_LOG_LEVEL` and up.
+* **Volume.** `config.ini` ships TRACE for the refactor, so the file carries the
+  full message trace - every message twice, sent and received. The operator
+  panel filters to `PANEL_LOG_LEVEL` and up.
 """
 
 from __future__ import annotations
 
 import logging
 from pathlib import Path
+
+# Registers the TRACE name, so the message trace is filtered out like DEBUG
+# rather than shown as a line with a level nobody knows.
+from pypts.logger.levels import TRACE  # noqa: F401 - imported for its side effect
 
 #: Lowest level the operator's panel shows, whatever the file holds.
 PANEL_LOG_LEVEL = logging.INFO
@@ -53,8 +57,8 @@ def format_record(line: str, min_level: int = PANEL_LOG_LEVEL) -> str | None:
     Returns:
         `LEVEL     HH:MM:SS  message`, keeping the level first because that is
         what `LogPanel.append_line()` colours on. Process and source location are
-        dropped: they are what the Debug Monitor is for. None when the record is
-        below `min_level`.
+        dropped: they are developer detail, read in the log file. None when the
+        record is below `min_level`.
 
         A line that is not a record at all - the continuation lines of a
         traceback, which logging writes under the record they belong to - is

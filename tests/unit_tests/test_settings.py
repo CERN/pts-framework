@@ -117,7 +117,6 @@ def settings_in_force(tmp_path):
     """What a dialog is opened with: every editable key, as text."""
     return {
         "paths.base_dir": str(tmp_path),
-        "paths.logs_dir": str(tmp_path / "logs"),
         "paths.reports_dir": str(tmp_path / "reports"),
         "logging.level": "INFO",
         "report.type": "html",
@@ -178,7 +177,7 @@ def test_a_key_no_page_names_still_gets_a_page(monkeypatch):
 
     placed = [key for _title, keys in pages for key in keys]
     assert sorted(placed) == sorted(settings_dialog.editable_keys())
-    assert ("Paths", ("paths.base_dir", "paths.logs_dir", "paths.reports_dir")) in pages
+    assert ("Paths", ("paths.base_dir", "paths.reports_dir")) in pages
 
 
 def test_the_theme_is_picked_from_three_cards(qapp, tmp_path):
@@ -251,7 +250,7 @@ def test_the_log_level_is_a_row_of_buttons(qapp, tmp_path):
     dialog = a_settings_dialog(tmp_path)
     buttons = dialog.editors["logging.level"].buttons
 
-    assert list(buttons) == ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    assert list(buttons) == ["TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
     buttons["DEBUG"].click()
 
     assert dialog.text_of("logging.level") == "DEBUG"
@@ -348,12 +347,10 @@ def test_a_relative_folder_cannot_be_saved_and_says_why(qapp, tmp_path):
 
 
 def test_open_is_offered_only_for_a_folder_that_exists(qapp, tmp_path):
-    (tmp_path / "reports").mkdir()
+    dialog = a_settings_dialog(tmp_path)  # the reports folder is not made yet
 
-    dialog = a_settings_dialog(tmp_path)
-
-    assert dialog.editors["paths.reports_dir"].open_button.isEnabled() is True
-    assert dialog.editors["paths.logs_dir"].open_button.isEnabled() is False
+    assert dialog.editors["paths.base_dir"].open_button.isEnabled() is True
+    assert dialog.editors["paths.reports_dir"].open_button.isEnabled() is False
     dialog.close()
 
 
@@ -607,6 +604,10 @@ def test_the_dialog_saves_through_core_and_shows_its_answer(gui_factory, monkeyp
     Save puts SetConfigParameter on the link, and CORE's answer - arriving
     through the poll timer, which keeps running under exec()'s nested event
     loop - reaches the open dialog.
+
+    The change is the log level, not a window size: the window keys are saved
+    by Keep in the "keep these window settings?" question, never by Save
+    (SettingsDialog._changes_to_save), and have tests of their own below.
     """
     from pypts.hmi.gui.settings_dialog import SettingsDialog
 
@@ -614,19 +615,19 @@ def test_the_dialog_saves_through_core_and_shows_its_answer(gui_factory, monkeyp
     instance, outbox, inbox = gui_factory()
     seen = {}
 
-    def operator_changes_the_width(dialog):
-        dialog.set_value("gui.window_width", "1500")
+    def operator_changes_the_log_level(dialog):
+        dialog.set_value("logging.level", "INFO")
         dialog.save_button.click()
         seen["asked"] = [m for m in drain(outbox) if isinstance(m, SetConfigParameter)]
-        inbox.send(ConfigParameterResult(key="gui.window_width", value="1500", accepted=True))
+        inbox.send(ConfigParameterResult(key="logging.level", value="INFO", accepted=True))
         instance.poll_core()
         seen["saved"] = dialog.saved
         return 0
 
-    monkeypatch.setattr(SettingsDialog, "exec", operator_changes_the_width)
+    monkeypatch.setattr(SettingsDialog, "exec", operator_changes_the_log_level)
     instance.window.settings_action.trigger()
 
-    assert seen["asked"] == [SetConfigParameter(key="gui.window_width", value="1500")]
+    assert seen["asked"] == [SetConfigParameter(key="logging.level", value="INFO")]
     # All accepted: the dialog closed itself, and the status line says so.
     assert seen["saved"] is True
     assert "Settings saved" in instance.status_label.text()
@@ -760,14 +761,16 @@ def test_view_offers_full_screen_on_f11(gui_factory):
 
 
 def test_full_screen_toggles_for_the_session(gui_factory):
+    """Full screen is maximised, not a true full screen - GUI._use_window() says why."""
     instance, _outbox, _inbox = gui_factory()
     instance.show()
 
     instance.window.full_screen_action.trigger()
-    assert instance.window.isFullScreen() is True
+    assert instance.window.isMaximized() is True
+    assert instance.window.isFullScreen() is False
 
     instance.window.full_screen_action.trigger()
-    assert instance.window.isFullScreen() is False
+    assert instance.window.isMaximized() is False
 
 
 def test_the_window_opens_in_the_configured_mode(gui_factory):
@@ -776,32 +779,66 @@ def test_the_window_opens_in_the_configured_mode(gui_factory):
 
     instance.show()
 
-    assert instance.window.isFullScreen() is True
+    assert instance.window.isMaximized() is True
     assert instance.window.full_screen_action.isChecked() is True
 
 
-def test_a_window_tried_in_settings_really_resizes_and_cancel_restores_it(
-    gui_factory, monkeypatch
-):
+def test_a_window_kept_in_settings_is_saved_and_stays_after_cancel(gui_factory, monkeypatch):
+    """
+    Keep in the "keep these window settings?" question is a save: the size goes
+    to CORE at once and counts as what the dialog opened with, so leaving the
+    dialog by Cancel does not put the old window back.
+    """
     from pypts.hmi.gui import settings_dialog
     from pypts.hmi.gui.settings_dialog import SettingsDialog
 
     a_config_file()
-    instance, _outbox, _inbox = gui_factory()
+    instance, outbox, _inbox = gui_factory()
     instance.show()
     monkeypatch.setattr(settings_dialog, "confirm_window_settings", lambda text, parent: True)
     seen = {}
 
-    def try_hd_plus_then_cancel(dialog):
+    def try_hd_plus_keep_it_then_cancel(dialog):
         dialog.presets["HD+"].click()
         seen["size_while_open"] = (instance.window.width(), instance.window.height())
+        seen["asked"] = [m for m in drain(outbox) if isinstance(m, SetConfigParameter)]
         dialog.reject()
         return 0
 
-    monkeypatch.setattr(SettingsDialog, "exec", try_hd_plus_then_cancel)
+    monkeypatch.setattr(SettingsDialog, "exec", try_hd_plus_keep_it_then_cancel)
     instance.window.settings_action.trigger()
 
     assert seen["size_while_open"] == (1600, 900)
+    assert seen["asked"] == [
+        SetConfigParameter(key="gui.window_width", value="1600"),
+        SetConfigParameter(key="gui.window_height", value="900"),
+    ]
+    assert (instance.window.width(), instance.window.height()) == (1600, 900)
+
+
+def test_a_window_not_kept_in_settings_is_put_back_at_once(gui_factory, monkeypatch):
+    """Not keeping a tried window restores the previous one there and then, and saves nothing."""
+    from pypts.hmi.gui import settings_dialog
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+
+    a_config_file()
+    instance, outbox, _inbox = gui_factory()
+    instance.show()
+    monkeypatch.setattr(settings_dialog, "confirm_window_settings", lambda text, parent: False)
+    seen = {}
+
+    def try_hd_plus_and_refuse_it(dialog):
+        dialog.presets["HD+"].click()
+        seen["size_after_refusing"] = (instance.window.width(), instance.window.height())
+        seen["asked"] = [m for m in drain(outbox) if isinstance(m, SetConfigParameter)]
+        dialog.reject()
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", try_hd_plus_and_refuse_it)
+    instance.window.settings_action.trigger()
+
+    assert seen["size_after_refusing"] == (1280, 720)
+    assert seen["asked"] == []
     assert (instance.window.width(), instance.window.height()) == (1280, 720)
 
 

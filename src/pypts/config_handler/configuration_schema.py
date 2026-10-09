@@ -24,10 +24,11 @@ that would be wrong on Linux. Once written they are ordinary values the user may
 edit, and nothing recomputes them.
 
 The schema is a flat list of named sections and nothing else. A section the user
-adds that is not in it - `[hardware.dmm1]`, most likely - is not an error: it is
-kept as it was written, reported once at WARNING, and its values come back as
-text. How hardware is configured is Phase 5's question, and this module does not
-pre-empt the answer.
+adds that is not in it is not an error: it is kept as it was written, reported
+once at WARNING, and its values come back as text. The one family of sections it
+knows without typing them is `[hardware.<name>]`: each declares a device for the
+hardware layer (pypts.hal), whose keys belong to the device's driver - kept as
+text, without a warning. See hal/hal.md.
 """
 
 from dataclasses import dataclass
@@ -75,7 +76,7 @@ class Field:
 
 #: The log levels `[logging] level` accepts. Same set as the launcher's
 #: --log-level argument, which overrides this value for one run.
-LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+LOG_LEVELS = ("TRACE", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
 #: section -> key -> Field. Section names are lower case with dots for
 #: hierarchy; configparser treats them as opaque strings, so the dots cost
@@ -92,14 +93,13 @@ SCHEMA: dict[str, dict[str, Field]] = {
     },
     "paths": {
         "base_dir": Field("path", derived=True),
-        "logs_dir": Field("path", derived=True),
         "reports_dir": Field("path", derived=True),
     },
     "logging": {
-        # DEBUG for the duration of the refactor, so every run carries the
-        # message trace and the Debug Monitor always has something to read.
+        # TRACE for the duration of the refactor, so every run carries the
+        # message trace.
         # This reverts to INFO before v1.0 - see the TODO in the roadmap.
-        "level": Field("str", "DEBUG", choices=LOG_LEVELS),
+        "level": Field("str", "TRACE", choices=LOG_LEVELS),
     },
     "report": {
         "type": Field("str", "html", choices=("html", "csv")),
@@ -125,14 +125,24 @@ SCHEMA: dict[str, dict[str, Field]] = {
 #: either, so the rule holds even for a frontend that forgets it.
 READ_ONLY_SECTIONS = ("meta", "operating_system")
 
+#: The prefix of a device section: `[hardware.ssh1]` declares the device the
+#: hardware layer knows as 'ssh1'. Its keys are the driver's, so none is typed
+#: here; they come back as text. Nothing in such a section is mandatory, which
+#: is why adding this did not change CONFIG_VERSION.
+HARDWARE_PREFIX = "hardware."
+
+
+def is_hardware_section(section: str) -> bool:
+    """Whether a section declares a device: `hardware.` followed by a logical name."""
+    return section.startswith(HARDWARE_PREFIX) and len(section) > len(HARDWARE_PREFIX)
+
 
 def schema_for_section(section: str) -> dict[str, Field] | None:
     """
     The fields a section is validated against, or None if it is not part of the
     schema at all.
 
-    A plain lookup today. It stays a function rather than a dict access because
-    it is the one place that decides what a section name means, and Phase 5 will
-    have to answer that question again for hardware.
+    A plain lookup. A device section is not in the schema either - its keys are
+    the driver's - and is_hardware_section() is what tells the two apart.
     """
     return SCHEMA.get(section)

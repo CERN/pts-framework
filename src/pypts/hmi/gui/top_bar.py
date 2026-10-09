@@ -38,6 +38,12 @@ _FOLDER_SVG = (
     '<path d="M2 12V5a1 1 0 011-1h3.5l1.5 1.5H13a1 1 0 011 1V12a1 1 0 01-1 1H3a1 1 0 01-1-1z"/>'
     "</svg>"
 )
+_CROSS_SVG = (
+    '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"'
+    ' fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">'
+    '<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>'
+    "</svg>"
+)
 _MAGNIFIER_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"'
     ' fill="none" stroke="{color}" stroke-width="1.5" stroke-linecap="round">'
@@ -94,7 +100,7 @@ def describe(widget: QWidget, title: str, detail: str) -> None:
 
 
 class TopBarContent(QToolBar):
-    """Open / Preview / sequence chooser / Start / Pause / Stop. A native QToolBar."""
+    """Open / Unload / Preview / sequence chooser / Start / Pause / Stop. A native QToolBar."""
 
     def __init__(
         self,
@@ -105,6 +111,7 @@ class TopBarContent(QToolBar):
         on_sequence_selected: Callable[[str], None],
         on_open_report: Callable[[], None],
         on_preview: Callable[[], None] = lambda: None,
+        on_unload: Callable[[], None] = lambda: None,
     ) -> None:
         super().__init__()
         self.setMovable(False)
@@ -118,8 +125,11 @@ class TopBarContent(QToolBar):
         self._on_sequence_selected = on_sequence_selected
         self._on_open_report = on_open_report
         self._on_preview = on_preview
+        self._on_unload = on_unload
         self._dark = False
         self._running = False
+        #: Whether CORE holds a recipe: from RecipeLoaded to RecipeUnloaded.
+        self._recipe_loaded = False
         self._metadata: dict[str, str] = {}
         #: Rendering only: whether the run is paused or pausing, so Start reads
         #: Resume and Pause is greyed. The GUI owns the pause state and sets
@@ -131,6 +141,14 @@ class TopBarContent(QToolBar):
         self.open_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
         self.open_button.setIconSize(QSize(16, 16))
         self.open_button.clicked.connect(self.choose_recipe_file)
+
+        # Unload the recipe: back to the window as it opened, with a fresh run
+        # log. Greyed while there is nothing loaded and while a run is on.
+        self.unload_button = QToolButton()
+        self.unload_button.setAutoRaise(True)
+        self.unload_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        self.unload_button.setIconSize(QSize(16, 16))
+        self.unload_button.clicked.connect(lambda _checked=False: self._on_unload())
 
         # The whole loaded recipe, read-only. Allowed during a run too: looking
         # changes nothing. Greyed until there is a recipe to look at.
@@ -188,6 +206,7 @@ class TopBarContent(QToolBar):
         self.report_button.clicked.connect(self._on_open_report)
 
         self.addWidget(self.open_button)
+        self.addWidget(self.unload_button)
         self.addWidget(self.preview_button)
         self.addWidget(self.start_button)
         self.addWidget(self.pause_button)
@@ -198,6 +217,7 @@ class TopBarContent(QToolBar):
         self.addWidget(self.report_button)
 
         self.sequence_combo.setEnabled(False)
+        self.unload_button.setEnabled(False)
         self.preview_button.setEnabled(False)
         self.start_button.setEnabled(False)
         self.pause_button.setEnabled(False)
@@ -218,7 +238,10 @@ class TopBarContent(QToolBar):
         palette = get_palette(self._dark)
         icon_color = palette.accent_text if self._dark else palette.toolbutton
         disabled = palette.icon_disabled
-        self.open_button.setIcon(_svg_icon(_FOLDER_SVG.format(color=icon_color)))
+        open_color = icon_color if self.open_button.isEnabled() else disabled
+        self.open_button.setIcon(_svg_icon(_FOLDER_SVG.format(color=open_color)))
+        unload_color = icon_color if self.unload_button.isEnabled() else disabled
+        self.unload_button.setIcon(_svg_icon(_CROSS_SVG.format(color=unload_color)))
         preview_color = icon_color if self.preview_button.isEnabled() else disabled
         self.preview_button.setIcon(_svg_icon(_MAGNIFIER_SVG.format(color=preview_color)))
         can_start = self.start_button.isEnabled()
@@ -249,6 +272,16 @@ class TopBarContent(QToolBar):
             if self.open_button.isEnabled()
             else "Not while a run is in progress - stop the run first.",
         )
+        if self.unload_button.isEnabled():
+            unload_detail = (
+                "Close the loaded recipe and clear the window. "
+                "The run log carries on in a new file."
+            )
+        elif self._running:
+            unload_detail = "Not while a run is in progress - stop the run first."
+        else:
+            unload_detail = "No recipe is loaded."
+        describe(self.unload_button, "Unload recipe", unload_detail)
         describe(
             self.preview_button,
             "Preview recipe",
@@ -376,7 +409,9 @@ class TopBarContent(QToolBar):
         self.metadata_label.setVisible(False)
 
     def show_recipe_loaded(self, event: RecipeLoaded) -> None:
-        """A recipe is in: offer its sequences, allow starting."""
+        """A recipe is in: offer its sequences, allow starting and unloading."""
+        self._recipe_loaded = True
+        self.unload_button.setEnabled(True)
         self.clear_run_metadata()
         self.sequence_combo.blockSignals(True)
         self.sequence_combo.clear()
@@ -394,6 +429,7 @@ class TopBarContent(QToolBar):
         """A run is on: nothing may change under it, only pausing and stopping are left."""
         self._running = True
         self.open_button.setEnabled(False)
+        self.unload_button.setEnabled(False)
         self.sequence_combo.setEnabled(False)
         self.start_button.setEnabled(False)
         self.pause_button.setEnabled(True)
@@ -404,8 +440,24 @@ class TopBarContent(QToolBar):
         """The run answered - however it went, the operator has the controls back."""
         self._running = False
         self.open_button.setEnabled(True)
+        self.unload_button.setEnabled(self._recipe_loaded)
         self.sequence_combo.setEnabled(True)
         self.start_button.setEnabled(True)
+        self.pause_button.setEnabled(False)
+        self.stop_button.setEnabled(False)
+        self._refresh_controls()
+
+    def show_recipe_unloaded(self) -> None:
+        """No recipe any more: the controls go back to how the window opened."""
+        self._recipe_loaded = False
+        self.clear_run_metadata()
+        self.sequence_combo.blockSignals(True)
+        self.sequence_combo.clear()
+        self.sequence_combo.blockSignals(False)
+        self.sequence_combo.setEnabled(False)
+        self.unload_button.setEnabled(False)
+        self.preview_button.setEnabled(False)
+        self.start_button.setEnabled(False)
         self.pause_button.setEnabled(False)
         self.stop_button.setEnabled(False)
         self._refresh_controls()

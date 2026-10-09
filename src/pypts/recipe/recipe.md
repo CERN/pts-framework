@@ -15,8 +15,7 @@ objects, but the step classes and the steptype registry belong to `pypts.step`
 | File | Owns |
 |------|------|
 | `recipe.py` | `Recipe`, `Sequence`, `RecipeError` — the data objects, plus the `from_file` / `from_yaml_text` facades |
-| `rules.py` | The format rules as data: required fields, defaults, the legal steptypes and input/output types. Definitions only — no code acts here |
-| `validator.py` | Mandatory-field and shape checks against `rules.py`; each function returns a list of problem strings |
+| `recipe_schema.py` | The format rules: the constants (same names as the old `rules.py`, read by the Recipe Creator and `step_source.py`) and the Pydantic models every document is validated with — `HeaderSchema`, `SequenceSchema`, `AnyStepSchema` and one model per steptype. Only `recipe_parser.py` uses the models |
 | `recipe_parser.py` | The whole load pipeline (below), `normalize_*`, `apply_defaults`, `current_recipe_version()` |
 | `step_source.py` | `step_sources_by_sequence(path)` — for each step-table row, the sequence document it belongs to as written and the step's lines in it, for the GUI's click panel |
 
@@ -35,33 +34,58 @@ failure — one exception type for CORE to catch.
 the running pypts (empty when there is no package metadata). Templates, generators and tests
 ask it rather than rebuilding the rule.
 
+For a tool that checks a recipe rather than loads it — the Recipe Creator's verificator
+(`helper_applications/recipe_creator/recipe_creator.md`):
+
+- `parse_recipe(text, file_name, check_version=False)` — the whole load, without the version
+  check (no log line, empty `version_notice`).
+- `validate_document(raw, schema_cls, context)` — one normalized document against
+  `HeaderSchema` or `SequenceSchema`: `([], model)` or `(problems, None)`, where each
+  `SchemaProblem` carries `where` and `message` (the two halves of the sentence a
+  `RecipeError` carries), `path` (the location in the document, as the YAML nests it, union
+  tags left out, positions from 0) and `kind` (Pydantic's error type).
+- `sequence_context(document, number)` — how a problem names a sequence document.
+- `recipe_schema.STEP_SCHEMAS` — each steptype's model, to ask which keys it takes.
+
 ## The load pipeline (`recipe_parser.py`)
 
 1. **Read** the file (`load_recipe` only). Unreadable → `RecipeError`.
 2. **Parse** the YAML: document 1 is the header, every further document is a sequence. Empty
    file, bad YAML or a non-mapping header → `RecipeError`.
 3. **Normalize** — the recipe language is case-insensitive. Keys of the header, sequences,
-   steps and input/output entries are lowercased, and so is an entry's `type`. Values keep
-   their case (`steptype: PythonModule` stays as written), and so do input/output *entry
-   names*. An `Indexed` step's `template` is normalized as a step.
-4. **Validate** (`validator.py`) — header, every sequence, every step. **All problems are
+   steps and input/output entries are lowercased, and so are a step's `steptype` and an
+   entry's `type`. Other values keep their case, and so do input/output *entry names*. An
+   `Indexed` step's `template` is normalized as a step.
+4. **Validate** (`recipe_schema.py`, via `validate_document()`) —
+   `HeaderSchema.model_validate()` on the header, `SequenceSchema.model_validate()` on every
+   sequence document, which checks every step through `AnyStepSchema`. **All problems are
    collected and raised as one `RecipeError`**, so the author fixes the file in one round.
-5. **Version check** — `_check_framework_version()` compares the header's `version` (the
+   Each problem (`SchemaProblem`) is Pydantic's own message at a location
+   `_describe_problem()` makes
+   findable: `sequence 'Main', steps[1] 'Only wait': wait_time: Field required` — steps
+   counted from 1 and named, the union tag Pydantic puts in the path left out, a number key
+   shown as a name (`outputs -> 1`), not a position. Three messages are reworded: a missing
+   or bare `steptype:` / output `type:` reads `Field required`, an unknown one
+   `steptype 'x' is not one of: …`, and a non-mapping where a model is expected
+   `Input should be a valid dictionary` (without Pydantic's class name). The header
+   then comes back as `model_dump()` with its defaults filled in (`report_metadata` names
+   stripped); each sequence as `model_dump(exclude_unset=True)` — only what the recipe
+   wrote, with numbers read as text where a name is expected, so the step constructors keep
+   their own defaults and an `Indexed` wrapper's unset `skip` stays unset.
+5. **Version check** (unless `check_version=False`) — `_check_framework_version()` compares the header's `version` (the
    pypts version the recipe was written for) with the running pypts, **major.minor only**.
    Warn-only during the refactor: an ERROR in the log and `Recipe.version_notice` set; the
    recipe still loads, and CORE shows the notice to the operator. Hard refusal is planned for
    ~v1.0.
-6. **Defaults** — `apply_defaults()` fills every absent (or `None`) optional key from
-   `HEADER_DEFAULTS` / `SEQUENCE_DEFAULTS`; mutable defaults are copied.
-7. **Expand** — every `Indexed` step becomes one ordinary step mapping per parameter set
+6. **Expand** — every `Indexed` step becomes one ordinary step mapping per parameter set
    (`step/indexed_step.py`). Nothing downstream ever sees the steptype.
-8. **Build** — first the checks that need the whole file: duplicate sequence names
+7. **Build** — first the checks that need the whole file: duplicate sequence names
    (case-insensitive), at least one sequence, `main_sequence` exists (case-insensitive; empty
    means the first sequence). Then each sequence, each step through
    `step.registry.build_step()` (a `KeyError`, `ValueError` or `TypeError` from a constructor
    becomes a `RecipeError` naming sequence, position and step), and a `Sequence` step gets a
-   fresh copy of the sequence it calls (below). Last, `report_metadata` must be a list of
-   non-empty strings.
+   fresh copy of the sequence it calls (below). `_build_sequence()` fills a sequence's
+   absent optional keys from `SEQUENCE_DEFAULTS` with `apply_defaults()`.
 
 ## Key types
 
@@ -89,8 +113,9 @@ A `steptype: Sequence` step calls another sequence document by `sequence_name`
 `_called_sequence()`), so no two calls share a `Step` or a UUID, and a sequence may be called
 any number of times. Refused with sequence, position and chain: an unknown `sequence_name`, a
 call to the main sequence, and recursion (`Main -> A -> B -> A`). The shape of the call
-(`sequence_name` required; `step_name`, `inputs`, `outputs`, `id` refused; not an `Indexed`
-template) is checked by the validator through `step/sequence_step.check_sequence_step()`.
+(`sequence_name` required, and not empty or only spaces; `step_name`, `inputs`, `outputs`, `id` refused with the reasons in
+`step/sequence_step.REFUSED_KEYS`; not an `Indexed` template) is checked by
+`SequenceStepSchema` and `IndexedStepSchema` in `recipe_schema.py`.
 
 `step_source.py` walks the same depth-first order to give every step-table row its click-panel text.
 
@@ -98,7 +123,12 @@ template) is checked by the validator through `step/sequence_step.check_sequence
 own tree, so any sequence can still be started. Stage 2 makes main the only runnable one and
 adds the "never called from main" warning.
 
-## Format rules (`rules.py`)
+## Format rules (`recipe_schema.py`)
+
+The constants below are plain data, read by the Recipe Creator's verificator and
+`step_source.py`. The models in the same file encode the same rules for validation;
+`tests/unit_tests/test_recipe_schema.py` pins every model's required fields against
+`STEP_REQUIRED` / `STEP_TYPE_REQUIRED`.
 
 | Name | Meaning |
 |------|---------|
@@ -118,6 +148,21 @@ adds the "never called from main" warning.
 
 Removed sequence keys, on purpose: `setup_steps`, `parameters` / `outputs`, `locals`. There is
 one variable scope, `globals`, for the whole run.
+
+What the models add to the constants:
+
+- A bare key (`description:`, read by YAML as `None`) counts as absent: an optional field
+  keeps its default, a required one is `Field required` (`_RecipeModel`).
+- Unknown keys are ignored in the header and in a sequence document, and **refused on a
+  step** (`extra="forbid"`) — every step key becomes a constructor argument.
+- A text field (`name`, `step_name`, `message`, `module`, …) takes text or a number, read
+  as its text; a YAML boolean, date or list is refused. Mapping keys (`globals`, `inputs`,
+  `outputs`) and global names stay exactly as written - a global is found by plain dict
+  lookup. `report_metadata` entries must be strings (a number is refused, not coerced).
+- Every ordinary step also takes the `Step` constructor's `id`, `inputs` and `outputs`.
+- An `Indexed` template may leave out `step_name` (it is checked under the indexed step's
+  name); a `parameter_sets` entry (`ParameterSet`) carries `inputs` and/or `expect` and
+  nothing else.
 
 ## `step_source.py` — the click panel's YAML
 
@@ -143,9 +188,12 @@ The authoritative checklist is `step/step.md` §4. On the recipe side:
 1. Add its required keys to `STEP_TYPE_REQUIRED` and its optional keys to
    `STEP_TYPE_DEFAULTS`, keyed lowercase. A unit test pins these keys against
    `step/registry.py`'s `STEP_TYPES`.
-2. Update the Recipe Creator's verificator hints in the same commit — the sync rule in
+2. Add its model to `recipe_schema.py` (subclass `_OrdinaryStep`, `steptype` a `Literal` of
+   the lowercase name) and to the `AnyStepSchema` union; `test_recipe_schema.py`'s
+   `_ONE_OF_EACH` needs one valid example, and pins the model against the constants.
+3. Update the Recipe Creator's verificator hints in the same commit — the sync rule in
    `helper_applications/recipe_creator/recipe_creator.md`.
-3. Document it in `recipe_guide.html`.
+4. Document it in `recipe_guide.html`.
 
 ## Known gaps
 

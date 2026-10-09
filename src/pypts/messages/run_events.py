@@ -116,6 +116,11 @@ class RunStarted:
     `report_metadata` header - the *names* are known now even though the
     values arrive later, as RunMetadata, which is what lets the header row
     be written once and stay correct.
+
+    `run_dir` is the run's folder, made by the Sequencer; the Report writes
+    into it. `run_log_path` is the run log inside it, which the GUI's log
+    panel follows. Either is "" when it could not be made - no folder, or no
+    Logger process to write a run log.
     """
 
     recipe_name: str
@@ -123,6 +128,8 @@ class RunStarted:
     recipe_version: str = ""
     pypts_version: str = ""
     metadata_names: tuple[str, ...] = ()
+    run_dir: str = ""
+    run_log_path: str = ""
 
 
 # Sender: Sequencer.execute_sequence(). Receiver: hmi_client.py show_run_finished()

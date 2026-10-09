@@ -369,15 +369,14 @@ class Pts:
     #: Headless mode (headless.py) says "headless".
     MODE = "api"
 
-    def __init__(self, log_level: str | None = None, debug_monitor: bool = False) -> None:
+    def __init__(self, log_level: str | None = None) -> None:
         """
         Args:
-            log_level: "DEBUG", "INFO", ... - overrides [logging] level in config.ini.
-            debug_monitor: open the Debug Monitor on this run's log.
+            log_level: "TRACE", "DEBUG", "INFO", ... - overrides [logging] level in config.ini.
         """
         self._saved_logging = _save_root_logging()
         try:
-            self._engine = startup.start_engine(self.MODE, log_level, debug_monitor)
+            self._engine = startup.start_engine(self.MODE, log_level)
         except BaseException:
             _restore_root_logging(self._saved_logging)
             raise
@@ -461,7 +460,6 @@ def open_gui(
     start: bool = False,
     sequence: str | None = None,
     log_level: str | None = None,
-    debug_monitor: bool = False,
 ) -> None:
     """
     Open the pypts window, as `python -m pypts` does, and wait until it is closed.
@@ -500,7 +498,7 @@ def open_gui(
 
     saved_logging = _save_root_logging()
     try:
-        engine = startup.start_engine("gui", log_level, debug_monitor)
+        engine = startup.start_engine("gui", log_level)
         try:
             startup.run_gui(engine, recipe_path, start, sequence)
         finally:

@@ -66,7 +66,7 @@ launcher/startup.py
             └─ anything wrong → defaults in memory, no write → outcome DISCARDED
   show_config_popup(...)            # launcher: popup (GUI) / banner (CLI) for CREATED/DISCARDED
   _validate()                        # every value converted to its declared type
-  get_parameter("paths.logs_dir")    # decides the log file path
+  get_parameter("paths.reports_dir") # decides where the session log goes
   init_logging(...)
   config.replay_bootstrap_log()      # the buffered narration finally reaches the run log
 
@@ -99,8 +99,8 @@ Sections currently in the schema:
 |---|---|
 | `meta` | `config_version` (`MAJOR.MINOR.PATCH` string, managed by pypts) |
 | `operating_system` | `name`, `version`, `architecture`, `kernel` — **derived**, recorded once at creation, never recomputed |
-| `paths` | `base_dir`, `logs_dir`, `reports_dir` — **derived** paths |
-| `logging` | `level` — one of `DEBUG/INFO/WARNING/ERROR/CRITICAL` |
+| `paths` | `base_dir`, `reports_dir` — **derived** paths. `reports_dir` holds the session log and one folder per run (report + that run's log) |
+| `logging` | `level` — one of `TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL`; ships `TRACE` |
 | `report` | `type` (`html`/`csv`), `theme` |
 | `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
 
@@ -119,13 +119,12 @@ settings: the Settings dialog does not offer them and CORE refuses a
   Windows) without hardcoding a Windows path (wrong on Linux). Once written they are
   ordinary values the user may edit, and nothing recomputes them.
 
-**There is no hardware section.** There used to be: `[hardware.example_device]` in the
-template, a matching entry in `SCHEMA`, and a `SECTION_FAMILIES` prefix rule that validated
-any `[hardware.<logical name>]` against the example's fields. Nothing consumed it, and it
-committed the file to a shape Phase 5 had not chosen yet, so all three were removed. A
-hardware section a user writes today is simply a section the schema does not know: kept
-verbatim, reported once at WARNING, values returned as text. Phase 5 decides what replaces
-it.
+**Hardware sections.** A `[hardware.<logical name>]` section declares one device for the
+hardware layer (`hal/hal.md` → *Configuration*). The schema types none of its keys — they are
+the driver's — so it is kept verbatim and returned as text, like an unknown section, but
+**without** the WARNING (the section gets a DEBUG note instead): `configuration_schema.is_hardware_section()` tells the two apart.
+Nothing in it is mandatory, so `CONFIG_VERSION` did not change. The template ends with a
+commented example.
 
 ---
 
@@ -133,9 +132,9 @@ it.
 
 ```python
 config = ConfigHandler()
-config.get_parameter("paths.logs_dir")               # -> Path
+config.get_parameter("paths.reports_dir")            # -> Path
 config.get_parameter("gui.window_width")             # -> int
-config.get_parameter("hardware.dmm1.timeout_s")      # -> str: not in the schema
+config.get_parameter("hardware.dmm1.timeout_s")      # -> str: a device section, untyped
 config.get_parameter("paths.nothing", default=None)  # -> None instead of raising
 ```
 
@@ -276,7 +275,7 @@ Two file-format details worth knowing:
 
 | Caller | Uses |
 |---|---|
-| `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.logs_dir`, `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
+| `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.reports_dir` (the session log), `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
 | `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
 | `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` when the window opens (template defaults if there is no config); `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
@@ -338,15 +337,22 @@ Roadmap §1.3 is the authority; the TODOs live there, not in code comments. In s
   and to act on it — not planned.
 - **`restore_default()` and `dump()` have no framework caller** — API surface only the tests
   exercise.
-- **Hardware is not configurable yet, at all.** The placeholder section and its family rule
-  were removed rather than left to be designed around; a `[hardware.dmm1]` written by hand is
-  preserved and returned as text, and nothing types it, repairs it or reads it. Phase 5 owns
-  the replacement — reading a device section into a `DeviceConfig` and handing it to drivers
-  by logical name — and is free to choose a shape that is not this one.
+- **Device sections are untyped.** A wrong key in `[hardware.<name>]` is found only when the
+  driver reads it (at the first `get_device()`), not at start-up.
+- **Secrets are masked in the log, not protected on disk.** `_note_active_configuration()`,
+  `dump()` and `set_parameter()`'s INFO line ("Setting '...' changed to '******'."), and CORE's
+  refused-change DEBUG line, show a key named like a password (`utilities/common.py` →
+  `is_secret_key()`) as `******`; `config.ini` itself stays plain text. The hardware layer's
+  `connect` / `recover` trace (`ConnectionDriver`) is masked the same way.
+- **The message trace is not masked.** `QueueWrapper`'s TRACE lines log `SetConfigParameter` /
+  `ConfigParameterResult` payloads verbatim, so a secret set through the protocol appears in a
+  TRACE run log. Masking belongs in the message layer (design conversation; roadmap §1.54).
 - **`report.type` / `report.theme` are editable but not yet used** — Phase 4. The
   Settings dialog marks both "Not used yet."
 - **`stdout_logging_enabled` is still derived from `--mode`**, not from the configuration.
   Probably correct — it follows from having a console rather than from a preference — but it
   is the one logging decision the config does not own.
-- **Per-run log folders do not exist.** `paths.logs_dir` is honoured, but it is still one
-  timestamped file per run rather than a folder per run with a file per process.
+- **`logs_dir` was retired on 2026-10-09.** Logs now live in `reports_dir`. An existing
+  config.ini that still has a `logs_dir =` line loads normally; the line is an unknown key,
+  kept as text and warned about once, until its owner deletes it. `CONFIG_VERSION` did not
+  change - nothing new is mandatory.

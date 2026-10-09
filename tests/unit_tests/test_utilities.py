@@ -32,10 +32,13 @@ import pytest
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
 from pypts.utilities.common import (
+    MASK,
     convert_string_to_int,
     describe_step_values,
     describe_value,
     ignore_keyboard_interrupt,
+    is_secret_key,
+    masked,
 )
 from pypts.utilities.error_handling import (
     catch_and_report_errors,
@@ -93,13 +96,13 @@ def test_catch_and_report_errors_lets_an_explicit_module_name_win():
         def __init__(self):
             self.core = QueueWrapper(outbox)
 
-        @catch_and_report_errors(module_name="pypts.hardware_layer.hal")
+        @catch_and_report_errors(module_name="pypts.hal.local_setup")
         def explode(self):
             raise RuntimeError("driver lost")
 
     Named().explode()
 
-    assert outbox.get_nowait().source == "pypts.hardware_layer.hal"
+    assert outbox.get_nowait().source == "pypts.hal.local_setup"
 
 
 def test_catch_and_report_errors_swallows_so_an_event_loop_survives():
@@ -400,3 +403,79 @@ def test_describe_step_values_gives_one_line_per_group_and_none_when_empty():
     ) == ["inputs: a = 2, b = 3", "outputs: sum = 5 (equals 5)"]
     # An output with no declared check is shown bare.
     assert describe_step_values({}, {"label": "'ch1'"}, {}) == ["outputs: label = 'ch1'"]
+
+
+@pytest.mark.parametrize(
+    ("key", "secret"),
+    [
+        ("password", True),
+        ("SSH_Password", True),
+        ("key_passphrase", True),
+        ("api_token", True),
+        ("client_secret", True),
+        ("host", False),
+        ("key_filename", False),
+    ],
+)
+def test_is_secret_key(key, secret):
+    assert is_secret_key(key) is secret
+
+
+def test_masked_hides_only_the_secrets():
+    assert masked({"host": "h", "password": "hunter2"}) == {"host": "h", "password": MASK}
+
+
+# --------------------------------------------------------------------------
+# local_storage: the next run log
+# --------------------------------------------------------------------------
+
+
+def test_the_next_log_file_is_a_new_file_beside_the_current_one(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from pypts.utilities import local_storage
+
+    same_second = str(tmp_path / "pypts_20261009_093012.log")
+    monkeypatch.setattr(local_storage, "get_log_file_path", lambda folder: same_second)
+    Path(same_second).write_text("", encoding="utf-8")
+    (tmp_path / "pypts_20261009_093012_2.log").write_text("", encoding="utf-8")
+
+    new_path = local_storage.next_log_file_path(same_second)
+
+    assert new_path == str(tmp_path / "pypts_20261009_093012_3.log")
+
+
+def test_the_next_log_file_takes_the_plain_name_when_it_is_free(tmp_path):
+    from pathlib import Path
+
+    from pypts.utilities.local_storage import LOG_FILE_PREFIX, next_log_file_path
+
+    current = tmp_path / "pypts_20000101_000000.log"
+
+    new_path = Path(next_log_file_path(current))
+
+    assert new_path.parent == tmp_path
+    assert new_path != current
+    assert new_path.name.startswith(LOG_FILE_PREFIX + "_")
+
+
+def test_a_run_folder_is_named_after_the_time_and_the_recipe(tmp_path):
+    from pypts.utilities.local_storage import make_run_folder
+
+    run_dir = make_run_folder(tmp_path / "reports", "Wait demo!")
+
+    assert run_dir.is_dir()
+    assert run_dir.parent == tmp_path / "reports"
+    assert run_dir.name.endswith("_Wait_demo_")
+
+
+def test_a_second_run_folder_in_the_same_second_gets_a_suffix(tmp_path, monkeypatch):
+    from pypts.utilities import local_storage
+
+    monkeypatch.setattr(local_storage.time, "strftime", lambda *args: "20261009_093012")
+
+    first = local_storage.make_run_folder(tmp_path, "demo")
+    second = local_storage.make_run_folder(tmp_path, "demo")
+
+    assert first.name == "20261009_093012_demo"
+    assert second.name == "20261009_093012_demo_2"

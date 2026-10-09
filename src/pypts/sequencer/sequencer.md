@@ -14,7 +14,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   sends heartbeats. Four methods carry `@catch_and_report_errors()` and no others:
   `poll_core()`, `handle_core_message()` (one bad message fails alone), `do_periodic_tasks()`
   and the two thread entry points `start()` and `execute_sequence()`. The handlers below them
-  — `run_sequence()`, `stop_sequence()`, `pause_sequence()`, `resume_sequence()`, `stop()` —
+  — `run_sequence()`, `forget_recipe()`, `stop_sequence()`, `pause_sequence()`,
+  `resume_sequence()`, `stop()` —
   are deliberately **undecorated**: their failures unwind to the per-message boundary instead
   of being swallowed a frame deeper, where the caller would carry on as if the call had
   worked. `start()` rather than `main_loop()` because the `while` is inside main_loop. The
@@ -22,11 +23,37 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 - **Recipe execution** — `run_sequence()` starts a worker thread for `execute_sequence()`.
   The event loop keeps turning while the sequence thread runs; this is what lets
   heartbeats keep flowing and `StopSequence` be processed mid-run.
-- **`execute_sequence()`** — resolves the sequence, builds a `Runtime`, emits
-  `RunStarted`, calls `run_sequence_body()` from the step layer, emits `RunFinished`.
+- **`execute_sequence()`** — resolves the sequence, builds a `Runtime`, makes the run
+  folder and starts the run log in it (`start_run_folder()`), emits `RunStarted` naming both,
+  runs the steps (`run_body()` → `run_sequence_body()` from the step layer), logs the run
+  summary, ends the run log, and only then emits `RunFinished`. That order is what puts every
+  line of the run - its first to the summary - in the run log, and the run's last lines before
+  the Report sees `RunFinished`. The end is in a `finally`, so a run that raises still returns
+  the Logger to the session log.
+- **The run folder and run log** — `start_run_folder()` calls
+  `utilities.local_storage.make_run_folder(self.reports_dir(), recipe name)`; a folder that
+  cannot be made is a WARNING `ModuleError` ("The results folder could not be created: …")
+  and the run goes on with `run_dir=""`. The run log is `get_log_file_path(run folder)`,
+  started with `log.start_run_log()`; its first line is `Run log of recipe '…', sequence '…'.`
+  With no Logger process (unit tests) there is no run log and `run_log_path` is `""`. After
+  the run the session log gets `The run's log is <path>`. `reports_dir` defaults to
+  `reports_dir_from_config()` (`paths.reports_dir`); tests replace it.
   `RunFinished.outcomes` and the run summary lines count **real steps** at every depth
   (`real_step_results()`): the row of a called sequence is not counted, the steps inside it
   are (`step/step.md` §2.8). Also watches `report_metadata` globals and forwards `RunMetadata` updates to CORE.
+- **The run's devices** — `execute_sequence()` runs the step layer inside
+  `with LocalSetup(self.read_hardware_sections):` (`hal/hal.md` → *Lifetime*). Test code opens a
+  device on first `get_device()`; every device closes when the block ends — after the teardown
+  steps, before `RunFinished`. `read_hardware_sections` defaults to
+  `hal.local_setup.hardware_sections_from_config` and is only called on the first `get_device()`, so a
+  run that uses no device never reads the device sections; tests replace it.
+- **Forgetting the recipe** — `self.recipe` is written only by `RunSequence` and keeps the
+  last run's recipe afterwards. `ForgetRecipe` (CORE sends it when the operator unloads the
+  recipe) runs `forget_recipe()`: `self.recipe = None`, and `forget_loaded_modules()` from
+  `step/python_module_step.py` drops the cached test modules, so an edited test file is read
+  afresh next time. Refused with `report_problem()` (ERROR, "Cannot unload the recipe: a test
+  is running…") while a sequence thread is alive — that thread is the module cache's only,
+  lockless, reader.
 - **Operator interaction** — `ask_operator()` puts a `UserPromptRequest`,
   `UserTextRequest` or `UserPathRequest` on the CORE link and blocks in `PendingRequests.wait()` until the
   response arrives. The event loop must keep turning; `ask_operator` runs on the sequence
@@ -80,3 +107,5 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 ## Known gaps
 
 - `WaitStep` does not honour `stop_requested` mid-sleep (step layer issue, not sequencer).
+- A run abandoned by `stop_running_sequence()` leaves its devices open until CORE exits; the
+  next run's bench replaces it as the active one.

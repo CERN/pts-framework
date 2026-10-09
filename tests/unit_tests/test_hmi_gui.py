@@ -908,7 +908,7 @@ def test_format_record_shows_level_time_and_message():
     assert line.startswith("INFO")
     assert "12:04:31" in line
     assert line.endswith("Recipe 'demo' (v1.0) loaded.")
-    # The parts the Debug Monitor is for stay out of the operator's panel.
+    # Developer detail stays out of the operator's panel.
     assert "core.py" not in line
     assert "2026-09-01" not in line
 
@@ -924,12 +924,35 @@ def test_format_record_keeps_a_message_containing_semicolons():
 
 
 def test_format_record_drops_records_below_the_panel_level():
-    """config.ini ships DEBUG, so the file carries the whole message trace."""
+    """config.ini ships TRACE, so the file carries the whole message trace."""
     from pypts.hmi.gui.log_tail import format_record
 
+    assert format_record(a_record("TRACE", "send hmi->core LoadRecipe(...)")) is None
     assert format_record(a_record("DEBUG", "HMI->CORE send: LoadRecipe(...)")) is None
     assert format_record(a_record("WARNING", "unknown log level")) is not None
     assert format_record(a_record("ERROR", "it broke")) is not None
+
+
+def test_log_tail_knows_trace_without_the_message_layer_loaded():
+    """
+    An unknown level is shown, not hidden - so log_tail must know TRACE itself.
+
+    Run in a fresh interpreter: in this one the message layer has long since
+    registered the name, which would hide the gap.
+    """
+    import subprocess
+    import sys
+
+    probe = (
+        "from pypts.hmi.gui.log_tail import format_record; "
+        "print(format_record('2026-10-09 10:26:25.376;TRACE;Core;queue_wrapper.py:send;"
+        "send core->hmi X()'))"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe], capture_output=True, text=True, check=True
+    )
+
+    assert result.stdout.strip() == "None"
 
 
 def test_log_tail_reads_only_what_is_new(tmp_path):
@@ -1089,18 +1112,6 @@ def test_the_submenu_lists_recipes_most_recent_first(gui, tmp_path):
     assert labels[0] == "second.yml"
     assert labels[1] == "first.yml"
     assert "Clear list" in labels
-
-
-def test_an_empty_submenu_says_so_and_cannot_be_clicked(gui):
-    """A dead menu item beats an empty menu the operator thinks is broken."""
-    instance, _outbox, _inbox = gui
-
-    instance._rebuild_recent_menu()
-    actions = instance.window.recent_menu.actions()
-
-    assert len(actions) == 1
-    assert actions[0].isEnabled() is False
-    assert "No recent recipes" in actions[0].text()
 
 
 def test_the_full_path_is_the_tooltip(gui, tmp_path):
@@ -1513,6 +1524,7 @@ def test_every_top_bar_control_describes_itself(gui):
 
     controls = (
         top.open_button,
+        top.unload_button,
         top.start_button,
         top.pause_button,
         top.stop_button,
@@ -2642,3 +2654,330 @@ def test_loading_a_recipe_keeps_the_last_results(gui):
     load_demo_recipe(instance, inbox)
 
     assert results_tree_rows(instance) == 1
+
+
+# --------------------------------------------------------------------------
+# Unloading the recipe
+# --------------------------------------------------------------------------
+
+
+def test_unload_is_offered_only_with_a_recipe_and_no_run(gui):
+    instance, _outbox, inbox = gui
+    top = instance.top_bar
+    menu_entry = instance.window.unload_recipe_action
+
+    assert not top.unload_button.isEnabled()
+    assert not menu_entry.isEnabled()
+    assert "No recipe is loaded" in top.unload_button.toolTip()
+
+    load_demo_recipe(instance, inbox)
+    assert top.unload_button.isEnabled()
+    assert menu_entry.isEnabled()
+
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    instance.poll_core()
+    assert not top.unload_button.isEnabled()
+    assert not menu_entry.isEnabled()
+    assert "Not while a run is in progress" in top.unload_button.toolTip()
+
+    inbox.send(RunFinished(result=ResultType.DONE))
+    instance.poll_core()
+    assert top.unload_button.isEnabled()
+    assert menu_entry.isEnabled()
+
+
+def test_the_unload_button_and_the_menu_entry_ask_core_to_unload(gui):
+    from pypts.messages.core_hmi_communication import UnloadRecipe
+
+    instance, outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    drain(outbox)
+
+    instance.top_bar.unload_button.click()
+    instance.window.unload_recipe_action.trigger()
+
+    sent = [message for message in drain(outbox) if isinstance(message, UnloadRecipe)]
+    assert len(sent) == 2
+
+
+def test_the_unload_button_sits_right_after_open(gui):
+    instance, _outbox, _inbox = gui
+    top = instance.top_bar
+
+    widgets = [top.widgetForAction(action) for action in top.actions()]
+
+    assert widgets.index(top.unload_button) == widgets.index(top.open_button) + 1
+
+
+def test_recipe_unloaded_puts_the_window_back_as_it_opened(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+    from pypts.messages.core_hmi_communication import RecipeUnloaded
+
+    instance, _outbox, inbox = gui
+    event = load_demo_recipe(instance, inbox)
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    inbox.send(StepFinished(outcome=a_measured_outcome(event.sequences[0].steps[0].step_id)))
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=(a_measured_outcome(),)))
+    inbox.send(RunMetadata(values=(("serial_number", "SN-1"),)))
+    instance.poll_core()
+    assert instance.window.view_tabs.pulsing_tab() == TAB_RESULTS
+
+    inbox.send(RecipeUnloaded())
+    instance.poll_core()
+
+    window = instance.window
+    top = instance.top_bar
+    assert instance.current_recipe is None
+    assert window.recipe_label.text() == "No recipe loaded"
+    assert window.windowTitle() == "pyPTS"
+    assert instance.status_label.text() == "Status: Idle"
+    assert window.run_stack.currentIndex() == 0  # the idle logo
+    assert window.view_tabs.currentIndex() == TAB_RUN
+    assert window.view_tabs.pulsing_tab() is None
+    assert results_tree_rows(instance) == 0
+    assert instance.step_table.table.rowCount() == 0
+    assert window.run_progress.isVisibleTo(window) is False
+    assert top.sequence_combo.count() == 0
+    assert not top.sequence_combo.isEnabled()
+    assert not top.start_button.isEnabled()
+    assert not top.preview_button.isEnabled()
+    assert not top.unload_button.isEnabled()
+    assert top.metadata_label.text() == ""
+    assert top.open_button.isEnabled()
+    assert instance.report_dir is None
+
+
+def test_unloading_switches_the_run_log_and_the_panel_follows_the_new_file(
+    gui, tmp_path, monkeypatch
+):
+    from pypts.hmi.gui import gui as gui_module
+    from pypts.messages.core_hmi_communication import RecipeUnloaded
+
+    instance, _outbox, inbox = gui
+    old_log = tmp_path / "pypts_20261009_091500.log"
+    old_log.write_text(a_record("INFO", "Before the unload.") + "\n", encoding="utf-8")
+    current = {"path": str(old_log)}
+    switched_to = []
+
+    def fake_switch(path):
+        switched_to.append(path)
+        current["path"] = path
+        return True
+
+    monkeypatch.setattr(gui_module, "get_log_path", lambda: current["path"])
+    monkeypatch.setattr(gui_module, "switch_log_file", fake_switch)
+    instance.start_log_tail()
+    instance.poll_log()
+    assert "Before the unload." in instance.center.log_panel.toPlainText()
+
+    load_demo_recipe(instance, inbox)
+    inbox.send(RecipeUnloaded())
+    instance.poll_core()
+
+    # A new file beside the old one, the panel emptied and waiting for it.
+    assert len(switched_to) == 1
+    new_log = Path(switched_to[0])
+    assert new_log.parent == tmp_path
+    assert new_log != old_log
+    assert instance.center.log_panel.toPlainText() == ""
+    instance.poll_log()
+    assert instance.log_tail is None
+
+    # The Logger creates it; the panel picks it up on the next tick.
+    new_log.write_text(a_record("INFO", "After the unload.") + "\n", encoding="utf-8")
+    instance.poll_log()
+    instance.poll_log()
+    shown = instance.center.log_panel.toPlainText()
+    assert "After the unload." in shown
+    assert "Before the unload." not in shown
+
+    instance.stop_log_tail()
+
+
+def test_the_new_run_log_starts_with_the_startup_header(gui, tmp_path, monkeypatch, caplog):
+    from pypts.hmi.gui import gui as gui_module
+
+    instance, _outbox, _inbox = gui
+    old_log = tmp_path / "pypts_20261009_091500.log"
+    current = {"path": str(old_log)}
+
+    def fake_switch(path):
+        current["path"] = path
+        return True
+
+    monkeypatch.setattr(gui_module, "get_log_path", lambda: current["path"])
+    monkeypatch.setattr(gui_module, "switch_log_file", fake_switch)
+
+    with caplog.at_level(logging.INFO):
+        instance.start_new_log_file()
+
+    new_name = Path(current["path"]).name
+    lines = [record.getMessage() for record in caplog.records if record.levelno >= logging.INFO]
+    assert lines[0] == f"Run log continues in {new_name}"
+    assert lines[1].startswith("PyPTS ") and lines[1].endswith(" started in GUI mode.")
+    assert lines[2].startswith("Started by ")
+    assert lines[3] == f"Run log: {current['path']}"
+    assert lines[4] == f"Run log continues from {old_log.name}"
+    instance.stop_log_tail()
+
+
+def test_a_new_run_log_that_never_appears_is_reported_in_the_panel(gui, tmp_path, monkeypatch):
+    from pypts.hmi.gui import gui as gui_module
+
+    instance, _outbox, _inbox = gui
+    current = {"path": str(tmp_path / "pypts_20261009_091500.log")}
+
+    def fake_switch(path):
+        current["path"] = path
+        return True
+
+    monkeypatch.setattr(gui_module, "get_log_path", lambda: current["path"])
+    monkeypatch.setattr(gui_module, "switch_log_file", fake_switch)
+    instance.start_new_log_file()
+
+    instance._new_log_deadline = 0.0  # already past
+    instance.poll_log()
+
+    assert "Could not open the run log" in instance.center.log_panel.toPlainText()
+    assert instance.log_timer.isActive() is False
+
+
+def test_unloading_without_a_run_log_leaves_the_panel_alone(gui):
+    from pypts.messages.core_hmi_communication import RecipeUnloaded
+
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+
+    inbox.send(RecipeUnloaded())
+    instance.poll_core()
+
+    assert "No run log to follow." in instance.center.log_panel.toPlainText()
+    assert instance.log_tail is None
+
+
+# --------------------------------------------------------------------------
+# The run log: the panel follows it during a run, without clearing
+# --------------------------------------------------------------------------
+
+
+def write_records(path, *messages):
+    """Append records to a log file the way the Logger does - whole lines."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as handle:
+        for message in messages:
+            handle.write(a_record("INFO", message) + "\n")
+
+
+def a_gui_following_a_session_log(gui, tmp_path, monkeypatch):
+    from pypts.hmi.gui import gui as gui_module
+
+    instance, _outbox, _inbox = gui
+    session = tmp_path / "pypts_session.log"
+    write_records(session, "Before the run.")
+    monkeypatch.setattr(gui_module, "get_log_path", lambda: str(session))
+    instance.start_log_tail()
+    instance.poll_log()
+    return instance, session
+
+
+def test_the_panel_follows_the_run_log_and_comes_back_without_clearing(
+    gui, tmp_path, monkeypatch
+):
+    instance, session = a_gui_following_a_session_log(gui, tmp_path, monkeypatch)
+    run_log = tmp_path / "20261009_093012_demo" / "pypts_run.log"
+
+    instance.follow_run_log(str(run_log))
+    instance.poll_log()  # the Logger has not created it yet
+    write_records(run_log, "During the run.")
+    instance.poll_log()
+    instance.run_log_finished()
+    write_records(session, "After the run.")
+    instance.poll_log()
+
+    shown = instance.center.log_panel.toPlainText()
+    order = [shown.index(text) for text in ("Before the run.", "During the run.", "After the run.")]
+    assert order == sorted(order)
+    assert instance.run_log_tail is None  # done with, and released
+    instance.stop_log_tail()
+
+
+def test_session_lines_the_logger_wrote_late_come_before_the_run(gui, tmp_path, monkeypatch):
+    """The Logger may still be writing the session log when RunStarted arrives."""
+    instance, session = a_gui_following_a_session_log(gui, tmp_path, monkeypatch)
+    run_log = tmp_path / "run" / "pypts_run.log"
+
+    instance.follow_run_log(str(run_log))
+    write_records(session, "Late session line.")
+    write_records(run_log, "First line of the run.")
+    instance.poll_log()
+
+    shown = instance.center.log_panel.toPlainText()
+    assert shown.index("Late session line.") < shown.index("First line of the run.")
+    instance.stop_log_tail()
+
+
+def test_a_summary_the_logger_wrote_late_comes_before_the_session(gui, tmp_path, monkeypatch):
+    """RunFinished may reach the GUI before the run log's last lines are read."""
+    instance, session = a_gui_following_a_session_log(gui, tmp_path, monkeypatch)
+    run_log = tmp_path / "run" / "pypts_run.log"
+    instance.follow_run_log(str(run_log))
+    write_records(run_log, "During the run.")
+    instance.poll_log()
+
+    instance.run_log_finished()
+    write_records(run_log, "Run summary: DONE.")
+    write_records(session, "The run's log is somewhere.")
+    instance.poll_log()
+
+    shown = instance.center.log_panel.toPlainText()
+    assert shown.index("Run summary: DONE.") < shown.index("The run's log is somewhere.")
+    instance.stop_log_tail()
+
+
+def test_a_run_log_that_never_appears_is_reported_in_the_panel(gui, tmp_path, monkeypatch):
+    instance, _session = a_gui_following_a_session_log(gui, tmp_path, monkeypatch)
+
+    instance.follow_run_log(str(tmp_path / "missing" / "pypts_run.log"))
+    instance._run_log_deadline = 0.0  # already past
+    instance.poll_log()
+
+    assert "Could not open the run log" in instance.center.log_panel.toPlainText()
+    assert instance.run_log_tail is None
+    instance.stop_log_tail()
+
+
+def test_a_run_shorter_than_one_tick_still_shows_its_lines_first(gui, tmp_path, monkeypatch):
+    """RunFinished before the panel ever saw the run log: it is read, then released."""
+    instance, session = a_gui_following_a_session_log(gui, tmp_path, monkeypatch)
+    run_log = tmp_path / "run" / "pypts_run.log"
+
+    instance.follow_run_log(str(run_log))
+    instance.run_log_finished()
+    write_records(run_log, "The whole run.")
+    write_records(session, "After the run.")
+    instance.poll_log()
+
+    shown = instance.center.log_panel.toPlainText()
+    assert shown.index("The whole run.") < shown.index("After the run.")
+    assert instance.run_log_tail is None
+    instance.stop_log_tail()
+
+
+def test_session_lines_after_the_run_wait_for_the_summary_even_before_run_finished(
+    gui, tmp_path, monkeypatch
+):
+    """The Logger is back in the session log before RunFinished reaches the GUI."""
+    instance, session = a_gui_following_a_session_log(gui, tmp_path, monkeypatch)
+    run_log = tmp_path / "run" / "pypts_run.log"
+    instance.follow_run_log(str(run_log))
+    write_records(run_log, "During the run.")
+    instance.poll_log()
+
+    # No run_log_finished() yet: the log timer fired first.
+    write_records(run_log, "Run summary: DONE.")
+    write_records(session, "The run's log is somewhere.")
+    instance.poll_log()
+
+    shown = instance.center.log_panel.toPlainText()
+    assert shown.index("Run summary: DONE.") < shown.index("The run's log is somewhere.")
+    instance.stop_log_tail()

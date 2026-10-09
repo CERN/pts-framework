@@ -35,6 +35,23 @@ from pypts.step.step import Step
 _loaded_modules: dict[Path, ModuleType] = {}
 
 
+def forget_loaded_modules() -> int:
+    """
+    Drop every module file loaded so far, so the next use reads it afresh.
+
+    Called when the operator unloads the recipe (Sequencer.forget_recipe), and
+    never while a sequence runs - the sequence thread is the only reader. Only
+    the file modules: they never touched sys.modules, so nothing else holds
+    them. Dotted-name imports stay where importlib cached them.
+
+    Returns:
+        How many modules were dropped.
+    """
+    count = len(_loaded_modules)
+    _loaded_modules.clear()
+    return count
+
+
 def load_python_module(module_ref: str, base_dir: str) -> ModuleType:
     """
     Turn a recipe's `module:` value into a loaded module.

@@ -29,12 +29,14 @@ from pypts.messages.core_hmi_communication import (
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
+    RecipeUnloaded,
     ReportReady,
     SetConfigParameter,
     ShutdownRequested,
     StartSequence,
     StatusChanged,
     StopHmi,
+    UnloadRecipe,
 )
 from pypts.messages.run_events import (
     PauseSequence,
@@ -164,10 +166,15 @@ class HmiClient:
             # the third.
             case RecipeLoaded():
                 self.show_recipe_loaded(message)
+            case RecipeUnloaded():
+                self.show_recipe_unloaded()
             case RunStarted(recipe_name=name, recipe_description=description):
                 self.show_run_started(name, description)
+                if message.run_log_path:
+                    self.follow_run_log(message.run_log_path)
             case RunFinished(result=result, outcomes=outcomes):
                 self.show_run_finished(result, outcomes)
+                self.run_log_finished()
             case RunMetadata(values=values):
                 self.show_run_metadata(values)
             # The operator's hold, confirmed. Only the GUI asks for one, but
@@ -199,6 +206,14 @@ class HmiClient:
 
     def load_recipe(self, recipe_path: str) -> None:
         self.core.send(LoadRecipe(recipe_path))
+
+    def unload_recipe(self) -> None:
+        """
+        Ask CORE to forget the loaded recipe. The confirmation is RecipeUnloaded,
+        at show_recipe_unloaded(). Not during a run - the frontend must not offer
+        it then. GUI only.
+        """
+        self.core.send(UnloadRecipe())
 
     def start_sequence(self, sequence_name: str) -> None:
         self.core.send(StartSequence(sequence_name))
@@ -340,11 +355,27 @@ class HmiClient:
             len(event.sequences),
         )
 
+    def show_recipe_unloaded(self) -> None:
+        """CORE holds no recipe any more."""
+        log.debug("RecipeUnloaded received.")
+
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
         log.debug("RunStarted received for recipe '%s'.", recipe_name)
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
         log.debug("RunFinished received: %s over %d steps.", result.name, len(outcomes))
+
+    def follow_run_log(self, run_log_path: str) -> None:
+        """
+        The run is logged in its own file, in its run folder, until it ends.
+
+        The Logger has already been told; a frontend that shows the log follows
+        this file now and the session log again after run_log_finished().
+        """
+        log.debug("The run is logged in %s.", run_log_path)
+
+    def run_log_finished(self) -> None:
+        """The run is over; what is logged from now on is in the session log again."""
 
     def show_run_paused(self, event: RunPaused) -> None:
         """The hold has begun. Passed whole: a frontend that says where the run

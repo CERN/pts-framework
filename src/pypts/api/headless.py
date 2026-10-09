@@ -54,8 +54,7 @@ def exit_code_for(result: ResultType) -> int:
 
 
 def headless_main(
-    recipe: str, sequence: str | None = None, log_level: str | None = None,
-    debug_monitor: bool = False,
+    recipe: str, sequence: str | None = None, log_level: str | None = None
 ) -> int:
     """
     Run one sequence of one recipe and return the process exit code.
@@ -64,7 +63,6 @@ def headless_main(
         recipe: path to the recipe file.
         sequence: which sequence; None runs the recipe's main sequence.
         log_level: overrides [logging] level in config.ini, as --log-level.
-        debug_monitor: open the Debug Monitor on this run's log.
     """
     recipe_path = Path(recipe)
     if not recipe_path.is_file():
@@ -73,7 +71,7 @@ def headless_main(
         return EXIT_NOT_RUN
 
     try:
-        pts = HeadlessPts(log_level=log_level, debug_monitor=debug_monitor)
+        pts = HeadlessPts(log_level=log_level)
     except Exception as error:  # noqa: BLE001 - any start failure is exit code 3, said in one line
         print(f"pypts could not start: {error}", file=sys.stderr)
         return EXIT_NOT_RUN

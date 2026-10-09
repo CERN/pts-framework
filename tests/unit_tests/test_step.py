@@ -135,10 +135,10 @@ def test_unknown_steptype_raises_a_clear_error_listing_available_types():
 
 
 def test_the_rules_and_the_registry_agree_on_the_steptypes():
-    """rules.py is the one source for what each type requires; the registry is
+    """recipe_schema.py is the one source for what each type requires; the registry is
     the one source for what *runs*. They must name the same types, except the
     ones the parser expands away before anything is built."""
-    from pypts.recipe.rules import EXPANDED_STEP_TYPES, STEP_TYPE_REQUIRED
+    from pypts.recipe.recipe_schema import EXPANDED_STEP_TYPES, STEP_TYPE_REQUIRED
 
     assert set(STEP_TYPE_REQUIRED) - set(EXPANDED_STEP_TYPES) == set(STEP_TYPES)
 
@@ -146,7 +146,7 @@ def test_the_rules_and_the_registry_agree_on_the_steptypes():
 def test_an_expanded_steptype_never_reaches_the_registry():
     """An Indexed step is gone by build time: it becomes N ordinary steps, and
     nothing downstream may be able to build one."""
-    from pypts.recipe.rules import EXPANDED_STEP_TYPES
+    from pypts.recipe.recipe_schema import EXPANDED_STEP_TYPES
 
     for steptype in EXPANDED_STEP_TYPES:
         assert steptype not in STEP_TYPES

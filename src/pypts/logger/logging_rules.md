@@ -40,6 +40,7 @@ borderline case: the question "would a technician act on this?" answers it every
 
 | Level | Audience | What belongs there |
 |---|---|---|
+| `TRACE` | developer | the message trace and nothing else: every message on every link, sent and received (`QueueWrapper`). Custom level 5, `logger/levels.py` |
 | `DEBUG` | developer | near-trace: call arguments and return values, branch decisions with the value that chose them, state transitions, message hops, tracebacks, heartbeat and liveness internals, internal paths, object reprs |
 | `INFO` | technician | the run's story, in plain sentences — and nothing else |
 | `WARNING` | technician | degraded, but the run continues: a retry, a discarded settings file, a module that stopped responding |
@@ -67,7 +68,7 @@ out. Only `ResultType.ERROR` — the step itself blew up — produces an `ERROR`
 - **Verdicts bare and uppercase**: `PASS`, `FAIL`, `SKIP`, `ERROR`, `DONE`, `STOP` — the
   `ResultType` members, so the log, the CSV and the HTML report all say the same word.
 - **`%`-style lazy formatting, never f-strings**: `log.info("Recipe '%s' loaded.", name)`. This
-  is what makes the heavy DEBUG trace cost nothing at INFO level. `ruff`'s `G004` enforces it.
+  is what makes the heavy DEBUG and TRACE lines cost nothing at INFO level. `ruff`'s `G004` enforces it.
 - **No jargon at INFO and above** — see §1.
 
 ---
@@ -80,7 +81,7 @@ out. Only `ResultType.ERROR` — the step itself blew up — produces an `ERROR`
 %(asctime)s.%(msecs)03d;%(levelname)s;%(processName)s;%(filename)s:%(funcName)s;%(message)s
 ```
 
-so the Debug Monitor's parser and `test_logger.py`'s `LOG_LINE` regex keep working, and the
+so `test_logger.py`'s `LOG_LINE` regex keeps working, and the
 `%(processName)s` column keeps reading `Core` for the Sequencer and the Report threads — the
 open TODO in roadmap §1.5, untouched here.
 
@@ -129,7 +130,10 @@ still traceable at DEBUG without the operator's panel saying the same thing thre
 
 | Fact | INFO owner | DEBUG hop |
 |---|---|---|
-| application start, operator and host, run log path, shutdown | `launcher/startup.py` | — |
+| application start, operator and host, run log path, shutdown | `launcher/startup.py`, through `log.log_run_log_header()` | — |
+| recipe unloaded | `core/core.py` | `hmi_client`, `gui` |
+| the run log carrying on in a new file (an unload): `Run log continues in <file>`, the header again, `Run log continues from <file>` | `gui` | — |
+| a run logged in its own folder: `Run log of recipe '<name>', sequence '<name>'.` first in the run log; `The run's log is <path>` in the session log after it | `sequencer/sequencer.py` | — |
 | module started / stopped | each module, about itself | — |
 | recipe loaded, sequences available | `core/core.py` | `sequencer`, `hmi_client`, `gui`, `cli` |
 | sequence started / finished, each step started / finished | `step/step.py` — the execution layer the Sequencer drives | `core`, `hmi_client`, `gui`, `cli` |
@@ -154,7 +158,7 @@ is either a bug or a new event that belongs in this table.
 ```
 PyPTS 0.2.2 started in GUI mode.
 Started by dzbanan on PCBE12345.
-Run log: C:\Users\...\logs\pypts_20260902_141201.log
+Run log: C:\Users\...\reports\pypts_20260902_141201.log
 CORE module started.
 GUI module started.
 Recipe 'thermal_cycle.yml' loaded: "Thermal cycle" v1.2, 3 sequences.
@@ -184,10 +188,38 @@ Notes on that shape:
 - **Durations** come from `StepOutcome.duration_s`, which `step.py` already measures. The
   sequence duration is wall clock, measured in the Sequencer.
 - **The run summary is three separate records**, not one multi-line record. Each then carries
-  its own timestamp, and neither `log_tail` nor the Debug Monitor has to treat the second and
-  third lines as traceback continuations.
+  its own timestamp, and `log_tail` does not have to treat the second and third lines as
+  traceback continuations.
 - **Paths at INFO are only the ones the operator needs**: the run log, the run folder, the
   report. Config directories, cache directories and module search paths are DEBUG.
+
+### 6.0a Each run is logged in its own folder
+
+The file the launcher starts - the *session log*, in `paths.reports_dir` - holds startup,
+loading, the time between runs and shutdown. Each run is logged in `pypts_<timestamp>.log`
+inside its own run folder, next to `report.csv` and `report.html`: from
+`Run log of recipe '…', sequence '…'.` to the three `Run summary:` lines. The session log then
+carries on, appended, with `The run's log is <path>`.
+
+### 6.0 Unloading the recipe starts a new file
+
+The operator's Unload (GUI) ends one run log and starts the next, so each file still opens
+with the three header lines. The old file ends, and the new one begins:
+
+```
+Recipe "Thermal cycle" unloaded.
+Run log continues in pypts_20260902_150412.log
+--- new file ---
+PyPTS 0.2.2 started in GUI mode.
+Started by dzbanan on PCBE12345.
+Run log: C:\Users\...\reports\pypts_20260902_150412.log
+Run log continues from pypts_20260902_141201.log
+```
+
+The header is the startup header word for word (`log.log_run_log_header()`), even though
+nothing restarted; the `continues from` line right under it says why it is there. Lines
+other processes wrote at the moment of the switch land in whichever file the queue order
+puts them in — the cut is clean for the GUI's own lines, not across processes.
 
 ### 6.1 The reason on a FAIL line
 
@@ -285,11 +317,10 @@ The log-tail exclusion is not style, it is a feedback loop: that timer reads the
 process is writing to. Everything those paths actually *decide* is still logged; only the empty
 ticks are not.
 
-**The cost is real.** A normal DEBUG run already produces a six-figure line count, because
-`QueueWrapper` traces every message twice — once sent, once received (roadmap §1.2), and
-`config.ini` ships DEBUG for the duration of the refactor (§1.6). Heavy tracing multiplies
-that, and the Debug Monitor has to parse all of it. That is the accepted price of being able to
-reconstruct a run from its log.
+**The cost is real.** A TRACE run produces a six-figure line count, because `QueueWrapper`
+traces every message twice — once sent, once received (roadmap §1.2), and `config.ini` ships
+TRACE for the duration of the refactor (§1.6). DEBUG leaves the message trace out; heavy
+tracing multiplies what is left. That is the accepted price of being able to reconstruct a run from its log.
 
 ---
 

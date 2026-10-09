@@ -36,7 +36,7 @@ import yaml
 from pypts.logger.log import log
 from pypts.recipe import recipe_parser
 from pypts.recipe.recipe import RecipeError
-from pypts.recipe.rules import SEQUENCE_DEFAULTS
+from pypts.recipe.recipe_schema import SEQUENCE_DEFAULTS
 from pypts.step import indexed_step, sequence_step
 
 #: The two step lists of a sequence document, in row order.

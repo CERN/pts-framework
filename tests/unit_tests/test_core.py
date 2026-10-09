@@ -52,8 +52,8 @@ def test_heartbeat_timeout_warns_once_per_outage(caplog):
         for _ in range(50):
             core.do_periodic_tasks()
 
-    # The operator's sentence, and the machine-readable line the Debug Monitor
-    # parses, are both written once per outage.
+    # The operator's sentence and the developer's DEBUG line are both written
+    # once per outage.
     spoken = [r for r in caplog.records if "has stopped responding" in r.message]
     assert len(spoken) == 1, f"expected one warning, got {len(spoken)}"
 
@@ -310,6 +310,57 @@ def test_start_sequence_without_a_recipe_is_refused_by_core():
     assert isinstance(shown[0], ModuleErrorReported)
     assert shown[0].error.operation == "Core.start_sequence"
     assert "no recipe" in shown[0].error.message.lower()
+
+
+def test_unload_recipe_forgets_it_and_tells_the_sequencer_and_the_hmi(caplog):
+    from pypts.messages.core_hmi_communication import RecipeUnloaded, UnloadRecipe
+    from pypts.messages.core_sequencer_communication import ForgetRecipe
+
+    core = build_core_that_spawns_nothing()
+    load_a_recipe(core)
+
+    with caplog.at_level(logging.INFO):
+        core.from_hmi.send(UnloadRecipe())
+        core.poll_all_sources()
+
+    assert core.recipe is None
+    assert [type(m) for m in core.to_sequencer.receive()] == [ForgetRecipe]
+    assert [type(m) for m in core.to_hmi.receive()] == [RecipeUnloaded]
+    assert 'Recipe "Wait demo" unloaded.' in caplog.messages
+
+
+def test_after_an_unload_a_start_is_refused_as_before_the_first_load():
+    from pypts.messages.core_hmi_communication import (
+        ModuleErrorReported,
+        StartSequence,
+        UnloadRecipe,
+    )
+
+    core = build_core_that_spawns_nothing()
+    load_a_recipe(core)
+    core.from_hmi.send(UnloadRecipe())
+    core.poll_all_sources()
+    list(core.to_sequencer.receive())
+    list(core.to_hmi.receive())
+
+    core.from_hmi.send(StartSequence(sequence_name="Main"))
+    core.poll_all_sources()
+
+    assert list(core.to_sequencer.receive()) == []
+    shown = list(core.to_hmi.receive())
+    assert isinstance(shown[0], ModuleErrorReported)
+    assert "no recipe" in shown[0].error.message.lower()
+
+
+def test_unload_with_nothing_loaded_is_still_answered():
+    from pypts.messages.core_hmi_communication import RecipeUnloaded, UnloadRecipe
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(UnloadRecipe())
+    core.poll_all_sources()
+
+    assert [type(m) for m in core.to_hmi.receive()] == [RecipeUnloaded]
 
 
 def test_stop_sequence_from_hmi_is_forwarded_to_the_sequencer():
@@ -929,9 +980,24 @@ def test_a_module_that_has_not_spoken_yet_is_said_to_be_starting_not_gone(caplog
     with caplog.at_level(logging.DEBUG):
         core.do_periodic_tasks()
 
-    spoken = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    spoken = [r.getMessage() for r in caplog.records]
     assert any("has not started yet" in message for message in spoken)
     assert not any("stopped responding" in message for message in spoken)
+
+
+def test_the_not_started_notice_is_for_developers_only(caplog):
+    """A slow GUI start is routine; nothing about it reaches the technician."""
+    from pypts.core.core import HEARTBEAT_TIMEOUT_S
+
+    core = build_core_that_spawns_nothing()
+    core.started_at = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
+
+    with caplog.at_level(logging.DEBUG):
+        core.do_periodic_tasks()
+
+    notices = [r for r in caplog.records if "has not started yet" in r.getMessage()]
+    assert notices
+    assert all(r.levelno == logging.DEBUG for r in notices)
 
 
 def test_the_not_started_notice_is_given_once_per_module(caplog):
@@ -941,7 +1007,7 @@ def test_the_not_started_notice_is_given_once_per_module(caplog):
     core = build_core_that_spawns_nothing()
     core.started_at = time.time() - (HEARTBEAT_TIMEOUT_S + 1)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.DEBUG):
         for _ in range(30):
             core.do_periodic_tasks()
 
@@ -1125,6 +1191,29 @@ def test_a_managed_section_is_refused_even_with_a_valid_value(writable_config):
     assert answers[0].accepted is False
     assert "managed by pypts" in answers[0].reason
     assert writable_config.read_text(encoding="utf-8") == before
+
+
+def test_a_refused_secret_is_masked_in_cores_refusal_line(writable_config, caplog):
+    """
+    A secret for a device section that is not in the file is refused (the key is
+    unknown). CORE's own refusal line at DEBUG shows the value masked.
+
+    Not asserted here: the messaging trace (QueueWrapper, TRACE) still logs the whole
+    message, value included, so the secret reaches the run log through it. See the
+    Task 6 report, concern on the trace.
+    """
+    from pypts.messages.core_hmi_communication import SetConfigParameter
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(SetConfigParameter(key="hardware.ssh9.password", value="s3cret-refused"))
+    with caplog.at_level(logging.DEBUG):
+        core.poll_all_sources()
+
+    answers = config_answers(core)
+    assert len(answers) == 1
+    assert answers[0].accepted is False
+    assert "The refused change was hardware.ssh9.password = '******'." in caplog.text
 
 
 def test_a_change_with_no_configuration_to_write_is_answered_not_raised(tmp_path, monkeypatch):

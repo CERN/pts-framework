@@ -12,7 +12,7 @@ From the repository root:
    python -m pypts                                   # GUI (default)
    python -m pypts --mode cli                        # text shell
    python -m pypts --mode headless --recipe x.yml    # one unattended run, for CI
-   python -m pypts --log-level DEBUG                 # full message trace in the run log
+   python -m pypts --log-level TRACE                 # full message trace in the run log
 
 On Windows, ``run_pypts.bat`` does the same with the repository's ``.venv``.
 To try it, load ``resources/recipes/Development_recipes/wait_recipe.yml``.

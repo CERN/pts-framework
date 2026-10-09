@@ -14,7 +14,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
 from pypts.helper_applications.recipe_creator import verify_string
-from pypts.recipe.rules import (
+from pypts.recipe.recipe_schema import (
     STEP_TYPE_REQUIRED,
     STEP_COMMON_DEFAULTS,
     STEP_TYPE_DEFAULTS,
@@ -105,7 +105,10 @@ class RecipeModel(QObject):
         self._invalid_line = 0
         self._yaml = YAML()
         self._yaml.preserve_quotes = True
-        self.undo_stack.cleanChanged.connect(lambda _: self.changed.emit())
+        # Signal to signal, not through a lambda: Qt drops the connection when
+        # this model is destroyed, so the undo stack emitting cleanChanged while
+        # it is torn down cannot reach a deleted model.
+        self.undo_stack.cleanChanged.connect(self.changed)
 
     # ── Read ──────────────────────────────────────────────────────────────────
 

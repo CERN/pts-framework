@@ -115,9 +115,11 @@ class Palette:
     #: `brand_accent` - a saturated blue is unreadable on charcoal.
     accent_text: str
     tab_text: str
-    #: The selected Run/Results tab, and the look its pulse fades towards.
+    #: The selected Run/Results tab, and the colour a tab's pulse starts from.
     tab_selected_background: str
     tab_selected_text: str
+    #: The darker blue a pulsing tab reaches at the top of its pulse.
+    tab_pulse_background: str
 
     # Surfaces, from the back of the window forwards.
     window: str
@@ -224,6 +226,7 @@ LIGHT = Palette(
     # A pale fill on the pale tab bar: the tab is marked, not shouted.
     tab_selected_background="#D6E6F7",
     tab_selected_text="#005BAC",
+    tab_pulse_background="#9CC3F0",
     window="#f5f7fa",
     menu_background="#ffffff",
     toolbar_background="#F8FAFC",
@@ -293,6 +296,7 @@ DARK = Palette(
     tab_text="#B3CFF0",
     tab_selected_background="#005BAC",
     tab_selected_text="#ffffff",
+    tab_pulse_background="#0033A0",
     window="#2b2b2b",
     menu_background="#2b2b2b",
     toolbar_background="#232323",

@@ -1,16 +1,23 @@
 """
 Recipe verificator: validate a recipe YAML file or string and return every
-problem found in one pass, with verbose, line-numbered diagnostics.
+problem found in one pass, with line-numbered diagnostics and a fix hint each.
 
 The public surface is two functions:
 
     verify_file(path)    -> list[ValidationIssue]
     verify_string(text)  -> list[ValidationIssue]
 
-Both collect *all* problems before returning (no bail-out on first error),
-so the author sees the full picture in one round trip. The schema source of
-truth is pypts.recipe.rules - if rules.py changes, update the hint strings
-and the known-key sets in this file to match.
+The verdict is the framework's. Errors come from the same Pydantic models the
+framework loads a recipe with (recipe_parser.validate_document against
+pypts.recipe.recipe_schema), worded exactly as the framework words them; once
+those pass, the framework's real load (recipe_parser.parse_recipe) runs and
+anything it still refuses - a `select` that is neither file nor folder, a call
+of a sequence that does not exist - is an error too. So a recipe verifies
+without errors exactly when the framework would load it.
+
+What is this file's own: the line of every issue, the hint on how to fix it,
+and the warnings about what loads but looks wrong (a removed key, a version
+written as a number).
 """
 
 from __future__ import annotations
@@ -20,15 +27,26 @@ from typing import Any
 
 import yaml
 
-from pypts.recipe import recipe_parser, rules
-from pypts.step import indexed_step
 from pypts.helper_applications.recipe_creator.issue import ValidationIssue
-
+from pypts.recipe import recipe_parser
+from pypts.recipe.recipe import RecipeError
+from pypts.recipe.recipe_parser import SchemaProblem
+from pypts.recipe.recipe_schema import (
+    INDEXED_STEP_REFUSED_KEYS,
+    INPUT_TYPES,
+    OUTPUT_TYPES,
+    SEQUENCE_STEP_REFUSED_KEYS,
+    STEP_SCHEMAS,
+    STEP_TYPE_REQUIRED,
+    HeaderSchema,
+    SequenceSchema,
+)
 
 # ---------------------------------------------------------------------------
 # Keys that existed in the old recipe format and were deliberately removed.
-# A recipe that still carries them gets a targeted warning rather than a
-# generic "unknown key" message.
+# A sequence document is allowed unknown keys - the framework ignores them -
+# so these load, and a recipe that still carries them gets a targeted warning
+# rather than a generic "unknown key" one.
 # ---------------------------------------------------------------------------
 _REMOVED_SEQUENCE_KEYS: dict[str, str] = {
     "setup_steps": (
@@ -36,8 +54,8 @@ _REMOVED_SEQUENCE_KEYS: dict[str, str] = {
         "the front of 'steps' instead."
     ),
     "parameters": (
-        "'parameters' was removed. Sequences no longer declare a call interface "
-        "(SequenceStep is dropped). Remove this key."
+        "'parameters' was removed. A sequence declares no call interface: a "
+        "Sequence step calls it and it shares the run's globals. Remove this key."
     ),
     "outputs": (
         "'outputs' as a sequence-level key was removed (step-level 'outputs' "
@@ -50,29 +68,18 @@ _REMOVED_SEQUENCE_KEYS: dict[str, str] = {
     ),
 }
 
-# Keys a sequence document may carry under the current schema.
-_KNOWN_SEQUENCE_KEYS: frozenset[str] = frozenset(
-    list(rules.SEQUENCE_REQUIRED) + list(rules.SEQUENCE_DEFAULTS)
+#: A text field refuses a YAML boolean, a date or a list - the cure is quoting.
+_QUOTE_HINT = (
+    "This field takes text (a number is read as its text). YAML reads yes/no/"
+    "on/off/true/false as a boolean and 2024-01-01 as a date: quote the value.\n"
+    "Example:  message: 'yes'"
 )
-
-# Common keys valid on every step regardless of type.
-_STEP_COMMON_VALID: frozenset[str] = (
-    frozenset(rules.STEP_REQUIRED) | frozenset(rules.STEP_COMMON_DEFAULTS)
-)
-
-# Per-type extra valid keys: required + optional (from STEP_TYPE_DEFAULTS).
-_STEP_TYPE_VALID: dict[str, frozenset[str]] = {
-    steptype: (
-        frozenset(required)
-        | frozenset(rules.STEP_TYPE_DEFAULTS.get(steptype, {}).keys())
-    )
-    for steptype, required in rules.STEP_TYPE_REQUIRED.items()
-}
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def verify_file(path: Path | str) -> list[ValidationIssue]:
     """Verify a recipe YAML file. Returns all issues, errors before warnings."""
@@ -101,25 +108,21 @@ def verify_string(content: str) -> list[ValidationIssue]:
 # Internal pipeline
 # ---------------------------------------------------------------------------
 
+
 class _Context:
     """Accumulates issues during one verification run."""
 
     def __init__(self) -> None:
         self.issues: list[ValidationIssue] = []
 
-    def error(
-        self, field: str, message: str, hint: str, line: int | None = None
-    ) -> None:
-        self.issues.append(
-            ValidationIssue("error", field, message, hint, line)
-        )
+    def error(self, field: str, message: str, hint: str, line: int | None = None) -> None:
+        self.issues.append(ValidationIssue("error", field, message, hint, line))
 
-    def warning(
-        self, field: str, message: str, hint: str, line: int | None = None
-    ) -> None:
-        self.issues.append(
-            ValidationIssue("warning", field, message, hint, line)
-        )
+    def warning(self, field: str, message: str, hint: str, line: int | None = None) -> None:
+        self.issues.append(ValidationIssue("warning", field, message, hint, line))
+
+    def has_errors(self) -> bool:
+        return any(issue.is_error for issue in self.issues)
 
 
 def _lower_path(path: tuple) -> tuple:
@@ -143,9 +146,16 @@ class _LineMap:
         # unaffected. On a collision the first occurrence wins.
         self._lower_map: dict[tuple, int] = {}
         self.document_line: int = node.start_mark.line + 1
+        # An alias is the node of its anchor, met again. Walking it twice adds
+        # no line of its own, and an anchor that contains its own alias
+        # (`g: &a [*a]` - legal YAML, and the framework loads it) never ends.
+        self._walked: set[int] = set()
         self._walk(node, ())
 
     def _walk(self, node: yaml.Node, path: tuple) -> None:
+        if id(node) in self._walked:
+            return
+        self._walked.add(id(node))
         if isinstance(node, yaml.MappingNode):
             for key_node, value_node in node.value:
                 key = key_node.value
@@ -168,10 +178,46 @@ class _LineMap:
             return line
         return self._lower_map.get(_lower_path(path))
 
+    def nearest(self, doc: dict[str, Any], path: tuple) -> int:
+        """
+        The line of `path` in `doc`, or of the closest thing around it that is
+        in the file: a missing field points at the step or document it is
+        missing from.
+        """
+        keys = _line_map_keys(doc, path)
+        while keys:
+            line = self.get(*keys)
+            if line is not None:
+                return line
+            keys = keys[:-1]
+        return self.document_line
+
+
+def _line_map_keys(doc: dict[str, Any], path: tuple) -> tuple:
+    """
+    `path` as the line map spells it. The map records a mapping key as the text
+    the author wrote, so a key YAML read as a number (`1:`) is looked up as
+    "1" - but a list position stays a position. The document says which is which.
+    """
+    keys: list[str | int] = []
+    container: Any = doc
+    for part in path:
+        if isinstance(container, list) or isinstance(part, str):
+            keys.append(part)
+        else:
+            keys.append(str(part))
+        if isinstance(container, dict):
+            container = container.get(part)
+        elif isinstance(container, list) and isinstance(part, int) and 0 <= part < len(container):
+            container = container[part]
+        else:
+            container = None
+    return tuple(keys)
+
 
 def _run(content: str, ctx: _Context) -> None:
-    """Top-level pipeline: parse → structure → header → sequences → cross-refs."""
-    # Pass 1 — YAML parsing
+    """parse -> structure -> header -> sequences -> cross-refs -> the framework's load."""
+    # Pass 1 - YAML parsing
     try:
         nodes = list(yaml.compose_all(content))
         docs: list[Any] = list(yaml.safe_load_all(content))
@@ -199,12 +245,27 @@ def _run(content: str, ctx: _Context) -> None:
         )
         return
 
-    # Pass 2 — each document must be a mapping
-    valid: list[tuple[dict[str, Any], yaml.Node]] = []
+    # Pass 2 - each document must be a mapping. `number` counts every document
+    # from 1, header included, as the framework's messages do. The first one is
+    # the header, and without it the framework stops - so does this check:
+    # the next mapping is not the header, and checking it as one says nothing.
+    if not isinstance(docs[0], dict):
+        ctx.error(
+            field="document 1",
+            message="Document 1 is not a YAML mapping.",
+            hint=(
+                "The first document is the recipe header, a mapping that starts "
+                "with 'name:'. Sequence documents follow after '---'."
+            ),
+            line=nodes[0].start_mark.line + 1,
+        )
+        return
+
+    valid: list[tuple[int, dict[str, Any], yaml.Node]] = []
     for i, (doc, node) in enumerate(zip(docs, nodes)):
         if not isinstance(doc, dict):
             ctx.error(
-                field=f"document[{i}]",
+                field=f"document {i + 1}",
                 message=f"Document {i + 1} is not a YAML mapping.",
                 hint=(
                     "Every document in a recipe must be a mapping (key: value "
@@ -214,10 +275,7 @@ def _run(content: str, ctx: _Context) -> None:
                 line=node.start_mark.line + 1,
             )
         else:
-            valid.append((doc, node))
-
-    if not valid:
-        return
+            valid.append((i + 1, doc, node))
 
     # The recipe language is case-insensitive: the framework lowercases every
     # mapping key before it validates anything (recipe_parser._lowercase_keys),
@@ -228,10 +286,10 @@ def _run(content: str, ctx: _Context) -> None:
     # This has to happen before the header is identified below, which is itself
     # a raw-key test: a header written `Name:` was rejected as "not a header"
     # before a single field was looked at.
-    header_doc = recipe_parser.normalize_header(valid[0][0])
-    header_node = valid[0][1]
-    sequence_pairs = [
-        (recipe_parser.normalize_sequence(doc), node) for doc, node in valid[1:]
+    header_doc = recipe_parser.normalize_header(valid[0][1])
+    header_node = valid[0][2]
+    sequences = [
+        (number, recipe_parser.normalize_sequence(doc), node) for number, doc, node in valid[1:]
     ]
 
     # Confirm the first document is the header and not a sequence
@@ -239,7 +297,7 @@ def _run(content: str, ctx: _Context) -> None:
     has_seq = "sequence_name" in header_doc
     if has_seq and not has_name:
         ctx.error(
-            field="document[0]",
+            field="document 1",
             message="The first document looks like a sequence, not a header.",
             hint=(
                 "The first document must be the recipe header and start with "
@@ -251,7 +309,7 @@ def _run(content: str, ctx: _Context) -> None:
         return
     if not has_name and not has_seq:
         ctx.error(
-            field="document[0]",
+            field="document 1",
             message="Cannot identify the first document as a recipe header.",
             hint=(
                 "The first document must start with 'name: <recipe name>'. "
@@ -261,7 +319,7 @@ def _run(content: str, ctx: _Context) -> None:
         )
         return
 
-    if not sequence_pairs:
+    if not sequences:
         ctx.error(
             field="file",
             message="The recipe has a header but no sequence documents.",
@@ -277,697 +335,149 @@ def _run(content: str, ctx: _Context) -> None:
             ),
         )
 
-    # Pass 3 — header content
+    # Pass 3 - the header, against the framework's model
     header_lm = _LineMap(header_node)
-    _check_header(header_doc, header_lm, ctx)
+    header_problems, _ = recipe_parser.validate_document(header_doc, HeaderSchema, "header")
+    _report_problems(header_problems, header_doc, header_lm, ctx)
+    _warn_about_header(header_doc, header_lm, header_problems, ctx)
 
-    # Pass 4 — sequence content
-    seq_names: list[str] = []
-    for seq_idx, (seq_doc, seq_node) in enumerate(sequence_pairs):
+    # Pass 4 - every sequence, against the framework's model
+    # Every sequence name, with the line it is written on.
+    seq_names: list[tuple[str, int | None]] = []
+    for number, seq_doc, seq_node in sequences:
         seq_lm = _LineMap(seq_node)
-        name = _check_sequence(seq_doc, seq_lm, seq_idx, ctx)
-        if name:
-            seq_names.append(name)
+        context = recipe_parser.sequence_context(seq_doc, number)
+        problems, _ = recipe_parser.validate_document(seq_doc, SequenceSchema, context)
+        _report_problems(problems, seq_doc, seq_lm, ctx)
+        _warn_about_sequence(seq_doc, seq_lm, context, ctx)
+        # A number is a sequence name too: the framework reads it as its text.
+        name = seq_doc.get("sequence_name")
+        name_line = seq_lm.get("sequence_name")
+        if isinstance(name, str) and name:
+            seq_names.append((name, name_line))
+        elif isinstance(name, (int, float)) and not isinstance(name, bool):
+            seq_names.append((str(name), name_line))
 
-    # Pass 5 — cross-document references
-    _check_cross_references(header_doc, seq_names, ctx)
+    # Pass 5 - cross-document references
+    _check_cross_references(header_doc, header_lm, seq_names, ctx)
+
+    # Pass 6 - the framework's own load. Only once everything above is clean:
+    # it stops at its first problem, and every one before it is already named.
+    if not ctx.has_errors():
+        _check_full_load(content, ctx)
 
 
 # ---------------------------------------------------------------------------
-# Header
+# Validation problems -> issues
 # ---------------------------------------------------------------------------
 
-def _check_header(doc: dict[str, Any], lm: _LineMap, ctx: _Context) -> None:
-    # Required fields
-    for field in rules.HEADER_REQUIRED:
-        line = lm.get(field)
+
+def _report_problems(
+    problems: list[SchemaProblem], doc: dict[str, Any], lm: _LineMap, ctx: _Context
+) -> None:
+    """Each problem the framework's model found, as an error at its line."""
+    for problem in problems:
+        ctx.error(
+            field=problem.where,
+            message=problem.message,
+            hint=_hint(problem, doc),
+            line=lm.nearest(doc, problem.path),
+        )
+
+
+def _check_full_load(content: str, ctx: _Context) -> None:
+    """What only building the recipe finds: a step constructor's refusal, a bad call."""
+    try:
+        recipe_parser.parse_recipe(content, check_version=False)
+    except RecipeError as error:
+        ctx.error(
+            field="recipe",
+            message=str(error),
+            hint=(
+                "Every field is valid, but the framework refused the recipe while "
+                "building it. The message names the sequence and the step, counted "
+                "from 1 with every Indexed step already expanded."
+            ),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Warnings - what loads, but looks wrong
+# ---------------------------------------------------------------------------
+
+
+def _warn_about_header(
+    doc: dict[str, Any], lm: _LineMap, problems: list[SchemaProblem], ctx: _Context
+) -> None:
+    refused = {problem.path[0] for problem in problems if problem.path}
+    for field in ("name", "version"):
         value = doc.get(field)
-        if value is None:
-            ctx.error(
-                field=f"header.{field}",
-                message=f"Missing required field '{field}'.",
-                hint=_header_required_hint(field),
-                line=line,
-            )
+        if value is None or field in refused:
             continue
-
-        # `version: 0.2` is a float in YAML; the parser accepts it via str().
-        # We do the same: scalars are fine, non-scalars are not.
-        if isinstance(value, (dict, list)):
-            ctx.error(
-                field=f"header.{field}",
-                message=(
-                    f"'{field}' must be a scalar value (string or number), "
-                    f"got {type(value).__name__}."
-                ),
-                hint=f"Example:  {field}: My Recipe",
-                line=line,
-            )
-        elif not str(value).strip():
+        if not str(value).strip():
             ctx.warning(
                 field=f"header.{field}",
                 message=f"'{field}' is empty.",
                 hint=f"Give the recipe a meaningful {field}.",
-                line=line,
+                line=lm.get(field),
             )
         elif field == "version" and not isinstance(value, str):
             ctx.warning(
-                field=f"header.{field}",
+                field="header.version",
                 message=(
                     f"'version' is written as a number ({value}). "
                     f"PyPTS accepts it, but quoting avoids ambiguity."
                 ),
-                hint=f"Example:  version: '0.2'  or  version: \"0.2\"",
-                line=line,
+                hint="Example:  version: '0.2'  or  version: \"0.2\"",
+                line=lm.get(field),
             )
 
-    # Optional — description
-    _check_optional_str(doc, "description", "header.description", lm, ctx)
 
-    # Optional — main_sequence
-    if "main_sequence" in doc and doc["main_sequence"] is not None:
-        v = doc["main_sequence"]
-        if not isinstance(v, str):
-            ctx.error(
-                field="header.main_sequence",
-                message=(
-                    f"'main_sequence' must be a string (the name of the "
-                    f"sequence to run first), got {type(v).__name__}."
-                ),
-                hint=(
-                    "Example:  main_sequence: Main\n"
-                    "If omitted the first sequence in the file is used."
-                ),
-                line=lm.get("main_sequence"),
-            )
-
-    # Optional — globals
-    if "globals" in doc and doc["globals"] is not None:
-        v = doc["globals"]
-        if not isinstance(v, dict):
-            ctx.error(
-                field="header.globals",
-                message=(
-                    f"'globals' must be a mapping of variable names to "
-                    f"initial values, got {type(v).__name__}."
-                ),
-                hint=(
-                    "Example:\n"
-                    "  globals:\n"
-                    "    serial_number: ''\n"
-                    "    voltage: 0"
-                ),
-                line=lm.get("globals"),
-            )
-
-    # Optional — report_metadata
-    if "report_metadata" in doc and doc["report_metadata"] is not None:
-        rm = doc["report_metadata"]
-        rm_line = lm.get("report_metadata")
-        if not isinstance(rm, list):
-            ctx.error(
-                field="header.report_metadata",
-                message=(
-                    f"'report_metadata' must be a list of global variable "
-                    f"names, got {type(rm).__name__}."
-                ),
-                hint="Example:  report_metadata: [serial_number, lot_number]",
-                line=rm_line,
-            )
-        else:
-            for i, entry in enumerate(rm):
-                if not isinstance(entry, str) or not entry.strip():
-                    ctx.error(
-                        field=f"header.report_metadata[{i}]",
-                        message=f"report_metadata[{i}] is not a non-empty string.",
-                        hint=(
-                            "Each entry must be the name of a globals variable "
-                            "whose value is stamped on every row of the report."
-                        ),
-                        line=lm.get("report_metadata", i),
-                    )
-
-
-def _header_required_hint(field: str) -> str:
-    return {
-        "name": (
-            "Every recipe needs a unique name so the operator and the report "
-            "can identify what was run.\nExample:  name: Output Voltage Test"
-        ),
-        "version": (
-            "Every recipe must declare which PyPTS version it targets. The "
-            "framework warns when they differ.\nExample:  version: 0.2"
-        ),
-    }.get(field, f"Add '{field}' to the recipe header.")
-
-
-# ---------------------------------------------------------------------------
-# Sequence
-# ---------------------------------------------------------------------------
-
-def _check_sequence(
-    doc: dict[str, Any],
-    lm: _LineMap,
-    seq_idx: int,
-    ctx: _Context,
-) -> str:
-    """Check one sequence document. Returns the sequence name (or '')."""
-    raw_name = doc.get("sequence_name")
-    seq_label = f"sequences[{seq_idx}]" if raw_name is None else f"sequence '{raw_name}'"
-
-    # Required — sequence_name
-    if raw_name is None:
-        ctx.error(
-            field=f"sequences[{seq_idx}].sequence_name",
-            message="Missing required field 'sequence_name'.",
-            hint=(
-                "Each sequence document must begin with "
-                "'sequence_name: <name>'. The first document is the recipe "
-                "header (starts with 'name:'); every document after it is a "
-                "sequence."
-            ),
-            line=lm.document_line,
-        )
-    elif not isinstance(raw_name, str) or not str(raw_name).strip():
-        ctx.error(
-            field=f"sequences[{seq_idx}].sequence_name",
-            message="'sequence_name' must be a non-empty string.",
-            hint="Example:  sequence_name: Main",
-            line=lm.get("sequence_name"),
-        )
-
-    seq_name = str(raw_name) if isinstance(raw_name, str) and raw_name else ""
-
-    # Required — steps
-    if "steps" not in doc:
-        ctx.error(
-            field=f"{seq_label}.steps",
-            message="Missing required field 'steps'.",
-            hint=(
-                "A sequence must contain at least one step.\nExample:\n"
-                "  steps:\n"
-                "    - steptype: Wait\n"
-                "      step_name: Pause\n"
-                "      wait_time: 1"
-            ),
-            line=lm.document_line,
-        )
-    elif not isinstance(doc["steps"], list):
-        ctx.error(
-            field=f"{seq_label}.steps",
-            message=(
-                f"'steps' must be a list of step mappings, "
-                f"got {type(doc['steps']).__name__}."
-            ),
-            hint="Each entry under 'steps' starts with 'steptype:' and 'step_name:'.",
-            line=lm.get("steps"),
-        )
-    elif not doc["steps"]:
-        ctx.error(
-            field=f"{seq_label}.steps",
-            message="'steps' is empty — a sequence must contain at least one step.",
-            hint="Add at least one step mapping under 'steps'.",
-            line=lm.get("steps"),
-        )
-    else:
-        _check_step_list(doc["steps"], lm, "steps", seq_label, ctx)
-
-    # Optional — teardown_steps
-    if "teardown_steps" in doc and doc["teardown_steps"] is not None:
-        td = doc["teardown_steps"]
-        if not isinstance(td, list):
-            ctx.error(
-                field=f"{seq_label}.teardown_steps",
-                message=(
-                    f"'teardown_steps' must be a list of step mappings, "
-                    f"got {type(td).__name__}."
-                ),
-                hint=(
-                    "teardown_steps runs after the sequence finishes, even "
-                    "after an abort. Its steps are structured like 'steps'."
-                ),
-                line=lm.get("teardown_steps"),
-            )
-        elif td:
-            _check_step_list(td, lm, "teardown_steps", seq_label, ctx)
-
-    # Optional — description
-    _check_optional_str(doc, "description", f"{seq_label}.description", lm, ctx)
-
-    # Removed keys — specific, actionable warnings
-    for old_key, hint in _REMOVED_SEQUENCE_KEYS.items():
-        if old_key in doc:
-            ctx.warning(
-                field=f"{seq_label}.{old_key}",
-                message=f"'{old_key}' is not part of the current recipe format.",
-                hint=hint,
-                line=lm.get(old_key),
-            )
-
-    # Truly unknown keys
-    known_all = _KNOWN_SEQUENCE_KEYS | frozenset(_REMOVED_SEQUENCE_KEYS)
+def _warn_about_sequence(
+    doc: dict[str, Any], lm: _LineMap, context: str, ctx: _Context
+) -> None:
+    """A sequence document's unknown keys load and are ignored - worth a word."""
+    known = set(SequenceSchema.model_fields)
     for key in doc:
-        if key not in known_all:
+        if key in known:
+            continue
+        removed = _REMOVED_SEQUENCE_KEYS.get(key)
+        if removed is not None:
             ctx.warning(
-                field=f"{seq_label}.{key}",
-                message=f"Unknown sequence key '{key}' — it will be ignored.",
-                hint=(
-                    f"Known sequence keys: "
-                    f"{', '.join(sorted(_KNOWN_SEQUENCE_KEYS))}."
-                ),
+                field=f"{context}.{key}",
+                message=f"'{key}' is not part of the current recipe format.",
+                hint=removed,
                 line=lm.get(key),
             )
-
-    return seq_name
-
-
-# ---------------------------------------------------------------------------
-# Step list and individual steps
-# ---------------------------------------------------------------------------
-
-def _check_step_list(
-    steps: list[Any],
-    lm: _LineMap,
-    list_key: str,
-    seq_label: str,
-    ctx: _Context,
-) -> None:
-    """Validate every step in a list (steps or teardown_steps)."""
-    for idx, step_data in enumerate(steps):
-        path_prefix = (list_key, idx)
-        step_line = lm.get(*path_prefix)
-        step_field = f"{seq_label}.{list_key}[{idx}]"
-
-        if not isinstance(step_data, dict):
-            ctx.error(
-                field=step_field,
-                message=f"Step {idx + 1} is not a mapping.",
-                hint=(
-                    "Each step must be a YAML mapping starting with "
-                    "'steptype:' and 'step_name:'. A missing '-' before the "
-                    "step or wrong indentation is a common cause."
-                ),
-                line=step_line,
-            )
-            continue
-
-        step_name_val = step_data.get("step_name")
-        if step_name_val and isinstance(step_name_val, str):
-            step_display = f"step '{step_name_val}'"
         else:
-            step_display = f"step {idx + 1}"
-
-        _check_step(step_data, lm, path_prefix, step_field, step_display, ctx)
-
-
-def _check_step(
-    step_data: dict[str, Any],
-    lm: _LineMap,
-    path_prefix: tuple,
-    step_field: str,
-    step_display: str,
-    ctx: _Context,
-) -> None:
-    """All checks for one step mapping."""
-    step_line = lm.get(*path_prefix)
-
-    def field_line(*keys: str | int) -> int | None:
-        return lm.get(*path_prefix, *keys)
-
-    # ── Common required: steptype ───────────────────────────────────────────
-    steptype_raw = step_data.get("steptype")
-    if steptype_raw is None:
-        ctx.error(
-            field=f"{step_field}.steptype",
-            message=f"{step_display.capitalize()}: missing required field 'steptype'.",
-            hint=(
-                f"Every step must name its type. "
-                f"Available: {', '.join(sorted(rules.STEP_TYPE_REQUIRED))}.\n"
-                f"Example:  steptype: Wait"
-            ),
-            line=step_line,
-        )
-    elif not isinstance(steptype_raw, str):
-        ctx.error(
-            field=f"{step_field}.steptype",
-            message=(
-                f"{step_display.capitalize()}: 'steptype' must be a string, "
-                f"got {type(steptype_raw).__name__}."
-            ),
-            hint=(
-                f"Available: {', '.join(sorted(rules.STEP_TYPE_REQUIRED))}."
-            ),
-            line=field_line("steptype"),
-        )
-
-    # ── Common required: step_name ──────────────────────────────────────────
-    if step_data.get("step_name") is None:
-        ctx.error(
-            field=f"{step_field}.step_name",
-            message=f"Step {_ordinal(path_prefix)}: missing required field 'step_name'.",
-            hint=(
-                "Every step needs a name that appears in the step table and "
-                "the report.\nExample:  step_name: Measure output voltage"
-            ),
-            line=step_line,
-        )
-    elif not isinstance(step_data["step_name"], str) or not step_data["step_name"].strip():
-        ctx.error(
-            field=f"{step_field}.step_name",
-            message=(
-                f"{step_display.capitalize()}: 'step_name' must be a "
-                f"non-empty string."
-            ),
-            hint="Example:  step_name: Measure output voltage",
-            line=field_line("step_name"),
-        )
-
-    # Stop early if steptype is not a usable string
-    if not isinstance(steptype_raw, str):
-        return
-
-    steptype = steptype_raw.lower()
-
-    # ── steptype must be known ──────────────────────────────────────────────
-    if steptype not in rules.STEP_TYPE_REQUIRED:
-        known = ", ".join(sorted(rules.STEP_TYPE_REQUIRED))
-        ctx.error(
-            field=f"{step_field}.steptype",
-            message=(
-                f"{step_display.capitalize()}: unknown step type "
-                f"'{steptype_raw}'. Available: {known}."
-            ),
-            hint=_unknown_steptype_hint(steptype_raw),
-            line=field_line("steptype"),
-        )
-        return
-
-    # ── Type-specific required fields ───────────────────────────────────────
-    for field in rules.STEP_TYPE_REQUIRED[steptype]:
-        if step_data.get(field) is None:
-            ctx.error(
-                field=f"{step_field}.{field}",
-                message=(
-                    f"{step_display.capitalize()}: missing required field "
-                    f"'{field}' (required for {steptype_raw} steps)."
-                ),
-                hint=_step_field_hint(steptype, field),
-                line=field_line(field) or step_line,
-            )
-
-    # ── Common optional: skip ───────────────────────────────────────────────
-    if "skip" in step_data and step_data["skip"] is not None:
-        if not isinstance(step_data["skip"], bool):
-            ctx.error(
-                field=f"{step_field}.skip",
-                message=(
-                    f"{step_display.capitalize()}: 'skip' must be true or "
-                    f"false, got {type(step_data['skip']).__name__}."
-                ),
-                hint="Example:  skip: true",
-                line=field_line("skip"),
-            )
-
-    # ── Common optional: continue_on_error ─────────────────────────────────
-    if "continue_on_error" in step_data and step_data["continue_on_error"] is not None:
-        if not isinstance(step_data["continue_on_error"], bool):
-            ctx.error(
-                field=f"{step_field}.continue_on_error",
-                message=(
-                    f"{step_display.capitalize()}: 'continue_on_error' must "
-                    f"be true or false, got "
-                    f"{type(step_data['continue_on_error']).__name__}."
-                ),
-                hint=(
-                    "continue_on_error: false means an ERROR or FAIL on this "
-                    "step ends the run and every subsequent step is SKIP."
-                ),
-                line=field_line("continue_on_error"),
-            )
-
-    # ── Indexed — delegate to the canonical checker ─────────────────────────
-    if steptype == "indexed":
-        _check_indexed_step(step_data, lm, path_prefix, step_field, step_display, ctx)
-        return
-
-    # ── inputs / outputs vocabulary ─────────────────────────────────────────
-    _check_inputs(step_data, lm, path_prefix, step_field, step_display, ctx)
-    _check_outputs(step_data, lm, path_prefix, step_field, step_display, ctx)
-
-    # ── Unknown keys ────────────────────────────────────────────────────────
-    type_valid = _STEP_TYPE_VALID.get(steptype, frozenset())
-    all_valid = _STEP_COMMON_VALID | type_valid
-    for key in step_data:
-        if key not in all_valid:
             ctx.warning(
-                field=f"{step_field}.{key}",
-                message=(
-                    f"{step_display.capitalize()}: unknown key '{key}' for a "
-                    f"{steptype_raw} step — it will be ignored."
-                ),
-                hint=(
-                    f"Valid keys for a {steptype_raw} step: "
-                    f"{', '.join(sorted(all_valid))}."
-                ),
-                line=field_line(key),
+                field=f"{context}.{key}",
+                message=f"Unknown sequence key '{key}' - it will be ignored.",
+                hint=f"Known sequence keys: {', '.join(sorted(known))}.",
+                line=lm.get(key),
             )
-
-
-def _check_indexed_step(
-    step_data: dict[str, Any],
-    lm: _LineMap,
-    path_prefix: tuple,
-    step_field: str,
-    step_display: str,
-    ctx: _Context,
-) -> None:
-    """Indexed-step-specific checks via the canonical indexed_step module."""
-    step_line = lm.get(*path_prefix)
-
-    for problem in indexed_step.check_indexed_step(step_data):
-        ctx.error(
-            field=step_field,
-            message=f"{step_display.capitalize()}: {problem}.",
-            hint=_indexed_hint(problem),
-            line=step_line,
-        )
-
-    # Validate the template as an ordinary step
-    template = step_data.get(indexed_step.TEMPLATE_KEY)
-    if isinstance(template, dict):
-        template_prefix = path_prefix + (indexed_step.TEMPLATE_KEY,)
-        template_field = f"{step_field}.{indexed_step.TEMPLATE_KEY}"
-        # Give the template a synthetic step_name so required-field checks work
-        probe = dict(template)
-        if probe.get("step_name") is None:
-            probe["step_name"] = (
-                step_data.get("step_name") or "<indexed template>"
-            )
-        _check_step(
-            probe, lm, template_prefix, template_field, "indexed template", ctx
-        )
-
-
-# ---------------------------------------------------------------------------
-# inputs / outputs
-# ---------------------------------------------------------------------------
-
-def _check_inputs(
-    step_data: dict[str, Any],
-    lm: _LineMap,
-    path_prefix: tuple,
-    step_field: str,
-    step_display: str,
-    ctx: _Context,
-) -> None:
-    inputs = step_data.get("inputs")
-    if inputs is None:
-        return
-    inputs_line = lm.get(*path_prefix, "inputs")
-    if not isinstance(inputs, dict):
-        ctx.error(
-            field=f"{step_field}.inputs",
-            message=(
-                f"{step_display.capitalize()}: 'inputs' must be a mapping of "
-                f"argument names to values, got {type(inputs).__name__}."
-            ),
-            hint=(
-                "Example:\n"
-                "  inputs:\n"
-                "    voltage: 5.0\n"
-                "    source: {type: global, global_name: supply_voltage}"
-            ),
-            line=inputs_line,
-        )
-        return
-
-    for entry_name, config in inputs.items():
-        entry_field = f"{step_field}.inputs.{entry_name}"
-        entry_line = lm.get(*path_prefix, "inputs", entry_name)
-
-        if not isinstance(config, dict):
-            # A bare scalar is a valid literal input — nothing to check.
-            continue
-
-        declared = config.get("type")
-        if declared is None:
-            known = ", ".join(sorted(rules.INPUT_TYPES))
-            ctx.error(
-                field=entry_field,
-                message=(
-                    f"Input '{entry_name}': a mapping must name a 'type' "
-                    f"({known})."
-                ),
-                hint=(
-                    f"A literal value is written directly: "
-                    f"`{entry_name}: <value>`.\n"
-                    f"To read a run variable: `{entry_name}: "
-                    f"{{type: global, global_name: <var>}}`."
-                ),
-                line=entry_line,
-            )
-            continue
-
-        declared_lower = str(declared).lower()
-        required_keys = rules.INPUT_TYPES.get(declared_lower)
-        if required_keys is None:
-            known = ", ".join(sorted(rules.INPUT_TYPES))
-            ctx.error(
-                field=entry_field,
-                message=(
-                    f"Input '{entry_name}': unknown type '{declared}'. "
-                    f"Available: {known}."
-                ),
-                hint=(
-                    f"The only mapping input type is 'global' (reads a run "
-                    f"variable). A literal value does not need a type: "
-                    f"`{entry_name}: 42`."
-                ),
-                line=entry_line,
-            )
-            continue
-
-        for key in required_keys:
-            if config.get(key) is None:
-                ctx.error(
-                    field=f"{entry_field}.{key}",
-                    message=(
-                        f"Input '{entry_name}': a '{declared}' entry needs "
-                        f"'{key}'."
-                    ),
-                    hint=_input_type_hint(declared_lower, entry_name, key),
-                    line=entry_line,
-                )
-
-
-def _check_outputs(
-    step_data: dict[str, Any],
-    lm: _LineMap,
-    path_prefix: tuple,
-    step_field: str,
-    step_display: str,
-    ctx: _Context,
-) -> None:
-    outputs = step_data.get("outputs")
-    if outputs is None:
-        return
-    outputs_line = lm.get(*path_prefix, "outputs")
-    if not isinstance(outputs, dict):
-        ctx.error(
-            field=f"{step_field}.outputs",
-            message=(
-                f"{step_display.capitalize()}: 'outputs' must be a mapping of "
-                f"output names to type configurations, "
-                f"got {type(outputs).__name__}."
-            ),
-            hint=(
-                "Example:\n"
-                "  outputs:\n"
-                "    voltage: {type: range, min: 4.9, max: 5.1}\n"
-                "    result: {type: global, global_name: measured_voltage}"
-            ),
-            line=outputs_line,
-        )
-        return
-
-    for entry_name, config in outputs.items():
-        entry_field = f"{step_field}.outputs.{entry_name}"
-        entry_line = lm.get(*path_prefix, "outputs", entry_name)
-
-        if not isinstance(config, dict):
-            ctx.error(
-                field=entry_field,
-                message=(
-                    f"Output '{entry_name}': must be a mapping naming a 'type'."
-                ),
-                hint=(
-                    f"Every output entry says what to do with the returned "
-                    f"value.\nExample:  {entry_name}: {{type: equals, value: 5}}"
-                ),
-                line=entry_line,
-            )
-            continue
-
-        declared = config.get("type")
-        if declared is None:
-            known = ", ".join(sorted(rules.OUTPUT_TYPES))
-            ctx.error(
-                field=entry_field,
-                message=(
-                    f"Output '{entry_name}': missing 'type'. "
-                    f"Available: {known}."
-                ),
-                hint=_output_no_type_hint(entry_name),
-                line=entry_line,
-            )
-            continue
-
-        declared_lower = str(declared).lower()
-        required_keys = rules.OUTPUT_TYPES.get(declared_lower)
-        if required_keys is None:
-            known = ", ".join(sorted(rules.OUTPUT_TYPES))
-            ctx.error(
-                field=entry_field,
-                message=(
-                    f"Output '{entry_name}': unknown type '{declared}'. "
-                    f"Available: {known}."
-                ),
-                hint=_output_unknown_type_hint(entry_name, str(declared)),
-                line=entry_line,
-            )
-            continue
-
-        for key in required_keys:
-            if config.get(key) is None:
-                ctx.error(
-                    field=f"{entry_field}.{key}",
-                    message=(
-                        f"Output '{entry_name}': a '{declared}' entry needs "
-                        f"'{key}'."
-                    ),
-                    hint=_output_type_hint(declared_lower, entry_name, key),
-                    line=entry_line,
-                )
 
 
 # ---------------------------------------------------------------------------
 # Cross-document references
 # ---------------------------------------------------------------------------
 
+
 def _check_cross_references(
     header: dict[str, Any],
-    seq_names: list[str],
+    header_lm: _LineMap,
+    seq_names: list[tuple[str, int | None]],
     ctx: _Context,
 ) -> None:
     # Duplicate sequence names. The parser compares them lowercased
-    # (recipe_parser.py:95): a sequence name keeps its case for display but
-    # must be unique without it, so that a case-insensitive main_sequence
+    # (recipe_parser.parse_recipe): a sequence name keeps its case for display
+    # but must be unique without it, so that a case-insensitive main_sequence
     # lookup can never be ambiguous. Compared exactly here, `Main` and `main`
     # looked like two sequences and the recipe verified clean - then the
     # framework refused to load it.
     seen: set[str] = set()
-    for name in seq_names:
-        lowered = str(name).lower()
+    for name, line in seq_names:
+        lowered = name.lower()
         if lowered in seen:
             ctx.error(
                 field="sequences",
@@ -976,17 +486,17 @@ def _check_cross_references(
                     "Each sequence in a recipe must have a unique name, "
                     "regardless of case. Rename one of the duplicates."
                 ),
+                line=line,
             )
         seen.add(lowered)
 
     # main_sequence must name an existing sequence. The parser resolves it
-    # case-insensitively (recipe_parser.py:105), so `main_sequence: main`
-    # against a sequence called `Main` runs - matched exactly here, it was
-    # reported as a broken reference.
+    # case-insensitively, so `main_sequence: main` against a sequence called
+    # `Main` runs - matched exactly here, it was reported as a broken reference.
     main = header.get("main_sequence")
     if isinstance(main, str) and main.strip() and seq_names:
-        if main.lower() not in {str(name).lower() for name in seq_names}:
-            available = ", ".join(f"'{n}'" for n in seq_names)
+        if main.lower() not in {name.lower() for name, _ in seq_names}:
+            available = ", ".join(f"'{name}'" for name, _ in seq_names)
             ctx.error(
                 field="header.main_sequence",
                 message=(
@@ -998,75 +508,209 @@ def _check_cross_references(
                     f"Fix the name, or remove 'main_sequence' to use the "
                     f"first sequence."
                 ),
+                line=header_lm.get("main_sequence"),
             )
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Hints - chosen by where the problem is and what kind it is
 # ---------------------------------------------------------------------------
 
-def _check_optional_str(
-    doc: dict[str, Any],
-    key: str,
-    field: str,
-    lm: _LineMap,
-    ctx: _Context,
-) -> None:
-    """Warn if an optional string field is present but not a string."""
-    if key in doc and doc[key] is not None:
-        if not isinstance(doc[key], str):
-            ctx.error(
-                field=field,
-                message=(
-                    f"'{key}' must be a string, "
-                    f"got {type(doc[key]).__name__}."
-                ),
-                hint=f"Example:  {key}: A brief description.",
-                line=lm.get(key),
+#: Hints for the header's and a sequence document's own fields.
+_DOCUMENT_FIELD_HINTS: dict[str, str] = {
+    "name": (
+        "Every recipe needs a unique name so the operator and the report "
+        "can identify what was run.\nExample:  name: Output Voltage Test"
+    ),
+    "version": (
+        "Every recipe must declare which PyPTS version it targets. The "
+        "framework warns when they differ.\nExample:  version: '0.2'"
+    ),
+    "main_sequence": (
+        "The name of the sequence to run.\nExample:  main_sequence: Main\n"
+        "If omitted the first sequence in the file is used."
+    ),
+    "globals": (
+        "A mapping of variable names to initial values.\nExample:\n"
+        "  globals:\n"
+        "    serial_number: ''\n"
+        "    voltage: 0"
+    ),
+    "report_metadata": (
+        "A list of globals variable names, each stamped on every row of the "
+        "report. Each entry is a name written as text; a number is not a name.\n"
+        "Example:  report_metadata: [serial_number, lot_number]"
+    ),
+    "sequence_name": (
+        "Each sequence document must begin with 'sequence_name: <name>'. The "
+        "first document is the recipe header (starts with 'name:'); every "
+        "document after it is a sequence."
+    ),
+    "steps": (
+        "A sequence must contain at least one step.\nExample:\n"
+        "  steps:\n"
+        "    - steptype: Wait\n"
+        "      step_name: Pause\n"
+        "      wait_time: 1"
+    ),
+    "teardown_steps": (
+        "teardown_steps runs after the sequence finishes, even after an abort. "
+        "Its steps are structured like 'steps'."
+    ),
+}
+
+
+def _hint(problem: SchemaProblem, doc: dict[str, Any]) -> str:
+    """The hint for one problem, from the document it was found in."""
+    path = problem.path
+    if len(path) >= 2 and path[0] in ("steps", "teardown_steps") and isinstance(path[1], int):
+        steps = doc.get(str(path[0]))
+        step: Any = None
+        if isinstance(steps, list) and path[1] < len(steps):
+            step = steps[path[1]]
+        return _step_hint(problem, step, path[2:])
+
+    field = str(path[0]) if path else ""
+    # report_metadata entries are names, not text fields: a number is refused there.
+    if problem.kind == "string_type" and field != "report_metadata":
+        return _QUOTE_HINT
+    return _DOCUMENT_FIELD_HINTS.get(field, "See recipe_guide.html for the recipe format.")
+
+
+def _step_hint(problem: SchemaProblem, step: Any, rest: tuple[int | str, ...]) -> str:
+    """The hint for a problem inside one step; `rest` is the path within the step."""
+    steptype = _steptype(step)
+
+    # A problem inside an Indexed step's template is a problem of the step it becomes.
+    if steptype == "indexed" and rest and rest[0] == "template":
+        if len(rest) == 1:
+            return _template_hint(problem, step.get("template"))
+        step = step.get("template")
+        steptype = _steptype(step)
+        rest = rest[1:]
+
+    if not rest:
+        if problem.kind == "union_tag_invalid":
+            return _unknown_steptype_hint(steptype)
+        return (
+            "Each step must be a YAML mapping starting with 'steptype:' and "
+            "'step_name:'. A missing '-' before the step or wrong indentation "
+            "is a common cause."
+        )
+
+    field = str(rest[0])
+    if field == "steptype":
+        return (
+            f"Every step must name its type. "
+            f"Available: {', '.join(sorted(STEP_TYPE_REQUIRED))}.\n"
+            f"Example:  steptype: Wait"
+        )
+    if field in ("inputs", "outputs") and len(rest) >= 2:
+        return _entry_hint(problem, step, field, rest[1], rest[2:])
+    if steptype == "indexed" and (field == "parameter_sets" or field in INDEXED_STEP_REFUSED_KEYS):
+        if problem.kind == "missing":
+            return _step_field_hint(steptype, field)
+        return _indexed_hint(field)
+    if steptype == "sequence" and field in SEQUENCE_STEP_REFUSED_KEYS:
+        return (
+            "A Sequence step carries only 'sequence_name' and the common fields "
+            "(description, skip, continue_on_error). It is named after the "
+            "sequence it calls, which shares the run's globals."
+        )
+    if problem.kind == "missing":
+        return _step_field_hint(steptype, field)
+    if problem.kind == "extra_forbidden":
+        return _valid_keys_hint(steptype)
+    if field == "skip":
+        return "Example:  skip: true"
+    if field == "continue_on_error":
+        return (
+            "continue_on_error: false means an ERROR or FAIL on this step ends "
+            "the run and every subsequent step is SKIP."
+        )
+    if problem.kind == "string_type":
+        return _QUOTE_HINT
+    return "See recipe_guide.html for this step type."
+
+
+def _entry_hint(
+    problem: SchemaProblem,
+    step: Any,
+    mapping_name: str,
+    entry_name: int | str,
+    rest: tuple[int | str, ...],
+) -> str:
+    """The hint for one `inputs` or `outputs` entry."""
+    config: Any = None
+    mapping = step.get(mapping_name) if isinstance(step, dict) else None
+    if isinstance(mapping, dict):
+        config = mapping.get(entry_name)
+    declared = config.get("type") if isinstance(config, dict) else None
+    entry = str(entry_name)
+
+    if mapping_name == "inputs":
+        if declared is None:
+            return (
+                f"A literal value is written directly: `{entry}: <value>`.\n"
+                f"To read a run variable: `{entry}: {{type: global, global_name: <var>}}`."
             )
+        required = INPUT_TYPES.get(str(declared))
+        if required is None:
+            return (
+                f"The only mapping input type is 'global' (reads a run variable). "
+                f"A literal value does not need a type: `{entry}: 42`."
+            )
+        missing = [key for key in required if config.get(key) is None]
+        if missing:
+            return _input_type_hint(str(declared), entry, missing[0])
+        return f"A '{declared}' input: see recipe_guide.html."
+
+    if problem.kind == "union_tag_not_found" or declared is None:
+        return _output_no_type_hint(entry)
+    if problem.kind == "union_tag_invalid":
+        return _output_unknown_type_hint(entry, str(declared))
+    if problem.kind == "missing" and rest:
+        return _output_type_hint(str(declared), entry, str(rest[-1]))
+    return _output_no_type_hint(entry)
 
 
-def _ordinal(path_prefix: tuple) -> str:
-    """The step index as a human-readable ordinal for error messages."""
-    idx = path_prefix[-1] if path_prefix else 0
-    if isinstance(idx, int):
-        return str(idx + 1)
-    return str(idx)
+def _steptype(step: Any) -> str:
+    """A step mapping's (normalized, lowercase) steptype, or ""."""
+    if isinstance(step, dict) and isinstance(step.get("steptype"), str):
+        return step["steptype"]
+    return ""
 
 
-# ---------------------------------------------------------------------------
-# Hint strings
-# ---------------------------------------------------------------------------
-
-def _header_required_hint(field: str) -> str:
-    return {
-        "name": (
-            "Every recipe needs a unique name so the operator and the report "
-            "can identify what was run.\nExample:  name: Output Voltage Test"
-        ),
-        "version": (
-            "Every recipe must declare which PyPTS version it targets. The "
-            "framework warns when they differ.\nExample:  version: 0.2"
-        ),
-    }.get(field, f"Add '{field}' to the recipe header.")
+def _valid_keys_hint(steptype: str) -> str:
+    """Every key a steptype takes, read from its model."""
+    model = STEP_SCHEMAS.get(steptype)
+    if model is None:
+        return "See recipe_guide.html for this step type."
+    # A field typed None is declared only to be refused with its reason.
+    keys = []
+    for name, field in model.model_fields.items():
+        if field.annotation is not type(None):
+            keys.append(name)
+    return f"Valid keys for a {steptype} step: {', '.join(sorted(keys))}."
 
 
-def _unknown_steptype_hint(steptype_raw: str) -> str:
-    known = ", ".join(sorted(rules.STEP_TYPE_REQUIRED))
+def _unknown_steptype_hint(steptype: str) -> str:
+    known = ", ".join(sorted(STEP_TYPE_REQUIRED))
     guesses: dict[str, str] = {
         "userinteractionstep": "userinteraction",
         "waitstep": "wait",
         "pythonmodulestep": "pythonmodule",
         "userwritestep": "userwrite",
         "userloadingstep": "userloading",
+        "sequencestep": "sequence",
+        "indexedstep": "indexed",
         "sshconnectstep": "(SSH steps are not yet available in this version)",
         "sshclosestep": "(SSH steps are not yet available in this version)",
-        "sequencestep": "(SequenceStep is dropped; put sub-sequences in-line)",
     }
-    suggestion = guesses.get(steptype_raw.lower(), "")
+    suggestion = guesses.get(steptype.lower(), "")
     hint = f"Available step types: {known}."
     if suggestion:
-        hint += f"\n'{steptype_raw}' was renamed or removed. {suggestion}"
+        hint += f"\n'{steptype}' was renamed or removed. {suggestion}"
     return hint
 
 
@@ -1104,6 +748,10 @@ def _step_field_hint(steptype: str, field: str) -> str:
             "'select: folder', file by default).\n"
             "Example:  message: Select the calibration file for this unit."
         ),
+        ("sequence", "sequence_name"): (
+            "A Sequence step calls another sequence of this recipe by its name.\n"
+            "Example:  sequence_name: Calibrate"
+        ),
         ("indexed", "template"): (
             "An Indexed step needs 'template': the step mapping used as a "
             "base for each generated step.\n"
@@ -1122,24 +770,46 @@ def _step_field_hint(steptype: str, field: str) -> str:
             "      expect: {sum: 3}"
         ),
     }
-    return hints.get(
-        (steptype, field),
-        f"A {steptype} step requires '{field}'.",
-    )
+    if field == "step_name":
+        return (
+            "Every step needs a name that appears in the step table and "
+            "the report.\nExample:  step_name: Measure output voltage"
+        )
+    return hints.get((steptype, field), f"A {steptype} step requires '{field}'.")
 
 
-def _indexed_hint(problem: str) -> str:
-    if "inputs" in problem or "outputs" in problem:
+def _template_hint(problem: SchemaProblem, template: Any) -> str:
+    """A problem with an Indexed step's `template` as a whole."""
+    if problem.kind == "missing":
+        return _step_field_hint("indexed", "template")
+    if problem.kind == "union_tag_invalid":
+        return _unknown_steptype_hint(_steptype(template))
+    return _indexed_hint("template")
+
+
+def _indexed_hint(field: str) -> str:
+    """A problem with one of an Indexed step's own keys, by the key."""
+    if field in ("inputs", "outputs"):
         return (
             "Put 'inputs' and 'outputs' on the 'template', not on the "
             "indexed step wrapper. The wrapper only carries 'template', "
             "'parameter_sets', and the common step fields."
         )
-    if "parameter_sets" in problem:
+    if field == "parameter_sets":
         return (
             "Each entry in 'parameter_sets' may carry 'inputs' (direct "
             "values merged into the template's inputs) and 'expect' "
-            "(shorthand equals checks merged into outputs)."
+            "(shorthand equals checks merged into outputs), and at least one of them."
+        )
+    if field == "id":
+        return (
+            "An indexed step becomes several steps, and each gets an id of its "
+            "own. Remove 'id' here and from the template."
+        )
+    if field == "template":
+        return (
+            "The template is one ordinary step: not a Sequence step, not another "
+            "Indexed step, and without an 'id' - each generated step gets its own."
         )
     return "See the Indexed step documentation in step/step.md."
 
@@ -1154,10 +824,10 @@ def _input_type_hint(type_name: str, entry_name: str, missing_key: str) -> str:
 
 
 def _output_no_type_hint(entry_name: str) -> str:
-    known = ", ".join(sorted(rules.OUTPUT_TYPES))
+    known = ", ".join(sorted(OUTPUT_TYPES))
     return (
-        f"Every output entry says what to do with the returned value via "
-        f"'type'. Available types: {known}.\n"
+        f"Every output entry is a mapping that says what to do with the returned "
+        f"value via 'type'. Available types: {known}.\n"
         f"Examples:\n"
         f"  {entry_name}: {{type: equals, value: 5}}\n"
         f"  {entry_name}: {{type: range, min: 4.9, max: 5.1}}\n"
@@ -1168,14 +838,14 @@ def _output_no_type_hint(entry_name: str) -> str:
 
 
 def _output_unknown_type_hint(entry_name: str, declared: str) -> str:
-    known = ", ".join(sorted(rules.OUTPUT_TYPES))
+    known = ", ".join(sorted(OUTPUT_TYPES))
     return (
         f"'{declared}' is not a valid output type. Available: {known}.\n"
-        f"  equals   — pass if the returned value equals 'value'\n"
-        f"  range    — pass if the value is between 'min' and 'max'\n"
-        f"  passfail — pass if the value is truthy\n"
-        f"  pass     — always DONE, no judgement\n"
-        f"  global   — store the value in a run variable"
+        f"  equals   - pass if the returned value equals 'value'\n"
+        f"  range    - pass if the value is between 'min' and 'max'\n"
+        f"  passfail - pass if the value is truthy\n"
+        f"  pass     - always DONE, no judgement\n"
+        f"  global   - store the value in a run variable"
     )
 
 

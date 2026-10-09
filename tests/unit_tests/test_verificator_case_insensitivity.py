@@ -8,8 +8,9 @@ The verificator and the framework must agree about case.
 The recipe language is case-insensitive: `recipe_parser.normalize_header` and
 `normalize_sequence` lowercase every mapping key before anything is validated,
 so `Step_Name:` loads and runs exactly as `step_name:` does. The Recipe
-Creator's verificator is a second, independent implementation, and it used to
-read raw keys - so a recipe the framework ran happily was reported broken.
+Creator's verificator used to be a second, independent implementation that
+read raw keys - so a recipe the framework ran happily was reported broken. It
+now validates with the framework's own models; these tests still pin the two.
 
 These tests pin the two halves together at the only place that matters: the
 verdict. A recipe the framework accepts must verify clean, and a recipe the

@@ -27,7 +27,7 @@ startup is lost; it simply arrives in the run log a few milliseconds late.
 Typical use:
 
     ConfigHandler.bootstrap()                        # launcher, once
-    ConfigHandler().get_parameter("paths.logs_dir")  # anywhere, any process
+    ConfigHandler().get_parameter("paths.reports_dir")  # anywhere, any process
 """
 
 import configparser
@@ -47,9 +47,11 @@ from pypts.config_handler.configuration_schema import (
     SCHEMA,
     TRUE_VALUES,
     Field,
+    is_hardware_section,
     schema_for_section,
 )
 from pypts.logger.log import log
+from pypts.utilities.common import MASK, is_secret_key, masked
 
 #: Name of the template shipped inside this package.
 TEMPLATE_FILE_NAME = "config_template.ini"
@@ -276,10 +278,11 @@ class ConfigHandler:
         Every value in force, one record each, at DEBUG.
 
         One line per key rather than one block, so that the run log stays one
-        record per line and a value can be grepped for on its own.
+        record per line and a value can be grepped for on its own. A secret (a key
+        named like a password, see utilities/common.py) is shown masked.
         """
         for section, values in self._values.items():
-            for key, value in values.items():
+            for key, value in masked(values).items():
                 self._note(logging.DEBUG, f"Configuration value {section}.{key} = {value}")
 
     # --- reading --------------------------------------------------------------
@@ -289,7 +292,7 @@ class ConfigHandler:
         One value, converted to the type its schema field declares.
 
         Args:
-            key: dotted, `section.option` - "paths.logs_dir",
+            key: dotted, `section.option` - "paths.reports_dir",
                 "gui.window_width". Everything before the last dot is the
                 section name.
             default: returned instead of raising when the key is absent. Pass it
@@ -305,7 +308,7 @@ class ConfigHandler:
         section, _, option = key.rpartition(".")
         if not section:
             raise ConfigKeyError(
-                f"Configuration keys are dotted, as in 'paths.logs_dir'; got {key!r}."
+                f"Configuration keys are dotted, as in 'paths.reports_dir'; got {key!r}."
             )
 
         if section in self._values and option in self._values[section]:
@@ -355,7 +358,8 @@ class ConfigHandler:
         ordered += [section for section in self._values if section not in SCHEMA]
         for section in ordered:
             lines.append(f"[{section}]")
-            lines.extend(f"    {key} = {value}" for key, value in self._values[section].items())
+            shown = masked(self._values[section])
+            lines.extend(f"    {key} = {value}" for key, value in shown.items())
         return "\n".join(lines)
 
     @property
@@ -424,7 +428,11 @@ class ConfigHandler:
 
         self._raw[section][option] = text
         self._values = self._validate(self._raw)
-        log.info("Setting '%s' changed to '%s'.", key, text)
+        if is_secret_key(option):
+            shown = MASK
+        else:
+            shown = text
+        log.info("Setting '%s' changed to '%s'.", key, shown)
         log.debug("Written to %s.", self._path)
 
     def restore_default(self) -> None:
@@ -577,11 +585,18 @@ class ConfigHandler:
         for section, options in raw.items():
             fields = schema_for_section(section)
             if fields is None:
-                self._note(
-                    logging.WARNING,
-                    f"Configuration section [{section}] is not part of the schema; "
-                    f"its values are available as text and nothing else reads them.",
-                )
+                if is_hardware_section(section):
+                    self._note(
+                        logging.DEBUG,
+                        f"Configuration section [{section}] declares a device; its values "
+                        f"are kept as text for the hardware layer.",
+                    )
+                else:
+                    self._note(
+                        logging.WARNING,
+                        f"Configuration section [{section}] is not part of the schema; "
+                        f"its values are available as text and nothing else reads them.",
+                    )
                 values[section] = dict(options)
                 continue
 
@@ -704,7 +719,6 @@ def _default_paths() -> dict[str, str]:
     base = file_locations.default_data_dir()
     return {
         "base_dir": str(base),
-        "logs_dir": str(base / "logs"),
         "reports_dir": str(base / "reports"),
     }
 

@@ -111,7 +111,7 @@ A message shared by two links — anything CORE forwards rather than repacks —
 
 | File | Contents |
 |---|---|
-| `queue_wrapper.py` | `QueueWrapper`, its DEBUG trace, `unhandled()`, `UnhandledMessage` |
+| `queue_wrapper.py` | `QueueWrapper`, its TRACE-level message trace, `unhandled()`, `UnhandledMessage` |
 | `links.py` | the name of each direction, as it appears in the trace |
 | `common_messages.py` | vocabulary shared by more than one link: `ModuleError`, `Heartbeat`, `ResultType`, `StepOutcome` |
 | `run_events.py` | what the engine reports during a run, and the two questions it asks the operator |

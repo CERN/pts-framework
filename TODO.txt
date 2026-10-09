@@ -6,7 +6,9 @@ todo:
 - XY graph integration
 - Linux/Windows compatibilty tests
 - How to properly deploy it?
-- SSH steps - create the HAL layer, move the SSH there
+[x] SSH steps - create the HAL layer, move the SSH there
+    -> done 2026-10-08: pypts/hal/ - devices by logical name, one driver process each,
+       SshDriver; status 1.54. Recipe-level `devices:` is a TODO there.
 
 
 - Make it possible to run the sequence inside of the sequence. The main should be the only one to execute, while it should be able nest sequences.
@@ -21,8 +23,10 @@ Eventually, it can flatten at loading. Idk how we do with indexed step - u tell
 how to decide what widget to load?
 based on the recipe definition
 
-Move the yaml recipe schema to the pydantic framework?
+[x] Move the yaml recipe schema to the pydantic framework?
 rules are already in recipe_parser.py on master branch
+    -> done 2026-10-08: recipe/recipe_schema.py (constants + Pydantic models) replaces
+       rules.py and validator.py; status 1.52.
 
 Selecting steps for executing only those ones. - for development purposes
 
