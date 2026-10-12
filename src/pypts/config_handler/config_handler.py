@@ -38,7 +38,7 @@ from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Self
+from typing import Any
 
 from pypts.config_handler import file_locations, template_writer
 from pypts.config_handler.configuration_schema import (
@@ -125,7 +125,7 @@ class ConfigHandler:
     #: cold singleton at the same moment.
     _lock = threading.RLock()
 
-    def __new__(cls) -> Self:
+    def __new__(cls) -> "ConfigHandler":
         """Read-only access to the configuration of this process."""
         return cls._obtain(Role.READER, create_if_missing=False)
 

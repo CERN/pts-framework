@@ -51,7 +51,6 @@ class UserInteractionStep(Step):
         self,
         message: str,
         options: Any,
-        image_path: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
@@ -60,7 +59,6 @@ class UserInteractionStep(Step):
         # is coerced rather than refused, so `options: [1, 2]` works and the
         # answer that comes back is comparable with what the recipe wrote.
         self.options: tuple[str, ...] = tuple(str(option) for option in options or ())
-        self.image_path = image_path
         if not self.options:
             raise ValueError(
                 f"Step '{self.name}': 'options' must list at least one button. "
@@ -73,7 +71,7 @@ class UserInteractionStep(Step):
             request_id=uuid.uuid4(),
             message=self.message,
             options=self.options,
-            image_path=resolve_image_path(self.name, self.image_path, runtime.base_dir),
+            image_path=resolve_image_path(self.image_path, runtime.base_dir),
         )
         log.info("Waiting for the operator: '%s'", self.message)
         log.debug(

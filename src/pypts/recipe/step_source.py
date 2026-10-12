@@ -18,6 +18,11 @@ highlighted: clicking a call shows what the call runs. The rows an `Indexed`
 step expands into exist in no file, so each of them highlights the authored
 `Indexed` block they came from.
 
+**And the code behind it.** A PythonModule row also carries `python_file`: the
+source file its `module:` names, found the way a run would find it
+(`python_module_step.find_module_file`), for the step table's "Open Python file".
+Every other row - another step type, a Sequence step's row - has none.
+
 `recipe_file_text(path)` is the whole file, for the toolbar's recipe preview.
 
 **The ordering contract.** Rows are produced in the order `Sequence.to_summary()`
@@ -38,6 +43,7 @@ from pypts.recipe import recipe_parser
 from pypts.recipe.recipe import RecipeError
 from pypts.recipe.recipe_schema import SEQUENCE_DEFAULTS
 from pypts.step import indexed_step, sequence_step
+from pypts.step.python_module_step import find_module_file
 
 #: The two step lists of a sequence document, in row order.
 _STEP_LISTS = ("steps", "teardown_steps")
@@ -50,12 +56,15 @@ class StepSource:
 
     `text` is the sequence document the row's step belongs to, exactly as the
     file has it. `first_line` and `last_line` are the step's lines in that
-    text, 0-based and inclusive.
+    text, 0-based and inclusive. `python_file` is the absolute path of the
+    source file a PythonModule step runs; empty for every other row, and for
+    a module whose file cannot be found.
     """
 
     text: str
     first_line: int
     last_line: int
+    python_file: str = ""
 
     @property
     def highlights(self) -> bool:
@@ -116,12 +125,15 @@ def step_sources_by_sequence(path: str) -> dict[str, tuple[StepSource, ...]]:
 
     lines = text.split("\n")
     documents = _sequence_documents(loaded, nodes, lines)
+    # What a PythonModule step's `module:` is resolved against - the recipe's
+    # folder, as recipe_parser sets Recipe.base_dir.
+    base_dir = str(Path(path).resolve().parent)
 
     sources: dict[str, tuple[StepSource, ...]] = {}
     for document in documents.values():
         name = str(document.data["sequence_name"])
         try:
-            sources[name] = tuple(_rows(document, documents, ()))
+            sources[name] = tuple(_rows(document, documents, (), base_dir))
         except (RecipeError, KeyError, ValueError, TypeError, AttributeError) as error:
             log.debug("No step YAML for sequence '%s' of '%s': %s", name, path, error)
     return sources
@@ -174,7 +186,7 @@ def _document_lines(node: yaml.MappingNode, lines: list[str]) -> tuple[int, int]
 
 
 def _rows(
-    document: _Document, documents: dict[str, _Document], chain: tuple[str, ...]
+    document: _Document, documents: dict[str, _Document], chain: tuple[str, ...], base_dir: str
 ) -> list[StepSource]:
     """One document's rows, each call followed by the rows of what it calls."""
     name = str(document.data["sequence_name"])
@@ -191,15 +203,30 @@ def _rows(
             first, last = _item_lines(
                 item_nodes[position], following, document.first_file_line, text_lines
             )
-            source = StepSource(text=document.text, first_line=first, last_line=last)
             if indexed_step.is_indexed_step(step_data):
-                # Every generated row points at the Indexed block it came from.
-                count = len(indexed_step.expand_indexed_step(step_data))
-                rows.extend([source] * count)
+                # Every generated row points at the Indexed block it came from,
+                # and at the code its own generated step runs.
+                for generated in indexed_step.expand_indexed_step(step_data):
+                    rows.append(
+                        StepSource(
+                            text=document.text,
+                            first_line=first,
+                            last_line=last,
+                            python_file=_python_file(generated, base_dir),
+                        )
+                    )
                 continue
             if not sequence_step.is_sequence_step(step_data):
-                rows.append(source)
+                rows.append(
+                    StepSource(
+                        text=document.text,
+                        first_line=first,
+                        last_line=last,
+                        python_file=_python_file(step_data, base_dir),
+                    )
+                )
                 continue
+            source = StepSource(text=document.text, first_line=first, last_line=last)
             called = documents.get(str(step_data.get("sequence_name")).lower())
             # The parser has refused an unknown name or a cycle already; here
             # they fall back to the call itself and add no rows.
@@ -208,8 +235,23 @@ def _rows(
                 continue
             # The call's row shows what the call runs: the called sequence, whole.
             rows.append(StepSource(text=called.text, first_line=NO_LINE, last_line=NO_LINE))
-            rows.extend(_rows(called, documents, chain))
+            rows.extend(_rows(called, documents, chain, base_dir))
     return rows
+
+
+def _python_file(step_data: dict[str, Any], base_dir: str) -> str:
+    """The source file a PythonModule step runs, or "" for any other row."""
+    steptype = step_data.get("steptype")
+    if not isinstance(steptype, str) or steptype.lower() != "pythonmodule":
+        return ""
+    module_ref = step_data.get("module")
+    if not isinstance(module_ref, str) or not module_ref:
+        return ""
+    path = find_module_file(module_ref, base_dir)
+    if path is None:
+        log.debug("No Python file found for module '%s' (base %s).", module_ref, base_dir)
+        return ""
+    return str(path)
 
 
 def _list_items(node: yaml.MappingNode, list_name: str) -> list[yaml.Node]:

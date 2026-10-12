@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from queue import Queue
 from typing import ClassVar
+from uuid import UUID
 
 from pypts.config_handler import ConfigError, ConfigHandler
 from pypts.config_handler.configuration_schema import READ_ONLY_SECTIONS
@@ -274,6 +275,13 @@ class Core:
         #: refusable here.
         self.recipe: Recipe | None = None
 
+        #: Whether the run in progress has a report: the `write_report` of its
+        #: RunStarted, back to True when its RunFinished has been routed. False
+        #: only for the GUI's engineering-mode retest, whose events then go to
+        #: the HMI alone. Taken from the Sequencer's RunStarted rather than from
+        #: the StartSequence CORE relayed, because the Sequencer may refuse it.
+        self.run_has_report = True
+
         #: When CORE stops waiting for the modules it asked to stop. None until
         #: it has asked, because there is nothing to time out before that.
         self.shutdown_deadline: float | None = None
@@ -434,8 +442,12 @@ class Core:
                 self.load_recipe(recipe_path)
             case UnloadRecipe():
                 self.unload_recipe()
-            case StartSequence(sequence_name=sequence_name):
-                self.start_sequence(sequence_name)
+            case StartSequence(
+                sequence_name=sequence_name,
+                excluded_step_ids=excluded_step_ids,
+                write_report=write_report,
+            ):
+                self.start_sequence(sequence_name, excluded_step_ids, write_report)
             case StopSequence():
                 # The operator's abort. Relayed unchanged; the Sequencer answers
                 # with the run's own RunFinished(STOP).
@@ -466,30 +478,33 @@ class Core:
             case SequencerStopped():
                 self.modules[SEQUENCER].running = False
                 self.release_stop_report()
-            case RunStarted() | SequenceStarted():
-                # Progress is the frontend's business, and these two are the
-                # Report's as well: RunStarted opens the run folder and the
-                # CSV, SequenceStarted names the rows that follow. The same
-                # object is relayed rather than repacked, so nothing is lost
-                # on the way.
-                log.debug(
-                    "CORE relaying %s to the Report and the HMI.", type(message).__name__
-                )
-                self.to_report.send(message)
-                self.to_hmi.send(message)
+            case RunStarted():
+                # Decides the routing of the whole run: an engineering-mode
+                # retest has no report, so nothing of it goes to the Report.
+                self.run_has_report = message.write_report
+                if not self.run_has_report:
+                    log.debug("CORE: this run has no report; its events go to the HMI only.")
+                self.relay_run_event(message)
+            case SequenceStarted():
+                self.relay_run_event(message)
             case RunFinished():
                 # The Report closes the CSV on RunFinished, then builds the
                 # HTML on the GenerateReport sent right behind it - one queue,
                 # so the order is guaranteed.
-                log.debug("CORE relaying RunFinished and asking for the report.")
-                self.to_report.send(message)
-                self.to_report.send(GenerateReport())
+                if self.run_has_report:
+                    log.debug("CORE relaying RunFinished and asking for the report.")
+                    self.to_report.send(message)
+                    self.to_report.send(GenerateReport())
+                else:
+                    log.debug("CORE relaying RunFinished to the HMI; no report for this run.")
                 self.to_hmi.send(message)
+                self.run_has_report = True
             case RunMetadata():
                 # What the run has learned about the unit on the bench. The
                 # Report stamps it on every row; the HMI shows it beside the
                 # recipe name so the operator can see which unit this is.
-                self.to_report.send(message)
+                if self.run_has_report:
+                    self.to_report.send(message)
                 self.to_hmi.send(message)
             case SequenceFinished() | StepStarted() | StepFinished():
                 log.debug("CORE relaying %s to the HMI.", type(message).__name__)
@@ -503,8 +518,10 @@ class Core:
             case StepExecuted():
                 # The rich step record. Report only - the HMI already got the
                 # flat StepFinished, and this one must not cross the process
-                # boundary (see its docstring).
-                self.to_report.send(message)
+                # boundary (see its docstring). Dropped for a run without a
+                # report; RunStarted already logged that once.
+                if self.run_has_report:
+                    self.to_report.send(message)
             case UserPromptRequest() | UserTextRequest() | UserPathRequest():
                 # A step is waiting on the sequence thread for the answer to
                 # this. Relayed unchanged; the answer comes back through
@@ -517,6 +534,22 @@ class Core:
                 self.handle_module_error(message)
             case _:
                 unhandled(message)
+
+    def relay_run_event(self, message: RunStarted | SequenceStarted) -> None:
+        """
+        RunStarted / SequenceStarted: to the HMI, and to the Report when the run has one.
+
+        Progress is the frontend's business, and these two are the Report's as
+        well: RunStarted opens the CSV in the run folder, SequenceStarted names
+        the rows that follow. The same object is relayed rather than repacked,
+        so nothing is lost on the way.
+        """
+        if self.run_has_report:
+            log.debug("CORE relaying %s to the Report and the HMI.", type(message).__name__)
+            self.to_report.send(message)
+        else:
+            log.debug("CORE relaying %s to the HMI.", type(message).__name__)
+        self.to_hmi.send(message)
 
     def handle_report_message(self, message: ReportToCore) -> None:
         match message:
@@ -569,17 +602,17 @@ class Core:
             return
         self.recipe = recipe
         # The parser knows the format and has already logged its verdict;
-        # CORE owns the channel to the operator, so the sentence is shown
-        # from here. A version mismatch never stops a run: the recipe loads
-        # anyway, but may expect a framework this is not. It is sent as ERROR,
-        # not WARNING, so it reaches the operator - handle_module_error() only
-        # logs a WARNING and never shows it on the HMI.
-        if recipe.version_notice:
+        # CORE owns the channel to the operator, so the sentences are shown
+        # from here. None of them stops a run: a version mismatch or a missing
+        # picture loads anyway. Each is sent as ERROR, not WARNING, so it
+        # reaches the operator - handle_module_error() only logs a WARNING and
+        # never shows it on the HMI.
+        for notice in recipe.load_notices:
             self.handle_module_error(
                 ModuleError(
                     source="pypts.recipe.recipe_parser",
                     severity=ErrorSeverity.ERROR,
-                    message=recipe.version_notice,
+                    message=notice,
                     operation="Recipe.from_file",
                 )
             )
@@ -622,13 +655,21 @@ class Core:
         self.to_sequencer.send(ForgetRecipe())
         self.to_hmi.send(RecipeUnloaded())
 
-    def start_sequence(self, sequence_name: str) -> None:
+    def start_sequence(
+        self,
+        sequence_name: str,
+        excluded_step_ids: tuple[UUID, ...] = (),
+        write_report: bool = True,
+    ) -> None:
         """
         Ask the Sequencer to run a sequence, handing over the recipe with it.
 
         CORE holds the loaded recipe, so CORE is the one that can refuse: with
         nothing loaded the command stops here and the operator is told why. The
         Sequencer is never asked to run a recipe it was not given.
+
+        `excluded_step_ids` and `write_report` (the GUI's engineering mode) are
+        copied onto the RunSequence unread.
         """
         if self.recipe is None:
             self.handle_module_error(
@@ -643,8 +684,15 @@ class Core:
                 )
             )
             return
-        log.debug("CORE asking the Sequencer to run sequence '%s'.", sequence_name)
-        self.to_sequencer.send(RunSequence(self.recipe, sequence_name))
+        log.debug(
+            "CORE asking the Sequencer to run sequence '%s' (%d steps left out, report: %s).",
+            sequence_name,
+            len(excluded_step_ids),
+            write_report,
+        )
+        self.to_sequencer.send(
+            RunSequence(self.recipe, sequence_name, excluded_step_ids, write_report)
+        )
 
     def set_config_parameter(self, key: str, value: str) -> None:
         """

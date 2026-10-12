@@ -1,0 +1,48 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The hardware layer with an instrument anyone can reach: a weather station on
+# the internet (Open-Meteo, free, no API key). The test code in
+# meteo_demo_tests.py asks for the device by logical name; PyPTS starts its
+# driver process on first use and closes it when the run ends.
+#
+# The device is declared in config.ini (File -> Open Config), not in the
+# recipe:
+#
+#   [hardware.meteo1]
+#   driver = pypts.hal.drivers.weather.OpenMeteoDriver
+#   place = CERN Meyrin
+#   latitude = 46.23
+#   longitude = 6.05
+#
+# Needs internet access. Without it every step ends ERROR with
+# "Device 'meteo1' could not be opened: ... could not be reached" - which is
+# what an instrument that is switched off looks like too.
+#
+# The driver, src/pypts/hal/drivers/weather.py, is the template for a new one:
+# derive from a device type, read settings in connect(), release in teardown(),
+# every other public method is an operation. src/pypts/hal/hal.md has the rules.
+name: Meteo demo
+description: A weather station on the internet, reached as a HAL device.
+version: 0.2
+---
+sequence_name: Main
+description: Reads the weather at CERN.
+steps:
+  - steptype: PythonModule
+    step_name: Temperature at CERN
+    description: The air temperature must be one the Earth has.
+    module: meteo_demo_tests.py
+    method_name: cern_temperature
+    outputs:
+      temperature_c: {type: range, min: '-40', max: '50'}
+  # `pass` records a value in the report without judging it.
+  - steptype: PythonModule
+    step_name: Wind at CERN
+    description: Wind speed in km/h, below hurricane force; direction recorded.
+    module: meteo_demo_tests.py
+    method_name: cern_wind
+    outputs:
+      wind_speed_kmh: {type: range, min: '0', max: '200'}
+      wind_direction_deg: {type: pass}

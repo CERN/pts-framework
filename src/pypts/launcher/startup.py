@@ -131,15 +131,14 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    if args.mode == "headless":
-        if args.recipe is None:
-            parser.error("--mode headless needs --recipe")
-    elif args.recipe is not None or args.sequence is not None:
+    if args.mode != "headless" and (args.recipe is not None or args.sequence is not None):
         parser.error("--recipe and --sequence are for --mode headless only")
 
     # Headless mode is pypts.api.Pts with a console, and Pts starts the engine
     # itself. Imported here, not at the top: pypts.api imports this module.
     if args.mode == "headless":
+        if args.recipe is None:
+            parser.error("--mode headless needs --recipe")
         from pypts.api.headless import headless_main
 
         sys.exit(headless_main(args.recipe, args.sequence, args.log_level))
@@ -193,10 +192,11 @@ def restart_pypts() -> int:
     """
     Start pypts again with the command line this one was started with, and wait.
 
-    Called by main() when the GUI ended asking for it - after Restore default
-    settings deleted config.ini. A fresh process rather than a second pass through
-    main(): every singleton (the configuration, logging) starts empty, exactly
-    as when an operator starts pypts by hand, so config.ini is recreated from
+    Called by main() when the GUI ended asking for it - File -> Restart, or
+    Restore default settings once it deleted config.ini. A fresh process rather
+    than a second pass through main(): every singleton (the configuration,
+    logging) starts empty, exactly as when an operator starts pypts by hand, so
+    a hand-edited config.ini is read again, or a deleted one recreated from
     the template by the bootstrap that already does it, and a new run log comes
     with it.
 
@@ -279,7 +279,7 @@ def start_engine(mode: str, log_level_name: str | None = None) -> Engine:
     # and owned by a single writer. The queue is what guarantees that no
     # parallel writes are made to the log file.
 
-    log_queue = Queue()
+    log_queue: Any = Queue()
     log_file_path = get_log_file_path(config.get_parameter("paths.reports_dir"))
 
     configured_level = log_level_name or config.get_parameter("logging.level")
@@ -366,7 +366,8 @@ def run_gui(
 
     Returns:
         True if the GUI ended asking for pypts to be started again
-        (RESTART_EXIT_CODE), after Restore default settings - main() does that;
+        (RESTART_EXIT_CODE), from File -> Restart or Restore default settings -
+        main() does that;
         pypts.api.open_gui() ignores it.
     """
     # Imported here and not at the top, for the reason main() checks the import

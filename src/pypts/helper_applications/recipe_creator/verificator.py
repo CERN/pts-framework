@@ -15,17 +15,21 @@ anything it still refuses - a `select` that is neither file nor folder, a call
 of a sequence that does not exist - is an error too. So a recipe verifies
 without errors exactly when the framework would load it.
 
-What is this file's own: the line of every issue, the hint on how to fix it,
-and the warnings about what loads but looks wrong (a removed key, a version
-written as a number).
+What is this file's own: the line of every issue, which field's hint fits it
+(the words are the schema's own field descriptions and examples), and the
+warnings about what loads but looks wrong (a removed key, a version written as
+a number).
 """
 
 from __future__ import annotations
 
+import textwrap
+import typing
 from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel
 
 from pypts.helper_applications.recipe_creator.issue import ValidationIssue
 from pypts.recipe import recipe_parser
@@ -33,40 +37,15 @@ from pypts.recipe.recipe import RecipeError
 from pypts.recipe.recipe_parser import SchemaProblem
 from pypts.recipe.recipe_schema import (
     INDEXED_STEP_REFUSED_KEYS,
-    INPUT_TYPES,
-    OUTPUT_TYPES,
+    OUTPUT_SCHEMAS,
+    REMOVED_SEQUENCE_KEYS,
+    RENAMED_STEP_TYPES,
     SEQUENCE_STEP_REFUSED_KEYS,
     STEP_SCHEMAS,
-    STEP_TYPE_REQUIRED,
     HeaderSchema,
+    IndexedStepSchema,
     SequenceSchema,
 )
-
-# ---------------------------------------------------------------------------
-# Keys that existed in the old recipe format and were deliberately removed.
-# A sequence document is allowed unknown keys - the framework ignores them -
-# so these load, and a recipe that still carries them gets a targeted warning
-# rather than a generic "unknown key" one.
-# ---------------------------------------------------------------------------
-_REMOVED_SEQUENCE_KEYS: dict[str, str] = {
-    "setup_steps": (
-        "'setup_steps' was removed. Steps that belonged in setup_steps go at "
-        "the front of 'steps' instead."
-    ),
-    "parameters": (
-        "'parameters' was removed. A sequence declares no call interface: a "
-        "Sequence step calls it and it shares the run's globals. Remove this key."
-    ),
-    "outputs": (
-        "'outputs' as a sequence-level key was removed (step-level 'outputs' "
-        "mappings are still valid). Remove this key from the sequence header."
-    ),
-    "locals": (
-        "'locals' was removed. There is now one scope for the whole run: "
-        "'globals'. Declare variables there and read them from a step with "
-        "{type: global, global_name: <name>}."
-    ),
-}
 
 #: A text field refuses a YAML boolean, a date or a list - the cure is quoting.
 _QUOTE_HINT = (
@@ -338,7 +317,7 @@ def _run(content: str, ctx: _Context) -> None:
     # Pass 3 - the header, against the framework's model
     header_lm = _LineMap(header_node)
     header_problems, _ = recipe_parser.validate_document(header_doc, HeaderSchema, "header")
-    _report_problems(header_problems, header_doc, header_lm, ctx)
+    _report_problems(header_problems, header_doc, HeaderSchema, header_lm, ctx)
     _warn_about_header(header_doc, header_lm, header_problems, ctx)
 
     # Pass 4 - every sequence, against the framework's model
@@ -348,7 +327,7 @@ def _run(content: str, ctx: _Context) -> None:
         seq_lm = _LineMap(seq_node)
         context = recipe_parser.sequence_context(seq_doc, number)
         problems, _ = recipe_parser.validate_document(seq_doc, SequenceSchema, context)
-        _report_problems(problems, seq_doc, seq_lm, ctx)
+        _report_problems(problems, seq_doc, SequenceSchema, seq_lm, ctx)
         _warn_about_sequence(seq_doc, seq_lm, context, ctx)
         # A number is a sequence name too: the framework reads it as its text.
         name = seq_doc.get("sequence_name")
@@ -373,14 +352,18 @@ def _run(content: str, ctx: _Context) -> None:
 
 
 def _report_problems(
-    problems: list[SchemaProblem], doc: dict[str, Any], lm: _LineMap, ctx: _Context
+    problems: list[SchemaProblem],
+    doc: dict[str, Any],
+    model: type[BaseModel],
+    lm: _LineMap,
+    ctx: _Context,
 ) -> None:
     """Each problem the framework's model found, as an error at its line."""
     for problem in problems:
         ctx.error(
             field=problem.where,
             message=problem.message,
-            hint=_hint(problem, doc),
+            hint=_hint(problem, doc, model),
             line=lm.nearest(doc, problem.path),
         )
 
@@ -441,7 +424,7 @@ def _warn_about_sequence(
     for key in doc:
         if key in known:
             continue
-        removed = _REMOVED_SEQUENCE_KEYS.get(key)
+        removed = REMOVED_SEQUENCE_KEYS.get(key)
         if removed is not None:
             ctx.warning(
                 field=f"{context}.{key}",
@@ -513,55 +496,17 @@ def _check_cross_references(
 
 
 # ---------------------------------------------------------------------------
-# Hints - chosen by where the problem is and what kind it is
+# Hints - chosen by where the problem is and what kind it is. The words are
+# the schema's: every field carries its own description and example
+# (recipe_schema.py), so this part only picks which field a problem is about.
 # ---------------------------------------------------------------------------
 
-#: Hints for the header's and a sequence document's own fields.
-_DOCUMENT_FIELD_HINTS: dict[str, str] = {
-    "name": (
-        "Every recipe needs a unique name so the operator and the report "
-        "can identify what was run.\nExample:  name: Output Voltage Test"
-    ),
-    "version": (
-        "Every recipe must declare which PyPTS version it targets. The "
-        "framework warns when they differ.\nExample:  version: '0.2'"
-    ),
-    "main_sequence": (
-        "The name of the sequence to run.\nExample:  main_sequence: Main\n"
-        "If omitted the first sequence in the file is used."
-    ),
-    "globals": (
-        "A mapping of variable names to initial values.\nExample:\n"
-        "  globals:\n"
-        "    serial_number: ''\n"
-        "    voltage: 0"
-    ),
-    "report_metadata": (
-        "A list of globals variable names, each stamped on every row of the "
-        "report. Each entry is a name written as text; a number is not a name.\n"
-        "Example:  report_metadata: [serial_number, lot_number]"
-    ),
-    "sequence_name": (
-        "Each sequence document must begin with 'sequence_name: <name>'. The "
-        "first document is the recipe header (starts with 'name:'); every "
-        "document after it is a sequence."
-    ),
-    "steps": (
-        "A sequence must contain at least one step.\nExample:\n"
-        "  steps:\n"
-        "    - steptype: Wait\n"
-        "      step_name: Pause\n"
-        "      wait_time: 1"
-    ),
-    "teardown_steps": (
-        "teardown_steps runs after the sequence finishes, even after an abort. "
-        "Its steps are structured like 'steps'."
-    ),
-}
+#: For a problem no field of the schema describes.
+_FALLBACK_HINT = "See recipe_guide.html for the recipe format."
 
 
-def _hint(problem: SchemaProblem, doc: dict[str, Any]) -> str:
-    """The hint for one problem, from the document it was found in."""
+def _hint(problem: SchemaProblem, doc: dict[str, Any], model: type[BaseModel]) -> str:
+    """The hint for one problem, from the document it was found in and its model."""
     path = problem.path
     if len(path) >= 2 and path[0] in ("steps", "teardown_steps") and isinstance(path[1], int):
         steps = doc.get(str(path[0]))
@@ -574,7 +519,7 @@ def _hint(problem: SchemaProblem, doc: dict[str, Any]) -> str:
     # report_metadata entries are names, not text fields: a number is refused there.
     if problem.kind == "string_type" and field != "report_metadata":
         return _QUOTE_HINT
-    return _DOCUMENT_FIELD_HINTS.get(field, "See recipe_guide.html for the recipe format.")
+    return _field_help(model, field)
 
 
 def _step_hint(problem: SchemaProblem, step: Any, rest: tuple[int | str, ...]) -> str:
@@ -598,80 +543,106 @@ def _step_hint(problem: SchemaProblem, step: Any, rest: tuple[int | str, ...]) -
             "is a common cause."
         )
 
+    model = STEP_SCHEMAS.get(steptype)
     field = str(rest[0])
     if field == "steptype":
         return (
-            f"Every step must name its type. "
-            f"Available: {', '.join(sorted(STEP_TYPE_REQUIRED))}.\n"
-            f"Example:  steptype: Wait"
+            "Every step must name its type.\n"
+            + _type_list("Available step types", STEP_SCHEMAS, "steptype")
+            + "\nExample:  steptype: Wait"
         )
     if field in ("inputs", "outputs") and len(rest) >= 2:
-        return _entry_hint(problem, step, field, rest[1], rest[2:])
-    if steptype == "indexed" and (field == "parameter_sets" or field in INDEXED_STEP_REFUSED_KEYS):
-        if problem.kind == "missing":
-            return _step_field_hint(steptype, field)
-        return _indexed_hint(field)
+        return _entry_hint(problem, step, model, field, rest[1], rest[2:])
+    # A refused key's reason is already the message; say what the step does take.
+    if steptype == "indexed" and field in INDEXED_STEP_REFUSED_KEYS:
+        return _valid_keys_hint(steptype)
     if steptype == "sequence" and field in SEQUENCE_STEP_REFUSED_KEYS:
-        return (
-            "A Sequence step carries only 'sequence_name' and the common fields "
-            "(description, skip, continue_on_error). It is named after the "
-            "sequence it calls, which shares the run's globals."
-        )
-    if problem.kind == "missing":
-        return _step_field_hint(steptype, field)
+        return _valid_keys_hint(steptype)
+    # Inside a parameter set, 'Extra inputs' is about the set, not the step.
+    if steptype == "indexed" and field == "parameter_sets":
+        return _field_help(model, field)
     if problem.kind == "extra_forbidden":
         return _valid_keys_hint(steptype)
-    if field == "skip":
-        return "Example:  skip: true"
-    if field == "continue_on_error":
-        return (
-            "continue_on_error: false means an ERROR or FAIL on this step ends "
-            "the run and every subsequent step is SKIP."
-        )
     if problem.kind == "string_type":
         return _QUOTE_HINT
-    return "See recipe_guide.html for this step type."
+    return _field_help(model, field)
 
 
 def _entry_hint(
     problem: SchemaProblem,
     step: Any,
+    model: type[BaseModel] | None,
     mapping_name: str,
     entry_name: int | str,
     rest: tuple[int | str, ...],
 ) -> str:
     """The hint for one `inputs` or `outputs` entry."""
+    # Every inputs problem has one answer: the two forms an entry takes.
+    if mapping_name == "inputs":
+        return _field_help(model, "inputs")
+
     config: Any = None
     mapping = step.get(mapping_name) if isinstance(step, dict) else None
     if isinstance(mapping, dict):
         config = mapping.get(entry_name)
     declared = config.get("type") if isinstance(config, dict) else None
-    entry = str(entry_name)
-
-    if mapping_name == "inputs":
-        if declared is None:
-            return (
-                f"A literal value is written directly: `{entry}: <value>`.\n"
-                f"To read a run variable: `{entry}: {{type: global, global_name: <var>}}`."
-            )
-        required = INPUT_TYPES.get(str(declared))
-        if required is None:
-            return (
-                f"The only mapping input type is 'global' (reads a run variable). "
-                f"A literal value does not need a type: `{entry}: 42`."
-            )
-        missing = [key for key in required if config.get(key) is None]
-        if missing:
-            return _input_type_hint(str(declared), entry, missing[0])
-        return f"A '{declared}' input: see recipe_guide.html."
 
     if problem.kind == "union_tag_not_found" or declared is None:
-        return _output_no_type_hint(entry)
+        return _output_no_type_hint(entry_name)
     if problem.kind == "union_tag_invalid":
-        return _output_unknown_type_hint(entry, str(declared))
-    if problem.kind == "missing" and rest:
-        return _output_type_hint(str(declared), entry, str(rest[-1]))
-    return _output_no_type_hint(entry)
+        return f"'{declared}' is not a valid output type.\n" + _type_list(
+            "Available", OUTPUT_SCHEMAS, "type"
+        )
+    output_model = OUTPUT_SCHEMAS.get(str(declared))
+    if output_model is not None and problem.kind == "missing" and rest:
+        info = output_model.model_fields.get(str(rest[-1]))
+        if info is not None and info.description:
+            return f"{info.description}\nExample:  {_output_example(output_model, entry_name)}"
+    return _output_no_type_hint(entry_name)
+
+
+def _template_hint(problem: SchemaProblem, template: Any) -> str:
+    """A problem with an Indexed step's `template` as a whole."""
+    if problem.kind == "union_tag_invalid":
+        return _unknown_steptype_hint(_steptype(template))
+    return _field_help(IndexedStepSchema, "template")
+
+
+def _unknown_steptype_hint(steptype: str) -> str:
+    hint = _type_list("Available step types", STEP_SCHEMAS, "steptype")
+    renamed = RENAMED_STEP_TYPES.get(steptype.lower())
+    if renamed:
+        hint += f"\n'{steptype}' was renamed or removed. {renamed}"
+    return hint
+
+
+def _output_no_type_hint(entry_name: int | str) -> str:
+    examples = []
+    for model in OUTPUT_SCHEMAS.values():
+        examples.append("  " + _output_example(model, entry_name))
+    return (
+        "Every output entry is a mapping that says what to do with the returned "
+        "value via 'type'.\n"
+        + _type_list("Available types", OUTPUT_SCHEMAS, "type")
+        + "\nExamples:\n"
+        + "\n".join(examples)
+    )
+
+
+def _valid_keys_hint(steptype: str) -> str:
+    """Every key a steptype takes, read from its model."""
+    model = STEP_SCHEMAS.get(steptype)
+    if model is None:
+        return _FALLBACK_HINT
+    # A field typed None is declared only to be refused with its reason.
+    keys = []
+    for name, field in model.model_fields.items():
+        if field.annotation is not type(None):
+            keys.append(name)
+    return f"Valid keys for a {steptype} step: {', '.join(sorted(keys))}."
+
+
+# -- reading the schema's words ------------------------------------------------
 
 
 def _steptype(step: Any) -> str:
@@ -681,196 +652,60 @@ def _steptype(step: Any) -> str:
     return ""
 
 
-def _valid_keys_hint(steptype: str) -> str:
-    """Every key a steptype takes, read from its model."""
-    model = STEP_SCHEMAS.get(steptype)
-    if model is None:
-        return "See recipe_guide.html for this step type."
-    # A field typed None is declared only to be refused with its reason.
-    keys = []
-    for name, field in model.model_fields.items():
-        if field.annotation is not type(None):
-            keys.append(name)
-    return f"Valid keys for a {steptype} step: {', '.join(sorted(keys))}."
+def _field_help(model: type[BaseModel] | None, field: str) -> str:
+    """A field's description and its first example, as the schema words them."""
+    info = None
+    if model is not None:
+        info = model.model_fields.get(field)
+    if info is None or not info.description:
+        return _FALLBACK_HINT
+    if not info.examples:
+        return info.description
+    return f"{info.description}\n{_example(field, info.examples[0])}"
 
 
-def _unknown_steptype_hint(steptype: str) -> str:
-    known = ", ".join(sorted(STEP_TYPE_REQUIRED))
-    guesses: dict[str, str] = {
-        "userinteractionstep": "userinteraction",
-        "waitstep": "wait",
-        "pythonmodulestep": "pythonmodule",
-        "userwritestep": "userwrite",
-        "userloadingstep": "userloading",
-        "sequencestep": "sequence",
-        "indexedstep": "indexed",
-        "sshconnectstep": "(SSH steps are not yet available in this version)",
-        "sshclosestep": "(SSH steps are not yet available in this version)",
-    }
-    suggestion = guesses.get(steptype.lower(), "")
-    hint = f"Available step types: {known}."
-    if suggestion:
-        hint += f"\n'{steptype}' was renamed or removed. {suggestion}"
-    return hint
+def _example(key: str, value: Any) -> str:
+    """`key: value` as YAML: on one line when it is short, as a block when it is nested."""
+    if isinstance(value, list) and not any(isinstance(item, (dict, list)) for item in value):
+        # A list of plain values reads best inline: `options: [Continue, Abort]`.
+        text = f"{key}: {_dump(value, True)}"
+    elif isinstance(value, list):
+        # A list of mappings as a block, each mapping inline when it is flat.
+        text = _dump({key: value}, None)
+    else:
+        text = _dump({key: value}, False)
+    if "\n" in text:
+        return "Example:\n" + textwrap.indent(text, "  ")
+    return f"Example:  {text}"
 
 
-def _step_field_hint(steptype: str, field: str) -> str:
-    hints: dict[tuple[str, str], str] = {
-        ("wait", "wait_time"): (
-            "A Wait step pauses the run for a fixed duration in seconds.\n"
-            "Example:  wait_time: 2"
-        ),
-        ("pythonmodule", "module"): (
-            "A PythonModule step calls a function from a Python file. "
-            "Specify the file with 'module'.\n"
-            "Example:  module: my_tests.py"
-        ),
-        ("pythonmodule", "method_name"): (
-            "A PythonModule step needs 'method_name': the function inside "
-            "the module to call.\nExample:  method_name: measure_voltage"
-        ),
-        ("userinteraction", "message"): (
-            "A UserInteraction step needs 'message': the question shown to "
-            "the operator.\nExample:  message: Connect the unit to J1, then continue."
-        ),
-        ("userinteraction", "options"): (
-            "A UserInteraction step needs 'options': the list of button "
-            "labels the operator can press.\nExample:  options: [Continue, Abort]"
-        ),
-        ("userwrite", "message"): (
-            "A UserWrite step needs 'message': the prompt shown before the "
-            "operator types their input.\n"
-            "Example:  message: Scan or type the serial number."
-        ),
-        ("userloading", "message"): (
-            "A UserLoading step needs 'message': the prompt shown while the "
-            "operator chooses a file or a folder ('select: file' or "
-            "'select: folder', file by default).\n"
-            "Example:  message: Select the calibration file for this unit."
-        ),
-        ("sequence", "sequence_name"): (
-            "A Sequence step calls another sequence of this recipe by its name.\n"
-            "Example:  sequence_name: Calibrate"
-        ),
-        ("indexed", "template"): (
-            "An Indexed step needs 'template': the step mapping used as a "
-            "base for each generated step.\n"
-            "Example:\n"
-            "  template:\n"
-            "    steptype: PythonModule\n"
-            "    module: my_tests.py\n"
-            "    method_name: add"
-        ),
-        ("indexed", "parameter_sets"): (
-            "An Indexed step needs 'parameter_sets': a list of input/expect "
-            "sets, one per generated step.\n"
-            "Example:\n"
-            "  parameter_sets:\n"
-            "    - inputs: {a: 1, b: 2}\n"
-            "      expect: {sum: 3}"
-        ),
-    }
-    if field == "step_name":
-        return (
-            "Every step needs a name that appears in the step table and "
-            "the report.\nExample:  step_name: Measure output voltage"
-        )
-    return hints.get((steptype, field), f"A {steptype} step requires '{field}'.")
+def _output_example(model: type[BaseModel], entry_name: int | str) -> str:
+    """One outputs entry, built from the model: its type and each field's first example."""
+    fields: dict[str, Any] = {}
+    for name, info in model.model_fields.items():
+        if name == "type":
+            fields[name] = _tag_value(model, name)
+        elif info.examples:
+            fields[name] = info.examples[0]
+    return f"{entry_name}: {_dump(fields, True)}"
 
 
-def _template_hint(problem: SchemaProblem, template: Any) -> str:
-    """A problem with an Indexed step's `template` as a whole."""
-    if problem.kind == "missing":
-        return _step_field_hint("indexed", "template")
-    if problem.kind == "union_tag_invalid":
-        return _unknown_steptype_hint(_steptype(template))
-    return _indexed_hint("template")
+def _type_list(title: str, models: dict[str, type[BaseModel]], tag: str) -> str:
+    """Each type in `models`, with what its tag field says it does - one per line."""
+    width = max(len(name) for name in models)
+    lines = [f"{title}:"]
+    for name in sorted(models):
+        info = models[name].model_fields[tag]
+        lines.append(f"  {name.ljust(width)}  - {info.description}")
+    return "\n".join(lines)
 
 
-def _indexed_hint(field: str) -> str:
-    """A problem with one of an Indexed step's own keys, by the key."""
-    if field in ("inputs", "outputs"):
-        return (
-            "Put 'inputs' and 'outputs' on the 'template', not on the "
-            "indexed step wrapper. The wrapper only carries 'template', "
-            "'parameter_sets', and the common step fields."
-        )
-    if field == "parameter_sets":
-        return (
-            "Each entry in 'parameter_sets' may carry 'inputs' (direct "
-            "values merged into the template's inputs) and 'expect' "
-            "(shorthand equals checks merged into outputs), and at least one of them."
-        )
-    if field == "id":
-        return (
-            "An indexed step becomes several steps, and each gets an id of its "
-            "own. Remove 'id' here and from the template."
-        )
-    if field == "template":
-        return (
-            "The template is one ordinary step: not a Sequence step, not another "
-            "Indexed step, and without an 'id' - each generated step gets its own."
-        )
-    return "See the Indexed step documentation in step/step.md."
+def _tag_value(model: type[BaseModel], tag: str) -> Any:
+    """The one value a model's Literal tag field takes."""
+    return typing.get_args(model.model_fields[tag].annotation)[0]
 
 
-def _input_type_hint(type_name: str, entry_name: str, missing_key: str) -> str:
-    if type_name == "global" and missing_key == "global_name":
-        return (
-            f"A 'global' input reads a run variable. Specify which one:\n"
-            f"  {entry_name}: {{type: global, global_name: my_variable}}"
-        )
-    return f"A '{type_name}' input needs '{missing_key}'."
-
-
-def _output_no_type_hint(entry_name: str) -> str:
-    known = ", ".join(sorted(OUTPUT_TYPES))
-    return (
-        f"Every output entry is a mapping that says what to do with the returned "
-        f"value via 'type'. Available types: {known}.\n"
-        f"Examples:\n"
-        f"  {entry_name}: {{type: equals, value: 5}}\n"
-        f"  {entry_name}: {{type: range, min: 4.9, max: 5.1}}\n"
-        f"  {entry_name}: {{type: global, global_name: my_var}}\n"
-        f"  {entry_name}: {{type: passfail}}\n"
-        f"  {entry_name}: {{type: pass}}"
-    )
-
-
-def _output_unknown_type_hint(entry_name: str, declared: str) -> str:
-    known = ", ".join(sorted(OUTPUT_TYPES))
-    return (
-        f"'{declared}' is not a valid output type. Available: {known}.\n"
-        f"  equals   - pass if the returned value equals 'value'\n"
-        f"  range    - pass if the value is between 'min' and 'max'\n"
-        f"  passfail - pass if the value is truthy\n"
-        f"  pass     - always DONE, no judgement\n"
-        f"  global   - store the value in a run variable"
-    )
-
-
-def _output_type_hint(type_name: str, entry_name: str, missing_key: str) -> str:
-    hints: dict[tuple[str, str], str] = {
-        ("equals", "value"): (
-            f"An 'equals' output checks that the returned value matches "
-            f"'value' exactly.\n"
-            f"  {entry_name}: {{type: equals, value: 5}}"
-        ),
-        ("range", "min"): (
-            f"A 'range' output needs both 'min' and 'max'.\n"
-            f"  {entry_name}: {{type: range, min: 4.9, max: 5.1}}"
-        ),
-        ("range", "max"): (
-            f"A 'range' output needs both 'min' and 'max'.\n"
-            f"  {entry_name}: {{type: range, min: 4.9, max: 5.1}}"
-        ),
-        ("global", "global_name"): (
-            f"A 'global' output stores the returned value into a run "
-            f"variable. Specify which one:\n"
-            f"  {entry_name}: {{type: global, global_name: my_var}}"
-        ),
-    }
-    return hints.get(
-        (type_name, missing_key),
-        f"A '{type_name}' output needs '{missing_key}'.",
-    )
+def _dump(value: Any, flow_style: bool | None) -> str:
+    """YAML text for `value`, in the order it was written and never wrapped."""
+    text = yaml.safe_dump(value, default_flow_style=flow_style, sort_keys=False, width=1000)
+    return text.strip()

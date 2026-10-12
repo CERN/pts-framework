@@ -17,6 +17,7 @@ Runtime.ask, so a test hands it a callable that answers.
 
 import logging
 import uuid
+from pathlib import Path
 
 import pytest
 
@@ -29,11 +30,12 @@ from pypts.messages.run_events import (
     StepStarted,
     UserPathRequest,
 )
-from pypts.step.python_module_step import PythonModuleStep
+from pypts.step.python_module_step import PythonModuleStep, find_module_file
 from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
 from pypts.step.sequence_step import SequenceStep
 from pypts.step.step import (
+    LEFT_OUT_REASON,
     MAX_LISTED_ITEMS,
     MAX_VALUE_CHARS,
     Step,
@@ -249,17 +251,25 @@ def test_a_global_entry_stores_without_judging():
     assert runtime.get_global("kept_global") == 2
 
 
-def test_the_last_judging_entry_wins():
-    """Documented behaviour, kept from the old engine for parity (F6).
-
-    A fail-then-pass mapping reports PASS. Revisiting this (all checks must
-    pass) is a recorded roadmap TODO - this test pins the current contract.
-    """
+def test_one_failing_check_fails_the_step():
+    """F6: every judging entry must pass - order does not matter."""
     mapping = {
         "first": {"type": "passfail"},
         "second": {"type": "passfail"},
     }
-    assert judge(mapping, {"first": False, "second": True}) is ResultType.PASS
+    assert judge(mapping, {"first": False, "second": True}) is ResultType.FAIL
+    assert judge(mapping, {"first": True, "second": False}) is ResultType.FAIL
+    assert judge(mapping, {"first": True, "second": True}) is ResultType.PASS
+
+
+def test_a_recorded_value_does_not_reset_a_judged_verdict():
+    """A `pass` entry after a check used to turn its PASS or FAIL into DONE."""
+    mapping = {
+        "speed": {"type": "range", "min": "0", "max": "200"},
+        "direction": {"type": "pass"},
+    }
+    assert judge(mapping, {"speed": 10, "direction": 90}) is ResultType.PASS
+    assert judge(mapping, {"speed": 999, "direction": 90}) is ResultType.FAIL
 
 
 def test_an_unknown_output_type_is_refused():
@@ -383,9 +393,7 @@ def test_a_passing_step_records_no_reason():
     assert result.error_info == ""
 
 
-def test_last_wins_leaves_no_reason_beside_a_pass():
-    """F6 is unchanged: a fail-then-pass mapping still reports PASS. The point
-    here is that it does not report PASS with a failure written beside it."""
+def test_a_failing_check_before_a_passing_one_fails_with_its_reason():
     step = ReturnsDict(
         step_name="mixed",
         payload={"first": False, "second": True},
@@ -394,22 +402,24 @@ def test_last_wins_leaves_no_reason_beside_a_pass():
 
     result = step.run(Runtime())
 
-    assert result.result is ResultType.PASS
-    assert result.error_info == ""
+    assert result.result is ResultType.FAIL
+    assert "first = False, expected a pass" in result.error_info
 
 
 def test_process_outputs_collects_every_failing_check():
-    """The out-parameter describes them all, even the ones last-wins overrode."""
     failures = []
     step = ReturnsDict(
         step_name="mixed",
         outputs={"first": {"type": "passfail"}, "second": {"type": "passfail"}},
     )
 
-    verdict = step.process_outputs(Runtime(), {"first": False, "second": True}, failures)
+    verdict = step.process_outputs(Runtime(), {"first": False, "second": False}, failures)
 
-    assert verdict is ResultType.PASS
-    assert failures == ["first = False, expected a pass"]
+    assert verdict is ResultType.FAIL
+    assert failures == [
+        "first = False, expected a pass",
+        "second = False, expected a pass",
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -1524,6 +1534,43 @@ def test_python_module_step_requires_a_method_name():
         PythonModuleStep(step_name="nameless", module="demo_tests.py")
 
 
+# --- find_module_file: what the GUI's "Open Python file" opens -----------------
+
+
+def test_find_module_file_finds_a_file_beside_the_recipe_with_or_without_py(tmp_path):
+    module_file = write_module(tmp_path)
+
+    assert find_module_file("demo_tests.py", str(tmp_path)) == module_file.resolve()
+    assert find_module_file("demo_tests", str(tmp_path)) == module_file.resolve()
+
+
+def test_find_module_file_takes_an_absolute_path(tmp_path):
+    module_file = write_module(tmp_path)
+
+    assert find_module_file(str(module_file), "") == module_file.resolve()
+
+
+def test_find_module_file_locates_a_dotted_name_without_running_it():
+    """`platform` is a stdlib .py module: found by find_spec, not imported."""
+    import platform
+
+    found = find_module_file("platform", "")
+
+    assert found is not None
+    assert found.name == "platform.py"
+    assert found == Path(platform.__file__)
+
+
+def test_find_module_file_has_nothing_for_a_missing_module(tmp_path):
+    assert find_module_file("no_such_module_anywhere", str(tmp_path)) is None
+    assert find_module_file("missing_tests.py", str(tmp_path)) is None
+
+
+def test_find_module_file_has_nothing_for_a_module_without_a_source_file():
+    """A built-in module has no file to open."""
+    assert find_module_file("sys", "") is None
+
+
 def test_action_type_is_not_a_key_at_all():
     """Dropped outright (2026-09-02), not tolerated: the type calls methods and
     nothing else, so the key that used to select between three actions is now
@@ -1800,8 +1847,9 @@ def test_user_interaction_step_resolves_the_image_beside_the_recipe(tmp_path):
     assert seen[0].image_path == str(image.resolve())
 
 
-def test_user_interaction_step_missing_image_is_a_step_error(tmp_path):
-    """The GUI would silently fall back to the logo, so the step refuses first."""
+def test_user_interaction_step_missing_image_still_asks(tmp_path):
+    """A missing picture is not an error: the parser warned at load, and the
+    GUI shows its "No image available" placeholder. The question is asked."""
     seen = []
     step = UserInteractionStep(
         step_name="Check the LED",
@@ -1810,9 +1858,8 @@ def test_user_interaction_step_missing_image_is_a_step_error(tmp_path):
         image_path="no_such_image.png",
     )
     result = step.run(Runtime(ask=make_asker("Yes", seen), base_dir=str(tmp_path)))
-    assert result.result is ResultType.ERROR
-    assert "no_such_image.png" in result.error_info
-    assert seen == [], "nothing should be asked when the image is wrong"
+    assert result.result is not ResultType.ERROR
+    assert seen[0].image_path == str((tmp_path / "no_such_image.png").resolve())
 
 
 def test_the_registry_builds_a_user_interaction_step():
@@ -1908,7 +1955,7 @@ def test_user_write_step_resolves_the_image_beside_the_recipe(tmp_path):
     assert seen[0].image_path == str(image.resolve())
 
 
-def test_user_write_step_missing_image_is_a_step_error(tmp_path):
+def test_user_write_step_missing_image_still_asks(tmp_path):
     seen = []
     step = UserWriteStep(
         step_name="get_serial_number",
@@ -1916,9 +1963,8 @@ def test_user_write_step_missing_image_is_a_step_error(tmp_path):
         image_path="no_such_image.png",
     )
     result = step.run(Runtime(ask=make_asker("SN-1", seen), base_dir=str(tmp_path)))
-    assert result.result is ResultType.ERROR
-    assert "no_such_image.png" in result.error_info
-    assert seen == [], "nothing should be asked when the image is wrong"
+    assert result.result is not ResultType.ERROR
+    assert seen[0].image_path == str((tmp_path / "no_such_image.png").resolve())
 
 
 def test_the_registry_builds_a_user_write_step():
@@ -2060,13 +2106,14 @@ def test_user_loading_step_resolves_the_image_beside_the_recipe(tmp_path):
     assert seen[0].select == "file"
 
 
-def test_user_loading_step_missing_image_is_a_step_error(tmp_path):
+def test_user_loading_step_missing_image_still_asks(tmp_path):
+    chosen = tmp_path / "cal.csv"
+    chosen.write_text("x", encoding="utf-8")
     seen = []
     step = UserLoadingStep(step_name="pick", message="Pick", image_path="no_such_image.png")
-    result = step.run(Runtime(ask=make_asker("anything", seen), base_dir=str(tmp_path)))
-    assert result.result is ResultType.ERROR
-    assert "no_such_image.png" in result.error_info
-    assert seen == [], "nothing should be asked when the image is wrong"
+    result = step.run(Runtime(ask=make_asker(str(chosen), seen), base_dir=str(tmp_path)))
+    assert result.result is not ResultType.ERROR
+    assert seen[0].image_path == str((tmp_path / "no_such_image.png").resolve())
 
 
 def test_the_registry_builds_a_user_loading_step():
@@ -2177,3 +2224,97 @@ def test_a_global_that_was_never_set_is_a_step_error():
 
     assert result.result is ResultType.ERROR
     assert "nope" in result.error_info
+
+
+# --------------------------------------------------------------------------
+# Engineering mode - steps left out by id
+# --------------------------------------------------------------------------
+
+
+def test_a_left_out_step_is_skipped_and_the_next_one_still_runs():
+    ran = []
+    one = Notes(ran, step_name="one")
+    two = Notes(ran, step_name="two")
+    three = Notes(ran, step_name="three")
+    runtime = Runtime(excluded_step_ids=frozenset({two.id}))
+
+    results = Step.run_steps(runtime, [one, two, three])
+
+    assert ran == ["one", "three"]
+    assert [r.result for r in results] == [ResultType.DONE, ResultType.SKIP, ResultType.DONE]
+    assert results[1].error_info == LEFT_OUT_REASON
+
+
+def test_a_left_out_step_settles_its_row_like_any_skipped_one():
+    events = []
+    step = Notes([], step_name="left out")
+    runtime = Runtime(emit=events.append, excluded_step_ids=frozenset({step.id}))
+
+    Step.run_steps(runtime, [step])
+
+    finished = [e for e in events if isinstance(e, StepFinished)]
+    assert len(finished) == 1
+    assert finished[0].outcome.result == ResultType.SKIP
+
+
+def test_a_left_out_step_is_never_held_before():
+    held = []
+    step = Notes([], step_name="left out")
+    runtime = Runtime(
+        hold_if_paused=lambda name, position, total: held.append(name),
+        excluded_step_ids=frozenset({step.id}),
+    )
+
+    Step.run_steps(runtime, [step])
+
+    assert held == []
+
+
+def test_a_teardown_step_can_be_left_out_too():
+    ran = []
+    cleanup_one = Notes(ran, step_name="cleanup one")
+    cleanup_two = Notes(ran, step_name="cleanup two")
+    runtime = Runtime(excluded_step_ids=frozenset({cleanup_one.id}))
+
+    sequence = FakeSequence(
+        steps=[Notes(ran, step_name="main")], teardown_steps=[cleanup_one, cleanup_two]
+    )
+    run_sequence(runtime, sequence)
+
+    assert ran == ["main", "cleanup two"]
+
+
+def test_a_left_out_group_skips_everything_inside_it():
+    ran = []
+    inner = Notes(ran, step_name="inner")
+    cleanup = Notes(ran, step_name="cleanup")
+    called = group("G", steps=[inner], teardown_steps=[cleanup])
+    runtime = Runtime(excluded_step_ids=frozenset({called.id, inner.id, cleanup.id}))
+
+    results = Step.run_steps(runtime, [called])
+
+    assert ran == []
+    assert results[0].result is ResultType.SKIP
+
+
+def test_one_step_picked_inside_a_group_runs_alone():
+    """The group is entered only as the way in: its other rows, teardown too, are SKIP."""
+    ran = []
+    picked = Notes(ran, step_name="picked")
+    sibling = Notes(ran, step_name="sibling")
+    cleanup = Notes(ran, step_name="cleanup")
+    called = group("G", steps=[sibling, picked], teardown_steps=[cleanup])
+    runtime = Runtime(excluded_step_ids=frozenset({sibling.id, cleanup.id}))
+
+    Step.run_steps(runtime, [called])
+
+    assert ran == ["picked"]
+
+
+def test_no_left_out_steps_changes_nothing():
+    ran = []
+    results = Step.run_steps(
+        Runtime(), [Notes(ran, step_name="one"), Notes(ran, step_name="two")]
+    )
+    assert ran == ["one", "two"]
+    assert all(r.result is ResultType.DONE for r in results)

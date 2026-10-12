@@ -68,7 +68,9 @@ PySide6 application. Full context in `hmi/gui/gui.md`. Key points:
 
 ## Key messages (HMI → CORE)
 
-`LoadRecipe`, `UnloadRecipe` (sent by `unload_recipe()`; GUI only), `StartSequence`,
+`LoadRecipe`, `UnloadRecipe` (sent by `unload_recipe()`; GUI only), `StartSequence` (sent by
+`start_sequence(sequence_name, excluded_step_ids=(), write_report=True)`; only the GUI's
+engineering mode passes the last two),
 `StopSequence`, `PauseSequence` / `ResumeSequence` (GUI only),
 `ShutdownRequested`, `UserPromptResponse`, `UserTextResponse`,
 `UserPathResponse` (sent by `answer_user_path()`), `HmiStopped`, `SetConfigParameter` (sent by `set_config_parameter()`; only the GUI's

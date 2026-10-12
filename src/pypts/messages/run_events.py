@@ -58,6 +58,10 @@ class StepSummary:
     #: True for a row that stands for a called sequence (a Sequence step); its
     #: steps follow it, one level deeper.
     is_group: bool = False
+    #: The picture to show while the step runs: absolute, and None when the
+    #: recipe names none. It may not exist - the parser has already warned, and
+    #: a frontend shows its "no image" placeholder.
+    image_path: str | None = None
 
 
 @dataclass
@@ -73,6 +77,9 @@ class SequenceSummary:
 
     sequence_name: str
     steps: tuple[StepSummary, ...]
+    #: The picture to show while the sequence runs, for every step that has
+    #: none of its own. Absolute or None, like StepSummary.image_path.
+    image_path: str | None = None
 
 
 # --- Progress: messages, on a link union and sent on their own ----------------
@@ -121,6 +128,11 @@ class RunStarted:
     into it. `run_log_path` is the run log inside it, which the GUI's log
     panel follows. Either is "" when it could not be made - no folder, or no
     Logger process to write a run log.
+
+    `write_report` False is an engineering-mode retest: the Sequencer made no
+    folder and no run log, and CORE routes nothing of this run to the Report.
+    CORE routes on this field, not on what it asked for, because the
+    Sequencer is the one that decides whether a run starts at all.
     """
 
     recipe_name: str
@@ -130,6 +142,7 @@ class RunStarted:
     metadata_names: tuple[str, ...] = ()
     run_dir: str = ""
     run_log_path: str = ""
+    write_report: bool = True
 
 
 # Sender: Sequencer.execute_sequence(). Receiver: hmi_client.py show_run_finished()

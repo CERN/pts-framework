@@ -15,6 +15,13 @@ import pytest
 
 from pypts.helper_applications.recipe_creator import verify_string
 from pypts.recipe.recipe import Recipe, RecipeError
+from pypts.recipe.recipe_schema import (
+    REMOVED_SEQUENCE_KEYS,
+    IndexedStepSchema,
+    PythonModuleStepSchema,
+    RangeOutput,
+    WaitStepSchema,
+)
 
 ROOT = Path(__file__).parents[2]
 SHIPPED_RECIPES = sorted(
@@ -157,11 +164,15 @@ def test_every_validation_problem_is_reported_at_once():
     assert messages == ["version: Field required", "wait_time: Field required"]
 
 
-# -- hints stay ---------------------------------------------------------------------
+# -- hints come from the schema ------------------------------------------------------
+#
+# The wording is the field's own description and example (recipe_schema.py); the
+# verificator only picks which field a problem is about.
 
 
-def test_a_missing_step_field_keeps_its_hint():
+def test_a_missing_step_field_hint_is_the_field_s_description_and_example():
     (issue,) = errors(REFUSED["wait_time missing"])
+    assert WaitStepSchema.model_fields["wait_time"].description in issue.hint
     assert "Example:  wait_time: 2" in issue.hint
 
 
@@ -174,11 +185,29 @@ def test_an_unknown_key_hint_lists_the_keys_the_step_takes():
 def test_an_unknown_steptype_keeps_its_rename_hint():
     (issue,) = errors(VALID.replace("steptype: Wait", "steptype: WaitStep"))
     assert "'waitstep' was renamed or removed" in issue.hint
+    assert "Available step types" in issue.hint
 
 
-def test_a_missing_output_key_keeps_its_hint():
+def test_an_unknown_steptype_hint_says_what_each_type_does():
+    (issue,) = errors(VALID.replace("steptype: Wait", "steptype: Nope"))
+    assert WaitStepSchema.model_fields["steptype"].description in issue.hint
+
+
+def test_a_missing_output_key_hint_uses_the_author_s_entry_name():
     (issue,) = errors(REFUSED["a range without max"])
-    assert "A 'range' output needs both 'min' and 'max'" in issue.hint
+    assert RangeOutput.model_fields["max"].description in issue.hint
+    assert "r: {type: range, min: 4.9, max: 5.1}" in issue.hint
+
+
+def test_a_numeric_output_name_is_the_name_in_the_example():
+    (issue,) = errors(with_step("    outputs:\n      1: {type: equals}\n"))
+    assert "1: {type: equals, value: 5}" in issue.hint
+
+
+def test_an_unknown_output_type_hint_lists_the_types_with_their_meaning():
+    (issue,) = errors(REFUSED["an unknown output type"])
+    assert "'local' is not a valid output type" in issue.hint
+    assert RangeOutput.model_fields["type"].description in issue.hint
 
 
 INDEXED = """\
@@ -201,7 +230,7 @@ steps:
 def test_a_parameter_set_problem_gets_the_parameter_set_hint():
     """'Extra inputs are not permitted' names inputs, but it is not about them."""
     (issue,) = errors(INDEXED.replace("- inputs: {a: 1}", "- foo: 1"))
-    assert "Each entry in 'parameter_sets'" in issue.hint
+    assert IndexedStepSchema.model_fields["parameter_sets"].description in issue.hint
 
 
 def test_a_missing_template_gets_the_template_hint():
@@ -210,12 +239,19 @@ def test_a_missing_template_gets_the_template_hint():
         "",
     )
     (issue,) = errors(text)
-    assert "An Indexed step needs 'template'" in issue.hint
+    assert IndexedStepSchema.model_fields["template"].description in issue.hint
+    # A nested example reads as YAML, not as a Python dict.
+    assert "  steptype: PythonModule" in issue.hint
 
 
 def test_a_template_with_an_unknown_steptype_gets_the_steptype_hint():
     (issue,) = errors(INDEXED.replace("steptype: PythonModule", "steptype: Nope"))
     assert "Available step types" in issue.hint
+
+
+def test_a_missing_template_field_gets_the_template_steptype_s_hint():
+    (issue,) = errors(INDEXED.replace("      method_name: add\n", ""))
+    assert PythonModuleStepSchema.model_fields["method_name"].description in issue.hint
 
 
 def test_report_metadata_naming_a_number_is_not_told_to_quote_text():
@@ -264,7 +300,9 @@ def test_a_removed_sequence_key_is_a_warning_and_the_recipe_loads():
     text = VALID.replace("steps:", "locals: {}\nsteps:")
     assert framework_refusal(text) == ""
     assert errors(text) == []
-    assert [issue.field for issue in warnings(text)] == ["sequence 'Main'.locals"]
+    (warning,) = warnings(text)
+    assert warning.field == "sequence 'Main'.locals"
+    assert warning.hint == REMOVED_SEQUENCE_KEYS["locals"]
 
 
 def test_a_version_written_as_a_number_is_a_warning():

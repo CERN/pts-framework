@@ -78,7 +78,7 @@ _PAUSE_SVG = (
 def _svg_icon(svg_str: str, size: int = 16) -> QIcon:
     renderer = QSvgRenderer(QByteArray(svg_str.encode()))
     pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.transparent)
+    pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     renderer.render(painter)
     painter.end()
@@ -186,7 +186,7 @@ class TopBarContent(QToolBar):
         self.metadata_label.setObjectName("runMetadataLabel")
         self.metadata_label.setVisible(False)
 
-        self.sequence_combo = QComboBox()
+        self.sequence_combo: QComboBox = QComboBox()
         self.sequence_combo.currentTextChanged.connect(self._sequence_changed)
 
         combo_container = QWidget()

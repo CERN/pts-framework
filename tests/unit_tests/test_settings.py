@@ -1018,7 +1018,7 @@ def test_restore_is_refused_during_a_run_and_says_why(qapp, tmp_path):
     dialog.close()
 
 
-def test_edit_offers_only_edit_recipe_and_settings(gui_factory):
+def test_edit_offers_only_edit_recipe_engineering_mode_and_settings(gui_factory):
     from PySide6.QtWidgets import QMenu
 
     instance, _outbox, _inbox = gui_factory()
@@ -1029,6 +1029,7 @@ def test_edit_offers_only_edit_recipe_and_settings(gui_factory):
 
     assert [action.text() for action in edit_menu.actions() if action.text()] == [
         "Edit Recipe",
+        "Engineering Mode",
         "Settings",
     ]
 

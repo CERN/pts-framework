@@ -37,7 +37,7 @@ from pypts.utilities.common import describe_value
 class SummaryBadge(QLabel):
     def __init__(self, count: int, label: str, bg: str, fg: str, parent=None):
         super().__init__(parent)
-        self.setAlignment(Qt.AlignCenter)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._bg = bg
         self._fg = fg
         self.update_count(count, label)

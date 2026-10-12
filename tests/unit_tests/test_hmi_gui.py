@@ -2397,6 +2397,132 @@ def test_folding_away_the_row_the_panel_is_open_on_closes_the_panel(qapp):
     assert content.yaml_popup.isVisible() is False
 
 
+# --- Right-click: Open recipe in text editor / Open Python file ----------------
+
+
+def menu_actions(menu):
+    """The menu's entries by text, separators left out."""
+    return {action.text(): action for action in menu.actions() if action.text()}
+
+
+def a_table_with_python_files(qapp):
+    """The folding table, with a Python file on row 0 only."""
+    from pypts.hmi.gui.step_table import StepTableContent
+    from pypts.recipe.step_source import StepSource
+
+    content = StepTableContent()
+    sequence = a_nested_sequence()
+    sources = [
+        StepSource(text="sequence_name: Main", first_line=0, last_line=0)
+        for _row in sequence.steps
+    ]
+    sources[0] = StepSource(
+        text="sequence_name: Main", first_line=0, last_line=0, python_file="/bench/tests.py"
+    )
+    content.show_sequence(sequence, tuple(sources))
+    return content
+
+
+def test_the_menu_opens_the_python_file_of_the_row_under_the_pointer(qapp):
+    content = a_table_with_python_files(qapp)
+    asked = []
+    content.open_python_file_requested.connect(asked.append)
+
+    actions = menu_actions(content._build_context_menu(0))
+    assert list(actions) == [
+        "Open recipe in text editor",
+        "Open Python file",
+        "Expand all",
+        "Collapse all",
+    ]
+    assert actions["Open Python file"].isEnabled() is True
+    actions["Open Python file"].trigger()
+
+    assert asked == ["/bench/tests.py"]
+
+
+def test_open_python_file_is_greyed_out_on_a_row_without_one(qapp):
+    """Another step type, a group row, or below the last row: the entry is
+    there, so the menu reads the same everywhere, but it does nothing."""
+    content = a_table_with_python_files(qapp)
+
+    for row in (1, 6, -1):
+        actions = menu_actions(content._build_context_menu(row))
+        assert actions["Open Python file"].isEnabled() is False
+        assert actions["Open recipe in text editor"].isEnabled() is True
+
+
+def test_open_recipe_asks_the_window_and_is_greyed_out_with_no_recipe(qapp):
+    from pypts.hmi.gui.step_table import StepTableContent
+
+    content = a_table_with_python_files(qapp)
+    asked = []
+    content.open_recipe_requested.connect(lambda: asked.append(True))
+    menu_actions(content._build_context_menu(2))["Open recipe in text editor"].trigger()
+    assert asked == [True]
+
+    empty = StepTableContent()
+    actions = menu_actions(empty._build_context_menu(-1))
+    assert actions["Open recipe in text editor"].isEnabled() is False
+    assert actions["Open Python file"].isEnabled() is False
+
+
+def test_the_window_opens_the_loaded_recipe_in_the_default_editor(gui, tmp_path, monkeypatch):
+    from PySide6.QtGui import QDesktopServices
+
+    recipe_file = tmp_path / "bench.yml"
+    recipe_file.write_text("name: Bench\n", encoding="utf-8")
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+
+    instance, outbox, _inbox = gui
+    instance._loaded_recipe_path = str(recipe_file)
+    instance.step_table.open_recipe_requested.emit()
+
+    assert [Path(url.toLocalFile()) for url in opened] == [recipe_file]
+    assert drain(outbox) == []
+
+
+def test_the_window_opens_a_python_file_in_the_default_editor(gui, tmp_path, monkeypatch):
+    from PySide6.QtGui import QDesktopServices
+
+    python_file = tmp_path / "bench_tests.py"
+    python_file.write_text("def add(a, b):\n    return a + b\n", encoding="utf-8")
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl", lambda url: opened.append(url) or True)
+
+    instance, outbox, _inbox = gui
+    instance.step_table.open_python_file_requested.emit(str(python_file))
+
+    assert [Path(url.toLocalFile()) for url in opened] == [python_file]
+    assert drain(outbox) == []
+
+
+def test_a_file_that_is_gone_is_a_warning_not_an_editor(gui, tmp_path, monkeypatch):
+    """Deleted since the recipe was loaded, or no recipe at all: nothing opens."""
+    from PySide6.QtGui import QDesktopServices
+
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", lambda _url: pytest.fail("nothing to open")
+    )
+
+    instance, outbox, _inbox = gui
+    instance._loaded_recipe_path = None
+    instance.open_recipe_in_editor()
+    instance._loaded_recipe_path = str(tmp_path / "gone.yml")
+    instance.open_recipe_in_editor()
+    instance.open_python_file(str(tmp_path / "gone.py"))
+
+    errors = [message for message in drain(outbox) if isinstance(message, ModuleError)]
+    assert [error.operation for error in errors] == [
+        "open_recipe_in_editor",
+        "open_recipe_in_editor",
+        "open_python_file",
+    ]
+    assert all(error.severity is ErrorSeverity.WARNING for error in errors)
+    assert str(tmp_path / "gone.py") in errors[2].message
+
+
 # --- File > Open Config -------------------------------------------------------
 
 
@@ -2700,6 +2826,37 @@ def test_the_unload_button_and_the_menu_entry_ask_core_to_unload(gui):
     assert len(sent) == 2
 
 
+# --------------------------------------------------------------------------
+# File -> Restart
+# --------------------------------------------------------------------------
+
+
+def test_restart_asks_core_to_shut_down_with_the_restart_exit_code(gui):
+    from pypts.utilities.common import RESTART_EXIT_CODE
+
+    instance, outbox, _inbox = gui
+    drain(outbox)
+
+    instance.window.restart_action.trigger()
+
+    assert instance.exit_code == RESTART_EXIT_CODE
+    assert any(isinstance(message, ShutdownRequested) for message in drain(outbox))
+
+
+def test_restart_is_not_offered_during_a_run(gui):
+    instance, _outbox, inbox = gui
+    menu_entry = instance.window.restart_action
+    assert menu_entry.isEnabled()
+
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    instance.poll_core()
+    assert not menu_entry.isEnabled()
+
+    inbox.send(RunFinished(result=ResultType.DONE))
+    instance.poll_core()
+    assert menu_entry.isEnabled()
+
+
 def test_the_unload_button_sits_right_after_open(gui):
     instance, _outbox, _inbox = gui
     top = instance.top_bar
@@ -2981,3 +3138,439 @@ def test_session_lines_after_the_run_wait_for_the_summary_even_before_run_finish
     shown = instance.center.log_panel.toPlainText()
     assert shown.index("Run summary: DONE.") < shown.index("The run's log is somewhere.")
     instance.stop_log_tail()
+
+
+# --------------------------------------------------------------------------
+# Engineering mode: the step table as a picker
+# --------------------------------------------------------------------------
+
+
+def an_engineering_table(qapp):
+    """The nested table (see a_nested_sequence) with engineering mode on."""
+    content, sequence = a_folding_table(qapp)
+    content.set_engineering_mode(True)
+    return content, sequence
+
+
+def ids_of(sequence, *rows):
+    return tuple(sequence.steps[row].step_id for row in rows)
+
+
+def test_engineering_mode_ticks_every_row_and_selects_none(qapp):
+    content, _sequence = an_engineering_table(qapp)
+
+    assert all(content.is_ticked(row) for row in range(7))
+    assert content.selected_rows() == []
+    assert content.retest_exclusions() is None
+    assert content.left_out_exclusions() == ()
+
+
+def test_a_plain_click_selects_one_row_and_a_ctrl_click_adds_one(qapp):
+    from PySide6.QtCore import Qt
+
+    content, _sequence = an_engineering_table(qapp)
+
+    content._engineering_click(0, Qt.KeyboardModifier.NoModifier)
+    content._engineering_click(6, Qt.KeyboardModifier.ControlModifier)
+    assert content.selected_rows() == [0, 6]
+
+    content._engineering_click(6, Qt.KeyboardModifier.ControlModifier)
+    assert content.selected_rows() == [0]
+
+    content._engineering_click(6, Qt.KeyboardModifier.NoModifier)
+    assert content.selected_rows() == [6]
+
+
+def test_a_shift_click_selects_the_showing_range_and_what_is_folded_inside_it(qapp):
+    from PySide6.QtCore import Qt
+
+    content, _sequence = an_engineering_table(qapp)
+
+    content._engineering_click(0, Qt.KeyboardModifier.NoModifier)
+    content._engineering_click(6, Qt.KeyboardModifier.ShiftModifier)
+
+    assert content.selected_rows() == [0, 1, 2, 3, 4, 5, 6]
+
+
+def test_selecting_a_group_selects_everything_under_it(qapp):
+    from PySide6.QtCore import Qt
+
+    content, _sequence = an_engineering_table(qapp)
+
+    content._engineering_click(3, Qt.KeyboardModifier.NoModifier)
+
+    assert content.selected_rows() == [3, 4]
+
+
+def test_a_click_in_engineering_mode_neither_folds_nor_opens_the_panel(qapp):
+    content, _sequence = an_engineering_table(qapp)
+
+    content._clicked_cell(1, 0)
+
+    assert content.is_expanded(1) is False
+    assert content.yaml_popup.isVisible() is False
+    assert content.selected_rows() == [1, 2, 3, 4, 5]
+
+
+def test_a_double_click_on_a_group_name_folds_it_in_engineering_mode(qapp):
+    content, _sequence = an_engineering_table(qapp)
+
+    content._double_clicked_cell(1, 0)
+
+    assert content.is_expanded(1) is True
+
+
+def test_one_step_picked_inside_a_group_runs_it_and_its_groups_only(qapp):
+    from PySide6.QtCore import Qt
+
+    content, sequence = an_engineering_table(qapp)
+
+    content._engineering_click(4, Qt.KeyboardModifier.NoModifier)  # Settle time
+
+    # PowerCycle and Settle are entered as the way in; everything else is out.
+    assert content.retest_exclusions() == ids_of(sequence, 0, 2, 5, 6)
+
+
+def test_an_unticked_row_does_not_run_even_when_selected(qapp):
+    from PySide6.QtCore import Qt
+
+    content, sequence = an_engineering_table(qapp)
+    content._engineering_click(0, Qt.KeyboardModifier.NoModifier)
+    content._engineering_click(6, Qt.KeyboardModifier.ControlModifier)
+
+    content.set_ticked(6, False)
+
+    assert content.retest_exclusions() == ids_of(sequence, 1, 2, 3, 4, 5, 6)
+
+
+def test_unticking_a_group_unticks_everything_under_it(qapp):
+    content, sequence = an_engineering_table(qapp)
+
+    content.set_ticked(1, False)
+
+    assert [content.is_ticked(row) for row in range(7)] == [
+        True, False, False, False, False, False, True,
+    ]
+    assert content.left_out_exclusions() == ids_of(sequence, 1, 2, 3, 4, 5)
+
+
+def test_ticking_a_step_ticks_the_groups_it_sits_in(qapp):
+    content, sequence = an_engineering_table(qapp)
+    content.set_ticked(1, False)
+
+    content.set_ticked(4, True)  # Settle time, inside Settle inside PowerCycle
+
+    assert content.left_out_exclusions() == ids_of(sequence, 2, 5)
+
+
+def test_an_unticked_row_is_greyed_and_a_ticked_one_is_not(qapp):
+    """Only the colour changes: the font - and so the row's size - stays as it was."""
+    from PySide6.QtCore import Qt
+
+    content, _sequence = an_engineering_table(qapp)
+    fonts_before = [content.table.item(0, column).font() for column in (0, 1)]
+
+    content.set_ticked(0, False)
+
+    greyed = content.table.item(0, 1)
+    assert greyed.data(Qt.ItemDataRole.ForegroundRole) is not None
+    assert [content.table.item(0, column).font() for column in (0, 1)] == fonts_before
+    assert content.table.item(6, 1).data(Qt.ItemDataRole.ForegroundRole) is None
+
+
+def test_switching_engineering_mode_off_removes_ticks_grey_and_selection(qapp):
+    from PySide6.QtCore import Qt
+
+    content, _sequence = an_engineering_table(qapp)
+    content._engineering_click(0, Qt.KeyboardModifier.NoModifier)
+    content.set_ticked(6, False)
+
+    content.set_engineering_mode(False)
+
+    assert content.selected_rows() == []
+    assert content.left_out_exclusions() == ()
+    for row in range(7):
+        name = content.table.item(row, 0)
+        assert name.data(Qt.ItemDataRole.CheckStateRole) is None
+        assert content.table.item(row, 1).data(Qt.ItemDataRole.BackgroundRole) is None
+
+
+def test_the_selection_and_the_ticks_are_frozen_during_a_run(qapp):
+    from PySide6.QtCore import Qt
+
+    content, _sequence = an_engineering_table(qapp)
+    content._engineering_click(0, Qt.KeyboardModifier.NoModifier)
+
+    content.set_running(True)
+    content._engineering_click(6, Qt.KeyboardModifier.NoModifier)
+    assert content.selected_rows() == [0]
+    flags = content.table.item(0, 0).flags()
+    assert not flags & Qt.ItemFlag.ItemIsUserCheckable
+
+    content.set_running(False)
+    assert content.table.item(0, 0).flags() & Qt.ItemFlag.ItemIsUserCheckable
+    assert content.selected_rows() == [0]
+
+
+def test_showing_a_sequence_starts_the_picker_clean(qapp):
+    from PySide6.QtCore import Qt
+
+    content, sequence = an_engineering_table(qapp)
+    content._engineering_click(0, Qt.KeyboardModifier.NoModifier)
+    content.set_ticked(6, False)
+
+    content.show_sequence(sequence)
+
+    assert content.selected_rows() == []
+    assert all(content.is_ticked(row) for row in range(7))
+
+
+# --------------------------------------------------------------------------
+# Engineering mode: the menu, Space and Start
+# --------------------------------------------------------------------------
+
+
+def test_the_engineering_menu_switches_the_table_and_the_label(gui):
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+
+    instance.window.engineering_action.setChecked(True)
+    assert instance.step_table.engineering_mode is True
+    assert instance.engineering_label.isVisibleTo(instance.window) is True
+
+    instance.window.engineering_action.setChecked(False)
+    assert instance.step_table.engineering_mode is False
+    assert instance.engineering_label.isVisibleTo(instance.window) is False
+
+
+def test_space_runs_only_the_picked_steps_without_a_report(gui):
+    from PySide6.QtCore import Qt
+
+    instance, outbox, inbox = gui
+    event = load_demo_recipe(instance, inbox)
+    drain(outbox)
+    instance.window.engineering_action.setChecked(True)
+    instance.step_table._engineering_click(1, Qt.KeyboardModifier.NoModifier)
+
+    instance.run_selected_steps()
+
+    first_wait = event.sequences[0].steps[0].step_id
+    assert drain(outbox) == [StartSequence("Main", (first_wait,), False)]
+
+
+def test_space_with_nothing_picked_sends_nothing(gui):
+    instance, outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    drain(outbox)
+    instance.window.engineering_action.setChecked(True)
+
+    instance.run_selected_steps()
+
+    assert drain(outbox) == []
+
+
+def test_space_outside_engineering_mode_sends_nothing(gui):
+    from PySide6.QtCore import Qt
+
+    instance, outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    drain(outbox)
+    instance.window.engineering_action.setChecked(True)
+    instance.step_table._engineering_click(1, Qt.KeyboardModifier.NoModifier)
+    instance.window.engineering_action.setChecked(False)
+
+    instance.run_selected_steps()
+
+    assert drain(outbox) == []
+
+
+def test_start_in_engineering_mode_leaves_out_the_unticked_steps_with_a_report(gui):
+    instance, outbox, inbox = gui
+    event = load_demo_recipe(instance, inbox)
+    drain(outbox)
+    instance.window.engineering_action.setChecked(True)
+    instance.step_table.set_ticked(0, False)
+
+    instance.top_bar.start_button.click()
+
+    first_wait = event.sequences[0].steps[0].step_id
+    assert StartSequence("Main", (first_wait,), True) in drain(outbox)
+
+
+def test_the_engineering_menu_is_off_limits_during_a_run(gui):
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+
+    instance.show_run_started("Wait demo", "")
+    assert instance.window.engineering_action.isEnabled() is False
+
+    instance.show_run_finished(ResultType.DONE, ())
+    assert instance.window.engineering_action.isEnabled() is True
+
+
+# --------------------------------------------------------------------------
+# The picture area during a run (gui.md §18): step and sequence pictures,
+# the run card, and "No image available"
+# --------------------------------------------------------------------------
+
+
+def a_real_png(path):
+    from PySide6.QtGui import QColor, QPixmap
+
+    pixmap = QPixmap(8, 8)
+    pixmap.fill(QColor("red"))
+    assert pixmap.save(str(path), "PNG")
+    return str(path)
+
+
+def a_picture_recipe_loaded(step_image, sequence_image=None):
+    """Main: 'Pictured' (step_image), 'Bare' (none)."""
+    rows = (
+        StepSummary(
+            step_id=uuid4(), step_name="Pictured", description="Has one.", image_path=step_image
+        ),
+        StepSummary(step_id=uuid4(), step_name="Bare", description="Has none."),
+    )
+    return RecipeLoaded(
+        recipe_name="Pictures",
+        recipe_version="1.0.0",
+        main_sequence="Main",
+        sequences=(SequenceSummary(sequence_name="Main", steps=rows, image_path=sequence_image),),
+    )
+
+
+def start_picture_run(instance, inbox, event):
+    from pypts.messages.run_events import SequenceStarted
+
+    inbox.send(event)
+    inbox.send(RunStarted(recipe_name="Pictures", recipe_description=""))
+    inbox.send(SequenceStarted(sequence_name="Main"))
+    instance.poll_core()
+
+
+def step_started(step):
+    from pypts.messages.run_events import StepStarted
+
+    return StepStarted(step_id=step.step_id, step_name=step.step_name)
+
+
+def test_a_step_picture_shows_while_it_runs_and_the_run_card_after(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    image = a_real_png(tmp_path / "probe.png")
+    event = a_picture_recipe_loaded(image)
+    pictured, bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    panel = instance.center.interaction
+    assert panel.is_showing_run_card(), "nothing running yet has a picture"
+
+    inbox.send(step_started(pictured))
+    instance.poll_core()
+    assert not panel.is_showing_run_card()
+    assert panel._current_image_path == image
+    assert not panel.is_showing_no_image()
+
+    inbox.send(finished(pictured))
+    inbox.send(step_started(bare))
+    instance.poll_core()
+    assert panel.is_showing_run_card()
+    assert panel.run_card.step_label.text() == "Bare"
+    assert panel.run_card.description_label.text() == "Has none."
+    assert panel.run_card.counts_label.text() == "1 PASS"
+    assert panel.run_card.is_ticking()
+
+
+def test_a_step_without_a_picture_shows_its_sequence_picture(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    fixture = a_real_png(tmp_path / "fixture.png")
+    event = a_picture_recipe_loaded(None, sequence_image=fixture)
+    start_picture_run(instance, inbox, event)
+
+    inbox.send(step_started(event.sequences[0].steps[1]))
+    instance.poll_core()
+
+    panel = instance.center.interaction
+    assert not panel.is_showing_run_card()
+    assert panel._current_image_path == fixture
+
+
+def test_a_missing_picture_shows_no_image_available(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(str(tmp_path / "gone.png"))
+    start_picture_run(instance, inbox, event)
+
+    inbox.send(step_started(event.sequences[0].steps[0]))
+    instance.poll_core()
+
+    panel = instance.center.interaction
+    assert panel.is_showing_no_image()
+    assert panel.current_pixmap() is not None
+    assert not panel.current_pixmap().isNull()
+
+
+def test_the_run_card_shows_the_last_failure(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    pictured, bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+
+    inbox.send(finished(pictured, ResultType.FAIL))
+    inbox.send(step_started(bare))
+    instance.poll_core()
+
+    card = instance.center.interaction.run_card
+    assert card.last_failure_label.text() == "Last failure: Pictured"
+    assert card.counts_label.text() == "1 FAIL"
+
+
+def test_the_logo_comes_back_when_the_run_ends(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(a_real_png(tmp_path / "probe.png"))
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(event.sequences[0].steps[0]))
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    instance.poll_core()
+
+    panel = instance.center.interaction
+    assert not panel.is_showing_run_card()
+    assert panel._current_image_path is None
+    assert not panel.run_card.is_ticking()
+
+
+def test_a_prompt_without_a_picture_shows_the_logo_then_the_step_picture_returns(
+    gui, tmp_path
+):
+    instance, _outbox, inbox = gui
+    image = a_real_png(tmp_path / "probe.png")
+    event = a_picture_recipe_loaded(image)
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(event.sequences[0].steps[0]))
+    instance.poll_core()
+    panel = instance.center.interaction
+
+    instance.ask_user(UserPromptRequest(request_id=uuid4(), message="Ready?", options=("ok",)))
+    assert panel._current_image_path is None
+    assert not panel.is_showing_run_card()
+
+    instance.center.option_buttons[0].click()
+    assert panel._current_image_path == image
+
+
+def test_switching_theme_keeps_the_run_card_on_screen(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    start_picture_run(instance, inbox, event)
+    panel = instance.center.interaction
+    assert panel.is_showing_run_card()
+
+    instance.center.set_dark(True)
+
+    assert panel.is_showing_run_card()
+
+
+def test_elapsed_text_reads_minutes_then_hours():
+    from pypts.hmi.gui.run_card import elapsed_text
+
+    assert elapsed_text(0) == "0:00"
+    assert elapsed_text(247.9) == "4:07"
+    assert elapsed_text(3727) == "1:02:07"
+    assert elapsed_text(-5) == "0:00"

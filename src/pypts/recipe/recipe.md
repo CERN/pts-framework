@@ -17,7 +17,7 @@ objects, but the step classes and the steptype registry belong to `pypts.step`
 | `recipe.py` | `Recipe`, `Sequence`, `RecipeError` — the data objects, plus the `from_file` / `from_yaml_text` facades |
 | `recipe_schema.py` | The format rules: the constants (same names as the old `rules.py`, read by the Recipe Creator and `step_source.py`) and the Pydantic models every document is validated with — `HeaderSchema`, `SequenceSchema`, `AnyStepSchema` and one model per steptype. Only `recipe_parser.py` uses the models |
 | `recipe_parser.py` | The whole load pipeline (below), `normalize_*`, `apply_defaults`, `current_recipe_version()` |
-| `step_source.py` | `step_sources_by_sequence(path)` — for each step-table row, the sequence document it belongs to as written and the step's lines in it, for the GUI's click panel |
+| `step_source.py` | `step_sources_by_sequence(path)` — for each step-table row, the sequence document it belongs to as written and the step's lines in it, for the GUI's click panel, and the `.py` a PythonModule row runs, for its right-click *Open Python file* |
 
 ## Public entry points
 
@@ -38,7 +38,7 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
 (`helper_applications/recipe_creator/recipe_creator.md`):
 
 - `parse_recipe(text, file_name, check_version=False)` — the whole load, without the version
-  check (no log line, empty `version_notice`).
+  check (no log line, empty `load_notices`).
 - `validate_document(raw, schema_cls, context)` — one normalized document against
   `HeaderSchema` or `SequenceSchema`: `([], model)` or `(problems, None)`, where each
   `SchemaProblem` carries `where` and `message` (the two halves of the sentence a
@@ -74,9 +74,9 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
    their own defaults and an `Indexed` wrapper's unset `skip` stays unset.
 5. **Version check** (unless `check_version=False`) — `_check_framework_version()` compares the header's `version` (the
    pypts version the recipe was written for) with the running pypts, **major.minor only**.
-   Warn-only during the refactor: an ERROR in the log and `Recipe.version_notice` set; the
-   recipe still loads, and CORE shows the notice to the operator. Hard refusal is planned for
-   ~v1.0.
+   Warn-only during the refactor: an ERROR in the log and the sentence added to
+   `Recipe.load_notices`; the recipe still loads, and CORE shows the notice to the operator.
+   Hard refusal is planned for ~v1.0.
 6. **Expand** — every `Indexed` step becomes one ordinary step mapping per parameter set
    (`step/indexed_step.py`). Nothing downstream ever sees the steptype.
 7. **Build** — first the checks that need the whole file: duplicate sequence names
@@ -86,6 +86,14 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
    becomes a `RecipeError` naming sequence, position and step), and a `Sequence` step gets a
    fresh copy of the sequence it calls (below). `_build_sequence()` fills a sequence's
    absent optional keys from `SEQUENCE_DEFAULTS` with `apply_defaults()`.
+8. **Resolve pictures** (`load_recipe` only, once `base_dir` is set) — `resolve_images()`
+   makes every `image_path` absolute: each sequence's, each step's (teardown steps and the
+   copies inside called sequences included), against the recipe's folder, with
+   `step.operator_prompt.resolve_image_path()`. **A file that is not there is not an
+   error**: one WARNING per place it is named (a called sequence is built once per call, but
+   said once), the path is kept absolute, and one sentence listing them all is added to
+   `load_notices` — the GUI shows "No image available" in its place (`hmi/gui/gui.md` §18).
+   `parse_recipe()` alone has no folder, so a recipe from text keeps its paths as written.
 
 ## Key types
 
@@ -94,16 +102,21 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
 - `sequences: dict[str, Sequence]` — in document order
 - `report_metadata: tuple[str, ...]` — globals the Report stamps on every CSV row and in
   the HTML header
-- `version_notice` — empty, or the operator sentence from the version check
+- `load_notices: tuple[str, ...]` — the sentences the operator sees once it has loaded:
+  the version check's, and the missing-pictures one from `load_recipe`. Empty when all is
+  well; never a reason not to load
 - `file_name` — set by both entry points when given; `base_dir` — the file's folder, set only
   by `from_file` (what a `PythonModule` step's relative `module:` resolves against)
 - `to_summary()` — every sequence's `SequenceSummary`, for `RecipeLoaded`
 
 **`Sequence`**:
 - `name`, `description`, `steps`, `teardown_steps`
-- `to_summary()` — pickle-safe `SequenceSummary`: one `StepSummary` per step **including the
+- `image_path` — the picture the GUI shows while the sequence runs, for every step without
+  one; absolute after `load_recipe`, None when the recipe names none
+- `to_summary()` — pickle-safe `SequenceSummary` (carrying `image_path`): one `StepSummary` per step **including the
   teardown steps**, in run order, depth-first over calls (`summary_rows(depth)`): a `Sequence`
-  step's row is followed by its own rows, and every row carries `depth` and `is_group`
+  step's row is followed by its own rows, and every row carries `depth`, `is_group` and the
+  step's `image_path`
 
 ## Sequence steps — the call tree
 
@@ -136,10 +149,10 @@ The constants below are plain data, read by the Recipe Creator's verificator and
 | `HEADER_SINGLE_VALUE` | Header fields that may not be a list or mapping |
 | `HEADER_DEFAULTS` | `description`, `main_sequence` (empty = first), `globals` (`{}`), `report_metadata` |
 | `REPORT_METADATA_DEFAULT` | `("serial_number",)` — a convention, not a constraint; `[]` means none |
-| `SEQUENCE_REQUIRED` / `SEQUENCE_DEFAULTS` | `sequence_name`, `steps` (at least one) / `description`, `teardown_steps` |
+| `SEQUENCE_REQUIRED` / `SEQUENCE_DEFAULTS` | `sequence_name`, `steps` (at least one) / `description`, `image_path` (None), `teardown_steps` |
 | `STEP_REQUIRED` | `steptype`, `step_name` |
 | `UNNAMED_STEP_TYPES` | `("sequence",)` — exempt from `step_name`; a Sequence step is named after the sequence it calls |
-| `STEP_COMMON_DEFAULTS` | `description`, `skip`, `continue_on_error` (default `True`) — accepted by every steptype |
+| `STEP_COMMON_DEFAULTS` | `description`, `image_path` (None), `skip`, `continue_on_error` (default `True`) — accepted by every steptype |
 | `STEP_TYPE_REQUIRED` | Per lowercase steptype: the extra required keys. **Its keys are the only steptypes a recipe may name** |
 | `STEP_TYPE_DEFAULTS` | Per steptype: its optional keys and their defaults |
 | `EXPANDED_STEP_TYPES` | `("indexed",)` — in the rules, never in the registry |
@@ -148,6 +161,23 @@ The constants below are plain data, read by the Recipe Creator's verificator and
 
 Removed sequence keys, on purpose: `setup_steps`, `parameters` / `outputs`, `locals`. There is
 one variable scope, `globals`, for the whole run.
+
+Three more constants serve a tool that checks a recipe rather than loads it:
+
+| Name | Meaning |
+|------|---------|
+| `OUTPUT_SCHEMAS` | Each output type's model, keyed as `OUTPUT_TYPES` (as `STEP_SCHEMAS` is for steptypes) |
+| `REMOVED_SEQUENCE_KEYS` | The four removed sequence keys above, each with the sentence telling an author what to do instead |
+| `RENAMED_STEP_TYPES` | Old steptype names (lowercased: `waitstep`, `sshconnectstep`, …) with what replaced them |
+
+**The author-facing words live on the fields.** Every field an author can write carries
+`Field(description=...)`, and every required one `examples=[...]`; the sentence saying what a
+step type or output type *is* sits on its `steptype` / `type` tag field, so the class
+docstrings stay for developers. Descriptions are plain sentences for the recipe author (no
+YAML, no Python names) and examples are values, not YAML lines - the Recipe Creator's
+verificator builds its hints from them, and they are written so its form can show them as
+tooltips too. They are metadata only: no verdict depends on them.
+`test_recipe_schema.py` fails, naming model and field, when one is missing.
 
 What the models add to the constants:
 
@@ -176,6 +206,12 @@ expands into highlights the authored `Indexed` block. Line positions come from
 `yaml.compose_all` nodes; a list item is bounded by the next item's first line, with the blank
 lines and comments in front of it trimmed off.
 
+A `StepSource` also carries `python_file`, for the step table's right-click *Open Python
+file*: the absolute path of the `.py` a PythonModule row runs, resolved against the recipe's
+folder by `step/python_module_step.py: find_module_file()` — so it is the file a run would
+use. An `Indexed` row gets its generated step's file; every other row, and a module that
+cannot be found, gets `""`.
+
 The row order must match `Sequence.to_summary()` (steps, then teardown, an `Indexed` step once
 per parameter set, each call followed by the rows of the sequence it calls);
 `tests/unit_tests/test_recipe.py` pins the two together. A failure is a DEBUG line and an
@@ -191,8 +227,10 @@ The authoritative checklist is `step/step.md` §4. On the recipe side:
 2. Add its model to `recipe_schema.py` (subclass `_OrdinaryStep`, `steptype` a `Literal` of
    the lowercase name) and to the `AnyStepSchema` union; `test_recipe_schema.py`'s
    `_ONE_OF_EACH` needs one valid example, and pins the model against the constants.
-3. Update the Recipe Creator's verificator hints in the same commit — the sync rule in
-   `helper_applications/recipe_creator/recipe_creator.md`.
+3. Give the `steptype` tag field a description (what the type does) and every field a
+   description, required ones an example too - the Recipe Creator's hints are built from
+   them, and `test_recipe_schema.py` fails until they are there. A steptype that replaces an
+   old name gets a `RENAMED_STEP_TYPES` entry.
 4. Document it in `recipe_guide.html`.
 
 ## Known gaps

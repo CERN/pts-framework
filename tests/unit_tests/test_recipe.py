@@ -43,6 +43,7 @@ USER_LOADING_DEMO = DEMOS / "userloadingstep_demo.yml"
 ALL_STEPTYPES_DEMO = DEMOS / "all_steptypes_demo.yml"
 SEQUENCE_DEMO = DEMOS / "sequencestep_demo.yml"
 HAL_DEMO = DEMOS / "hal_demo.yml"
+STEPIMAGE_DEMO = DEMOS / "stepimage_demo.yml"
 
 #: The pypts this suite runs against, which is what a recipe declares to
 #: match it. Asked rather than written out, so the fixtures do not start
@@ -843,7 +844,8 @@ def test_a_version_written_for_another_pypts_is_reported_and_still_loads(caplog)
         recipe = Recipe.from_yaml_text(text)
 
     assert recipe.name == "Wait demo"
-    assert "9.9" in recipe.version_notice
+    assert len(recipe.load_notices) == 1
+    assert "9.9" in recipe.load_notices[0]
     complaints = [r.getMessage() for r in caplog.records if "9.9" in r.getMessage()]
     assert len(complaints) == 1
 
@@ -857,8 +859,8 @@ def test_only_major_and_minor_are_compared(caplog):
         recipe = Recipe.from_yaml_text(text)
         matching = Recipe.from_yaml_text(VALID)
 
-    assert recipe.version_notice == ""
-    assert matching.version_notice == ""
+    assert recipe.load_notices == ()
+    assert matching.load_notices == ()
     assert not caplog.records
 
 
@@ -869,7 +871,8 @@ def test_a_version_that_is_not_a_version_is_reported(caplog):
     with caplog.at_level(logging.ERROR):
         recipe = Recipe.from_yaml_text(text)
 
-    assert "my-recipe-v2" in recipe.version_notice
+    assert len(recipe.load_notices) == 1
+    assert "my-recipe-v2" in recipe.load_notices[0]
     assert len(caplog.records) == 1
 
 
@@ -1111,6 +1114,68 @@ def test_the_all_steptypes_demo_recipe_has_a_source_for_every_row():
                 assert source.highlights is False
             elif not row.step_name.startswith("Add numbers ["):
                 assert f"step_name: {row.step_name}" in block
+
+
+def test_a_python_module_row_carries_the_file_its_module_names(tmp_path):
+    """What the step table's "Open Python file" opens: resolved beside the
+    recipe as a run resolves it, for every row that runs Python - an Indexed
+    step's generated rows too - and nothing for any other row."""
+    module_file = tmp_path / "bench_tests.py"
+    module_file.write_text("def add(a, b):\n    return {'sum': a + b}\n", encoding="utf-8")
+    text = f"""\
+name: Python files
+version: {CURRENT_VERSION}
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: Add
+    module: bench_tests
+    method_name: add
+  - steptype: Wait
+    step_name: Settle
+    wait_time: '0'
+  - steptype: Sequence
+    sequence_name: Sub
+  - steptype: Indexed
+    step_name: Add many
+    template:
+      steptype: PythonModule
+      module: bench_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {{a: 1, b: 1}}
+        expect: {{sum: 2}}
+      - inputs: {{a: 2, b: 3}}
+        expect: {{sum: 5}}
+  - steptype: PythonModule
+    step_name: Ghost
+    module: not_written_yet.py
+    method_name: add
+---
+sequence_name: Sub
+steps:
+  - steptype: PythonModule
+    step_name: Add inside
+    module: bench_tests.py
+    method_name: add
+"""
+    path = tmp_path / "recipe.yml"
+    path.write_text(text, encoding="utf-8")
+
+    rows = step_source.step_sources_by_sequence(str(path))["Main"]
+
+    expected = str(module_file.resolve())
+    assert [row.python_file for row in rows] == [
+        expected,  # Add
+        "",  # Settle - a Wait step
+        "",  # the call to Sub - a group row
+        expected,  # Add inside, in Sub
+        expected,  # Add many [a=1, b=1]
+        expected,  # Add many [a=2, b=3]
+        "",  # Ghost - no such file
+    ]
 
 
 def test_an_unknown_mapping_type_is_refused_when_the_recipe_loads():
@@ -1463,3 +1528,165 @@ def test_the_hal_demo_recipe_parses():
     assert recipe.name == "HAL demo"
     names = [step.name for step in recipe.sequences["Main"].steps]
     assert names == ["Loopback echo", "Remote system name"]
+
+
+# --------------------------------------------------------------------------
+# image_path on every step and on a sequence: resolved at load, a missing
+# file a notice and never a reason not to load
+# --------------------------------------------------------------------------
+
+PICTURES = f"""\
+name: Pictures
+version: {CURRENT_VERSION}
+main_sequence: Main
+---
+sequence_name: Main
+image_path: fixture.png
+steps:
+  - steptype: Wait
+    step_name: With its own
+    wait_time: 0
+    image_path: probe.png
+  - steptype: Wait
+    step_name: Without
+    wait_time: 0
+  - steptype: Sequence
+    sequence_name: Called
+    image_path: called_step.png
+  - steptype: Indexed
+    step_name: Each
+    image_path: wrapper.png
+    template:
+      steptype: Wait
+      wait_time: 0
+    parameter_sets:
+      - inputs: {{a: 1}}
+  - steptype: Indexed
+    step_name: Own
+    image_path: wrapper.png
+    template:
+      steptype: Wait
+      wait_time: 0
+      image_path: template.png
+    parameter_sets:
+      - inputs: {{a: 1}}
+teardown_steps:
+  - steptype: Wait
+    step_name: Tidy
+    wait_time: 0
+    image_path: tidy.png
+---
+sequence_name: Called
+image_path: called.png
+steps:
+  - steptype: Wait
+    step_name: Inner
+    wait_time: 0
+    image_path: inner.png
+"""
+
+_PICTURE_FILES = (
+    "fixture.png",
+    "probe.png",
+    "called_step.png",
+    "wrapper.png",
+    "template.png",
+    "tidy.png",
+    "called.png",
+    "inner.png",
+)
+
+
+def _picture_recipe(tmp_path, missing=()):
+    for name in _PICTURE_FILES:
+        if name not in missing:
+            (tmp_path / name).write_bytes(b"not really a png")
+    path = tmp_path / "pictures.yml"
+    path.write_text(PICTURES, encoding="utf-8")
+    return Recipe.from_file(str(path))
+
+
+def test_every_picture_is_resolved_beside_the_recipe(tmp_path):
+    recipe = _picture_recipe(tmp_path)
+    main = recipe.sequences["Main"]
+
+    def where(name):
+        return str((tmp_path / name).resolve())
+
+    assert main.image_path == where("fixture.png")
+    assert main.steps[0].image_path == where("probe.png")
+    assert main.steps[1].image_path is None
+    assert main.steps[2].image_path == where("called_step.png")
+    # The called copy inside the Sequence step is resolved too.
+    assert main.steps[2].sequence.image_path == where("called.png")
+    assert main.steps[2].sequence.steps[0].image_path == where("inner.png")
+    assert main.teardown_steps[0].image_path == where("tidy.png")
+    assert recipe.load_notices == ()
+
+
+def test_an_indexed_template_picture_wins_over_the_wrapper(tmp_path):
+    """The picture follows the description: the wrapper's, unless the
+    template names its own."""
+    main = _picture_recipe(tmp_path).sequences["Main"]
+
+    assert main.steps[3].image_path == str((tmp_path / "wrapper.png").resolve())
+    assert main.steps[4].image_path == str((tmp_path / "template.png").resolve())
+
+
+def test_the_summaries_carry_the_resolved_pictures(tmp_path):
+    recipe = _picture_recipe(tmp_path)
+    main = next(s for s in recipe.to_summary() if s.sequence_name == "Main")
+
+    assert main.image_path == str((tmp_path / "fixture.png").resolve())
+    rows = {row.step_name: row.image_path for row in main.steps}
+    assert rows["With its own"] == str((tmp_path / "probe.png").resolve())
+    assert rows["Without"] is None
+    assert rows["Inner"] == str((tmp_path / "inner.png").resolve())
+
+
+def test_a_missing_picture_is_a_notice_and_the_recipe_still_loads(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING):
+        recipe = _picture_recipe(tmp_path, missing=("probe.png", "called.png"))
+
+    main = recipe.sequences["Main"]
+    # Kept absolute: the GUI draws "No image available" in its place.
+    assert main.steps[0].image_path == str((tmp_path / "probe.png").resolve())
+    assert len(recipe.load_notices) == 1
+    notice = recipe.load_notices[0]
+    assert "2 pictures are missing" in notice
+    assert "probe.png" in notice
+    assert "called.png" in notice
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    # called.png is met twice - the Called document and its copy inside the
+    # Sequence step - and said once.
+    assert sum("probe.png" in r.getMessage() for r in warnings) == 1
+    assert sum("called.png" in r.getMessage() for r in warnings) == 1
+
+
+def test_a_recipe_from_text_keeps_its_pictures_as_written():
+    """Only a file has a folder to resolve against; from text, nothing is
+    checked and nothing is said."""
+    recipe = Recipe.from_yaml_text(VALID.replace(
+        "    wait_time: '0.01'\n", "    wait_time: '0.01'\n    image_path: x.png\n"
+    ))
+
+    assert recipe.sequences["Main"].steps[0].image_path == "x.png"
+    assert recipe.load_notices == ()
+
+
+def test_the_picture_demo_loads_with_its_one_missing_picture_named():
+    """resources/recipes/Development_recipes/stepimage_demo.yml is the
+    image_path showcase: a step picture and a sequence picture that are in the
+    repository, and one missing on purpose - which is a notice, not a refusal."""
+    recipe = Recipe.from_file(str(STEPIMAGE_DEMO))
+    main = recipe.sequences["Main"]
+    images = (DEMOS.parent.parent / "images").resolve()
+
+    assert main.image_path is None
+    assert main.steps[0].image_path is None
+    assert main.steps[1].image_path == str(images / "CERN_Logo.png")
+    assert main.steps[2].sequence.image_path == str(images / "Front_Panel_Test.jpg")
+    assert Path(main.steps[1].image_path).is_file()
+    assert Path(main.steps[2].sequence.image_path).is_file()
+    assert len(recipe.load_notices) == 1
+    assert "not_there_on_purpose.png" in recipe.load_notices[0]

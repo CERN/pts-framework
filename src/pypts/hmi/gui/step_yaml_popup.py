@@ -38,7 +38,14 @@ per-character and per-line formats, which no stylesheet can reach at all -
 """
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QColor, QFontMetrics, QGuiApplication, QTextCursor, QTextFormat
+from PySide6.QtGui import (
+    QColor,
+    QFontMetrics,
+    QGuiApplication,
+    QScreen,
+    QTextCursor,
+    QTextFormat,
+)
 from PySide6.QtWidgets import QFrame, QPlainTextEdit, QTextEdit, QVBoxLayout, QWidget
 
 from pypts.hmi.gui.palette import get_palette
@@ -144,10 +151,14 @@ class StepYamlPopup(QFrame):
                 block = document.findBlockByNumber(line)
                 if not block.isValid():
                     break
+                # PySide6's stubs do not declare ExtraSelection's two fields;
+                # they exist at runtime and are the documented way to fill one.
                 selection = QTextEdit.ExtraSelection()
-                selection.format.setBackground(band)
-                selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
-                selection.cursor = QTextCursor(block)
+                selection.format.setBackground(band)  # type: ignore[attr-defined]
+                selection.format.setProperty(  # type: ignore[attr-defined]
+                    QTextFormat.Property.FullWidthSelection, True
+                )
+                selection.cursor = QTextCursor(block)  # type: ignore[attr-defined]
                 selections.append(selection)
         self.text_view.setExtraSelections(selections)
 
@@ -245,9 +256,11 @@ class StepYamlPopup(QFrame):
         self.text_view.setFixedSize(view_width, view_height)
         self.setFixedSize(view_width + margins.left() + margins.right() + 6, view_height + chrome)
 
-    def _screen_at(self, global_x: int, global_y: int):
-        """The screen the cursor is on, or the primary one."""
-        screen = QGuiApplication.screenAt(QPoint(global_x, global_y))
+    def _screen_at(self, global_x: int, global_y: int) -> QScreen | None:
+        """The screen the cursor is on, or the primary one; None with no screen at all."""
+        # screenAt() and primaryScreen() return None at runtime; their stubs
+        # say they never do.
+        screen: QScreen | None = QGuiApplication.screenAt(QPoint(global_x, global_y))
         if screen is None:
             screen = QGuiApplication.primaryScreen()
         return screen

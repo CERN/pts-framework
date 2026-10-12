@@ -25,7 +25,7 @@ import pytest
 
 from pypts.hmi.hmi_client import HmiClient
 from pypts.messages import QueueWrapper
-from pypts.messages.core_hmi_communication import HmiStopped
+from pypts.messages.core_hmi_communication import HmiStopped, StartSequence
 from pypts.messages.run_events import PauseSequence, ResumeSequence, RunPaused, RunResumed
 
 #: What a frontend is expected to do in: the "returns at once" branch must not
@@ -237,6 +237,25 @@ def test_pause_and_resume_send_their_commands(client):
     instance.resume_sequence()
 
     assert drain(to_core) == [PauseSequence(), ResumeSequence()]
+
+
+def test_start_sequence_sends_an_ordinary_run_by_default(client):
+    instance, to_core = client
+
+    instance.start_sequence("Main")
+
+    assert drain(to_core) == [StartSequence("Main", (), True)]
+
+
+def test_start_sequence_carries_the_engineering_options(client):
+    from uuid import uuid4
+
+    instance, to_core = client
+    left_out = (uuid4(),)
+
+    instance.start_sequence("Main", left_out, write_report=False)
+
+    assert drain(to_core) == [StartSequence("Main", left_out, False)]
 
 
 def test_run_paused_and_run_resumed_reach_their_hooks(client):

@@ -78,6 +78,7 @@ SEQUENCE_REQUIRED: tuple[str, ...] = ("sequence_name", "steps")
 #:                  `inputs` and `outputs`.
 SEQUENCE_DEFAULTS: dict[str, Any] = {
     "description": "",
+    "image_path": None,
     "teardown_steps": [],
 }
 
@@ -116,9 +117,10 @@ INPUT_TYPES: dict[str, tuple[str, ...]] = {
 }
 
 #: The `type` an `outputs` entry may name. `passfail`, `equals` and `range`
-#: judge - they set the step's verdict; `pass` says this output is not a
-#: measurement and the verdict is DONE whatever came back; `global` stores
-#: the value in the run's one variable scope and leaves the verdict alone.
+#: judge - the step is PASS when all of them pass, FAIL when any fails, DONE
+#: when it has none; `pass` records a value that is not a measurement and
+#: `global` stores it in the run's one variable scope - neither touches the
+#: verdict.
 #: An outputs entry is always a mapping and always names its type: there is
 #: no sensible default for "what to do with this value".
 OUTPUT_TYPES: dict[str, tuple[str, ...]] = {
@@ -136,8 +138,11 @@ OUTPUT_TYPES: dict[str, tuple[str, ...]] = {
 #: run and every step after it is recorded SKIP; the default carries on to the
 #: next step. It is written on a step and nowhere else - a recipe-level or
 #: `globals` form is exactly what F1 and F8 were.
+#: `image_path` is the picture the GUI shows while the step runs; an absent one
+#: means none of the step's own (the sequence's, if it has one, shows instead).
 STEP_COMMON_DEFAULTS: dict[str, Any] = {
     "description": "",
+    "image_path": None,
     "skip": False,
     "continue_on_error": True,
 }
@@ -148,18 +153,18 @@ STEP_COMMON_DEFAULTS: dict[str, Any] = {
 #: is `wait_time`, written directly on the step.
 STEP_TYPE_DEFAULTS: dict[str, dict[str, Any]] = {
     "pythonmodule": {"inputs": {}, "outputs": {}},
-    # A UserInteraction carries its question directly - message/options/
-    # image_path are fields, not `inputs` entries - so only the answer
-    # goes through a mapping. An absent image_path means no picture.
-    "userinteraction": {"image_path": None, "outputs": {}},
+    # A UserInteraction carries its question directly - message and options
+    # are fields, not `inputs` entries - so only the answer goes through a
+    # mapping.
+    "userinteraction": {"outputs": {}},
     # A UserWrite carries only the question: what the operator types is the
     # output, so there is nothing to feed in. No `allow_empty` - the GUI
     # keeps OK disabled until something is typed.
-    "userwrite": {"image_path": None, "outputs": {}},
+    "userwrite": {"outputs": {}},
     # A UserLoading asks for a path: `select` says whether a file or a folder,
     # and anything but those two words (case-insensitive) is refused by the
     # step's constructor when the recipe loads. The chosen path is the output.
-    "userloading": {"select": "file", "image_path": None, "outputs": {}},
+    "userloading": {"select": "file", "outputs": {}},
     "wait": {},
     # A Sequence step owns no mappings: a called sequence shares the run's
     # globals and takes its verdict from its own steps.
@@ -230,14 +235,48 @@ def _report_name(name: str) -> str:
 class HeaderSchema(_RecipeModel):
     """Document 1 of a recipe."""
 
-    name: str
-    version: str
-    description: str = ""
-    main_sequence: str = ""
-    globals: dict[Any, Any] = Field(default_factory=dict)
+    name: str = Field(
+        description=(
+            "The recipe's name, so the operator and the report can tell what was run."
+        ),
+        examples=["Output Voltage Test"],
+    )
+    version: str = Field(
+        description=(
+            "The PyPTS version the recipe was written for. The framework warns "
+            "when it differs from the one running it."
+        ),
+        examples=["0.2"],
+    )
+    description: str = Field(
+        default="",
+        description="What the recipe tests, in a sentence or two.",
+    )
+    main_sequence: str = Field(
+        default="",
+        description=(
+            "The name of the sequence to run. If omitted, the first sequence in "
+            "the file runs."
+        ),
+        examples=["Main"],
+    )
+    globals: dict[Any, Any] = Field(
+        default_factory=dict,
+        description=(
+            "The run's variables and their starting values. A step reads one with "
+            "{type: global, global_name: <name>} and writes one through an output "
+            "of type 'global'."
+        ),
+        examples=[{"serial_number": "", "voltage": 0}],
+    )
     # Strict: a column called `3` is a mistake, not a name to coerce.
     report_metadata: list[Annotated[StrictStr, AfterValidator(_report_name)]] = Field(
-        default_factory=lambda: list(REPORT_METADATA_DEFAULT)
+        default_factory=lambda: list(REPORT_METADATA_DEFAULT),
+        description=(
+            "The names of globals stamped on every row of the report. Each entry is "
+            "a name written as text; a number is not a name."
+        ),
+        examples=[["serial_number", "lot_number"]],
     )
 
 
@@ -267,27 +306,38 @@ InputEntry = Annotated[Any, AfterValidator(_input_entry)]
 
 
 class PassOutput(_RecipeModel):
-    type: Literal["pass"]
+    type: Literal["pass"] = Field(
+        description="Records the returned value without judging it; the step stays DONE."
+    )
 
 
 class PassfailOutput(_RecipeModel):
-    type: Literal["passfail"]
+    type: Literal["passfail"] = Field(description="Passes if the returned value is true.")
 
 
 class EqualsOutput(_RecipeModel):
-    type: Literal["equals"]
-    value: Any
+    type: Literal["equals"] = Field(
+        description="Passes if the returned value equals 'value' exactly."
+    )
+    value: Any = Field(description="The value the step must return to pass.", examples=[5])
 
 
 class RangeOutput(_RecipeModel):
-    type: Literal["range"]
-    min: Any
-    max: Any
+    type: Literal["range"] = Field(
+        description="Passes if the returned value is between 'min' and 'max'."
+    )
+    min: Any = Field(description="The lowest value that passes.", examples=[4.9])
+    max: Any = Field(description="The highest value that passes.", examples=[5.1])
 
 
 class GlobalOutput(_RecipeModel):
-    type: Literal["global"]
-    global_name: Any
+    type: Literal["global"] = Field(
+        description="Stores the returned value in a run variable, without judging it."
+    )
+    global_name: Any = Field(
+        description="The run variable (a name in 'globals') to store the value in.",
+        examples=["my_var"],
+    )
 
 
 #: One `outputs` entry, picked by its `type` (OUTPUT_TYPES).
@@ -295,6 +345,16 @@ OutputEntry = Annotated[
     PassOutput | PassfailOutput | EqualsOutput | RangeOutput | GlobalOutput,
     Field(discriminator="type"),
 ]
+
+#: Each output type's model, keyed as OUTPUT_TYPES is - for a tool that asks an
+#: output type what it means and which keys it takes (the Recipe Creator's hints).
+OUTPUT_SCHEMAS: dict[str, type[BaseModel]] = {
+    "pass": PassOutput,
+    "passfail": PassfailOutput,
+    "equals": EqualsOutput,
+    "range": RangeOutput,
+    "global": GlobalOutput,
+}
 
 
 # -- steps -------------------------------------------------------------------------
@@ -305,49 +365,119 @@ class _StepFields(_RecipeModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    description: str = ""
-    skip: bool = False
-    continue_on_error: bool = True
+    description: str = Field(default="", description="What the step does, for the operator.")
+    image_path: str | None = Field(
+        default=None,
+        description=(
+            "A picture shown on the right while this step runs: a path relative to "
+            "the recipe's own folder, or an absolute one."
+        ),
+        examples=["probe_tp3.png"],
+    )
+    skip: bool = Field(
+        default=False,
+        description="true records the step as SKIP without running it.",
+        examples=[True],
+    )
+    continue_on_error: bool = Field(
+        default=True,
+        description=(
+            "false means an ERROR or FAIL on this step ends the run, and every "
+            "step after it is recorded SKIP."
+        ),
+        examples=[False],
+    )
 
 
 class _OrdinaryStep(_StepFields):
     """The arguments of pypts.step.step.Step's constructor, which every built step takes."""
 
-    step_name: str
-    id: str = ""
-    inputs: dict[Any, InputEntry] = Field(default_factory=dict)
-    outputs: dict[Any, OutputEntry] = Field(default_factory=dict)
+    step_name: str = Field(
+        description="The step's name, shown in the step table and the report.",
+        examples=["Measure output voltage"],
+    )
+    id: str = Field(
+        default="",
+        description="A stable id for the step. If omitted, the step gets a fresh one.",
+        examples=["my-stable-id"],
+    )
+    inputs: dict[Any, InputEntry] = Field(
+        default_factory=dict,
+        description=(
+            "The arguments passed to the step, by name. A value is written as itself; "
+            "a mapping with type 'global' reads a run variable instead."
+        ),
+        examples=[{"channel": 1, "voltage": {"type": "global", "global_name": "v_set"}}],
+    )
+    outputs: dict[Any, OutputEntry] = Field(
+        default_factory=dict,
+        description=(
+            "What to do with each value the step returns, by name: judge it "
+            "(equals, range, passfail), record it (pass) or store it (global)."
+        ),
+        examples=[{"output": {"type": "range", "min": 4.9, "max": 5.1}}],
+    )
 
 
 class PythonModuleStepSchema(_OrdinaryStep):
-    steptype: Literal["pythonmodule"]
-    module: str
-    method_name: str
+    steptype: Literal["pythonmodule"] = Field(
+        description="Calls one function of a Python module and judges what it returns."
+    )
+    module: str = Field(
+        description=(
+            "The Python file to call, relative to the recipe's own folder, or a "
+            "dotted module name."
+        ),
+        examples=["my_tests.py"],
+    )
+    method_name: str = Field(
+        description="The function inside the module to call.",
+        examples=["measure_voltage"],
+    )
 
 
 class UserInteractionStepSchema(_OrdinaryStep):
-    steptype: Literal["userinteraction"]
-    message: str
-    options: Any
-    image_path: str | None = None
+    steptype: Literal["userinteraction"] = Field(
+        description="Asks the operator a question with buttons; the chosen one is the output."
+    )
+    message: str = Field(
+        description="The question shown to the operator.",
+        examples=["Connect the unit to J1, then continue."],
+    )
+    options: Any = Field(
+        description="The button labels the operator can press, at least one.",
+        examples=[["Continue", "Abort"]],
+    )
 
 
 class UserWriteStepSchema(_OrdinaryStep):
-    steptype: Literal["userwrite"]
-    message: str
-    image_path: str | None = None
+    steptype: Literal["userwrite"] = Field(
+        description="Asks the operator to type something; what they type is the output."
+    )
+    message: str = Field(
+        description="The prompt shown before the operator types their answer.",
+        examples=["Scan or type the serial number."],
+    )
 
 
 class UserLoadingStepSchema(_OrdinaryStep):
-    steptype: Literal["userloading"]
-    message: str
-    select: str = "file"
-    image_path: str | None = None
+    steptype: Literal["userloading"] = Field(
+        description="Asks the operator to choose a file or a folder; the path is the output."
+    )
+    message: str = Field(
+        description="The prompt shown while the operator chooses.",
+        examples=["Select the calibration file for this unit."],
+    )
+    select: str = Field(
+        default="file",
+        description="What the operator chooses: 'file' (the default) or 'folder'.",
+        examples=["folder"],
+    )
 
 
 class WaitStepSchema(_OrdinaryStep):
-    steptype: Literal["wait"]
-    wait_time: Any
+    steptype: Literal["wait"] = Field(description="Pauses the run for a fixed time.")
+    wait_time: Any = Field(description="How long to wait, in seconds.", examples=[2])
 
 
 class SequenceStepSchema(_StepFields):
@@ -358,8 +488,16 @@ class SequenceStepSchema(_StepFields):
     their reason; a plain unknown key would say no more than 'Extra inputs'.
     """
 
-    steptype: Literal["sequence"]
-    sequence_name: str
+    steptype: Literal["sequence"] = Field(
+        description=(
+            "Runs another sequence of this recipe as a group of steps; it shares "
+            "the run's globals."
+        )
+    )
+    sequence_name: str = Field(
+        description="The name of the sequence to run, written as in its 'sequence_name'.",
+        examples=["Calibrate"],
+    )
     step_name: None = None
     inputs: None = None
     outputs: None = None
@@ -393,8 +531,16 @@ class ParameterSet(_RecipeModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    inputs: dict[str, Any] = Field(default_factory=dict)
-    expect: dict[str, Any] = Field(default_factory=dict)
+    inputs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Values merged into the template's inputs for this case.",
+        examples=[{"a": 1, "b": 2}],
+    )
+    expect: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Shorthand 'equals' checks merged into the template's outputs.",
+        examples=[{"sum": 3}],
+    )
 
     @model_validator(mode="after")
     def _says_something(self) -> Self:
@@ -411,10 +557,29 @@ class IndexedStepSchema(_StepFields):
     it after validation.
     """
 
-    steptype: Literal["indexed"]
-    step_name: str
-    template: "AnyStepSchema"
-    parameter_sets: list[ParameterSet] = Field(min_length=1)
+    steptype: Literal["indexed"] = Field(
+        description="Writes one step once and runs it once per parameter set."
+    )
+    step_name: str = Field(
+        description=(
+            "The base name of the generated steps; each one adds its own parameters to it."
+        ),
+        examples=["Add"],
+    )
+    template: "AnyStepSchema" = Field(
+        description=(
+            "The step every case is built from: one ordinary step, carrying the "
+            "inputs and outputs the cases share."
+        ),
+        examples=[{"steptype": "PythonModule", "module": "my_tests.py", "method_name": "add"}],
+    )
+    parameter_sets: list[ParameterSet] = Field(
+        min_length=1,
+        description=(
+            "One entry per generated step; each carries 'inputs', 'expect', or both."
+        ),
+        examples=[[{"inputs": {"a": 1, "b": 2}, "expect": {"sum": 3}}]],
+    )
     id: None = None
     inputs: None = None
     outputs: None = None
@@ -487,8 +652,70 @@ STEP_SCHEMAS: dict[str, type[BaseModel]] = {
 class SequenceSchema(_RecipeModel):
     """Documents 2 onwards of a recipe: one sequence each."""
 
-    sequence_name: str
-    description: str = ""
+    sequence_name: str = Field(
+        description=(
+            "The sequence's name, unique in the recipe regardless of case. Every "
+            "document after the header is a sequence and starts with it."
+        ),
+        examples=["Main"],
+    )
+    description: str = Field(default="", description="What the sequence does.")
+    image_path: str | None = Field(
+        default=None,
+        description=(
+            "A picture shown while this sequence runs, for every step that has none "
+            "of its own: a path relative to the recipe's own folder, or an absolute one."
+        ),
+        examples=["fixture.png"],
+    )
     # A sequence exists to run something; teardown_steps is an optional extra.
-    steps: list[AnyStepSchema] = Field(min_length=1)
-    teardown_steps: list[AnyStepSchema] = Field(default_factory=list)
+    steps: list[AnyStepSchema] = Field(
+        min_length=1,
+        description="The steps, run in order. A sequence needs at least one.",
+        examples=[[{"steptype": "Wait", "step_name": "Pause", "wait_time": 1}]],
+    )
+    teardown_steps: list[AnyStepSchema] = Field(
+        default_factory=list,
+        description=(
+            "Steps run after 'steps' finish - after a pass, a failure or a stop. "
+            "They are written like 'steps'."
+        ),
+    )
+
+
+#: Sequence keys the format once had and removed on purpose, with what to do
+#: instead. They load - a sequence ignores unknown keys - so a tool that checks
+#: a recipe (the Recipe Creator) names them rather than calling them unknown.
+REMOVED_SEQUENCE_KEYS: dict[str, str] = {
+    "setup_steps": (
+        "'setup_steps' was removed. Steps that belonged in setup_steps go at "
+        "the front of 'steps' instead."
+    ),
+    "parameters": (
+        "'parameters' was removed. A sequence declares no call interface: a "
+        "Sequence step calls it and it shares the run's globals. Remove this key."
+    ),
+    "outputs": (
+        "'outputs' as a sequence-level key was removed (step-level 'outputs' "
+        "mappings are still valid). Remove this key from the sequence header."
+    ),
+    "locals": (
+        "'locals' was removed. There is now one scope for the whole run: "
+        "'globals'. Declare variables there and read them from a step with "
+        "{type: global, global_name: <name>}."
+    ),
+}
+
+#: Steptype names the format once had, lowercased, with what replaced them -
+#: for a tool that answers an unknown steptype with more than the list.
+RENAMED_STEP_TYPES: dict[str, str] = {
+    "userinteractionstep": "userinteraction",
+    "waitstep": "wait",
+    "pythonmodulestep": "pythonmodule",
+    "userwritestep": "userwrite",
+    "userloadingstep": "userloading",
+    "sequencestep": "sequence",
+    "indexedstep": "indexed",
+    "sshconnectstep": "(SSH steps are not yet available in this version)",
+    "sshclosestep": "(SSH steps are not yet available in this version)",
+}

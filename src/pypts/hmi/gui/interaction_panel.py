@@ -17,12 +17,19 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from pypts.hmi.gui.palette import get_palette
-from pypts.hmi.gui.resources import load_cern_logo_pixmap, make_placeholder_pixmap
+from pypts.hmi.gui.resources import (
+    load_cern_logo_pixmap,
+    load_no_image_pixmap,
+    make_placeholder_pixmap,
+)
+from pypts.hmi.gui.run_card import RunCard
+from pypts.hmi.gui.run_display import RunDisplay
 
 #: The button every prompt carries beyond the recipe's own options, so the
 #: operator is never trapped in front of a question they cannot answer. It is
@@ -68,10 +75,11 @@ class InteractionPanel(QWidget):
     response_given = Signal(str)
     cancelled = Signal()
 
-    def __init__(self, parent=None):
+    def __init__(self, display: RunDisplay | None = None, parent=None):
         super().__init__(parent)
         self._dark = False
         self._logo_pixmap = load_cern_logo_pixmap(get_palette(False).logo_tint)
+        self._no_image_pixmap = load_no_image_pixmap(get_palette(False).text_muted)
         self._selected_button_index = -1
         self._current_image_path: str | None = None
         self._mode = "idle"
@@ -88,10 +96,18 @@ class InteractionPanel(QWidget):
         self._inner.setContentsMargins(16, 16, 16, 16)
         self._inner.setSpacing(12)
 
+        # The picture area: the picture (or the logo, or "No image available")
+        # on one page, the run card on the other (gui.md §18).
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumHeight(220)
-        self._inner.addWidget(self.image_label, stretch=1)
+        if display is None:
+            display = RunDisplay()
+        self.run_card = RunCard(display)
+        self._visual_stack = QStackedWidget()
+        self._visual_stack.addWidget(self.image_label)
+        self._visual_stack.addWidget(self.run_card)
+        self._inner.addWidget(self._visual_stack, stretch=1)
 
         self.message_label = QLabel()
         self.message_label.setWordWrap(True)
@@ -183,8 +199,8 @@ class InteractionPanel(QWidget):
         # The logo is artwork, not a stylesheet colour, so it is reloaded rather
         # than restyled - dark tints it, light draws the file as it is.
         self._logo_pixmap = load_cern_logo_pixmap(palette.logo_tint)
-        if self._current_image_path is None:
-            self._refresh_idle_visual()
+        self._no_image_pixmap = load_no_image_pixmap(palette.text_muted)
+        self.run_card.set_dark(dark)
         frame_bg = palette.panel_background
         border = palette.border
         text_color = palette.text
@@ -209,7 +225,7 @@ class InteractionPanel(QWidget):
         self._path_page.setVisible(False)
         self.path_input.clear()
         self._mode = "idle"
-        self._refresh_idle_visual()
+        self._set_image_from_path(None)
 
     def is_idle(self) -> bool:
         """No question on screen. Logical state, not Qt visibility: a child of
@@ -342,7 +358,17 @@ class InteractionPanel(QWidget):
             self.path_input.setText(str(Path(chosen)))
 
     def set_image(self, image_path: str | None):
+        """The picture area shows `image_path`; None shows the logo."""
         self._set_image_from_path(image_path)
+
+    def show_run_card(self):
+        """The picture area shows the run card instead of a picture."""
+        self._current_image_path = None
+        self._visual_stack.setCurrentWidget(self.run_card)
+        self.run_card.refresh()
+
+    def is_showing_run_card(self) -> bool:
+        return self._visual_stack.currentWidget() is self.run_card
 
     def add_button(self, label: str, value: str, primary: bool = False, on_click=None):
         """One prompt button. `on_click` replaces the default answer-with-value
@@ -375,11 +401,21 @@ class InteractionPanel(QWidget):
 
     def _set_image_from_path(self, image_path: str | None):
         self._current_image_path = image_path
+        self._visual_stack.setCurrentWidget(self.image_label)
         self._refresh_visual()
 
     def _refresh_visual(self):
+        """
+        Redraw the picture page: the picture, or - when one was named but the
+        file is missing or will not load - "No image available", or with
+        none named the logo. A wrong picture is never replaced by the logo,
+        which would look like nothing was asked for.
+        """
         image_path = self._current_image_path
-        if image_path and os.path.exists(image_path):
+        if not image_path:
+            self._refresh_idle_visual()
+            return
+        if os.path.exists(image_path):
             pixmap = QPixmap(image_path)
             if not pixmap.isNull():
                 self.image_label.setPixmap(
@@ -387,7 +423,22 @@ class InteractionPanel(QWidget):
                 )
                 self.image_label.setText("")
                 return
-        self._refresh_idle_visual()
+        no_image = self._no_image_pixmap
+        if no_image is None or no_image.isNull():
+            no_image = make_placeholder_pixmap(420, 220, "No image available")
+        self.image_label.setPixmap(
+            no_image.scaled(420, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        )
+        self.image_label.setText("")
+
+    def is_showing_no_image(self) -> bool:
+        """A picture was named and it could not be shown."""
+        image_path = self._current_image_path
+        if not image_path:
+            return False
+        if self._visual_stack.currentWidget() is not self.image_label:
+            return False
+        return not os.path.exists(image_path) or QPixmap(image_path).isNull()
 
     def _refresh_idle_visual(self):
         pixmap = self._logo_pixmap

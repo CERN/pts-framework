@@ -55,18 +55,16 @@ class UserWriteStep(Step):
     def __init__(
         self,
         message: str,
-        image_path: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.message = str(message)
-        self.image_path = image_path
 
     def _step(self, runtime: Runtime, step_input: dict[str, Any]) -> Any:
         request = UserTextRequest(
             request_id=uuid.uuid4(),
             message=self.message,
-            image_path=resolve_image_path(self.name, self.image_path, runtime.base_dir),
+            image_path=resolve_image_path(self.image_path, runtime.base_dir),
         )
         log.info("Waiting for the operator to type: '%s'", self.message)
         log.debug("Step '%s' asked request %s.", self.name, request.request_id)

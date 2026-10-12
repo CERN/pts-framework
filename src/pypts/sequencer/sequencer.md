@@ -30,6 +30,17 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   line of the run - its first to the summary - in the run log, and the run's last lines before
   the Report sees `RunFinished`. The end is in a `finally`, so a run that raises still returns
   the Logger to the session log.
+- **Engineering mode** — `RunSequence.excluded_step_ids` and `.write_report` reach
+  `execute_sequence()` through `run_sequence()` (as thread arguments). The exclusions go on the
+  `Runtime` (`excluded_step_ids`, `step/step.md` §3); the step layer records each SKIP.
+  `write_report=False` (the GUI's Space retest) skips `start_run_folder()`: no run folder, no
+  run log, `RunStarted(run_dir="", run_log_path="", write_report=False)` — the run is logged
+  in the session log, and CORE keeps it away from the Report on the strength of that
+  `RunStarted`. `log_engineering_run()` writes the technician's lines before `RunStarted`:
+  INFO `Engineering run: N of M steps left out.` (M counts the sequence's table rows, called
+  sequences' steps and teardown included) when anything is left out, and INFO
+  `Engineering run: no report and no run folder for this run.` when `write_report` is False.
+  An ordinary run writes neither.
 - **The run folder and run log** — `start_run_folder()` calls
   `utilities.local_storage.make_run_folder(self.reports_dir(), recipe name)`; a folder that
   cannot be made is a WARNING `ModuleError` ("The results folder could not be created: …")

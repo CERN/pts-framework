@@ -138,6 +138,8 @@ still traceable at DEBUG without the operator's panel saying the same thing thre
 | recipe loaded, sequences available | `core/core.py` | `sequencer`, `hmi_client`, `gui`, `cli` |
 | sequence started / finished, each step started / finished | `step/step.py` — the execution layer the Sequencer drives | `core`, `hmi_client`, `gui`, `cli` |
 | the run summary, the unit under test, the operator's stop, pause and resume, the hold beginning / ending / lapsing | `sequencer/sequencer.py` | `core`, `hmi_client`, `gui`, `cli` |
+| an engineering run: `Engineering run: N of M steps left out.` and `Engineering run: no report and no run folder for this run.` | `sequencer/sequencer.py` | `core`, `gui` |
+| engineering mode switched on / off | `gui` | — |
 | operator prompted, operator answered | the `User*` step types | `core`, `hmi_client`, `gui` |
 | run folder, report generated | `report/report.py` | `core`, `hmi_client`, `gui`, `cli` |
 | operator housekeeping (clearing recents, a settings write, Restore default settings) | `gui`, `utilities`, `config_handler` | — |
@@ -247,9 +249,8 @@ Three rules it follows:
   read.
 - **A value is truncated at `MAX_VALUE_CHARS` (80).** A step may return 40 kB, and neither a
   log line, a tooltip nor a CSV cell is improved by carrying it.
-- **A reason appears only on `FAIL`.** Where last-wins (F6) leaves a failing check beside a
-  `PASS` verdict, the check is still described into the list but the list is discarded — a
-  reason printed next to a PASS would contradict it.
+- **A reason appears only on `FAIL`.** One failing check fails the step, so every sentence in
+  the list explains the verdict it is printed beside.
 
 An `ERROR` verdict is different: `error_info` is the traceback, so the operator's line carries
 its **last line only** — `TimeoutError: the instrument did not answer` — and the stack stays at

@@ -23,11 +23,13 @@ contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
 `view_tabs.py` (`ViewTabBar` — the Run | Results tabs, §14),
 `step_table.py` (Run tab), `results_panel.py` (Results tab),
 `center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel`),
+`run_display.py` / `run_card.py` (`RunDisplay` — which picture the right column shows
+during a run — and `RunCard`, the card shown when there is none, §18),
 `log_tail.py` (what fills that panel — §8),
 `run_progress.py` (`RunProgress` — the progress bar in the recipe label row, §15).
 Styling: `palette.py` — **every colour the GUI uses, and the only file allowed a
 hex literal** (§10) — plus `styles.py` (the light/dark QSS built from those
-tokens) and `resources.py` (logo loaders). The vendored scaffold in `scaffold/` is no longer used by the
+tokens) and `resources.py` (logo and "No image available" loaders). The vendored scaffold in `scaffold/` is no longer used by the
 main window (§6 below). The protocol half, `hmi/hmi_client.py`, is complete and
 shared with the CLI. Roadmap §1.15, §1.20, §1.21 record the rework.
 
@@ -268,7 +270,7 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `QDesktopServices`, path on hover, Exit) / Edit (Edit Recipe — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `_open_in_text_editor()` (`QDesktopServices`, Notepad / `xdg-open` fallback), path on hover, Restart → §10, Exit) / Edit (Edit Recipe — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" / the run summary, above the splitter; stretches across its row |
 | `run_progress` (`RunProgress`) | the same row, at the window's right edge — the green run progress bar and `6 / 15 (40 %)` (§15) |
 | `QSplitter` 52/48 | left: `view_tabs` over `left_stack`; right: `CenterContent` |
@@ -408,7 +410,7 @@ Three things decline an open prompt, all through `cancel_pending()`, all answeri
 | Trigger | Why |
 |---|---|
 | a superseding `show_prompt()` / `show_text_request()` / `show_path_request()` | the step waiting on the old request must be released, not stranded |
-| `RunFinished` (`gui.py`) | the run is over; nothing is left to answer |
+| `RunFinished` (`gui.py` → `CenterContent.run_finished()`) | the run is over; nothing is left to answer |
 | the operator's **Cancel** button | they chose not to answer |
 
 **Cancel is the GUI's, not the recipe's** (roadmap §1.28). `set_prompt()` appends it after
@@ -662,7 +664,9 @@ which on `#1e1e1e` is barely readable.
 The CERN logo is the fourth: it is artwork, not a stylesheet colour, so
 `load_cern_logo_pixmap(tint)` recolours it through `resources.tint_pixmap()` —
 `SourceIn` over the alpha, so the outline keeps every edge — and `gui.py` and
-`interaction_panel.py` reload it on a theme change.
+`interaction_panel.py` reload it on a theme change. The "No image available" picture
+(§18) is the fifth, the same way: `load_no_image_pixmap(tint)` flattens its grey to
+`text_muted`, in both themes.
 
 `Palette` is a frozen dataclass, so `LIGHT` and `DARK` cannot drift: a token added
 to one is a `TypeError` until the other has it too.
@@ -726,7 +730,7 @@ held in memory and the file on disk are cleared together and nothing needs rebui
 **Restore default settings** is the last card of the Advanced page. It asks first
 (`confirm_restore_defaults()`, Cancel is the default), then closes Settings with
 `restore_requested`; `GUI._restore_default_settings()` deletes `config.ini` and calls
-`GUI.restart()`. A fresh start is what recreates the file from the template and puts its
+`GUI.restart(reason)`. A fresh start is what recreates the file from the template and puts its
 values in force — the bootstrap already does both, with this machine's paths filled in.
 Unsaved changes in the dialog are lost, and the question says so.
 
@@ -738,9 +742,16 @@ Edit > Settings (or View > Appearance) -> GUI._open_settings()
      Advanced page: Restore defaults -> confirm -> accept() with restore_requested
    after exec():
      recents_cleared   -> status "Recent recipes list cleared"
-     restore_requested -> delete config.ini -> GUI.restart()
+     restore_requested -> delete config.ini -> GUI.restart(reason)
                           -> shutdown, exit code 75 -> launcher starts pypts again
 ```
+
+**File → Restart** (`restart_action`, right after Open Config) calls `GUI.restart()` with
+`"pypts is restarting at the operator's request."`, so a hand edit of `config.ini` (a
+`[hardware.*]` section, say) takes effect without leaving pypts by hand. No question; greyed out
+from `show_run_started()` to `show_run_finished()`. The new window opens with no recipe.
+`restart(reason)` logs `reason` at INFO; Restore default settings passes
+`"pypts is restarting, so the configuration is recreated from the template."`.
 
 **Decisions worth not undoing:**
 
@@ -924,7 +935,7 @@ Three files, each with one job:
 
 | File | Owns |
 |---|---|
-| `recipe/step_source.py` | `step_sources_by_sequence(path)` — the file on disk to one `StepSource(text, first_line, last_line)` per row, keyed by sequence name |
+| `recipe/step_source.py` | `step_sources_by_sequence(path)` — the file on disk to one `StepSource(text, first_line, last_line, python_file)` per row, keyed by sequence name. `python_file` is not the panel's: it is what the right-click *Open Python file* opens (§12b) |
 | `yaml_highlighter.py` | `YamlHighlighter` — the colours, from `palette.py` |
 | `step_yaml_popup.py` | `StepYamlPopup` — the frame, the step band, scrolling, sizing and placement |
 
@@ -1115,6 +1126,8 @@ gets folded away, the panel closes.
 - **Groups start folded** — every `show_sequence()` (a load, a sequence switch) folds all.
 - **A run unfolds nothing.** `mark_running()` scrolls to `_visible_row_for(row)`: the row, or
   the nearest showing group above it. Folding and unfolding still work during a run.
+- **In engineering mode (§17)** a click selects instead, so the double-click — on any
+  column, the name included — is the only way to toggle a group with the mouse.
 - **Toggle:** a click on a group's **name** (arrow included) toggles it; a **double-click**
   anywhere on the row toggles it once. A double-click arrives as `cellClicked` then
   `cellDoubleClicked` (checked): on the name the click already toggled, so
@@ -1122,7 +1135,24 @@ gets folded away, the panel closes.
   panel, so the double-click closes it and toggles. A click on a group's **description** opens
   the YAML panel with the called sequence (§12).
 - **Right-click** on the table: *Expand all* / *Collapse all* (`expand_all()` /
-  `collapse_all()`).
+  `collapse_all()`), below the two open entries (next item).
+
+**Right-click → open in an editor (2026-10-12).** `_show_context_menu()` builds the menu with
+`_build_context_menu(row)` for the row under the pointer (`rowAt`, -1 below the last row):
+
+- *Open recipe in text editor* — enabled whenever the table has rows; emits
+  `open_recipe_requested`.
+- *Open Python file* — the row's `StepSource.python_file` (§12), its path as the tooltip;
+  enabled only when that is non-empty (a PythonModule row, an Indexed row whose template is
+  one), greyed out otherwise; emits `open_python_file_requested(path)`.
+
+The table only asks; `gui.py` connects both signals to `open_recipe_in_editor()` (the
+`_loaded_recipe_path`) and `open_python_file(path)`. Both are `@catch_and_report_errors()`,
+report a missing file as a `report_problem` WARNING, and hand the file to
+`_open_in_text_editor()` — the same OS-default-app path as File > Open Config, which now uses it
+too: `QDesktopServices.openUrl`, falling back to Notepad / `xdg-open`. The OS default app cannot
+be told a line, so the editor opens at the top of the file. Both entries work during a run and
+in engineering mode; an edit applies once the recipe is opened again.
 
 The row numbers in the vertical header are the real row positions, so they skip the folded
 rows (1, 2, 8, 12…); left as is.
@@ -1255,7 +1285,7 @@ icon colour, `icon_disabled` when greyed, and its tooltip says why (`No recipe i
 | GUI state | `current_recipe`, `_requested_recipe_path`, `_loaded_recipe_path`, `_recipe_yaml`, `_recipe_text`, `_run_outcomes`, `_running_recipe_name`, `_run_state`, `report_dir`, a pending start and the pause flag all cleared |
 | Top bar | `TopBarContent.show_recipe_unloaded()` — combo emptied and greyed, Start / Pause / Stop / preview / × greyed, run metadata cleared; Open stays enabled |
 | Left pane | `step_table.clear()` (no rows, popup closed), `run_progress.clear()` (hidden), results emptied, pulse stopped, `run_stack` on the idle logo, the Run tab open |
-| Centre | `center.cancel_pending()` + `show_idle()` |
+| Centre | `center.cancel_pending()` + `set_recipe(None)` (the run card stops) + `show_idle()` |
 | Labels | `No recipe loaded`, title `pyPTS`, `Status: Idle` |
 
 The recents list stays — it is the operator's history, not the recipe's.
@@ -1281,6 +1311,115 @@ keeps naming the first file, which nothing reads after startup.
 
 The engine side — CORE dropping `Core.recipe`, the Sequencer dropping its last recipe and the
 cached test modules — is in `core/core.md` and `sequencer/sequencer.md`.
+
+## 17. Engineering mode (2026-10-12)
+
+Edit → **Engineering Mode** (`engineering_action`, checkable, under Edit Recipe) turns the
+step table into a picker for two things:
+
+- **Quick retest — Space.** Click / Ctrl-click / Shift-click rows, press Space: only those
+  steps run. No report and no run folder; the run is logged in the session log.
+- **Leave steps out — the tick boxes.** Every name cell gets a tick box; an unticked row is
+  greyed (`text_muted`; only the colour changes, never the font, so rows stay put). Start then runs an ordinary run, **with** its report, and the
+  unticked steps come back `SKIP` with `Not run: left out in engineering mode.`
+
+**The recipe stays in CORE.** The GUI sends step UUIDs it already has (`StepSummary.step_id`)
+as `StartSequence.excluded_step_ids`; the step layer does the skipping (`step/step.md` §3,
+`sequencer/sequencer.md`, `core/core.md`). GUI only — the CLI, headless mode and `Pts` keep
+the defaults.
+
+**The window** (`gui.py`):
+
+| Piece | What it does |
+|---|---|
+| `set_engineering_mode(on)` | `engineering_action.toggled` lands here: INFO `Engineering mode switched on.` / `... off.`, `step_table.set_engineering_mode(on)`, the status bar's `engineering_label` (`ENGINEERING MODE`, `QLabel#engineeringLabel`, `palette.danger`) shown or hidden. |
+| `retest_shortcut` | A `QShortcut` for Space on the step table, `WidgetWithChildrenShortcut` — so it fires only while the table has the focus, and a space typed into the interaction panel stays a space. Calls `run_selected_steps()`. |
+| `run_selected_steps()` | Sends `start_sequence(<combo sequence>, step_table.retest_exclusions(), write_report=False)`. Does nothing (one DEBUG line) outside engineering mode, with no recipe, during a run, or when nothing picked would run. |
+| `_start_or_resume()` | In engineering mode, Start sends `step_table.left_out_exclusions()` with the report. Resume is unchanged. |
+| `show_run_started()` / `show_run_finished()` | Grey and restore `engineering_action`: the mode cannot change during a run. |
+
+**The step table** (`step_table.py`):
+
+- `set_engineering_mode(on)` closes the YAML panel; **the panel stays off** for as long as the
+  mode is on — a click selects instead (`_clicked_cell()` hands it to `_engineering_click()`).
+- **Selection** is the widget's own `_selected_rows`, painted per cell on Name and Description
+  in `palette.engineering_selection` — not Qt's selection, which would tint the Result chips
+  (the same reason as the click highlight, §12). Plain click: that row alone; Ctrl: that row in
+  or out; Shift: every showing row from the last plain or Ctrl click (`_anchor_row`). A group
+  row takes every row under it along (`_descendant_rows()`).
+  `_paint_engineering_row()` changes colours only - never the font or the text - and writes
+  only the roles that differ (`_set_brush_if_changed()`); a click ends with one
+  `viewport().update()`. Rewriting every cell's font on every click made the rows (sized to
+  contents) re-measure mid-repaint and left stale tint on description cells.
+- **Tick boxes** are the name cell's own Qt check state, plus `_TICK_ROLE` holding the last
+  settled value, which is how `_item_changed()` tells a tick change from every other
+  `itemChanged` (a background, a font). Unticking a row unticks everything under it; ticking a
+  row ticks everything under it and every group above it (`_ancestor_rows()`), so a ticked step
+  never sits in an unticked group. Qt emits `itemChanged` and then `cellClicked` for the same
+  release, so `_tick_just_changed` makes the click that toggled a box leave the selection alone
+  (cleared again on the next event-loop turn, for a box toggled from the keyboard).
+- **`retest_exclusions()`** — a step runs when it is selected and ticked; a group runs when
+  anything under it runs (it is only the way in), or, empty, when it is selected and ticked
+  itself. Returns every other row's id, or None when nothing would run. Picking one step inside
+  a called sequence therefore runs that step and enters its groups, and nothing else — their
+  teardown included.
+- **`left_out_exclusions()`** — every unticked row's id; `()` outside the mode.
+- **Frozen during a run**: `set_running(True)` removes `ItemIsUserCheckable` (the ticks stay)
+  and selection clicks are ignored; `set_running(False)` gives both back. The selection
+  survives the run, so Space repeats the retest.
+- **Session only, and clean every time.** `show_sequence()` (a load, a sequence switch),
+  `clear()` (an unload) and switching the mode off drop the selection and the ticks; nothing is
+  written to `config.ini`. `set_dark()` repaints the selection and grey in the new theme.
+- Folding: §12b — double-click only while the mode is on.
+
+---
+
+## 18. The picture area during a run (2026-10-12)
+
+The top of the right column (`InteractionPanel`'s picture area) is no longer only the
+prompts'. A recipe may name `image_path` on any step and on a sequence
+(`recipe_guide.html`, `step/step.md` §3.8); the GUI shows it while that step or sequence
+runs, and a **run card** when no picture applies. Design:
+`docs/superpowers/specs/2026-10-12-step-image-design.md`.
+
+**No new message.** The pictures arrive once, in `RecipeLoaded`: absolute paths on
+`StepSummary.image_path` and `SequenceSummary.image_path`, resolved by the recipe parser.
+Everything else comes from the events the window already handles — `RunStarted`,
+`SequenceStarted`/`Finished`, `StepStarted`/`Finished`, `RunFinished` — which `gui.py`
+passes on to `CenterContent` (`run_started()`, `sequence_started()`, `step_started()`, …;
+`set_recipe()` on load and unload).
+
+| File | What |
+|---|---|
+| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the run card's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`) |
+| `run_card.py` | `RunCard` — the card's widget, drawn from a `RunDisplay`; `elapsed_text()`; a one-second `QTimer` while a run is on |
+| `center_view.py` | `CenterContent` owns the `RunDisplay`; `_show_run_view()` puts the picture or the card on screen |
+| `interaction_panel.py` | the picture area is a `QStackedWidget`: `image_label` or `run_card`. `set_image()`, `show_run_card()`, `is_showing_run_card()`, `is_showing_no_image()` |
+| `resources.py` | `load_no_image_pixmap(tint)` |
+| `images/no_image_available.png` | Wikimedia Commons "No image available.svg" (Cburnett, 2007), **public domain** — `LicenseRef-PublicDomain`, sidecar `.license` beside it, text in `LICENSES/` |
+
+**Which picture.** `SequenceStarted` pushes the sequence's picture onto a stack,
+`StepStarted` the step's; the matching `...Finished` pops it, and anything left above it
+(a lost event cannot leave a stale picture). The **innermost** one set is shown. So a
+step's picture goes when the step ends; a step without one shows its sequence's; inside a
+called sequence with neither, the calling `Sequence` step's (still running — its
+`StepFinished` comes after its children's), and so on outward; nothing anywhere, the run
+card. Sequences are looked up by name, case-insensitively — a called sequence's
+`SequenceStarted` carries the name of its own document.
+
+| When | The picture area shows |
+|---|---|
+| No run (no recipe, loaded, after a run) | the CERN logo, as before |
+| A question is open | the question's own picture, or the logo when it has none — the run's view comes back once it is answered (`CenterContent._answer()`) |
+| A run, a picture applies | that picture |
+| A run, none applies | the run card |
+| A named picture is missing or will not load | "No image available" (`_refresh_visual()`; never the logo, which would look like nothing was asked for) |
+
+**The run card** — the innermost running step's name and description, `Run 4:07 · Step
+0:12` (ticking every second; paused time is not taken off), the verdicts so far in
+`run_display.COUNT_ORDER` (`2 PASS · 1 FAIL`) counted like `RunProgress` (no group rows,
+every verdict), and `Last failure: <step>` in the FAIL chip's colours while there is one.
+Between steps the name reads `-`. `RunFinished` stops the clock and brings the logo back.
 
 ---
 

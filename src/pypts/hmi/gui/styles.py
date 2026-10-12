@@ -378,6 +378,12 @@ QLabel#statusLabel {{
     padding-left: 10px;
     padding-bottom: 2px;
 }}
+QLabel#engineeringLabel {{
+    font-size: 10px;
+    font-weight: 600;
+    color: {palette.danger};
+    padding-right: 10px;
+}}
 QLabel#versionLabel {{
     font-size: 10px;
     color: {palette.text_muted};

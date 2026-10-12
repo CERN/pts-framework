@@ -26,8 +26,9 @@ load it. `check_version=False` keeps the framework's version check — a log lin
 for the technician — out of a check that runs on every edit.
 
 What is the verificator's own: the line of every issue (`_LineMap.nearest()` —
-a missing field points at the step or document it is missing from), the hint
-(`_hint()`, chosen by where the problem is and Pydantic's error type), the
+a missing field points at the step or document it is missing from), the choice
+of hint (`_hint()`, by where the problem is and Pydantic's error type — the
+words themselves are the schema's, see the sync rule below), the
 structural pre-checks (not YAML, empty, a document that is not a mapping, a
 first document that is not a header), the cross-document checks (duplicate
 sequence names, `main_sequence` naming nothing — both also refused by the
@@ -71,21 +72,40 @@ keys do not.
 
 ## The sync rule — **read this before touching either module**
 
-There is no second copy of the format rules to keep in step: the verificator
-validates with the framework's models and loads with the framework's parser.
-What still has to follow a format change by hand is **wording**:
+There is no second copy of the format to keep in step. The verificator
+validates with the framework's models, loads with the framework's parser, and
+**takes its words from the models too**: every field in `recipe/recipe_schema.py`
+carries `Field(description=..., examples=[...])`, and each step type's and
+output type's own sentence sits on its `steptype` / `type` tag field
+(`recipe/recipe.md`, Format rules). The verificator only decides *which* field
+a problem is about. So a new step type, input or output form, or header,
+sequence or step field needs no edit here —
+`tests/unit_tests/test_recipe_schema.py` fails until every field has its
+description, and every required one an example.
 
-- A new step type → a hint in `_step_field_hint` for each required field, and a
-  rename entry in `_unknown_steptype_hint` if it replaces an old name. Its valid
-  keys come from `recipe_schema.STEP_SCHEMAS` by themselves.
-- A new input or output type → a hint branch in `_input_type_hint`, or in
-  `_output_type_hint` and `_output_unknown_type_hint`.
-- A new header or sequence field → a hint in `_DOCUMENT_FIELD_HINTS`.
-- A sequence key removed from the format → an entry in `_REMOVED_SEQUENCE_KEYS`,
-  so authors get a targeted warning instead of a generic "unknown key" one.
+Read from the schema, by helper:
 
-A missing hint is never a wrong verdict — the fallback hint points at
-`recipe_guide.html`.
+- `_field_help(model, field)` — the description, then `Example:` and the first
+  example as YAML (`yaml.safe_dump`): a scalar or a list of plain values on one
+  line (`options: [Continue, Abort]`), a mapping or a list of mappings as an
+  indented block.
+- `_output_example(model, entry_name)` — one outputs entry built from an
+  `OUTPUT_SCHEMAS` model: its `type` plus each field's first example, under the
+  author's own entry name (`r: {type: range, min: 4.9, max: 5.1}`).
+- `_type_list(title, models, tag)` — every step type (`STEP_SCHEMAS`) or output
+  type (`OUTPUT_SCHEMAS`) with its tag field's description, for an unknown or
+  missing type.
+- `_valid_keys_hint(steptype)` — the keys a step model takes; also the hint for a
+  key an Indexed or Sequence step refuses, whose reason is already the message.
+- `REMOVED_SEQUENCE_KEYS` (the warning for a removed sequence key) and
+  `RENAMED_STEP_TYPES` (the note added to an unknown steptype) are schema
+  constants.
+
+What stays worded here describes the file, not a field: the structural
+pre-checks in `_run`, `_QUOTE_HINT`, "each step must be a mapping" and
+"every step must name its type" (followed by the generated type list), the
+cross-reference hints, the header warnings, and `_FALLBACK_HINT`
+("See recipe_guide.html…"), which only a problem with no field reaches.
 
 ## Public API
 
@@ -144,4 +164,5 @@ empty `name`/`version`, a removed sequence key (`setup_steps`, `parameters`,
 - Global variable forward-reference checking (warning when a `{type: global}`
   input names a variable not in `globals`) is not implemented; an earlier step
   may set it dynamically.
-- `image_path` existence on disk is not checked.
+- `image_path` existence on disk is not checked. A missing file never stops a recipe:
+  the framework warns when it loads one from a file (`recipe/recipe.md`, load step 8).

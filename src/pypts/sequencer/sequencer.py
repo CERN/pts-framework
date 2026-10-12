@@ -18,6 +18,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from typing import Any
+from uuid import UUID
 
 from pypts._version import __version__
 from pypts.config_handler import ConfigHandler
@@ -188,11 +189,16 @@ class Sequencer:
     @catch_and_report_errors()
     def handle_core_message(self, message: CoreToSequencer) -> None:
         match message:
-            case RunSequence(recipe=recipe, sequence_name=sequence_name):
+            case RunSequence(
+                recipe=recipe,
+                sequence_name=sequence_name,
+                excluded_step_ids=excluded_step_ids,
+                write_report=write_report,
+            ):
                 # The only place `recipe` is written: a run always uses the
                 # recipe its own command carried.
                 self.recipe = recipe
-                self.run_sequence(sequence_name)
+                self.run_sequence(sequence_name, excluded_step_ids, write_report)
             case ForgetRecipe():
                 self.forget_recipe()
             case StopSequence():
@@ -210,8 +216,18 @@ class Sequencer:
 
     # --- Execution ------------------------------------------------------------
 
-    def run_sequence(self, sequence_name: str) -> None:
-        """Start one named sequence on a thread of its own, so the event loop keeps turning."""
+    def run_sequence(
+        self,
+        sequence_name: str,
+        excluded_step_ids: tuple[UUID, ...] = (),
+        write_report: bool = True,
+    ) -> None:
+        """
+        Start one named sequence on a thread of its own, so the event loop keeps turning.
+
+        `excluded_step_ids` and `write_report` are the GUI's engineering mode;
+        see execute_sequence().
+        """
         if self.sequence_is_running():
             report_problem(
                 self,
@@ -229,7 +245,7 @@ class Sequencer:
         self.sequence_thread = threading.Thread(
             target=self.execute_sequence,
             name="Sequence",
-            args=(sequence_name,),
+            args=(sequence_name, excluded_step_ids, write_report),
             daemon=True,
         )
         self.sequence_thread.start()
@@ -259,13 +275,24 @@ class Sequencer:
         return self.sequence_thread is not None and self.sequence_thread.is_alive()
 
     @catch_and_report_errors()
-    def execute_sequence(self, sequence_name: str) -> None:
+    def execute_sequence(
+        self,
+        sequence_name: str,
+        excluded_step_ids: tuple[UUID, ...] = (),
+        write_report: bool = True,
+    ) -> None:
         """
         Run one named sequence.
 
         Emits RunStarted/RunFinished itself; everything in between
         (SequenceStarted, the step events, SequenceFinished) comes out of the
         step layer through the Runtime's messages.
+
+        The GUI's engineering mode: the steps in `excluded_step_ids` are
+        recorded SKIP by the step layer instead of run. `write_report` False is
+        a quick retest - no run folder and no run log are made, so the run is
+        logged in the session log, and RunStarted says so, which is what keeps
+        CORE from routing the run to the Report.
         """
         # Unreachable through the protocol - RunSequence carries the recipe, and
         # CORE refuses the command when it has none. Kept as the guard for a
@@ -310,10 +337,15 @@ class Sequencer:
             base_dir=self.recipe.base_dir,
             hold_if_paused=self.hold_if_paused,
             drop_pending_pause=self.drop_pending_pause,
+            excluded_step_ids=frozenset(excluded_step_ids),
         )
         # Before RunStarted, so every line of the run - from its first - is in
         # the run log, and the Report can write into the same folder.
-        run_dir, run_log_path = self.start_run_folder(self.recipe.name, sequence_name)
+        run_dir = ""
+        run_log_path = ""
+        if write_report:
+            run_dir, run_log_path = self.start_run_folder(self.recipe.name, sequence_name)
+        self.log_engineering_run(sequence, excluded_step_ids, write_report)
         self.core.send(
             RunStarted(
                 recipe_name=self.recipe.name,
@@ -323,6 +355,7 @@ class Sequencer:
                 metadata_names=metadata_names,
                 run_dir=run_dir,
                 run_log_path=run_log_path,
+                write_report=write_report,
             )
         )
         try:
@@ -345,6 +378,27 @@ class Sequencer:
         self.core.send(
             RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in real_results))
         )
+
+    def log_engineering_run(
+        self, sequence: Sequence, excluded_step_ids: tuple[UUID, ...], write_report: bool
+    ) -> None:
+        """
+        Tell the technician this is not an ordinary run - one line per difference.
+
+        Nothing for an ordinary run. The count is of the sequence's own rows -
+        every step the table shows, called sequences' steps and teardown
+        included - so it reads against the table.
+        """
+        if excluded_step_ids:
+            excluded = set(excluded_step_ids)
+            rows = sequence.to_summary().steps
+            left_out = 0
+            for row in rows:
+                if row.step_id in excluded:
+                    left_out += 1
+            log.info("Engineering run: %d of %d steps left out.", left_out, len(rows))
+        if not write_report:
+            log.info("Engineering run: no report and no run folder for this run.")
 
     def start_run_folder(self, recipe_name: str, sequence_name: str) -> tuple[str, str]:
         """

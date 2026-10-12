@@ -18,6 +18,7 @@ frontend that has not caught up with it yet.
 """
 
 import time
+from uuid import UUID
 
 from pypts.logger.log import log
 from pypts.messages import QueueWrapper, unhandled
@@ -215,8 +216,20 @@ class HmiClient:
         """
         self.core.send(UnloadRecipe())
 
-    def start_sequence(self, sequence_name: str) -> None:
-        self.core.send(StartSequence(sequence_name))
+    def start_sequence(
+        self,
+        sequence_name: str,
+        excluded_step_ids: tuple[UUID, ...] = (),
+        write_report: bool = True,
+    ) -> None:
+        """
+        Ask CORE to run one sequence of the loaded recipe.
+
+        The two optional arguments are the GUI's engineering mode: steps to
+        record SKIP instead of running, and False for a retest that writes no
+        report and makes no run folder. Every other caller leaves the defaults.
+        """
+        self.core.send(StartSequence(sequence_name, excluded_step_ids, write_report))
 
     def stop_sequence(self) -> None:
         """

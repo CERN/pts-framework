@@ -27,8 +27,9 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   *Routing table* below.
 - **Recipe loading** — `load_recipe()` handles `LoadRecipe` with `Recipe.from_file()`. On
   success CORE **keeps the `Recipe`** (`self.recipe`, the only copy) and sends the HMI
-  `RecipeLoaded`; the Sequencer is told nothing. A non-empty `recipe.version_notice` is shown
-  to the operator as a `ModuleError` (severity ERROR) — the recipe still loads. On failure
+  `RecipeLoaded`; the Sequencer is told nothing. Each entry of `recipe.load_notices` (a
+  version mismatch, missing pictures) is shown to the operator as a `ModuleError` (severity
+  ERROR) — the recipe still loads. On failure
   (`RecipeError`, or any other exception out of the parser) nothing is kept and the error
   goes out through `report_own_error()`.
 - **Recipe unloading** — `unload_recipe()` handles `UnloadRecipe`: it sets `self.recipe` to
@@ -36,9 +37,16 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   Sequencer `ForgetRecipe`, and answers the HMI `RecipeUnloaded` either way. It does not check
   for a run in progress — the frontend does not offer it then, as for `LoadRecipe`.
 - **Starting a run** — `start_sequence()` answers `StartSequence` by sending
-  `RunSequence(self.recipe, sequence_name)`. That is the **only** way the recipe reaches the
-  Sequencer, which keeps only the last run's until `ForgetRecipe`. With no recipe loaded —
+  `RunSequence(self.recipe, sequence_name, excluded_step_ids, write_report)`. That is the
+  **only** way the recipe reaches the Sequencer, which keeps only the last run's until
+  `ForgetRecipe`. The two engineering-mode fields are copied unread. With no recipe loaded —
   before the first load or after an unload — CORE refuses it itself and tells the operator.
+- **A run without a report** — `self.run_has_report` is set from each `RunStarted.write_report`
+  and put back to True once that run's `RunFinished` is routed. While it is False (the GUI's
+  engineering-mode retest) `RunStarted`, `SequenceStarted`, `RunMetadata`, `StepExecuted` and
+  `RunFinished` go to the HMI only, no `GenerateReport` is sent, and `StepExecuted` is dropped
+  (one DEBUG line at `RunStarted` says so). CORE routes on the Sequencer's `RunStarted`, not on
+  the `StartSequence` it relayed, because the Sequencer may refuse the run.
 - **Error reporting** — `handle_module_error()` logs every `ModuleError` twice
   (`logger/logging_rules.md` §7): one operator line at the level in `LOG_LEVEL_FOR_SEVERITY`,
   naming the part of the software through `describe_source()` / `FRIENDLY_SOURCE_NAME`
@@ -87,10 +95,10 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
 |---|---|
 | `StopSequence`, `PauseSequence`, `ResumeSequence`, the three `User*Response` | Sequencer |
 | `UnloadRecipe` | handled by CORE, which then sends `ForgetRecipe` to the Sequencer and `RecipeUnloaded` to the HMI |
-| `RunStarted`, `SequenceStarted`, `RunMetadata` | Report **and** HMI |
-| `RunFinished` | Report (followed by `GenerateReport` on the same queue) and HMI |
+| `RunStarted`, `SequenceStarted`, `RunMetadata` | Report **and** HMI (`relay_run_event()` for the first two); HMI only for a run without a report |
+| `RunFinished` | Report (followed by `GenerateReport` on the same queue) and HMI; HMI only for a run without a report |
 | `SequenceFinished`, `StepStarted`, `StepFinished`, `RunPaused`, `RunResumed`, the three `User*Request` | HMI only |
-| `StepExecuted` | Report only — it must never cross the HMI boundary |
+| `StepExecuted` | Report only — it must never cross the HMI boundary; dropped for a run without a report |
 | `ReportGenerated` | HMI, as `StatusChanged` **and** `ReportReady(report_path, report_dir)` |
 | `ReportExported` (not sent yet) | HMI, as `StatusChanged` |
 

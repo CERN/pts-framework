@@ -66,9 +66,9 @@ headless mode uses 2 for a run that ended in ERROR/STOP.
 
 ## Restart
 
-The GUI can ask for pypts to be started again - today only after Settings → Advanced →
-Restore default settings deleted `config.ini`, so the file is recreated from the template
-(`hmi/gui/gui.md` §10). It asks by
+The GUI can ask for pypts to be started again: from File → Restart, so a hand-edited
+`config.ini` takes effect, and after Settings → Advanced → Restore default settings deleted
+`config.ini`, so the file is recreated from the template (`hmi/gui/gui.md` §10). It asks by
 shutting down the ordinary way and exiting with `RESTART_EXIT_CODE` (75, in
 `utilities/common.py` - the launcher must not import Qt, the GUI must not import the launcher).
 

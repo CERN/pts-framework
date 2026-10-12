@@ -64,12 +64,10 @@ class UserLoadingStep(Step):
         self,
         message: str,
         select: str = SELECT_FILE,
-        image_path: str | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self.message = str(message)
-        self.image_path = image_path
         # Lowercased like a steptype or an outputs `type`, so `select: Folder`
         # works; the message always carries the lowercase word.
         self.select = str(select).strip().lower()
@@ -84,7 +82,7 @@ class UserLoadingStep(Step):
             request_id=uuid.uuid4(),
             message=self.message,
             select=self.select,
-            image_path=resolve_image_path(self.name, self.image_path, runtime.base_dir),
+            image_path=resolve_image_path(self.image_path, runtime.base_dir),
         )
         log.info("Waiting for the operator to choose a %s: '%s'", self.select, self.message)
         log.debug("Step '%s' asked request %s.", self.name, request.request_id)

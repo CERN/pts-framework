@@ -142,7 +142,7 @@ def drain(a_queue):
 def blocks_until(event: threading.Event, reached: threading.Event):
     """A fake sequence body: says it started, then waits to be let go."""
 
-    def execute(sequence_name: str) -> None:
+    def execute(sequence_name: str, *run_options) -> None:
         reached.set()
         event.wait(timeout=REACHED_TIMEOUT_S)
 
@@ -183,7 +183,7 @@ def test_run_sequence_takes_the_recipe_from_the_command(sequencer):
     instance, _outbox, inbox = sequencer
     assert instance.recipe is None
     recipe = wait_recipe()
-    instance.execute_sequence = lambda sequence_name: None
+    instance.execute_sequence = lambda sequence_name, *run_options: None
 
     inbox.put(RunSequence(recipe, "Main"))
     instance.poll_core()
@@ -233,7 +233,7 @@ def test_stop_sequence_is_received_while_a_sequence_runs(sequencer):
 
     reached = threading.Event()
 
-    def waits_for_the_flag(sequence_name: str) -> None:
+    def waits_for_the_flag(sequence_name: str, *run_options) -> None:
         reached.set()
         deadline = time.time() + REACHED_TIMEOUT_S
         while not instance.stop_requested and time.time() < deadline:
@@ -266,7 +266,7 @@ def test_a_step_waiting_for_an_answer_is_woken_by_the_event_loop(sequencer):
     reached = threading.Event()
     answer = {}
 
-    def asks_the_operator(sequence_name: str) -> None:
+    def asks_the_operator(sequence_name: str, *run_options) -> None:
         instance.pending.start(request_id)
         reached.set()
         answer["value"] = instance.pending.wait(request_id, timeout_s=REACHED_TIMEOUT_S)
@@ -300,7 +300,7 @@ def test_ask_operator_sends_the_question_and_returns_the_answer(sequencer):
     asked = threading.Event()
     answer = {}
 
-    def asks_the_operator(sequence_name: str) -> None:
+    def asks_the_operator(sequence_name: str, *run_options) -> None:
         asked.set()
         answer["value"] = instance.ask_operator(request)
 
@@ -330,7 +330,7 @@ def test_a_path_answer_reaches_the_step_that_asked_for_it(sequencer):
     asked = threading.Event()
     answer = {}
 
-    def asks_the_operator(sequence_name: str) -> None:
+    def asks_the_operator(sequence_name: str, *run_options) -> None:
         asked.set()
         answer["value"] = instance.ask_operator(request)
 
@@ -363,7 +363,7 @@ def test_ask_operator_gives_up_when_the_run_is_stopped(sequencer):
     asked = threading.Event()
     answer = {"value": "not set"}
 
-    def asks_the_operator(sequence_name: str) -> None:
+    def asks_the_operator(sequence_name: str, *run_options) -> None:
         asked.set()
         answer["value"] = instance.ask_operator(request)
 
@@ -443,7 +443,7 @@ def test_stop_reports_stopped_only_after_the_sequence_thread_has_ended(sequencer
 
     reached = threading.Event()
 
-    def waits_for_the_flag(sequence_name: str) -> None:
+    def waits_for_the_flag(sequence_name: str, *run_options) -> None:
         reached.set()
         deadline = time.time() + REACHED_TIMEOUT_S
         while not instance.stop_requested and time.time() < deadline:
@@ -1373,3 +1373,70 @@ def test_a_run_folder_that_cannot_be_made_does_not_stop_the_run(sequencer, tmp_p
     assert [m for m in messages if isinstance(m, RunFinished)]
     problems = [m for m in messages if isinstance(m, ModuleError)]
     assert problems and "results folder" in problems[0].message
+
+
+# --------------------------------------------------------------------------
+# Engineering mode
+# --------------------------------------------------------------------------
+
+
+def test_a_retest_makes_no_run_folder_and_says_it_has_no_report(sequencer, tmp_path):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Main", (), False)
+
+    messages = drain(outbox)
+    started = next(m for m in messages if isinstance(m, RunStarted))
+    assert started.write_report is False
+    assert started.run_dir == ""
+    assert started.run_log_path == ""
+    assert not (tmp_path / "reports").exists()
+    assert [m for m in messages if isinstance(m, RunFinished)]
+
+
+def test_an_ordinary_run_says_it_has_a_report(sequencer):
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    instance.execute_sequence("Main")
+
+    started = next(m for m in drain(outbox) if isinstance(m, RunStarted))
+    assert started.write_report is True
+
+
+def test_left_out_steps_are_skipped_and_counted_for_the_technician(sequencer, caplog):
+    instance, outbox, inbox = sequencer
+    recipe = load_wait_recipe(instance, inbox)
+    second = recipe.sequences["Main"].steps[1]
+
+    with caplog.at_level(logging.INFO):
+        instance.execute_sequence("Main", (second.id,), True)
+
+    finished = [m.outcome for m in drain(outbox) if isinstance(m, StepFinished)]
+    assert [o.result for o in finished] == [ResultType.DONE, ResultType.SKIP]
+    assert "Engineering run: 1 of 2 steps left out." in caplog.text
+
+
+def test_run_sequence_hands_the_run_options_to_the_sequence_thread(sequencer):
+    instance, _outbox, _inbox = sequencer
+    seen = []
+    done = threading.Event()
+
+    def records(sequence_name, excluded_step_ids, write_report):
+        seen.append((sequence_name, excluded_step_ids, write_report))
+        done.set()
+
+    instance.execute_sequence = records
+    step_id = uuid4()
+    instance.handle_core_message(
+        RunSequence(
+            recipe=wait_recipe(),
+            sequence_name="Main",
+            excluded_step_ids=(step_id,),
+            write_report=False,
+        )
+    )
+
+    assert done.wait(REACHED_TIMEOUT_S)
+    assert seen == [("Main", (step_id,), False)]

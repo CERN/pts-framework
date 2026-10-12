@@ -230,7 +230,7 @@ def pages_for_schema() -> list[tuple[str, tuple[str, ...]]]:
     """
     known = editable_keys()
     placed: set[str] = set()
-    pages = []
+    pages: list[tuple[str, tuple[str, ...]]] = []
     for title, keys in PAGES:
         present = tuple(key for key in keys if key in known)
         if present:
@@ -242,8 +242,8 @@ def pages_for_schema() -> list[tuple[str, tuple[str, ...]]]:
         if key not in placed:
             section = key.rpartition(".")[0]
             leftovers.setdefault(section, []).append(key)
-    for section, keys in leftovers.items():
-        pages.append((SECTION_TITLES.get(section, section), tuple(keys)))
+    for section, section_keys in leftovers.items():
+        pages.append((SECTION_TITLES.get(section, section), tuple(section_keys)))
     return pages
 
 
@@ -398,7 +398,7 @@ def _theme_swatch(choice: str) -> QWidget:
     row.setSpacing(0)
 
     if choice == "system":
-        parts = ("Light", "Dark")
+        parts: tuple[str, ...] = ("Light", "Dark")
     elif choice == "dark":
         parts = ("Dark",)
     else:

@@ -30,6 +30,7 @@ def read_kernel():
 | `local_setup.py` | `LocalSetup`, the devices of one run; `get_device()`; `split_section()`; the section readers |
 | `drivers/loopback.py` | `LoopbackDriver` (Other): no hardware; tests, demo, smoke check |
 | `drivers/ssh.py` | `SshDriver` (SSH): the reference driver, paramiko |
+| `drivers/weather.py` | `OpenMeteoDriver` (Other): a weather station on the internet, standard library only; the showcase driver |
 
 `local_setup.py` imports `pypts.config_handler` lazily, inside the functions that need it,
 because a driver process imports `pypts.hal` too and has no use for the configuration.
@@ -100,7 +101,7 @@ A custom driver's module must be importable by the driver process: installed, or
 process's `sys.path`.
 
 The device sections are read from the configuration PyPTS loaded at start, so a hand edit of
-`config.ini` applies from the next start. Restore default settings (GUI) recreates `config.ini`
+`config.ini` applies from the next start: File → Restart in the GUI. Restore default settings (GUI) recreates `config.ini`
 and so removes the `[hardware.*]` sections too; the confirmation says so.
 
 ## Lifetime
@@ -172,7 +173,8 @@ the arguments of ordinary calls are traced as given.
    `multiprocessing` processes from a driver: the driver process is a daemon, and a daemon
    cannot have children.
 4. Import the vendor library at the top of the driver module, with an `ImportError` that names
-   the extra to install (see `drivers/ssh.py`).
+   the extra to install (see `drivers/ssh.py`). A driver that needs no vendor library and
+   turns every failure of its far end into one `DriverError` is `drivers/weather.py`.
 5. Test it in-process with the vendor library mocked (`test_hal_ssh.py`), and through a real
    driver process with the loopback pattern (`test_hal_connection.py`).
 
@@ -191,29 +193,25 @@ refused (`RejectPolicy`) unless `accept_unknown_host` is true. Needs
 `pip install pts-framework[ssh]`. The old engine's `SSHConnectStep`/`SSHCloseStep` are replaced
 by this; see `step/step.md` §2.7.
 
+## Weather
+
+`OpenMeteoDriver` reads the Open-Meteo forecast API (no API key) with `urllib`. Keys:
+`latitude` (46.23) and `longitude` (6.05), CERN Meyrin by default; `place`, a label put in
+the readings; `http_timeout_s` (10). `connect()` checks the numbers and takes one reading, so
+a station that cannot be reached fails the device at open. Verbs beyond `Other`'s none:
+`current_conditions()` (`place`, `time`, `temperature_c`, `relative_humidity_pct`,
+`pressure_hpa`, `wind_speed_kmh`, `wind_direction_deg`), `temperature()`, `wind_speed()`,
+`hourly_forecast(hours)` (1 to 384; `time`, `temperature_c`, `wind_speed_kmh` per hour).
+Every failure of the far end (unreachable, HTTP error with Open-Meteo's `reason`, an answer
+that is not JSON or lacks a reading) is a `DriverError`. The showcase recipe is
+`resources/recipes/Development_recipes/meteo_demo.yml`: temperature and wind at CERN from
+one device, `meteo1`.
+
 ## Packaging
 
-The core ships no driver library. Extras: `[ssh]` paramiko, `[ni]` nidmm + hightime,
+The core ships no driver library; `loopback.py` and `weather.py` need none. Extras: `[ssh]` paramiko, `[ni]` nidmm + hightime,
 `[serial]` pyserial, `[hardware]` all three. `.gitignore` carries `!/src/pypts/hal/drivers/`
 because its bare `drivers` rule would otherwise hide the shipped drivers.
-
-## Planned: devices from the recipe (not built)
-
-A step will name the devices it needs, and the step layer will hand them to the function as
-keyword arguments:
-
-```yaml
-- steptype: PythonModule
-  step_name: Kernel version
-  module: bench_tests.py
-  method_name: read_kernel
-  devices:
-    dut: ssh1          # parameter name: logical device name
-```
-
-It reuses the run's active local setup (`get_device()`), so nothing in this module changes; it
-is a recipe-format change (`recipe_guide.html`, the schema in `recipe/recipe_schema.py`, the
-verificator). Roadmap TODO in §1.54.
 
 ## Known gaps
 

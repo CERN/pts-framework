@@ -72,6 +72,9 @@ MAX_LISTED_ITEMS = 8
 #: does not, so a step may declare one without producing anything for it.
 READS_A_VALUE = ("passfail", "equals", "range", "global")
 
+#: The reason a step left out by the GUI's engineering mode is recorded with.
+LEFT_OUT_REASON = "Not run: left out in engineering mode."
+
 
 def shorten(text: str, limit: int) -> str:
     """`text` cut to `limit` characters, the last three of them `...` when it was."""
@@ -377,9 +380,13 @@ class Step:
         outputs: dict[str, Any] | None = None,
         skip: bool = False,
         continue_on_error: bool = True,
+        image_path: str | None = None,
     ) -> None:
         self.name = step_name
         self.description = description
+        #: The picture the GUI shows while this step runs, or None. As the
+        #: recipe wrote it until recipe_parser.load_recipe() makes it absolute.
+        self.image_path = image_path
         # A fresh dict per instance. The old base used mutable defaults, so
         # every step that omitted a mapping shared one dict (F12).
         self.inputs: dict[str, Any] = dict(inputs) if inputs else {}
@@ -478,15 +485,11 @@ class Step:
         """
         Judge and store the step's outputs; return the verdict.
 
-        Judging entries (`passfail`, `equals`, `range`) assign the verdict;
-        `pass` says this output is not a measurement, so the verdict is DONE
-        whatever came back; a `global` entry writes the run's one variable
-        scope and leaves the verdict alone. With no entry that touches the
-        verdict at all, it is DONE.
-
-        When several entries judge, the last one wins - kept as-is from the
-        old engine for parity during the port.
-        TODO(roadmap): revisit last-wins vs "all checks must pass" (F6).
+        Judging entries (`passfail`, `equals`, `range`) decide the verdict:
+        PASS when every one of them passed, FAIL when any one did not. `pass`
+        (a value recorded, not a measurement) and `global` (a value stored in
+        the run's one variable scope) leave the verdict alone. A step with no
+        judging entry is DONE.
 
         Args:
             failures: if given, one sentence is appended for every check that
@@ -496,13 +499,9 @@ class Step:
                 that only want the verdict, tests included, should not have to
                 unpack a tuple to get it. `run()` is the one caller that
                 passes a list.
-
-                Every failing check is described, even where last-wins leaves
-                the verdict PASS. `run()` only uses the list when the final
-                verdict is FAIL, so F6 shows through in the verdict and never
-                in a contradictory sentence beside it.
         """
-        verdict = ResultType.DONE
+        judged = False
+        all_passed = True
         for output_name, output_config in self.outputs.items():
             output_type = output_config["type"]
             if output_type in READS_A_VALUE and output_name not in step_output:
@@ -519,18 +518,18 @@ class Step:
             passed = True
             match output_type:
                 case "pass":
-                    verdict = ResultType.DONE
+                    pass
                 case "passfail":
+                    judged = True
                     passed = bool(step_output[output_name])
-                    verdict = ResultType.PASS if passed else ResultType.FAIL
                 case "equals":
+                    judged = True
                     passed = step_output[output_name] == output_config["value"]
-                    verdict = ResultType.PASS if passed else ResultType.FAIL
                 case "range":
+                    judged = True
                     low = float(output_config["min"])
                     high = float(output_config["max"])
                     passed = low <= float(step_output[output_name]) <= high
-                    verdict = ResultType.PASS if passed else ResultType.FAIL
                 case "global":
                     runtime.set_global(output_config["global_name"], step_output[output_name])
                 case _:
@@ -538,13 +537,19 @@ class Step:
                         f"Step '{self.name}': unknown output type {output_type!r} "
                         f"for output '{output_name}'"
                     )
-            if failures is not None and not passed:
-                failures.append(
-                    describe_failed_check(
-                        output_name, output_config, step_output[output_name]
+            if not passed:
+                all_passed = False
+                if failures is not None:
+                    failures.append(
+                        describe_failed_check(
+                            output_name, output_config, step_output[output_name]
+                        )
                     )
-                )
-        return verdict
+        if not judged:
+            return ResultType.DONE
+        if all_passed:
+            return ResultType.PASS
+        return ResultType.FAIL
 
     # --- the lifecycle ---------------------------------------------------------
 
@@ -601,10 +606,8 @@ class Step:
                         step_output = {"output": raw_output}
                     failures: list[str] = []
                     verdict = self._verdict(runtime, step_output, failures)
-                    # Only on FAIL: on any other verdict a failing check either
-                    # did not decide the outcome (F6, last-wins) or there is
-                    # nothing to explain, and a reason beside a PASS would
-                    # contradict it.
+                    # Only on FAIL: on any other verdict there is nothing to
+                    # explain.
                     if verdict is ResultType.FAIL:
                         reason = build_fail_reason(failures, step_input, step_output)
                     else:
@@ -677,7 +680,11 @@ class Step:
         - a step that contains steps is never held before: the hold lands
           before the first step inside it,
         - a `skip_reason` given up front records every step SKIP with it -
-          a group marked `skip: true`, or one the run never reached.
+          a group marked `skip: true`, or one the run never reached,
+        - a step whose id is in `runtime.excluded_step_ids` (the GUI's
+          engineering mode) is recorded SKIP with LEFT_OUT_REASON, is never
+          held before, and does **not** end the list: the next step runs.
+          Teardown lists honour it too - the engineer may leave out any row.
 
         `phase` is only the word the operator's log lines start with, so that a
         teardown step reads as "Teardown step 1/2 'power_off'" rather than as a
@@ -687,9 +694,10 @@ class Step:
         indent = "  " * runtime.depth
         total = len(steps)
         for position, step in enumerate(steps, start=1):
+            left_out = step.id in runtime.excluded_step_ids
             if not skip_reason and not run_to_end and runtime.halt_reason:
                 skip_reason = runtime.halt_reason
-            if not skip_reason and not run_to_end and not step.contains_steps:
+            if not skip_reason and not run_to_end and not step.contains_steps and not left_out:
                 # Before the stop check, not after it: a Stop pressed while
                 # the run is held ends the hold, and must then be seen here.
                 runtime.hold_if_paused(step.name, position, total)
@@ -697,11 +705,17 @@ class Step:
                 skip_reason = "Not run: the run was stopped by the operator."
                 log.debug("The stop flag is set; the remaining steps will be skipped.")
 
+            # This step's own reason. `skip_reason` is the list's and sticks to
+            # every step after it; a step left out skips itself alone.
+            step_skip = skip_reason
+            if not step_skip and left_out:
+                step_skip = LEFT_OUT_REASON
+
             where = f"{indent}{phase} {position}/{total} '{step.name}'"
             # No "started" line for a step that is not going to run: it would
             # promise the operator work that never happens, and the SKIP line
             # right behind it says everything there is to say.
-            if not skip_reason and not step.skip:
+            if not step_skip and not step.skip:
                 log.info("%s started.", where)
             log.debug(
                 "Running step '%s' (%s): skip=%s, continue_on_error=%s, skip_reason=%r.",
@@ -709,14 +723,14 @@ class Step:
                 type(step).__name__,
                 step.skip,
                 step.continue_on_error,
-                skip_reason,
+                step_skip,
             )
 
             began = time.perf_counter()
-            step_result = step.run(runtime, skip_reason=skip_reason)
+            step_result = step.run(runtime, skip_reason=step_skip)
             log_step_outcome(where, step, step_result, time.perf_counter() - began)
             step_results.append(step_result)
-            if skip_reason:
+            if step_skip:
                 continue
 
             halting_verdict = step_result.result in (ResultType.ERROR, ResultType.FAIL)

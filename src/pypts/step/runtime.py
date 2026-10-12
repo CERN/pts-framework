@@ -34,11 +34,14 @@ Beside the seams, four plain attributes say where the step lists are running,
 because a sequence may call another (step/sequence_step.py): `group_path` and
 `depth` (set by `entering()`), `in_teardown`, and `halt_reason`, which is how a
 `continue_on_error: false` halt inside a called sequence ends the whole run.
+A fifth, `excluded_step_ids`, is fixed for the run: the steps the GUI's
+engineering mode left out, which the step layer records SKIP instead of running.
 """
 
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from typing import Any
+from uuid import UUID
 
 
 class PromptUnanswered(Exception):
@@ -84,6 +87,7 @@ class Runtime:
         base_dir: str = "",
         hold_if_paused: Callable[[str, int, int], None] | None = None,
         drop_pending_pause: Callable[[], None] | None = None,
+        excluded_step_ids: frozenset[UUID] = frozenset(),
     ) -> None:
         self.globals: dict[str, Any] = globals if globals is not None else {}
         #: The folder the recipe file came from - what a PythonModuleStep's
@@ -137,6 +141,11 @@ class Runtime:
         #: by every step list of the run, so a halt inside a called sequence
         #: ends the whole run and not only the list it happened in.
         self.halt_reason = ""
+        #: The steps left out of this run by the GUI's engineering mode, by id.
+        #: Each is recorded SKIP with LEFT_OUT_REASON (step.py) when its list
+        #: reaches it - teardown lists included - and the list carries on.
+        #: Empty for every run that is not an engineering-mode one.
+        self.excluded_step_ids = excluded_step_ids
 
     # --- globals: one flat dict for the whole run -----------------------------
 

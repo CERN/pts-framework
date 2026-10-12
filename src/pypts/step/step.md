@@ -85,6 +85,13 @@ passed as keyword arguments.
   `ForgetRecipe`, never during a run. A dotted name goes through `importlib.import_module`,
   which `sys.modules` already caches; an unload leaves those alone, so an edit to one still
   needs a restart.
+- **`find_module_file(module_ref, base_dir)`** (2026-10-12) answers "which `.py` would this
+  run?" without running it, for the GUI's right-click *Open Python file* (through
+  `recipe/step_source.py`). It shares `_module_file_beside()` with `load_python_module()`, so
+  the two resolve a file beside the recipe identically; a dotted name goes through
+  `importlib.util.find_spec` (which imports `pkg` to find `pkg.sub`, but never the module
+  itself). None for no such module, or one without a `.py` source (a built-in, an extension);
+  it never raises.
 
 ### 2.3 `UserInteractionStep` → `UserInteraction` — done
 
@@ -101,7 +108,7 @@ way a PythonModule's `inputs` entries do. Only the *answer* goes through a mappi
   step_name: Check the LED
   message: Is the red LED lit?
   options: [Yes, No]
-  image_path: led.png        # optional, resolved against the recipe's folder
+  image_path: led.png        # optional, any step may have one (§3.8)
   outputs:
     output: {type: equals, value: Yes}
 ```
@@ -140,15 +147,14 @@ because that is worth reading; the verdict does not change. `Step.run_steps` car
 the next step (§3.1), so one unanswered question does not throw the rest of the sequence
 away.
 
-**Two things the step refuses at load time**, rather than letting them fail quietly:
+**The step refuses `options: []` at load time**, rather than letting it fail quietly: with
+no buttons the operator cannot answer, so the step could only ever time out.
 
-- `options: []` — with no buttons the operator cannot answer, so the step could only ever
-  time out;
-- an `image_path` that does not exist — the GUI's handling of a bad path is to fall back
-  to the idle logo (`interaction_panel._refresh_visual`), which would leave the operator
-  looking at the wrong picture with nothing said about it. The check happens before the
-  request is sent, and the resolved path is made **absolute** because the HMI is another
-  process and resolves nothing.
+**A missing `image_path` is not refused** (changed 2026-10-12). The picture rule is every
+step's now (§3.8): the recipe parser warns at load, the request carries the path anyway —
+made **absolute** with `resolve_image_path()`, because the HMI is another process and
+resolves nothing — and the GUI shows "No image available" in its place. The question is
+asked as usual.
 
 **The Cancel button is the GUI's, not the recipe's.** Every prompt grows one beyond the
 recipe's own options (`interaction_panel.CANCEL_LABEL`), so an operator is never stuck in
@@ -174,15 +180,16 @@ declines every question).
 - steptype: UserWrite
   step_name: get_serial_number
   message: Scan or type the serial number of the unit under test.
-  image_path: label_location.png     # optional, resolved against the recipe's folder
+  image_path: label_location.png     # optional, any step may have one (§3.8)
   outputs:
     output: {type: global, global_name: serial_number}
 ```
 
 **What the prompting types share lives in `operator_prompt.py`**, as two plain
 functions rather than a base class, so §4's rule still holds — a step type subclasses
-`Step`, overrides `_step()` and nothing else. `resolve_image_path()` is the absolute-path
-rule of §2.3; `ask_or_raise()` is its "not answering is an ERROR" rule. All three types
+`Step`, overrides `_step()` and nothing else. `resolve_image_path(image_path, base_dir)` is
+the absolute-path rule of §3.8 (it never raises; the recipe parser uses it too);
+`ask_or_raise()` is §2.3's "not answering is an ERROR" rule. All three types
 (`UserInteraction`, `UserWrite`, `UserLoading`) call both, so none can drift.
 
 **There is no `allow_empty` field.** The GUI keeps OK disabled while the field is empty
@@ -228,7 +235,7 @@ chooser and the API's answer come in later stages — until then `HmiClient`'s d
   step_name: pick_calibration_file
   message: Select the calibration file for this unit.
   select: file          # optional: file (default) or folder
-  image_path: cal.png   # optional, resolved against the recipe's folder
+  image_path: cal.png   # optional, any step may have one (§3.8)
   outputs:
     output: {type: global, global_name: calibration_file}
 ```
@@ -288,8 +295,7 @@ not having anywhere else to put it. So: no `SSHConnect` / `SSHClose` entries in
 Credentials live in `[hardware.<name>]` in `config.ini`, masked in the log. The session belongs
 to the run's local setup, which closes it after the teardown steps on every outcome, abort included —
 what the old `teardown_steps` rule stood in for. The live client stays in the driver's own
-process; only picklable values cross. Details: `hal/hal.md`. A recipe-level `devices:` key is planned,
-not built.
+process; only picklable values cross. Details: `hal/hal.md`.
 
 ### 2.8 `SequenceStep` → `Sequence` — reversed 2026-09-16, engine done (stage 1)
 
@@ -395,6 +401,8 @@ parameter set, and everything downstream deals with plain steps:
   `Indexed` step itself (they would apply to nothing, or to N steps at once), an `Indexed`
   step as its own `template`, an empty `parameter_sets`, and an unknown key in a set.
   `skip: true` on it skips every generated step.
+- The wrapper's `description` and `image_path` go on every generated step, unless the
+  `template` states its own (`indexed_step._build_one()`).
 
 **The cost, and it is the real one:** N is fixed when the recipe loads. "Run once per
 device the previous step found" is not expressible and would need a runtime construct.
@@ -457,8 +465,7 @@ not details:
   `build_fail_reason()` joins those with the step's inputs and outputs, and `set_result()`
   stores the sentence on `error_info` - the same field `set_skip()` uses, so it reaches the
   step table's tooltip, the CLI and the report's CSV as well as the log. The list is only used
-  when the verdict is `FAIL`, so last-wins (F6) can never leave a failure written beside a
-  `PASS`.
+  when the verdict is `FAIL`.
 
   **Two budgets bound that sentence**, because all four of the places it lands are one line,
   one cell or one tooltip. `MAX_VALUE_CHARS` (80) bounds a single value - a step is free to
@@ -498,6 +505,17 @@ not details:
   sequence aggregates to. **The operator's Stop does the same**, for the same reason, with
   its own reason text — before this, both simply dropped the remaining steps and left their
   rows pending forever.
+- **Engineering mode leaves steps out by id.** `Runtime.excluded_step_ids` (a frozenset of
+  step UUIDs, empty unless the GUI's engineering mode started the run) is checked per step in
+  `run_steps()`: a step in it is run with `skip_reason=LEFT_OUT_REASON`
+  (`"Not run: left out in engineering mode."`, a constant in `step.py`), so it emits the full
+  trio and comes back `SKIP` like any skipped step. Unlike the list-wide reason of a halt or a
+  Stop, it is **this step's alone** (`step_skip` in the loop): the next step runs. It is never
+  held before, and it applies in teardown lists too (`run_to_end` does not exempt it) — the
+  engineer may leave out any row. A left-out Sequence step settles its children through
+  `_skip_contents()`; a Sequence step that is *not* left out is entered, and only the steps
+  inside it that are listed come back `SKIP` — which is how picking one step inside a called
+  sequence runs that step alone.
 - **A halt ends the whole run, at any depth.** Halting sets `runtime.halt_reason`, which every
   step list of the run checks beside the stop flag — so a halt inside a called sequence skips
   the rest of that sequence *and* of every sequence around it (§2.8). Teardown lists never
@@ -572,9 +590,10 @@ mapping can only be `global` — which is why it must name its type: there is no
 left to fall back to. `value` is still an `equals` entry's key on the **outputs** side;
 that is a different thing and it stays.
 
-The `outputs` vocabulary is `passfail`, `equals`, `range` (they judge), `pass` (this
-output is not a measurement — the verdict is DONE whatever came back) and `global`
-(store it, leave the verdict alone).
+The `outputs` vocabulary is `passfail`, `equals`, `range` (they judge), `pass` (record
+this value, it is not a measurement) and `global` (store it). The verdict is `PASS` when
+every judging entry passed, `FAIL` when any did not, and `DONE` when the step has no
+judging entry; `pass` and `global` never touch it.
 
 Two consequences worth knowing:
 
@@ -643,7 +662,8 @@ is never interrupted. The step layer knows only two `Runtime` seams, both no-ops
 `Runtime()`:
 
 - **`hold_if_paused(step_name, position, total)`** - called by `run_steps()` before each
-  main step that is about to run for real (`not run_to_end and not skip_reason`), with the
+  main step that is about to run for real (`not run_to_end and not skip_reason`, and not
+  left out by engineering mode), with the
   same 1-based numbers as the `Step 4/10 'name'` log line. It blocks while the run is held.
   It is called **before** the stop check, so a Stop that ends a hold is seen at once and the
   remaining steps are recorded SKIP as usual. Steps inside a called sequence are held before
@@ -658,6 +678,25 @@ is never interrupted. The step layer knows only two `Runtime` seams, both no-ops
 **Teardown is never held**: `run_to_end=True` skips the hold with the two early exits. What
 a hold *is* - the flag, the `RunPaused`/`RunResumed` events, the log lines - belongs to the
 Sequencer (`sequencer/sequencer.md`).
+
+### 3.8 `image_path` — a picture on every step (2026-10-12)
+
+Every step type takes `image_path`, a common argument of `Step.__init__` stored as
+`step.image_path` (`SequenceStep` passes its own through; a sequence document has one too,
+on `recipe.Sequence`). It is the picture the GUI's right column shows while the step runs
+(`hmi/gui/gui.md` §18); the step layer does nothing with it except the three prompting
+types, which put it on their request.
+
+- **Resolved at load, not at run time.** `recipe_parser.load_recipe()` makes every one
+  absolute against the recipe's folder with `operator_prompt.resolve_image_path()`, so
+  `step.image_path` is what the recipe wrote until then. The prompting types call the same
+  function again when they ask; on an absolute path it is a no-op, and a step built in
+  code still gets the recipe-folder rule from `runtime.base_dir`.
+- **A missing file is never an error** — not at load, not when a prompt asks. The parser
+  logs a WARNING and adds one sentence to `Recipe.load_notices`; the GUI shows "No image
+  available". Before 2026-10-12 a prompting step with a missing picture ended ERROR.
+- **Indexed:** the wrapper's goes on every generated step unless the template names its
+  own (§2.9).
 
 ---
 
@@ -681,7 +720,7 @@ Sequencer (`sequencer/sequencer.md`).
    place fails the suite.
 
 **Only what is genuinely the type's own goes in `STEP_TYPE_DEFAULTS`.** The fields every
-step accepts whatever its type — `description`, `skip`, `continue_on_error` — are the
+step accepts whatever its type — `description`, `image_path`, `skip`, `continue_on_error` — are the
 common arguments of `Step.__init__` and are declared once, in `STEP_COMMON_DEFAULTS`. A new
 type gets them for free and must not repeat them; the old format's per-type
 `continue_on_error` is why putting it on the wrong one of the ten types was a load-time

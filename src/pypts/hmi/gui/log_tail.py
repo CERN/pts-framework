@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TextIO
 
 # Registers the TRACE name, so the message trace is filtered out like DEBUG
 # rather than shown as a line with a level nobody knows.
@@ -102,7 +103,7 @@ class LogTail:
     def __init__(self, path, min_level: int = PANEL_LOG_LEVEL) -> None:
         self.path = Path(path)
         self.min_level = min_level
-        self._handle = None
+        self._handle: TextIO | None = None
         #: The tail of the file that is not yet a whole line.
         self._partial = ""
         #: Whether the record the panel last showed is still being written to,

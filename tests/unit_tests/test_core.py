@@ -288,6 +288,27 @@ def test_start_sequence_hands_the_recipe_over_with_the_command():
     assert isinstance(handoff[0], RunSequence)
     assert handoff[0].sequence_name == "Main"
     assert handoff[0].recipe is core.recipe
+    assert handoff[0].excluded_step_ids == ()
+    assert handoff[0].write_report is True
+
+
+def test_start_sequence_hands_the_engineering_options_over_unread():
+    from uuid import uuid4
+
+    from pypts.messages.core_hmi_communication import StartSequence
+
+    core = build_core_that_spawns_nothing()
+    load_a_recipe(core)
+    left_out = (uuid4(), uuid4())
+
+    core.from_hmi.send(
+        StartSequence(sequence_name="Main", excluded_step_ids=left_out, write_report=False)
+    )
+    core.poll_all_sources()
+
+    handoff = list(core.to_sequencer.receive())
+    assert handoff[0].excluded_step_ids == left_out
+    assert handoff[0].write_report is False
 
 
 def test_start_sequence_without_a_recipe_is_refused_by_core():
@@ -742,6 +763,49 @@ def test_step_executed_goes_to_the_report_not_the_hmi():
 
     assert list(core.to_report.receive()) == [executed]
     assert list(core.to_hmi.receive()) == []
+
+
+def test_a_run_without_a_report_reaches_the_hmi_and_nothing_reaches_the_report():
+    """An engineering-mode retest: RunStarted says so, and CORE keeps the whole
+    run away from the Report - no GenerateReport either."""
+    from pypts.messages.common_messages import ResultType
+    from pypts.messages.run_events import RunFinished, RunMetadata, RunStarted, SequenceStarted
+
+    core = build_core_that_spawns_nothing()
+    started = RunStarted(recipe_name="Wait demo", recipe_description="", write_report=False)
+    sequence = SequenceStarted(sequence_name="Main")
+    metadata = RunMetadata(values=(("serial_number", "SN-1"),))
+    executed = a_step_executed()
+    finished = RunFinished(result=ResultType.DONE)
+
+    for message in (started, sequence, metadata, executed, finished):
+        core.from_sequencer.send(message)
+    core.poll_all_sources()
+
+    assert list(core.to_report.receive()) == []
+    assert list(core.to_hmi.receive()) == [started, sequence, metadata, finished]
+
+
+def test_the_run_after_a_retest_reaches_the_report_again():
+    from pypts.messages.common_messages import ResultType
+    from pypts.messages.core_report_communication import GenerateReport
+    from pypts.messages.run_events import RunFinished, RunStarted
+
+    core = build_core_that_spawns_nothing()
+    core.from_sequencer.send(
+        RunStarted(recipe_name="Wait demo", recipe_description="", write_report=False)
+    )
+    core.from_sequencer.send(RunFinished(result=ResultType.DONE))
+    core.poll_all_sources()
+    list(core.to_hmi.receive())
+
+    started = RunStarted(recipe_name="Wait demo", recipe_description="")
+    finished = RunFinished(result=ResultType.DONE)
+    core.from_sequencer.send(started)
+    core.from_sequencer.send(finished)
+    core.poll_all_sources()
+
+    assert list(core.to_report.receive()) == [started, finished, GenerateReport()]
 
 
 def test_run_paused_and_run_resumed_go_to_the_hmi_not_the_report():

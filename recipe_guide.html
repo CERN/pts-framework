@@ -212,6 +212,7 @@ globals:                         # the run's variables and their starting values
 <h2 id="4-sequence-document">4. Sequence document</h2>
 <pre><code class="language-yaml">sequence_name: Main          # required; what main_sequence and Sequence steps name
 description: Main test flow
+image_path: fixture.png      # optional; shown while the sequence runs (§5.1)
 steps:                       # required; at least one step
   - ...
 teardown_steps:              # optional; runs after the steps, whatever happened
@@ -220,6 +221,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <tr><td><code>sequence_name</code></td><td>yes</td><td>The name; unique in the file regardless of case — <code>Main</code> and <code>main</code> are the same name</td></tr>
 <tr><td><code>steps</code></td><td>yes, at least one</td><td>The steps, run in order</td></tr>
 <tr><td><code>description</code></td><td>no (<code>""</code>)</td><td>GUI, log</td></tr>
+<tr><td><code>image_path</code></td><td>no</td><td>A picture the GUI shows while the sequence runs, for every step that has none of its own (§5.1)</td></tr>
 <tr><td><code>teardown_steps</code></td><td>no (<code>[]</code>)</td><td>Run after <code>steps</code> after a pass, a failure or a stop. Inside a teardown everything runs to the end: <code>continue_on_error: false</code> does not stop it</td></tr>
 </tbody></table>
 <p>Any other sequence key is ignored (the Recipe Creator warns about it). Removed on purpose: <code>setup_steps</code> (put those steps at the front of <code>steps</code>), <code>locals</code> (use <code>globals</code>), and <code>parameters</code> / <code>outputs</code> (a called sequence shares the run's globals).</p>
@@ -228,6 +230,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <pre><code class="language-yaml">- steptype: PythonModule     # required; selects the step type (§10)
   step_name: Check 3V3 rail  # required; shown in the step table and the report
   description: ...           # optional
+  image_path: probe_tp3.png  # optional; shown while the step runs (§5.1)
   id: my-stable-id           # optional; a fresh id if absent
   skip: false                # optional; true records SKIP without running it
   continue_on_error: true    # optional; see §9.1
@@ -238,6 +241,16 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <li><strong>An unknown key is refused</strong> when the recipe loads — every key becomes an argument of the step, so a typo (<code>skipp: true</code>) is an error, not a silently ignored line.</li>
 <li><code>skip</code> and <code>continue_on_error</code> take <code>true</code>/<code>false</code>; a text field takes text or a number (§12).</li>
 <li>Two step types differ: a <code>Sequence</code> step is named after the sequence it calls and takes no <code>step_name</code>, <code>id</code>, <code>inputs</code> or <code>outputs</code>; an <code>Indexed</code> step puts <code>inputs</code> and <code>outputs</code> on its <code>template</code> (§10).</li>
+</ul>
+<h3 id="5-1-image-path">5.1 <code>image_path</code> — a picture while the step runs</h3>
+<p>Any step, of any type, and any sequence may name a picture. The GUI shows it on the right while that step (or sequence) runs — a wiring diagram, where to put the probe, what the fixture should look like.</p>
+<ul>
+<li>A path <strong>relative to the recipe's own folder</strong>, or an absolute one — the same rule as <code>module:</code>.</li>
+<li>A step's picture goes away when the step ends. A step without one shows its sequence's; inside a called sequence with neither, the calling <code>Sequence</code> step's, and so on outward. With no picture anywhere, the GUI shows a card with the running step, the elapsed time, the verdicts so far and the last failure.</li>
+<li>On a question step (<code>UserInteraction</code>, <code>UserWrite</code>, <code>UserLoading</code>) the picture shows beside the question. A question step without one shows the CERN logo while it waits — not its sequence's picture.</li>
+<li>On an <code>Indexed</code> step it goes on every generated step, unless the <code>template</code> names its own.</li>
+<li><strong>A file that is not there does not stop anything.</strong> The recipe loads, the operator is told once which pictures are missing, and "No image available" is shown in their place.</li>
+<li>The CLI and headless mode ignore it.</li>
 </ul>
 <hr>
 <h2 id="6-inputs-where-arguments-come-from">6. <code>inputs</code> — where arguments come from</h2>
@@ -273,7 +286,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <tr><td><code>global</code></td><td><code>global_name</code></td><td>Stores the value in that global; leaves the result alone</td></tr>
 </tbody></table>
 <p><strong>What a step returns:</strong> a mapping is used as it is; <code>None</code> is an empty one; any other value is the output named <code>output</code>. So a function that returns <code>5.0</code> is judged with <code>outputs: {output: {type: range, ...}}</code>.</p>
-<p><strong>Result rule:</strong> the result starts as <code>DONE</code>. Each judging entry (<code>passfail</code>/<code>equals</code>/<code>range</code>) assigns it; with several, the last one wins — write one judging entry per step to avoid surprises. A <code>global</code> entry never touches it. An entry other than <code>pass</code> whose value the step did not return is an <code>ERROR</code> naming what it did return.</p>
+<p><strong>Result rule:</strong> a step with at least one judging entry (<code>passfail</code>/<code>equals</code>/<code>range</code>) is <code>PASS</code> when every one of them passes and <code>FAIL</code> when any one does not. A step with no judging entry — only <code>pass</code>/<code>global</code> entries, or no outputs — is <code>DONE</code>. <code>pass</code> and <code>global</code> entries never touch the result. An entry other than <code>pass</code> whose value the step did not return is an <code>ERROR</code> naming what it did return.</p>
 <hr>
 <h2 id="8-result-model">8. Result model</h2>
 <p><code>ResultType</code> is an <code>IntEnum</code>; the ordering is the aggregation rule:</p>
@@ -328,14 +341,14 @@ teardown_steps:              # optional; runs after the steps, whatever happened
   step_name: confirm_wiring
   description: Operator confirms the harness is connected
   message: Connect the harness, then press Next.
-  image_path: harness.jpg    # optional
+  image_path: harness.jpg    # optional (§5.1)
   options: [Next]
   outputs:
     output: { type: equals, value: Next }</code></pre>
 <ul>
 <li><code>options</code>` is a list of strings. Each string is both the button label and the value the step returns as <code>output</code>`.
 </li>
-<li>An empty <code>options</code>` list is refused at load time, as is an <code>image_path</code>` that does not exist.
+<li>An empty <code>options</code>` list is refused at load time. A missing <code>image_path</code>` is not: "No image available" is shown (§5.1).
 </li>
 <li>The GUI always adds its own Cancel button. Cancelling, a timeout or a stop makes the step <code>ERROR</code>`; the run carries on unless <code>continue_on_error: false</code>`.
 </li>
@@ -355,7 +368,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
   description: Choose the calibration file for this unit
   message: Select the calibration file for this unit.
   select: file               # optional: file (default) or folder, case-insensitive
-  image_path: cal.png        # optional
+  image_path: cal.png        # optional (§5.1)
   outputs:
     output: { type: global, global_name: calibration_file }</code></pre>
 <ul>
@@ -447,7 +460,7 @@ teardown_steps:
 <li>Once all of the above is clean, whatever the framework's real load still refuses: <code>select</code> that is neither <code>file</code> nor <code>folder</code>, an empty <code>method_name</code> or <code>options</code>, a <code>Sequence</code> step calling a sequence that does not exist, the main sequence, or itself in a loop. These are found one at a time and carry no line number.</li>
 </ul>
 <p><strong>Warnings</strong> — the recipe loads, but something looks wrong: <code>version</code> written as a number, an empty <code>name</code> or <code>version</code>, a removed sequence key (<code>setup_steps</code>, <code>parameters</code>, <code>outputs</code>, <code>locals</code>), an unknown sequence key (ignored).</p>
-<p><strong>Not checked</strong>, because the framework does not check it at load time either: that <code>module</code>/<code>method_name</code> exist, that an <code>image_path</code> exists, that a <code>global</code> input names a global something will have set, or the value of <code>wait_time</code>.</p>
+<p><strong>Not checked</strong>, because the framework does not check it at load time either: that <code>module</code>/<code>method_name</code> exist, that a <code>global</code> input names a global something will have set, or the value of <code>wait_time</code>. A missing <code>image_path</code> file is not reported either: it never stops a recipe, and the framework tells the operator about it when the recipe is loaded (§5.1).</p>
 </div>
 </body>
 </html>

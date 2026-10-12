@@ -10,6 +10,7 @@ emits them and CORE forwards them to the HMI, reacting on the way past.
 """
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from pypts.messages.common_messages import Heartbeat, ModuleError
 from pypts.messages.run_events import (
@@ -56,10 +57,15 @@ class RunSequence:
     plain values - allowed because this link never leaves the Core process,
     so nothing is ever pickled (see core.py). CORE only sends a recipe that
     passed validation: an invalid file never reaches the Sequencer.
+
+    `excluded_step_ids` and `write_report` are copied from the StartSequence
+    that asked for the run (the GUI's engineering mode).
     """
 
     recipe: Recipe
     sequence_name: str
+    excluded_step_ids: tuple[UUID, ...] = ()
+    write_report: bool = True
 
 
 @dataclass

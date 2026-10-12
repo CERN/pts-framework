@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
@@ -374,6 +374,13 @@ class PtsMainWindow(QMainWindow):
         file_menu.addSeparator()
         self.open_config_action = file_menu.addAction("Open Config")
         self.open_config_action.setToolTip(str(file_locations.config_file_path()))
+        # Beside Open Config: every process reads config.ini once, at start, so
+        # a hand edit (a [hardware.*] section, say) applies after a restart.
+        self.restart_action = file_menu.addAction("Restart")
+        self.restart_action.setToolTip(
+            "Close pypts and start it again, so edits to config.ini take effect. "
+            "Not during a run."
+        )
 
         file_menu.addSeparator()
         exit_action = file_menu.addAction("Exit")
@@ -384,6 +391,12 @@ class PtsMainWindow(QMainWindow):
         self.edit_recipe_action = edit_menu.addAction("Edit Recipe")
         self.edit_recipe_action.setToolTip(
             "Open the Recipe Creator - on the loaded recipe, when there is one."
+        )
+        self.engineering_action = edit_menu.addAction("Engineering Mode")
+        self.engineering_action.setCheckable(True)
+        self.engineering_action.setToolTip(
+            "Pick steps in the table and press Space to run only those (no report), "
+            "or untick steps to leave them out of a Start. Not during a run."
         )
         edit_menu.addSeparator()
         self.settings_action = edit_menu.addAction("Settings")
@@ -574,6 +587,24 @@ class GUI(HmiClient):
         self.version_label.setGraphicsEffect(faint)
         self.window.statusBar().addPermanentWidget(self.version_label)
 
+        # Says, for as long as it is true, that a run may leave steps out.
+        self.engineering_label = QLabel("ENGINEERING MODE")
+        self.engineering_label.setObjectName("engineeringLabel")
+        self.engineering_label.setVisible(False)
+        self.window.statusBar().addPermanentWidget(self.engineering_label)
+
+        # Space runs the steps picked in the table. Only while the table (or a
+        # cell in it) has the focus, so a Space typed into the interaction
+        # panel's text field stays a space.
+        self.retest_shortcut = QShortcut(QKeySequence(Qt.Key.Key_Space), self.step_table)
+        self.retest_shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
+        self.retest_shortcut.activated.connect(self.run_selected_steps)
+
+        # The step table's right-click menu asks; the window, which knows the
+        # recipe's path, opens.
+        self.step_table.open_recipe_requested.connect(self.open_recipe_in_editor)
+        self.step_table.open_python_file_requested.connect(self.open_python_file)
+
         self.report_dir: str | None = None
 
         #: What the GUI process exits with. RESTART_EXIT_CODE asks the launcher to
@@ -598,10 +629,14 @@ class GUI(HmiClient):
             lambda _checked=False: self._open_settings("Appearance")
         )
         self.window.edit_recipe_action.triggered.connect(self.open_recipe_creator)
+        self.window.engineering_action.toggled.connect(self.set_engineering_mode)
         self.window.unload_recipe_action.triggered.connect(
             lambda _checked=False: self.unload_recipe()
         )
         self.window.open_config_action.triggered.connect(self.open_config_file)
+        self.window.restart_action.triggered.connect(
+            lambda _checked=False: self.restart("pypts is restarting at the operator's request.")
+        )
 
         # Rebuilt every time it opens rather than kept in step with the store,
         # so it can never show a stale list.
@@ -893,7 +928,7 @@ class GUI(HmiClient):
 
     def _apply_theme(self, dark: bool) -> None:
         app = QApplication.instance()
-        if app is not None:
+        if isinstance(app, QApplication):
             app.setStyleSheet(get_stylesheet(dark))
         self.top_bar.set_dark(dark)
         self.center.set_dark(dark)
@@ -972,8 +1007,50 @@ class GUI(HmiClient):
             log.debug("The operator asked to resume the run.")
             self.resume_sequence()
             self._show_run_moving()
+        elif self.step_table.engineering_mode:
+            # An ordinary run with a report, less whatever is unticked.
+            self.start_sequence(sequence_name, self.step_table.left_out_exclusions())
         else:
             self.start_sequence(sequence_name)
+
+    # --- Engineering mode -------------------------------------------------------
+
+    def set_engineering_mode(self, on: bool) -> None:
+        """
+        Edit -> Engineering Mode. The step table becomes a picker, or stops being one.
+
+        Session only: nothing is saved, and the picks start clean either way.
+        """
+        if on:
+            log.info("Engineering mode switched on.")
+        else:
+            log.info("Engineering mode switched off.")
+        self.step_table.set_engineering_mode(on)
+        self.engineering_label.setVisible(on)
+
+    def run_selected_steps(self) -> None:
+        """
+        Space: run only the steps picked in the table - no report, no run folder.
+
+        Does nothing, and says so at DEBUG, outside engineering mode, without a
+        recipe, during a run, or with nothing picked that would run.
+        """
+        if not self.step_table.engineering_mode:
+            log.debug("Space ignored: engineering mode is off.")
+            return
+        if self.current_recipe is None:
+            log.debug("Space ignored: no recipe is loaded.")
+            return
+        if self._run_in_progress:
+            log.debug("Space ignored: a run is in progress.")
+            return
+        excluded = self.step_table.retest_exclusions()
+        if excluded is None:
+            log.debug("Space ignored: no ticked step is selected.")
+            return
+        sequence_name = self.top_bar.sequence_combo.currentText()
+        log.debug("Retest of sequence '%s' with %d steps left out.", sequence_name, len(excluded))
+        self.start_sequence(sequence_name, excluded, write_report=False)
 
     def _set_pause_requested(self, requested: bool) -> None:
         self._pause_requested = requested
@@ -1055,6 +1132,7 @@ class GUI(HmiClient):
             self._recipe_text = step_source.recipe_file_text(self._requested_recipe_path)
             self._requested_recipe_path = None
         self.step_table.set_running(False)
+        self.center.set_recipe(event)
         self.top_bar.show_recipe_loaded(event)
         self.top_bar.set_preview_available(bool(self._recipe_text.strip()))
         self.window.unload_recipe_action.setEnabled(not self._run_in_progress)
@@ -1096,6 +1174,7 @@ class GUI(HmiClient):
         self.step_table.clear()
         self.window.run_progress.clear()
         self.center.cancel_pending()
+        self.center.set_recipe(None)
         self.center.show_idle()
         self.window.results_panel.set_results(())
         self.window.view_tabs.stop_pulse()
@@ -1114,6 +1193,10 @@ class GUI(HmiClient):
     def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
         self._run_in_progress = True
         self._set_recipe_opening_enabled(False)
+        # A restart would take the run down with it.
+        self.window.restart_action.setEnabled(False)
+        # The picks are frozen during a run, and so is the mode itself.
+        self.window.engineering_action.setEnabled(False)
         self._run_outcomes = []
         self._running_recipe_name = recipe_name
         self.top_bar.show_run_started()
@@ -1122,6 +1205,7 @@ class GUI(HmiClient):
         self.step_table.reset_to_pending()
         self.window.run_progress.reset()
         self.center.show_idle()
+        self.center.run_started()
         # The last run's results go, and the operator is taken to this run.
         self.window.results_panel.set_results(())
         self.window.view_tabs.stop_pulse()
@@ -1133,12 +1217,13 @@ class GUI(HmiClient):
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
         self._run_in_progress = False
         self._set_recipe_opening_enabled(True)
+        self.window.restart_action.setEnabled(True)
+        self.window.engineering_action.setEnabled(True)
         # A pause that lapsed, or a hold ended by Stop, is over with the run.
         self._set_pause_requested(False)
         self.step_table.set_running(False)
         self.top_bar.show_run_finished()
-        self.center.cancel_pending()
-        self.center.show_idle()
+        self.center.run_finished()
         self.window.results_panel.set_results(outcomes)
         if outcomes:
             # Not switched to: the Results tab pulses until it is opened.
@@ -1167,15 +1252,19 @@ class GUI(HmiClient):
 
     def show_sequence_started(self, sequence_name: str) -> None:
         log.debug("SequenceStarted received for '%s'.", sequence_name)
+        self.center.sequence_started(sequence_name)
 
     def show_sequence_finished(self, sequence_name: str, result: ResultType) -> None:
         log.debug("SequenceFinished received for '%s': %s.", sequence_name, result.name)
+        self.center.sequence_finished(sequence_name)
 
     def show_step_started(self, event: StepStarted) -> None:
         self.step_table.mark_running(event)
+        self.center.step_started(event.step_id)
 
     def show_step_finished(self, outcome: StepOutcome) -> None:
         self.step_table.show_outcome(outcome)
+        self.center.step_finished(outcome)
         self.window.run_progress.step_finished(outcome)
         self._run_outcomes.append(outcome)
         # Live: the Results tab can be opened during the run.
@@ -1312,19 +1401,23 @@ class GUI(HmiClient):
 
     # --- Restart ----------------------------------------------------------------
 
-    def restart(self) -> None:
+    def restart(self, reason: str) -> None:
         """
         Close pypts and have the launcher start it again, with the same command line.
 
-        Used by Restore default settings, once config.ini is deleted. Every
-        process read its configuration once, at startup, so a fresh start is
-        what recreates the file from the template and puts its values in force -
-        through the one code path that already does both. The shutdown is the ordinary one
+        Used by File -> Restart, and by Restore default settings once config.ini
+        is deleted. Every process read its configuration once, at startup, so a
+        fresh start is what puts a hand-edited config.ini in force, or recreates
+        the file from the template - through the one code path that already does
+        both. The shutdown is the ordinary one
         (ShutdownRequested -> CORE stops every module -> StopHmi -> on_stop());
         only the GUI process's exit code differs, and the launcher acts on it.
         Under pypts.api.open_gui() nothing restarts: the window just closes.
+
+        Args:
+            reason: the INFO line that says why, for the technician.
         """
-        log.info("pypts is restarting, so the configuration is recreated from the template.")
+        log.info("%s", reason)
         self.exit_code = RESTART_EXIT_CODE
         self.show_status("Restarting")
         self.request_shutdown()
@@ -1350,7 +1443,7 @@ class GUI(HmiClient):
             )
             return
         log.info("The operator restored the default settings.")
-        self.restart()
+        self.restart("pypts is restarting, so the configuration is recreated from the template.")
 
     # --- Opening a recipe, and the recipes opened before ------------------------
 
@@ -1518,19 +1611,74 @@ class GUI(HmiClient):
                 operation="open_config_file",
             )
             return
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(config_file))):
-            try:
-                if sys.platform == "win32":
-                    subprocess.Popen(["notepad.exe", str(config_file)])
-                else:
-                    subprocess.Popen(["xdg-open", str(config_file)])
-            except OSError:
-                report_problem(
-                    self,
-                    f"This machine has no application set up to open {config_file}",
-                    severity=ErrorSeverity.WARNING,
-                    operation="open_config_file",
-                )
+        self._open_in_text_editor(config_file, "open_config_file")
+
+    @catch_and_report_errors()
+    def open_recipe_in_editor(self) -> None:
+        """
+        Step table right-click > Open recipe in text editor: the loaded recipe
+        file, in whatever this machine opens a .yml with.
+
+        Nothing reloads afterwards: an edit applies once the recipe is opened
+        again, as with any change to the file.
+        """
+        if self._loaded_recipe_path is None:
+            report_problem(
+                self,
+                "There is no recipe file to open.",
+                severity=ErrorSeverity.WARNING,
+                operation="open_recipe_in_editor",
+            )
+            return
+        recipe_file = Path(self._loaded_recipe_path)
+        if not recipe_file.is_file():
+            report_problem(
+                self,
+                f"The recipe file is not there any more: {recipe_file}",
+                severity=ErrorSeverity.WARNING,
+                operation="open_recipe_in_editor",
+            )
+            return
+        self._open_in_text_editor(recipe_file, "open_recipe_in_editor")
+
+    @catch_and_report_errors()
+    def open_python_file(self, path: str) -> None:
+        """
+        Step table right-click > Open Python file: the source file a PythonModule
+        step runs (`StepSource.python_file`), in whatever opens a .py here.
+        """
+        python_file = Path(path)
+        if not python_file.is_file():
+            report_problem(
+                self,
+                f"The Python file is not there any more: {python_file}",
+                severity=ErrorSeverity.WARNING,
+                operation="open_python_file",
+            )
+            return
+        self._open_in_text_editor(python_file, "open_python_file")
+
+    def _open_in_text_editor(self, path: Path, operation: str) -> None:
+        """
+        Hand a file to the machine's default application for its type; failing
+        that, Notepad on Windows or xdg-open elsewhere. A machine that has
+        neither gets a warning, never a window that goes down with it.
+        """
+        log.debug("Opening %s in the default editor.", path)
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["notepad.exe", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except OSError:
+            report_problem(
+                self,
+                f"This machine has no application set up to open {path}",
+                severity=ErrorSeverity.WARNING,
+                operation=operation,
+            )
 
     def ask_user(self, request: UserPromptRequest) -> None:
         self.center.show_prompt(

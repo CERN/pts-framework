@@ -69,6 +69,39 @@ def load_python_module(module_ref: str, base_dir: str) -> ModuleType:
     for the file (old_code/steps.py __load_module) - a heuristic with a bare
     except at its heart. Here the recipe says where its code is.
     """
+    path = _module_file_beside(module_ref, base_dir)
+    if path is not None:
+        if path in _loaded_modules:
+            return _loaded_modules[path]
+        spec = importlib.util.spec_from_file_location(f"pypts_recipe_module_{path.stem}", path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Cannot load a module from '{path}'")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _loaded_modules[path] = module
+        return module
+
+    if not module_ref.endswith(".py"):
+        try:
+            return importlib.import_module(module_ref)
+        except ImportError as error:
+            raise ImportError(
+                f"Module '{module_ref}' is neither a file next to the recipe "
+                f"(looked in '{base_dir or '.'}') nor an importable name: {error}"
+            ) from error
+    raise ImportError(
+        f"Module file '{module_ref}' not found next to the recipe (looked in "
+        f"'{base_dir or '.'}')"
+    )
+
+
+def _module_file_beside(module_ref: str, base_dir: str) -> Path | None:
+    """
+    The file a `module:` value names - beside the recipe, or absolute - resolved.
+
+    None when there is no such file, which for load_python_module() means the
+    value is a dotted import name instead.
+    """
     candidates = []
     reference = Path(module_ref)
     if reference.is_absolute():
@@ -83,31 +116,39 @@ def load_python_module(module_ref: str, base_dir: str) -> ModuleType:
 
     for candidate in candidates:
         if candidate.is_file():
-            path = candidate.resolve()
-            if path in _loaded_modules:
-                return _loaded_modules[path]
-            spec = importlib.util.spec_from_file_location(
-                f"pypts_recipe_module_{candidate.stem}", path
-            )
-            if spec is None or spec.loader is None:
-                raise ImportError(f"Cannot load a module from '{candidate}'")
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            _loaded_modules[path] = module
-            return module
+            return candidate.resolve()
+    return None
 
-    if not module_ref.endswith(".py"):
-        try:
-            return importlib.import_module(module_ref)
-        except ImportError as error:
-            raise ImportError(
-                f"Module '{module_ref}' is neither a file next to the recipe "
-                f"(looked in '{base_dir or '.'}') nor an importable name: {error}"
-            ) from error
-    raise ImportError(
-        f"Module file '{module_ref}' not found next to the recipe (looked in "
-        f"'{base_dir or '.'}')"
-    )
+
+def find_module_file(module_ref: str, base_dir: str) -> Path | None:
+    """
+    The source file a `module:` value would run, found without running it.
+
+    The same two spellings, in the same order, as load_python_module() - so the
+    GUI's "Open Python file" opens the file a run would use. A dotted name is
+    looked up with `importlib.util.find_spec`, which does not execute the
+    module itself; for `pkg.sub` Python does import `pkg` to find `sub`.
+
+    None when there is nothing to open: no such file or module, or a module
+    with no source file of its own (a built-in, a compiled extension). This is
+    a convenience lookup, so it never raises.
+    """
+    path = _module_file_beside(module_ref, base_dir)
+    if path is not None:
+        return path
+    if module_ref.endswith(".py"):
+        return None
+    try:
+        spec = importlib.util.find_spec(module_ref)
+    except Exception as error:  # noqa: BLE001 - a parent package's import may raise anything
+        log.debug("No source file found for module '%s': %s", module_ref, error)
+        return None
+    if spec is None or not spec.has_location or spec.origin is None:
+        return None
+    origin = Path(spec.origin)
+    if origin.suffix != ".py" or not origin.is_file():
+        return None
+    return origin
 
 
 class PythonModuleStep(Step):

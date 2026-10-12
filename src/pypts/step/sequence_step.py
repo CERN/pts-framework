@@ -96,6 +96,7 @@ class SequenceStep(Step):
         description: str = "",
         skip: bool = False,
         continue_on_error: bool = True,
+        image_path: str | None = None,
     ) -> None:
         if not description:
             description = sequence.description
@@ -104,6 +105,7 @@ class SequenceStep(Step):
             description=description,
             skip=skip,
             continue_on_error=continue_on_error,
+            image_path=image_path,
         )
         #: As the recipe wrote it; `name` is the called sequence's own spelling.
         self.sequence_name = sequence_name

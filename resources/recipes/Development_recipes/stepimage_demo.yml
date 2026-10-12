@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The picture showcase - `image_path` on a step and on a sequence, and what the
+# GUI's right column shows when there is none.
+#
+# Any step, of any type, and any sequence may name a picture, relative to this
+# recipe's folder. The GUI shows it while that step (or sequence) runs and takes
+# it away when the step ends. A step without one shows its sequence's; with no
+# picture anywhere the column shows the run card - the step running, the
+# elapsed time, the verdicts so far, the last failure.
+#
+# Watch the right column in the GUI:
+#   1. "Run card"          no picture anywhere -> the run card
+#   2. "Step picture"      its own picture (the CERN logo artwork)
+#   3. "Front panel"       a called sequence with a picture; its two steps have
+#                          none, so they show the sequence's
+#   4. "Missing picture"   names a file that is not there, on purpose: the recipe
+#                          still loads (you are told once which picture is
+#                          missing) and "No image available" is shown instead
+#
+# Runs headless too - only Wait steps; headless ignores the pictures:
+#   python -m pypts --mode headless --recipe resources/recipes/Development_recipes/stepimage_demo.yml
+name: Picture demo
+description: Pictures on steps and sequences, and the run card in between.
+version: 0.2
+report_metadata: []
+---
+sequence_name: Main
+description: Four steps, four things the right column can show.
+steps:
+  - steptype: Wait
+    step_name: Run card
+    description: No picture here or on Main, so the run card shows.
+    wait_time: 3
+  - steptype: Wait
+    step_name: Step picture
+    description: This step names its own picture.
+    image_path: ../../images/CERN_Logo.png
+    wait_time: 3
+  - steptype: Sequence
+    sequence_name: Front panel
+  - steptype: Wait
+    step_name: Missing picture
+    description: Names a file that is not there - "No image available".
+    image_path: not_there_on_purpose.png
+    wait_time: 3
+---
+sequence_name: Front panel
+description: Its steps have no picture, so they show this sequence's.
+image_path: ../../images/Front_Panel_Test.jpg
+steps:
+  - steptype: Wait
+    step_name: Check the LEDs
+    description: Shows the sequence's picture.
+    wait_time: 3
+  - steptype: Wait
+    step_name: Check the switches
+    description: Shows the sequence's picture too.
+    wait_time: 3

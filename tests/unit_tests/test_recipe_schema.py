@@ -16,12 +16,17 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from pypts.recipe.recipe_schema import (
+    OUTPUT_SCHEMAS,
+    OUTPUT_TYPES,
+    REMOVED_SEQUENCE_KEYS,
+    RENAMED_STEP_TYPES,
     STEP_REQUIRED,
     STEP_SCHEMAS,
     STEP_TYPE_REQUIRED,
     UNNAMED_STEP_TYPES,
     HeaderSchema,
     IndexedStepSchema,
+    ParameterSet,
     PythonModuleStepSchema,
     SequenceSchema,
     SequenceStepSchema,
@@ -535,3 +540,60 @@ def test_exclude_unset_dump_keeps_the_text_a_number_was_read_as():
     raw = {"sequence_name": "Main", "steps": [_wait(step_name=7)]}
     dumped = SequenceSchema.model_validate(raw).model_dump(exclude_unset=True)
     assert dumped["steps"][0]["step_name"] == "7"
+
+
+# -- the author-facing text on every field -----------------------------------------
+#
+# The wording a recipe author reads - the Recipe Creator's hints, later its form -
+# lives on the fields themselves. A new field without it fails here, naming itself.
+
+_TAG_FIELDS = ("steptype", "type")
+
+
+def _author_models() -> list[type[BaseModel]]:
+    models: list[type[BaseModel]] = [HeaderSchema, SequenceSchema, ParameterSet]
+    models.extend(STEP_SCHEMAS.values())
+    models.extend(OUTPUT_SCHEMAS.values())
+    return models
+
+
+def _author_fields() -> list[tuple[str, str, Any]]:
+    """(model name, field name, FieldInfo) for every field an author can write."""
+    found = []
+    for model in _author_models():
+        for name, field in model.model_fields.items():
+            # A field typed None is declared only to be refused with its reason.
+            if field.annotation is type(None):
+                continue
+            found.append((model.__name__, name, field))
+    return found
+
+
+def test_every_author_field_is_described():
+    undescribed = []
+    for model_name, name, field in _author_fields():
+        if not (field.description or "").strip():
+            undescribed.append(f"{model_name}.{name}")
+    assert undescribed == []
+
+
+def test_every_required_field_has_an_example():
+    missing = []
+    for model_name, name, field in _author_fields():
+        if name in _TAG_FIELDS or not field.is_required():
+            continue
+        if not field.examples:
+            missing.append(f"{model_name}.{name}")
+    assert missing == []
+
+
+def test_output_schemas_cover_every_output_type():
+    assert sorted(OUTPUT_SCHEMAS) == sorted(OUTPUT_TYPES)
+
+
+def test_removed_sequence_keys_are_not_live_fields():
+    assert set(REMOVED_SEQUENCE_KEYS).isdisjoint(SequenceSchema.model_fields)
+
+
+def test_renamed_step_types_are_not_live_steptypes():
+    assert set(RENAMED_STEP_TYPES).isdisjoint(STEP_TYPE_REQUIRED)

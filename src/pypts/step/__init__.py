@@ -62,8 +62,8 @@ do with each key of the dict the step returned: judge it (`passfail`,
 `global`. A step
 that returns a non-dict has it wrapped as {"output": value}; None becomes
 {}. There is no type coercion anywhere - '45' is a string and 45 is an int.
-When several entries judge, the last one wins - kept from the old engine for
-parity; revisiting it is a roadmap TODO (F6).
+The verdict is PASS when every judging entry passed, FAIL when any did not,
+and DONE when the step has no judging entry; `pass` and `global` never touch it.
 
 Errors: a step failure must become a StepResult with ResultType.ERROR and
 the traceback, never a silent continue - `run()` is the one place that

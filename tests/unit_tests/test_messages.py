@@ -186,6 +186,7 @@ EXAMPLES = {
         recipe_version="1.2",
         pypts_version="0.2.2",
         metadata_names=("serial_number",),
+        write_report=False,
     ),
     RunFinished: RunFinished(result=ResultType.PASS, outcomes=(AN_OUTCOME,)),
     RunPaused: RunPaused(step_name="Measure voltage", position=4, total=10),
@@ -227,7 +228,9 @@ EXAMPLES = {
     LoadRecipe: LoadRecipe(recipe_path="resources/recipes/example.yaml"),
     UnloadRecipe: UnloadRecipe(),
     RecipeUnloaded: RecipeUnloaded(),
-    StartSequence: StartSequence(sequence_name="Main"),
+    StartSequence: StartSequence(
+        sequence_name="Main", excluded_step_ids=(STEP_ID,), write_report=False
+    ),
     SetConfigParameter: SetConfigParameter(key="report.theme", value="dark"),
     ShutdownRequested: ShutdownRequested(),
     HmiStopped: HmiStopped(),
@@ -244,7 +247,9 @@ EXAMPLES = {
         reason="Configuration key 'gui.window_width' is 'wide'; a whole number is required.",
     ),
     # core_sequencer_communication
-    RunSequence: RunSequence(recipe=A_RECIPE, sequence_name="Main"),
+    RunSequence: RunSequence(
+        recipe=A_RECIPE, sequence_name="Main", excluded_step_ids=(STEP_ID,), write_report=False
+    ),
     ForgetRecipe: ForgetRecipe(),
     StopSequence: StopSequence(),
     PauseSequence: PauseSequence(),

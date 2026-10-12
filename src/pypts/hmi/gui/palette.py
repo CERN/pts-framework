@@ -159,6 +159,10 @@ class Palette:
     button_hover: str
     selection_background: str
     selection_text: str
+    #: The step table's engineering-mode selection: the rows Space will run.
+    #: Stronger than `header_background`, which the YAML click panel's
+    #: highlight uses, so the two never read as the same thing.
+    engineering_selection: str
 
     # The stop button, and anything else that has to look like a refusal.
     danger: str
@@ -256,6 +260,7 @@ LIGHT = Palette(
     button_hover="#c8d8f4",
     selection_background="#EEF5FF",
     selection_text="#1a1a2e",
+    engineering_selection="#C9DCFF",
     danger="#CC0000",
     danger_background="#FFEBEE",
     danger_border="#FFCDD2",
@@ -328,6 +333,7 @@ DARK = Palette(
     button_hover="#5c5c5c",
     selection_background="#1a2840",
     selection_text="#f0f0f0",
+    engineering_selection="#2E4D80",
     danger="#F28B82",
     danger_background="#3a1a1a",
     danger_border="#5a2a2a",

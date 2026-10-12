@@ -11,6 +11,7 @@ every member of both unions and fails if one stops being pickle-safe.
 """
 
 from dataclasses import dataclass
+from uuid import UUID
 
 from pypts.messages.common_messages import Heartbeat, ModuleError
 from pypts.messages.run_events import (
@@ -61,9 +62,18 @@ class UnloadRecipe:
 
 @dataclass
 class StartSequence:
-    """Run one named sequence of the loaded recipe."""
+    """
+    Run one named sequence of the loaded recipe.
+
+    The two optional fields are the GUI's engineering mode; every other sender
+    leaves the defaults. `excluded_step_ids` are steps to record SKIP instead
+    of running. `write_report` False runs without a report and without a run
+    folder - the run is logged in the session log.
+    """
 
     sequence_name: str
+    excluded_step_ids: tuple[UUID, ...] = ()
+    write_report: bool = True
 
 
 @dataclass

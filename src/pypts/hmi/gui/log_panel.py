@@ -58,13 +58,13 @@ class LogPanel(QPlainTextEdit):
             del self._lines[: len(self._lines) - self.maximumBlockCount()]
 
         cursor = self.textCursor()
-        cursor.movePosition(QTextCursor.End)
+        cursor.movePosition(QTextCursor.MoveOperation.End)
 
         level_found = next((lvl for lvl in self._LEVELS if line.upper().startswith(lvl)), None)
         if level_found:
             fmt_level = QTextCharFormat()
             fmt_level.setForeground(QColor(LOG_LEVEL_COLORS[level_found]))
-            fmt_level.setFontWeight(QFont.Medium)
+            fmt_level.setFontWeight(QFont.Weight.Medium)
             cursor.insertText(level_found, fmt_level)
 
             fmt_rest = QTextCharFormat()

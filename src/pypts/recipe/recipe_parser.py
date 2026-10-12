@@ -49,6 +49,7 @@ from pypts.recipe.recipe_schema import (
     SequenceSchema,
 )
 from pypts.step import indexed_step, sequence_step
+from pypts.step.operator_prompt import resolve_image_path
 from pypts.step.registry import build_step
 from pypts.step.step import Step
 
@@ -61,7 +62,79 @@ def load_recipe(path: str) -> Recipe:
         raise RecipeError(f"Cannot read recipe file '{path}': {error}") from error
     recipe = parse_recipe(text, file_name=Path(path).name)
     recipe.base_dir = str(Path(path).resolve().parent)
+    missing = resolve_images(recipe)
+    if missing:
+        recipe.load_notices = (*recipe.load_notices, _missing_images_notice(recipe, missing))
     return recipe
+
+
+def resolve_images(recipe: Recipe) -> list[str]:
+    """
+    Make every picture of the recipe absolute; the ones not on disk, listed.
+
+    Every sequence's `image_path` and every step's - teardown steps and the
+    copies inside called sequences included - is resolved against the
+    recipe's own folder (operator_prompt.resolve_image_path). A file that is
+    not there is **not** an error: it is logged as a WARNING, here, once per
+    place it is named, and the GUI shows its "No image available" placeholder
+    where the picture would be. A missing picture never stops a recipe.
+
+    Returns:
+        "<where>: <path as written>" for each picture that is not on disk.
+    """
+    missing: list[str] = []
+    for sequence in recipe.sequences.values():
+        _resolve_sequence_images(recipe, sequence, missing)
+    return missing
+
+
+def _resolve_sequence_images(recipe: Recipe, sequence: Sequence, missing: list[str]) -> None:
+    """One sequence's picture, its steps' pictures, and those of what it calls."""
+    sequence.image_path = _resolve_one_image(
+        recipe, f"Sequence '{sequence.name}'", sequence.image_path, missing
+    )
+    for step in sequence.steps + sequence.teardown_steps:
+        where = f"Sequence '{sequence.name}', step '{step.name}'"
+        step.image_path = _resolve_one_image(recipe, where, step.image_path, missing)
+        if isinstance(step, sequence_step.SequenceStep):
+            _resolve_sequence_images(recipe, step.sequence, missing)
+
+
+def _resolve_one_image(
+    recipe: Recipe, where: str, image_path: str | None, missing: list[str]
+) -> str | None:
+    """
+    One picture made absolute; a missing one warned about and listed - once,
+    though a called sequence is built again for every Sequence step that
+    calls it and so is met here more than once.
+    """
+    resolved = resolve_image_path(image_path, recipe.base_dir)
+    entry = f"{where}: {image_path}"
+    if resolved is not None and not Path(resolved).is_file() and entry not in missing:
+        log.warning(
+            "Recipe '%s': %s shows the picture '%s', which is not there. "
+            "A 'No image available' picture is shown in its place.",
+            recipe.file_name,
+            where,
+            image_path,
+        )
+        missing.append(entry)
+    return resolved
+
+
+def _missing_images_notice(recipe: Recipe, missing: list[str]) -> str:
+    """The one sentence the operator sees about every missing picture."""
+    if len(missing) == 1:
+        counted = "1 picture is missing, so 'No image available' is shown in its place"
+    else:
+        counted = (
+            f"{len(missing)} pictures are missing, so 'No image available' is shown "
+            f"in their place"
+        )
+    return (
+        f"Recipe '{recipe.file_name}': {counted} - {'; '.join(missing)}. The recipe "
+        f"was loaded and runs normally."
+    )
 
 
 def parse_recipe(text: str, file_name: str = "", check_version: bool = True) -> Recipe:
@@ -71,16 +144,16 @@ def parse_recipe(text: str, file_name: str = "", check_version: bool = True) -> 
     `check_version=False` is for a tool that only asks whether a recipe would
     load - the Recipe Creator's verificator, on every edit. The version check
     is part of really loading one: it logs for the technician and sets the
-    operator's notice, so it is skipped and `version_notice` stays empty.
+    operator's notice, so it is skipped and `load_notices` stays empty.
     """
     try:
-        documents = list(yaml.safe_load_all(text))
+        loaded_documents = list(yaml.safe_load_all(text))
     except yaml.YAMLError as error:
         raise RecipeError(f"Recipe '{file_name}' is not valid YAML: {error}") from error
-    if not documents or documents[0] is None:
+    if not loaded_documents or loaded_documents[0] is None:
         raise RecipeError(f"Recipe '{file_name}' is empty")
 
-    header = documents[0]
+    header = loaded_documents[0]
     if not isinstance(header, dict):
         raise RecipeError(f"Recipe '{file_name}': the first document is not a mapping")
 
@@ -92,7 +165,7 @@ def parse_recipe(text: str, file_name: str = "", check_version: bool = True) -> 
     header_problems, header_schema = validate_document(header, HeaderSchema, "header")
     problems = [str(problem) for problem in header_problems]
     sequence_schemas = []
-    for number, document in enumerate(documents[1:], start=2):
+    for number, document in enumerate(loaded_documents[1:], start=2):
         if not isinstance(document, dict):
             problems.append(f"document {number} is not a mapping")
             continue
@@ -115,9 +188,11 @@ def parse_recipe(text: str, file_name: str = "", check_version: bool = True) -> 
         if sequence_schema is not None:
             sequence_documents.append(sequence_schema.model_dump(exclude_unset=True))
 
-    version_notice = ""
+    load_notices: tuple[str, ...] = ()
     if check_version:
         version_notice = _check_framework_version(header, file_name)
+        if version_notice:
+            load_notices = (version_notice,)
 
     # Sequence names keep their case but must be unique without it, so a
     # case-insensitive lookup - main_sequence, or a Sequence step's
@@ -156,7 +231,7 @@ def parse_recipe(text: str, file_name: str = "", check_version: bool = True) -> 
         globals=header["globals"],
         main_sequence=main_sequence,
         report_metadata=tuple(header["report_metadata"]),
-        version_notice=version_notice,
+        load_notices=load_notices,
         sequences=sequences,
         file_name=file_name,
     )
@@ -542,6 +617,7 @@ def _build_sequence(
         description=document["description"],
         steps=steps,
         teardown_steps=teardown_steps,
+        image_path=document["image_path"],
     )
 
 

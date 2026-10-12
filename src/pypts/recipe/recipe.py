@@ -41,11 +41,15 @@ class Sequence:
         description: str,
         steps: list[Step],
         teardown_steps: list[Step],
+        image_path: str | None = None,
     ) -> None:
         self.name = name
         self.description = description
         self.steps = steps
         self.teardown_steps = teardown_steps
+        #: The picture the GUI shows while this sequence runs, for every step
+        #: that has none of its own. As written until load_recipe() resolves it.
+        self.image_path = image_path
 
     def __repr__(self) -> str:
         return f"Sequence({self.name!r}, {len(self.steps)} steps)"
@@ -57,7 +61,11 @@ class Sequence:
         a run - which includes the teardown steps, at the end, and every step
         of every sequence it calls, right after the row of the call.
         """
-        return SequenceSummary(sequence_name=self.name, steps=tuple(self.summary_rows(0)))
+        return SequenceSummary(
+            sequence_name=self.name,
+            steps=tuple(self.summary_rows(0)),
+            image_path=self.image_path,
+        )
 
     def summary_rows(self, depth: int) -> list[StepSummary]:
         """This sequence's rows at `depth`, each call followed by its own rows."""
@@ -71,6 +79,7 @@ class Sequence:
                     description=step.description,
                     depth=depth,
                     is_group=is_group,
+                    image_path=step.image_path,
                 )
             )
             if isinstance(step, SequenceStep):
@@ -90,7 +99,7 @@ class Recipe:
         main_sequence: str,
         sequences: dict[str, Sequence],
         report_metadata: tuple[str, ...] = (),
-        version_notice: str = "",
+        load_notices: tuple[str, ...] = (),
         file_name: str = "",
         base_dir: str = "",
     ) -> None:
@@ -103,11 +112,12 @@ class Recipe:
         #: The globals the Report stamps on every row and in the report
         #: header. The recipe names them; the framework only carries them.
         self.report_metadata = report_metadata
-        #: Empty when the recipe's `version` matches the running pypts.
-        #: Otherwise the sentence the operator should see: the parser
-        #: knows the format, CORE owns the channel to the frontend, so
-        #: the text is written here and reported there.
-        self.version_notice = version_notice
+        #: The sentences the operator should see once the recipe has loaded,
+        #: none when all is well: a `version` that is not the running pypts',
+        #: pictures that are not on disk. The parser knows the format, CORE
+        #: owns the channel to the frontend, so the text is written here and
+        #: reported there. Never a reason not to load.
+        self.load_notices = load_notices
         self.file_name = file_name
         #: The folder the file came from - what a PythonModule step's relative
         #: `module:` path resolves against. Empty for a recipe parsed from text.

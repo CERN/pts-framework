@@ -1,6 +1,8 @@
 todo: 
 
 - Fix the recipe verification tool - in progress
+    -> 2026-10-12: hints now worded by the schema's field descriptions (status 1.61);
+       verdicts were already Pydantic (1.53). Item left open for you to close.
 - Then make proper recipe creation tool - in progress
 
 - XY graph integration
@@ -8,7 +10,7 @@ todo:
 - How to properly deploy it?
 [x] SSH steps - create the HAL layer, move the SSH there
     -> done 2026-10-08: pypts/hal/ - devices by logical name, one driver process each,
-       SshDriver; status 1.54. Recipe-level `devices:` is a TODO there.
+       SshDriver; status 1.54.
 
 
 - Make it possible to run the sequence inside of the sequence. The main should be the only one to execute, while it should be able nest sequences.
@@ -20,8 +22,11 @@ Eventually, it can flatten at loading. Idk how we do with indexed step - u tell
 
 - Is our project running the python 3.12? 
 
-how to decide what widget to load?
+[x] how to decide what widget to load?
 based on the recipe definition
+    -> done 2026-10-12 for pictures: optional `image_path` on any step and sequence,
+       a run card when there is none; status 1.62. Text instructions, on_fail hints
+       and a plot slot are TODOs there.
 
 [x] Move the yaml recipe schema to the pydantic framework?
 rules are already in recipe_parser.py on master branch

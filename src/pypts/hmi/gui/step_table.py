@@ -24,14 +24,33 @@ fold away under it. Nothing is removed: a folded row is only hidden, so every
 update that finds its row by step id still finds it. Groups start folded; a click
 on a group's name, or a double-click anywhere on its row, folds or unfolds it,
 and the table's right-click menu expands or collapses them all.
+
+**The right-click menu** also opens files in the machine's default editor:
+"Open recipe in text editor" - the loaded recipe - and "Open Python file" - the
+`StepSource.python_file` of the row under the pointer, greyed out when the row
+has none. The table only asks (`open_recipe_requested`,
+`open_python_file_requested`); the window, which knows the recipe's path and
+reports what cannot be opened, does the opening. Both work during a run too.
+
+**Engineering mode** (Edit -> Engineering Mode, `set_engineering_mode()`) turns
+the table into a picker, and the click panel off. A click selects rows - Ctrl
+adds or removes one, Shift a range - painted in the palette's
+`engineering_selection`; `retest_exclusions()` is what Space then leaves out.
+Every name cell grows a tick box; an unticked row is greyed and
+`left_out_exclusions()` is what Start then leaves out. A group row acts for
+everything under it, a group is folded by double-click only, and both
+selection and ticks are frozen while a run is in progress. Nothing of it
+outlives the rows: a new sequence shown, the table cleared, or the mode
+switched off, starts from every row ticked and none selected.
 """
 
 from uuid import UUID
 
-from PySide6.QtCore import QPoint, QRect, Qt, QTimer
-from PySide6.QtGui import QColor, QCursor
+from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
+from PySide6.QtGui import QBrush, QColor, QCursor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QHeaderView,
     QMenu,
     QTableWidget,
@@ -73,6 +92,10 @@ _GROUP_ROLE = Qt.ItemDataRole.UserRole + 3
 _EXPANDED_ROLE = Qt.ItemDataRole.UserRole + 4
 #: The step's own name, without the indentation and the arrow the cell shows.
 _NAME_ROLE = Qt.ItemDataRole.UserRole + 5
+#: Engineering mode: whether the row is ticked, as last settled by this widget.
+#: Kept beside Qt's own check state so a change of it can be told apart from
+#: every other itemChanged the cell emits (a background, a font).
+_TICK_ROLE = Qt.ItemDataRole.UserRole + 6
 
 #: What a group's name starts with, folded and unfolded.
 _FOLDED_ARROW = "\u25b8"
@@ -112,6 +135,20 @@ def _name_text(name: str, depth: int, is_group: bool, expanded: bool) -> str:
     return f"{prefix}{arrow} {name}"
 
 
+def _set_brush_if_changed(item: QTableWidgetItem, role: Qt.ItemDataRole, color: str | None) -> None:
+    """Set a cell's colour role to `color` (None: the table's own), unless it already is."""
+    current = item.data(role)
+    current_name = None
+    if isinstance(current, QBrush):
+        current_name = current.color().name().lower()
+    if color is None:
+        if current is not None:
+            item.setData(role, None)
+        return
+    if current_name != QColor(color).name().lower():
+        item.setData(role, QBrush(QColor(color)))
+
+
 def read_only(item: QTableWidgetItem) -> QTableWidgetItem:
     item.setFlags(item.flags() ^ Qt.ItemFlag.ItemIsEditable)
     return item
@@ -125,6 +162,11 @@ class StepTableContent(QWidget):
     in it gets the room. Rows are sized to their contents, so a description that
     wraps onto three lines gets a row three lines tall instead of being clipped.
     """
+
+    #: Right-click "Open recipe in text editor".
+    open_recipe_requested = Signal()
+    #: Right-click "Open Python file", with the row's `StepSource.python_file`.
+    open_python_file_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -178,7 +220,7 @@ class StepTableContent(QWidget):
         self.table.cellClicked.connect(self._clicked_cell)
         self.table.cellDoubleClicked.connect(self._double_clicked_cell)
 
-        # Expand all / Collapse all.
+        # Open recipe / Open Python file, Expand all / Collapse all.
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self._show_context_menu)
         self._pointer_timer = QTimer(self)
@@ -191,6 +233,17 @@ class StepTableContent(QWidget):
         # Where the click was, in global coordinates: one end of the corridor
         # the pointer may cross to reach the panel.
         self._clicked_at = QPoint()
+
+        # Engineering mode. The selected rows, and the row a Shift-click
+        # extends a range from (-1 for none).
+        self._engineering = False
+        self._selected_rows: set[int] = set()
+        self._anchor_row = -1
+        # Set by a tick box changing, read by the click that changed it: Qt
+        # emits itemChanged and then cellClicked for the same release, and a
+        # click on a tick box must not also move the selection.
+        self._tick_just_changed = False
+        self.table.itemChanged.connect(self._item_changed)
 
     # --- Filling ---------------------------------------------------------------
 
@@ -228,6 +281,12 @@ class StepTableContent(QWidget):
         # Every group starts folded.
         self._apply_folding()
 
+        # New rows: nothing selected, everything ticked.
+        self._selected_rows = set()
+        self._anchor_row = -1
+        if self._engineering:
+            self._add_tick_boxes()
+
         # ResizeToContents keeps the heights right from here on; this one call
         # is for right now, before the table has been laid out and while the
         # stretch column still has its pre-layout width.
@@ -237,6 +296,8 @@ class StepTableContent(QWidget):
         """No rows at all - the recipe was unloaded."""
         self.hide_yaml_popup()
         self.table.setRowCount(0)
+        self._selected_rows = set()
+        self._anchor_row = -1
 
     # --- Folding ---------------------------------------------------------------
 
@@ -324,12 +385,44 @@ class StepTableContent(QWidget):
         return row
 
     def _show_context_menu(self, position: QPoint) -> None:
+        menu = self._build_context_menu(self.table.rowAt(position.y()))
+        menu.exec(self.table.viewport().mapToGlobal(position))
+
+    def _build_context_menu(self, row: int) -> QMenu:
+        """The right-click menu for `row`, -1 when the click was below the rows."""
         menu = QMenu(self.table)
+        open_recipe = menu.addAction("Open recipe in text editor")
+        open_recipe.setEnabled(self.table.rowCount() > 0)
+        open_recipe.triggered.connect(lambda _checked=False: self.open_recipe_requested.emit())
+
+        python_file = self._python_file(row)
+        open_python = menu.addAction("Open Python file")
+        open_python.setEnabled(bool(python_file))
+        if python_file:
+            open_python.setToolTip(python_file)
+            open_python.triggered.connect(
+                lambda _checked=False: self.open_python_file_requested.emit(python_file)
+            )
+        menu.setToolTipsVisible(True)
+
+        menu.addSeparator()
         expand = menu.addAction("Expand all")
         collapse = menu.addAction("Collapse all")
         expand.triggered.connect(lambda _checked=False: self.expand_all())
         collapse.triggered.connect(lambda _checked=False: self.collapse_all())
-        menu.exec(self.table.viewport().mapToGlobal(position))
+        return menu
+
+    def _python_file(self, row: int) -> str:
+        """The row's `StepSource.python_file`; "" for no row, or a row without one."""
+        if row < 0:
+            return ""
+        item = self.table.item(row, 0)
+        if item is None:
+            return ""
+        source = item.data(_YAML_ROLE)
+        if not isinstance(source, StepSource):
+            return ""
+        return source.python_file
 
     def reset_to_pending(self) -> None:
         """Back to 'Pending' everywhere - a re-run starts from a clean table."""
@@ -350,6 +443,9 @@ class StepTableContent(QWidget):
         self._running = running
         if running:
             self.hide_yaml_popup()
+        if self._engineering:
+            # Frozen, not cleared: the same selection is there to run again.
+            self._set_tick_boxes_enabled(not running)
 
     def hide_yaml_popup(self) -> None:
         """Close the panel and drop the row highlight - they are one gesture."""
@@ -367,6 +463,9 @@ class StepTableContent(QWidget):
         which is also how the operator dismisses the panel without leaving the
         table.
         """
+        if self._engineering:
+            self._engineering_click(row)
+            return
         if column == 0 and self.is_group_row(row):
             # A group's name is its fold control - during a run too.
             self.hide_yaml_popup()
@@ -415,8 +514,13 @@ class StepTableContent(QWidget):
         the click has already toggled the group, so the double-click adds nothing;
         on the description the click opened the panel, so this closes it and
         toggles.
+
+        In engineering mode a click selects, so the double-click is the only
+        fold control, on every column.
         """
-        if column == 0 or not self.is_group_row(row):
+        if not self.is_group_row(row):
+            return
+        if column == 0 and not self._engineering:
             return
         self.hide_yaml_popup()
         self.toggle_row(row)
@@ -495,6 +599,299 @@ class StepTableContent(QWidget):
                 item.setData(Qt.ItemDataRole.BackgroundRole, None)
         self._active_row = -1
 
+    # --- Engineering mode ------------------------------------------------------
+
+    @property
+    def engineering_mode(self) -> bool:
+        return self._engineering
+
+    def set_engineering_mode(self, on: bool) -> None:
+        """
+        Switch the picker on or off. Either way it starts clean.
+
+        On: the click panel closes and stays off, every name cell gets a ticked
+        tick box. Off: tick boxes, grey and selection are all removed, and the
+        table is the ordinary one again.
+        """
+        if on == self._engineering:
+            return
+        self.hide_yaml_popup()
+        self._selected_rows = set()
+        self._anchor_row = -1
+        self._engineering = on
+        if on:
+            self._add_tick_boxes()
+        else:
+            self._remove_tick_boxes()
+        log.debug("Step table engineering mode: %s.", on)
+
+    def retest_exclusions(self) -> tuple[UUID, ...] | None:
+        """
+        What Space leaves out: every row that is not to run, in row order.
+
+        A step runs when it is selected and ticked. A group runs when anything
+        under it runs - it is the way in - or, with nothing under it, when it
+        is selected and ticked itself. None when nothing would run at all.
+        """
+        row_count = self.table.rowCount()
+        runs = [False] * row_count
+        # Bottom-up, so a group's verdict can read its rows' verdicts.
+        for row in range(row_count - 1, -1, -1):
+            chosen = row in self._selected_rows and self._is_ticked(row)
+            descendants = self._descendant_rows(row)
+            if descendants:
+                runs[row] = any(runs[child] for child in descendants)
+            else:
+                runs[row] = chosen
+        if not any(runs):
+            return None
+        excluded = []
+        for row in range(row_count):
+            if not runs[row]:
+                excluded.append(self._row_step_id(row))
+        return tuple(excluded)
+
+    def left_out_exclusions(self) -> tuple[UUID, ...]:
+        """What Start leaves out: every unticked row, in row order. () outside the mode."""
+        if not self._engineering:
+            return ()
+        excluded = []
+        for row in range(self.table.rowCount()):
+            if not self._is_ticked(row):
+                excluded.append(self._row_step_id(row))
+        return tuple(excluded)
+
+    def selected_rows(self) -> list[int]:
+        return sorted(self._selected_rows)
+
+    def is_ticked(self, row: int) -> bool:
+        return self._is_ticked(row)
+
+    def set_ticked(self, row: int, ticked: bool) -> None:
+        """Tick or untick one row as a click on its box would - cascade included."""
+        item = self.table.item(row, 0)
+        if item is None or not self._engineering:
+            return
+        state = Qt.CheckState.Unchecked
+        if ticked:
+            state = Qt.CheckState.Checked
+        item.setCheckState(state)
+        # Not a click on the box, so no click is coming to be swallowed.
+        self._tick_just_changed = False
+
+    def _engineering_click(
+        self, row: int, modifiers: Qt.KeyboardModifier | None = None
+    ) -> None:
+        """
+        One click in engineering mode: the selection, never the panel.
+
+        Plain click: this row alone. Ctrl: this row in or out. Shift: every
+        showing row from the last plain or Ctrl click to this one. A group row
+        takes everything under it along. `modifiers` is read off the keyboard
+        when not given - a test gives it.
+        """
+        if self._tick_just_changed:
+            # The click landed on a tick box; _item_changed() has dealt with it.
+            self._tick_just_changed = False
+            return
+        if self._running:
+            log.debug("Step table click on row %d: the selection is frozen during a run.", row)
+            return
+        if modifiers is None:
+            modifiers = QApplication.keyboardModifiers()
+        if modifiers & Qt.KeyboardModifier.ShiftModifier and self._anchor_row >= 0:
+            first = min(self._anchor_row, row)
+            last = max(self._anchor_row, row)
+            chosen: set[int] = set()
+            for in_range in range(first, last + 1):
+                if not self.table.isRowHidden(in_range):
+                    chosen.add(in_range)
+                    chosen.update(self._descendant_rows(in_range))
+            self._selected_rows = chosen
+        elif modifiers & Qt.KeyboardModifier.ControlModifier:
+            rows = {row}
+            rows.update(self._descendant_rows(row))
+            if row in self._selected_rows:
+                self._selected_rows -= rows
+            else:
+                self._selected_rows |= rows
+            self._anchor_row = row
+        else:
+            self._selected_rows = {row}
+            self._selected_rows.update(self._descendant_rows(row))
+            self._anchor_row = row
+        for any_row in range(self.table.rowCount()):
+            self._paint_engineering_row(any_row)
+        # One full repaint, so no cell is left showing the old tint.
+        self.table.viewport().update()
+        log.debug("Step table selection: %d rows.", len(self._selected_rows))
+
+    def _item_changed(self, item: QTableWidgetItem) -> None:
+        """
+        A tick box was clicked: cascade it and repaint.
+
+        Unticking a row unticks everything under it; ticking one ticks
+        everything under it and every group above it, so a ticked step is never
+        hidden inside an unticked group. Every other itemChanged - a background,
+        a font - is told apart by _TICK_ROLE and ignored.
+        """
+        if not self._engineering or item.column() != 0:
+            return
+        if item.data(Qt.ItemDataRole.CheckStateRole) is None:
+            return
+        ticked = item.checkState() == Qt.CheckState.Checked
+        if ticked == bool(item.data(_TICK_ROLE)):
+            return
+        self._tick_just_changed = True
+        # The click that caused this, if any, is handled before the event loop
+        # turns again; a tick changed from the keyboard has no click to follow.
+        QTimer.singleShot(0, self._forget_tick_change)
+        row = item.row()
+        rows = [row]
+        rows.extend(self._descendant_rows(row))
+        if ticked:
+            rows.extend(self._ancestor_rows(row))
+        self.table.blockSignals(True)
+        try:
+            for changed in rows:
+                self._store_tick(changed, ticked)
+        finally:
+            self.table.blockSignals(False)
+        word = "unticked"
+        if ticked:
+            word = "ticked"
+        log.debug("Step table row %d %s, with %d more.", row, word, len(rows) - 1)
+
+    def _forget_tick_change(self) -> None:
+        self._tick_just_changed = False
+
+    def _add_tick_boxes(self) -> None:
+        self.table.blockSignals(True)
+        try:
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item is None:
+                    continue
+                if not self._running:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                self._store_tick(row, True)
+        finally:
+            self.table.blockSignals(False)
+
+    def _remove_tick_boxes(self) -> None:
+        self.table.blockSignals(True)
+        try:
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item is None:
+                    continue
+                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+                # No check state at all is what makes Qt stop drawing the box.
+                item.setData(Qt.ItemDataRole.CheckStateRole, None)
+                item.setData(_TICK_ROLE, None)
+                self._paint_engineering_row(row)
+        finally:
+            self.table.blockSignals(False)
+
+    def _set_tick_boxes_enabled(self, enabled: bool) -> None:
+        self.table.blockSignals(True)
+        try:
+            for row in range(self.table.rowCount()):
+                item = self.table.item(row, 0)
+                if item is None:
+                    continue
+                if enabled:
+                    item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                else:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsUserCheckable)
+        finally:
+            self.table.blockSignals(False)
+
+    def _store_tick(self, row: int, ticked: bool) -> None:
+        """Qt's check state and _TICK_ROLE, set together, then the row repainted."""
+        item = self.table.item(row, 0)
+        if item is None:
+            return
+        state = Qt.CheckState.Unchecked
+        if ticked:
+            state = Qt.CheckState.Checked
+        item.setCheckState(state)
+        item.setData(_TICK_ROLE, ticked)
+        self._paint_engineering_row(row)
+
+    def _is_ticked(self, row: int) -> bool:
+        """Outside engineering mode every row counts as ticked."""
+        item = self.table.item(row, 0)
+        if item is None or item.data(_TICK_ROLE) is None:
+            return True
+        return bool(item.data(_TICK_ROLE))
+
+    def _paint_engineering_row(self, row: int) -> None:
+        """
+        Name and description: the selection tint and the grey of an unticked row.
+
+        The Result cell is left alone, as by the click highlight - its
+        background is the verdict chip. Outside engineering mode this puts the
+        two cells back to the table's own painting.
+
+        Colours only: the text itself - font, wording - never changes, so a
+        row keeps its exact size and place. Only what differs is written,
+        because every write is a dataChanged and the rows are sized to their
+        contents.
+        """
+        selected = self._engineering and row in self._selected_rows
+        greyed = self._engineering and not self._is_ticked(row)
+        palette = get_palette(self._dark)
+        background = None
+        if selected:
+            background = palette.engineering_selection
+        foreground = None
+        if greyed:
+            foreground = palette.text_muted
+        for column in _POPUP_COLUMNS:
+            item = self.table.item(row, column)
+            if item is None:
+                continue
+            _set_brush_if_changed(item, Qt.ItemDataRole.BackgroundRole, background)
+            _set_brush_if_changed(item, Qt.ItemDataRole.ForegroundRole, foreground)
+
+    def _descendant_rows(self, row: int) -> list[int]:
+        """Every row under a group - the following rows that are deeper. [] for a step."""
+        if not self.is_group_row(row):
+            return []
+        depth = self._row_depth(row)
+        rows = []
+        for below in range(row + 1, self.table.rowCount()):
+            if self._row_depth(below) <= depth:
+                break
+            rows.append(below)
+        return rows
+
+    def _ancestor_rows(self, row: int) -> list[int]:
+        """Every group this row sits inside, nearest first."""
+        depth = self._row_depth(row)
+        rows = []
+        for above in range(row - 1, -1, -1):
+            if depth == 0:
+                break
+            above_depth = self._row_depth(above)
+            if above_depth < depth:
+                rows.append(above)
+                depth = above_depth
+        return rows
+
+    def _row_depth(self, row: int) -> int:
+        item = self.table.item(row, 0)
+        if item is None:
+            return 0
+        return int(item.data(_DEPTH_ROLE) or 0)
+
+    def _row_step_id(self, row: int) -> UUID:
+        item = self.table.item(row, 0)
+        if item is None:
+            raise LookupError(f"Step table row {row} has no name cell.")
+        return UUID(str(item.data(Qt.ItemDataRole.UserRole)))
+
     # --- Updating, by step id --------------------------------------------------
 
     def mark_running(self, event: StepStarted) -> None:
@@ -508,10 +905,9 @@ class StepTableContent(QWidget):
         self.table.setItem(row, 2, item)
         # A step inside a folded group stays folded: the table follows the run to
         # the group row that is showing instead.
-        self.table.scrollToItem(
-            self.table.item(self._visible_row_for(row), 0),
-            QAbstractItemView.ScrollHint.EnsureVisible,
-        )
+        shown_item = self.table.item(self._visible_row_for(row), 0)
+        if shown_item is not None:
+            self.table.scrollToItem(shown_item, QAbstractItemView.ScrollHint.EnsureVisible)
 
     def show_outcome(self, outcome: StepOutcome) -> None:
         row = self._find_row(outcome.step_id)
@@ -547,6 +943,9 @@ class StepTableContent(QWidget):
         self.hide_yaml_popup()
         self._dark = dark
         self.yaml_popup.set_dark(dark)
+        if self._engineering:
+            for row in range(self.table.rowCount()):
+                self._paint_engineering_row(row)
         for row in range(self.table.rowCount()):
             cell = self.table.item(row, 2)
             if cell is None:

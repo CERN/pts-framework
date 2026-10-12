@@ -161,6 +161,14 @@ to unfold it and see its steps, indented under it; click again to fold it. Right
 table for <em>Expand all</em> / <em>Collapse all</em>. A folded group still gets its result
 during a run, and so do the steps inside it; nothing unfolds by itself.</p>
 
+<p><strong>Opening the files behind a step.</strong> Right-click a step in the table:
+<em>Open recipe in text editor</em> opens the loaded recipe file, and <em>Open Python file</em>
+opens the Python file that a <code>PythonModule</code> step runs (hover the entry to see its
+path). Each file opens in the program your computer uses for that file type (on Windows, Notepad if there is
+none), at the top of the file. <em>Open Python file</em> is greyed out on a step that doesn't run
+Python code, or whose file can't be found. Both work during a run too, but the run carries on
+with what was loaded: open the recipe again for your edits to take effect.</p>
+
 <h3>The toolbar</h3>
 <div class="wrap"><table>
   <tr><th>Button</th><th>Does</th></tr>
@@ -197,6 +205,19 @@ called sequence. Clicking a group's description shows the sequence it calls, who
 folds or unfolds it). The row goes pale blue while the panel is up. Move the mouse onto the
 panel to scroll it with the wheel; moving the mouse anywhere else closes it.</p>
 
+<h3>The picture on the right</h3>
+<p>Above the log, the right-hand panel shows what the recipe wants you to see while a step
+runs: a wiring diagram, where to put the probe, what the fixture should look like. The recipe
+decides the picture for each step, or for a whole sequence. A step's picture goes away when the
+step ends.</p>
+<p>When the running step has no picture, the panel shows a <strong>run card</strong>
+instead: the step that is running and what it does, how long the run and the step have taken
+(<em>Run 4:07 · Step 0:12</em>), the verdicts so far (<em>2 PASS · 1 FAIL</em>), and the
+last step that failed. When a question is waiting, the panel shows the question's own picture,
+or the CERN logo. Outside a run, it shows the CERN logo.</p>
+<p><strong>"No image available"</strong> means the recipe names a picture that isn't on disk.
+You are told which ones when the recipe loads; the run works normally.</p>
+
 <h3>Answering questions</h3>
 <p>A step can ask one of three things:</p>
 <ul>
@@ -214,14 +235,38 @@ the sequence continues with the next step.</p>
   <tr><th>Menu</th><th>Items</th></tr>
   <tr><td>File</td><td>Open Recipe · Open Recent (last 10 recipes that loaded) · Unload Recipe
       (the same as the × button) · Open Config
-      (opens <code>config.ini</code> in your editor) · Exit</td></tr>
+      (opens <code>config.ini</code> in your editor) · Restart (closes pypts and starts it again,
+      so your edits to <code>config.ini</code> take effect; the recipe is not reopened; greyed out
+      during a run) · Exit</td></tr>
   <tr><td>Edit</td><td><strong>Edit Recipe</strong> (opens the Recipe Creator, on the loaded
       recipe if there is one; save there, then open the recipe again here to run it) ·
+      <strong>Engineering Mode</strong> (see <em>Engineering mode</em> below; greyed out during a run) ·
       <strong>Settings</strong>: theme, window, folders, log level…; changes apply at the <em>next</em> start, except the theme and the window mode and size, which you try straight away — keep a window within 15 seconds or it goes back; Keep saves it. Save closes Settings once
 everything is saved, and only stays open to tell you about a setting that could not be saved. The <strong>Storage</strong> page shows the base folder and opens it in the file manager with <strong>Open</strong>; pypts never deletes reports or run logs, so remove what you no longer need there. <strong>Advanced → Clear recent recipes</strong> empties the Open Recent list straight away. <strong>Advanced → Restore default settings</strong> puts every setting back and restarts pypts; it does not work during a run.</td></tr>
   <tr><td>View</td><td><strong>Appearance</strong> (opens Settings on its Appearance page) · <strong>Full Screen</strong> (<kbd>F11</kbd>) for this session only — the window fills the screen but keeps its title bar</td></tr>
   <tr><td>About</td><td>Links to GitHub and the wiki</td></tr>
 </table></div>
+
+<h3>Engineering mode</h3>
+<p><em>Edit → Engineering Mode</em> lets you run part of a recipe. While it is on, the status
+bar says <strong>ENGINEERING MODE</strong>, a click in the step table picks rows instead of
+showing the step's YAML, and a group folds and unfolds by double-click. It lasts until you
+switch it off or close pypts; loading, unloading or switching the sequence starts your picks
+afresh.</p>
+<ul>
+  <li><strong>Quick retest — <kbd>Space</kbd>.</strong> Click a row to pick it,
+      <kbd>Ctrl</kbd>+click to add or remove one, <kbd>Shift</kbd>+click for a range; picking a
+      group picks everything in it. With the step table focused, <kbd>Space</kbd> runs only the
+      picked steps; all the others show <code>SKIP</code>, teardown steps included. A retest
+      writes <strong>no report and no run folder</strong> — its lines go to the session log. Your
+      picks stay after the run, so <kbd>Space</kbd> again repeats it.</li>
+  <li><strong>Leave steps out — the tick boxes.</strong> Each step gets a tick box; untick a step
+      (or a whole group) to grey it out. <strong>Start</strong> then runs as usual and writes the
+      report, with the unticked steps as <code>SKIP</code> rows, "Not run: left out in engineering
+      mode."</li>
+</ul>
+<p>A step that reads a value an unticked or unpicked step would have set comes back
+<code>ERROR</code>. Picks and ticks cannot be changed during a run.</p>
 
 <h2 id="cli">6. CLI mode</h2>
 <p>Start with <code>python -m pypts --mode cli</code>, then type commands at the
@@ -311,7 +356,8 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
 <ul>
   <li><strong>Report</strong>: each run gets one folder, <code>&lt;timestamp&gt;_&lt;recipe&gt;</code>,
       containing <code>report.csv</code> (written step by step), <code>report.html</code> and the
-      run's own log, <code>pypts_&lt;timestamp&gt;.log</code>, with every line of that run.</li>
+      run's own log, <code>pypts_&lt;timestamp&gt;.log</code>, with every line of that run. An
+      engineering-mode retest (<kbd>Space</kbd>) gets no folder; it is in the session log.</li>
   <li><strong>Session log</strong>: one file in the reports folder each time PyPTS starts, and a
       new one each time you unload the recipe. It holds everything outside the runs and names
       each run's log. Its first lines give the version, the user and the machine, which makes
@@ -349,7 +395,10 @@ def read_kernel():
       plain text: prefer <code>key_filename</code>. Keys named like a password are masked in the log lines PyPTS writes about configuration and device connections.</li>
   <li><strong>No hardware?</strong> <code>driver = pypts.hal.drivers.loopback.LoopbackDriver</code>
       answers with whatever it is sent; <code>resources/recipes/Development_recipes/hal_demo.yml</code>
-      uses it.</li>
+      uses it. For live readings with no instrument, <code>driver = pypts.hal.drivers.weather.OpenMeteoDriver</code>
+      is a weather station on the internet (keys <code>latitude</code>, <code>longitude</code>, <code>place</code>,
+      <code>http_timeout_s</code>; needs internet access); <code>resources/recipes/Development_recipes/meteo_demo.yml</code>
+      uses one.</li>
   <li><strong>Outside PyPTS</strong>: <code>with LocalSetup.from_ini("bench.ini"):</code> (from
       <code>pypts.hal</code>) makes <code>get_device()</code> work in a script of your own. Put that code under
       <code>if __name__ == "__main__":</code>: each device's process starts by re-reading your script.</li>
@@ -374,6 +423,9 @@ def read_kernel():
   <tr><td>"GUI mode needs PySide6…"</td><td>Install PySide6, or start with <code>--mode cli</code>.</td></tr>
   <tr><td>"pypts configuration discarded"</td><td>Your <code>config.ini</code> is broken or outdated.
       The run continues on defaults. Fix the file, or delete it.</td></tr>
+  <tr><td>"No image available" in the right-hand panel</td><td>The recipe names a picture that
+      isn't there. The message shown when the recipe loaded lists which ones. Put the files next
+      to the recipe (or fix the paths in it); the run itself is not affected.</td></tr>
   <tr><td>A recipe won't load</td><td>The error names the problem. Open the recipe in the Recipe Creator to
       see every issue at once.</td></tr>
   <tr><td>A step that asks a question ends <code>ERROR</code> in the CLI</td><td>That's expected, see

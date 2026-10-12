@@ -80,6 +80,26 @@ def load_cern_logo_pixmap(tint: str | None = None) -> QPixmap | None:
     return tint_pixmap(pixmap, tint)
 
 
+def load_no_image_pixmap(tint: str | None = None) -> QPixmap | None:
+    """
+    "No image available" - shown where a recipe names a picture that is not
+    there (gui.md §18). Public domain, from Wikimedia Commons; see the
+    `.license` file beside it.
+
+    Args:
+        tint: a colour to flatten the grey artwork to - `Palette.text_muted`,
+            so it reads on either theme.
+    """
+    pixmap = _load_package_pixmap(("images", "no_image_available.png"))
+    if pixmap is None:
+        gui_dir = Path(__file__).resolve().parent
+        pixmap = _load_filesystem_pixmap([gui_dir / "images" / "no_image_available.png"])
+
+    if pixmap is None or tint is None:
+        return pixmap
+    return tint_pixmap(pixmap, tint)
+
+
 def load_app_logo_pixmap() -> QPixmap | None:
     for name in ("logo.png", "YamVIEW.png", "YamVIEW_cookie.png"):
         pixmap = _load_package_pixmap(("images", name))
@@ -101,7 +121,7 @@ def make_placeholder_pixmap(width: int, height: int, text: str = "pypts") -> QPi
     pixmap.fill(QColor(PLACEHOLDER_FILL))
 
     painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
     border_pen = QPen(QColor(PLACEHOLDER_BORDER))
     border_pen.setWidth(2)
@@ -113,7 +133,7 @@ def make_placeholder_pixmap(width: int, height: int, text: str = "pypts") -> QPi
     font.setPointSize(max(12, min(width, height) // 10))
     font.setBold(True)
     painter.setFont(font)
-    painter.drawText(pixmap.rect(), Qt.AlignCenter, text)
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
     painter.end()
 
     return pixmap
