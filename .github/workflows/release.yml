@@ -13,47 +13,10 @@ permissions:
 
 jobs:
   build:
-    name: Test and build distributions
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v6
-
-      - name: Validate and expose the release version
-        id: version
-        shell: bash
-        run: |
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tags must use the vX.Y.Z format." >&2
-            exit 1
-          fi
-          echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
-      - name: Build the disposable CI image
-        run: >-
-          docker build
-          --build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTS_FRAMEWORK=${{ steps.version.outputs.value }}
-          --tag pts-framework-release:${{ github.sha }}
-          .
-
-      - name: Run tests in the CI image
-        run: docker run --rm pts-framework-release:${{ github.sha }}
-
-      - name: Build wheel and source distribution
-        run: >-
-          docker run --rm
-          --volume "${{ github.workspace }}/dist:/dist"
-          pts-framework-release:${{ github.sha }}
-          python -m build --outdir /dist
-
-      - name: Store release distributions temporarily
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-dists
-          path: dist/
-          if-no-files-found: error
-          retention-days: 30
+    uses: ./.github/workflows/_build.yml
+    with:
+      upload-docs: true
+      build-dists: true
 
   publish-testpypi:
     name: Publish to TestPyPI
@@ -92,3 +55,29 @@ jobs:
 
       - name: Publish distributions
         uses: pypa/gh-action-pypi-publish@release/v1
+
+  deploy-docs:
+    name: Deploy documentation to GitHub Pages
+    needs: publish-pypi
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  publish-image:
+    needs: [build, publish-pypi]
+    uses: ./.github/workflows/_publish-image.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+    secrets: inherit

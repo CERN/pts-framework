@@ -17,26 +17,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Check out source
-        uses: actions/checkout@v6
+  build:
+    uses: ./.github/workflows/_build.yml
 
-      - name: Build the CI image
-        run: >-
-          docker build
-          --build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTS_FRAMEWORK=0.0+g${GITHUB_SHA::7}
-          --tag pts-framework-ci:${GITHUB_SHA}
-          .
-
-      - name: Run tests
-        run: >-
-          docker run --rm pts-framework-ci:${GITHUB_SHA}
-          python -m pytest tests -vv --durations=20
-
-      - name: Build documentation
-        run: >-
-          docker run --rm pts-framework-ci:${GITHUB_SHA}
-          python -m sphinx -W --keep-going -b html docs/source docs/build/html
+  publish-image:
+    if: github.event_name == 'push'
+    needs: build
+    uses: ./.github/workflows/_publish-image.yml
+    with:
+      version: ${{ needs.build.outputs.version }}
+    secrets: inherit

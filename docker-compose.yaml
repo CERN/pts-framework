@@ -1,0 +1,15 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+services:
+  pypts:
+    image: cern/pts-framework:latest
+    build:
+      context: .
+      target: runtime
+    ports:
+      - "127.0.0.1:6080:6080"
+    volumes:
+      - ./pts_reports:/home/pts/pts_reports
+      - ./recipes:/recipes

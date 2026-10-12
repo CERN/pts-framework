@@ -25,6 +25,7 @@ path = [
     "src/pypts/recipes/*.yml",
     "src/pypts/recipes/*.yaml",
     "pyproject.toml",
+    "uv.lock",
     "requirements.txt",
     ".gitlab-ci.yml",
     ".gitignore",
@@ -38,6 +39,7 @@ SPDX-License-Identifier = "LGPL-2.1-or-later"
 [[annotations]]
 path = [
     "README.md",
+    "README_DOCKERHUB.md",
     "docs/**/*.rst",
     "docs/**/*.md",
     "docs/**/*.txt",

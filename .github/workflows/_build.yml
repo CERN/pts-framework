@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+name: Build and verify
+
+on:
+  workflow_call:
+    inputs:
+      upload-docs:
+        type: boolean
+        default: false
+      build-dists:
+        type: boolean
+        default: false
+    outputs:
+      version:
+        value: ${{ jobs.build.outputs.version }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Resolve package version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Release tags must use the vX.Y.Z format." >&2
+              exit 1
+            fi
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=0.0+g${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build the CI image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          target: ci
+          load: true
+          provenance: false
+          tags: pts-framework-ci:${{ github.sha }}
+          build-args: |
+            SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTS_FRAMEWORK=${{ steps.version.outputs.value }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run tests
+        run: >-
+          docker run --rm "pts-framework-ci:${GITHUB_SHA}"
+          python -m pytest tests -vv --durations=20
+
+      - name: Build documentation
+        run: |
+          mkdir site
+          docker run --rm \
+            --volume "${{ github.workspace }}/site:/site" \
+            "pts-framework-ci:${GITHUB_SHA}" \
+            python -m sphinx -W --keep-going -b html -d /tmp/doctrees docs/source /site
+          touch site/.nojekyll
+
+      - name: Upload documentation artifact
+        if: inputs.upload-docs
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Build wheel and source distribution
+        if: inputs.build-dists
+        run: >-
+          docker run --rm
+          --volume "${{ github.workspace }}/dist:/dist"
+          "pts-framework-ci:${GITHUB_SHA}"
+          uv build --out-dir /dist
+
+      - name: Store release distributions temporarily
+        if: inputs.build-dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-dists
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30

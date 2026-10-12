@@ -32,7 +32,7 @@ The project is tested in a disposable Python 3.13 Docker image. To reproduce the
 GitHub CI build locally, run:
 
 ```sh
-docker build --build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTS_FRAMEWORK=0+local -t pts-framework-ci .
+docker build --target ci --build-arg SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PTS_FRAMEWORK=0+local -t pts-framework-ci .
 docker run --rm pts-framework-ci
 ```
 

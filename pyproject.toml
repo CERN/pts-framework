@@ -84,6 +84,8 @@ where = ["src"]
 include = ["pypts", "pypts.*"]
 
 [tool.setuptools.package-data]
+"pypts.images" = ["*.png"]
+"pypts.recipes" = ["*.yml"]
 "pypts.examples.environment_setup_tools.Minimal_setup" = [
   "Minimal_setup_recipe.yml",
   "README.md",
