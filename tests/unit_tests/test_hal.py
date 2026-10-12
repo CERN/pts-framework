@@ -1,6 +1,6 @@
 """
 Unit tests for the hardware layer (src/pypts/hal/): the driver base and the
-families, the driver-process half of connection_driver.py run in-process, and
+device types, the driver-process half of connection_driver.py run in-process, and
 the local setup.
 
 No test here starts a process; ConnectionDriver's process tests live in
@@ -28,8 +28,8 @@ from pypts.hal import (
 from pypts.hal import local_setup as local_setup_module
 from pypts.hal.base_driver import LIFECYCLE_METHODS, operations_of
 from pypts.hal.connection_driver import ERROR, RESULT, answer, load_driver_class
+from pypts.hal.device_types import DEVICE_TYPE_NAMES, DEVICE_TYPES
 from pypts.hal.drivers.loopback import LoopbackDriver
-from pypts.hal.families import FAMILIES, FAMILY_NAMES
 from pypts.hal.local_setup import (
     DEFAULT_CALL_TIMEOUT_S,
     hardware_sections,
@@ -90,13 +90,13 @@ def test_operations_are_the_public_methods_without_the_lifecycle():
     assert LIFECYCLE_METHODS == ("connect", "teardown", "recover")
 
 
-def test_every_family_names_itself():
-    assert FAMILY_NAMES == ("PSU", "DMM", "Scope", "SSH", "Load", "Other")
-    assert [family.FAMILY for family in FAMILIES] == list(FAMILY_NAMES)
-    assert BaseDriver.FAMILY == ""
+def test_every_device_type_names_itself():
+    assert DEVICE_TYPE_NAMES == ("PSU", "DMM", "Scope", "SSH", "Load", "Other")
+    assert [device_type.DEVICE_TYPE for device_type in DEVICE_TYPES] == list(DEVICE_TYPE_NAMES)
+    assert BaseDriver.DEVICE_TYPE == ""
 
 
-def test_family_verbs_are_abstract():
+def test_device_type_verbs_are_abstract():
     assert operations_of(PSU) == [
         "measure_current",
         "measure_voltage",
@@ -139,7 +139,7 @@ LOOPBACK = "pypts.hal.drivers.loopback.LoopbackDriver"
 
 
 def test_the_loopback_driver_is_an_other():
-    assert LoopbackDriver.FAMILY == "Other"
+    assert LoopbackDriver.DEVICE_TYPE == "Other"
     assert "echo" in operations_of(LoopbackDriver)
 
 
@@ -153,7 +153,7 @@ def test_load_driver_class_finds_a_driver():
         ("LoopbackDriver", "not a dotted path"),
         ("pypts.hal.drivers.loopback.Nope", "has no class 'Nope'"),
         ("pypts.hal.base_driver.DriverError", "is not a driver"),
-        ("pypts.hal.base_driver.BaseDriver", "belongs to no device family"),
+        ("pypts.hal.base_driver.BaseDriver", "belongs to no device type"),
     ],
 )
 def test_load_driver_class_explains_a_bad_path(dotted, words):

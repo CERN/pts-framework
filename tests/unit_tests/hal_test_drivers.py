@@ -11,10 +11,10 @@ import ctypes
 import threading
 
 from pypts.hal.base_driver import BaseDriver
-from pypts.hal.families import Other
+from pypts.hal.device_types import Other
 
 
-class NoFamilyDriver(BaseDriver):
+class NoDeviceTypeDriver(BaseDriver):
     def connect(self, config):
         pass
 

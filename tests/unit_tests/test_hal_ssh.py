@@ -30,7 +30,7 @@ def connected(client):
 
 
 def test_the_ssh_driver_is_an_ssh():
-    assert SshDriver.FAMILY == "SSH"
+    assert SshDriver.DEVICE_TYPE == "SSH"
     assert operations_of(SshDriver) == ["execute", "get_file", "put_file"]
 
 

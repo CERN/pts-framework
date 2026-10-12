@@ -26,14 +26,14 @@ class BaseDriver(ABC):
     receives the device's `[hardware.<name>]` keys as text, minus the keys the
     hardware layer reads itself (`driver`, `call_timeout_s`).
 
-    Derive from a family in families.py, never from BaseDriver directly - a
-    driver that belongs to no family is refused. Every public method becomes
+    Derive from a device type in device_types.py, never from BaseDriver directly - a
+    driver that belongs to no device type is refused. Every public method becomes
     an operation test code can call; return values and arguments must be what
     pickle can carry.
     """
 
-    #: The family this driver belongs to. Set by each family base.
-    FAMILY: ClassVar[str] = ""
+    #: The device type this driver belongs to. Set by each device-type base.
+    DEVICE_TYPE: ClassVar[str] = ""
 
     @abstractmethod
     def connect(self, config: dict[str, str]) -> None:

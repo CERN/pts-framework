@@ -1,9 +1,9 @@
 """
-The device families. A driver derives from exactly one of them.
+The device types. A driver derives from exactly one of them.
 
-A family names the verbs every driver of that family offers, so test code
+A device type names the verbs every driver of that type offers, so test code
 written against "a PSU" runs against any PSU driver. The lists are short on
-purpose; a driver may offer more operations than its family declares, and test
+purpose; a driver may offer more operations than its device type declares, and test
 code that uses those is tied to that driver.
 
 Standard library only, for the same reason as base_driver.py.
@@ -18,7 +18,7 @@ from pypts.hal.base_driver import BaseDriver
 class PSU(BaseDriver):
     """A programmable power supply. Channels are numbered from 1."""
 
-    FAMILY = "PSU"
+    DEVICE_TYPE = "PSU"
 
     @abstractmethod
     def set_voltage(self, channel: int, volts: float) -> None:
@@ -48,7 +48,7 @@ class PSU(BaseDriver):
 class DMM(BaseDriver):
     """A digital multimeter. Each call takes one reading."""
 
-    FAMILY = "DMM"
+    DEVICE_TYPE = "DMM"
 
     @abstractmethod
     def measure_dc_voltage(self) -> float:
@@ -70,7 +70,7 @@ class DMM(BaseDriver):
 class Scope(BaseDriver):
     """An oscilloscope. Channels are numbered from 1."""
 
-    FAMILY = "Scope"
+    DEVICE_TYPE = "Scope"
 
     @abstractmethod
     def set_timebase(self, seconds_per_division: float) -> None:
@@ -95,7 +95,7 @@ class Scope(BaseDriver):
 class SSH(BaseDriver):
     """A remote shell."""
 
-    FAMILY = "SSH"
+    DEVICE_TYPE = "SSH"
 
     @abstractmethod
     def execute(self, command: str, timeout_s: float | None = None) -> dict[str, Any]:
@@ -113,7 +113,7 @@ class SSH(BaseDriver):
 class Load(BaseDriver):
     """An electronic load."""
 
-    FAMILY = "Load"
+    DEVICE_TYPE = "Load"
 
     @abstractmethod
     def set_mode(self, mode: str) -> None:
@@ -143,11 +143,11 @@ class Load(BaseDriver):
 class Other(BaseDriver):
     """Anything that is none of the above. No verbs of its own."""
 
-    FAMILY = "Other"
+    DEVICE_TYPE = "Other"
 
 
-#: Every family, in the order the documentation lists them.
-FAMILIES: tuple[type[BaseDriver], ...] = (PSU, DMM, Scope, SSH, Load, Other)
+#: Every device type, in the order the documentation lists them.
+DEVICE_TYPES: tuple[type[BaseDriver], ...] = (PSU, DMM, Scope, SSH, Load, Other)
 
-#: Their names - what a driver's FAMILY must be one of.
-FAMILY_NAMES: tuple[str, ...] = tuple(family.FAMILY for family in FAMILIES)
+#: Their names - what a driver's DEVICE_TYPE must be one of.
+DEVICE_TYPE_NAMES: tuple[str, ...] = tuple(device_type.DEVICE_TYPE for device_type in DEVICE_TYPES)

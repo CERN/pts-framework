@@ -13,7 +13,7 @@ import os
 import time
 from typing import Any
 
-from pypts.hal.families import Other
+from pypts.hal.device_types import Other
 
 logger = logging.getLogger(__name__)
 

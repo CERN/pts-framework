@@ -30,7 +30,7 @@ from multiprocessing.reduction import ForkingPickler
 from typing import Any, TextIO, cast
 
 from pypts.hal.base_driver import LIFECYCLE_METHODS, BaseDriver, DriverError, operations_of
-from pypts.hal.families import FAMILY_NAMES
+from pypts.hal.device_types import DEVICE_TYPE_NAMES
 from pypts.logger.log import log
 from pypts.utilities.common import masked
 
@@ -52,13 +52,13 @@ LIVENESS_POLL_S = 0.2
 
 #: Names ConnectionDriver itself uses. A driver operation with one of these
 #: names cannot be reached - do not give a driver method these names.
-RESERVED_NAMES = ("name", "family", "operations", "open", "close", "recover", "is_open")
+RESERVED_NAMES = ("name", "device_type", "operations", "open", "close", "recover", "is_open")
 
 #: The longest a call argument or return value gets in the DEBUG trace.
 TRACE_MAX_CHARS = 300
 
 # What the driver process sends back. The first item of every message is its kind.
-#: ("hello", family, operations) - once, first: the driver is built.
+#: ("hello", device_type, operations) - once, first: the driver is built.
 HELLO = "hello"
 #: ("fatal", reason) - instead of hello: the driver could not be built.
 FATAL = "fatal"
@@ -92,8 +92,8 @@ class ConnectionDriver:
         call_timeout_s: float = 60.0,
     ) -> None:
         self.name = name
-        #: The driver's family and operations, as its hello said. Empty until open().
-        self.family = ""
+        #: The driver's device type and operations, as its hello said. Empty until open().
+        self.device_type = ""
         self.operations: tuple[str, ...] = ()
         self._driver_path = driver_path
         self._driver_module = driver_path.rpartition(".")[0]
@@ -111,9 +111,9 @@ class ConnectionDriver:
             raise AttributeError(name)
         if name not in self.operations:
             known = ", ".join(self.operations) or "none"
-            family = self.family or "not open"
+            device_type = self.device_type or "not open"
             raise AttributeError(
-                f"Device '{self.name}' ({family}) has no operation '{name}'. It has: {known}."
+                f"Device '{self.name}' ({device_type}) has no operation '{name}'. It has: {known}."
             )
 
         def operation(*args: Any, **kwargs: Any) -> Any:
@@ -203,10 +203,10 @@ class ConnectionDriver:
             raise DriverError(
                 f"Device '{self.name}' could not be opened: it began with {kind!r}, not hello."
             )
-        self.family = str(message[1])
+        self.device_type = str(message[1])
         self.operations = tuple(message[2])
         log.debug(
-            "Device '%s' is a %s with operations %s.", self.name, self.family, self.operations
+            "Device '%s' is a %s with operations %s.", self.name, self.device_type, self.operations
         )
 
     def _discard(self) -> None:
@@ -412,7 +412,7 @@ class _PrintForwarder(io.TextIOBase):
 
 
 def load_driver_class(dotted: str) -> type[BaseDriver]:
-    """The class `dotted` names, checked to be a driver of a known family."""
+    """The class `dotted` names, checked to be a driver of a known device type."""
     module_name, _, class_name = dotted.rpartition(".")
     if not module_name:
         raise ValueError(f"'{dotted}' is not a dotted path to a class.")
@@ -422,10 +422,10 @@ def load_driver_class(dotted: str) -> type[BaseDriver]:
         raise ValueError(f"Module '{module_name}' has no class '{class_name}'.")
     if not isinstance(found, type) or not issubclass(found, BaseDriver):
         raise ValueError(f"'{dotted}' is not a driver: it does not derive from BaseDriver.")
-    if found.FAMILY not in FAMILY_NAMES:
+    if found.DEVICE_TYPE not in DEVICE_TYPE_NAMES:
         raise ValueError(
-            f"'{dotted}' belongs to no device family; derive it from one of "
-            f"{', '.join(FAMILY_NAMES)}."
+            f"'{dotted}' belongs to no device type; derive it from one of "
+            f"{', '.join(DEVICE_TYPE_NAMES)}."
         )
     return found
 
@@ -469,7 +469,7 @@ def driver_process_main(conn: PipeEnd, driver_path: str, log_level: int) -> None
         return
 
     operations = operations_of(driver_class)
-    channel.send((HELLO, driver_class.FAMILY, operations))
+    channel.send((HELLO, driver_class.DEVICE_TYPE, operations))
     try:
         while True:
             try:

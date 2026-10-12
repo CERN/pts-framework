@@ -23,9 +23,9 @@ def read_kernel():
 
 | File | Holds |
 |---|---|
-| `__init__.py` | The public API: `get_device`, `LocalSetup`, `ConnectionDriver`, `BaseDriver`, `DriverError`, the six families |
+| `__init__.py` | The public API: `get_device`, `LocalSetup`, `ConnectionDriver`, `BaseDriver`, `DriverError`, the six device types |
 | `base_driver.py` | `BaseDriver` (ABC: `connect`, `teardown`, `recover`), `DriverError`, `LIFECYCLE_METHODS`, `operations_of()` |
-| `families.py` | `PSU`, `DMM`, `Scope`, `SSH`, `Load`, `Other`; `FAMILIES`, `FAMILY_NAMES` |
+| `device_types.py` | `PSU`, `DMM`, `Scope`, `SSH`, `Load`, `Other`; `DEVICE_TYPES`, `DEVICE_TYPE_NAMES` |
 | `connection_driver.py` | `ConnectionDriver`, one device as test code sees it; below it, the driver process: `driver_process_main()`, `load_driver_class()`, `answer()` |
 | `local_setup.py` | `LocalSetup`, the devices of one run; `get_device()`; `split_section()`; the section readers |
 | `drivers/loopback.py` | `LoopbackDriver` (Other): no hardware; tests, demo, smoke check |
@@ -43,7 +43,7 @@ because a driver process imports `pypts.hal` too and has no use for the configur
    `Device ssh1`, that runs `driver_process_main()`. Spawn hands the child this process's
    `sys.path`, so a source-tree run (`run_pypts.py`) and a driver beside it import there too.
 3. The driver process sends its log records and printed lines back over the Pipe, imports and
-   builds the driver, and sends `hello` (family and operations) or `fatal` with the reason.
+   builds the driver, and sends `hello` (device type and operations) or `fatal` with the reason.
    `open()` then calls `connect(settings)`. If anything in `open()` fails, including an
    interrupt, the process is killed and nothing is left running.
 4. `device.execute("uname -r")` goes through `__getattr__`: a name in `operations` becomes a
@@ -59,7 +59,7 @@ Each message is a pickled tuple whose first item is its kind (constants in
 | Message | Direction |
 |---|---|
 | `(method, args, kwargs)` | PyPTS → driver process: one call |
-| `("hello", family, operations)` | driver process → PyPTS, once, first |
+| `("hello", device_type, operations)` | driver process → PyPTS, once, first |
 | `("fatal", reason)` | driver process → PyPTS, instead of hello |
 | `("log", level, logger_name, message)` | driver process → PyPTS, any time |
 | `("printed", line)` | driver process → PyPTS, any time |
@@ -163,11 +163,11 @@ the arguments of ordinary calls are traced as given.
 
 ## Writing a driver
 
-1. Derive from the family it belongs to (`from pypts.hal import PSU`), never from `BaseDriver`
-   directly: a driver of no family is refused.
+1. Derive from the device type it belongs to (`from pypts.hal import PSU`), never from
+   `BaseDriver` directly: a driver of no device type is refused.
 2. Implement `connect(config)` (all values are text), `teardown()` (harmless when nothing is
-   open) and the family's verbs. Every other public method becomes an operation too.
-3. Log with `logging.getLogger(__name__)`. Do not name a method `name`, `family`, `operations`,
+   open) and the device type's verbs. Every other public method becomes an operation too.
+3. Log with `logging.getLogger(__name__)`. Do not name a method `name`, `device_type`, `operations`,
    `open`, `close`, `recover` or `is_open` (`connection_driver.RESERVED_NAMES`). Do not start
    `multiprocessing` processes from a driver: the driver process is a daemon, and a daemon
    cannot have children.
@@ -176,7 +176,7 @@ the arguments of ordinary calls are traced as given.
 5. Test it in-process with the vendor library mocked (`test_hal_ssh.py`), and through a real
    driver process with the loopback pattern (`test_hal_connection.py`).
 
-Family verbs: PSU `set_voltage`, `set_current_limit`, `output_on`, `output_off`,
+Device-type verbs: PSU `set_voltage`, `set_current_limit`, `output_on`, `output_off`,
 `measure_voltage`, `measure_current` (channel from 1); DMM `measure_dc_voltage`,
 `measure_ac_voltage`, `measure_dc_current`, `measure_resistance`; Scope `set_timebase`,
 `set_vertical_scale`, `arm_single`, `read_waveform`; Load `set_mode` (CC/CV/CR/CP), `set_level`,
@@ -230,6 +230,6 @@ verificator). Roadmap TODO in §1.54.
 - Output a C library writes straight to the process's file descriptors (not through
   `sys.stdout`) is not forwarded. It goes to PyPTS's own console, if there is one.
 - No automatic recovery policy, only `device.recover()` from test code.
-- No PSU, DMM, Scope or Load driver ships yet; only the family bases.
+- No PSU, DMM, Scope or Load driver ships yet; only the device-type bases.
 - Every driver runs on PyPTS's own Python: a vendor library that needs another interpreter
   (for example a 32-bit DLL) is not supported.

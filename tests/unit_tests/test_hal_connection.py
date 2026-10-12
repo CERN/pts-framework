@@ -31,7 +31,7 @@ def device():
 
 def test_open_says_hello_and_connects(device):
     assert device.is_open()
-    assert device.family == "Other"
+    assert device.device_type == "Other"
     assert "echo" in device.operations
     assert device.is_connected() is True
     assert device.settings() == {"mode": "test"}
@@ -176,7 +176,7 @@ def test_recover_on_a_live_process_keeps_the_process(device):
     ("driver_path", "words"),
     [
         ("pypts.hal.drivers.nothing.Here", "No module named"),
-        ("hal_test_drivers.NoFamilyDriver", "belongs to no device family"),
+        ("hal_test_drivers.NoDeviceTypeDriver", "belongs to no device type"),
         ("hal_test_drivers.BrokenConstructorDriver", "constructor exploded"),
         ("hal_test_drivers.FailingConnectDriver", "instrument is switched off"),
     ],
