@@ -25,6 +25,9 @@ from pypts.recipe.recipe_schema import (
 
 _MISSING = object()
 
+#: The value for RecipeModel.set_path() that removes the key instead of setting it.
+DELETE = object()
+
 #: Keys the tree shows as text. A list or mapping there cannot be shown.
 _HEADER_TEXT_KEYS = ("name", "version", "description")
 _SEQUENCE_TEXT_KEYS = ("sequence_name", "description")
@@ -180,6 +183,30 @@ class RecipeModel(QObject):
         step = self.steps(seq_idx)[step_idx]
         self.undo_stack.push(_SetDictField(self, step, key, value, f"Set step.{key}"))
 
+    def set_path(self, document: int, path: tuple[int | str, ...], value: Any) -> None:
+        """
+        Set one value anywhere in the recipe - one undo entry.
+
+        `document` is the YAML document (0 the header, 1 the first sequence),
+        `path` the keys and list positions down to the value, e.g.
+        ("steps", 2, "template", "wait_time"). DELETE removes the key. Every
+        container on the way must exist; the Recipe Editor v2's form writes
+        whole mappings where one may be missing.
+        """
+        if not self.is_valid() or document >= len(self._docs) or not path:
+            return
+        target: Any = self._docs[document]
+        for key in path[:-1]:
+            target = target[key]
+        name = ".".join(str(key) for key in path)
+        self.undo_stack.push(_SetPathValue(self, target, path[-1], value, f"Set {name}"))
+
+    def duplicate_step(self, seq_idx: int, step_idx: int) -> None:
+        """A copy of the step right after it, its name marked as a copy."""
+        if not self.is_valid():
+            return
+        self.undo_stack.push(_DuplicateStep(self, seq_idx, step_idx))
+
     def add_step(self, seq_idx: int, steptype: str, position: int) -> None:
         if not self.is_valid():
             return
@@ -290,6 +317,57 @@ class _SetDictField(QUndoCommand):
             self._target.pop(self._key, None)
         else:
             self._target[self._key] = self._old
+        self._model._notify()
+
+
+class _SetPathValue(QUndoCommand):
+    """One key of a mapping, or one item of a list, set or (DELETE) removed."""
+
+    def __init__(self, model: RecipeModel, target: Any, key: Any, new: Any, text: str) -> None:
+        super().__init__(text)
+        self._model = model
+        self._target = target
+        self._key = key
+        self._new = new
+        if isinstance(target, dict):
+            self._old = target.get(key, _MISSING)
+        else:
+            self._old = target[key]
+
+    def redo(self) -> None:
+        if self._new is DELETE:
+            if isinstance(self._target, dict):
+                self._target.pop(self._key, None)
+        else:
+            self._target[self._key] = self._new
+        self._model._notify()
+
+    def undo(self) -> None:
+        if self._old is _MISSING:
+            self._target.pop(self._key, None)
+        else:
+            self._target[self._key] = self._old
+        self._model._notify()
+
+
+class _DuplicateStep(QUndoCommand):
+    def __init__(self, model: RecipeModel, seq_idx: int, step_idx: int) -> None:
+        super().__init__("Duplicate step")
+        self._model = model
+        self._seq_idx = seq_idx
+        self._position = step_idx + 1
+        self._step = copy.deepcopy(model.steps(seq_idx)[step_idx])
+        if isinstance(self._step.get("step_name"), str):
+            self._step["step_name"] = self._step["step_name"] + " (copy)"
+
+    def redo(self) -> None:
+        self._model.steps(self._seq_idx).insert(self._position, self._step)
+        self._model._notify()
+
+    def undo(self) -> None:
+        steps = self._model.steps(self._seq_idx)
+        if self._position < len(steps) and steps[self._position] is self._step:
+            steps.pop(self._position)
         self._model._notify()
 
 

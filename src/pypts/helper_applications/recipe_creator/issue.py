@@ -16,6 +16,12 @@ class ValidationIssue:
     message   Short description of what is wrong.
     hint      What to do to fix it, with a YAML example where useful.
     line      1-based line number in the YAML source, or None if not trackable.
+    document  0-based index of the YAML document the problem is in (0 is the
+              header), or None where it is about no one document.
+    path      Where in that document, as the schema found it - e.g.
+              ('steps', 1, 'outputs', 'r', 'max'). Empty where there is no
+              field to point at (structure, cross-document checks, warnings).
+              For a tool that marks the field itself (Recipe Editor v2).
     """
 
     severity: Literal["error", "warning"]
@@ -23,6 +29,8 @@ class ValidationIssue:
     message: str
     hint: str
     line: int | None = None
+    document: int | None = None
+    path: tuple[int | str, ...] = ()
 
     @property
     def is_error(self) -> bool:

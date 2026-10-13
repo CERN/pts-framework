@@ -67,7 +67,29 @@ DEBUG, and to stdout. In it:
 - a hard crash inside Qt: `faulthandler` writes the Python stack of every thread to the
   same file, through a handle kept open for the program's life.
 
+`start_logging(prefix, program_name)` is shared: the Recipe Editor v2 passes
+`"recipe_editor"` and `"Recipe Editor v2"`, which name its log file and its error dialog.
+
 Tests: `tests/unit_tests/test_rc_logging.py` (the hard crash runs in a subprocess).
+
+## Shared with the Recipe Editor v2
+
+`helper_applications/recipe_editor/` builds on this package: `RecipeModel`, `YamlEditor`,
+`InvalidOverlay`, `creator_stylesheet()`, `verify_string()` and `rc_logging`. For it:
+
+- `RecipeModel.set_path(document, path, value)` sets one value anywhere in the recipe as one
+  undo entry (`DELETE` removes the key); `duplicate_step(seq_idx, step_idx)` inserts a copy
+  named "… (copy)" after the step.
+- `YamlEditor.set_step_lines(first, last)` tints a step's lines (0-based; -1, -1 for none).
+- `YamlEditor` commits (`text_committed`) only text that differs from what it last showed or
+  committed. Re-colouring the text — a theme switch, the highlighter — also emits
+  `textChanged`, and used to commit the same text as an edit: an "Edit YAML" undo entry and a
+  modified recipe right after start-up, in both editors.
+- `ValidationIssue.document` (0 the header) and `.path` (e.g. `('steps', 1, 'outputs', 'r',
+  'max')`) say where a schema problem is, for the editor's field outlines; both are empty
+  (`None`, `()`) for a problem with no field. The Creator does not use them.
+
+A change to any of these is a change to both editors.
 
 ## The window
 

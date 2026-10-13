@@ -94,8 +94,16 @@ class _Context:
     def __init__(self) -> None:
         self.issues: list[ValidationIssue] = []
 
-    def error(self, field: str, message: str, hint: str, line: int | None = None) -> None:
-        self.issues.append(ValidationIssue("error", field, message, hint, line))
+    def error(
+        self,
+        field: str,
+        message: str,
+        hint: str,
+        line: int | None = None,
+        document: int | None = None,
+        path: tuple[int | str, ...] = (),
+    ) -> None:
+        self.issues.append(ValidationIssue("error", field, message, hint, line, document, path))
 
     def warning(self, field: str, message: str, hint: str, line: int | None = None) -> None:
         self.issues.append(ValidationIssue("warning", field, message, hint, line))
@@ -317,7 +325,7 @@ def _run(content: str, ctx: _Context) -> None:
     # Pass 3 - the header, against the framework's model
     header_lm = _LineMap(header_node)
     header_problems, _ = recipe_parser.validate_document(header_doc, HeaderSchema, "header")
-    _report_problems(header_problems, header_doc, HeaderSchema, header_lm, ctx)
+    _report_problems(header_problems, header_doc, HeaderSchema, header_lm, 0, ctx)
     _warn_about_header(header_doc, header_lm, header_problems, ctx)
 
     # Pass 4 - every sequence, against the framework's model
@@ -327,7 +335,7 @@ def _run(content: str, ctx: _Context) -> None:
         seq_lm = _LineMap(seq_node)
         context = recipe_parser.sequence_context(seq_doc, number)
         problems, _ = recipe_parser.validate_document(seq_doc, SequenceSchema, context)
-        _report_problems(problems, seq_doc, SequenceSchema, seq_lm, ctx)
+        _report_problems(problems, seq_doc, SequenceSchema, seq_lm, number - 1, ctx)
         _warn_about_sequence(seq_doc, seq_lm, context, ctx)
         # A number is a sequence name too: the framework reads it as its text.
         name = seq_doc.get("sequence_name")
@@ -356,15 +364,18 @@ def _report_problems(
     doc: dict[str, Any],
     model: type[BaseModel],
     lm: _LineMap,
+    document: int,
     ctx: _Context,
 ) -> None:
-    """Each problem the framework's model found, as an error at its line."""
+    """Each problem the framework's model found, as an error at its line and field."""
     for problem in problems:
         ctx.error(
             field=problem.where,
             message=problem.message,
             hint=_hint(problem, doc, model),
             line=lm.nearest(doc, problem.path),
+            document=document,
+            path=tuple(problem.path),
         )
 
 

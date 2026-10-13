@@ -37,19 +37,27 @@ LOG_FILE_PREFIX = "recipe_creator"
 # moment of a crash, when nothing can be opened any more.
 _fault_file: IO[str] | None = None
 
-# Where the log is, for the error dialog.
+# Where the log is, and which program this is, for the error dialog.
 _log_path = ""
+_program_name = "The Recipe Creator"
 
 
-def start_logging() -> str:
+def start_logging(
+    prefix: str = LOG_FILE_PREFIX, program_name: str = "The Recipe Creator"
+) -> str:
     """
-    Log to the Creator's own file (and stdout), and catch what nobody caught.
+    Log to the program's own file (and stdout), and catch what nobody caught.
 
-    Called once, first thing in main(). Returns the log file's path.
+    Called once, first thing in main(). `prefix` starts the file name: the
+    Creator keeps the default, the Recipe Editor v2 passes "recipe_editor".
+    `program_name` is how the log and the error dialog name the program.
+    Returns the log file's path.
     """
-    global _fault_file, _log_path
+    global _fault_file, _log_path, _program_name
 
-    _log_path = get_log_file_path(_reports_dir(), prefix=LOG_FILE_PREFIX)
+    _program_name = program_name
+
+    _log_path = get_log_file_path(_reports_dir(), prefix=prefix)
 
     root = init_logging(level=logging.DEBUG)
     file_handler = logging.FileHandler(_log_path, encoding="utf-8")
@@ -86,7 +94,7 @@ def _report_uncaught_error(
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
         return
 
-    log.error("The Recipe Creator hit an unexpected error: %s", exc_value)
+    log.error("%s hit an unexpected error: %s", _program_name, exc_value)
     log.debug(
         "Traceback for the unexpected error:",
         exc_info=(exc_type, exc_value, exc_traceback),
@@ -99,7 +107,7 @@ def _report_uncaught_error(
             QApplication.activeWindow(),
             "Unexpected error",
             f"{exc_type.__name__}: {exc_value}\n\n"
-            "The Recipe Creator is still running, but save your work under a new "
+            f"{_program_name} is still running, but save your work under a new "
             "name to be safe.\n\n"
             f"The details are in:\n{_log_path}",
         )

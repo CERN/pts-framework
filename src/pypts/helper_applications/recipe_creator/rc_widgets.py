@@ -38,6 +38,7 @@ from PySide6.QtGui import (
     QPainter,
     QSyntaxHighlighter,
     QTextCharFormat,
+    QTextCursor,
     QTextFormat,
 )
 from PySide6.QtCore import QEvent, QSize, Qt, QRegularExpression, QTimer, Signal
@@ -179,6 +180,8 @@ class YamlEditor(ScintillaYamlEditor):
         super().__init__(parent)
         self._updating = False
         self._error_lines: set[int] = set()
+        # The text as last set or committed: a commit of the same text is no edit.
+        self._committed_text = ""
 
         # Detach the parent's plain YamlHighlighter and replace it with the
         # palette-aware version so only one highlighter is active on the document.
@@ -205,11 +208,20 @@ class YamlEditor(ScintillaYamlEditor):
         self._updating = True
         self.setPlainText(text)
         self._updating = False
+        self._committed_text = text
 
     def set_error_lines(self, lines: set[int]) -> None:
         """Mark 1-based line numbers with a red dot in the gutter."""
         self._error_lines = lines
         self.line_number_area.update()
+
+    def set_step_lines(self, first: int, last: int) -> None:
+        """
+        Tint 0-based lines first..last - the step selected elsewhere (Recipe
+        Editor v2). -1, -1 for none. The Creator never calls it.
+        """
+        self._step_lines = (first, last)
+        self.update_current_line_highlight()
 
     def go_to_line(self, line_num: int) -> None:
         """Move cursor to 1-based line_num and ensure it is visible."""
@@ -222,7 +234,12 @@ class YamlEditor(ScintillaYamlEditor):
             self._debounce.start()
 
     def _on_debounce(self) -> None:
-        self.text_committed.emit(self.toPlainText())
+        text = self.toPlainText()
+        # Re-colouring (a theme switch, the highlighter) also emits textChanged.
+        if text == self._committed_text:
+            return
+        self._committed_text = text
+        self.text_committed.emit(text)
 
     def line_number_area_width(self) -> int:
         """Return gutter width wide enough for digits plus a red-dot column."""
@@ -231,6 +248,24 @@ class YamlEditor(ScintillaYamlEditor):
     def update_current_line_highlight(self) -> None:
         """The current line in a palette colour (the base class paints a black bar in dark)."""
         selections = []
+        # Also reached from the base class's __init__, before ours has run.
+        first, last = getattr(self, "_step_lines", (-1, -1))
+        if first >= 0:
+            document = self.document()
+            start = document.findBlockByNumber(first)
+            end = document.findBlockByNumber(max(first, last))
+            if start.isValid() and end.isValid():
+                step = QTextEdit.ExtraSelection()
+                # The accent, faint: visible on both themes, the syntax colours still read.
+                tint = QColor(get_palette(self.dark_mode).accent_text)
+                tint.setAlpha(40)
+                step.format.setBackground(tint)
+                step.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+                cursor = QTextCursor(start)
+                end_of_step = end.position() + max(0, end.length() - 1)
+                cursor.setPosition(end_of_step, QTextCursor.MoveMode.KeepAnchor)
+                step.cursor = cursor
+                selections.append(step)
         if self.highlight_current_line:
             p = get_palette(self.dark_mode)
             if self.dark_mode:
