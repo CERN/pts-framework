@@ -293,7 +293,7 @@ steps:
   - steptype: Wait
     step_name: Step picture
     description: This step names its own picture.
-    image_path: ../../images/CERN_Logo.png
+    image_path: ../../images/cat.png
     wait_time: 3
   - steptype: Sequence
     sequence_name: Front panel

@@ -138,6 +138,13 @@ QHeaderView::section {{
 QTableWidget#stepTable {{
     font-size: 12px;
 }}
+/* Greyed while a run is on (step_table.set_running): nothing in the table can
+   be changed until it ends. Only the background - the Result chips carry their
+   own per-item colours and stay readable. */
+QTableWidget#stepTable[running="true"] {{
+    background-color: {palette.table_background_running};
+    alternate-background-color: {palette.row_alternate_running};
+}}
 QTableWidget#stepTable QHeaderView::section {{
     font-size: 12px;
     padding: 4px 6px;

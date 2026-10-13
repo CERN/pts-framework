@@ -23,9 +23,8 @@ contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
 `view_tabs.py` (`ViewTabBar` — the Run | Results tabs, §14),
 `step_table.py` (Run tab), `results_panel.py` (Results tab),
 `center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel`),
-`run_display.py` / `run_card.py` (`RunDisplay` — which picture the right column shows
-during a run — and `RunCard`, the card shown when there is none, §18),
-`step_review_card.py` (`StepReviewCard` — a step looked back at, §19),
+`run_display.py` / `run_header.py` (`RunDisplay` — which picture the right column shows
+during a run — and `RunHeader`, the step card on top of it, §18),
 `log_tail.py` (what fills that panel — §8),
 `run_progress.py` (`RunProgress` — the progress bar in the recipe label row, §15).
 Styling: `palette.py` — **every colour the GUI uses, and the only file allowed a
@@ -929,12 +928,11 @@ covers File → Unload Recipe with nothing loaded, and Open Recipe / Open Recent
 
 ## 12. The step table's YAML click panel
 
-Clicking a step's **name or description** — between runs or during one — pops up a panel beside the cursor
-holding **the whole sequence that step belongs to, exactly as the recipe file has it, syntax
-coloured, with the clicked step's lines on a band and scrolled into view**. It answers the
-During or after a run the same click also shows that step's picture or card on the right
-(§19). The panel answers the
-question the three columns cannot — which module, which inputs, what the output is checked
+Clicking a step's **description** — between runs or during one — pops up a panel beside the
+cursor holding **the whole sequence that step belongs to, exactly as the recipe file has it,
+syntax coloured, with the clicked step's lines on a band and scrolled into view** (changed
+2026-10-13: the step name used to open it too; it now shows the step on the right, §19). The
+panel answers the question the three columns cannot — which module, which inputs, what the output is checked
 against, and what surrounds the step — without the operator leaving the GUI for a text editor.
 
 Three files, each with one job:
@@ -1025,9 +1023,19 @@ is pushed up rather than hanging off the display.
 
 **It opens on a click, never on a hover.** `cellClicked` → `_clicked_cell(row, column)` is the one
 place that opens the panel, so it carries the no-source case too, with a DEBUG line saying why
-nothing opened. Only `_POPUP_COLUMNS` — `(0, 1)`, the step name and the
-description — count: the Result column is a verdict with its own tooltip on it (the reason and
-the measured values), and a click there closes whatever is open.
+nothing opened. Only `_PANEL_COLUMN` — `1`, the description — opens it. A click on the step
+name or the Result closes whatever is open and emits `step_clicked` instead (§19); a group's
+name stays its fold control (§12b). `_POPUP_COLUMNS` — `(0, 1)` — is now only what the row
+highlight paints and what the pointer may rest on: the Result cell's background is the verdict
+chip and is never tinted. With the click panel off (Recipe Editor v2) a name or description
+click still selects the row and emits `row_clicked`.
+
+**The table is grey during a run** (2026-10-13). `set_running()` sets the table's `running`
+property and re-polishes it, which switches on the stylesheet rule
+`QTableWidget#stepTable[running="true"]` (`styles.py`) — background
+`palette.table_background_running`, alternate rows `palette.row_alternate_running`. Only the
+background: the Result chips are per-item brushes and keep their colours, and so do the click
+highlight and engineering-mode tints.
 
 **It closes when the pointer is somewhere the gesture does not allow** (changed 2026-09-17).
 While the panel is open a `QTimer` (`_POINTER_CHECK_MS`, 100 ms) hands `QCursor.pos()` to
@@ -1302,7 +1310,7 @@ icon colour, `icon_disabled` when greyed, and its tooltip says why (`No recipe i
 | GUI state | `current_recipe`, `_requested_recipe_path`, `_loaded_recipe_path`, `_recipe_yaml`, `_recipe_text`, `_run_outcomes`, `_running_recipe_name`, `_run_state`, `report_dir`, a pending start and the pause flag all cleared |
 | Top bar | `TopBarContent.show_recipe_unloaded()` — combo emptied and greyed, Start / Pause / Stop / preview / × greyed, run metadata cleared; Open stays enabled |
 | Left pane | `step_table.clear()` (no rows, popup closed), `run_progress.clear()` (hidden), results emptied, pulse stopped, `run_stack` on the idle logo, the Run tab open |
-| Centre | `center.cancel_pending()` + `set_recipe(None)` (the run card stops) + `show_idle()` |
+| Centre | `center.cancel_pending()` + `set_recipe(None)` (the header's clock stops) + `show_idle()` |
 | Labels | `No recipe loaded`, title `pyPTS`, `Status: Idle` |
 
 The recents list stays — it is the operator's history, not the recipe's.
@@ -1392,13 +1400,16 @@ the defaults.
 
 ---
 
-## 18. The picture area during a run (2026-10-12)
+## 18. The right column during a run: the step card and the pictures (2026-10-12)
 
-The top of the right column (`InteractionPanel`'s picture area) is no longer only the
-prompts'. A recipe may name `image_path` on any step and on a sequence
-(`recipe_guide.html`, `step/step.md` §3.8); the GUI shows it while that step or sequence
-runs, and a **run card** when no picture applies. Design:
-`docs/superpowers/specs/2026-10-12-step-image-design.md`.
+The top of the right column (`InteractionPanel`) is no longer only the prompts'. For the
+whole run a **step card** (`RunHeader`) sits above everything else — the running step's
+name, description, state chip, times and counts, and its results. Under it, a recipe may
+name `image_path` on any step and on a sequence (`recipe_guide.html`, `step/step.md` §3.8);
+the GUI shows it while that step or sequence runs, and **nothing** when no picture applies —
+the picture area is hidden (`show_no_picture()`) and a stretch at the bottom of the panel
+keeps the card and any question at the top. (Changed 2026-10-13: a run card used to fill
+the picture area then, and for a while the plain logo did.) Design: `docs/superpowers/specs/2026-10-12-step-image-design.md`.
 
 **No new message.** The pictures arrive once, in `RecipeLoaded`: absolute paths on
 `StepSummary.image_path` and `SequenceSummary.image_path`, resolved by the recipe parser.
@@ -1409,10 +1420,10 @@ passes on to `CenterContent` (`run_started()`, `sequence_started()`, `step_start
 
 | File | What |
 |---|---|
-| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the run card's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`); what each step had, for §19 (`review()`) |
-| `run_card.py` | `RunCard` — the card's widget, drawn from a `RunDisplay`; `elapsed_text()`; a one-second `QTimer` while a run is on |
-| `center_view.py` | `CenterContent` owns the `RunDisplay`; `_show_run_view()` puts the picture or the card on screen |
-| `interaction_panel.py` | the picture area is a `QStackedWidget`: `image_label` or `run_card`. `set_image()`, `show_run_card()`, `is_showing_run_card()`, `is_showing_no_image()`, `set_run_result()`, `run_result_shown()` |
+| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the header's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`); what each step had, for §19 (`review()`) |
+| `run_header.py` | `RunHeader` — the step card, drawn from a `RunDisplay`: `heading_label` (`NOW RUNNING`, or `LOOKING BACK` §19), `step_label`, `description_label`, `state_label` (the chip), `info_label` (the time line), `results_label`, `error_label`; `show_live()` / `show_review()`, `state_text()`; a one-second `QTimer` while a run is on; `elapsed_text()`, `review_state_text()`, the texts `RUNNING_TEXT`, `PENDING_TEXT`, `NO_RESULTS_YET_TEXT`, `NO_VALUES_TEXT` |
+| `center_view.py` | `CenterContent` owns the `RunDisplay`; `_show_run_view()` refreshes the card and puts the picture on screen — or, with none, hides the picture area |
+| `interaction_panel.py` | `run_header` on top, hidden outside a run (`show_live_header()`, `hide_header()`, `is_showing_header()`); the picture area is `image_label`: `set_image()`, `show_no_picture()`, `is_showing_picture_area()`, `is_showing_logo()`, `is_showing_no_image()`, `set_run_result()`, `run_result_shown()` |
 | `resources.py` | `load_no_image_pixmap()`; `load_run_result_pixmap(file_name)` with `RUN_PASSED_IMAGE` / `RUN_FAILED_IMAGE` — never tinted: the green and red words are the point; transparent background |
 | `images/CERN_Logo_passed.png`, `images/CERN_Logo_failed.png` | the end-of-run pictures; `.license` sidecars like `CERN_Logo.png`'s |
 | `images/no_image_available.png` | "No image available", CERN 2026, LGPL-2.1-or-later (sidecar `.license` beside it); greys and white on a transparent background, never tinted |
@@ -1422,43 +1433,51 @@ passes on to `CenterContent` (`run_started()`, `sequence_started()`, `step_start
 (a lost event cannot leave a stale picture). The **innermost** one set is shown. So a
 step's picture goes when the step ends; a step without one shows its sequence's; inside a
 called sequence with neither, the calling `Sequence` step's (still running — its
-`StepFinished` comes after its children's), and so on outward; nothing anywhere, the run
-card. Sequences are looked up by name, case-insensitively — a called sequence's
+`StepFinished` comes after its children's), and so on outward; nothing anywhere, no picture.
+Sequences are looked up by name, case-insensitively — a called sequence's
 `SequenceStarted` carries the name of its own document.
 
 | When | The picture area shows |
 |---|---|
-| No run (no recipe, or loaded and not yet run) | the CERN logo, as before |
-| After a run | the logo marked "TESTS PASSED" (`CERN_Logo_passed.png`: PASS, DONE) or "TESTS FAILED" (`CERN_Logo_failed.png`: FAIL, ERROR, STOP); SKIP keeps the plain logo — `center_view.run_result_image()`. It stays until the next run starts or a recipe is loaded or unloaded (`InteractionPanel.set_run_result(None)`) |
-| A question with its own picture is open | that picture — the run's view comes back once it is answered (`CenterContent._answer()`) |
-| A question without a picture is open | the run's view stays (its picture, or the run card), never the logo — `CenterContent._question_shown()` |
-| A run, a picture applies | that picture |
-| A run, none applies | the run card |
-| A named picture is missing or will not load | "No image available" (`_refresh_visual()`; never the logo, which would look like nothing was asked for) |
-| A step row was clicked during or after a run | that step's picture or card, under the review bar — §19 |
+| No run (no recipe, or loaded and not yet run) | the CERN logo; no step card |
+| After a run | the logo marked "TESTS PASSED" (`CERN_Logo_passed.png`: PASS, DONE) or "TESTS FAILED" (`CERN_Logo_failed.png`: FAIL, ERROR, STOP); SKIP keeps the plain logo — `center_view.run_result_image()`. It stays until the next run starts or a recipe is loaded or unloaded (`InteractionPanel.set_run_result(None)`). No step card |
+| A question with its own picture is open | that picture — the run's view comes back once it is answered (`CenterContent._answer()`); the step card stays on the step that asks |
+| A question without a picture is open | the run's view stays (its picture, or none) — `CenterContent._question_shown()` |
+| A run, a picture applies | that picture, under the step card |
+| A run, none applies | nothing: the picture area is hidden, the step card says it all |
+| A named picture is missing or will not load | "No image available" (`_refresh_visual()`; never the logo, which would look like nothing was asked for), with `missing_image_label` under it: `interaction_panel.missing_image_text(path)` — "This picture could not be found: <path>" or "This file could not be shown as a picture: <path>", and what to check (`image_path` in the recipe; a relative one is read from the recipe's own folder). Selectable, so the path can be copied; hidden whenever anything else is on screen |
+| A step's name or Result was clicked during or after a run | that step in the step card, and its picture if it had one — §19 |
 
-**The run card** — the innermost running step's name and description, `Run 4:07 · Step
-0:12` (ticking every second; paused time is not taken off), the verdicts so far in
-`run_display.COUNT_ORDER` (`2 PASS · 1 FAIL`) counted like `RunProgress` (no group rows,
-every verdict), and `Last failure: <step>` in the FAIL chip's colours while there is one.
-Between steps the name reads `-`. `RunFinished` stops the clock and brings the logo back,
-marked with the run's result (table above).
+**The step card** — top to bottom:
+
+| Line | Live | Looking back (§19) |
+|---|---|---|
+| heading | `NOW RUNNING` | `LOOKING BACK` |
+| name, description | the innermost running step's (16 px bold; muted, hidden when empty) | the clicked step's |
+| state chip | `Running...` on the `RUNNING` verdict chip | its verdict on that verdict's chip; `Not run yet` (`PENDING`); `Running...` |
+| time line | `Run 4:07 · Step 0:12` (ticking every second; paused time is not taken off), the verdicts so far in `run_display.COUNT_ORDER` (`2 PASS · 1 FAIL`) counted like `RunProgress` (no group rows, every verdict), `Last failure: <step>` | `Took 0:12`; hidden before it has finished |
+| results | `No results yet.` | the values (`describe_step_values()`, as the Result tooltip; `No values recorded.` for none), then the error text in the FAIL chip's colours; hidden for a step not run yet. Selectable |
+
+Between steps the name reads `-` and there is no chip and no results line. `RunStarted`
+shows the card and starts the clock; `RunFinished` stops the clock, hides it and brings
+the logo back, marked with the run's result (table above).
 
 ## 19. Looking back at a step (2026-10-13)
 
-A click on a step row's name or description **during or after a run** also shows, on the
-right, what that step had: its picture, or — with none — a card for it. The same click
-still opens the YAML panel (§12); one gesture does both. GUI only: nothing is sent, CORE
-and the engine know nothing of it, and no message or field was added.
+A click on a step row's **name or Result** **during or after a run** puts that step in the
+step card — marked `LOOKING BACK`, with its state chip, `Took 0:12` and its results (§18) —
+and shows the picture it had, or none.
+The description opens the YAML panel instead (§12; at first one click did both). GUI only:
+nothing is sent, CORE and the engine know nothing of it, and no message or field was added.
 
 | File | What it adds |
 |---|---|
-| `step_table.py` | `step_clicked` (the row's step id, as `Signal(object)`), emitted by `_clicked_cell()` for a name/description click with the YAML panel on — before the panel opens, so a row without recipe text still counts. A group's name stays its fold control and emits nothing |
+| `step_table.py` | `step_clicked` (the row's step id, as `Signal(object)`), emitted by `_clicked_cell()` for a click on the name or the Result with the YAML panel on; that click closes the panel. A group's name stays its fold control and emits nothing — a group is looked at through its Result |
 | `run_display.py` | Every started step is remembered (`_Seen`): the picture on screen once it was innermost, its start and finish (`step_finished(outcome, now)`), its outcome. `review(step_id)` → `StepReview(step, state, image_path, outcome, duration)`, `state` one of `REVIEW_PENDING` / `REVIEW_RUNNING` / `REVIEW_FINISHED`; None before the first run since the recipe was loaded (`has_run`). `is_running_step()` |
-| `step_review_card.py` | `StepReviewCard` — heading `LOOKING BACK`, the step's name and description, the state on its verdict chip (`Not run yet`, `Running...`, or the verdict), `Took 0:12`, the values (`describe_step_values()`, as the Result tooltip), the error text in the FAIL chip's colours |
-| `interaction_panel.py` | the review bar above the picture area (`review_caption` — `Step '<name>' - <verdict>` — and `review_back_button`, emitting `review_closed`); the card as the visual stack's third page. `show_review(review, during_run)`, `hide_review()`, `is_showing_review()`, `is_showing_review_card()` |
-| `center_view.py` | `review_step(step_id)`, `close_review()`, `is_reviewing()`; `_show_run_view()` leaves the area alone while reviewing |
-| `gui.py` | `step_table.step_clicked` → `center.review_step` |
+| `run_header.py` | `show_review(review)` — the step card stands on the step until `show_live()` (`step_review_card.py`, a separate card under the header, was folded into it on 2026-10-13) |
+| `interaction_panel.py` | `show_review(review)` — the card, and the picture or `show_no_picture()`; `is_showing_review()` |
+| `center_view.py` | `review_step(step_id)`, `close_review()`, `is_reviewing()`; `_show_run_view()` leaves the card and the picture area alone while reviewing |
+| `gui.py` | `step_table.step_clicked` → `center.review_step`, then `OutsideClickWatcher.watch()` |
 
 **Recorded, not worked out from the recipe.** A `Sequence` step runs its own fresh copy of
 the called sequence (new step ids), and a row does not say which sequence a group calls,
@@ -1467,18 +1486,27 @@ screen is recorded at `StepStarted` instead — exactly what the operator saw. A
 started yet in this run shows its own `image_path`, or the card. A `StepFinished` with no
 start (SKIP) is remembered with no picture and a zero duration.
 
+**No Back button** (changed 2026-10-13; there was a *Back to live* / *Back* button on a
+caption bar). A look-back ends by itself, or with a click anywhere outside the step table:
+`gui.OutsideClickWatcher` is an application-wide event filter, installed by `watch()` only
+while a step is being looked at and removed as soon as it is not — so the rest of the time
+no event pays for it. It looks at the widget under the press (`QApplication.widgetAt()`,
+not the receiver: an ignored press travels on to the table's parents, which are outside
+it). The step table and its YAML panel — a window of its own — count as inside.
+
 | When | What happens |
 |---|---|
-| Before the first run since the recipe was loaded | nothing — the YAML panel only |
+| Before the first run since the recipe was loaded | nothing |
 | A question is open | nothing new: the question needs the area |
-| The clicked step is the innermost one running | the live view (any review ends) |
-| Any other step, during a run | its picture or card; the bar's button reads **Back to live** |
-| Any step, after a run | the same; the button reads **Back**, and returns to the end-of-run picture |
-| The next `StepStarted` | the review ends, the live view comes back |
-| A question arrives (`_question_shown()`) | the review ends |
-| `RunStarted`, `RunFinished`, a recipe loaded or unloaded | the review ends |
+| The clicked step is the innermost one running | the live view (any look-back ends) |
+| Any other step, during a run | that step in the step card, its picture if it had one |
+| Any step, after a run | the same — the step card comes back for it |
+| A click outside the step table | the look-back ends: the live view, or after a run the end-of-run picture with no step card |
+| The next `StepStarted` | the look-back ends, the live view comes back |
+| A question arrives (`_question_shown()`) | the look-back ends |
+| `RunStarted`, `RunFinished`, a recipe loaded or unloaded | the look-back ends |
 
-`StepFinished` and the sequence events leave a review in place. Engineering mode clicks
+`StepFinished` and the sequence events leave a look-back in place. Engineering mode clicks
 select rows (§17) and look back at nothing.
 
 ---

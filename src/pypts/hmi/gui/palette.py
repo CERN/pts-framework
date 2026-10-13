@@ -127,6 +127,10 @@ class Palette:
     toolbar_background: str
     table_background: str
     row_alternate: str
+    #: The step table while a run is on: greyed, because nothing in it can be
+    #: changed until the run ends. The Result chips keep their own colours.
+    table_background_running: str
+    row_alternate_running: str
     header_background: str
     status_background: str
     panel_background: str
@@ -236,6 +240,8 @@ LIGHT = Palette(
     toolbar_background="#F8FAFC",
     table_background="#ffffff",
     row_alternate="#fafbfe",
+    table_background_running="#E9ECEF",
+    row_alternate_running="#E4E7EB",
     header_background="#F0F4FA",
     status_background="#F0F4FA",
     panel_background="#F0F4FA",
@@ -307,6 +313,8 @@ DARK = Palette(
     toolbar_background="#232323",
     table_background="#3c3f41",
     row_alternate="#404346",
+    table_background_running="#2F3133",
+    row_alternate_running="#333638",
     header_background="#2b2b2b",
     status_background="#1e1e1e",
     panel_background="#1e1e1e",

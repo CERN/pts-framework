@@ -1,44 +1,10 @@
 todo: 
 
 - Fix the recipe verification tool - in progress
-    -> 2026-10-12: hints now worded by the schema's field descriptions (status 1.61);
-       verdicts were already Pydantic (1.53). Item left open for you to close.
 - Then make proper recipe creation tool - in progress
 
 - XY graph integration
 - Linux/Windows compatibilty tests
 - How to properly deploy it?
-[x] SSH steps - create the HAL layer, move the SSH there
-    -> done 2026-10-08: pypts/hal/ - devices by logical name, one driver process each,
-       SshDriver; status 1.54.
-
-
-- Make it possible to run the sequence inside of the sequence. The main should be the only one to execute, while it should be able nest sequences.
-Ideally, we want to be able to define a sequence below main and put it as a group of tests inside the main. Should be also possible to nest sequence inside sequence inside the sequence.
-Do you understand? Firstly ask me about it as we would be in the plan mode. Then we decide what to do with it.
-Then we need to resurrect the SequenceStep type - so the whole pipeline of adding it and documenting have to happen. Interrogate me so u understand it very well. Also, before we start, tell me if our architecture is actually prepared for that or we need to dso a lot of patching.
-Eventually, it can flatten at loading. Idk how we do with indexed step - u tell
-
-
 - Is our project running the python 3.12? 
-
-[x] how to decide what widget to load?
-based on the recipe definition
-    -> done 2026-10-12 for pictures: optional `image_path` on any step and sequence,
-       a run card when there is none; status 1.62. Text instructions, on_fail hints
-       and a plot slot are TODOs there.
-
-[x] Move the yaml recipe schema to the pydantic framework?
-rules are already in recipe_parser.py on master branch
-    -> done 2026-10-08: recipe/recipe_schema.py (constants + Pydantic models) replaces
-       rules.py and validator.py; status 1.52.
-
-Selecting steps for executing only those ones. - for development purposes
-
-Checkbox for overriding the continue_on_error
-
-
-the YAML key - naming.
-The steptype: Sequence - this if fine.
-sequence_name - PowerCycle
-description - blah blah. I want it to have the same structure as our "main" sequence have now. But instead of running the suite as main or othewr sequences. I want to have main as only executable, while I can still group tests in other sequences and execute them as nested in main
+- how to decide what widget to load? - based on the recipe definition. Needs to ingtegrate the XY graph still

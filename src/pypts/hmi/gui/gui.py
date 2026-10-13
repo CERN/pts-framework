@@ -27,8 +27,8 @@ import sys
 import time
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QMouseEvent, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QGraphicsOpacityEffect,
@@ -256,6 +256,69 @@ def gui_main(
     # loop is running leaves every later event loop in the process stopped
     # before it starts, which is what it did to the test suite.
     sys.exit(gui.exit_code)
+
+
+class OutsideClickWatcher(QObject):
+    """
+    Ends a look back at a step (gui.md §19) when the operator clicks anywhere
+    outside the step table.
+
+    An application-wide event filter, installed only while a step is being
+    looked at - watch() after a click, and it takes itself off again once the
+    look-back is over - so the rest of the time no event pays for it. Inside
+    means the step table or its YAML panel, which is a window of its own.
+    """
+
+    def __init__(self, step_table: QWidget, popup: QWidget, center: CenterContent) -> None:
+        super().__init__(step_table)
+        self._step_table = step_table
+        self._popup = popup
+        self._center = center
+        self._installed = False
+
+    def watch(self) -> None:
+        """After a step row click: start watching if it began a look-back."""
+        if not self._center.is_reviewing() or self._installed:
+            return
+        application = QApplication.instance()
+        if application is None:
+            return
+        application.installEventFilter(self)
+        self._installed = True
+
+    def _stop(self) -> None:
+        application = QApplication.instance()
+        if application is not None:
+            application.removeEventFilter(self)
+        self._installed = False
+
+    def is_watching(self) -> bool:
+        return self._installed
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt virtual
+        if not self._center.is_reviewing():
+            # Ended some other way - the next step, a question, a new run.
+            self._stop()
+            return False
+        if event.type() != QEvent.Type.MouseButtonPress:
+            return False
+        if not isinstance(event, QMouseEvent):
+            return False
+        # Where the press landed, not `watched`: an ignored press travels on to
+        # the parents, and the table's parent is already outside it.
+        target = QApplication.widgetAt(event.globalPosition().toPoint())
+        if target is None or self._is_inside(target):
+            return False
+        log.debug("A click outside the step table ends looking back at a step.")
+        self._stop()
+        self._center.close_review()
+        return False
+
+    def _is_inside(self, widget: QWidget) -> bool:
+        for area in (self._step_table, self._popup):
+            if widget is area or area.isAncestorOf(widget):
+                return True
+        return False
 
 
 class PtsMainWindow(QMainWindow):
@@ -616,6 +679,13 @@ class GUI(HmiClient):
         self.step_table.open_recipe_requested.connect(self.open_recipe_in_editor)
         self.step_table.open_python_file_requested.connect(self.open_python_file)
         self.step_table.step_clicked.connect(self.center.review_step)
+        self.outside_click_watcher = OutsideClickWatcher(
+            self.step_table, self.step_table.yaml_popup, self.center
+        )
+        # After review_step(), so watch() sees whether a look-back began.
+        self.step_table.step_clicked.connect(
+            lambda _step_id: self.outside_click_watcher.watch()
+        )
 
         self.report_dir: str | None = None
 

@@ -183,6 +183,7 @@ def test_text_that_does_not_load_keeps_the_last_rows_grayed(window):
     assert window.step_table.table.rowCount() == rows
     assert not window.step_table.isEnabled()
     assert "cannot be read" in window.problems.item_text(0)
+    assert window.problems.badge_text() == "ERROR"
 
 
 def test_a_loading_problem_keeps_the_rows_and_names_it(window):
@@ -341,7 +342,7 @@ def test_an_edit_does_not_crash_the_editor(action):
 def test_starting_up_is_not_an_edit(window, qapp):
     # Re-colouring the empty editor used to commit "" as an edit after 400 ms.
     window.yaml_editor._on_debounce()
-    window._toggle_dark(True)
+    window._apply_theme(True)
     window.yaml_editor._on_debounce()
     assert window._model.undo_stack.count() == 0
     assert not window._model.is_modified()
@@ -402,3 +403,158 @@ def test_redo_answers_both_shortcuts(window, qapp, keys):
     QTest.keySequence(window, QKeySequence(keys))
 
     assert window._model.steps(0)[0]["wait_time"] == 5
+
+
+# -- second round (2026-10-13): views, Add step, drag-and-drop, menus ------------------------
+
+_THREE = """\
+name: Three
+version: "1.0"
+---
+sequence_name: Main
+steps:
+  - steptype: Wait
+    step_name: A
+    wait_time: 1
+  - steptype: Wait
+    step_name: B
+    wait_time: 2
+  - steptype: Wait
+    step_name: C
+    wait_time: 3
+  - steptype: Sequence
+    sequence_name: Inner
+---
+sequence_name: Inner
+steps:
+  - steptype: Wait
+    step_name: Inside
+    wait_time: 1
+"""
+
+
+def _names(window, sequence=0):
+    return [step.get("step_name") for step in window._model.steps(sequence)]
+
+
+def test_dropping_a_row_below_another_moves_its_step_there(window):
+    _load(window, _THREE)
+    window._on_row_dropped(0, 2, True)
+    assert _names(window)[:3] == ["B", "C", "A"]
+    assert window._selected is not None and window._selected.step_index == 2
+
+
+def test_dropping_a_row_above_another_moves_its_step_there(window):
+    _load(window, _THREE)
+    window._on_row_dropped(2, 0, False)
+    assert _names(window)[:3] == ["C", "A", "B"]
+
+
+def test_dropping_a_row_on_itself_changes_nothing(window):
+    _load(window, _THREE)
+    window._on_row_dropped(1, 1, True)
+    window._on_row_dropped(1, 2, False)
+    assert window._model.undo_stack.count() == 0
+
+
+def test_a_step_cannot_be_dropped_into_another_sequence(window):
+    _load(window, _THREE)
+    window.step_table.expand_all()
+    # Row 3 is the call, row 4 the called sequence's own step.
+    window._on_row_dropped(0, 4, True)
+    assert _names(window)[:3] == ["A", "B", "C"]
+    assert "own sequence" in window.statusBar().currentMessage()
+
+
+def test_the_drop_target_is_above_or_below_by_the_rows_half(window):
+    _load(window, _THREE)
+    window.show()
+    table = window.step_table.table
+    rect = table.visualRect(table.model().index(1, 0))
+    assert window._dragger.drop_target(rect.top() + 2) == (1, False)
+    assert window._dragger.drop_target(rect.bottom() - 2) == (1, True)
+
+
+def test_add_step_is_in_the_toolbar_with_words_under_the_table_and_the_form(window):
+    from PySide6.QtCore import Qt as _Qt
+
+    _load(window, _THREE)
+    toolbar_button = window._toolbar.widgetForAction(window._act_add_step)
+    assert toolbar_button.toolButtonStyle() == _Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+    assert window.add_step_button.isEnabled()
+    assert window.add_step_button.menu() is window._add_step_menu
+    assert window.form_add_button.menu() is window._add_step_menu
+
+
+def test_menus_get_the_stylesheet_with_room_at_the_left(window, qapp):
+    assert "QMenu::item" in qapp.styleSheet()
+    assert "padding: 7px 28px 7px 18px" in qapp.styleSheet()
+
+
+def test_a_drop_event_on_the_table_moves_the_step(window, qapp):
+    from PySide6.QtCore import QMimeData, QPointF
+    from PySide6.QtCore import Qt as _Qt
+    from PySide6.QtGui import QDropEvent
+
+    from pypts.helper_applications.recipe_editor.row_drag import ROW_MIME
+
+    _load(window, _THREE)
+    window.show()
+    table = window.step_table.table
+    mime = QMimeData()
+    mime.setData(ROW_MIME, b"0")
+    rect = table.visualRect(table.model().index(2, 0))
+    drop = QDropEvent(
+        QPointF(rect.center().x(), rect.bottom() - 2),
+        _Qt.DropAction.MoveAction,
+        mime,
+        _Qt.MouseButton.LeftButton,
+        _Qt.KeyboardModifier.NoModifier,
+    )
+    # Through the filter itself: Qt delivers a drop only inside a real drag session.
+    assert window._dragger.eventFilter(table.viewport(), drop) is True
+    assert _names(window)[:3] == ["B", "C", "A"]
+
+
+# -- third round (2026-10-13): the form only, a badge on PROBLEMS ------------------------------
+
+
+def test_the_right_column_is_the_form_only(window):
+    from PySide6.QtWidgets import QMenu, QTabBar
+
+    menus = window.menuBar().findChildren(QMenu)
+    view_menu = next(menu for menu in menus if menu.title() == "View")
+    assert [a.text() for a in view_menu.actions()] == ["Toggle Dark Mode"]
+    assert window.form.parent() is not None
+    assert not window.form.parentWidget().findChildren(QTabBar)
+
+
+def test_the_problems_badge_says_ok_warning_or_error(window):
+    from pypts.helper_applications.recipe_creator.issue import ValidationIssue
+    from pypts.helper_applications.recipe_editor.problems_panel import (
+        STATE_ERROR,
+        STATE_NONE,
+        STATE_OK,
+        STATE_WARNING,
+    )
+
+    window._refresh_view()
+    assert window.problems.state() == STATE_NONE
+    assert window.problems._badge.isHidden()
+    _load(window, _THREE)
+    assert window.problems.state() == STATE_OK
+    assert window.problems.badge_text() == "OK"
+    assert not window.problems._badge.isHidden()
+    warning = ValidationIssue(severity="warning", field="x", message="m", hint="h")
+    error = ValidationIssue(severity="error", field="x", message="m", hint="h")
+    window.problems.show_issues([warning])
+    assert (window.problems.state(), window.problems.badge_text()) == (STATE_WARNING, "!")
+    window.problems.show_issues([warning, error])
+    assert (window.problems.state(), window.problems.badge_text()) == (STATE_ERROR, "ERROR")
+
+
+def test_the_badge_is_coloured_by_the_stylesheet(window, qapp):
+    sheet = qapp.styleSheet()
+    assert 'QLabel#problemsBadge[state="ok"]' in sheet
+    assert 'QLabel#problemsBadge[state="warning"]' in sheet
+    assert 'QLabel#problemsBadge[state="error"]' in sheet

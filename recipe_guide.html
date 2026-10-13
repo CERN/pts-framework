@@ -247,7 +247,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <ul>
 <li>A path <strong>relative to the recipe's own folder</strong>, or an absolute one — the same rule as <code>module:</code>.</li>
 <li>A step's picture goes away when the step ends. A step without one shows its sequence's; inside a called sequence with neither, the calling <code>Sequence</code> step's, and so on outward. With no picture anywhere, the GUI shows a card with the running step, the elapsed time, the verdicts so far and the last failure.</li>
-<li>On a question step (<code>UserInteraction</code>, <code>UserWrite</code>, <code>UserLoading</code>) the picture shows beside the question. A question step without one leaves the run's view as it is while it waits — its sequence's picture if that has one, otherwise the run card.</li>
+<li>On a question step (<code>UserInteraction</code>, <code>UserWrite</code>, <code>UserLoading</code>) the picture shows beside the question. A question step without one leaves the run's view as it is while it waits — its sequence's picture if that has one, otherwise no picture at all — the step card at the top of the panel names the step.</li>
 <li>On an <code>Indexed</code> step it goes on every generated step, unless the <code>template</code> names its own.</li>
 <li><strong>A file that is not there does not stop anything.</strong> The recipe loads, the operator is told once which pictures are missing, and "No image available" is shown in their place.</li>
 <li>The CLI and headless mode ignore it.</li>

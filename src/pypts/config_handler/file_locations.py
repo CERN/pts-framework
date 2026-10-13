@@ -25,6 +25,7 @@ the conventional per-user locations instead:
     Linux     config  ~/.config/pypts/config.ini
               data    ~/.local/share/pypts/{logs,reports}
               state   ~/.local/state/pypts/recent_recipes.json
+                      ~/.local/state/pypts/recent_recipes_editor.json
 
 Config, data and state are three different things, and that split is why there
 are three functions rather than one. *Config* is the user's - pypts reads it and
@@ -59,6 +60,10 @@ CONFIG_FILE_NAME = "config.ini"
 #: The file name inside the state directory.
 RECENT_RECIPES_FILE_NAME = "recent_recipes.json"
 
+#: The Recipe Editor v2's own list, beside pypts': it reads pypts' list and
+#: writes only this one.
+EDITOR_RECENT_RECIPES_FILE_NAME = "recent_recipes_editor.json"
+
 
 def config_dir() -> Path:
     """The per-user directory holding config.ini."""
@@ -87,6 +92,11 @@ def recent_recipes_path() -> Path:
     store asks nothing else where its file lives.
     """
     return state_dir() / RECENT_RECIPES_FILE_NAME
+
+
+def editor_recent_recipes_path() -> Path:
+    """Full path of the Recipe Editor v2's recent-recipes list, whether or not it exists yet."""
+    return state_dir() / EDITOR_RECENT_RECIPES_FILE_NAME
 
 
 def default_data_dir() -> Path:

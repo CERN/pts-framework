@@ -44,8 +44,9 @@ from dataclasses import dataclass
 #: the change adds something new that is mandatory - something an existing file
 #: cannot work without. Reset to 1.0.0 in September 2026; the integer versions
 #: 2-4 before it ([watchdog], the `[gui] theme` values, `[gui] window_mode`)
-#: belong to the refactor branch and are not continued.
-CONFIG_VERSION = "1.0.0"
+#: belong to the refactor branch and are not continued. 2.0.0 (October 2026):
+#: the mandatory [recipe_editor] section.
+CONFIG_VERSION = "2.0.0"
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
 #: that a file written by hand behaves the way an INI file is expected to.
@@ -115,6 +116,14 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "window_mode": Field("str", "windowed", choices=("windowed", "fullscreen")),
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
+    },
+    "recipe_editor": {
+        # The Recipe Editor v2's own window, the same keys as [gui]: the editor
+        # is set up in its own Settings and never changes pypts' window.
+        "theme": Field("str", "light", choices=("light", "dark", "system")),
+        "window_mode": Field("str", "windowed", choices=("windowed", "fullscreen")),
+        "window_width": Field("int", "1600"),
+        "window_height": Field("int", "1000"),
     },
 }
 

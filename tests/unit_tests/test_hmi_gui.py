@@ -1867,14 +1867,14 @@ def test_a_sequence_without_sources_still_fills_the_table(qapp):
     assert content.table.rowCount() == 2
     assert content.table.item(0, 0).data(_YAML_ROLE) is None
 
-    content._clicked_cell(0, 0)
+    content._clicked_cell(0, 1)
     assert content.yaml_popup.isVisible() is False
 
 
 def test_clicking_a_row_shows_its_sequence_with_the_step_picked_out(qapp):
     content, sources = a_table_with_yaml(qapp)
 
-    content._clicked_cell(1, 0)
+    content._clicked_cell(1, 1)
 
     assert content.yaml_popup.isVisible() is True
     assert content.yaml_popup.text_view.toPlainText() == sources[1].text
@@ -1918,16 +1918,58 @@ def test_a_tool_can_add_entries_to_the_right_click_menu(qapp):
     assert "Tool entry" in [action.text() for action in menu.actions()]
 
 
-def test_the_description_opens_the_panel_too_and_the_result_does_not(qapp):
-    """The two prose columns are the affordance; the Result column is a verdict
-    with its own tooltip, and a click there dismisses instead."""
+def test_only_the_description_opens_the_panel(qapp):
+    """The description opens the recipe panel; the step name and the Result
+    close it and ask for the step on the right instead (gui.md §19)."""
     content, _sources = a_table_with_yaml(qapp)
+    asked: list = []
+    content.step_clicked.connect(asked.append)
 
     content._clicked_cell(0, 1)
     assert content.yaml_popup.isVisible() is True
+    assert asked == []
 
     content._clicked_cell(0, 2)
     assert content.yaml_popup.isVisible() is False
+
+    content._clicked_cell(1, 0)
+    assert content.yaml_popup.isVisible() is False
+    assert asked == [content._row_step_id(0), content._row_step_id(1)]
+
+
+def test_a_group_name_still_folds_and_asks_for_nothing(qapp):
+    content, _sequence = a_folding_table(qapp)
+    asked: list = []
+    content.step_clicked.connect(asked.append)
+
+    content._clicked_cell(1, 0)
+
+    assert content.is_expanded(1) is True
+    assert asked == []
+
+
+def test_the_table_goes_grey_for_a_run_and_the_chips_keep_their_colours(qapp):
+    content, _sources = a_table_with_yaml(qapp)
+    chip_before = content.table.item(0, 2).background().color().name()
+
+    content.set_running(True)
+    assert content.table.property("running") is True
+    assert content.table.item(0, 2).background().color().name() == chip_before
+
+    content.set_running(False)
+    assert content.table.property("running") is False
+
+
+def test_both_themes_style_the_running_table_grey():
+    from pypts.hmi.gui.palette import get_palette
+    from pypts.hmi.gui.styles import get_stylesheet
+
+    for dark in (False, True):
+        qss = get_stylesheet(dark)
+        palette = get_palette(dark)
+        rule = qss.split('QTableWidget#stepTable[running="true"]', 1)[1].split("}", 1)[0]
+        assert palette.table_background_running in rule
+        assert palette.row_alternate_running in rule
 
 
 def test_nothing_opens_without_a_click(qapp):
@@ -1950,7 +1992,7 @@ def test_the_clicked_row_is_highlighted_and_the_verdict_chip_is_not(qapp):
     content, _sources = a_table_with_yaml(qapp)
     chip_before = content.table.item(0, 2).background().color().name()
 
-    content._clicked_cell(0, 0)
+    content._clicked_cell(0, 1)
 
     tint = get_palette(False).header_background.lower()
     assert content.table.item(0, 0).background().color().name().lower() == tint
@@ -1965,7 +2007,7 @@ def shown_table_with_yaml(qapp):
     content.resize(600, 300)
     content.show()
     qapp.processEvents()
-    content._clicked_cell(0, 0)
+    content._clicked_cell(0, 1)
     return content, sources
 
 
@@ -2019,7 +2061,7 @@ def test_hiding_the_panel_drops_the_highlight_and_stops_watching(qapp):
     from PySide6.QtCore import Qt
 
     content, _sources = a_table_with_yaml(qapp)
-    content._clicked_cell(0, 0)
+    content._clicked_cell(0, 1)
     assert content._active_row == 0
     assert content._pointer_timer.isActive() is True
 
@@ -2034,13 +2076,13 @@ def test_the_panel_opens_while_a_recipe_runs(qapp):
     """The start of a run closes an open panel - every row is reset - but a
     click during the run opens it, highlight and all."""
     content, _sources = a_table_with_yaml(qapp)
-    content._clicked_cell(0, 0)
+    content._clicked_cell(0, 1)
     assert content.yaml_popup.isVisible() is True
 
     content.set_running(True)
     assert content.yaml_popup.isVisible() is False
 
-    content._clicked_cell(1, 0)
+    content._clicked_cell(1, 1)
     assert content.yaml_popup.isVisible() is True
     assert content._active_row == 1
     content.hide_yaml_popup()
@@ -2052,7 +2094,7 @@ def test_a_verdict_arriving_keeps_the_panel_and_its_highlight(qapp):
 
     content, _sources = a_table_with_yaml(qapp)
     content.set_running(True)
-    content._clicked_cell(0, 0)
+    content._clicked_cell(0, 1)
     step_id = content._row_step_id(0)
 
     content.mark_running(StepStarted(step_id=step_id, step_name="x"))
@@ -2447,7 +2489,7 @@ def test_folding_away_the_row_the_panel_is_open_on_closes_the_panel(qapp):
     )
     content.show_sequence(sequence, sources)
     content.expand_all()
-    content._clicked_cell(2, 0)
+    content._clicked_cell(2, 1)
     assert content.yaml_popup.isVisible() is True
 
     content.set_expanded(1, False)
@@ -3532,29 +3574,75 @@ def step_started(step):
     return StepStarted(step_id=step.step_id, step_name=step.step_name)
 
 
-def test_a_step_picture_shows_while_it_runs_and_the_run_card_after(gui, tmp_path):
+def test_a_step_picture_shows_while_it_runs_and_nothing_after(gui, tmp_path):
     instance, _outbox, inbox = gui
     image = a_real_png(tmp_path / "probe.png")
     event = a_picture_recipe_loaded(image)
     pictured, bare = event.sequences[0].steps
     start_picture_run(instance, inbox, event)
     panel = instance.center.interaction
-    assert panel.is_showing_run_card(), "nothing running yet has a picture"
+    assert not panel.is_showing_picture_area(), "nothing running yet has a picture"
 
     inbox.send(step_started(pictured))
     instance.poll_core()
-    assert not panel.is_showing_run_card()
     assert panel._current_image_path == image
     assert not panel.is_showing_no_image()
 
     inbox.send(finished(pictured))
     inbox.send(step_started(bare))
     instance.poll_core()
-    assert panel.is_showing_run_card()
-    assert panel.run_card.step_label.text() == "Bare"
-    assert panel.run_card.description_label.text() == "Has none."
-    assert panel.run_card.counts_label.text() == "1 PASS"
-    assert panel.run_card.is_ticking()
+    assert not panel.is_showing_picture_area()
+    assert panel.run_result_shown() is None
+
+
+def test_the_header_names_the_running_step_for_the_whole_run(gui, tmp_path):
+    from pypts.hmi.gui.run_header import LIVE_HEADING
+
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(a_real_png(tmp_path / "probe.png"))
+    pictured, bare = event.sequences[0].steps
+    panel = instance.center.interaction
+    inbox.send(event)
+    instance.poll_core()
+    assert not panel.is_showing_header(), "no header outside a run"
+
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(pictured))
+    instance.poll_core()
+    header = panel.run_header
+    assert panel.is_showing_header()
+    assert header.heading_label.text() == LIVE_HEADING
+    assert header.step_label.text() == "Pictured"
+    assert header.description_label.text() == "Has one."
+    assert header.is_ticking()
+
+    inbox.send(finished(pictured))
+    inbox.send(step_started(bare))
+    instance.poll_core()
+    assert header.step_label.text() == "Bare"
+    assert "1 PASS" in header.info_label.text()
+    assert "Step 0:0" in header.info_label.text()
+
+
+def test_the_live_card_shows_a_running_chip_and_no_results_yet(gui, tmp_path):
+    from pypts.hmi.gui.run_header import NO_RESULTS_YET_TEXT, RUNNING_TEXT
+
+    instance, _inbox, _pictured, _bare = a_run_past_the_first_step(gui)
+
+    card = instance.center.interaction.run_header
+    assert card.state_text() == RUNNING_TEXT
+    assert card.results_label.text() == NO_RESULTS_YET_TEXT
+    assert card.error_label.isHidden()
+
+
+def test_between_steps_the_card_has_no_chip(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    start_picture_run(instance, inbox, a_picture_recipe_loaded(None))
+
+    card = instance.center.interaction.run_header
+    assert card.step_label.text() == "-"
+    assert card.state_text() == ""
+    assert card.results_label.isHidden()
 
 
 def test_a_step_without_a_picture_shows_its_sequence_picture(gui, tmp_path):
@@ -3567,7 +3655,6 @@ def test_a_step_without_a_picture_shows_its_sequence_picture(gui, tmp_path):
     instance.poll_core()
 
     panel = instance.center.interaction
-    assert not panel.is_showing_run_card()
     assert panel._current_image_path == fixture
 
 
@@ -3584,8 +3671,47 @@ def test_a_missing_picture_shows_no_image_available(gui, tmp_path):
     assert panel.current_pixmap() is not None
     assert not panel.current_pixmap().isNull()
 
+    # Under it: which file, and what to check.
+    assert panel.is_showing_missing_image_text()
+    text = panel.missing_image_label.text()
+    assert "could not be found" in text
+    assert str(tmp_path / "gone.png") in text
+    assert "image_path in the recipe" in text
 
-def test_the_run_card_shows_the_last_failure(gui, tmp_path):
+    inbox.send(finished(event.sequences[0].steps[0]))
+    inbox.send(step_started(event.sequences[0].steps[1]))
+    instance.poll_core()
+    assert not panel.is_showing_picture_area()
+    assert not panel.is_showing_missing_image_text()
+
+
+def test_a_file_that_is_not_a_picture_says_so(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    not_a_picture = tmp_path / "notes.png"
+    not_a_picture.write_text("not an image", encoding="utf-8")
+    event = a_picture_recipe_loaded(str(not_a_picture))
+    start_picture_run(instance, inbox, event)
+
+    inbox.send(step_started(event.sequences[0].steps[0]))
+    instance.poll_core()
+
+    panel = instance.center.interaction
+    assert panel.is_showing_no_image()
+    assert "could not be shown as a picture" in panel.missing_image_label.text()
+
+
+def test_no_explanation_under_a_picture_that_loads(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(a_real_png(tmp_path / "probe.png"))
+    start_picture_run(instance, inbox, event)
+
+    inbox.send(step_started(event.sequences[0].steps[0]))
+    instance.poll_core()
+
+    assert not instance.center.interaction.is_showing_missing_image_text()
+
+
+def test_the_header_shows_the_last_failure(gui, tmp_path):
     instance, _outbox, inbox = gui
     event = a_picture_recipe_loaded(None)
     pictured, bare = event.sequences[0].steps
@@ -3595,9 +3721,9 @@ def test_the_run_card_shows_the_last_failure(gui, tmp_path):
     inbox.send(step_started(bare))
     instance.poll_core()
 
-    card = instance.center.interaction.run_card
-    assert card.last_failure_label.text() == "Last failure: Pictured"
-    assert card.counts_label.text() == "1 FAIL"
+    info = instance.center.interaction.run_header.info_label.text()
+    assert "1 FAIL" in info
+    assert "Last failure: Pictured" in info
 
 
 def test_the_logo_comes_back_when_the_run_ends(gui, tmp_path):
@@ -3609,9 +3735,9 @@ def test_the_logo_comes_back_when_the_run_ends(gui, tmp_path):
     instance.poll_core()
 
     panel = instance.center.interaction
-    assert not panel.is_showing_run_card()
-    assert panel._current_image_path is None
-    assert not panel.run_card.is_ticking()
+    assert panel.is_showing_logo()
+    assert not panel.is_showing_header()
+    assert not panel.run_header.is_ticking()
 
 
 def test_a_passed_run_ends_on_the_passed_logo(gui, tmp_path):
@@ -3693,7 +3819,7 @@ def test_the_end_of_run_pictures_ship_with_the_package(qapp):
         assert pixmap is not None and not pixmap.isNull(), name
 
 
-def test_a_prompt_without_a_picture_keeps_the_run_card(gui, tmp_path):
+def test_a_prompt_keeps_the_header_on_the_step_that_asks(gui, tmp_path):
     instance, _outbox, inbox = gui
     event = a_picture_recipe_loaded(None)
     start_picture_run(instance, inbox, event)
@@ -3702,11 +3828,14 @@ def test_a_prompt_without_a_picture_keeps_the_run_card(gui, tmp_path):
     panel = instance.center.interaction
 
     instance.ask_user(UserPromptRequest(request_id=uuid4(), message="Ready?", options=("ok",)))
-    assert panel.is_showing_run_card(), "not the logo: the run is still on"
+    assert panel.is_showing_header()
+    assert panel.run_header.step_label.text() == "Bare"
+    assert not panel.is_showing_picture_area()
     assert panel.message_label.text() == "Ready?"
 
     instance.center.option_buttons[0].click()
-    assert panel.is_showing_run_card()
+    assert panel.is_showing_header()
+    assert not panel.is_showing_picture_area()
 
 
 def test_a_prompt_without_a_picture_keeps_the_run_picture(gui, tmp_path):
@@ -3719,11 +3848,10 @@ def test_a_prompt_without_a_picture_keeps_the_run_picture(gui, tmp_path):
     panel = instance.center.interaction
 
     instance.ask_user(UserPromptRequest(request_id=uuid4(), message="Ready?", options=("ok",)))
-    assert not panel.is_showing_run_card()
     assert panel._current_image_path == fixture
 
 
-def test_a_prompt_with_a_picture_shows_it_then_the_run_card_returns(gui, tmp_path):
+def test_a_prompt_with_a_picture_shows_it_then_the_run_view_returns(gui, tmp_path):
     instance, _outbox, inbox = gui
     event = a_picture_recipe_loaded(None)
     start_picture_run(instance, inbox, event)
@@ -3735,37 +3863,37 @@ def test_a_prompt_with_a_picture_shows_it_then_the_run_card_returns(gui, tmp_pat
     instance.ask_user(
         UserPromptRequest(request_id=uuid4(), message="LED on?", options=("yes",), image_path=led)
     )
-    assert not panel.is_showing_run_card()
     assert panel._current_image_path == led
 
     instance.center.option_buttons[0].click()
-    assert panel.is_showing_run_card()
+    assert not panel.is_showing_picture_area()
 
 
-def test_a_text_question_without_a_picture_keeps_the_run_card(gui, tmp_path):
+def test_a_text_question_without_a_picture_keeps_the_header(gui, tmp_path):
     instance, _outbox, inbox = gui
     event = a_picture_recipe_loaded(None)
     start_picture_run(instance, inbox, event)
     panel = instance.center.interaction
 
     instance.ask_user_text(UserTextRequest(request_id=uuid4(), message="Serial?"))
-    assert panel.is_showing_run_card()
+    assert panel.is_showing_header()
+    assert not panel.is_showing_picture_area()
 
 
-def test_switching_theme_keeps_the_run_card_on_screen(gui, tmp_path):
+def test_switching_theme_keeps_the_header_on_screen(gui, tmp_path):
     instance, _outbox, inbox = gui
     event = a_picture_recipe_loaded(None)
     start_picture_run(instance, inbox, event)
     panel = instance.center.interaction
-    assert panel.is_showing_run_card()
+    assert panel.is_showing_header()
 
     instance.center.set_dark(True)
 
-    assert panel.is_showing_run_card()
+    assert panel.is_showing_header()
 
 
 def test_elapsed_text_reads_minutes_then_hours():
-    from pypts.hmi.gui.run_card import elapsed_text
+    from pypts.hmi.gui.run_header import elapsed_text
 
     assert elapsed_text(0) == "0:00"
     assert elapsed_text(247.9) == "4:07"
@@ -3808,14 +3936,27 @@ def test_the_edit_menu_starts_each_recipe_tool_on_the_loaded_recipe(
 
 
 # --------------------------------------------------------------------------
-# Looking back at a step (gui.md §19): a click on a step row during or after
-# a run shows the picture it had, or its card
+# Looking back at a step (gui.md §19): a click on a step's name or Result
+# during or after a run puts it in the header and shows the picture it had,
+# or its card
 # --------------------------------------------------------------------------
 
 
 def click_step(instance, row):
     instance.step_table._clicked_cell(row, 0)
-    instance.step_table.hide_yaml_popup()
+
+
+def a_run_past_the_first_step(gui, image=None):
+    """Pictured finished PASS, Bare running."""
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(image)
+    pictured, bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(pictured))
+    inbox.send(finished(pictured))
+    inbox.send(step_started(bare))
+    instance.poll_core()
+    return instance, inbox, pictured, bare
 
 
 def test_a_click_before_any_run_looks_back_at_nothing(gui):
@@ -3828,27 +3969,23 @@ def test_a_click_before_any_run_looks_back_at_nothing(gui):
     assert not instance.center.interaction.is_showing_review()
 
 
-def test_a_finished_step_shows_its_picture_until_the_next_step_starts(gui, tmp_path):
-    from pypts.hmi.gui.interaction_panel import BACK_TO_LIVE_LABEL
+def test_a_finished_step_is_in_the_header_with_its_picture_until_the_next_step(gui, tmp_path):
+    from pypts.hmi.gui.run_header import LIVE_HEADING, REVIEW_HEADING
 
-    instance, _outbox, inbox = gui
     image = a_real_png(tmp_path / "probe.png")
-    event = a_picture_recipe_loaded(image)
-    pictured, bare = event.sequences[0].steps
-    start_picture_run(instance, inbox, event)
-    inbox.send(step_started(pictured))
-    inbox.send(finished(pictured))
-    inbox.send(step_started(bare))
-    instance.poll_core()
+    instance, inbox, pictured, bare = a_run_past_the_first_step(gui, image)
     panel = instance.center.interaction
-    assert panel.is_showing_run_card()
+    header = panel.run_header
+    assert not panel.is_showing_picture_area()
 
     click_step(instance, 0)
 
     assert panel.is_showing_review()
     assert panel._current_image_path == image
-    assert panel.review_caption.text() == "Step 'Pictured' - PASS"
-    assert panel.review_back_button.text() == BACK_TO_LIVE_LABEL
+    assert header.heading_label.text() == REVIEW_HEADING
+    assert header.step_label.text() == "Pictured"
+    assert header.state_text() == "PASS"
+    assert header.info_label.text().startswith("Took ")
 
     inbox.send(finished(bare))
     instance.poll_core()
@@ -3857,10 +3994,11 @@ def test_a_finished_step_shows_its_picture_until_the_next_step_starts(gui, tmp_p
     inbox.send(step_started(pictured))
     instance.poll_core()
     assert not panel.is_showing_review()
+    assert header.heading_label.text() == LIVE_HEADING
     assert panel._current_image_path == image
 
 
-def test_a_step_with_no_picture_shows_its_card(gui, tmp_path):
+def test_a_looked_back_step_shows_its_results_in_the_card(gui, tmp_path):
     instance, _outbox, inbox = gui
     event = a_picture_recipe_loaded(None)
     pictured, bare = event.sequences[0].steps
@@ -3884,50 +4022,40 @@ def test_a_step_with_no_picture_shows_its_card(gui, tmp_path):
 
     click_step(instance, 0)
 
-    card = panel.review_card
-    assert panel.is_showing_review_card()
+    card = panel.run_header
+    assert not panel.is_showing_picture_area(), "it had no picture"
     assert card.step_label.text() == "Pictured"
     assert card.state_text() == "FAIL"
+    assert card.info_label.text().startswith("Took ")
     assert card.error_label.text() == "Too low."
-    assert card.values_label.text() == "outputs: voltage = 3.1 (range 11 .. 13)"
-    assert card.duration_label.text().startswith("Took ")
+    assert card.results_label.text() == "outputs: voltage = 3.1 (range 11 .. 13)"
 
 
-def test_back_to_live_brings_the_run_view_back(gui, tmp_path):
-    instance, _outbox, inbox = gui
-    event = a_picture_recipe_loaded(a_real_png(tmp_path / "probe.png"))
-    pictured, bare = event.sequences[0].steps
-    start_picture_run(instance, inbox, event)
-    inbox.send(step_started(pictured))
-    inbox.send(finished(pictured))
-    inbox.send(step_started(bare))
-    instance.poll_core()
-    panel = instance.center.interaction
+def test_a_step_with_nothing_recorded_says_so(gui, tmp_path):
+    from pypts.hmi.gui.run_header import NO_VALUES_TEXT
+
+    instance, _inbox, _pictured, _bare = a_run_past_the_first_step(gui)
+
     click_step(instance, 0)
 
-    panel.review_back_button.click()
-
-    assert not panel.is_showing_review()
-    assert panel.is_showing_run_card()
+    assert instance.center.interaction.run_header.results_label.text() == NO_VALUES_TEXT
 
 
 def test_clicking_the_running_step_is_the_live_view(gui, tmp_path):
-    instance, _outbox, inbox = gui
-    event = a_picture_recipe_loaded(None)
-    _pictured, bare = event.sequences[0].steps
-    start_picture_run(instance, inbox, event)
-    inbox.send(step_started(bare))
-    instance.poll_core()
+    instance, _inbox, _pictured, _bare = a_run_past_the_first_step(gui)
+    panel = instance.center.interaction
+    click_step(instance, 0)
+    assert panel.is_showing_review()
 
     click_step(instance, 1)
 
-    panel = instance.center.interaction
     assert not panel.is_showing_review()
-    assert panel.is_showing_run_card()
+    assert panel.run_header.step_label.text() == "Bare"
+    assert not panel.is_showing_picture_area()
 
 
-def test_a_step_not_run_yet_shows_a_pending_card(gui, tmp_path):
-    from pypts.hmi.gui.step_review_card import PENDING_TEXT
+def test_a_step_not_run_yet_says_so_on_its_chip(gui, tmp_path):
+    from pypts.hmi.gui.run_header import PENDING_TEXT
 
     instance, _outbox, inbox = gui
     event = a_picture_recipe_loaded(None)
@@ -3938,51 +4066,100 @@ def test_a_step_not_run_yet_shows_a_pending_card(gui, tmp_path):
 
     click_step(instance, 1)
 
-    card = instance.center.interaction.review_card
+    card = instance.center.interaction.run_header
     assert card.state_text() == PENDING_TEXT
-    assert card.duration_label.isHidden()
+    assert card.info_label.isHidden(), "no duration before it has run"
+    assert card.results_label.isHidden()
 
 
 def test_a_question_ends_the_look_back(gui, tmp_path):
-    instance, _outbox, inbox = gui
-    event = a_picture_recipe_loaded(None)
-    pictured, bare = event.sequences[0].steps
-    start_picture_run(instance, inbox, event)
-    inbox.send(step_started(pictured))
-    inbox.send(finished(pictured))
-    inbox.send(step_started(bare))
-    instance.poll_core()
+    instance, _inbox, _pictured, _bare = a_run_past_the_first_step(gui)
     click_step(instance, 0)
     panel = instance.center.interaction
 
     instance.ask_user(UserPromptRequest(request_id=uuid4(), message="Ready?", options=("ok",)))
 
     assert not panel.is_showing_review()
-    assert panel.is_showing_run_card()
+    assert panel.run_header.step_label.text() == "Bare"
 
     click_step(instance, 0)
     assert not panel.is_showing_review(), "the question needs the area"
 
 
-def test_after_a_run_back_returns_to_the_end_of_run_picture(gui, tmp_path):
-    from pypts.hmi.gui.interaction_panel import BACK_LABEL
-    from pypts.hmi.gui.resources import RUN_PASSED_IMAGE
-
-    instance, _outbox, inbox = gui
+def test_after_a_run_the_header_goes_and_a_click_brings_a_step_back(gui, tmp_path):
     image = a_real_png(tmp_path / "probe.png")
-    event = a_picture_recipe_loaded(image)
-    pictured, _bare = event.sequences[0].steps
-    start_picture_run(instance, inbox, event)
-    inbox.send(step_started(pictured))
-    inbox.send(finished(pictured))
+    instance, inbox, _pictured, _bare = a_run_past_the_first_step(gui, image)
     inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
     instance.poll_core()
     panel = instance.center.interaction
+    assert not panel.is_showing_header()
 
     click_step(instance, 0)
-    assert panel._current_image_path == image
-    assert panel.review_back_button.text() == BACK_LABEL
 
-    panel.review_back_button.click()
+    assert panel.is_showing_header()
+    assert panel._current_image_path == image
+
+
+def press_on(monkeypatch, watcher, widget):
+    """Hand the watcher a mouse press that landed on `widget`."""
+    from PySide6.QtCore import QEvent, QPointF, Qt
+    from PySide6.QtGui import QMouseEvent
+    from PySide6.QtWidgets import QApplication
+
+    monkeypatch.setattr(QApplication, "widgetAt", staticmethod(lambda _point: widget))
+    event = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(1, 1),
+        QPointF(1, 1),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    watcher.eventFilter(widget, event)
+
+
+def test_a_click_outside_the_table_ends_the_look_back(gui, tmp_path, monkeypatch):
+    instance, _inbox, _pictured, _bare = a_run_past_the_first_step(gui)
+    watcher = instance.outside_click_watcher
+    panel = instance.center.interaction
+    click_step(instance, 0)
+    assert watcher.is_watching()
+
+    press_on(monkeypatch, watcher, instance.step_table.table.viewport())
+    assert panel.is_showing_review(), "a click in the table is not outside it"
+
+    press_on(monkeypatch, watcher, instance.center.log_panel)
     assert not panel.is_showing_review()
+    assert not watcher.is_watching()
+    assert panel.run_header.step_label.text() == "Bare"
+
+
+def test_after_a_run_a_click_outside_returns_to_the_end_of_run_picture(
+    gui, tmp_path, monkeypatch
+):
+    from pypts.hmi.gui.resources import RUN_PASSED_IMAGE
+
+    instance, inbox, _pictured, _bare = a_run_past_the_first_step(gui)
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    instance.poll_core()
+    panel = instance.center.interaction
+    click_step(instance, 0)
+
+    press_on(monkeypatch, instance.outside_click_watcher, instance.center.log_panel)
+
+    assert not panel.is_showing_review()
+    assert not panel.is_showing_header()
     assert panel.run_result_shown() == RUN_PASSED_IMAGE
+
+
+def test_the_watcher_lets_go_once_the_look_back_ends_another_way(gui, tmp_path, monkeypatch):
+    instance, inbox, pictured, _bare = a_run_past_the_first_step(gui)
+    watcher = instance.outside_click_watcher
+    click_step(instance, 0)
+    assert watcher.is_watching()
+
+    inbox.send(step_started(pictured))
+    instance.poll_core()
+    press_on(monkeypatch, watcher, instance.step_table.table.viewport())
+
+    assert not watcher.is_watching()

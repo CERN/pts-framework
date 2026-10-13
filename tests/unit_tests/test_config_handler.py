@@ -550,7 +550,7 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
     is never touched, and the reason is an ERROR in the log.
     """
     mismatched = config_path.read_text(encoding="utf-8").replace(
-        f"config_version = {CONFIG_VERSION}", "config_version = 2.0.0"
+        f"config_version = {CONFIG_VERSION}", "config_version = 3.0.0"
     )
     mismatched = mismatched.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(mismatched, encoding="utf-8")
@@ -560,7 +560,7 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
 
     assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
     assert handler.bootstrap_problem is not None
-    assert "2.0.0" in handler.bootstrap_problem
+    assert "3.0.0" in handler.bootstrap_problem
     assert f"expects {CONFIG_VERSION}" in handler.bootstrap_problem
     # The defaults are in force, not the file's values.
     assert handler.get_parameter("gui.window_width") == 1280
@@ -581,7 +581,7 @@ def test_a_different_minor_or_patch_version_is_still_loaded(config, config_path)
     patch number is trusted, and its values are the ones in force.
     """
     newer = config_path.read_text(encoding="utf-8").replace(
-        f"config_version = {CONFIG_VERSION}", "config_version = 1.3.7"
+        f"config_version = {CONFIG_VERSION}", "config_version = 2.3.7"
     )
     newer = newer.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(newer, encoding="utf-8")
@@ -590,7 +590,7 @@ def test_a_different_minor_or_patch_version_is_still_loaded(config, config_path)
     handler = _bootstrap_before_logging()
 
     assert handler.bootstrap_outcome is BootstrapOutcome.LOADED
-    assert handler.config_version == "1.3.7"
+    assert handler.config_version == "2.3.7"
     assert handler.get_parameter("gui.window_width") == 999
 
 

@@ -37,6 +37,10 @@ list, not the run.
 
 Two pypts instances writing at once is last-writer-wins, and one of them may
 lose an entry. That is acceptable for this data; it does not justify a lock.
+
+The Recipe Editor v2 keeps a list of its own (`RecentRecipes(path)` with
+`file_locations.editor_recent_recipes_path()`): it shows pypts' list beside it
+but never writes pypts' file.
 """
 
 import json
@@ -79,7 +83,13 @@ class RecentRecipes:
     ordinary Python to test.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, path: Path | None = None) -> None:
+        """
+        Args:
+            path: the file the list lives in. None: pypts' own,
+                `file_locations.recent_recipes_path()`, looked up at each use.
+        """
+        self._path = path
         self._entries: list[RecentEntry] = self._load()
 
     # --- Reading ---------------------------------------------------------------
@@ -134,9 +144,14 @@ class RecentRecipes:
         except OSError:
             return recipe_path
 
+    def _store_path(self) -> Path:
+        if self._path is not None:
+            return self._path
+        return file_locations.recent_recipes_path()
+
     def _load(self) -> list[RecentEntry]:
         """Whatever the file holds, or an empty list. Never raises."""
-        path = file_locations.recent_recipes_path()
+        path = self._store_path()
         if not path.is_file():
             return []
 
@@ -189,7 +204,7 @@ class RecentRecipes:
         that a kill mid-write leaves the previous list intact rather than a
         truncated one. `os.replace` is atomic on both platforms.
         """
-        path = file_locations.recent_recipes_path()
+        path = self._store_path()
         payload = {
             "version": STORE_VERSION,
             "entries": [

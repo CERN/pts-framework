@@ -20,21 +20,24 @@ which row is shown under the same picture and the same message. The panel that u
 beside it asked specifically for a serial number - a question the framework no
 longer has an opinion about, since a recipe asks it with a UserWrite step.
 
-**The picture area during a run** (gui.md §18) is decided here, from a
-RunDisplay fed the run's events: the innermost step or sequence picture, or
-the run card when there is none. An open question with a picture of its own
-owns the area while it is open, and the run's view comes back when it is
-answered; a question without one leaves the run's view where it is. Outside a
-run the area shows the logo - or, once a run has ended, the logo marked
-"TESTS PASSED" or "TESTS FAILED" until the next run or another recipe.
+**The right column during a run** (gui.md §18) is decided here, from a
+RunDisplay fed the run's events. On top, for the whole run, the step card
+(RunHeader): the running step's name, description, state chip, times and
+counts, and its results once it has them. Under it the innermost step or
+sequence picture - and nothing when there is none. An open question with a
+picture of its own owns the picture area while it is open, and the run's view
+comes back when it is answered; a question without one leaves the run's view
+where it is. Outside a run there is no card and the area shows the logo - or,
+once a run has ended, the logo marked "TESTS PASSED" or "TESTS FAILED" until
+the next run or another recipe.
 
-**Looking back at a step** (gui.md §19): a click on a step row during or after
-a run shows that step's picture - the one it had - or its card, under a bar
-naming it. During a run the live view comes back when the next step starts, a
-question arrives, or the operator presses Back to live; after a run, Back
-returns to the end-of-run picture. Clicking the step running now is the live
-view. While a question is open a click shows nothing new: the question needs
-the area.
+**Looking back at a step** (gui.md §19): a click on a step's name or Result
+during or after a run puts that step in the card, marked LOOKING BACK, with
+its verdict, duration and results, and shows the picture it had, if any. It
+ends when the next step starts, a
+question arrives, the running step is clicked, or the operator clicks anywhere
+outside the step table (gui.py watches for that). While a question is open a
+click shows nothing new: the question needs the area.
 """
 
 import time
@@ -86,7 +89,6 @@ class CenterContent(QWidget):
         self.interaction = InteractionPanel(self.run_display)
         self.interaction.response_given.connect(self._on_interaction_response)
         self.interaction.cancelled.connect(self.cancel_pending)
-        self.interaction.review_closed.connect(self.close_review)
 
         log_label = QLabel("LOG OUTPUT")
         log_label.setObjectName("sectionLabel")
@@ -182,13 +184,18 @@ class CenterContent(QWidget):
             return
         log.debug("Looking back at step '%s' (%s).", review.step.step_name, review.state)
         self._reviewing = step_id
-        self.interaction.show_review(review, during_run=self.run_display.running)
+        self.interaction.show_review(review)
 
     def is_reviewing(self) -> bool:
         return self._reviewing is not None
 
     def close_review(self) -> None:
-        """Back to the live view during a run, to the end-of-run picture after one."""
+        """
+        Back to the live view during a run, to the end-of-run picture after one.
+        Nothing to do when no step is being looked at.
+        """
+        if self._reviewing is None:
+            return
         self._end_review()
         if self.run_display.running:
             self._show_run_view()
@@ -196,35 +203,41 @@ class CenterContent(QWidget):
             self.show_idle()
 
     def _end_review(self) -> None:
-        """Forget the step looked at and take the bar down; the caller repaints."""
+        """
+        Forget the step looked at; the header follows the run again, or goes
+        when there is none. The caller repaints the picture area.
+        """
         self._reviewing = None
-        self.interaction.hide_review()
+        if self.run_display.running:
+            self.interaction.show_live_header()
+        else:
+            self.interaction.hide_header()
 
     # --- The picture area during a run -----------------------------------------
 
     def set_recipe(self, recipe: RecipeLoaded | None) -> None:
         """The recipe whose pictures the run will show; None when unloaded."""
-        self._end_review()
         self.run_display.set_recipe(recipe)
-        self.interaction.run_card.stop()
+        self._end_review()
+        self.interaction.run_header.stop()
         # The last run's verdict belonged to the recipe it ran.
         self.interaction.set_run_result(None)
 
     def run_started(self) -> None:
-        self._end_review()
         self.interaction.set_run_result(None)
         self.run_display.run_started(time.monotonic())
-        self.interaction.run_card.start()
+        self._end_review()
+        self.interaction.run_header.start()
         self._show_run_view()
 
     def run_finished(self, result: ResultType) -> None:
         """
-        Back to the logo, marked with how the run ended: the run's pictures
-        and card belong to the run. Its steps can still be looked back at.
+        Back to the logo, marked with how the run ended, and no header: the
+        run's pictures belong to the run. Its steps can still be looked back at.
         """
-        self._end_review()
         self.run_display.run_finished()
-        self.interaction.run_card.stop()
+        self._end_review()
+        self.interaction.run_header.stop()
         self.cancel_pending()
         self.show_idle()
         self.interaction.set_run_result(run_result_image(result))
@@ -249,20 +262,23 @@ class CenterContent(QWidget):
 
     def _show_run_view(self) -> None:
         """
-        The run's picture, or its card - unless a question with a picture owns
-        the area, or a step is being looked back at.
+        The header on the running step, and the run's picture under it - the
+        plain logo when none applies. A question with a picture keeps the
+        picture area, and a step looked back at keeps both.
         """
         if not self.run_display.running:
             return
-        if self._pending is not None and self._pending_image_path:
-            return
         if self._reviewing is not None:
+            return
+        self.interaction.run_header.refresh()
+        if self._pending is not None and self._pending_image_path:
             return
         image_path = self.run_display.image_path
         if image_path:
             self.interaction.set_image(image_path)
         else:
-            self.interaction.show_run_card()
+            # The step card above says it all: no picture area at all.
+            self.interaction.show_no_picture()
 
     def cancel_pending(self) -> None:
         """Decline whatever question is still open. Idempotent."""

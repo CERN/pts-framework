@@ -8,8 +8,8 @@ RunDisplay: what the right column's picture area shows during a run. No Qt.
 GUI only - nothing is sent and CORE knows nothing of it (gui.md §18). It is fed
 the events the window already receives and answers two questions:
 
-  image_path   the picture to show now, or None for the run card
-  the run card's numbers: the current step, its start, the run's start, the
+  image_path   the picture to show now, or None for the logo
+  the header's numbers: the current step, its start, the run's start, the
                verdict counts and the last failure
 
 **The running stack.** `SequenceStarted` pushes the sequence's picture,
@@ -18,7 +18,7 @@ the **innermost** one set, so a step's picture goes when the step ends, a step
 with none shows its sequence's, and a step inside a called sequence with
 neither shows the picture of the `Sequence` step that called it - which is
 still running, because its `StepFinished` comes after its children's - and so
-on outward. Nothing set anywhere: the run card.
+on outward. Nothing set anywhere: the logo.
 
 A pop is matched by id or name, not blind: it removes the matching entry and
 anything left above it, so a lost event cannot leave a stale picture on screen.
@@ -41,7 +41,7 @@ from uuid import UUID
 from pypts.messages.common_messages import ResultType, StepOutcome
 from pypts.messages.run_events import RecipeLoaded, StepSummary
 
-#: The order the run card lists its verdict counts in.
+#: The order the header lists its verdict counts in.
 COUNT_ORDER = (
     ResultType.PASS,
     ResultType.FAIL,
@@ -65,7 +65,7 @@ class _Running:
     image_path: str | None
     #: The step's row, None for a sequence.
     step: StepSummary | None = None
-    #: time.monotonic() when it started - a step's, for the run card.
+    #: time.monotonic() when it started - a step's, for the header.
     started_at: float = 0.0
 
 
@@ -79,7 +79,7 @@ REVIEW_FINISHED = "finished"
 class _Seen:
     """One step as this run saw it."""
 
-    #: The picture on screen while it ran; None when it was the run card.
+    #: The picture on screen while it ran; None when it was the logo.
     image_path: str | None
     started_at: float
     finished_at: float | None = None
@@ -195,7 +195,7 @@ class RunDisplay:
 
     @property
     def image_path(self) -> str | None:
-        """The innermost picture set on the running stack; None: the run card."""
+        """The innermost picture set on the running stack; None: the logo."""
         for entry in reversed(self._stack):
             if entry.image_path:
                 return entry.image_path

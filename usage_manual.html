@@ -202,38 +202,46 @@ with what was loaded: open the recipe again for your edits to take effect.</p>
 state: Idle, Running, Pausing, Paused, Finished or Stopped.</p>
 <p>Hover over any button to see what it does, or why it's greyed out.
 Hover over a step's result to see why it failed (if it did) and the values it measured.
-Click a step's name or description, between runs or during one, to see the whole sequence that step
+Click a step's description, between runs or during one, to see the whole sequence that step
 belongs to, exactly as it is written in the recipe file, with the clicked step
 highlighted and scrolled into view. For a step inside a called sequence, that is the
 called sequence. Clicking a group's description shows the sequence it calls, whole (clicking its name
 folds or unfolds it). The row goes pale blue while the panel is up. Move the mouse onto the
-panel to scroll it with the wheel; moving the mouse anywhere else closes it.</p>
+panel to scroll it with the wheel; moving the mouse anywhere else closes it.
+While a run is on, the table turns grey: nothing in it can be changed until the run ends.
+The results keep their colours.</p>
 
 <h3>The picture on the right</h3>
 <p>Above the log, the right-hand panel shows what the recipe wants you to see while a step
 runs: a wiring diagram, where to put the probe, what the fixture should look like. The recipe
 decides the picture for each step, or for a whole sequence. A step's picture goes away when the
 step ends.</p>
-<p>When the running step has no picture, the panel shows a <strong>run card</strong>
-instead: the step that is running and what it does, how long the run and the step have taken
-(<em>Run 4:07 · Step 0:12</em>), the verdicts so far (<em>2 PASS · 1 FAIL</em>), and the
-last step that failed. When a question is waiting, the panel shows the question's own picture;
-a question without one leaves the run's picture or the run card where it is. Outside a run, it
-shows the CERN logo. When a run ends, the logo says how: <strong>TESTS PASSED</strong> (PASS or
+<p>Throughout a run, a <strong>step card</strong> sits at the top of the panel: the name of
+the step that is running and what it does, a coloured <em>Running...</em> badge, a small line
+with how long the run and the step have taken (<em>Run 4:07 · Step 0:12</em>), the verdicts so
+far (<em>2 PASS · 1 FAIL</em>) and the last step that failed, and its results once it has
+them. The step's picture appears under the card only when the recipe names one. When a
+question is waiting, the panel shows the question's own picture; a question without one leaves
+the run's picture, if any, where it is. Outside a run there is no step card, just the CERN
+logo. When a run ends, the logo says how: <strong>TESTS PASSED</strong> (PASS or
 DONE) or <strong>TESTS FAILED</strong> (FAIL, ERROR or Stop); a run where every step was skipped
 shows the plain logo. That stays until the next run starts or a recipe is opened or unloaded.</p>
-<p><strong>"No image available"</strong> means the recipe names a picture that isn't on disk.
-You are told which ones when the recipe loads; the run works normally.</p>
+<p><strong>"No image available"</strong> means the recipe names a picture that isn't on disk,
+or a file that isn't a picture. Under it, the panel says which file it looked for (the full
+path, which you can select and copy) and what to check: <code>image_path</code> in the
+recipe. A relative path there is read from the recipe's own folder. You are also told which
+pictures are missing when the recipe loads; the run works normally.</p>
 <p><strong>Looking back at a step.</strong> During a run, or after it, click a step's name or
-description: besides the recipe panel, the right-hand side shows the picture that step had.
-If it had none, you get a card for it instead: its verdict, how long it took, the values it
-measured against what they were checked with, and why it failed, if it did. A step that hasn't
-run yet shows its own picture, or "Not run yet". A bar above names the step you're looking at.
-During a run the live view comes back by itself when the next step starts or a question
-appears, or straight away with <strong>Back to live</strong>; clicking the step that is
-running now also goes back to live. After a run, <strong>Back</strong> returns to the
-TESTS PASSED / TESTS FAILED logo. Before the first run of a recipe, a click only opens the
-recipe panel.</p>
+its result: the right-hand side shows the picture that step had (the description opens the
+recipe panel instead; for a group, click its result, since its name folds it).
+The step card then shows that step, marked <em>LOOKING BACK</em>: its verdict on a coloured
+badge, how long it took, the values it measured against what they were checked with, and why
+it failed, if it did; its picture appears under the card if it had one. A step that hasn't
+run yet shows "Not run yet", and its own picture if it has one. To leave, click anywhere outside the
+step table. During a run it also ends by itself when the next step starts or a question
+appears, and clicking the step that is running now goes straight back to it. After a run,
+leaving returns to the TESTS PASSED / TESTS FAILED logo. Before the first run of a recipe,
+clicking a name or a result does nothing.</p>
 
 <h3>Answering questions</h3>
 <p>A step can ask one of three things:</p>
@@ -455,10 +463,13 @@ def read_kernel():
       as the operator will: <strong>left</strong>, the step table exactly as pypts shows it once the
       recipe is loaded (Indexed steps expanded, called sequences as folding groups; no Result
       column, as there is no run), with
-      <strong>PROBLEMS</strong> under it; <strong>middle</strong>, the recipe text;
-      <strong>right</strong>, a form for the selected step. Click a row, or put the cursor in a
+      <strong>PROBLEMS</strong> under it, whose badge tells at a glance how the recipe stands
+      (green <strong>OK</strong>, yellow <strong>!</strong> for warnings only, red
+      <strong>ERROR</strong>); <strong>middle</strong>, the recipe text;
+      <strong>right</strong>, a form with every field of the selected step. Click a row, or put the cursor in a
       step in the text, to edit it; with nothing selected the form edits the recipe header and the
-      sequence. Hover the &#9432; beside a field for what it means. Edits in the text, the form
+      sequence. <em>+ Add step</em> is on the toolbar, under the table and under the form.
+      Drag a row of the table onto another to move its step there (within its own sequence). Hover the &#9432; beside a field for what it means. Edits in the text, the form
       and the toolbar (add, delete, move, duplicate a step) all share one Undo (Ctrl+Z; Redo is
       Ctrl+Y or Ctrl+Shift+Z), and the file's
       comments are kept. While the text cannot be loaded, the table keeps its last rows, greyed,

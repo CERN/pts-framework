@@ -46,12 +46,19 @@ schema (outside `READ_ONLY_SECTIONS`) gets a page named after its section and a
 control chosen from its type, so a key added to `configuration_schema.py` shows
 up with no change here.
 
+**One dialog, two tools.** A `SettingsProfile` says which pages to show and
+which keys are the theme and the window. pypts uses `PYPTS_SETTINGS`; the Recipe
+Editor v2 uses its own profile over the `[recipe_editor]` keys, and hands a
+`send` that writes the file itself and answers at once. pypts' dialog leaves
+`OWN_TOOL_SECTIONS` out: those are set in their own tool.
+
 Pure presentation: handed the values in force, the `send` callable and the
 preview callables, so a test drives the whole dialog with no CORE and no file.
 Styling lives in `styles.py` (object names `settings*` and `themeSwatch*`).
 """
 
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +124,9 @@ ADVANCED_PAGE = "Advanced"
 #: The keys the window card edits together, in the order `preview_window` takes them.
 WINDOW_KEYS = (WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)
 
+#: Sections another tool sets in its own Settings; pypts' dialog leaves them out.
+OWN_TOOL_SECTIONS = ("recipe_editor",)
+
 #: Page title -> the keys on it, in order. A key the schema does not have is
 #: skipped; a key the schema has and this does not name gets a page of its own.
 PAGES = (
@@ -147,6 +157,10 @@ LABELS = {
     "gui.window_mode": "Window mode",
     "gui.window_width": "Window width",
     "gui.window_height": "Window height",
+    "recipe_editor.theme": "Theme",
+    "recipe_editor.window_mode": "Window mode",
+    "recipe_editor.window_width": "Window width",
+    "recipe_editor.window_height": "Window height",
 }
 
 #: The line under a card's title, where a key needs explaining.
@@ -157,6 +171,7 @@ HINTS = {
     "report.type": "Not used yet.",
     "report.theme": "Not used yet.",
     "gui.theme": "Used by pypts and the Recipe Creator. Previewed as you pick it.",
+    "recipe_editor.theme": "Used by the Recipe Editor v2 only. Previewed as you pick it.",
 }
 
 #: Name and one line for each theme card.
@@ -182,8 +197,47 @@ WINDOW_PRESETS = (
 #: Appended to a page's name in the list while something on it is changed.
 MODIFIED_MARK = "  •"
 
+#: pypts' "next start" line; a profile words its own (`SettingsProfile.next_start_note`).
 NEXT_START_NOTE = "Changes take effect the next time pypts starts."
-FOOTER_NOTE = f"{NEXT_START_NOTE} The theme and the window are previewed straight away."
+
+
+@dataclass(frozen=True, slots=True)
+class SettingsProfile:
+    """
+    What one tool's Settings dialog shows.
+
+    Args:
+        pages: page title -> the keys on it, in order.
+        theme_key: the key edited with the theme cards, and previewed.
+        window_keys: the window's mode, width and height keys - one card, previewed.
+        every_key: True: any editable key `pages` does not place gets a page of
+            its own (pypts: no setting is left out). False: `pages` is all.
+        program: what "restart" and "the next time ... starts" name.
+    """
+
+    pages: tuple[tuple[str, tuple[str, ...]], ...]
+    theme_key: str
+    window_keys: tuple[str, str, str]
+    every_key: bool
+    program: str
+
+    @property
+    def next_start_note(self) -> str:
+        return f"Changes take effect the next time {self.program} starts."
+
+    @property
+    def footer_note(self) -> str:
+        return f"{self.next_start_note} The theme and the window are previewed straight away."
+
+
+#: pypts' own Settings: every editable key, `[gui]` for the theme and window.
+PYPTS_SETTINGS = SettingsProfile(
+    pages=PAGES,
+    theme_key=THEME_KEY,
+    window_keys=WINDOW_KEYS,
+    every_key=True,
+    program="pypts",
+)
 
 #: Said for every change still unanswered when ANSWER_TIMEOUT_MS runs out.
 NO_ANSWER_REASON = "The engine did not answer, so this change may not have been saved."
@@ -213,29 +267,39 @@ def setting_text(value: Any) -> str:
 
 
 def editable_keys() -> list[str]:
-    """Every dotted key the dialog offers, in schema order."""
+    """Every dotted key pypts' dialog offers, in schema order."""
     keys = []
     for section, fields in SCHEMA.items():
-        if section in READ_ONLY_SECTIONS:
+        if section in READ_ONLY_SECTIONS or section in OWN_TOOL_SECTIONS:
             continue
         for key in fields:
             keys.append(f"{section}.{key}")
     return keys
 
 
-def pages_for_schema() -> list[tuple[str, tuple[str, ...]]]:
+def _schema_has(key: str) -> bool:
+    section, _, name = key.rpartition(".")
+    return name in SCHEMA.get(section, {})
+
+
+def pages_for_schema(
+    profile: SettingsProfile = PYPTS_SETTINGS,
+) -> list[tuple[str, tuple[str, ...]]]:
     """
-    The pages to show: PAGES, holding only keys the schema has, followed by one
-    page per section for any editable key PAGES does not place.
+    The pages to show: the profile's pages, holding only keys the schema has,
+    followed - for a profile with `every_key` - by one page per section for any
+    editable key they do not place.
     """
     known = editable_keys()
     placed: set[str] = set()
     pages: list[tuple[str, tuple[str, ...]]] = []
-    for title, keys in PAGES:
-        present = tuple(key for key in keys if key in known)
+    for title, keys in profile.pages:
+        present = tuple(key for key in keys if _schema_has(key))
         if present:
             pages.append((title, present))
             placed.update(present)
+    if not profile.every_key:
+        return pages
 
     leftovers: dict[str, list[str]] = {}
     for key in known:
@@ -778,6 +842,7 @@ class SettingsDialog(QDialog):
         confirm_restore: Callable[[], bool] | None = None,
         blocked_reason: str | None = None,
         open_page: str | None = None,
+        profile: SettingsProfile = PYPTS_SETTINGS,
     ) -> None:
         """
         Args:
@@ -808,8 +873,12 @@ class SettingsDialog(QDialog):
                 is in progress), or None. Clearing the recents is always allowed.
             open_page: the page title to open on, e.g. "Appearance". None, or a
                 title there is no page for: the first page.
+            profile: the pages and the theme and window keys; pypts' by default.
         """
         super().__init__(parent)
+        self._profile = profile
+        self._theme_key = profile.theme_key
+        self._window_keys = profile.window_keys
         self._send = send
         self.problem = problem
         self._answer_timeout_ms = answer_timeout_ms
@@ -894,7 +963,8 @@ class SettingsDialog(QDialog):
             banner = QLabel(
                 "The settings file could not be used at startup, so the standard "
                 "settings are in force and nothing can be saved from here. Correct "
-                "the file, or delete it to have it recreated, then restart pypts.\n\n"
+                f"the file, or delete it to have it recreated, then restart "
+                f"{self._profile.program}.\n\n"
                 f"{self.problem}"
             )
             banner.setObjectName("settingsProblem")
@@ -914,7 +984,7 @@ class SettingsDialog(QDialog):
         # height instead of taking it from them. Wide enough for the three
         # theme cards side by side.
         self.pages.setMinimumSize(680, 500)
-        for title, keys in pages_for_schema():
+        for title, keys in pages_for_schema(self._profile):
             self._page_titles.append(title)
             self._page_keys.append(keys)
             self.nav.addItem(title)
@@ -963,11 +1033,11 @@ class SettingsDialog(QDialog):
         heading.setObjectName("settingsPageTitle")
         column.addWidget(heading)
 
-        has_window_card = all(key in keys for key in WINDOW_KEYS)
+        has_window_card = all(key in keys for key in self._window_keys)
         for key in keys:
             if key in self.cards:
                 continue
-            if has_window_card and key in WINDOW_KEYS:
+            if has_window_card and key in self._window_keys:
                 column.addWidget(self._window_card(values))
             else:
                 column.addWidget(self._single_card(key, values))
@@ -1114,9 +1184,8 @@ class SettingsDialog(QDialog):
         self._register(key, editor, card)
         return card
 
-    @staticmethod
-    def _editor_for(key: str, field: Field, text: str) -> SettingEditor:
-        if key == THEME_KEY and field.choices:
+    def _editor_for(self, key: str, field: Field, text: str) -> SettingEditor:
+        if key == self._theme_key and field.choices:
             return ThemeCards(field.choices, text)
         if field.type == "bool":
             return OnOffSwitch(text)
@@ -1130,16 +1199,17 @@ class SettingsDialog(QDialog):
 
     def _window_card(self, values: Mapping[str, str]) -> SettingCard:
         """The window's mode and size on one card, with Apply and the presets."""
-        mode_field = field_for(WINDOW_MODE_KEY)
-        width_field = field_for(WIDTH_KEY)
-        height_field = field_for(HEIGHT_KEY)
+        mode_key, width_key, height_key = self._window_keys
+        mode_field = field_for(mode_key)
+        width_field = field_for(width_key)
+        height_field = field_for(height_key)
         mode = ChoiceButtons(
             mode_field.choices,
-            values.get(WINDOW_MODE_KEY, mode_field.default),
+            values.get(mode_key, mode_field.default),
             labels=WINDOW_MODE_LABELS,
         )
-        width = NumberField(values.get(WIDTH_KEY, width_field.default), width_field.default)
-        height = NumberField(values.get(HEIGHT_KEY, height_field.default), height_field.default)
+        width = NumberField(values.get(width_key, width_field.default), width_field.default)
+        height = NumberField(values.get(height_key, height_field.default), height_field.default)
 
         body = QWidget()
         column = QVBoxLayout(body)
@@ -1193,9 +1263,9 @@ class SettingsDialog(QDialog):
             f"1000 {TIMES} 700.",
             body,
         )
-        self._register(WINDOW_MODE_KEY, mode, card)
-        self._register(WIDTH_KEY, width, card)
-        self._register(HEIGHT_KEY, height, card)
+        self._register(mode_key, mode, card)
+        self._register(width_key, width, card)
+        self._register(height_key, height, card)
         return card
 
     def _register(self, key: str, editor: SettingEditor, card: SettingCard) -> None:
@@ -1214,7 +1284,7 @@ class SettingsDialog(QDialog):
         row.setContentsMargins(20, 12, 20, 12)
         row.setSpacing(8)
 
-        note = QLabel(FOOTER_NOTE)
+        note = QLabel(self._profile.footer_note)
         note.setObjectName("settingsFooterNote")
         row.addWidget(note)
         row.addStretch()
@@ -1260,11 +1330,11 @@ class SettingsDialog(QDialog):
         return changed
 
     def _on_edited(self, key: str) -> None:
-        if key == THEME_KEY and self._preview_theme is not None:
-            self._preview_theme(self.text_of(THEME_KEY))
+        if key == self._theme_key and self._preview_theme is not None:
+            self._preview_theme(self.text_of(self._theme_key))
         # A mode is tried as soon as it is picked; typed sizes wait for Apply,
         # so the window does not jump on every keystroke.
-        if key == WINDOW_MODE_KEY and not self._setting_window_controls:
+        if key == self._window_keys[0] and not self._setting_window_controls:
             self._apply_window()
         self._refresh()
 
@@ -1281,7 +1351,7 @@ class SettingsDialog(QDialog):
                 self.set_value(key, self._original[key])
         finally:
             self._setting_window_controls = False
-        if any(key in WINDOW_KEYS for key in card.keys):
+        if any(key in self._window_keys for key in card.keys):
             self._apply_window()
         self._refresh()
 
@@ -1322,22 +1392,24 @@ class SettingsDialog(QDialog):
     # --- The window preview ---------------------------------------------------------
 
     def _has_window_card(self) -> bool:
-        return all(key in self.editors for key in WINDOW_KEYS)
+        return all(key in self.editors for key in self._window_keys)
 
     def _window_in_controls(self) -> tuple[str, int, int]:
+        mode_key, width_key, height_key = self._window_keys
         return (
-            self.text_of(WINDOW_MODE_KEY),
-            int(self.text_of(WIDTH_KEY)),
-            int(self.text_of(HEIGHT_KEY)),
+            self.text_of(mode_key),
+            int(self.text_of(width_key)),
+            int(self.text_of(height_key)),
         )
 
     def _show_window_in_controls(self, window: tuple[str, int, int]) -> None:
         mode, width, height = window
+        mode_key, width_key, height_key = self._window_keys
         self._setting_window_controls = True
         try:
-            self.set_value(WINDOW_MODE_KEY, mode)
-            self.set_value(WIDTH_KEY, str(width))
-            self.set_value(HEIGHT_KEY, str(height))
+            self.set_value(mode_key, mode)
+            self.set_value(width_key, str(width))
+            self.set_value(height_key, str(height))
         finally:
             self._setting_window_controls = False
 
@@ -1374,7 +1446,7 @@ class SettingsDialog(QDialog):
         if self.problem is not None:
             return
         texts = (window[0], str(window[1]), str(window[2]))
-        for key, text in zip(WINDOW_KEYS, texts, strict=True):
+        for key, text in zip(self._window_keys, texts, strict=True):
             if text != self._original[key]:
                 self._send(key, text)
                 self._original[key] = text
@@ -1388,7 +1460,7 @@ class SettingsDialog(QDialog):
         """The window config.ini will hold: saved values where CORE accepted them."""
         accepted = {result.key: result.value for result in self.results if result.accepted}
         values = []
-        for key in WINDOW_KEYS:
+        for key in self._window_keys:
             values.append(accepted.get(key, self._original[key]))
         return (values[0], int(values[1]), int(values[2]))
 
@@ -1403,7 +1475,7 @@ class SettingsDialog(QDialog):
         """
         changed = self.changes()
         if self._preview_window is not None:
-            for key in WINDOW_KEYS:
+            for key in self._window_keys:
                 changed.pop(key, None)
         return changed
 
@@ -1441,7 +1513,7 @@ class SettingsDialog(QDialog):
             return False
         del self.pending[result.key]
         self.results.append(result)
-        if result.key == THEME_KEY and result.accepted:
+        if result.key == self._theme_key and result.accepted:
             self._theme_saved = True
         if not self.pending:
             self._answer_timer.stop()
@@ -1474,8 +1546,8 @@ class SettingsDialog(QDialog):
         """
         self._answer_timer.stop()
         if self._preview_theme is not None and not self._theme_saved:
-            original = self._original.get(THEME_KEY)
-            if original is not None and self.text_of(THEME_KEY) != original:
+            original = self._original.get(self._theme_key)
+            if original is not None and self.text_of(self._theme_key) != original:
                 self._preview_theme(original)
 
         if (
@@ -1483,10 +1555,11 @@ class SettingsDialog(QDialog):
             and self._has_window_card()
             and self.window_on_screen is not None
         ):
+            mode_key, width_key, height_key = self._window_keys
             opened_with = (
-                self._original[WINDOW_MODE_KEY],
-                int(self._original[WIDTH_KEY]),
-                int(self._original[HEIGHT_KEY]),
+                self._original[mode_key],
+                int(self._original[width_key]),
+                int(self._original[height_key]),
             )
             if (
                 self.window_on_screen != self._window_in_force_next_start()
@@ -1530,7 +1603,8 @@ class SettingsDialog(QDialog):
         column.addWidget(title)
 
         if saved:
-            summary = f"{count_of(len(saved), 'setting')} saved. {NEXT_START_NOTE}"
+            note = self._profile.next_start_note
+            summary = f"{count_of(len(saved), 'setting')} saved. {note}"
         else:
             summary = "Nothing was saved."
         summary_label = QLabel(summary)

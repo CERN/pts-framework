@@ -169,11 +169,13 @@ def test_the_settings_are_grouped_into_pages(qapp, tmp_path):
 
 def test_a_key_no_page_names_still_gets_a_page(monkeypatch):
     """A key added to the schema must never be left out of the dialog."""
+    from dataclasses import replace
+
     from pypts.hmi.gui import settings_dialog
 
-    monkeypatch.setattr(settings_dialog, "PAGES", (("Appearance", ("gui.theme",)),))
+    profile = replace(settings_dialog.PYPTS_SETTINGS, pages=(("Appearance", ("gui.theme",)),))
 
-    pages = settings_dialog.pages_for_schema()
+    pages = settings_dialog.pages_for_schema(profile)
 
     placed = [key for _title, keys in pages for key in keys]
     assert sorted(placed) == sorted(settings_dialog.editable_keys())
@@ -670,7 +672,7 @@ def test_an_answer_with_no_dialog_open_goes_to_the_status_line(gui_factory):
 def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monkeypatch):
     from pypts.hmi.gui.settings_dialog import SettingsDialog
 
-    a_config_file({"meta.config_version": "2.0.0"})
+    a_config_file({"meta.config_version": "3.0.0"})
     instance, _outbox, _inbox = gui_factory()
     seen = {}
 
@@ -682,7 +684,7 @@ def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monke
     monkeypatch.setattr(SettingsDialog, "exec", look_at_the_dialog)
     instance.window.settings_action.trigger()
 
-    assert "structure version 2.0.0" in seen["problem"]
+    assert "structure version 3.0.0" in seen["problem"]
     assert seen["can_save"] is False
 
 

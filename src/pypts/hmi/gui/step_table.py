@@ -105,14 +105,16 @@ _UNFOLDED_ARROW = "\u25be"
 #: How far one level of the call tree is indented in the name column.
 _INDENT = "    "
 
-#: The columns a click in opens the panel: the step name and the description.
-#: The Result column is left out on purpose - it carries its own tooltip with
-#: the measured values in it, and a click there is a click on a verdict.
-#:
-#: They are also the columns the row highlight paints, for the same reason from
-#: the other side: the Result cell's background *is* the verdict chip, so
-#: tinting it would make PASS a different green on whichever row was clicked.
+#: The columns the row highlight paints: the step name and the description.
+#: The Result cell is left out on purpose: its background *is* the verdict
+#: chip, so tinting it would make PASS a different green on whichever row was
+#: clicked.
 _POPUP_COLUMNS = (0, 1)
+
+#: The one column a click in opens the YAML panel: the description. A click on
+#: the step name or the Result shows the step on the right instead
+#: (`step_clicked`, gui.md §19) - except a group's name, which folds it.
+_PANEL_COLUMN = 1
 
 #: How often an open panel looks at where the pointer is.
 _POINTER_CHECK_MS = 100
@@ -171,8 +173,8 @@ class StepTableContent(QWidget):
     #: A click in the name or description of a row that is not a group's fold
     #: control. pypts does not use it; the Recipe Editor v2 selects the step.
     row_clicked = Signal(int)
-    #: The same click with the YAML panel on (pypts), with the row's step id:
-    #: the window shows that step's picture or card (gui.md §19).
+    #: pypts (YAML panel on): a click on a step's name or Result, with the
+    #: row's step id - the window shows that step's picture or card (gui.md §19).
     step_clicked = Signal(object)
 
     def __init__(self) -> None:
@@ -457,10 +459,18 @@ class StepTableContent(QWidget):
         run only rewrites the Result column, which neither the panel nor the
         row highlight touches. The engineering selection is what the gate
         freezes.
+
+        The table goes grey for the run: the `running` property switches the
+        stylesheet's `QTableWidget#stepTable[running="true"]` rule on, and a
+        property change needs a re-polish to be seen.
         """
         self._running = running
         if running:
             self.hide_yaml_popup()
+        self.table.setProperty("running", running)
+        self.table.style().unpolish(self.table)
+        self.table.style().polish(self.table)
+        self.table.viewport().update()
         if self._engineering:
             # Frozen, not cleared: the same selection is there to run again.
             self._set_tick_boxes_enabled(not running)
@@ -473,13 +483,14 @@ class StepTableContent(QWidget):
 
     def _clicked_cell(self, row: int, column: int) -> None:
         """
-        A click in the name or the description: highlight the row, show its YAML.
+        A click in the description: highlight the row, show its YAML. A click
+        in the step name or the Result: close the panel and emit
+        `step_clicked`, which shows the step on the right (gui.md §19).
 
         The one place that opens the panel, so it carries the no-fragment case
         too rather than trusting every caller to have checked. It opens during
-        a run as well. A click anywhere else - the Result column - closes
-        whatever is open, which is also how the operator dismisses the panel
-        without leaving the table.
+        a run as well. Any click outside the description closes the panel,
+        which is also how the operator dismisses it without leaving the table.
         """
         if self._engineering:
             self._engineering_click(row)
@@ -489,15 +500,18 @@ class StepTableContent(QWidget):
             self.hide_yaml_popup()
             self.toggle_row(row)
             return
-        if column not in _POPUP_COLUMNS:
-            self.hide_yaml_popup()
-            return
         if not self._click_panel:
+            # The Recipe Editor v2's selection: name and description select.
+            if column not in _POPUP_COLUMNS:
+                self.hide_yaml_popup()
+                return
             self.highlight_row(row)
             self.row_clicked.emit(row)
             return
-        # Before the panel: a row without recipe text still has a picture.
-        self.step_clicked.emit(self._row_step_id(row))
+        if column != _PANEL_COLUMN:
+            self.hide_yaml_popup()
+            self.step_clicked.emit(self._row_step_id(row))
+            return
         item = self.table.item(row, 0)
         source = None
         if item is not None:

@@ -1,6 +1,6 @@
 """
 Unit tests for RunDisplay (src/pypts/hmi/gui/run_display.py): which picture
-the right column shows during a run, and the run card's numbers. No Qt.
+the right column shows during a run, and the header's numbers. No Qt.
 """
 
 import uuid
@@ -73,7 +73,7 @@ def test_a_step_without_one_shows_its_sequence_picture():
     assert display.image_path == "main.png"
 
 
-def test_nothing_anywhere_means_the_run_card():
+def test_nothing_anywhere_means_the_logo():
     display, rows = _display()
 
     display.step_started(rows["plain"].step_id, 101.0)

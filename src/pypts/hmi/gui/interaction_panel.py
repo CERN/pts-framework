@@ -17,7 +17,6 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QPushButton,
     QSizePolicy,
-    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -31,9 +30,8 @@ from pypts.hmi.gui.resources import (
     load_run_result_pixmap,
     make_placeholder_pixmap,
 )
-from pypts.hmi.gui.run_card import RunCard
 from pypts.hmi.gui.run_display import RunDisplay, StepReview
-from pypts.hmi.gui.step_review_card import StepReviewCard
+from pypts.hmi.gui.run_header import RunHeader
 
 #: The button every prompt carries beyond the recipe's own options, so the
 #: operator is never trapped in front of a question they cannot answer. It is
@@ -48,10 +46,24 @@ BROWSE_LABEL = "Browse..."
 SELECT_FILE = "file"
 SELECT_FOLDER = "folder"
 
-#: The review bar's button (gui.md §19): during a run it goes back to the live
-#: view, after one back to the end-of-run picture.
-BACK_TO_LIVE_LABEL = "Back to live"
-BACK_LABEL = "Back"
+
+def missing_image_text(image_path: str) -> str:
+    """
+    What the operator reads under "No image available": why the picture is
+    not there, and what to do about it. The path is already absolute - the
+    recipe's relative `image_path` was resolved against its own folder at load.
+    """
+    if not os.path.exists(image_path):
+        return (
+            f"This picture could not be found:\n{image_path}\n"
+            "Check image_path in the recipe. A relative path is read from the "
+            "recipe's own folder, so the file must be there under exactly that name."
+        )
+    return (
+        f"This file could not be shown as a picture:\n{image_path}\n"
+        "Check that image_path in the recipe points to a picture (PNG or JPG), "
+        "and that the file is not damaged."
+    )
 
 
 def path_problem(text: str, select: str) -> str:
@@ -83,8 +95,6 @@ def path_problem(text: str, select: str) -> str:
 class InteractionPanel(QWidget):
     response_given = Signal(str)
     cancelled = Signal()
-    #: The review bar's Back button (gui.md §19).
-    review_closed = Signal()
 
     def __init__(self, display: RunDisplay | None = None, parent=None):
         super().__init__(parent)
@@ -112,36 +122,32 @@ class InteractionPanel(QWidget):
         self._inner.setContentsMargins(16, 16, 16, 16)
         self._inner.setSpacing(12)
 
-        # The review bar: which step the picture area is looking back at, and
-        # the way back (gui.md §19). Hidden unless a step is being looked at.
-        self._review_bar = QWidget()
-        review_layout = QHBoxLayout(self._review_bar)
-        review_layout.setContentsMargins(0, 0, 0, 0)
-        review_layout.setSpacing(8)
-        self.review_caption = QLabel()
-        self.review_caption.setWordWrap(True)
-        self.review_back_button = QPushButton(BACK_TO_LIVE_LABEL)
-        self.review_back_button.clicked.connect(self.review_closed.emit)
-        review_layout.addWidget(self.review_caption, stretch=1)
-        review_layout.addWidget(self.review_back_button)
-        self._review_bar.setVisible(False)
-        self._inner.addWidget(self._review_bar)
+        # The header: the running step - or the one looked back at - above
+        # everything else, for the whole run (gui.md §18, §19). Hidden outside one.
+        if display is None:
+            display = RunDisplay()
+        self.run_header = RunHeader(display)
+        self.run_header.setVisible(False)
+        self._inner.addWidget(self.run_header)
 
-        # The picture area: the picture (or the logo, or "No image available")
-        # on one page, the run card on another (gui.md §18), and the card of a
-        # step looked back at on the third (§19).
+        # The picture area: the picture, the logo, or "No image available".
+        # During a run it is hidden when no picture applies - the step card
+        # above says everything (gui.md §18); show_no_picture().
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumHeight(220)
-        if display is None:
-            display = RunDisplay()
-        self.run_card = RunCard(display)
-        self.review_card = StepReviewCard()
-        self._visual_stack = QStackedWidget()
-        self._visual_stack.addWidget(self.image_label)
-        self._visual_stack.addWidget(self.run_card)
-        self._visual_stack.addWidget(self.review_card)
-        self._inner.addWidget(self._visual_stack, stretch=1)
+        self._inner.addWidget(self.image_label, stretch=1)
+
+        # Under "No image available": why, and what to do (gui.md §18). The
+        # path can be selected, so it can be copied into a file browser.
+        self.missing_image_label = QLabel()
+        self.missing_image_label.setWordWrap(True)
+        self.missing_image_label.setAlignment(Qt.AlignCenter)
+        self.missing_image_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        self.missing_image_label.setVisible(False)
+        self._inner.addWidget(self.missing_image_label)
 
         self.message_label = QLabel()
         self.message_label.setWordWrap(True)
@@ -224,6 +230,10 @@ class InteractionPanel(QWidget):
         self._path_page.setVisible(False)
         self._inner.addWidget(self._path_page)
 
+        # Takes the room the picture area leaves when it is hidden, so the
+        # step card and a question stay at the top instead of spreading out.
+        self._inner.addStretch()
+
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.set_idle()
 
@@ -233,11 +243,7 @@ class InteractionPanel(QWidget):
         # The logo is artwork, not a stylesheet colour, so it is reloaded rather
         # than restyled - dark tints it, light draws the file as it is.
         self._logo_pixmap = load_cern_logo_pixmap(palette.logo_tint)
-        self.run_card.set_dark(dark)
-        self.review_card.set_dark(dark)
-        self.review_caption.setStyleSheet(
-            f"font-size:12px; font-weight:600; color:{palette.section_label};"
-        )
+        self.run_header.set_dark(dark)
         frame_bg = palette.panel_background
         border = palette.border
         text_color = palette.text
@@ -250,6 +256,7 @@ class InteractionPanel(QWidget):
             f"font-size:13px; font-weight:500; color:{text_color}; padding:4px 0;"
         )
         self.path_hint_label.setStyleSheet(f"font-size:11px; color:{palette.text_muted};")
+        self.missing_image_label.setStyleSheet(f"font-size:12px; color:{palette.text};")
         self._refresh_visual()
 
     def set_idle(self):
@@ -408,52 +415,58 @@ class InteractionPanel(QWidget):
 
     def run_result_shown(self) -> str | None:
         """The end-of-run picture on screen now, or None when it is not one."""
-        if self._visual_stack.currentWidget() is not self.image_label:
+        if self.image_label.isHidden():
             return None
         if self._current_image_path:
             return None
         return self._run_result_image
 
-    def show_run_card(self):
-        """The picture area shows the run card instead of a picture."""
+    def is_showing_logo(self) -> bool:
+        """The picture area with no picture named: the logo (plain or end-of-run)."""
+        if self.image_label.isHidden():
+            return False
+        return not self._current_image_path
+
+    def show_no_picture(self):
+        """During a run, no picture applies: the picture area goes (gui.md §18)."""
         self._current_image_path = None
-        self._visual_stack.setCurrentWidget(self.run_card)
-        self.run_card.refresh()
+        self.image_label.setVisible(False)
+        self._refresh_missing_image_text()
 
-    def is_showing_run_card(self) -> bool:
-        return self._visual_stack.currentWidget() is self.run_card
+    def is_showing_picture_area(self) -> bool:
+        """Logical state, like is_idle(): not Qt visibility of an unshown window."""
+        return not self.image_label.isHidden()
 
-    def show_review(self, review: StepReview, during_run: bool):
+    # --- The header (gui.md §18, §19) --------------------------------------------
+
+    def show_live_header(self):
+        """The header on, following the running step."""
+        self.run_header.show_live()
+        self.run_header.setVisible(True)
+
+    def hide_header(self):
+        self.run_header.show_live()
+        self.run_header.setVisible(False)
+
+    def is_showing_header(self) -> bool:
+        """Logical state, like is_idle(): not Qt visibility of an unshown window."""
+        return not self.run_header.isHidden()
+
+    def show_review(self, review: StepReview):
         """
-        Look back at one step (gui.md §19): the review bar names it, and the
-        picture area shows the picture it had - or, with none, its card.
+        Look back at one step (gui.md §19): the step card stands on it, and the
+        picture area shows the picture it had - or goes, when it had none.
         """
-        caption = f"Step '{review.step.step_name}'"
-        if review.outcome is not None:
-            caption = f"{caption} - {review.outcome.result}"
-        self.review_caption.setText(caption)
-        if during_run:
-            self.review_back_button.setText(BACK_TO_LIVE_LABEL)
-        else:
-            self.review_back_button.setText(BACK_LABEL)
-        self._review_bar.setVisible(True)
+        self.run_header.show_review(review)
+        self.run_header.setVisible(True)
         if review.image_path:
             self._set_image_from_path(review.image_path)
         else:
-            self._current_image_path = None
-            self.review_card.show_review(review)
-            self._visual_stack.setCurrentWidget(self.review_card)
-
-    def hide_review(self):
-        """Take the review bar down. What the picture area shows next is the caller's."""
-        self._review_bar.setVisible(False)
+            self.show_no_picture()
 
     def is_showing_review(self) -> bool:
-        """A step is being looked back at. Logical state, like is_idle()."""
-        return not self._review_bar.isHidden()
-
-    def is_showing_review_card(self) -> bool:
-        return self._visual_stack.currentWidget() is self.review_card
+        """A step is being looked back at."""
+        return self.is_showing_header() and self.run_header.is_reviewing()
 
     def add_button(self, label: str, value: str, primary: bool = False, on_click=None):
         """One prompt button. `on_click` replaces the default answer-with-value
@@ -486,10 +499,28 @@ class InteractionPanel(QWidget):
 
     def _set_image_from_path(self, image_path: str | None):
         self._current_image_path = image_path
-        self._visual_stack.setCurrentWidget(self.image_label)
+        self.image_label.setVisible(True)
         self._refresh_visual()
 
     def _refresh_visual(self):
+        """The picture page, and the explanation under it when it is "No image available"."""
+        self._paint_picture_page()
+        self._refresh_missing_image_text()
+
+    def _refresh_missing_image_text(self):
+        """Shown exactly while "No image available" is on screen; hidden otherwise."""
+        if self.is_showing_no_image() and self._current_image_path:
+            self.missing_image_label.setText(missing_image_text(self._current_image_path))
+            self.missing_image_label.setVisible(True)
+        else:
+            self.missing_image_label.clear()
+            self.missing_image_label.setVisible(False)
+
+    def is_showing_missing_image_text(self) -> bool:
+        """Logical state, like is_idle(): not Qt visibility of an unshown window."""
+        return not self.missing_image_label.isHidden()
+
+    def _paint_picture_page(self):
         """
         Redraw the picture page: the picture, or - when one was named but the
         file is missing or will not load - "No image available", or with
@@ -521,7 +552,7 @@ class InteractionPanel(QWidget):
         image_path = self._current_image_path
         if not image_path:
             return False
-        if self._visual_stack.currentWidget() is not self.image_label:
+        if self.image_label.isHidden():
             return False
         return not os.path.exists(image_path) or QPixmap(image_path).isNull()
 
