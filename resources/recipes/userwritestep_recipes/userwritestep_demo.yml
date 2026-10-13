@@ -54,16 +54,6 @@ steps:
     outputs:
       output: {type: global, global_name: measured_voltage}
 
-  # Typed text judged rather than stored: the step passes only if what was
-  # typed matches. Useful for a deliberate confirmation the operator has to
-  # spell out rather than click past.
-  - steptype: UserWrite
-    step_name: Confirm the fixture is closed
-    description: Typing the word is the confirmation.
-    message: Type CLOSED once the fixture lid is shut.
-    outputs:
-      output: {type: equals, value: CLOSED}
-
   # And the answers used by a later step - which is why they were stored.
   - steptype: PythonModule
     step_name: Report the serial number

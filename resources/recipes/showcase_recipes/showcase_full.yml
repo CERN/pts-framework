@@ -31,9 +31,10 @@
 # proposes, and its get_serial_number step writes the serial_number global
 # that report_metadata below puts in the report.
 #
-# Expect FAIL on purpose: the PythonModule, Indexed and Sequence demos each
-# carry a deliberate FAIL. And expect, at load, one message about a missing
-# picture: the Step pictures demo names a file that is not there, to show the
+# Unlike the demos it is built from, it carries no deliberate FAIL: the
+# PythonModule, Indexed and Sequence groups are the demos' steps with the
+# failing values corrected, so a run on a good bench passes. Expect, at load,
+# one message about a missing picture: the Step pictures demo names a file that is not there, to show the
 # "No image available" placeholder.
 #
 # The HAL groups need devices declared in config.ini (File -> Open Config);
@@ -106,12 +107,6 @@ steps:
     message: Type the voltage shown on the bench meter, in volts.
     outputs:
       output: {type: global, global_name: measured_voltage}
-  - steptype: UserWrite
-    step_name: Confirm the fixture is closed
-    description: Typing the word is the confirmation.
-    message: Type CLOSED once the fixture lid is shut.
-    outputs:
-      output: {type: equals, value: CLOSED}
   - steptype: PythonModule
     step_name: Report the serial number
     description: Reads back the global the first step wrote.
@@ -161,12 +156,12 @@ steps:
     outputs:
       voltage: {type: range, min: '11', max: '13'}
   - steptype: PythonModule
-    step_name: Even check (fails on purpose)
-    description: 7 is not even - this one shows a FAIL verdict.
+    step_name: Even check
+    description: 8 is even.
     module: ../common/example_tests.py
     method_name: is_even
     inputs:
-      number: 7
+      number: 8
     outputs:
       even: {type: passfail}
   - steptype: PythonModule
@@ -212,9 +207,8 @@ steps:
         expect: {sum: -15}
       - inputs: {a: 1.5, b: 2.5}
         expect: {sum: 4.0}
-      # The deliberate FAIL: 6 + 7 is 13, not 12.
       - inputs: {a: 6, b: 7}
-        expect: {sum: 12}
+        expect: {sum: 13}
   - steptype: Indexed
     step_name: Even check
     description: The same passfail check over three numbers.
@@ -227,7 +221,7 @@ steps:
     parameter_sets:
       - inputs: {number: 2}
       - inputs: {number: 4}
-      - inputs: {number: 7}
+      - inputs: {number: 6}
 
 # ===========================================================================
 # Sequence - sequencestep_recipes/sequencestep_demo.yml
@@ -295,7 +289,7 @@ description: A group of parameterized additions.
 steps:
   - steptype: Indexed
     step_name: Add numbers
-    description: Three additions, one of them expecting the wrong sum.
+    description: Three additions, each checked against its sum.
     template:
       steptype: PythonModule
       module: ../common/example_tests.py
@@ -305,9 +299,8 @@ steps:
         expect: {sum: 2}
       - inputs: {a: 2, b: 3}
         expect: {sum: 5}
-      # The deliberate FAIL: 6 + 7 is 13, not 12.
       - inputs: {a: 6, b: 7}
-        expect: {sum: 12}
+        expect: {sum: 13}
 ---
 sequence_name: Optional checks
 description: Skipped from its caller - its steps show SKIP, its teardown still runs.
@@ -414,7 +407,7 @@ steps:
 # ===========================================================================
 ---
 sequence_name: UserInteraction steps
-description: Three questions, and one of the answers used by a later step.
+description: Four questions, and one of the answers used by a later step.
 steps:
   - steptype: UserInteraction
     step_name: Check the indicator
@@ -429,6 +422,13 @@ steps:
     description: A step that only waits for the operator to be ready.
     message: Connect the unit under test to J1, then continue.
     options: [Continue]
+  - steptype: UserInteraction
+    step_name: Confirm the fixture is closed
+    description: The operator confirms the fixture lid is shut.
+    message: Close the fixture lid, then confirm.
+    options: [Confirm]
+    outputs:
+      output: {type: equals, value: Confirm}
   - steptype: UserInteraction
     step_name: Which port
     description: The chosen port is kept for the step that follows.

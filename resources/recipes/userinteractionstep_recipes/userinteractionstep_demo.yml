@@ -26,7 +26,7 @@ description: Asking the operator questions - UserInteraction end to end.
 version: 0.2
 ---
 sequence_name: Main
-description: Three questions, and one of the answers used by a later step.
+description: Four questions, and one of the answers used by a later step.
 steps:
   # The simplest form: a message, two buttons, and a verdict from the choice.
   # Answer "Yes" for a PASS, "No" for a FAIL, Cancel for an ERROR.
@@ -48,6 +48,16 @@ steps:
     description: A step that only waits for the operator to be ready.
     message: Connect the unit under test to J1, then continue.
     options: [Continue]
+
+  # A confirmation with a verdict: one button, and the GUI's own Cancel beside
+  # it. Confirm is a PASS; Cancel answers nothing, so the step is an ERROR.
+  - steptype: UserInteraction
+    step_name: Confirm the fixture is closed
+    description: The operator confirms the fixture lid is shut.
+    message: Close the fixture lid, then confirm.
+    options: [Confirm]
+    outputs:
+      output: {type: equals, value: Confirm}
 
   # The answer stored rather than judged, so a later step can read it.
   # `globals` on the header is the run's one variable scope.
