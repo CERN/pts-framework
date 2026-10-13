@@ -14,6 +14,11 @@ is parsed as pypts parses a file (`recipe_parser.parse_recipe`) and the chosen
 sequence's `to_summary()` goes into the table; while the text does not load, the
 table keeps its last rows, grayed. `row_map` takes a clicked row to the step it
 was authored as, and a line of the YAML to the step around it.
+
+**Set up like pypts, apart from it.** Theme, window mode and size come from
+`[recipe_editor]` in config.ini and are changed in the same Settings dialog pypts
+has (`editor_settings`); Open Recent shows pypts' recipes beside the editor's own,
+but the editor writes only its own list.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from __future__ import annotations
 import logging
 import sys
 import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -36,6 +42,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSizePolicy,
     QSplitter,
     QToolBar,
@@ -45,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from pypts._version import __version__
+from pypts.config_handler import file_locations
 from pypts.helper_applications.recipe_creator import verify_string
 from pypts.helper_applications.recipe_creator.issue import ValidationIssue
 from pypts.helper_applications.recipe_creator.rc_logging import start_logging
@@ -54,10 +62,21 @@ from pypts.helper_applications.recipe_creator.rc_widgets import (
     YamlEditor,
     creator_stylesheet,
 )
+from pypts.helper_applications.recipe_editor.editor_settings import (
+    EDITOR_SETTINGS,
+    merged_recents,
+    open_config,
+    save_setting,
+    setting_values,
+    window_settings,
+)
 from pypts.helper_applications.recipe_editor.problems_panel import (
+    PROBLEMS_BADGE_NAME,
     PROBLEMS_LIST_NAME,
+    STATE_ERROR,
     ProblemsPanel,
 )
+from pypts.helper_applications.recipe_editor.row_drag import RowDragger
 from pypts.helper_applications.recipe_editor.row_map import (
     StepRef,
     all_refs,
@@ -66,19 +85,18 @@ from pypts.helper_applications.recipe_editor.row_map import (
     refs_for_rows,
 )
 from pypts.helper_applications.recipe_editor.schema_form import SchemaForm
-from pypts.hmi.gui.gui_theme import (
-    configured_theme,
-    detect_system_dark_mode,
-    install_system_theme_sync,
-)
+from pypts.hmi.gui.gui_theme import detect_system_dark_mode, install_system_theme_sync
 from pypts.hmi.gui.palette import get_palette
+from pypts.hmi.gui.settings_dialog import SettingsDialog
 from pypts.hmi.gui.step_table import StepTableContent
 from pypts.hmi.gui.styles import get_stylesheet
 from pypts.hmi.gui.top_bar import svg_icon
+from pypts.messages.core_hmi_communication import ConfigParameterResult
 from pypts.messages.run_events import SequenceSummary
 from pypts.recipe import recipe_parser
 from pypts.recipe.recipe_schema import STEP_TYPE_NAMES
 from pypts.recipe.step_source import step_sources_from_text
+from pypts.utilities.recent_recipes import RecentRecipes
 
 log = logging.getLogger(__name__)
 
@@ -178,6 +196,30 @@ QLabel#formProblem {{
 *[problem="true"] {{
     border: 1px solid {p.danger};
 }}
+QLabel#{PROBLEMS_BADGE_NAME} {{
+    border-radius: 4px;
+    padding: 1px 8px;
+    min-width: 24px;
+    font-weight: 700;
+}}
+QLabel#{PROBLEMS_BADGE_NAME}[state="ok"] {{
+    background-color: {p.verdicts["PASS"].background};
+    color: {p.verdicts["PASS"].text};
+}}
+QLabel#{PROBLEMS_BADGE_NAME}[state="error"] {{
+    background-color: {p.verdicts["FAIL"].background};
+    color: {p.verdicts["FAIL"].text};
+}}
+QLabel#{PROBLEMS_BADGE_NAME}[state="warning"] {{
+    background-color: {p.verdicts["SKIP"].background};
+    color: {p.verdicts["SKIP"].text};
+}}
+QMenu {{
+    padding: 6px 6px;
+}}
+QMenu::item {{
+    padding: 7px 28px 7px 18px;
+}}
 """
 
 
@@ -195,13 +237,16 @@ def _fold_keys(summary: SequenceSummary) -> list[tuple[str, ...]]:
 class RecipeEditorWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self._theme = configured_theme()
-        if self._theme == "dark":
-            self._dark = True
-        elif self._theme == "system":
-            self._dark = detect_system_dark_mode()
-        else:
-            self._dark = False
+        # [recipe_editor] in config.ini - the editor's own, never pypts' [gui].
+        theme, mode, width, height = window_settings()
+        self._dark = False
+        self._theme_disconnect: Callable[[], None] = _nothing_to_disconnect
+        #: The window mode and size in force: (mode, width, height).
+        self._window_state = (mode, width, height)
+        #: The editor's own recent recipes; pypts' list is only read.
+        self._recents = RecentRecipes(file_locations.editor_recent_recipes_path())
+        #: The Settings dialog while it is open, so an answer can be handed to it.
+        self._settings_dialog: SettingsDialog | None = None
 
         self._model = RecipeModel()
         self._file_path = ""
@@ -226,8 +271,9 @@ class RecipeEditorWindow(QMainWindow):
         self._cursor_timer.timeout.connect(self._follow_cursor)
 
         self.setWindowTitle(WINDOW_TITLE)
-        self.setMinimumSize(1100, 700)
-        self.resize(1600, 1000)
+        # The smallest window the Settings dialog's Window card allows.
+        self.setMinimumSize(1000, 700)
+        self.resize(width, height)
 
         self._build_actions()
         self._build_menus()
@@ -236,9 +282,7 @@ class RecipeEditorWindow(QMainWindow):
         self._build_status_bar()
 
         self._model.changed.connect(self._on_model_changed)
-        self._toggle_dark(self._dark)
-        if self._theme == "system":
-            install_system_theme_sync(QApplication.instance(), self._follow_system_theme)
+        self._use_theme(theme)
         self._apply_state()
         self._refresh_view()
 
@@ -260,7 +304,12 @@ class RecipeEditorWindow(QMainWindow):
         self._act_down = QAction("Move Down", self)
         self._act_duplicate = QAction("Duplicate Step", self)
         self._act_add_sequence = QAction("Add Sequence…", self)
-        self._act_dark = QAction("Toggle Dark Mode", self, checkable=True, checked=self._dark)
+        self._act_settings = QAction("Settings", self)
+        # A shortcut into Settings, opened on its Appearance page - as in pypts.
+        self._act_appearance = QAction("Appearance", self)
+        # For the session only; Settings saves a window mode.
+        self._act_full_screen = QAction("Full Screen", self, checkable=True)
+        self._act_full_screen.setShortcut(QKeySequence("F11"))
 
         self._act_open.setToolTip("Open a recipe file")
         self._act_save.setToolTip("Save the recipe")
@@ -290,7 +339,9 @@ class RecipeEditorWindow(QMainWindow):
         self._act_down.triggered.connect(lambda: self._move_step(1))
         self._act_duplicate.triggered.connect(self._duplicate_step)
         self._act_add_sequence.triggered.connect(self._add_sequence)
-        self._act_dark.triggered.connect(self._toggle_dark)
+        self._act_settings.triggered.connect(lambda: self._open_settings())
+        self._act_appearance.triggered.connect(lambda: self._open_settings("Appearance"))
+        self._act_full_screen.triggered.connect(self._toggle_full_screen)
         # Signal to slot, no lambda: Qt drops these when the stack is destroyed.
         self._model.undo_stack.canUndoChanged.connect(self._act_undo.setEnabled)
         self._model.undo_stack.canRedoChanged.connect(self._act_redo.setEnabled)
@@ -302,6 +353,9 @@ class RecipeEditorWindow(QMainWindow):
         file_menu = bar.addMenu("File")
         for action in (self._act_new, self._act_open):
             file_menu.addAction(action)
+        self.recent_menu = file_menu.addMenu("Open Recent")
+        self.recent_menu.setToolTipsVisible(True)
+        self.recent_menu.aboutToShow.connect(self._rebuild_recent_menu)
         file_menu.addSeparator()
         file_menu.addAction(self._act_save)
         file_menu.addAction(self._act_save_as)
@@ -320,9 +374,13 @@ class RecipeEditorWindow(QMainWindow):
         edit_menu.addAction(self._act_duplicate)
         edit_menu.addSeparator()
         edit_menu.addAction(self._act_add_sequence)
+        edit_menu.addSeparator()
+        edit_menu.addAction(self._act_settings)
 
+        # No dark mode toggle: the theme is chosen, and previewed, in Settings.
         view_menu = bar.addMenu("View")
-        view_menu.addAction(self._act_dark)
+        view_menu.addAction(self._act_appearance)
+        view_menu.addAction(self._act_full_screen)
 
         about_menu = bar.addMenu("About")
         gitlab = about_menu.addAction("GitLab")
@@ -354,6 +412,8 @@ class RecipeEditorWindow(QMainWindow):
         add_button = bar.widgetForAction(self._act_add_step)
         if isinstance(add_button, QToolButton):
             add_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            # Words beside the icon: a bare "+" was not found.
+            add_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         bar.addAction(self._act_delete)
         bar.addAction(self._act_up)
         bar.addAction(self._act_down)
@@ -396,9 +456,21 @@ class RecipeEditorWindow(QMainWindow):
         self.step_table.context_menu_extender = self._extend_table_menu
         self.problems = ProblemsPanel()
         self.problems.issue_activated.connect(self._on_issue_activated)
+        # Drag a row onto another to move its step there.
+        self._dragger = RowDragger(self.step_table.table)
+        self._dragger.row_dropped.connect(self._on_row_dropped)
+        self.add_step_button = QPushButton("+ Add step")
+        self.add_step_button.setToolTip("Add a step after the selected one")
+        self.add_step_button.setMenu(self._add_step_menu)
+        table_column = QWidget()
+        table_layout = QVBoxLayout(table_column)
+        table_layout.setContentsMargins(0, 0, 0, 0)
+        table_layout.setSpacing(6)
+        table_layout.addWidget(self.step_table, 1)
+        table_layout.addWidget(self.add_step_button)
         left = QSplitter(Qt.Orientation.Vertical)
         left.setChildrenCollapsible(False)
-        left.addWidget(self.step_table)
+        left.addWidget(table_column)
         left.addWidget(self.problems)
         left.setStretchFactor(0, 3)
         left.setStretchFactor(1, 1)
@@ -411,9 +483,20 @@ class RecipeEditorWindow(QMainWindow):
         self.yaml_editor.cursorPositionChanged.connect(self._on_cursor_moved)
         middle = self._titled("RECIPE YAML", self.yaml_editor)
 
-        # Right: the form.
+        # Right: the form, and Add step under it.
         self.form = SchemaForm(self._model)
-        right = self._titled("EDIT", self.form)
+        self.form_add_button = QPushButton("+ Add step after this")
+        self.form_add_button.setToolTip(
+            "Add a step after the selected one (at the end when none is selected)"
+        )
+        self.form_add_button.setMenu(self._add_step_menu)
+        form_column = QWidget()
+        form_layout = QVBoxLayout(form_column)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        form_layout.setSpacing(6)
+        form_layout.addWidget(self.form, 1)
+        form_layout.addWidget(self.form_add_button)
+        right = self._titled("EDIT", form_column)
 
         columns.addWidget(left)
         columns.addWidget(middle)
@@ -451,12 +534,38 @@ class RecipeEditorWindow(QMainWindow):
 
     # ── Theme ──────────────────────────────────────────────────────────────────
 
-    def _toggle_dark(self, dark: bool) -> None:
+    def _use_theme(self, theme: str) -> None:
+        """
+        Paint the window in one of the `[recipe_editor] theme` values, as pypts
+        does with its own: "system" follows the operating system, now and when
+        it changes; "light" and "dark" stay put. Called at start-up, and by the
+        Settings dialog, which previews a theme as it is picked.
+        """
+        self._theme_disconnect()
+        self._theme_disconnect = _nothing_to_disconnect
+        if theme == "dark":
+            dark = True
+        elif theme == "system":
+            dark = detect_system_dark_mode(QApplication.instance())
+            self._theme_disconnect = install_system_theme_sync(
+                QApplication.instance(), self._follow_system_theme
+            )
+        else:
+            dark = False
+        self._apply_theme(dark)
+
+    def _apply_theme(self, dark: bool) -> None:
         self._dark = dark
-        self._act_dark.setChecked(dark)
-        self.setStyleSheet(
-            get_stylesheet(dark) + creator_stylesheet(dark) + editor_stylesheet(dark)
-        )
+        # On the application, as pypts does: a menu or a dialog is a window of its
+        # own and does not inherit a stylesheet set on this one (the right-click
+        # menu had no padding).
+        sheet = get_stylesheet(dark) + creator_stylesheet(dark) + editor_stylesheet(dark)
+        app = QApplication.instance()
+        if isinstance(app, QApplication):
+            app.setStyleSheet(sheet)
+        else:
+            self.setStyleSheet(sheet)
+        self._dragger.set_marker_colour(get_palette(dark).accent_text)
         self.yaml_editor.set_dark(dark)
         self.step_table.set_dark(dark)
         self._overlay.set_dark(dark)
@@ -465,7 +574,121 @@ class RecipeEditorWindow(QMainWindow):
             self._highlight_selected()
 
     def _follow_system_theme(self, dark: bool) -> None:
-        self._toggle_dark(dark)
+        self._apply_theme(dark)
+
+    # ── Window mode and size ───────────────────────────────────────────────────
+
+    def show_window(self) -> None:
+        """Show the window in the mode and size `[recipe_editor]` names."""
+        self._use_window(*self._window_state)
+
+    def _use_window(self, mode: str, width: int, height: int) -> None:
+        """
+        "fullscreen" is a maximised window - the title bar and the taskbar stay,
+        as in pypts; anything else a normal window of width x height. Called at
+        start-up and by the Settings dialog, which tries a window on screen.
+        """
+        self._window_state = (mode, width, height)
+        if mode == "fullscreen":
+            self.showMaximized()
+        else:
+            self.showNormal()
+            self.resize(width, height)
+        self._act_full_screen.setChecked(mode == "fullscreen")
+
+    def _toggle_full_screen(self, checked: bool) -> None:
+        """View > Full Screen (F11), for the session only."""
+        if checked:
+            self.showMaximized()
+            return
+        mode, width, height = self._window_state
+        if mode == "fullscreen":
+            mode = "windowed"
+        self._use_window(mode, width, height)
+
+    # ── Settings ───────────────────────────────────────────────────────────────
+
+    def _open_settings(self, page: str | None = None) -> None:
+        """
+        Edit > Settings - or View > Appearance: pypts' Settings dialog over the
+        `[recipe_editor]` keys, plus Clear recent recipes (the editor's own list).
+        A change is written to config.ini at once; a discarded file saves nothing.
+        """
+        values, problem = setting_values()
+        dialog = SettingsDialog(
+            values,
+            self._send_setting,
+            problem=problem,
+            parent=self,
+            preview_theme=self._use_theme,
+            preview_window=self._use_window,
+            clear_recent_recipes=self._recents.clear,
+            open_page=page,
+            profile=EDITOR_SETTINGS,
+        )
+        self._settings_dialog = dialog
+        log.debug("The settings dialog is open.")
+        try:
+            dialog.exec()
+        finally:
+            self._settings_dialog = None
+        if dialog.saved:
+            self.statusBar().showMessage("Settings saved", 5000)
+        if dialog.recents_cleared:
+            self.statusBar().showMessage("Recent recipes list cleared", 5000)
+
+    def _send_setting(self, key: str, text: str) -> None:
+        """
+        Write one setting; the answer reaches the dialog on the next turn of
+        the event loop, as CORE's does in pypts - the dialog sends every change
+        before it waits for the first answer.
+        """
+        result = save_setting(key, text)
+        QTimer.singleShot(0, lambda: self._setting_answered(result))
+
+    def _setting_answered(self, result: ConfigParameterResult) -> None:
+        if self._settings_dialog is not None and self._settings_dialog.apply_result(result):
+            return
+        # The window card's Keep saves on its own, with nobody waiting for it.
+        if result.accepted:
+            self.statusBar().showMessage(f"Saved: {result.key} = {result.value}", 5000)
+        else:
+            self.statusBar().showMessage(f"{result.key} not saved: {result.reason}", 8000)
+
+    # ── Recent recipes ─────────────────────────────────────────────────────────
+
+    def _rebuild_recent_menu(self) -> None:
+        """File > Open Recent: the editor's recipes and pypts', newest first."""
+        menu = self.recent_menu
+        menu.clear()
+        entries = merged_recents(self._recents, RecentRecipes())
+        if not entries:
+            empty = menu.addAction("No recent recipes")
+            empty.setEnabled(False)
+            return
+        for entry in entries:
+            action = menu.addAction(entry.file_name)
+            action.setToolTip(entry.path)
+            action.triggered.connect(
+                lambda _checked=False, path=entry.path: self._open_recent(path)
+            )
+        menu.addSeparator()
+        menu.addAction("Clear list").triggered.connect(self._clear_recent_recipes)
+
+    def _open_recent(self, path: str) -> None:
+        if not Path(path).is_file():
+            # Dropped from the editor's list only; pypts' list is pypts' to keep.
+            self._recents.forget(path)
+            self.statusBar().showMessage(f"Not found any more: {path}", 8000)
+            return
+        if not self._may_discard():
+            return
+        self.open_file(path)
+
+    def _clear_recent_recipes(self) -> None:
+        """Clears the editor's list; pypts' recipes still show, pypts keeps them."""
+        self._recents.clear()
+        self.statusBar().showMessage("Recent recipes list cleared", 5000)
 
     def _refresh_icons(self) -> None:
         palette = get_palette(self._dark)
@@ -536,7 +759,8 @@ class RecipeEditorWindow(QMainWindow):
             line = self._model.invalid_line()
             where = f" (line {line})" if line else ""
             self.problems.show_message(
-                f"ERROR    The recipe text cannot be read: {self._model.invalid_reason()}{where}"
+                f"ERROR    The recipe text cannot be read: {self._model.invalid_reason()}{where}",
+                STATE_ERROR,
             )
             if line:
                 self.yaml_editor.set_error_lines({line})
@@ -632,6 +856,8 @@ class RecipeEditorWindow(QMainWindow):
         self._overlay.set_shown(empty and valid)
         self.step_table.setEnabled(usable)
         self.form.setEnabled(usable)
+        self.add_step_button.setEnabled(usable)
+        self.form_add_button.setEnabled(usable)
         selected_step = self._selected is not None and self._selected.list_name == "steps"
         self._act_add_step.setEnabled(usable)
         self._act_add_sequence.setEnabled(usable)
@@ -733,6 +959,36 @@ class RecipeEditorWindow(QMainWindow):
             return
         self._sequence_index = index
         self._select(None)
+        self._refresh_view()
+
+    def _on_row_dropped(self, source_row: int, target_row: int, below: bool) -> None:
+        """A row dragged onto another: its step moves before or after that row's step."""
+        if not (0 <= source_row < len(self._refs) and 0 <= target_row < len(self._refs)):
+            return
+        source = self._refs[source_row]
+        target = self._refs[target_row]
+        if source is None or target is None:
+            return
+        same_list = (
+            source.sequence_index == target.sequence_index
+            and source.list_name == target.list_name == "steps"
+        )
+        if not same_list:
+            self.statusBar().showMessage(
+                "A step moves within its own sequence's steps - drop it on a row of that "
+                "sequence.",
+                5000,
+            )
+            return
+        destination = target.step_index
+        if below:
+            destination += 1
+        if source.step_index < destination:
+            destination -= 1
+        if destination == source.step_index:
+            return
+        self._select_after_refresh = (source.sequence_index, "steps", destination)
+        self._model.move_step(source.sequence_index, source.step_index, destination)
         self._refresh_view()
 
     def _on_issue_activated(self, issue: ValidationIssue) -> None:
@@ -852,6 +1108,10 @@ class RecipeEditorWindow(QMainWindow):
         self.form.show_step(None, 0)
         self._update_title()
         self._refresh_view()
+        name = self._model.header().get("name")
+        if not isinstance(name, str) or not name:
+            name = Path(path).name
+        self._recents.remember(path, name)
         log.info("Opened: %s", path)
 
     def _on_save(self) -> None:
@@ -907,6 +1167,10 @@ class RecipeEditorWindow(QMainWindow):
             event.ignore()
 
 
+def _nothing_to_disconnect() -> None:
+    """Stands in for the OS theme sync's disconnect when the theme is fixed."""
+
+
 def _issue_summary(issues: list[ValidationIssue]) -> str:
     errors = sum(1 for issue in issues if issue.is_error)
     warnings = sum(1 for issue in issues if issue.is_warning)
@@ -924,9 +1188,12 @@ def main() -> int:
     log_path = start_logging(prefix="recipe_editor", program_name="Recipe Editor v2")
     log.info("Recipe Editor v2 started.")
     log.debug("Recipe Editor v2 log file: %s; arguments: %s", log_path, sys.argv[1:])
+    # Before anything reads a setting: create config.ini if there is none, and
+    # be this process's writer - the editor saves its own settings (no CORE).
+    open_config()
     app = QApplication(sys.argv)
     window = RecipeEditorWindow()
-    window.show()
+    window.show_window()
     # `python -m pypts.helper_applications.recipe_editor [recipe.yml]` - pypts'
     # Edit > Recipe Editor v2 passes the recipe it has loaded.
     if len(sys.argv) > 1:

@@ -20,8 +20,9 @@ Started by `python -m pypts.helper_applications.recipe_editor [recipe.yml]`,
 |---|---|
 | `editor_window.py` | `RecipeEditorWindow` and `main()`: layout, toolbar, menus, the wiring below; `editor_stylesheet()` |
 | `schema_form.py` | `SchemaForm`: the right-hand form, generated from `recipe_schema`; `field_kind()` |
+| `row_drag.py` | `RowDragger`: drag a table row onto another to move its step |
 | `row_map.py` | `StepRef` and the row ↔ authored-step mapping; no Qt |
-| `problems_panel.py` | `ProblemsPanel`: PROBLEMS, styled as pypts' LOG OUTPUT |
+| `problems_panel.py` | `ProblemsPanel`: PROBLEMS, styled as pypts' LOG OUTPUT, with its OK / ! / ERROR badge |
 | `__main__.py`, `__init__.py` | `python -m` entry; package |
 
 Reused, not copied:
@@ -45,10 +46,25 @@ Undo is Ctrl+Z; Redo is Ctrl+Y **and** Ctrl+Shift+Z (set explicitly - an action 
 `QKeySequence.StandardKey.Redo` gets only its first binding). With the focus in the YAML
 editor or a text field, that widget's own undo and redo of the typing come first.
 
-Three columns in a splitter (4 : 3 : 3); the left one is the step table over PROBLEMS
-(3 : 1). The table's Result column is hidden (`set_result_column_visible(False)`): before a
+Three columns in a splitter (4 : 3 : 3); the left one is the step table, with
+"+ Add step" under it, over PROBLEMS (3 : 1). The table's Result column is hidden (`set_result_column_visible(False)`): before a
 run every result is "Pending", nothing an author needs. The toolbar has pypts' objectName (`PtsToolBar`) and 16 px icon-only buttons; the
-icons are SVG, drawn in the palette's toolbutton colour, with a disabled variant. Status bar:
+icons are SVG, drawn in the palette's toolbutton colour, with a disabled variant. *Add Step*
+is the one button with words beside its icon: a bare "+" was not found. The same step-type
+menu is behind three buttons — the toolbar's, "+ Add step" under the table, "+ Add step after
+this" under the form (`form_add_button`) — and Edit → Add Step.
+
+**The PROBLEMS badge.** Beside the PROBLEMS title a badge says at a glance how the recipe
+stands: a green **OK** (no issues), a yellow **!** (warnings only) or a red **ERROR** (an error,
+or text that cannot be read); none while no recipe is open. `ProblemsPanel.show_issues()` sets
+it from the issues, `show_message(text, state)` from the window; the colours are the step
+table's PASS, SKIP and FAIL chips (`palette.verdicts`), chosen in `editor_stylesheet()` by the
+badge's `state` property.
+
+**The stylesheet is set on the application** (`QApplication.setStyleSheet`), as pypts does,
+not on the window: a menu or a dialog is a window of its own and does not inherit a
+window's stylesheet. `editor_stylesheet()` also gives menus more room at the left
+(`QMenu::item` padding 18 px, the menu 6 px) than pypts' 14 px, which read as cramped. Status bar:
 `Status: …` and the faint pypts version, as pypts shows them.
 
 ## One source of truth: the text in `RecipeModel`
@@ -92,6 +108,20 @@ File → New starts from a recipe with one Wait step, so it loads from the first
 Structure edits act on `steps` only; a teardown step is selected and edited in the form, but
 added, moved and deleted in the YAML. After an add, move or duplicate the step is selected again
 once the table is rebuilt (`_select_after_refresh`).
+
+The right column is the form only. Cards, Grid and Outline views were built and taken
+out again (2026-10-13): with the table and the YAML beside it, they did not add a useful way
+of editing.
+
+## Drag and drop
+
+`RowDragger` watches the step table's viewport from the outside (an event filter), so pypts'
+table is unchanged and Qt's own row moving — which would shuffle the table's items — stays
+off. Dragging a row shows a line where it would land; a drop reports
+`row_dropped(source_row, target_row, below)`. The window moves the source row's authored step
+before or after the target row's (`RecipeModel.move_step`, one undo entry) and selects it
+again. Both must be steps of the same sequence's `steps`: a step does not move into another
+sequence, nor in or out of `teardown_steps` — the status bar says so.
 
 ## The form (`schema_form.py`)
 
@@ -146,13 +176,19 @@ open or save are logged.
   equals `to_summary()`; click → selection, tint, form; grayed rows for unreadable and refused
   text; the empty start; New; folding kept across edits; add, move, duplicate, delete; the
   Sequence chooser; five edits that commit inside their own signal, each in a subprocess.
+- `test_recipe_editor_window.py` (second round) — dropping above, below, on itself, into
+  another sequence; the drop line's half-row rule; a drop through the event filter; the three
+  Add step buttons; menus styled with room at the left.
+- `test_recipe_editor_window.py` (third round) — the right column is the form only (no tabs,
+  View holds only dark mode); the PROBLEMS badge in each state, and its stylesheet rules.
 - `test_hmi_gui.py` — the click panel switched off, the right-click extender, and both Edit
   menu entries starting their module on the loaded recipe.
 
 ## Known gaps
 
 - A step's type cannot be changed in the form; that is done in the YAML.
-- No drag-and-drop in the table; Move up / Move down instead.
-- Teardown steps cannot be added, moved or deleted from the toolbar.
+- Teardown steps cannot be added, moved or deleted from the toolbar or by dragging.
+- A drag is tested through its event filter (Qt delivers a drop only inside a real drag
+  session); the gesture itself is tried by hand.
 - A form field shows the value, not where a global comes from; global names are not checked
   against `globals` (the verificator does not either).
