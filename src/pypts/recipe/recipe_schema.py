@@ -107,6 +107,19 @@ STEP_TYPE_REQUIRED: dict[str, tuple[str, ...]] = {
     "indexed": ("template", "parameter_sets"),
 }
 
+#: Each steptype as it is written in a recipe and shown to an author, keyed as
+#: STEP_TYPE_REQUIRED is. Case does not matter to the parser; this is the
+#: spelling the documentation and the demo recipes use.
+STEP_TYPE_NAMES: dict[str, str] = {
+    "pythonmodule": "PythonModule",
+    "userinteraction": "UserInteraction",
+    "userwrite": "UserWrite",
+    "userloading": "UserLoading",
+    "wait": "Wait",
+    "sequence": "Sequence",
+    "indexed": "Indexed",
+}
+
 #: The `type` an `inputs` entry may name, and the key it needs beside it.
 #: There is exactly one, because there are exactly two places a value can
 #: come from: an entry that is **not** a mapping is the literal itself
@@ -294,7 +307,8 @@ def _input_entry(value: Any) -> Any:
     declared = value.get("type")
     if declared is None:
         _refuse(f"a mapping names its 'type' ({known}); a literal value is written as itself")
-    if declared not in INPUT_TYPES:
+    # A mapping or a list cannot be looked up in INPUT_TYPES; it is unknown too.
+    if not isinstance(declared, str) or declared not in INPUT_TYPES:
         _refuse(f"unknown type '{declared}'. Available: {known}")
     for key in INPUT_TYPES[declared]:
         if value.get(key) is None:

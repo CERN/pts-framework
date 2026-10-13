@@ -207,7 +207,7 @@ globals:                         # the run's variables and their starting values
 <tr><td><code>globals</code></td><td>no (<code>{}</code>)</td><td>Flat <code>name: value</code> mapping: the run's variables and their starting values</td></tr>
 </tbody></table>
 <p>Any other header key is ignored.</p>
-<p><strong><code>serial_number</code> is not injected.</strong> The engine has no concept of a serial number. Capture it with a <code>UserWrite</code> step that stores it in the <code>serial_number</code> global, as the example in §2 does; the report picks it up through <code>report_metadata</code>. <code>resources/recipes/Development_recipes/userwritestep_demo.yml</code> shows it running.</p>
+<p><strong><code>serial_number</code> is not injected.</strong> The engine has no concept of a serial number. Capture it with a <code>UserWrite</code> step that stores it in the <code>serial_number</code> global, as the example in §2 does; the report picks it up through <code>report_metadata</code>. <code>resources/recipes/userwritestep_recipes/userwritestep_demo.yml</code> shows it running.</p>
 <hr>
 <h2 id="4-sequence-document">4. Sequence document</h2>
 <pre><code class="language-yaml">sequence_name: Main          # required; what main_sequence and Sequence steps name
@@ -378,7 +378,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 </li>
 <li>The step checks the answer itself: a path that does not exist, or a folder where a file was asked for (or the other way round), is <code>ERROR</code>`. Cancelling, a timeout or a stop is <code>ERROR</code>` too.
 </li>
-<li>One request, one response: the old type's second value on the response queue is gone. Worked example: <code>resources/recipes/Development_recipes/userloadingstep_demo.yml</code>` (GUI mode — the CLI declines).
+<li>One request, one response: the old type's second value on the response queue is gone. Worked example: <code>resources/recipes/userloadingstep_recipes/userloadingstep_demo.yml</code>` (GUI mode — the CLI declines).
 </ul>
 <h3 id="sequence-call-a-group-of-steps"><code>Sequence</code> — call a group of steps</h3>
 <pre><code class="language-yaml">---
@@ -417,7 +417,7 @@ teardown_steps:
 </li>
 <li><strong>Totals count real steps.</strong> A group's row is not counted in the run's step counts; the steps inside it are. Log lines inside a group are indented.
 </li>
-<li>Worked example: <code>resources/recipes/Development_recipes/sequencestep_demo.yml</code> (runs headless).
+<li>Worked example: <code>resources/recipes/sequencestep_recipes/sequencestep_demo.yml</code> (runs headless).
 </li>
 </ul>
 <p><strong>Not yet in the frontends:</strong> the GUI and CLI still offer every sequence to start and show group rows without indentation; the report has no group column yet; the Recipe Creator and its verificator do not know the step yet. These follow in the next stages (roadmap).</p>

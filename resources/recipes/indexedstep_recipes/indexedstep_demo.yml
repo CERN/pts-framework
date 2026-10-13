@@ -13,7 +13,8 @@
 # time: "run once per device the previous step found" is deliberately not
 # expressible, because nothing loops at run time.
 #
-# One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
+# One steptype per demo folder under resources/recipes/ - the list is in
+# pythonmodulestep_recipes/pythonmodulestep_demo.yml.
 name: Indexed demo
 description: Two authored steps, thirteen real ones - Indexed end to end.
 version: 0.2
@@ -35,7 +36,7 @@ steps:
     description: Ten additions, each checked against its own expected sum.
     template:
       steptype: PythonModule
-      module: example_tests.py
+      module: ../common/example_tests.py
       method_name: add
     parameter_sets:
       - inputs: {a: 1, b: 1}
@@ -70,7 +71,7 @@ steps:
     description: The same passfail check over three numbers.
     template:
       steptype: PythonModule
-      module: example_tests.py
+      module: ../common/example_tests.py
       method_name: is_even
       outputs:
         even: {type: passfail}

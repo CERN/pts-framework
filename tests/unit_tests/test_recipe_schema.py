@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from pypts.recipe.recipe_parser import steptype_key
 from pypts.recipe.recipe_schema import (
     OUTPUT_SCHEMAS,
     OUTPUT_TYPES,
@@ -22,6 +23,7 @@ from pypts.recipe.recipe_schema import (
     RENAMED_STEP_TYPES,
     STEP_REQUIRED,
     STEP_SCHEMAS,
+    STEP_TYPE_NAMES,
     STEP_TYPE_REQUIRED,
     UNNAMED_STEP_TYPES,
     HeaderSchema,
@@ -377,6 +379,14 @@ def test_an_unknown_input_type_is_refused():
     assert "'local'" in problems[0][1]
 
 
+@pytest.mark.parametrize("declared", [{"a": 1}, ["global"]])
+def test_an_input_type_that_is_not_a_name_is_refused_not_raised(declared):
+    # A mapping or list cannot be looked up by name; it used to escape as a TypeError.
+    problems = _step_problems(_module(inputs={"v": {"type": declared, "global_name": "g"}}))
+    assert len(problems) == 1
+    assert "unknown type" in problems[0][1]
+
+
 def test_a_well_formed_global_input_is_kept_as_written():
     entry = {"type": "global", "global_name": "g"}
     assert _one_step(_module(inputs={"v": entry})).inputs == {"v": entry}
@@ -597,3 +607,9 @@ def test_removed_sequence_keys_are_not_live_fields():
 
 def test_renamed_step_types_are_not_live_steptypes():
     assert set(RENAMED_STEP_TYPES).isdisjoint(STEP_TYPE_REQUIRED)
+
+
+def test_every_steptype_has_a_display_name_of_the_same_spelling():
+    assert set(STEP_TYPE_NAMES) == set(STEP_TYPE_REQUIRED)
+    for key, name in STEP_TYPE_NAMES.items():
+        assert steptype_key(name) == key

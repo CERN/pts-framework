@@ -1,0 +1,486 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The full showcase - every demo in one run, the ones that ask the operator
+# included. The recipe to reach for when testing the whole framework rather
+# than one step type.
+#
+# **GUI mode** (`python -m pypts`): the CLI frontend declines every question
+# it is asked, so the UserWrite, UserInteraction and UserLoading steps would
+# come back unanswered and be ERRORs. showcase_automated.yml is the same run
+# without them, and runs headless.
+#
+# Each demo is a group of its own: a sequence document below, called from Main
+# by a Sequence step, holding the steps of the demo it is named after. The
+# explanations stay in the demos; this file only puts them together.
+#
+#   UserWrite steps        userwritestep_recipes/userwritestep_demo.yml
+#   Wait steps             waitstep_recipes/wait_recipe.yml
+#   PythonModule steps     pythonmodulestep_recipes/pythonmodulestep_demo.yml
+#   Indexed steps          indexedstep_recipes/indexedstep_demo.yml
+#   Sequence steps         sequencestep_recipes/sequencestep_demo.yml
+#   Step pictures          stepimage_recipes/stepimage_demo.yml
+#   HAL loopback           HAL_recipes/hal_demo.yml (the loopback step)
+#   Meteo                  HAL_recipes/meteo_demo.yml
+#   UserInteraction steps  userinteractionstep_recipes/userinteractionstep_demo.yml
+#   UserLoading steps      userloadingstep_recipes/userloadingstep_demo.yml
+#
+# The UserWrite group comes first: identifying the unit under test before
+# anything is done to it is the practice resources/roadmap/best_practices.md
+# proposes, and its get_serial_number step writes the serial_number global
+# that report_metadata below puts in the report.
+#
+# Expect FAIL on purpose: the PythonModule, Indexed and Sequence demos each
+# carry a deliberate FAIL. And expect, at load, one message about a missing
+# picture: the Step pictures demo names a file that is not there, to show the
+# "No image available" placeholder.
+#
+# The HAL groups need devices declared in config.ini (File -> Open Config);
+# without them those steps end ERROR, which is what a missing device looks like:
+#
+#   [hardware.loop1]
+#   driver = pypts.hal.drivers.loopback.LoopbackDriver
+#
+#   [hardware.meteo1]
+#   driver = pypts.hal.drivers.weather.OpenMeteoDriver
+#   place = CERN Meyrin
+#   latitude = 46.23
+#   longitude = 6.05
+#
+# Meteo needs internet access too.
+name: Full showcase
+description: Every demo in one run, the operator's questions included - GUI mode.
+version: 0.2
+main_sequence: Main
+report_metadata: [serial_number]
+
+# What the operator's answers are stored in. Each is written by a question
+# before anything reads it; declared so the recipe says what it uses.
+globals:
+  port: ''
+  measured_voltage: ''
+  calibration_file: ''
+  dump_folder: ''
+---
+sequence_name: Main
+description: Calls each demo's group in turn.
+steps:
+  - steptype: Sequence
+    sequence_name: UserWrite steps
+  - steptype: Sequence
+    sequence_name: Wait steps
+  - steptype: Sequence
+    sequence_name: PythonModule steps
+  - steptype: Sequence
+    sequence_name: Indexed steps
+  - steptype: Sequence
+    sequence_name: Sequence steps
+  - steptype: Sequence
+    sequence_name: Step pictures
+  - steptype: Sequence
+    sequence_name: HAL loopback
+  - steptype: Sequence
+    sequence_name: Meteo
+  - steptype: Sequence
+    sequence_name: UserInteraction steps
+  - steptype: Sequence
+    sequence_name: UserLoading steps
+
+# ===========================================================================
+# UserWrite - userwritestep_recipes/userwritestep_demo.yml
+# ===========================================================================
+---
+sequence_name: UserWrite steps
+description: Identify the unit, then use what was typed.
+steps:
+  - steptype: UserWrite
+    step_name: get_serial_number
+    description: The operator scans or types the serial number of the unit.
+    message: Scan or type the serial number of the unit under test.
+    outputs:
+      output: {type: global, global_name: serial_number}
+  - steptype: UserWrite
+    step_name: Read the meter
+    description: A measurement off an instrument with no interface.
+    message: Type the voltage shown on the bench meter, in volts.
+    outputs:
+      output: {type: global, global_name: measured_voltage}
+  - steptype: UserWrite
+    step_name: Confirm the fixture is closed
+    description: Typing the word is the confirmation.
+    message: Type CLOSED once the fixture lid is shut.
+    outputs:
+      output: {type: equals, value: CLOSED}
+  - steptype: PythonModule
+    step_name: Report the serial number
+    description: Reads back the global the first step wrote.
+    module: ../common/example_tests.py
+    method_name: greet
+    inputs:
+      name: {type: global, global_name: serial_number}
+
+# ===========================================================================
+# Wait - waitstep_recipes/wait_recipe.yml
+# ===========================================================================
+---
+sequence_name: Wait steps
+description: Waits twice, briefly.
+steps:
+  - steptype: Wait
+    step_name: First wait
+    description: Pause briefly.
+    wait_time: '0.5'
+  - steptype: Wait
+    step_name: Second wait
+    description: Pause briefly again.
+    wait_time: '0.5'
+
+# ===========================================================================
+# PythonModule - pythonmodulestep_recipes/pythonmodulestep_demo.yml
+# ===========================================================================
+---
+sequence_name: PythonModule steps
+description: Adds, measures, checks and greets.
+steps:
+  - steptype: PythonModule
+    step_name: Add numbers
+    description: 2 + 3 must equal 5.
+    module: ../common/example_tests.py
+    method_name: add
+    inputs:
+      a: 2
+      b: 3
+    outputs:
+      sum: {type: equals, value: 5}
+  - steptype: PythonModule
+    step_name: Measure voltage
+    description: The reading must sit between 11 and 13 volts.
+    module: ../common/example_tests.py
+    method_name: measure_voltage
+    outputs:
+      voltage: {type: range, min: '11', max: '13'}
+  - steptype: PythonModule
+    step_name: Even check (fails on purpose)
+    description: 7 is not even - this one shows a FAIL verdict.
+    module: ../common/example_tests.py
+    method_name: is_even
+    inputs:
+      number: 7
+    outputs:
+      even: {type: passfail}
+  - steptype: PythonModule
+    step_name: Greet the operator
+    description: A scalar return, wrapped as "output" and compared.
+    module: ../common/example_tests
+    method_name: greet
+    inputs:
+      name: operator
+    outputs:
+      output: {type: equals, value: 'Hello, operator!'}
+
+# ===========================================================================
+# Indexed - indexedstep_recipes/indexedstep_demo.yml
+# ===========================================================================
+---
+sequence_name: Indexed steps
+description: The same call repeated over parameter sets, each with its own check.
+steps:
+  - steptype: Indexed
+    step_name: Add numbers
+    description: Ten additions, each checked against its own expected sum.
+    template:
+      steptype: PythonModule
+      module: ../common/example_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {a: 1, b: 1}
+        expect: {sum: 2}
+      - inputs: {a: 2, b: 3}
+        expect: {sum: 5}
+      - inputs: {a: 10, b: 5}
+        expect: {sum: 15}
+      - inputs: {a: 0, b: 0}
+        expect: {sum: 0}
+      - inputs: {a: -4, b: 4}
+        expect: {sum: 0}
+      - inputs: {a: 100, b: 250}
+        expect: {sum: 350}
+      - inputs: {a: 7, b: 8}
+        expect: {sum: 15}
+      - inputs: {a: -6, b: -9}
+        expect: {sum: -15}
+      - inputs: {a: 1.5, b: 2.5}
+        expect: {sum: 4.0}
+      # The deliberate FAIL: 6 + 7 is 13, not 12.
+      - inputs: {a: 6, b: 7}
+        expect: {sum: 12}
+  - steptype: Indexed
+    step_name: Even check
+    description: The same passfail check over three numbers.
+    template:
+      steptype: PythonModule
+      module: ../common/example_tests.py
+      method_name: is_even
+      outputs:
+        even: {type: passfail}
+    parameter_sets:
+      - inputs: {number: 2}
+      - inputs: {number: 4}
+      - inputs: {number: 7}
+
+# ===========================================================================
+# Sequence - sequencestep_recipes/sequencestep_demo.yml
+# Its Main is the group "Sequence steps"; its other sequences follow it.
+# ===========================================================================
+---
+sequence_name: Sequence steps
+description: Nested, reusable groups of steps, one called twice, one skipped.
+steps:
+  - steptype: Wait
+    step_name: Warm up
+    description: A step of the group itself, before any nested group.
+    wait_time: '0.1'
+  - steptype: Sequence
+    sequence_name: PowerCycle
+    description: First power cycle, before calibration.
+  - steptype: Sequence
+    sequence_name: Calibrate
+    description: Written on the call, this wins over the sequence's own description.
+  - steptype: Sequence
+    sequence_name: PowerCycle
+    description: Second power cycle, after calibration.
+  - steptype: Sequence
+    sequence_name: Optional checks
+    description: Not needed on this bench - skipped.
+    skip: true
+teardown_steps:
+  - steptype: Sequence
+    sequence_name: Shutdown
+    description: Always leave the bench safe, whatever happened above.
+---
+sequence_name: PowerCycle
+description: Switch the unit off, let it settle, switch it back on.
+steps:
+  - steptype: Wait
+    step_name: Power off
+    description: Stand in for switching the supply off.
+    wait_time: '0.1'
+  - steptype: Sequence
+    sequence_name: Settle
+    description: Nested one level deeper - PowerCycle calls Settle.
+teardown_steps:
+  - steptype: Wait
+    step_name: Power on
+    description: Stand in for switching the supply back on.
+    wait_time: '0.1'
+---
+sequence_name: Settle
+description: Wait for the rails to settle, then read one back.
+steps:
+  - steptype: Wait
+    step_name: Settle time
+    description: Give the rails time to settle.
+    wait_time: '0.1'
+  - steptype: PythonModule
+    step_name: Measure voltage
+    description: The reading must sit between 11 and 13 volts.
+    module: ../common/example_tests.py
+    method_name: measure_voltage
+    outputs:
+      voltage: {type: range, min: '11', max: '13'}
+---
+sequence_name: Calibrate
+description: A group of parameterized additions.
+steps:
+  - steptype: Indexed
+    step_name: Add numbers
+    description: Three additions, one of them expecting the wrong sum.
+    template:
+      steptype: PythonModule
+      module: ../common/example_tests.py
+      method_name: add
+    parameter_sets:
+      - inputs: {a: 1, b: 1}
+        expect: {sum: 2}
+      - inputs: {a: 2, b: 3}
+        expect: {sum: 5}
+      # The deliberate FAIL: 6 + 7 is 13, not 12.
+      - inputs: {a: 6, b: 7}
+        expect: {sum: 12}
+---
+sequence_name: Optional checks
+description: Skipped from its caller - its steps show SKIP, its teardown still runs.
+steps:
+  - steptype: PythonModule
+    step_name: Even check
+    description: Never runs here - the group is skipped.
+    module: ../common/example_tests.py
+    method_name: is_even
+    inputs:
+      number: 4
+    outputs:
+      even: {type: passfail}
+teardown_steps:
+  - steptype: Wait
+    step_name: Tidy up
+    description: The skipped group's teardown still runs.
+    wait_time: '0.1'
+---
+sequence_name: Shutdown
+description: Leave the bench safe.
+steps:
+  - steptype: Wait
+    step_name: Everything off
+    description: Stand in for switching every supply off.
+    wait_time: '0.1'
+
+# ===========================================================================
+# Step pictures - stepimage_recipes/stepimage_demo.yml
+# Watch the right column in the GUI; headless ignores the pictures.
+# ===========================================================================
+---
+sequence_name: Step pictures
+description: Pictures on steps and sequences, and the run card in between.
+steps:
+  - steptype: Wait
+    step_name: Run card
+    description: No picture here or on this group, so the run card shows.
+    wait_time: 3
+  - steptype: Wait
+    step_name: Step picture
+    description: This step names its own picture.
+    image_path: ../../images/CERN_Logo.png
+    wait_time: 3
+  - steptype: Sequence
+    sequence_name: Front panel
+  - steptype: Wait
+    step_name: Missing picture
+    description: Names a file that is not there - "No image available".
+    image_path: not_there_on_purpose.png
+    wait_time: 3
+---
+sequence_name: Front panel
+description: Its steps have no picture, so they show this sequence's.
+image_path: ../../images/Front_Panel_Test.jpg
+steps:
+  - steptype: Wait
+    step_name: Check the LEDs
+    description: Shows the sequence's picture.
+    wait_time: 3
+  - steptype: Wait
+    step_name: Check the switches
+    description: Shows the sequence's picture too.
+    wait_time: 3
+
+# ===========================================================================
+# HAL - HAL_recipes/hal_demo.yml (loopback) and HAL_recipes/meteo_demo.yml
+# ===========================================================================
+---
+sequence_name: HAL loopback
+description: A device reached by logical name - needs [hardware.loop1].
+steps:
+  - steptype: PythonModule
+    step_name: Loopback echo
+    description: The device sends the text back.
+    module: ../HAL_recipes/hal_demo_tests.py
+    method_name: loopback_echo
+    inputs:
+      text: hello
+    outputs:
+      echoed: {type: equals, value: hello}
+---
+sequence_name: Meteo
+description: A weather station on the internet - needs [hardware.meteo1].
+steps:
+  - steptype: PythonModule
+    step_name: Temperature at CERN
+    description: The air temperature must be one the Earth has.
+    module: ../HAL_recipes/meteo_demo_tests.py
+    method_name: cern_temperature
+    outputs:
+      temperature_c: {type: range, min: '-40', max: '50'}
+  - steptype: PythonModule
+    step_name: Wind at CERN
+    description: Wind speed in km/h, below hurricane force; direction recorded.
+    module: ../HAL_recipes/meteo_demo_tests.py
+    method_name: cern_wind
+    outputs:
+      wind_speed_kmh: {type: range, min: '0', max: '200'}
+      wind_direction_deg: {type: pass}
+
+# ===========================================================================
+# UserInteraction - userinteractionstep_recipes/userinteractionstep_demo.yml
+# ===========================================================================
+---
+sequence_name: UserInteraction steps
+description: Three questions, and one of the answers used by a later step.
+steps:
+  - steptype: UserInteraction
+    step_name: Check the indicator
+    description: The operator confirms the front-panel LED is lit.
+    message: Is the front-panel LED lit?
+    # Quoted on purpose: bare Yes/No are booleans in YAML 1.1.
+    options: ['Yes', 'No']
+    outputs:
+      output: {type: equals, value: 'Yes'}
+  - steptype: UserInteraction
+    step_name: Connect the DUT
+    description: A step that only waits for the operator to be ready.
+    message: Connect the unit under test to J1, then continue.
+    options: [Continue]
+  - steptype: UserInteraction
+    step_name: Which port
+    description: The chosen port is kept for the step that follows.
+    message: Which serial port is the unit on?
+    options: [COM1, COM2, COM3]
+    outputs:
+      output: {type: global, global_name: port}
+  - steptype: PythonModule
+    step_name: Report the port
+    description: Greets with whatever port the operator picked.
+    module: ../common/example_tests.py
+    method_name: greet
+    inputs:
+      name: {type: global, global_name: port}
+
+# ===========================================================================
+# UserLoading - userloadingstep_recipes/userloadingstep_demo.yml
+# ===========================================================================
+---
+sequence_name: UserLoading steps
+description: Pick a file, pick a folder, then use both paths.
+steps:
+  # Any existing file will do - ../common/example_tests.py is a handy one.
+  - steptype: UserLoading
+    step_name: pick_calibration_file
+    description: The operator chooses the calibration file for this unit.
+    message: Select the calibration file for this unit.
+    select: file
+    outputs:
+      output: {type: global, global_name: calibration_file}
+  - steptype: UserLoading
+    step_name: Pick the dump folder
+    description: The operator chooses the folder the fixture wrote its dump to.
+    message: Select the folder the fixture wrote its dump to.
+    select: Folder
+    outputs:
+      output: {type: global, global_name: dump_folder}
+  - steptype: PythonModule
+    step_name: Check the calibration file
+    description: Reads the global the file pick wrote and looks at the file.
+    module: ../common/example_tests.py
+    method_name: describe_file
+    inputs:
+      path: {type: global, global_name: calibration_file}
+    outputs:
+      size_bytes: {type: range, min: '0', max: '1000000000000'}
+  - steptype: PythonModule
+    step_name: Count the dump folder
+    description: Reads the global the folder pick wrote and counts what is in it.
+    module: ../common/example_tests.py
+    method_name: count_folder_entries
+    inputs:
+      path: {type: global, global_name: dump_folder}
+    outputs:
+      is_folder: {type: passfail}

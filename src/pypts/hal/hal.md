@@ -204,7 +204,7 @@ a station that cannot be reached fails the device at open. Verbs beyond `Other`'
 `hourly_forecast(hours)` (1 to 384; `time`, `temperature_c`, `wind_speed_kmh` per hour).
 Every failure of the far end (unreachable, HTTP error with Open-Meteo's `reason`, an answer
 that is not JSON or lacks a reading) is a `DriverError`. The showcase recipe is
-`resources/recipes/Development_recipes/meteo_demo.yml`: temperature and wind at CERN from
+`resources/recipes/HAL_recipes/meteo_demo.yml`: temperature and wind at CERN from
 one device, `meteo1`.
 
 ## Packaging

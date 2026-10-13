@@ -97,7 +97,11 @@ python -m pypts --mode cli   # text shell instead of a window</code></pre>
 the same options, e.g. <code>run_pypts.bat --mode cli</code>. It uses the repository's
 <code>.venv</code> when there is one.</p>
 <p>To try it out, load the smallest demo recipe:
-<code>resources/recipes/Development_recipes/wait_recipe.yml</code> (two short waits).</p>
+<code>resources/recipes/waitstep_recipes/wait_recipe.yml</code> (two short waits).
+<code>resources/recipes/</code> has a folder of demos for each step type, and
+<code>showcase_recipes/</code> puts them all in one run: <code>showcase_automated.yml</code>
+asks nothing and runs headless, <code>showcase_full.yml</code> asks the operator too and needs
+the window.</p>
 
 <h2 id="modes">3. The modes</h2>
 <div class="wrap"><table>
@@ -249,7 +253,8 @@ everything is saved, and only stays open to tell you about a setting that could 
 
 <h3>Engineering mode</h3>
 <p><em>Edit → Engineering Mode</em> lets you run part of a recipe. While it is on, the status
-bar says <strong>ENGINEERING MODE</strong>, a click in the step table picks rows instead of
+bar says <strong>ENGINEERING MODE</strong> and the window title ends in
+<strong>[ENGINEERING MODE]</strong> (so the taskbar shows it too), a click in the step table picks rows instead of
 showing the step's YAML, and a group folds and unfolds by double-click. It lasts until you
 switch it off or close pypts; loading, unloading or switching the sequence starts your picks
 afresh.</p>
@@ -283,7 +288,7 @@ afresh.</p>
   <tr><td><code>exit</code> (or <code>quit</code>, <code>stop</code>)</td><td>Leaves PyPTS.
       <kbd>Ctrl+C</kbd> does the same.</td></tr>
 </table></div>
-<pre><code>pypts&gt; load_recipe resources/recipes/Development_recipes/wait_recipe.yml
+<pre><code>pypts&gt; load_recipe resources/recipes/waitstep_recipes/wait_recipe.yml
 Recipe loaded: Wait demo (version 0.2)
 Sequences: Main (main)
 pypts&gt; start_sequence Main
@@ -394,10 +399,10 @@ def read_kernel():
       <code>accept_unknown_host = true</code>. A <code>password</code> key works, but the file is
       plain text: prefer <code>key_filename</code>. Keys named like a password are masked in the log lines PyPTS writes about configuration and device connections.</li>
   <li><strong>No hardware?</strong> <code>driver = pypts.hal.drivers.loopback.LoopbackDriver</code>
-      answers with whatever it is sent; <code>resources/recipes/Development_recipes/hal_demo.yml</code>
+      answers with whatever it is sent; <code>resources/recipes/HAL_recipes/hal_demo.yml</code>
       uses it. For live readings with no instrument, <code>driver = pypts.hal.drivers.weather.OpenMeteoDriver</code>
       is a weather station on the internet (keys <code>latitude</code>, <code>longitude</code>, <code>place</code>,
-      <code>http_timeout_s</code>; needs internet access); <code>resources/recipes/Development_recipes/meteo_demo.yml</code>
+      <code>http_timeout_s</code>; needs internet access); <code>resources/recipes/HAL_recipes/meteo_demo.yml</code>
       uses one.</li>
   <li><strong>Outside PyPTS</strong>: <code>with LocalSetup.from_ini("bench.ini"):</code> (from
       <code>pypts.hal</code>) makes <code>get_device()</code> work in a script of your own. Put that code under
@@ -414,7 +419,11 @@ def read_kernel():
       If the YAML text can't be shown as a tree (it doesn't parse, or has the wrong shape), the tree
       and the validation pane are grayed out, the text stays as you typed it, and the log says why.
       Fix it in the editor, press <em>Undo</em>, or press <em>Undo to Last Valid</em>.
-      <em>Save</em> still writes the text as it is. A broken file opens the same way.</td></tr>
+      <em>Save</em> still writes the text as it is. A broken file opens the same way.
+      It keeps its own log, <code>recipe_creator_&lt;timestamp&gt;.log</code>, in the reports
+      folder (<code>paths.reports_dir</code>). If something goes wrong unexpectedly, a dialog
+      says so and names that file; the window stays open &mdash; save your work under a new name.
+      A hard crash is written to the same file.</td></tr>
 </table></div>
 
 <h2 id="trouble">12. Troubleshooting</h2>

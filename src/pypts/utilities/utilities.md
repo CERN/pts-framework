@@ -90,10 +90,12 @@ Naming the files and folders pypts writes; it does not decide *where* they go (t
 configuration's `paths.reports_dir`, passed in by the caller, so this module stays free of
 the configuration).
 
-- `get_log_file_path(folder)` — creates `folder` and returns
-  `<folder>/pypts_<YYYYmmdd_HHMMSS>.log` as a string, in naive local time (the Logger
+- `get_log_file_path(folder, prefix=LOG_FILE_PREFIX)` — creates `folder` and returns
+  `<folder>/<prefix>_<YYYYmmdd_HHMMSS>.log` as a string, in naive local time (the Logger
   uses local time too). `LOG_FILE_PREFIX = "pypts"`. The launcher calls it with the reports
-  folder (the session log), the Sequencer with a run folder (the run log).
+  folder (the session log), the Sequencer with a run folder (the run log), both with the
+  default prefix; the Recipe Creator with `prefix="recipe_creator"` for its own log
+  (`helper_applications/recipe_creator/rc_logging.py`).
 - `make_run_folder(reports_dir, recipe_name)` — creates and returns
   `<reports_dir>/<YYYYmmdd_HHMMSS>_<recipe name>` (`safe_name_part()`: non-alphanumerics
   become `_`, at most 60 characters; `recipe` if nothing is left; `_2`, `_3`… in the same

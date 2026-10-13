@@ -15,7 +15,7 @@ pypts.api, one case at a time.
     python api_showcase.py gui-load    open the window with a recipe loaded
     python api_showcase.py gui-start   open the window with a recipe loaded and started
 
-Every case uses the demo recipes in resources/recipes/Development_recipes.
+Every case uses the demo recipes in resources/recipes.
 The run log and the report go where config.ini says, as for any pypts run.
 
 Everything runs under `if __name__ == "__main__":` - pypts starts its processes
@@ -36,31 +36,35 @@ from pypts.api import (
     open_gui,
 )
 
-RECIPES = Path(__file__).resolve().parent / "resources" / "recipes" / "Development_recipes"
+RECIPES = Path(__file__).resolve().parent / "resources" / "recipes"
 
-#: Every step type, including three questions, a text request and a file pick.
-ALL_STEPTYPES = RECIPES / "all_steptypes_demo.yml"
+#: Every demo in one run, including the questions, typed answers and picks.
+FULL_SHOWCASE = RECIPES / "showcase_recipes" / "showcase_full.yml"
 
 #: Four function calls and no questions - the simplest headless run.
-PYTHON_MODULE = RECIPES / "pythonmodulestep_demo.yml"
+PYTHON_MODULE = RECIPES / "pythonmodulestep_recipes" / "pythonmodulestep_demo.yml"
 
 
 def answer_like_an_operator(
     request: UserPromptRequest | UserTextRequest | UserPathRequest,
 ) -> str | None:
     """
-    Answer the questions all_steptypes_demo.yml asks, the way a technician would.
+    Answer the questions showcase_full.yml asks, the way a technician would.
 
     A UserTextRequest wants typed text; a UserPathRequest wants an existing
     file or folder, as `request.select` says; a UserPromptRequest wants one of
     its options. Returning None declines, which makes that step an ERROR.
     """
     if isinstance(request, UserTextRequest):
+        if "CLOSED" in request.message:
+            return "CLOSED"
+        if "voltage" in request.message:
+            return "12.0"
         return "SN-0001"
     if isinstance(request, UserPathRequest):
         if request.select == "folder":
             return str(RECIPES)
-        return str(RECIPES / "example_tests.py")
+        return str(RECIPES / "common" / "example_tests.py")
     if "serial port" in request.message:
         return "COM2"
     # "Continue" for the connection prompt, "Yes" for the LED.
@@ -82,7 +86,7 @@ def print_result(result: RunResult) -> None:
 def headless() -> None:
     """Load, run with answers, read the result."""
     with Pts() as pts:
-        recipe = pts.load_recipe(ALL_STEPTYPES)
+        recipe = pts.load_recipe(FULL_SHOWCASE)
         print(f"Loaded '{recipe.name}' - sequences: {', '.join(recipe.sequences)}")
         for warning in recipe.warnings:
             print(f"  warning: {warning}")
@@ -101,8 +105,8 @@ def progress() -> None:
 def stop() -> None:
     """stop() is safe from another thread; run() comes back with STOP."""
     with Pts() as pts:
-        pts.load_recipe(ALL_STEPTYPES)
-        # all_steptypes_demo waits two seconds in its fourth step; stop inside that.
+        pts.load_recipe(FULL_SHOWCASE)
+        # The answers come at once, so one second in is the Wait group; stop there.
         threading.Timer(1.0, pts.stop).start()
         result = pts.run(answer=answer_like_an_operator)
     print_result(result)
@@ -115,12 +119,12 @@ def gui() -> None:
 
 def gui_load() -> None:
     """The window with a recipe already loaded; the operator presses Start."""
-    open_gui(ALL_STEPTYPES)
+    open_gui(FULL_SHOWCASE)
 
 
 def gui_start() -> None:
     """The window with a recipe loaded and its main sequence already running."""
-    open_gui(ALL_STEPTYPES, start=True)
+    open_gui(FULL_SHOWCASE, start=True)
 
 
 CASES = {

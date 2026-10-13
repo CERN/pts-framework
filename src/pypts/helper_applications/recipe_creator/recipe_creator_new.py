@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 import webbrowser
 from pathlib import Path
@@ -18,17 +19,18 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
     QSplitter,
     QStackedWidget,
-    QTextEdit,
     QToolBar,
     QVBoxLayout,
     QWidget,
     QWidgetAction,
 )
 
+from pypts.helper_applications.recipe_creator.rc_logging import start_logging
 from pypts.helper_applications.recipe_creator.rc_model import RecipeModel
 from pypts.helper_applications.recipe_creator.rc_widgets import (
     CardStepView,
@@ -38,6 +40,7 @@ from pypts.helper_applications.recipe_creator.rc_widgets import (
     PanelsStepView,
     VerificationPanel,
     YamlEditor,
+    creator_stylesheet,
 )
 from pypts.helper_applications.recipe_creator import verify_string
 from pypts.hmi.gui.gui_theme import (
@@ -46,7 +49,14 @@ from pypts.hmi.gui.gui_theme import (
     install_system_theme_sync,
 )
 from pypts.hmi.gui.styles import get_stylesheet
-from pypts.recipe.recipe_schema import STEP_TYPE_REQUIRED
+from pypts.recipe.recipe_schema import STEP_TYPE_NAMES
+
+log = logging.getLogger(__name__)
+
+#: Over the grayed-out tree while the recipe text cannot be shown as one.
+INVALID_TEXT = "Recipe format invalid, fix the recipe via editor or undo"
+#: Over the grayed-out tree while there is no recipe at all.
+EMPTY_TEXT = "No recipe open: File > New or File > Open, or type one in the editor"
 
 
 class RecipeCreatorNewWindow(QMainWindow):
@@ -87,6 +97,8 @@ class RecipeCreatorNewWindow(QMainWindow):
             install_system_theme_sync(QApplication.instance(), self._follow_system_theme)
 
         self._model.changed.connect(self._on_model_changed)
+        # The window starts with no recipe: grayed out until New, Open or typing.
+        self._apply_validity()
 
     # ── Build ──────────────────────────────────────────────────────────────────
 
@@ -128,7 +140,7 @@ class RecipeCreatorNewWindow(QMainWindow):
         self._act_undo_valid.triggered.connect(self._model.undo_to_last_valid)
         self._act_undo_valid.setEnabled(False)
         self._add_step_menu = edit_menu.addMenu("Add Step")
-        for steptype in STEP_TYPE_REQUIRED:
+        for steptype in STEP_TYPE_NAMES.values():
             act = QAction(steptype, self)
             act.triggered.connect(lambda checked, t=steptype: self._add_step(t))
             self._add_step_menu.addAction(act)
@@ -190,6 +202,10 @@ class RecipeCreatorNewWindow(QMainWindow):
         tb.addAction(self._act_undo)
         tb.addAction(self._act_undo_valid)
         tb.addAction(self._act_redo)
+        # Shown on the toolbar only while the recipe is invalid - the one time it
+        # does anything. It stays in the Edit menu.
+        self._undo_valid_button = tb.widgetForAction(self._act_undo_valid)
+        self._undo_valid_button.setVisible(False)
         tb.addSeparator()
 
         self._act_validate = QAction("Validate", self)
@@ -231,7 +247,7 @@ class RecipeCreatorNewWindow(QMainWindow):
 
         # Left panel
         left = QWidget()
-        left.setMinimumWidth(340)
+        left.setMinimumWidth(420)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(0)
@@ -248,7 +264,7 @@ class RecipeCreatorNewWindow(QMainWindow):
         self._view_stack.addWidget(self._list_view)
         self._view_stack.addWidget(self._card_view)
         self._view_stack.addWidget(self._panels_view)
-        left_layout.addWidget(self._view_stack)
+        left_layout.addWidget(self._view_stack, 1)
 
         for view in [self._list_view, self._card_view, self._panels_view]:
             view.step_selected.connect(self._on_step_selected)
@@ -258,14 +274,18 @@ class RecipeCreatorNewWindow(QMainWindow):
         step_bar = QWidget()
         step_bar_layout = QVBoxLayout(step_bar)
         step_bar_layout.setContentsMargins(4, 4, 4, 4)
-        add_btn = QPushButton("+ Add Step \u25bc")
+        # Qt draws the menu arrow itself.
+        add_btn = QPushButton("+ Add Step")
         add_menu = QMenu(self)
-        for _st in STEP_TYPE_REQUIRED:
+        for _st in STEP_TYPE_NAMES.values():
             _act = add_menu.addAction(_st)
             _act.triggered.connect(lambda checked=False, t=_st: self._add_step(t))
         add_btn.setMenu(add_menu)
         del_btn = QPushButton("Delete")
+        del_btn.setToolTip("Delete the selected step")
+        del_btn.setEnabled(False)
         del_btn.clicked.connect(self._delete_selected_step)
+        self._del_btn = del_btn
         btn_row = QHBoxLayout()
         btn_row.addWidget(add_btn)
         btn_row.addWidget(del_btn)
@@ -274,30 +294,41 @@ class RecipeCreatorNewWindow(QMainWindow):
 
         self._hsplit.addWidget(left)
         self._left = left
-        self._invalid_overlay = InvalidOverlay(
-            left, "Recipe format invalid, fix the recipe via editor or undo"
-        )
+        self._invalid_overlay = InvalidOverlay(left, INVALID_TEXT)
 
         # Right panel: YAML editor
         self._yaml_editor = YamlEditor()
         self._yaml_editor.set_dark(self._dark)
         self._yaml_editor.text_committed.connect(self._on_yaml_committed)
         self._hsplit.addWidget(self._yaml_editor)
-        self._hsplit.setStretchFactor(0, 0)
-        self._hsplit.setStretchFactor(1, 1)
+        self._hsplit.setStretchFactor(0, 2)
+        self._hsplit.setStretchFactor(1, 3)
+        self._hsplit.setSizes([560, 840])
 
-        root_layout.addWidget(self._hsplit)
-
-        # Verification panel
+        # Bottom strip: problems and messages side by side
         self._verification = VerificationPanel()
         self._verification.line_requested.connect(self._yaml_editor.go_to_line)
-        root_layout.addWidget(self._verification)
 
-        # Log console
-        self._log = QTextEdit()
+        # A QPlainTextEdit, which pypts' stylesheet frames as its log panel.
+        self._log = QPlainTextEdit()
         self._log.setReadOnly(True)
-        self._log.setFixedHeight(150)
-        root_layout.addWidget(self._log)
+        self._log.setMaximumBlockCount(2000)
+
+        bottom = QSplitter(Qt.Orientation.Horizontal)
+        bottom.addWidget(self._verification)
+        bottom.addWidget(self._log)
+        bottom.setStretchFactor(0, 3)
+        bottom.setStretchFactor(1, 2)
+
+        # Editors on top take every spare pixel; the strip keeps its size.
+        self._vsplit = QSplitter(Qt.Orientation.Vertical)
+        self._vsplit.addWidget(self._hsplit)
+        self._vsplit.addWidget(bottom)
+        self._vsplit.setStretchFactor(0, 1)
+        self._vsplit.setStretchFactor(1, 0)
+        self._vsplit.setCollapsible(0, False)
+        self._vsplit.setSizes([10000, 200])
+        root_layout.addWidget(self._vsplit)
 
     # ── Slots ──────────────────────────────────────────────────────────────────
 
@@ -316,15 +347,28 @@ class RecipeCreatorNewWindow(QMainWindow):
             self._yaml_editor.set_content(text)
 
     def _apply_validity(self) -> None:
-        """Gray out the tree and verification while the text cannot be shown as a tree."""
+        """
+        Gray out the tree and verification while the text cannot be shown as a
+        tree, or while there is no recipe at all (start-up, before New or Open).
+        """
         valid = self._model.is_valid()
-        self._left.setEnabled(valid)
-        self._invalid_overlay.set_shown(not valid)
-        self._verification.setEnabled(valid)
+        empty = valid and self._model.is_empty()
+        usable = valid and not empty
+        self._left.setEnabled(usable)
+        if empty:
+            self._invalid_overlay.set_text(EMPTY_TEXT)
+        else:
+            self._invalid_overlay.set_text(INVALID_TEXT)
+        self._invalid_overlay.set_shown(not usable)
+        self._verification.setEnabled(usable)
         self._act_undo_valid.setEnabled(not valid)
-        self._add_step_menu.setEnabled(valid)
-        self._act_del_step.setEnabled(valid)
-        self._act_validate.setEnabled(valid)
+        self._undo_valid_button.setVisible(not valid)
+        self._add_step_menu.setEnabled(usable)
+        self._act_del_step.setEnabled(usable)
+        self._act_validate.setEnabled(usable)
+        # Nothing to write; an invalid text is still saved as it is.
+        self._act_save.setEnabled(not empty)
+        self._act_save_as.setEnabled(not empty)
         if valid:
             self._logged_invalid_reason = ""
             return
@@ -350,6 +394,7 @@ class RecipeCreatorNewWindow(QMainWindow):
 
     def _on_step_selected(self, seq_idx: int, step_idx: int) -> None:
         self._selected_step = (seq_idx, step_idx)
+        self._del_btn.setEnabled(True)
 
     def _on_step_action(self, action: str, seq_idx: int, step_idx: int) -> None:
         if action == "delete":
@@ -374,7 +419,7 @@ class RecipeCreatorNewWindow(QMainWindow):
 
     def _toggle_dark(self, dark: bool) -> None:
         self._dark = dark
-        self.setStyleSheet(get_stylesheet(dark))
+        self.setStyleSheet(get_stylesheet(dark) + creator_stylesheet(dark))
         self._yaml_editor.set_dark(dark)
         self._invalid_overlay.set_dark(dark)
         for view in [self._list_view, self._card_view, self._panels_view]:
@@ -397,6 +442,7 @@ class RecipeCreatorNewWindow(QMainWindow):
             seq_idx, step_idx = self._selected_step
             self._model.remove_step(seq_idx, step_idx)
             self._selected_step = None
+            self._del_btn.setEnabled(False)
 
     def _update_title(self) -> None:
         name = self._file_path or "Unsaved"
@@ -440,6 +486,8 @@ class RecipeCreatorNewWindow(QMainWindow):
             self._log_msg(f"Opened: {path}")
             self._verification.update_issues(issues)
         except Exception as exc:
+            log.error("Recipe '%s' could not be opened: %s", path, exc)
+            log.debug("Traceback for the failed open:", exc_info=True)
             QMessageBox.critical(self, "Open failed", str(exc))
 
     def _on_save(self) -> None:
@@ -463,6 +511,8 @@ class RecipeCreatorNewWindow(QMainWindow):
             self._update_title()
             self._log_msg(f"Saved: {path}")
         except Exception as exc:
+            log.error("Recipe '%s' could not be saved: %s", path, exc)
+            log.debug("Traceback for the failed save:", exc_info=True)
             QMessageBox.critical(self, "Save failed", str(exc))
 
     def _ask_discard(self) -> bool:
@@ -475,13 +525,18 @@ class RecipeCreatorNewWindow(QMainWindow):
         return result == QMessageBox.StandardButton.Discard
 
     def _log_msg(self, msg: str) -> None:
-        self._log.append(msg)
+        """A line for the window's message box, and the same line in the log file."""
+        self._log.appendPlainText(msg)
+        log.info("%s", msg)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 
 
 def main() -> int:
+    log_path = start_logging()
+    log.info("Recipe Creator started.")
+    log.debug("Recipe Creator log file: %s; arguments: %s", log_path, sys.argv[1:])
     app = QApplication(sys.argv)
     win = RecipeCreatorNewWindow()
     win.show()
@@ -489,7 +544,9 @@ def main() -> int:
     # Edit > Edit Recipe passes the recipe it has loaded.
     if len(sys.argv) > 1:
         win.open_file(sys.argv[1])
-    return app.exec()
+    exit_code = app.exec()
+    log.info("Recipe Creator stopped.")
+    return exit_code
 
 
 if __name__ == "__main__":

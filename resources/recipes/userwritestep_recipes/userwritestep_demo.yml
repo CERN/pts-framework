@@ -68,7 +68,7 @@ steps:
   - steptype: PythonModule
     step_name: Report the serial number
     description: Reads back the global the first step wrote.
-    module: example_tests.py
+    module: ../common/example_tests.py
     method_name: greet
     inputs:
       name: {type: global, global_name: serial_number}

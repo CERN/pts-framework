@@ -125,6 +125,8 @@ def gui(qapp):
     need. Yields (gui, outbox, inbox) where outbox holds what the GUI sent to
     CORE.
     """
+    from PySide6.QtCore import QCoreApplication, QEvent
+
     from pypts.hmi.gui.gui import GUI
 
     outbox: queue.Queue = queue.Queue()
@@ -132,10 +134,15 @@ def gui(qapp):
     instance = GUI(QueueWrapper(outbox), QueueWrapper(inbox))
     yield instance, outbox, QueueWrapper(inbox)
     instance.timer.stop()
+    instance.log_timer.stop()
     # closeEvent redirects [X] to a shutdown request; the teardown must really
     # close, or every test leaks an offscreen window into the next one.
     instance.window.allow_close = True
     instance.window.close()
+    # Closing only hides it. Delete it too: every window left alive made each
+    # next GUI slower to build, and the whole file took about ten minutes.
+    instance.window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
 
 
 def drain(a_queue):
@@ -3341,6 +3348,26 @@ def test_the_engineering_menu_switches_the_table_and_the_label(gui):
     instance.window.engineering_action.setChecked(False)
     assert instance.step_table.engineering_mode is False
     assert instance.engineering_label.isVisibleTo(instance.window) is False
+
+
+def test_the_window_title_says_engineering_mode_while_it_is_on(gui):
+    """The taskbar shows only the title; the status bar label may be out of sight."""
+    from pypts.messages.core_hmi_communication import RecipeUnloaded
+
+    instance, _outbox, inbox = gui
+
+    instance.window.engineering_action.setChecked(True)
+    assert instance.window.windowTitle() == "pyPTS  [ENGINEERING MODE]"
+
+    load_demo_recipe(instance, inbox)
+    assert instance.window.windowTitle() == "pyPTS: Wait demo  [ENGINEERING MODE]"
+
+    inbox.send(RecipeUnloaded())
+    instance.poll_core()
+    assert instance.window.windowTitle() == "pyPTS  [ENGINEERING MODE]"
+
+    instance.window.engineering_action.setChecked(False)
+    assert instance.window.windowTitle() == "pyPTS"
 
 
 def test_space_runs_only_the_picked_steps_without_a_report(gui):

@@ -12,12 +12,13 @@
 # steps, teardown included) and its own teardown.
 #
 # Runs headless - only Wait and PythonModule steps:
-#   python -m pypts --mode headless --recipe resources/recipes/Development_recipes/sequencestep_demo.yml
+#   python -m pypts --mode headless --recipe resources/recipes/sequencestep_recipes/sequencestep_demo.yml
 #
 # Expect FAIL on purpose: one addition inside Calibrate expects the wrong sum,
 # so the Calibrate group, and the run, show a FAIL among the passes.
 #
-# One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
+# One steptype per demo folder under resources/recipes/ - the list is in
+# pythonmodulestep_recipes/pythonmodulestep_demo.yml.
 name: Sequence demo
 description: A main sequence built from nested, reusable groups of steps.
 version: 0.2
@@ -94,7 +95,7 @@ steps:
   - steptype: PythonModule
     step_name: Measure voltage
     description: The reading must sit between 11 and 13 volts.
-    module: example_tests.py
+    module: ../common/example_tests.py
     method_name: measure_voltage
     outputs:
       voltage: {type: range, min: '11', max: '13'}
@@ -110,7 +111,7 @@ steps:
     description: Three additions, one of them expecting the wrong sum.
     template:
       steptype: PythonModule
-      module: example_tests.py
+      module: ../common/example_tests.py
       method_name: add
     parameter_sets:
       - inputs: {a: 1, b: 1}
@@ -127,7 +128,7 @@ steps:
   - steptype: PythonModule
     step_name: Even check
     description: Never runs here - the group is skipped.
-    module: example_tests.py
+    module: ../common/example_tests.py
     method_name: is_even
     inputs:
       number: 4

@@ -565,7 +565,8 @@ cancels the pending start; and it fires once, not on later loads.
 **The window title names the loaded recipe** (2026-09-15): `pyPTS` at start and again
 after an unload (§16), `pyPTS: <recipe name>` from `show_recipe_loaded()` on. The old engine did the same
 (`PTS: <name>`); several bench windows are often open at once and the taskbar shows only
-the title.
+the title. Engineering mode adds `  [ENGINEERING MODE]` to it; `update_window_title()` (§17)
+builds it every time.
 
 **Two decisions worth not undoing:**
 
@@ -977,8 +978,8 @@ disk rather than routing it through messages.
 **The ordering contract** is what makes indexing safe: `step_source` produces rows in the order
 `Sequence.to_summary()` emits them — steps, then teardown, an `Indexed` step once per parameter
 set, each `Sequence` step followed by the rows of the sequence it calls. `test_recipe.py` pins
-the two together against `all_steptypes_demo.yml`, whose rows include five from one Indexed step
-and two from a called sequence.
+the two together against `showcase_recipes/showcase_full.yml`, whose rows include many from
+Indexed steps and from called sequences, nested three deep.
 
 One limitation, accepted: the file is read **once, at load**. Editing the `.yml` afterwards
 makes the panel show the new file while the engine runs the old one.
@@ -1332,7 +1333,8 @@ the defaults.
 
 | Piece | What it does |
 |---|---|
-| `set_engineering_mode(on)` | `engineering_action.toggled` lands here: INFO `Engineering mode switched on.` / `... off.`, `step_table.set_engineering_mode(on)`, the status bar's `engineering_label` (`ENGINEERING MODE`, `QLabel#engineeringLabel`, `palette.danger`) shown or hidden. |
+| `set_engineering_mode(on)` | `engineering_action.toggled` lands here: INFO `Engineering mode switched on.` / `... off.`, `step_table.set_engineering_mode(on)`, the status bar's `engineering_label` (`ENGINEERING MODE`, `QLabel#engineeringLabel`, `palette.danger`) shown or hidden, and `update_window_title()`. |
+| `update_window_title()` | The one place the window title is set after construction: `pyPTS`, or `pyPTS: <recipe name>` with a recipe loaded (`current_recipe`), plus `ENGINEERING_TITLE_SUFFIX` (`  [ENGINEERING MODE]`) while the mode is on — so the taskbar shows the mode too. Also called by `show_recipe_loaded()` and `show_recipe_unloaded()`. |
 | `retest_shortcut` | A `QShortcut` for Space on the step table, `WidgetWithChildrenShortcut` — so it fires only while the table has the focus, and a space typed into the interaction panel stays a space. Calls `run_selected_steps()`. |
 | `run_selected_steps()` | Sends `start_sequence(<combo sequence>, step_table.retest_exclusions(), write_report=False)`. Does nothing (one DEBUG line) outside engineering mode, with no recipe, during a run, or when nothing picked would run. |
 | `_start_or_resume()` | In engineering mode, Start sends `step_table.left_out_exclusions()` with the report. Resume is unchanged. |

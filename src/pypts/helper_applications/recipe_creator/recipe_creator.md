@@ -40,6 +40,7 @@ warnings: what loads but looks wrong.
 | File | Owns |
 |---|---|
 | `recipe_creator_new.py` | Entry point and main window — what `__main__.py` runs |
+| `rc_logging.py` | The Creator's own log file and its handler for uncaught errors — see Logging below |
 | `rc_model.py` | `RecipeModel` and the `QUndoCommand` subclasses |
 | `rc_widgets.py` | The custom widgets |
 | `customGUIModules.py` | Editor widgets (YAML editor, highlighter) |
@@ -49,6 +50,25 @@ warnings: what loads but looks wrong.
 | `verificator.py` | Validation pipeline: `verify_file(path)` and `verify_string(content)` |
 | `__init__.py` | Public exports: `ValidationIssue`, `verify_file`, `verify_string` |
 | `verification_rule_alignment.html` | Why the verificator's rules drifted from the framework's, and what was done about it |
+
+## Logging
+
+The Creator is a separate program: no Logger process, no run log. `main()` calls
+`rc_logging.start_logging()` first, which writes
+`recipe_creator_<YYYYmmdd_HHMMSS>.log` (`get_log_file_path(..., prefix=LOG_FILE_PREFIX)`)
+into `paths.reports_dir` — the default reports folder when there is no configuration — at
+DEBUG, and to stdout. In it:
+
+- `Recipe Creator started.` / `Recipe Creator stopped.` (INFO), and every line of the
+  window's message box (`_log_msg`) at INFO;
+- a failed open or save: ERROR, traceback at DEBUG;
+- an exception nobody caught: `sys.excepthook` is `_report_uncaught_error`, which logs
+  it (ERROR, traceback at DEBUG) and shows a dialog naming the log file. PySide hands an
+  exception raised in a slot to `sys.excepthook` and carries on, so the window stays open;
+- a hard crash inside Qt: `faulthandler` writes the Python stack of every thread to the
+  same file, through a handle kept open for the program's life.
+
+Tests: `tests/unit_tests/test_rc_logging.py` (the hard crash runs in a subprocess).
 
 ## Case is the framework's business, not ours
 

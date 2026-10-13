@@ -509,6 +509,19 @@ def normalize_sequence(document: dict[str, Any]) -> dict[str, Any]:
     return document
 
 
+def steptype_key(steptype: Any) -> str:
+    """
+    A steptype as the models key it: `Wait`, `WAIT` and `wait` are all "wait".
+
+    The one place the case rule for a steptype lives - the parser uses it, and
+    so does a tool that looks a step up in STEP_TYPE_REQUIRED or STEP_SCHEMAS.
+    Anything that is not text gives "", which no table has.
+    """
+    if not isinstance(steptype, str):
+        return ""
+    return steptype.lower()
+
+
 def _normalize_step(step_data: Any) -> Any:
     """One step mapping; anything malformed is left for validation to name."""
     if not isinstance(step_data, dict):
@@ -516,7 +529,7 @@ def _normalize_step(step_data: Any) -> Any:
     step_data = _lowercase_keys(step_data)
     # The models pick a step's schema by its lowercase steptype.
     if isinstance(step_data.get("steptype"), str):
-        step_data["steptype"] = step_data["steptype"].lower()
+        step_data["steptype"] = steptype_key(step_data["steptype"])
     for mapping_name in ("inputs", "outputs"):
         mapping = step_data.get(mapping_name)
         if isinstance(mapping, dict):

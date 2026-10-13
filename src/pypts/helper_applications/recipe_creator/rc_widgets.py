@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSizePolicy,
@@ -27,6 +28,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QTextEdit,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -36,6 +38,7 @@ from PySide6.QtGui import (
     QPainter,
     QSyntaxHighlighter,
     QTextCharFormat,
+    QTextFormat,
 )
 from PySide6.QtCore import QEvent, Qt, QRegularExpression, QTimer, Signal
 
@@ -43,7 +46,80 @@ import yaml
 
 from pypts.helper_applications.recipe_creator.customGUIModules import ScintillaYamlEditor
 from pypts.hmi.gui.palette import get_palette
+from pypts.recipe.recipe_parser import steptype_key
 from pypts.recipe.recipe_schema import INPUT_TYPES, OUTPUT_TYPES, STEP_TYPE_REQUIRED
+
+
+# ── Small helpers ─────────────────────────────────────────────────────────────
+
+#: objectName of the square text buttons; creator_stylesheet() gives them no padding.
+SMALL_BUTTON_NAME = "rcSmallButton"
+
+
+def creator_stylesheet(dark: bool) -> str:
+    """
+    The Creator's own rules, appended to pypts' stylesheet (hmi/gui/styles.py).
+
+    Kept here rather than in the shared file: pypts' window has no small
+    buttons or group boxes, and the shared file is pypts' to change.
+    """
+    p = get_palette(dark)
+    return f"""
+QPushButton#{SMALL_BUTTON_NAME} {{
+    padding: 0px;
+    font-size: 14px;
+}}
+QGroupBox {{
+    border: 1px solid {p.border};
+    border-radius: 6px;
+    margin-top: 14px;
+    padding-top: 6px;
+}}
+QGroupBox::title {{
+    subcontrol-origin: margin;
+    left: 8px;
+    padding: 0px 4px;
+}}
+"""
+
+
+def _small_button(text: str, tooltip: str) -> QPushButton:
+    """A square text button: the app's QPushButton padding would clip its glyph."""
+    button = QPushButton(text)
+    button.setObjectName(SMALL_BUTTON_NAME)
+    button.setFixedSize(28, 28)
+    button.setToolTip(tooltip)
+    return button
+
+
+def _arrow_button(tooltip: str) -> QToolButton:
+    """The expand/collapse arrow of a section header."""
+    button = QToolButton()
+    button.setAutoRaise(True)
+    button.setToolTip(tooltip)
+    return button
+
+
+def _defer_delete(widget: QWidget | None) -> None:
+    """
+    Delete a widget once control is back in the event loop.
+
+    A form is often replaced from inside a signal one of its own widgets is
+    emitting (typing a step name commits it, the model changes, the view
+    rebuilds). Deleting it on the spot frees that widget mid-emit and Qt
+    crashes the process (access violation); deleteLater() waits until it is done.
+    """
+    if widget is None:
+        return
+    widget.hide()
+    widget.deleteLater()
+
+
+def _set_text_if_changed(edit: QLineEdit, text: str) -> None:
+    """Show `text`, from its start, without moving the cursor of an unchanged field."""
+    if edit.text() != text:
+        edit.setText(text)
+        edit.setCursorPosition(0)
 
 
 # ── PaletteYamlHighlighter ────────────────────────────────────────────────────
@@ -113,6 +189,8 @@ class YamlEditor(ScintillaYamlEditor):
         self._debounce.timeout.connect(self._on_debounce)
 
         self.textChanged.connect(self._on_text_changed)
+        # A wrapped YAML line reads as broken indentation.
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
 
     def set_dark(self, dark: bool) -> None:
         """Apply theme to both the gutter rendering and the syntax highlighter."""
@@ -148,6 +226,23 @@ class YamlEditor(ScintillaYamlEditor):
         """Return gutter width wide enough for digits plus a red-dot column."""
         return super().line_number_area_width() + 14
 
+    def update_current_line_highlight(self) -> None:
+        """The current line in a palette colour (the base class paints a black bar in dark)."""
+        selections = []
+        if self.highlight_current_line:
+            p = get_palette(self.dark_mode)
+            if self.dark_mode:
+                colour = p.row_alternate
+            else:
+                colour = p.selection_background
+            selection = QTextEdit.ExtraSelection()
+            selection.format.setBackground(QColor(colour))
+            selection.format.setProperty(QTextFormat.Property.FullWidthSelection, True)
+            selection.cursor = self.textCursor()
+            selection.cursor.clearSelection()
+            selections.append(selection)
+        self.setExtraSelections(selections)
+
     def line_number_area_paint_event(self, event) -> None:  # noqa: ANN001
         """Paint line numbers and red error dots.
 
@@ -156,6 +251,9 @@ class YamlEditor(ScintillaYamlEditor):
         in full.
         """
         painter = QPainter(self.line_number_area)
+        # The gutter is a plain QWidget, styled in the window's UI font; the
+        # numbers must be in the editor's font to sit on its lines.
+        painter.setFont(self.font())
         p = get_palette(self.dark_mode)
         painter.fillRect(event.rect(), QColor(p.panel_background))
 
@@ -163,11 +261,11 @@ class YamlEditor(ScintillaYamlEditor):
         block_number = block.blockNumber()
         top = int(self.blockBoundingGeometry(block).translated(self.contentOffset()).top())
         bottom = top + int(self.blockBoundingRect(block).height())
-        line_h = self.fontMetrics().height()
-        dot_size = min(8, line_h - 2)
+        dot_size = min(8, self.fontMetrics().height() - 2)
         num_width = self.line_number_area_width() - dot_size - 6
 
         while block.isValid() and top <= event.rect().bottom():
+            line_h = bottom - top
             if block.isVisible() and bottom >= event.rect().top():
                 line_num = block_number + 1
                 painter.setPen(QColor(p.text_muted))
@@ -176,7 +274,7 @@ class YamlEditor(ScintillaYamlEditor):
                     top,
                     num_width,
                     line_h,
-                    Qt.AlignmentFlag.AlignRight,
+                    Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                     str(line_num),
                 )
                 if line_num in self._error_lines:
@@ -189,6 +287,7 @@ class YamlEditor(ScintillaYamlEditor):
             top = bottom
             bottom = top + int(self.blockBoundingRect(block).height())
             block_number += 1
+        painter.end()
 
 
 # ── VerificationPanel ─────────────────────────────────────────────────────────
@@ -203,7 +302,7 @@ class VerificationPanel(QFrame):
         super().__init__(parent)
         self.setFrameShape(QFrame.Shape.StyledPanel)
 
-        self._expanded = False
+        self._expanded = True
         self._issues: list = []
 
         outer = QVBoxLayout(self)
@@ -215,25 +314,26 @@ class VerificationPanel(QFrame):
         row_layout = QHBoxLayout(summary_row)
         row_layout.setContentsMargins(0, 0, 0, 0)
         self._summary_label = QLabel("No recipe loaded")
-        self._toggle_btn = QLabel("[▶]")
-        self._toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._toggle_btn.mousePressEvent = lambda _: self._toggle()
+        self._toggle_btn = _arrow_button("Show or hide the problems")
+        self._toggle_btn.setArrowType(Qt.ArrowType.DownArrow)
+        self._toggle_btn.clicked.connect(self._toggle)
         row_layout.addWidget(self._summary_label)
         row_layout.addStretch()
         row_layout.addWidget(self._toggle_btn)
         outer.addWidget(summary_row)
 
-        # Issue list
+        # Issue list: takes the panel's height, wraps instead of scrolling sideways
         self._list = QListWidget()
-        self._list.setFixedHeight(140)
-        self._list.setVisible(False)
+        self._list.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._list.setWordWrap(True)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._list.itemDoubleClicked.connect(self._on_item_double_clicked)
-        outer.addWidget(self._list)
+        outer.addWidget(self._list, 1)
 
         # Hint label
         self._hint_label = QLabel()
         self._hint_label.setWordWrap(True)
-        self._hint_label.setVisible(False)
+        self._hint_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         outer.addWidget(self._hint_label)
         self._list.currentItemChanged.connect(self._on_item_selected)
 
@@ -253,7 +353,15 @@ class VerificationPanel(QFrame):
             if warnings:
                 parts.append(f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}")
             separator = " \u00b7 "
-            self._summary_label.setText(f"\u274c {separator.join(parts)}")
+            # A red cross only when something will not load; warnings alone get a sign.
+            if errors:
+                icon = "\u274c"
+            else:
+                icon = "\u26a0\ufe0f"
+            self._summary_label.setText(f"{icon} {separator.join(parts)}")
+            if not self._expanded:
+                self._toggle()
+        self._hint_label.clear()
 
         for issue in issues:
             line_info = f" (line {issue.line})" if issue.line else ""
@@ -273,7 +381,10 @@ class VerificationPanel(QFrame):
         self._expanded = not self._expanded
         self._list.setVisible(self._expanded)
         self._hint_label.setVisible(self._expanded)
-        self._toggle_btn.setText("[▼]" if self._expanded else "[▶]")
+        if self._expanded:
+            self._toggle_btn.setArrowType(Qt.ArrowType.DownArrow)
+        else:
+            self._toggle_btn.setArrowType(Qt.ArrowType.RightArrow)
 
     def _on_item_double_clicked(self, item: QListWidgetItem) -> None:
         issue = item.data(Qt.ItemDataRole.UserRole)
@@ -306,6 +417,10 @@ class InvalidOverlay(QWidget):
         self._dark = dark
         self.update()
 
+    def set_text(self, text: str) -> None:
+        self._text = text
+        self.update()
+
     def set_shown(self, shown: bool) -> None:
         self.setVisible(shown)
         if shown:
@@ -321,10 +436,14 @@ class InvalidOverlay(QWidget):
         p = get_palette(self._dark)
         painter = QPainter(self)
         background = QColor(p.panel_background)
-        background.setAlpha(170)
+        background.setAlpha(215)
         painter.fillRect(self.rect(), background)
-        font = painter.font()
-        font.setPointSize(font.pointSize() + 4)
+        # The stylesheet sizes fonts in pixels, where pointSize() is -1.
+        font = self.font()
+        if font.pixelSize() > 0:
+            font.setPixelSize(font.pixelSize() + 6)
+        else:
+            font.setPointSize(font.pointSize() + 4)
         font.setBold(True)
         painter.setFont(font)
         painter.setPen(QColor(p.text_muted))
@@ -428,9 +547,9 @@ class HeaderStrip(QFrame):
         bar_layout = QHBoxLayout(bar)
         bar_layout.setContentsMargins(0, 0, 0, 0)
         self._title_label = QLabel("Recipe header")
-        self._collapse_btn = QLabel("[▼]")
-        self._collapse_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._collapse_btn.mousePressEvent = lambda _: self._toggle()
+        self._collapse_btn = _arrow_button("Show or hide the recipe header")
+        self._collapse_btn.setArrowType(Qt.ArrowType.DownArrow)
+        self._collapse_btn.clicked.connect(self._toggle)
         bar_layout.addWidget(self._title_label)
         bar_layout.addStretch()
         bar_layout.addWidget(self._collapse_btn)
@@ -461,11 +580,9 @@ class HeaderStrip(QFrame):
         seq_layout.setContentsMargins(0, 0, 0, 0)
         self._seq_combo = QComboBox()
         self._seq_combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        add_seq_btn = QPushButton("+")
-        add_seq_btn.setFixedWidth(28)
+        add_seq_btn = _small_button("+", "Add a sequence")
         add_seq_btn.clicked.connect(self._add_sequence)
-        remove_seq_btn = QPushButton("−")
-        remove_seq_btn.setFixedWidth(28)
+        remove_seq_btn = _small_button("\u2212", "Remove this sequence")
         remove_seq_btn.clicked.connect(self._remove_sequence)
         seq_layout.addWidget(self._seq_combo)
         seq_layout.addWidget(add_seq_btn)
@@ -504,11 +621,15 @@ class HeaderStrip(QFrame):
         self._metadata_edit.blockSignals(True)
         self._seq_combo.blockSignals(True)
 
-        self._name_edit.setText(str(h.get("name") or ""))
-        self._version_edit.setText(str(h.get("version") or ""))
-        self._desc_edit.setText(str(h.get("description") or ""))
+        _set_text_if_changed(self._name_edit, str(h.get("name") or ""))
+        _set_text_if_changed(self._version_edit, str(h.get("version") or ""))
+        _set_text_if_changed(self._desc_edit, str(h.get("description") or ""))
         meta = h.get("report_metadata") or []
-        self._metadata_edit.setText(", ".join(meta) if isinstance(meta, list) else str(meta))
+        if isinstance(meta, list):
+            meta_text = ", ".join(str(m) for m in meta)
+        else:
+            meta_text = str(meta)
+        _set_text_if_changed(self._metadata_edit, meta_text)
 
         prev_idx = self._seq_combo.currentIndex()
         self._seq_combo.clear()
@@ -529,7 +650,10 @@ class HeaderStrip(QFrame):
     def _toggle(self) -> None:
         self._expanded = not self._expanded
         self._form_widget.setVisible(self._expanded)
-        self._collapse_btn.setText("[▼]" if self._expanded else "[▶]")
+        if self._expanded:
+            self._collapse_btn.setArrowType(Qt.ArrowType.DownArrow)
+        else:
+            self._collapse_btn.setArrowType(Qt.ArrowType.RightArrow)
 
     def _open_globals(self) -> None:
         dlg = GlobalsEditorDialog(self._model, self)
@@ -651,8 +775,7 @@ class MappingRowsWidget(QWidget):
         type_combo.currentTextChanged.connect(lambda t: (refresh_value(t), _commit()))
         name_edit.editingFinished.connect(_commit)
 
-        remove_btn = QPushButton("\u2715")
-        remove_btn.setFixedWidth(28)
+        remove_btn = _small_button("\u2715", f"Remove {name}")
         remove_btn.clicked.connect(lambda: self._remove_row(name))
         rl.addWidget(remove_btn)
 
@@ -834,6 +957,11 @@ class StepFormWidget(QWidget):
         self._seq_idx = seq_idx
         self._step_idx = step_idx
         self._dark = dark
+        # The steptype the type-specific rows were built for, and their editors.
+        # They are rebuilt only when the steptype changes; otherwise refilled, so
+        # a field keeps its focus while the user types in it.
+        self._specific_type: str | None = None
+        self._specific_editors: dict[str, QWidget] = {}
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
@@ -875,43 +1003,39 @@ class StepFormWidget(QWidget):
         self._specific_layout.setContentsMargins(0, 0, 0, 0)
         outer.addWidget(self._specific_widget)
 
-        # Inputs section
-        inputs_group = QGroupBox("Inputs")
-        inputs_vlayout = QVBoxLayout(inputs_group)
-        self._inputs_stack = QStackedWidget()
+        # Inputs and outputs: rows, or the same mapping as YAML
         self._inputs_rows = MappingRowsWidget(model, seq_idx, step_idx, "inputs")
         self._inputs_yaml = MappingYamlWidget(model, seq_idx, step_idx, "inputs", dark)
-        self._inputs_stack.addWidget(self._inputs_rows)
-        self._inputs_stack.addWidget(self._inputs_yaml)
-        toggle_inputs = QPushButton("Rows | YAML")
-        toggle_inputs.setCheckable(False)
-        toggle_inputs.clicked.connect(
-            lambda: self._inputs_stack.setCurrentIndex(1 - self._inputs_stack.currentIndex())
-        )
-        inputs_vlayout.addWidget(toggle_inputs)
-        inputs_vlayout.addWidget(self._inputs_stack)
-        outer.addWidget(inputs_group)
-
-        # Outputs section
-        outputs_group = QGroupBox("Outputs")
-        outputs_vlayout = QVBoxLayout(outputs_group)
-        self._outputs_stack = QStackedWidget()
+        outer.addWidget(self._mapping_group("Inputs", self._inputs_rows, self._inputs_yaml))
         self._outputs_rows = MappingRowsWidget(model, seq_idx, step_idx, "outputs")
         self._outputs_yaml = MappingYamlWidget(model, seq_idx, step_idx, "outputs", dark)
-        self._outputs_stack.addWidget(self._outputs_rows)
-        self._outputs_stack.addWidget(self._outputs_yaml)
-        toggle_outputs = QPushButton("Rows | YAML")
-        toggle_outputs.setCheckable(False)
-        toggle_outputs.clicked.connect(
-            lambda: self._outputs_stack.setCurrentIndex(1 - self._outputs_stack.currentIndex())
-        )
-        outputs_vlayout.addWidget(toggle_outputs)
-        outputs_vlayout.addWidget(self._outputs_stack)
-        outer.addWidget(outputs_group)
+        outer.addWidget(self._mapping_group("Outputs", self._outputs_rows, self._outputs_yaml))
 
         outer.addStretch()
         model.changed.connect(self.rebuild)
         self.rebuild()
+
+    def _mapping_group(self, title: str, rows: QWidget, yaml_view: QWidget) -> QGroupBox:
+        """A group with the rows editor, and a small YAML switch at its top right."""
+        group = QGroupBox(title)
+        layout = QVBoxLayout(group)
+        stack = QStackedWidget()
+        stack.addWidget(rows)
+        stack.addWidget(yaml_view)
+
+        yaml_switch = QToolButton()
+        yaml_switch.setText("YAML")
+        yaml_switch.setCheckable(True)
+        yaml_switch.setAutoRaise(True)
+        yaml_switch.setToolTip(f"Edit the {title.lower()} as YAML")
+        yaml_switch.toggled.connect(lambda checked: stack.setCurrentIndex(1 if checked else 0))
+        switch_row = QHBoxLayout()
+        switch_row.addStretch()
+        switch_row.addWidget(yaml_switch)
+
+        layout.addLayout(switch_row)
+        layout.addWidget(stack)
+        return group
 
     def set_dark(self, dark: bool) -> None:
         self._dark = dark
@@ -924,48 +1048,83 @@ class StepFormWidget(QWidget):
             return
         step = steps[self._step_idx]
 
-        _em = "\u2014"
+        _em = "—"
         self._type_label.setText(f"Type: {step.get('steptype', _em)}")
 
         for widget in [self._name_edit, self._desc_edit, self._skip_check, self._coe_check]:
             widget.blockSignals(True)
-        self._name_edit.setText(str(step.get("step_name") or ""))
-        self._desc_edit.setText(str(step.get("description") or ""))
+        _set_text_if_changed(self._name_edit, str(step.get("step_name") or ""))
+        _set_text_if_changed(self._desc_edit, str(step.get("description") or ""))
         self._skip_check.setChecked(bool(step.get("skip", False)))
         self._coe_check.setChecked(bool(step.get("continue_on_error", True)))
         for widget in [self._name_edit, self._desc_edit, self._skip_check, self._coe_check]:
             widget.blockSignals(False)
 
-        # Rebuild type-specific fields
+        steptype = steptype_key(step.get("steptype"))
+        if steptype != self._specific_type:
+            self._build_specific_rows(steptype)
+        self._fill_specific_rows(step)
+
+        self._inputs_rows.rebuild()
+        self._outputs_rows.rebuild()
+        self._inputs_yaml.rebuild()
+        self._outputs_yaml.rebuild()
+
+    def _build_specific_rows(self, steptype: str) -> None:
+        """One editor per field the steptype requires (inputs/outputs have their own groups)."""
         while self._specific_layout.rowCount():
-            self._specific_layout.removeRow(0)
-        steptype = step.get("steptype", "")
+            # takeRow, not removeRow: removeRow deletes the editors at once, and
+            # this can run inside a signal one of them is emitting.
+            row = self._specific_layout.takeRow(0)
+            for item in (row.labelItem, row.fieldItem):
+                if item is not None:
+                    _defer_delete(item.widget())
+        self._specific_editors = {}
+        self._specific_type = steptype
+
         for field in STEP_TYPE_REQUIRED.get(steptype, ()):
             if field in ("inputs", "outputs"):
                 continue
             if field == "wait_time":
                 spin = QDoubleSpinBox()
                 spin.setRange(0, 99999)
-                spin.setValue(float(step.get(field) or 0))
                 spin.valueChanged.connect(
                     lambda v, f=field: self._model.set_step_field(
                         self._seq_idx, self._step_idx, f, v
                     )
                 )
-                self._specific_layout.addRow(field, spin)
+                editor: QWidget = spin
             else:
-                edit = QLineEdit(str(step.get(field) or ""))
+                edit = QLineEdit()
                 edit.editingFinished.connect(
                     lambda f=field, e=edit: self._model.set_step_field(
                         self._seq_idx, self._step_idx, f, e.text()
                     )
                 )
-                self._specific_layout.addRow(field, edit)
+                editor = edit
+            self._specific_layout.addRow(field, editor)
+            self._specific_editors[field] = editor
 
-        self._inputs_rows.rebuild()
-        self._outputs_rows.rebuild()
-        self._inputs_yaml.rebuild()
-        self._outputs_yaml.rebuild()
+    def _fill_specific_rows(self, step: dict) -> None:
+        for field, editor in self._specific_editors.items():
+            value = step.get(field)
+            editor.blockSignals(True)
+            if isinstance(editor, QDoubleSpinBox):
+                # A wait_time the spin box cannot show (text, a list) shows as 0;
+                # the verificator names the problem.
+                try:
+                    number = float(value or 0)
+                except (TypeError, ValueError):
+                    number = 0.0
+                if editor.value() != number:
+                    editor.setValue(number)
+            elif isinstance(editor, QLineEdit):
+                if value is None:
+                    text = ""
+                else:
+                    text = str(value)
+                _set_text_if_changed(editor, text)
+            editor.blockSignals(False)
 
 
 # ── _ClickLabel ───────────────────────────────────────────────────────────────
@@ -979,6 +1138,16 @@ class _ClickLabel(QLabel):
     def mousePressEvent(self, event) -> None:  # noqa: ANN001
         self.clicked.emit()
         super().mousePressEvent(event)
+
+
+def _replace_form(container: QScrollArea, form: QWidget) -> None:
+    """
+    Put `form` into `container`, deleting the old form only later.
+
+    setWidget() deletes the widget it replaces at once; see _defer_delete().
+    """
+    _defer_delete(container.takeWidget())
+    container.setWidget(form)
 
 
 # ── ListStepView ──────────────────────────────────────────────────────────────
@@ -996,6 +1165,8 @@ class ListStepView(QSplitter):
         self._seq_idx = 0
         self._dark = False
         self._form: StepFormWidget | None = None
+        # (sequence, row) the form was built for; None when there is none.
+        self._form_for: tuple[int, int] | None = None
 
         # Top: list
         top = QWidget()
@@ -1007,10 +1178,14 @@ class ListStepView(QSplitter):
         top_layout.addWidget(self._list)
         self.addWidget(top)
 
-        # Bottom: form placeholder
+        # Bottom: form placeholder - the larger share, it is what is edited
         self._form_container = QScrollArea()
         self._form_container.setWidgetResizable(True)
         self.addWidget(self._form_container)
+        self.setStretchFactor(0, 1)
+        self.setStretchFactor(1, 2)
+        self.setSizes([200, 400])
+        self.setCollapsible(1, False)
 
         model.changed.connect(self.rebuild)
         self.rebuild()
@@ -1050,11 +1225,17 @@ class ListStepView(QSplitter):
 
     def _show_form(self, row: int) -> None:
         if row < 0 or row >= len(self._model.steps(self._seq_idx)):
-            self._form_container.setWidget(QWidget())
+            _replace_form(self._form_container, QWidget())
             self._form = None
+            self._form_for = None
+            return
+        # The same step: the form refreshes itself on model.changed, and keeps
+        # the focus and cursor of the field being typed in.
+        if self._form_for == (self._seq_idx, row):
             return
         self._form = StepFormWidget(self._model, self._seq_idx, row, self._dark)
-        self._form_container.setWidget(self._form)
+        self._form_for = (self._seq_idx, row)
+        _replace_form(self._form_container, self._form)
 
 
 # ── CardStepView ──────────────────────────────────────────────────────────────
@@ -1097,8 +1278,7 @@ class CardStepView(QScrollArea):
         # Remove all except the trailing stretch
         while self._layout.count() > 1:
             item = self._layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+            _defer_delete(item.widget())
 
         for idx, step in enumerate(self._model.steps(self._seq_idx)):
             card = self._make_card(idx, step)
@@ -1110,6 +1290,7 @@ class CardStepView(QScrollArea):
         card_layout = QVBoxLayout(card)
         card_layout.setContentsMargins(4, 4, 4, 4)
         card_layout.setSpacing(2)
+        expanded = step_idx == self._expanded_idx
 
         # Header row
         header = QWidget()
@@ -1118,10 +1299,11 @@ class CardStepView(QScrollArea):
         steptype = step.get("steptype", "?")
         name = step.get("step_name", "")
         title = _ClickLabel(f"[{steptype}] {name}")
-        expand_btn = QPushButton("▼" if step_idx == self._expanded_idx else "▶")
-        expand_btn.setFixedWidth(28)
-        delete_btn = QPushButton("✕")
-        delete_btn.setFixedWidth(28)
+        if expanded:
+            expand_btn = _small_button("▼", "Hide this step's fields")
+        else:
+            expand_btn = _small_button("▶", "Show this step's fields")
+        delete_btn = _small_button("✕", "Delete this step")
         delete_btn.clicked.connect(
             lambda checked=False, idx=step_idx: self.step_action_requested.emit(
                 "delete", self._seq_idx, idx
@@ -1133,10 +1315,11 @@ class CardStepView(QScrollArea):
         header_layout.addWidget(delete_btn)
         card_layout.addWidget(header)
 
-        # Body (form)
-        form = StepFormWidget(self._model, self._seq_idx, step_idx, self._dark)
-        form.setVisible(step_idx == self._expanded_idx)
-        card_layout.addWidget(form)
+        # Body (form) - only for the open card: every form listens to the model
+        if expanded:
+            card_layout.addWidget(
+                StepFormWidget(self._model, self._seq_idx, step_idx, self._dark)
+            )
 
         def toggle():  # noqa: ANN202
             if self._expanded_idx == step_idx:
@@ -1166,10 +1349,12 @@ class PanelsStepView(QSplitter):
         self._seq_idx = 0
         self._dark = False
         self._form: StepFormWidget | None = None
+        # (sequence, row) the form was built for; None when there is none.
+        self._form_for: tuple[int, int] | None = None
 
-        # Left: slim list
+        # Left: slim list, its width left to the splitter handle
         self._list = QListWidget()
-        self._list.setFixedWidth(180)
+        self._list.setMinimumWidth(150)
         self._list.currentRowChanged.connect(self._on_row_changed)
         self.addWidget(self._list)
 
@@ -1179,6 +1364,7 @@ class PanelsStepView(QSplitter):
         self.addWidget(self._form_container)
         self.setStretchFactor(0, 0)
         self.setStretchFactor(1, 1)
+        self.setSizes([170, 400])
 
         model.changed.connect(self.rebuild)
         self.rebuild()
@@ -1212,8 +1398,13 @@ class PanelsStepView(QSplitter):
 
     def _show_form(self, row: int) -> None:
         if row < 0 or row >= len(self._model.steps(self._seq_idx)):
-            self._form_container.setWidget(QWidget())
+            _replace_form(self._form_container, QWidget())
             self._form = None
+            self._form_for = None
+            return
+        # The same step: the form refreshes itself on model.changed.
+        if self._form_for == (self._seq_idx, row):
             return
         self._form = StepFormWidget(self._model, self._seq_idx, row, self._dark)
-        self._form_container.setWidget(self._form)
+        self._form_for = (self._seq_idx, row)
+        _replace_form(self._form_container, self._form)

@@ -34,16 +34,19 @@ from pypts.step.step import real_step_results, run_sequence
 from pypts.step.wait_step import WaitStep
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
-DEMOS = Path(__file__).parents[2] / "resources" / "recipes" / "Development_recipes"
-PYTHONMODULE_DEMO = DEMOS / "pythonmodulestep_demo.yml"
-INDEXED_DEMO = DEMOS / "indexedstep_demo.yml"
-USER_INTERACTION_DEMO = DEMOS / "userinteractionstep_demo.yml"
-USER_WRITE_DEMO = DEMOS / "userwritestep_demo.yml"
-USER_LOADING_DEMO = DEMOS / "userloadingstep_demo.yml"
-ALL_STEPTYPES_DEMO = DEMOS / "all_steptypes_demo.yml"
-SEQUENCE_DEMO = DEMOS / "sequencestep_demo.yml"
-HAL_DEMO = DEMOS / "hal_demo.yml"
-STEPIMAGE_DEMO = DEMOS / "stepimage_demo.yml"
+DEMOS = Path(__file__).parents[2] / "resources" / "recipes"
+PYTHONMODULE_DEMO = DEMOS / "pythonmodulestep_recipes" / "pythonmodulestep_demo.yml"
+INDEXED_DEMO = DEMOS / "indexedstep_recipes" / "indexedstep_demo.yml"
+USER_INTERACTION_DEMO = DEMOS / "userinteractionstep_recipes" / "userinteractionstep_demo.yml"
+USER_WRITE_DEMO = DEMOS / "userwritestep_recipes" / "userwritestep_demo.yml"
+USER_LOADING_DEMO = DEMOS / "userloadingstep_recipes" / "userloadingstep_demo.yml"
+SEQUENCE_DEMO = DEMOS / "sequencestep_recipes" / "sequencestep_demo.yml"
+WAIT_DEMO = DEMOS / "waitstep_recipes" / "wait_recipe.yml"
+HAL_DEMO = DEMOS / "HAL_recipes" / "hal_demo.yml"
+METEO_DEMO = DEMOS / "HAL_recipes" / "meteo_demo.yml"
+STEPIMAGE_DEMO = DEMOS / "stepimage_recipes" / "stepimage_demo.yml"
+AUTOMATED_SHOWCASE = DEMOS / "showcase_recipes" / "showcase_automated.yml"
+FULL_SHOWCASE = DEMOS / "showcase_recipes" / "showcase_full.yml"
 
 #: The pypts this suite runs against, which is what a recipe declares to
 #: match it. Asked rather than written out, so the fixtures do not start
@@ -611,7 +614,7 @@ teardown_steps:
 
 
 def test_the_pythonmodule_demo_recipe_parses_and_knows_its_folder():
-    """resources/recipes/Development_recipes/pythonmodulestep_demo.yml is the PythonModule
+    """resources/recipes/pythonmodulestep_recipes/pythonmodulestep_demo.yml is the PythonModule
     showcase and the reference for the simplified format; its `module:`
     entries resolve against base_dir, which from_file must set."""
     recipe = Recipe.from_file(str(PYTHONMODULE_DEMO))
@@ -630,7 +633,7 @@ def test_the_pythonmodule_demo_recipe_parses_and_knows_its_folder():
 
 
 def test_the_indexed_demo_recipe_expands_every_parameter_set():
-    """resources/recipes/Development_recipes/indexedstep_demo.yml is the Indexed showcase: two
+    """resources/recipes/indexedstep_recipes/indexedstep_demo.yml is the Indexed showcase: two
     authored steps, thirteen real ones, each named after its own parameters
     and none of them an Indexed step by the time the Sequencer sees it."""
     recipe = Recipe.from_file(str(INDEXED_DEMO))
@@ -657,8 +660,8 @@ def test_the_indexed_demo_recipe_expands_every_parameter_set():
 
 
 def test_the_user_interaction_demo_recipe_parses():
-    """resources/recipes/Development_recipes/userinteractionstep_demo.yml is the UserInteraction
-    showcase; the last step reads back the answer the third one stored."""
+    """resources/recipes/userinteractionstep_recipes/userinteractionstep_demo.yml is the
+    UserInteraction showcase; the last step reads back the answer the third one stored."""
     recipe = Recipe.from_file(str(USER_INTERACTION_DEMO))
 
     steps = recipe.sequences["Main"].steps
@@ -673,7 +676,7 @@ def test_the_user_interaction_demo_recipe_parses():
 
 
 def test_the_user_write_demo_recipe_parses():
-    """resources/recipes/Development_recipes/userwritestep_demo.yml is the UserWrite
+    """resources/recipes/userwritestep_recipes/userwritestep_demo.yml is the UserWrite
     showcase, and the worked example behind best_practices.md: the first step is
     named get_serial_number and writes the global the header names."""
     recipe = Recipe.from_file(str(USER_WRITE_DEMO))
@@ -697,7 +700,7 @@ def test_the_user_write_demo_recipe_parses():
 
 
 def test_the_user_loading_demo_recipe_parses():
-    """resources/recipes/Development_recipes/userloadingstep_demo.yml is the UserLoading
+    """resources/recipes/userloadingstep_recipes/userloadingstep_demo.yml is the UserLoading
     showcase: a file pick and a folder pick, each stored in a global that a
     later PythonModule step reads."""
     recipe = Recipe.from_file(str(USER_LOADING_DEMO))
@@ -728,7 +731,7 @@ def test_the_user_loading_demo_recipe_parses():
 
 
 def test_the_sequence_demo_recipe_builds_its_call_tree():
-    """resources/recipes/Development_recipes/sequencestep_demo.yml is the Sequence
+    """resources/recipes/sequencestep_recipes/sequencestep_demo.yml is the Sequence
     showcase: main calls groups, one of them twice, groups nest, an Indexed step
     expands inside a group and a group is called from teardown."""
     main = Recipe.from_file(str(SEQUENCE_DEMO)).sequences["Main"]
@@ -773,25 +776,105 @@ def test_the_sequence_demo_recipe_runs_to_its_intended_verdicts():
     assert len(real_step_results(results)) == 15
 
 
-def test_the_all_steptypes_demo_recipe_builds_one_of_everything():
-    """resources/recipes/Development_recipes/all_steptypes_demo.yml is the single run that
-    exercises every steptype - the one to reach for when testing the engine
-    rather than one type."""
-    recipe = Recipe.from_file(str(ALL_STEPTYPES_DEMO))
+def every_step_type(steps):
+    """The class names of these steps and of every step a Sequence step under them calls."""
+    names = set()
+    for step in steps:
+        names.add(type(step).__name__)
+        if isinstance(step, SequenceStep):
+            names |= every_step_type(step.sequence.steps + step.sequence.teardown_steps)
+    return names
 
-    sequence = recipe.sequences["Main"]
-    built = {type(step).__name__ for step in sequence.steps}
-    assert built == {
-        "UserInteractionStep",
-        "UserWriteStep",
-        "UserLoadingStep",
+
+#: Each showcase group, and the demo whose steps it holds: (file, sequence, how many steps).
+SHOWCASE_GROUPS = {
+    "Wait steps": (WAIT_DEMO, "Main", None),
+    "PythonModule steps": (PYTHONMODULE_DEMO, "Main", None),
+    "Indexed steps": (INDEXED_DEMO, "Main", None),
+    "Sequence steps": (SEQUENCE_DEMO, "Main", None),
+    "Step pictures": (STEPIMAGE_DEMO, "Main", None),
+    # Only the loopback step: the SSH one needs a host of the bench's own.
+    "HAL loopback": (HAL_DEMO, "Main", 1),
+    "Meteo": (METEO_DEMO, "Main", None),
+    "UserWrite steps": (USER_WRITE_DEMO, "Main", None),
+    "UserInteraction steps": (USER_INTERACTION_DEMO, "Main", None),
+    "UserLoading steps": (USER_LOADING_DEMO, "Main", None),
+}
+
+MANUAL_GROUPS = {"UserWrite steps", "UserInteraction steps", "UserLoading steps"}
+
+
+def test_the_full_showcase_calls_every_demo_and_builds_every_step_type():
+    """resources/recipes/showcase_recipes/showcase_full.yml is the one run that
+    exercises everything - each demo a group called from Main."""
+    recipe = Recipe.from_file(str(FULL_SHOWCASE))
+    main = recipe.sequences["Main"]
+
+    assert [step.name for step in main.steps] == [
+        "UserWrite steps",
+        "Wait steps",
+        "PythonModule steps",
+        "Indexed steps",
+        "Sequence steps",
+        "Step pictures",
+        "HAL loopback",
+        "Meteo",
+        "UserInteraction steps",
+        "UserLoading steps",
+    ]
+    # Indexed is gone by build time: its sets became ordinary steps.
+    assert every_step_type(main.steps) == {
+        "SequenceStep",
         "WaitStep",
         "PythonModuleStep",
-        "SequenceStep",
+        "UserWriteStep",
+        "UserInteractionStep",
+        "UserLoadingStep",
     }
-    # Indexed is gone by build time: five sets became five ordinary steps.
-    assert sum(step.name.startswith("Add numbers [") for step in sequence.steps) == 5
-    assert [step.name for step in sequence.teardown_steps] == ["Power down"]
+    assert recipe.report_metadata == ("serial_number",)
+
+
+def test_the_automated_showcase_is_the_full_one_without_a_question():
+    """showcase_automated.yml runs headless: the full showcase's groups, in the
+    same order, less the three that ask the operator."""
+    automated = Recipe.from_file(str(AUTOMATED_SHOWCASE)).sequences["Main"]
+    full = Recipe.from_file(str(FULL_SHOWCASE)).sequences["Main"]
+
+    assert [step.name for step in automated.steps] == [
+        step.name for step in full.steps if step.name not in MANUAL_GROUPS
+    ]
+    assert every_step_type(automated.steps) == {"SequenceStep", "WaitStep", "PythonModuleStep"}
+
+
+@pytest.mark.parametrize("showcase", [AUTOMATED_SHOWCASE, FULL_SHOWCASE], ids=lambda p: p.stem)
+def test_each_showcase_group_holds_the_steps_of_its_demo(showcase):
+    """The showcases copy the demos; this is what notices when a demo changes
+    and the copy does not. Compared after the build, so Indexed sets and the
+    groups a Sequence step calls are compared too. Descriptions may differ -
+    a demo's Main is a group in the showcase, and some say so."""
+    main = Recipe.from_file(str(showcase)).sequences["Main"]
+
+    def shape(steps):
+        rows = []
+        for step in steps:
+            rows.append(
+                (
+                    type(step).__name__,
+                    step.name,
+                    getattr(step, "inputs", None),
+                    getattr(step, "outputs", None),
+                )
+            )
+            if isinstance(step, SequenceStep):
+                rows.append(shape(step.sequence.steps + step.sequence.teardown_steps))
+        return rows
+
+    for call in main.steps:
+        demo_file, demo_sequence, count = SHOWCASE_GROUPS[call.name]
+        demo = Recipe.from_file(str(demo_file)).sequences[demo_sequence]
+        demo_steps = demo.steps[:count] + demo.teardown_steps
+        group = call.sequence
+        assert shape(group.steps + group.teardown_steps) == shape(demo_steps), call.name
 
 
 def test_unknown_header_keys_are_tolerated():
@@ -1096,12 +1179,12 @@ def test_a_recipe_that_cannot_be_read_costs_only_the_panel(tmp_path):
     assert step_source.step_sources_by_sequence(str(broken)) == {}
 
 
-def test_the_all_steptypes_demo_recipe_has_a_source_for_every_row():
-    """The everything recipe end to end - five of its rows come from one
-    Indexed step and exist in no file, and a Sequence step's rows come from
-    another document, so this is the real test of the ordering contract."""
-    sources = step_source.step_sources_by_sequence(str(ALL_STEPTYPES_DEMO))
-    recipe = Recipe.from_file(str(ALL_STEPTYPES_DEMO))
+def test_the_full_showcase_has_a_source_for_every_row():
+    """The everything recipe end to end - many of its rows come from Indexed
+    steps and exist in no file, and Sequence steps' rows come from other
+    documents, nested, so this is the real test of the ordering contract."""
+    sources = step_source.step_sources_by_sequence(str(FULL_SHOWCASE))
+    recipe = Recipe.from_file(str(FULL_SHOWCASE))
 
     for summary in recipe.to_summary():
         rows = sources[summary.sequence_name]
@@ -1112,7 +1195,7 @@ def test_the_all_steptypes_demo_recipe_has_a_source_for_every_row():
                 # A call's row shows the sequence it calls, whole.
                 assert f"sequence_name: {row.step_name}" in source.text.split("\n")
                 assert source.highlights is False
-            elif not row.step_name.startswith("Add numbers ["):
+            elif " [" not in row.step_name:
                 assert f"step_name: {row.step_name}" in block
 
 
@@ -1521,7 +1604,7 @@ def test_the_recipe_preview_gets_the_whole_file_as_written(tmp_path):
 
 
 def test_the_hal_demo_recipe_parses():
-    """resources/recipes/Development_recipes/hal_demo.yml shows test code reaching
+    """resources/recipes/HAL_recipes/hal_demo.yml shows test code reaching
     devices by logical name; running it needs [hardware.loop1] (and ssh1) in config.ini."""
     recipe = Recipe.from_file(str(HAL_DEMO))
 
@@ -1675,12 +1758,12 @@ def test_a_recipe_from_text_keeps_its_pictures_as_written():
 
 
 def test_the_picture_demo_loads_with_its_one_missing_picture_named():
-    """resources/recipes/Development_recipes/stepimage_demo.yml is the
+    """resources/recipes/stepimage_recipes/stepimage_demo.yml is the
     image_path showcase: a step picture and a sequence picture that are in the
     repository, and one missing on purpose - which is a notice, not a refusal."""
     recipe = Recipe.from_file(str(STEPIMAGE_DEMO))
     main = recipe.sequences["Main"]
-    images = (DEMOS.parent.parent / "images").resolve()
+    images = (DEMOS.parent / "images").resolve()
 
     assert main.image_path is None
     assert main.steps[0].image_path is None

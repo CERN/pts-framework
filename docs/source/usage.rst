@@ -15,11 +15,12 @@ From the repository root:
    python -m pypts --log-level TRACE                 # full message trace in the run log
 
 On Windows, ``run_pypts.bat`` does the same with the repository's ``.venv``.
-To try it, load ``resources/recipes/Development_recipes/wait_recipe.yml``.
+To try it, load ``resources/recipes/waitstep_recipes/wait_recipe.yml``.
 
 Your deliverable is a recipe YAML file and the Python modules it calls; the
 framework provides the processes, GUI, logging and reports.
-``resources/recipes/Development_recipes/`` has one demo recipe per step type.
+``resources/recipes/`` has a folder of demo recipes per step type, and
+``showcase_recipes/`` with all of them in one run.
 
 On first run the launcher creates a per-user ``config.ini``
 (``%LOCALAPPDATA%\pypts\config.ini`` on Windows, ``~/.config/pypts/config.ini``

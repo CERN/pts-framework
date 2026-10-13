@@ -19,7 +19,8 @@
 # answer is an ERROR - as is letting the five-minute timeout run out, or
 # pressing Stop. The sequence carries on to the next step either way.
 #
-# One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
+# One steptype per demo folder under resources/recipes/ - the list is in
+# pythonmodulestep_recipes/pythonmodulestep_demo.yml.
 name: UserInteraction demo
 description: Asking the operator questions - UserInteraction end to end.
 version: 0.2
@@ -64,7 +65,7 @@ steps:
   - steptype: PythonModule
     step_name: Report the port
     description: Greets with whatever port the operator picked.
-    module: example_tests.py
+    module: ../common/example_tests.py
     method_name: greet
     inputs:
       name: {type: global, global_name: port}

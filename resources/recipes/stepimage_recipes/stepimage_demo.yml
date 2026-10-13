@@ -21,7 +21,7 @@
 #                          missing) and "No image available" is shown instead
 #
 # Runs headless too - only Wait steps; headless ignores the pictures:
-#   python -m pypts --mode headless --recipe resources/recipes/Development_recipes/stepimage_demo.yml
+#   python -m pypts --mode headless --recipe resources/recipes/stepimage_recipes/stepimage_demo.yml
 name: Picture demo
 description: Pictures on steps and sequences, and the run card in between.
 version: 0.2

@@ -2,11 +2,12 @@
 #
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
-# The smallest recipe that actually runs on the new engine: two Wait steps
-# and nothing else. The other recipes in this folder still target the old
-# engine's step types and reference a test package that is not in the repo -
-# this one exists so `load_recipe resources/recipes/wait_recipe.yml` has
-# something real to load until they are portable.
+# The Wait showcase, and the smallest recipe that runs: two Wait steps and
+# nothing else, no test code. The one to load first, with
+# `load_recipe resources/recipes/waitstep_recipes/wait_recipe.yml` in the CLI.
+#
+# One steptype per demo folder under resources/recipes/ - the list is in
+# pythonmodulestep_recipes/pythonmodulestep_demo.yml.
 name: Wait demo
 description: Two short waits - the smallest recipe that runs end to end.
 version: 0.2

@@ -97,7 +97,7 @@ passed as keyword arguments.
 
 `user_interaction_step.py`. Prompt the operator with a message, an optional image and a
 list of buttons; the chosen key comes back as the step's output. Demo:
-`resources/recipes/userinteractionstep_demo.yml` (GUI mode — the CLI declines every
+`resources/recipes/userinteractionstep_recipes/userinteractionstep_demo.yml` (GUI mode — the CLI declines every
 question).
 
 **The question sits directly on the step**, the way a Wait's `wait_time` does and not the
@@ -173,7 +173,7 @@ global convention.
 step's output. The free-text half of the pair whose other half is `UserInteraction`,
 and it shares that type's shape exactly — `message` and `image_path` directly on the
 step, only the answer through a mapping. Demo:
-`resources/recipes/Development_recipes/userwritestep_demo.yml` (GUI mode — the CLI
+`resources/recipes/userwritestep_recipes/userwritestep_demo.yml` (GUI mode — the CLI
 declines every question).
 
 ```yaml

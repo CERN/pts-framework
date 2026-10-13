@@ -100,7 +100,9 @@ src/pypts/
   hal/           hardware layer: devices by logical name, one driver process each, SSH driver
   stream_handler/   stub
   helper_applications/  recipe_creator (incl. verificator), example_finder
-resources/recipes/Development_recipes/   one demo recipe per step type
+resources/recipes/   one folder of demos per step type (<type>step_recipes/, HAL_recipes/,
+                     stepimage_recipes/), showcase_recipes/ (all of them: automated, full),
+                     common/ (the test code they share)
 ```
 
 **Processes:** CORE (with Sequencer + Report threads), the HMI frontend, and the Logger. Only

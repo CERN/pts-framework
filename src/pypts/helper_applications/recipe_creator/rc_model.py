@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QUndoStack, QUndoCommand
 
 from pypts.helper_applications.recipe_creator import verify_string
+from pypts.recipe.recipe_parser import steptype_key
 from pypts.recipe.recipe_schema import (
     STEP_TYPE_REQUIRED,
     STEP_COMMON_DEFAULTS,
@@ -124,6 +125,10 @@ class RecipeModel(QObject):
         """False while the recipe text cannot be shown as a tree."""
         return self._invalid_text is None
 
+    def is_empty(self) -> bool:
+        """True while there is no recipe at all - before New, Open or any text."""
+        return not self._docs
+
     def invalid_reason(self) -> str:
         return self._invalid_reason
 
@@ -155,7 +160,8 @@ class RecipeModel(QObject):
     # a recipe the user can no longer see.
 
     def set_header_field(self, key: str, value: Any) -> None:
-        if not self.is_valid():
+        # No recipe yet: there is no header to write to.
+        if not self.is_valid() or self.is_empty():
             return
         self.undo_stack.push(
             _SetDictField(self, self._docs[0], key, value, f"Set header.{key}")
@@ -250,12 +256,14 @@ class RecipeModel(QObject):
         return docs, reason, 0
 
     def _default_step(self, steptype: str) -> dict:
+        """A new step, written as `steptype` is given - "Wait" or "wait" alike."""
+        key = steptype_key(steptype)
         step: dict[str, Any] = {"steptype": steptype, "step_name": f"New {steptype} step"}
         step.update(STEP_COMMON_DEFAULTS)
-        for field in STEP_TYPE_REQUIRED.get(steptype, ()):
+        for field in STEP_TYPE_REQUIRED.get(key, ()):
             if field not in step:
                 step[field] = ""
-        step.update(copy.deepcopy(STEP_TYPE_DEFAULTS.get(steptype, {})))
+        step.update(copy.deepcopy(STEP_TYPE_DEFAULTS.get(key, {})))
         return step
 
 

@@ -4,9 +4,9 @@
 
 """
 The test functions the demo recipes call - the shape user test code takes.
-Used by pythonmodulestep_demo.yml, indexedstep_demo.yml,
-userinteractionstep_demo.yml, userwritestep_demo.yml, userloadingstep_demo.yml
-and all_steptypes_demo.yml.
+Shared by the demo recipes in the folders beside this one - pythonmodulestep,
+indexedstep, sequencestep, userinteractionstep, userwritestep, userloadingstep
+and the two showcases - which name it as `module: ../common/example_tests.py`.
 
 Framework-free on purpose: a PythonModuleStep calls a plain function with the
 recipe's resolved inputs as keyword arguments, and judges whatever comes back.

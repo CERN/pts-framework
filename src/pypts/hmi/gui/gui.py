@@ -117,6 +117,10 @@ _DOCUMENTATION_URL = "https://cern.github.io/pts-framework/"
 #: an import: the operator screen must not import the helper applications.
 RECIPE_CREATOR_MODULE = "pypts.helper_applications.recipe_creator"
 
+#: Added to the window title while engineering mode is on, so the taskbar
+#: shows it too.
+ENGINEERING_TITLE_SUFFIX = "  [ENGINEERING MODE]"
+
 
 def open_external_url(url: str) -> None:
     """
@@ -1027,6 +1031,22 @@ class GUI(HmiClient):
             log.info("Engineering mode switched off.")
         self.step_table.set_engineering_mode(on)
         self.engineering_label.setVisible(on)
+        self.update_window_title()
+
+    def update_window_title(self) -> None:
+        """
+        `pyPTS`, then the loaded recipe's name, then the mode while engineering
+        mode is on: `pyPTS: Wait demo  [ENGINEERING MODE]`.
+
+        Several bench windows are often open at once; the taskbar shows the title.
+        """
+        if self.current_recipe is None:
+            title = "pyPTS"
+        else:
+            title = f"pyPTS: {self.current_recipe.recipe_name}"
+        if self.step_table.engineering_mode:
+            title = title + ENGINEERING_TITLE_SUFFIX
+        self.window.setWindowTitle(title)
 
     def run_selected_steps(self) -> None:
         """
@@ -1140,8 +1160,7 @@ class GUI(HmiClient):
         self.window.recipe_label.setText(
             f"Loaded {event.recipe_name}\nReady to start"
         )
-        # Several bench windows are often open at once; the taskbar shows the title.
-        self.window.setWindowTitle(f"pyPTS: {event.recipe_name}")
+        self.update_window_title()
         if self._start_when_loaded:
             self._start_pending_sequence(event)
 
@@ -1181,7 +1200,7 @@ class GUI(HmiClient):
         self.window.run_stack.setCurrentIndex(0)
         self.window.show_tab(TAB_RUN)
         self.window.recipe_label.setText("No recipe loaded")
-        self.window.setWindowTitle("pyPTS")
+        self.update_window_title()
         self.status_label.setText("Status: Idle")
 
         self.start_new_log_file()

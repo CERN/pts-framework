@@ -26,7 +26,12 @@ from pypts.recipe.recipe_schema import (
 ROOT = Path(__file__).parents[2]
 SHIPPED_RECIPES = sorted(
     [
-        *(ROOT / "resources" / "recipes" / "Development_recipes").glob("*.yml"),
+        # Every demo folder; Old_recipes holds the old engine's, which do not load.
+        *(
+            path
+            for path in (ROOT / "resources" / "recipes").glob("*/*.yml")
+            if path.parent.name != "Old_recipes"
+        ),
         *(Path(__file__).parent / "data").glob("*.yml"),
     ]
 )

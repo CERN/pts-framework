@@ -22,7 +22,8 @@
 # is an ERROR naming the path. So is Cancel, the five-minute timeout, or
 # pressing Stop.
 #
-# One steptype per demo recipe in this folder - see pythonmodulestep_demo.yml.
+# One steptype per demo folder under resources/recipes/ - the list is in
+# pythonmodulestep_recipes/pythonmodulestep_demo.yml.
 name: UserLoading demo
 description: Letting the operator choose a file and a folder - UserLoading end to end.
 version: 0.2
@@ -38,7 +39,7 @@ description: Pick a file, pick a folder, then use both paths.
 steps:
   # A file pick. `select: file` is the default and could be left out; it is
   # spelled here because this recipe is the example. Any existing file will do
-  # for the demo - example_tests.py beside this recipe is a handy one.
+  # for the demo - ../common/example_tests.py is a handy one.
   - steptype: UserLoading
     step_name: pick_calibration_file
     description: The operator chooses the calibration file for this unit.
@@ -65,7 +66,7 @@ steps:
   - steptype: PythonModule
     step_name: Check the calibration file
     description: Reads the global the file pick wrote and looks at the file.
-    module: example_tests.py
+    module: ../common/example_tests.py
     method_name: describe_file
     inputs:
       path: {type: global, global_name: calibration_file}
@@ -75,7 +76,7 @@ steps:
   - steptype: PythonModule
     step_name: Count the dump folder
     description: Reads the global the folder pick wrote and counts what is in it.
-    module: example_tests.py
+    module: ../common/example_tests.py
     method_name: count_folder_entries
     inputs:
       path: {type: global, global_name: dump_folder}

@@ -32,7 +32,7 @@ def ensure_folder_exists(folder_path) -> None:
     os.makedirs(folder_path, exist_ok=True)
 
 
-def get_log_file_path(folder) -> str:
+def get_log_file_path(folder, prefix: str = LOG_FILE_PREFIX) -> str:
     """
     Full path of the log file for this run, creating its directory.
 
@@ -41,6 +41,8 @@ def get_log_file_path(folder) -> str:
             a run folder for a run log.
             Passed in rather than looked up here, so that this module stays
             free of the configuration and remains usable by a standalone tool.
+        prefix: the start of the file name. pypts' own logs keep the default;
+            the Recipe Creator names its log after itself.
 
     Returns:
         The path, as a string, because that is what `logging.FileHandler` takes
@@ -52,7 +54,7 @@ def get_log_file_path(folder) -> str:
     # so a UTC file name would be the one timestamp in the system that did not
     # match the others.
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")  # noqa: DTZ005
-    return str(Path(folder) / f"{LOG_FILE_PREFIX}_{timestamp}.log")
+    return str(Path(folder) / f"{prefix}_{timestamp}.log")
 
 
 def safe_name_part(value: str) -> str:
