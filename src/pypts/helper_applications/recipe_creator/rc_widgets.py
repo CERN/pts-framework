@@ -40,7 +40,7 @@ from PySide6.QtGui import (
     QTextCharFormat,
     QTextFormat,
 )
-from PySide6.QtCore import QEvent, Qt, QRegularExpression, QTimer, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QRegularExpression, QTimer, Signal
 
 import yaml
 
@@ -96,6 +96,8 @@ def _arrow_button(tooltip: str) -> QToolButton:
     """The expand/collapse arrow of a section header."""
     button = QToolButton()
     button.setAutoRaise(True)
+    # Small: the arrow marks the section, it is not the section's content.
+    button.setIconSize(QSize(10, 10))
     button.setToolTip(tooltip)
     return button
 

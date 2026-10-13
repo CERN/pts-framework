@@ -42,9 +42,8 @@ warnings: what loads but looks wrong.
 | `recipe_creator_new.py` | Entry point and main window — what `__main__.py` runs |
 | `rc_logging.py` | The Creator's own log file and its handler for uncaught errors — see Logging below |
 | `rc_model.py` | `RecipeModel` and the `QUndoCommand` subclasses |
-| `rc_widgets.py` | The custom widgets |
+| `rc_widgets.py` | The custom widgets, and `creator_stylesheet()` — the Creator's own rules on top of pypts' stylesheet |
 | `customGUIModules.py` | Editor widgets (YAML editor, highlighter) |
-| `styles.py` | Light and dark stylesheets |
 | `recipe_creator.py` | **Dead code.** `__main__.py` runs `recipe_creator_new.py` |
 | `issue.py` | `ValidationIssue` dataclass — the single result type |
 | `verificator.py` | Validation pipeline: `verify_file(path)` and `verify_string(content)` |
@@ -70,6 +69,43 @@ DEBUG, and to stdout. In it:
 
 Tests: `tests/unit_tests/test_rc_logging.py` (the hard crash runs in a subprocess).
 
+## The window
+
+- **Layout.** One vertical splitter: the editors on top take all spare height (the header
+  strip and step view on the left, the YAML text on the right, 2 : 3); the bottom strip holds
+  the problems (`VerificationPanel`) and the message box (a `QPlainTextEdit`, framed by pypts'
+  log style) side by side. The problems panel starts open, opens itself when there are
+  issues, and shows ❌ only for errors (⚠️ for warnings alone).
+- **Theme.** `get_stylesheet(dark)` from `hmi/gui/styles.py` plus `creator_stylesheet(dark)`
+  from `rc_widgets.py`: square text buttons (`_small_button()`, objectName `rcSmallButton`,
+  no padding — the shared `QPushButton` padding clipped their glyphs) and framed group boxes.
+  Kept out of the shared file on purpose.
+- **No recipe yet.** At start-up the model is empty (`RecipeModel.is_empty()`): the tree is
+  grayed out under an overlay saying File > New / Open or type in the editor, and Save, Add
+  Step, Delete and Validate are disabled. `set_header_field()` ignores an edit then. While the
+  text is invalid the same overlay says so instead, and *Undo to Last Valid* appears on the
+  toolbar (it is always in the Edit menu).
+- **Step types.** The form looks a step's own fields up through
+  `recipe_parser.steptype_key()`, so `Wait`, `wait` and `WAIT` all show `wait_time`; the Add
+  Step menus list `STEP_TYPE_NAMES` (`PythonModule`, `Wait`, …).
+
+**Never delete a form widget on the spot — `deleteLater()` it.** A field commits its edit
+from inside its own signal (`editingFinished`, `currentTextChanged`, `valueChanged`); the
+model changes, the views rebuild, and an old form deleted right then frees the widget still
+emitting: an access violation that kills the process with no Python traceback. So:
+
+- `_replace_form()` swaps a view's form with `takeWidget()` and `_defer_delete()`, never
+  `QScrollArea.setWidget()` over the old one;
+- `StepFormWidget` builds its type-specific rows only when the steptype changes (`takeRow()`,
+  then `_defer_delete()`), and otherwise refills them — the field being typed in keeps its
+  focus;
+- List and Panels views rebuild the form only when another step is selected
+  (`_form_for`); the form refreshes itself on `model.changed`;
+- Card view builds a form only for the open card.
+
+Tests: `tests/unit_tests/test_rc_window.py` — the edits that crashed run in a subprocess,
+since a regression would take pytest down with it.
+
 ## Case is the framework's business, not ours
 
 The recipe language is **case-insensitive**: `Step_Name:` loads and runs exactly
@@ -77,6 +113,9 @@ as `step_name:` does. The verificator does not implement that rule — it calls
 `recipe_parser.normalize_header()` and `normalize_sequence()` in `_run`, before
 anything is checked, and compares sequence names and `main_sequence`
 lowercased, the way `recipe_parser.parse_recipe()` does.
+
+The window follows the same rule: it looks steptypes up through
+`recipe_parser.steptype_key()`, never with its own `.lower()`.
 
 **Do not reimplement normalization here.** A second copy of that rule is exactly
 what drifted: the verificator used to read raw keys and reported "missing

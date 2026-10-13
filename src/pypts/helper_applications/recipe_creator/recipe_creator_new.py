@@ -200,12 +200,14 @@ class RecipeCreatorNewWindow(QMainWindow):
             tb.addAction(act)
         tb.addSeparator()
         tb.addAction(self._act_undo)
-        tb.addAction(self._act_undo_valid)
+        # On the toolbar only while the recipe is invalid - the one time it does
+        # anything. Its own action: hiding the menu's would hide it in Edit too.
+        self._act_undo_valid_toolbar = QAction("Undo to Last Valid", self)
+        self._act_undo_valid_toolbar.setToolTip(self._act_undo_valid.toolTip())
+        self._act_undo_valid_toolbar.triggered.connect(self._model.undo_to_last_valid)
+        self._act_undo_valid_toolbar.setVisible(False)
+        tb.addAction(self._act_undo_valid_toolbar)
         tb.addAction(self._act_redo)
-        # Shown on the toolbar only while the recipe is invalid - the one time it
-        # does anything. It stays in the Edit menu.
-        self._undo_valid_button = tb.widgetForAction(self._act_undo_valid)
-        self._undo_valid_button.setVisible(False)
         tb.addSeparator()
 
         self._act_validate = QAction("Validate", self)
@@ -362,7 +364,7 @@ class RecipeCreatorNewWindow(QMainWindow):
         self._invalid_overlay.set_shown(not usable)
         self._verification.setEnabled(usable)
         self._act_undo_valid.setEnabled(not valid)
-        self._undo_valid_button.setVisible(not valid)
+        self._act_undo_valid_toolbar.setVisible(not valid)
         self._add_step_menu.setEnabled(usable)
         self._act_del_step.setEnabled(usable)
         self._act_validate.setEnabled(usable)
@@ -476,7 +478,7 @@ class RecipeCreatorNewWindow(QMainWindow):
         Load one recipe file into the editor.
 
         Split out of the Open dialog so a path given on the command line -
-        what pypts' Edit > Edit Recipe passes - opens the same way.
+        what pypts' Edit > Recipe Editor passes - opens the same way.
         """
         try:
             text = Path(path).read_text(encoding="utf-8")
@@ -541,7 +543,7 @@ def main() -> int:
     win = RecipeCreatorNewWindow()
     win.show()
     # `python -m pypts.helper_applications.recipe_creator [recipe.yml]` - pypts'
-    # Edit > Edit Recipe passes the recipe it has loaded.
+    # Edit > Recipe Editor passes the recipe it has loaded.
     if len(sys.argv) > 1:
         win.open_file(sys.argv[1])
     exit_code = app.exec()
