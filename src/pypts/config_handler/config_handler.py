@@ -15,8 +15,10 @@ That is why reading is pure: it parses, it never writes.
 validates it. An existing file that is broken or version-mismatched is never
 repaired: it is discarded for the run and the template defaults are used in
 memory (see `BootstrapOutcome`). From then on the file is read-only to everyone
-except CORE, which opens it with `open_for_writing()`. Any other process calling
-`set_parameter()` gets a `ConfigWriteError` instead.
+except CORE, which opens it with `open_for_writing()` - and the Recipe Editor
+v2, which runs without CORE and calls `bootstrap()` in its own process to save
+its `[recipe_editor]` settings. Any other process calling `set_parameter()` gets
+a `ConfigWriteError` instead.
 
 **It has to work before logging does.** `bootstrap()` runs before the Logger
 process exists - it is what decides where the log file goes - so it cannot log.

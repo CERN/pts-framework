@@ -234,3 +234,19 @@ def test_entry_is_frozen():
     entry = RecentEntry(path="a.yml", recipe_name="A", opened_at="2026-09-01T10:00:00")
     with pytest.raises(AttributeError):
         entry.path = "b.yml"  # type: ignore[misc]
+
+
+def test_a_store_given_its_own_path_leaves_the_default_alone(store_path, tmp_path, recipe_file):
+    """The Recipe Editor v2 keeps its own list: RecentRecipes(path) writes only there."""
+    own_path = tmp_path / "editor.json"
+    own = RecentRecipes(own_path)
+
+    own.remember(str(recipe_file), "Smoke test")
+
+    assert own_path.is_file()
+    assert not store_path.exists()
+    assert [entry.path for entry in RecentRecipes(own_path).entries()] == [
+        str(recipe_file.resolve())
+    ]
+    own.clear()
+    assert RecentRecipes(own_path).entries() == []

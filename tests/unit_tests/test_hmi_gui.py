@@ -1867,14 +1867,14 @@ def test_a_sequence_without_sources_still_fills_the_table(qapp):
     assert content.table.rowCount() == 2
     assert content.table.item(0, 0).data(_YAML_ROLE) is None
 
-    content._clicked_cell(0, 1)
+    content.open_yaml_popup(0)
     assert content.yaml_popup.isVisible() is False
 
 
 def test_clicking_a_row_shows_its_sequence_with_the_step_picked_out(qapp):
     content, sources = a_table_with_yaml(qapp)
 
-    content._clicked_cell(1, 1)
+    content.open_yaml_popup(1)
 
     assert content.yaml_popup.isVisible() is True
     assert content.yaml_popup.text_view.toPlainText() == sources[1].text
@@ -1918,23 +1918,75 @@ def test_a_tool_can_add_entries_to_the_right_click_menu(qapp):
     assert "Tool entry" in [action.text() for action in menu.actions()]
 
 
-def test_only_the_description_opens_the_panel(qapp):
-    """The description opens the recipe panel; the step name and the Result
-    close it and ask for the step on the right instead (gui.md §19)."""
+def test_a_click_anywhere_on_a_row_asks_for_the_step_and_never_opens_the_panel(qapp):
+    """Name, description or Result: a click shows the step on the right
+    (gui.md §19), and closes the panel if it was open."""
     content, _sources = a_table_with_yaml(qapp)
     asked: list = []
     content.step_clicked.connect(asked.append)
+    content.open_yaml_popup(0)
 
     content._clicked_cell(0, 1)
-    assert content.yaml_popup.isVisible() is True
-    assert asked == []
-
+    assert content.yaml_popup.isVisible() is False
     content._clicked_cell(0, 2)
-    assert content.yaml_popup.isVisible() is False
-
     content._clicked_cell(1, 0)
+
     assert content.yaml_popup.isVisible() is False
-    assert asked == [content._row_step_id(0), content._row_step_id(1)]
+    first, second = content._row_step_id(0), content._row_step_id(1)
+    assert asked == [first, first, second]
+
+
+def test_resting_on_a_name_or_description_starts_the_half_second_rest(qapp):
+    from pypts.hmi.gui.step_table import HOVER_DELAY_MS
+
+    content, _sources = a_table_with_yaml(qapp)
+    assert HOVER_DELAY_MS == 500
+    assert content.table.hasMouseTracking()
+
+    content._entered_cell(0, 0)
+    assert content._hover_timer.isActive()
+    assert content._hover_timer.interval() == HOVER_DELAY_MS
+    assert content._hover_row == 0
+
+    content._entered_cell(0, 2)
+    assert not content._hover_timer.isActive(), "the Result has its own tooltip"
+
+    content._entered_cell(1, 1)
+    assert content._hover_row == 1
+    content._clicked_cell(1, 1)
+    assert not content._hover_timer.isActive(), "a click cancels the rest"
+
+
+def test_the_rest_opens_the_panel_only_if_the_pointer_is_still_there(qapp, monkeypatch):
+    from PySide6.QtCore import QRect
+
+    content, sources = a_table_with_yaml(qapp)
+
+    monkeypatch.setattr(content, "_row_rect", lambda _row: QRect())
+    content._entered_cell(1, 0)
+    content._hover_rested()
+    assert content.yaml_popup.isVisible() is False, "the pointer left the row"
+
+    monkeypatch.setattr(content, "_row_rect", lambda _row: QRect(-100000, -100000, 200000, 200000))
+    content._entered_cell(1, 0)
+    content._hover_rested()
+    assert content.yaml_popup.isVisible() is True
+    assert content.yaml_popup.text_view.toPlainText() == sources[1].text
+    assert content._active_row == 1
+    content.hide_yaml_popup()
+
+
+def test_no_rest_in_engineering_mode_or_with_the_panel_off(qapp):
+    content, _sources = a_table_with_yaml(qapp)
+
+    content.set_click_panel_enabled(False)
+    content._entered_cell(0, 0)
+    assert not content._hover_timer.isActive()
+
+    content.set_click_panel_enabled(True)
+    content.set_engineering_mode(True)
+    content._entered_cell(0, 0)
+    assert not content._hover_timer.isActive()
 
 
 def test_a_group_name_still_folds_and_asks_for_nothing(qapp):
@@ -1992,7 +2044,7 @@ def test_the_clicked_row_is_highlighted_and_the_verdict_chip_is_not(qapp):
     content, _sources = a_table_with_yaml(qapp)
     chip_before = content.table.item(0, 2).background().color().name()
 
-    content._clicked_cell(0, 1)
+    content.open_yaml_popup(0)
 
     tint = get_palette(False).header_background.lower()
     assert content.table.item(0, 0).background().color().name().lower() == tint
@@ -2007,7 +2059,7 @@ def shown_table_with_yaml(qapp):
     content.resize(600, 300)
     content.show()
     qapp.processEvents()
-    content._clicked_cell(0, 1)
+    content.open_yaml_popup(0)
     return content, sources
 
 
@@ -2061,7 +2113,7 @@ def test_hiding_the_panel_drops_the_highlight_and_stops_watching(qapp):
     from PySide6.QtCore import Qt
 
     content, _sources = a_table_with_yaml(qapp)
-    content._clicked_cell(0, 1)
+    content.open_yaml_popup(0)
     assert content._active_row == 0
     assert content._pointer_timer.isActive() is True
 
@@ -2076,13 +2128,13 @@ def test_the_panel_opens_while_a_recipe_runs(qapp):
     """The start of a run closes an open panel - every row is reset - but a
     click during the run opens it, highlight and all."""
     content, _sources = a_table_with_yaml(qapp)
-    content._clicked_cell(0, 1)
+    content.open_yaml_popup(0)
     assert content.yaml_popup.isVisible() is True
 
     content.set_running(True)
     assert content.yaml_popup.isVisible() is False
 
-    content._clicked_cell(1, 1)
+    content.open_yaml_popup(1)
     assert content.yaml_popup.isVisible() is True
     assert content._active_row == 1
     content.hide_yaml_popup()
@@ -2094,7 +2146,7 @@ def test_a_verdict_arriving_keeps_the_panel_and_its_highlight(qapp):
 
     content, _sources = a_table_with_yaml(qapp)
     content.set_running(True)
-    content._clicked_cell(0, 1)
+    content.open_yaml_popup(0)
     step_id = content._row_step_id(0)
 
     content.mark_running(StepStarted(step_id=step_id, step_name="x"))
@@ -2403,7 +2455,7 @@ def test_the_description_of_a_group_still_opens_the_panel(qapp):
     )
     content.show_sequence(sequence, sources)
 
-    content._clicked_cell(1, 1)
+    content.open_yaml_popup(1)
 
     assert content.yaml_popup.isVisible() is True
     assert content.is_expanded(1) is False
@@ -2489,7 +2541,7 @@ def test_folding_away_the_row_the_panel_is_open_on_closes_the_panel(qapp):
     )
     content.show_sequence(sequence, sources)
     content.expand_all()
-    content._clicked_cell(2, 1)
+    content.open_yaml_popup(2)
     assert content.yaml_popup.isVisible() is True
 
     content.set_expanded(1, False)
@@ -3895,10 +3947,14 @@ def test_switching_theme_keeps_the_header_on_screen(gui, tmp_path):
 def test_elapsed_text_reads_minutes_then_hours():
     from pypts.hmi.gui.run_header import elapsed_text
 
-    assert elapsed_text(0) == "0:00"
-    assert elapsed_text(247.9) == "4:07"
-    assert elapsed_text(3727) == "1:02:07"
-    assert elapsed_text(-5) == "0:00"
+    assert elapsed_text(0) == "0:00.0"
+    assert elapsed_text(0.5) == "0:00.5"
+    assert elapsed_text(2.3) == "0:02.3"
+    # Cut down, not rounded: 0.99 s has not reached a second yet.
+    assert elapsed_text(0.99) == "0:00.9"
+    assert elapsed_text(247.9) == "4:07.9"
+    assert elapsed_text(3727.25) == "1:02:07.2"
+    assert elapsed_text(-5) == "0:00.0"
 
 
 # --- Edit > Recipe Editor / Recipe Editor v2 ----------------------------------------

@@ -132,6 +132,9 @@ no Qt and no messages.
 
 - **State, not a cache**: stored as JSON at `file_locations.recent_recipes_path()` (under
   `state_dir()`), not in a cache directory that cleanup tools may wipe.
+- **One file per list**: `RecentRecipes(path)` keeps its list in that file instead. The
+  Recipe Editor v2 keeps its own at `file_locations.editor_recent_recipes_path()`
+  (`recent_recipes_editor.json`): it reads pypts' list and writes only its own.
 - **References, not copies**: each `RecentEntry(path, recipe_name, opened_at)` is a resolved
   path; opening one re-reads the file from disk. At most `MAX_ENTRIES` (10), newest first.
 - `entries()`, `remember(path, name)` (called only after CORE answered `RecipeLoaded`),

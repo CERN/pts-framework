@@ -5,6 +5,7 @@ Edits that commit from inside their own widget's signal run in a process of
 their own: a native crash there would take pytest down with it.
 """
 
+import re
 import subprocess
 import sys
 import textwrap
@@ -14,6 +15,7 @@ import pytest
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import QApplication
 
+from pypts.config_handler import ConfigHandler, file_locations
 from pypts.helper_applications.recipe_editor.row_map import (
     StepRef,
     all_refs,
@@ -54,6 +56,39 @@ steps:
     step_name: Inside
     wait_time: 1
 """
+
+
+@pytest.fixture(autouse=True)
+def isolated_files(tmp_path, monkeypatch):
+    """No test here may read or write the user's config.ini or recent-recipes lists."""
+    monkeypatch.setattr(
+        file_locations, "config_file_path", lambda: tmp_path / "config" / "config.ini"
+    )
+    monkeypatch.setattr(
+        file_locations, "recent_recipes_path", lambda: tmp_path / "state" / "recent.json"
+    )
+    monkeypatch.setattr(
+        file_locations, "editor_recent_recipes_path", lambda: tmp_path / "state" / "editor.json"
+    )
+    ConfigHandler.reset_for_testing()
+    yield
+    ConfigHandler.reset_for_testing()
+
+
+def a_config_file(settings=None):
+    """A real config.ini in the test's folder, some values replaced; this process its writer."""
+    path = file_locations.config_file_path()
+    ConfigHandler.bootstrap()
+    text = path.read_text(encoding="utf-8")
+    for dotted, value in (settings or {}).items():
+        section, _, key = dotted.rpartition(".")
+        head, header, rest = text.partition(f"[{section}]")
+        rest = re.sub(rf"^{key} = .*$", f"{key} = {value}", rest, count=1, flags=re.MULTILINE)
+        text = head + header + rest
+    path.write_text(text, encoding="utf-8")
+    ConfigHandler.reset_for_testing()
+    ConfigHandler.bootstrap()
+    return path
 
 
 @pytest.fixture(scope="session")
@@ -524,7 +559,7 @@ def test_the_right_column_is_the_form_only(window):
 
     menus = window.menuBar().findChildren(QMenu)
     view_menu = next(menu for menu in menus if menu.title() == "View")
-    assert [a.text() for a in view_menu.actions()] == ["Toggle Dark Mode"]
+    assert [a.text() for a in view_menu.actions()] == ["Appearance", "Full Screen"]
     assert window.form.parent() is not None
     assert not window.form.parentWidget().findChildren(QTabBar)
 
@@ -558,3 +593,198 @@ def test_the_badge_is_coloured_by_the_stylesheet(window, qapp):
     assert 'QLabel#problemsBadge[state="ok"]' in sheet
     assert 'QLabel#problemsBadge[state="warning"]' in sheet
     assert 'QLabel#problemsBadge[state="error"]' in sheet
+
+
+# -- fourth round (2026-10-13): the editor's own settings and recent recipes -----------------
+
+
+def _section(text: str, name: str) -> str:
+    """One section of an INI text, up to the next header."""
+    rest = text.split(f"[{name}]", 1)[1]
+    return rest.split("\n[", 1)[0]
+
+
+def test_the_window_takes_its_theme_from_recipe_editor_not_gui(qapp):
+    from pypts.helper_applications.recipe_editor.editor_window import RecipeEditorWindow
+
+    a_config_file({"gui.theme": "light", "recipe_editor.theme": "dark"})
+    window = RecipeEditorWindow()
+    assert window._dark is True
+    window.close()
+
+    a_config_file({"gui.theme": "dark", "recipe_editor.theme": "light"})
+    window = RecipeEditorWindow()
+    assert window._dark is False
+    window.close()
+
+
+def test_the_window_opens_in_its_configured_mode_and_size(qapp):
+    from pypts.helper_applications.recipe_editor.editor_window import RecipeEditorWindow
+
+    a_config_file({"recipe_editor.window_width": "1280", "recipe_editor.window_height": "720"})
+    window = RecipeEditorWindow()
+    assert window._window_state == ("windowed", 1280, 720)
+    window.show_window()
+    assert (window.width(), window.height()) == (1280, 720)
+    assert not window._act_full_screen.isChecked()
+    window.close()
+
+
+def test_with_no_config_the_window_uses_the_template_defaults(window):
+    assert window._window_state == ("windowed", 1600, 1000)
+    assert window._dark is False
+
+
+def test_settings_is_in_the_edit_menu(window):
+    from PySide6.QtWidgets import QMenu
+
+    menus = window.menuBar().findChildren(QMenu)
+    edit_menu = next(menu for menu in menus if menu.title() == "Edit")
+    assert "Settings" in [action.text() for action in edit_menu.actions()]
+
+
+def test_the_settings_dialog_shows_only_the_editor_keys(window, monkeypatch):
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+
+    a_config_file()
+    seen = {}
+
+    def look(dialog):
+        seen["pages"] = [dialog.nav.item(row).text() for row in range(dialog.nav.count())]
+        seen["keys"] = sorted(dialog.editors)
+        seen["theme cards"] = sorted(dialog.editors["recipe_editor.theme"].buttons)
+        seen["can save"] = dialog.problem is None
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", look)
+    window._act_settings.trigger()
+    assert seen["pages"] == ["Appearance", "Advanced"]
+    assert seen["keys"] == [
+        "recipe_editor.theme",
+        "recipe_editor.window_height",
+        "recipe_editor.window_mode",
+        "recipe_editor.window_width",
+    ]
+    assert seen["theme cards"] == ["dark", "light", "system"]
+    assert seen["can save"]
+
+
+def test_pypts_settings_leave_the_editor_section_out():
+    from pypts.hmi.gui.settings_dialog import editable_keys, pages_for_schema
+
+    assert not [key for key in editable_keys() if key.startswith("recipe_editor.")]
+    placed = [key for _title, keys in pages_for_schema() for key in keys]
+    assert not [key for key in placed if key.startswith("recipe_editor.")]
+
+
+def test_saving_a_setting_changes_only_the_editor_section(window, qapp):
+    path = a_config_file()
+    before = path.read_text(encoding="utf-8")
+    window._send_setting("recipe_editor.theme", "dark")
+    qapp.processEvents()
+    after = path.read_text(encoding="utf-8")
+    assert "theme = dark" in _section(after, "recipe_editor")
+    assert _section(after, "gui") == _section(before, "gui")
+    assert "recipe_editor.theme" in window.statusBar().currentMessage()
+
+
+def test_a_setting_that_cannot_be_written_is_said_so(window, qapp):
+    from pypts.helper_applications.recipe_editor.editor_settings import save_setting
+
+    # No config file at all: nothing to write to.
+    result = save_setting("recipe_editor.theme", "dark")
+    assert result.accepted is False
+    assert result.reason
+
+
+def test_a_saved_answer_reaches_the_open_dialog(window, qapp, monkeypatch):
+    from pypts.hmi.gui.settings_dialog import SettingsDialog
+
+    a_config_file()
+    seen = {}
+
+    def save_one(dialog):
+        dialog.editors["recipe_editor.theme"].set_value("dark")
+        dialog.save_button.click()
+        for _ in range(5):
+            qapp.processEvents()
+        seen["saved"] = dialog.saved
+        return 0
+
+    monkeypatch.setattr(SettingsDialog, "exec", save_one)
+    window._act_settings.trigger()
+    assert seen["saved"] is True
+    assert ConfigHandler().get_parameter("recipe_editor.theme") == "dark"
+
+
+def test_opening_a_recipe_remembers_it_in_the_editor_list_only(window, tmp_path):
+    from pypts.utilities.recent_recipes import RecentRecipes
+
+    window.open_file(str(SHOWCASE))
+    own = RecentRecipes(file_locations.editor_recent_recipes_path())
+    assert [entry.path for entry in own.entries()] == [str(SHOWCASE)]
+    assert not file_locations.recent_recipes_path().exists()
+
+
+def test_open_recent_shows_the_editor_recipes_and_pypts(window, tmp_path):
+    from pypts.utilities.recent_recipes import RecentRecipes
+
+    pypts_recipe = tmp_path / "pypts_one.yml"
+    pypts_recipe.write_text(_RECIPE, encoding="utf-8")
+    RecentRecipes().remember(str(pypts_recipe), "From pypts")
+    window.open_file(str(SHOWCASE))
+
+    window._rebuild_recent_menu()
+    names = [action.text() for action in window.recent_menu.actions()]
+    assert names[:2] == [SHOWCASE.name, "pypts_one.yml"]
+    assert names[-1] == "Clear list"
+
+
+def test_clearing_keeps_pypts_list(window, tmp_path):
+    from pypts.utilities.recent_recipes import RecentRecipes
+
+    pypts_recipe = tmp_path / "pypts_one.yml"
+    pypts_recipe.write_text(_RECIPE, encoding="utf-8")
+    RecentRecipes().remember(str(pypts_recipe), "From pypts")
+    window.open_file(str(SHOWCASE))
+
+    window._clear_recent_recipes()
+    assert RecentRecipes(file_locations.editor_recent_recipes_path()).entries() == []
+    assert len(RecentRecipes().entries()) == 1
+
+
+def test_a_recent_recipe_that_is_gone_is_dropped_from_the_editor_list(window, tmp_path):
+    from pypts.utilities.recent_recipes import RecentRecipes
+
+    gone = tmp_path / "gone.yml"
+    gone.write_text(_RECIPE, encoding="utf-8")
+    window.open_file(str(gone))
+    gone.unlink()
+    window._open_recent(str(gone))
+    assert RecentRecipes(file_locations.editor_recent_recipes_path()).entries() == []
+    assert "Not found" in window.statusBar().currentMessage()
+
+
+def test_merged_recents_are_newest_first_each_file_once():
+    from pypts.helper_applications.recipe_editor.editor_settings import merged_recents
+    from pypts.utilities.recent_recipes import RecentEntry
+
+    class Fixed:
+        def __init__(self, entries):
+            self._entries = entries
+
+        def entries(self):
+            return list(self._entries)
+
+    own = Fixed([RecentEntry("/a.yml", "A", "2026-10-13T10:00:00")])
+    pypts = Fixed(
+        [
+            RecentEntry("/b.yml", "B", "2026-10-13T11:00:00"),
+            RecentEntry("/a.yml", "A old", "2026-10-01T09:00:00"),
+        ]
+    )
+    merged = merged_recents(own, pypts)
+    assert [(entry.path, entry.recipe_name) for entry in merged] == [
+        ("/b.yml", "B"),
+        ("/a.yml", "A"),
+    ]

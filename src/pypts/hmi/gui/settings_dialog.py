@@ -15,7 +15,7 @@ Browse and Open. A card whose value differs from the one the dialog opened with
 is outlined, gets a Reset, and marks its page in the list. Save sends the
 changed values; the same window then says what was saved and what was not.
 
-**It does not write the file.** CORE is the single runtime writer of config.ini
+**It does not write the file.** In pypts CORE is the runtime writer of config.ini
 (config_handler.md), so Save hands each changed value to a `send` callable - the
 GUI passes `set_config_parameter()`, which puts a SetConfigParameter on the link
 - and waits for CORE's ConfigParameterResult for each one, which the GUI passes

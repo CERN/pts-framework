@@ -13,8 +13,9 @@ any question:
   - its state on a chip in the verdict colours: Running..., or - looking
     back - its verdict, Not run yet or Running...
   - a time line: live, how long the run and the step have taken, the
-    verdicts so far and the last failure (the clocks tick once a second;
-    time paused is not taken off); looking back, how long the step took
+    verdicts so far and the last failure (the clocks show tenths of a
+    second and tick ten times a second; time paused is not taken off);
+    looking back, how long the step took
   - its results: the values it was given and returned against what they were
     checked with, and the reason it failed, if it did - "No results yet."
     while it runs
@@ -56,15 +57,27 @@ _PENDING_CHIP = "PENDING"
 _RUNNING_CHIP = "RUNNING"
 
 
+#: How often the live clocks are redrawn: they show tenths of a second.
+TICK_MS = 100
+
+
 def elapsed_text(seconds: float) -> str:
-    """`4:07`, or `1:02:07` from an hour on. Negative counts as zero."""
-    total = int(max(seconds, 0))
+    """
+    `0:00.5`, `4:07.3`, or `1:02:07.3` from an hour on. Negative counts as zero.
+
+    Cut down to the tenth, not rounded, so a clock never shows a tenth that
+    has not passed yet. The GUI's own timing, from when the events arrive: it
+    can differ from the report's `duration_s` by the time a message takes.
+    """
+    # round() first: 2.3 * 10 is 22.999999999999996, which int() would make 2.2.
+    tenths_total = int(round(max(seconds, 0) * 10, 6))
+    total, tenth = divmod(tenths_total, 10)
     hours = total // 3600
     minutes = (total % 3600) // 60
     rest = total % 60
     if hours:
-        return f"{hours}:{minutes:02d}:{rest:02d}"
-    return f"{minutes}:{rest:02d}"
+        return f"{hours}:{minutes:02d}:{rest:02d}.{tenth}"
+    return f"{minutes}:{rest:02d}.{tenth}"
 
 
 def review_state_text(review: StepReview) -> str:
@@ -125,7 +138,7 @@ class RunHeader(QWidget):
             column.addWidget(label, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self._timer = QTimer(self)
-        self._timer.setInterval(1000)
+        self._timer.setInterval(TICK_MS)
         self._timer.timeout.connect(self.refresh)
         self.set_dark(False)
 
@@ -149,7 +162,7 @@ class RunHeader(QWidget):
     # --- the clock -------------------------------------------------------------
 
     def start(self) -> None:
-        """Draw now and tick once a second."""
+        """Draw now and tick every TICK_MS."""
         self.refresh()
         self._timer.start()
 

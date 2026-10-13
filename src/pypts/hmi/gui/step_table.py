@@ -105,16 +105,16 @@ _UNFOLDED_ARROW = "\u25be"
 #: How far one level of the call tree is indented in the name column.
 _INDENT = "    "
 
-#: The columns the row highlight paints: the step name and the description.
-#: The Result cell is left out on purpose: its background *is* the verdict
-#: chip, so tinting it would make PASS a different green on whichever row was
-#: clicked.
+#: The columns a resting pointer opens the YAML panel over, and the ones the
+#: row highlight paints: the step name and the description. The Result cell is
+#: left out on purpose: it has its own tooltip (the reason and the measured
+#: values), and its background *is* the verdict chip, so tinting it would make
+#: PASS a different green on whichever row the panel is open on.
 _POPUP_COLUMNS = (0, 1)
 
-#: The one column a click in opens the YAML panel: the description. A click on
-#: the step name or the Result shows the step on the right instead
-#: (`step_clicked`, gui.md §19) - except a group's name, which folds it.
-_PANEL_COLUMN = 1
+#: How long the pointer rests on a step's name or description before the YAML
+#: panel opens (gui.md §12). A click shows the step on the right instead.
+HOVER_DELAY_MS = 500
 
 #: How often an open panel looks at where the pointer is.
 _POINTER_CHECK_MS = 100
@@ -220,14 +220,26 @@ class StepTableContent(QWidget):
         column.setContentsMargins(0, 0, 0, 0)
         column.addWidget(self.table)
 
-        # The panel. A click opens it; it closes when the pointer is neither on
-        # the clicked row, nor on the panel, nor on its way between the two. The
-        # pointer is *looked at* on a timer rather than followed through enter
-        # and leave events: the panel is a window of its own, and moving onto
-        # it to scroll is exactly a leave the table would otherwise act on.
+        # The panel. Resting the pointer HOVER_DELAY_MS on a step's name or
+        # description opens it; it closes when the pointer is neither on that
+        # row, nor on the panel, nor on its way between the two. The pointer is
+        # *looked at* on a timer rather than followed through enter and leave
+        # events: the panel is a window of its own, and moving onto it to
+        # scroll is exactly a leave the table would otherwise act on. A click
+        # does not open it - a click shows the step on the right (§19).
         self.yaml_popup = StepYamlPopup(self)
         self.table.cellClicked.connect(self._clicked_cell)
         self.table.cellDoubleClicked.connect(self._double_clicked_cell)
+        # cellEntered needs mouse tracking: without it Qt reports a cell only
+        # while a button is held.
+        self.table.setMouseTracking(True)
+        self.table.cellEntered.connect(self._entered_cell)
+        self._hover_timer = QTimer(self)
+        self._hover_timer.setSingleShot(True)
+        self._hover_timer.setInterval(HOVER_DELAY_MS)
+        self._hover_timer.timeout.connect(self._hover_rested)
+        # The row the pointer is resting on, -1 for none.
+        self._hover_row = -1
 
         # Open recipe / Open Python file, Expand all / Collapse all.
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -254,7 +266,7 @@ class StepTableContent(QWidget):
         self._tick_just_changed = False
         self.table.itemChanged.connect(self._item_changed)
 
-        # Whether a click opens the YAML panel. Always on in pypts; the Recipe
+        # Whether a rest opens the YAML panel. Always on in pypts; the Recipe
         # Editor v2 shows the YAML beside the table and turns it off.
         self._click_panel = True
         #: Called with the right-click menu and its row (-1 below the rows),
@@ -274,6 +286,7 @@ class StepTableContent(QWidget):
         simply has no panel, which is what a recipe the GUI could not read back
         off disk gets.
         """
+        self.stop_hover()
         self.hide_yaml_popup()
         self.table.setRowCount(len(sequence.steps))
         for row, step in enumerate(sequence.steps):
@@ -310,6 +323,7 @@ class StepTableContent(QWidget):
 
     def clear(self) -> None:
         """No rows at all - the recipe was unloaded."""
+        self.stop_hover()
         self.hide_yaml_popup()
         self.table.setRowCount(0)
         self._selected_rows = set()
@@ -455,7 +469,7 @@ class StepTableContent(QWidget):
         Whether a recipe is executing - a hold included: paused is still running.
 
         The start of a run closes the panel, since every row is about to be
-        reset; after that a click opens it during the run as between runs. A
+        reset; after that a rest opens it during the run as between runs. A
         run only rewrites the Result column, which neither the panel nor the
         row highlight touches. The engineering selection is what the gate
         freezes.
@@ -466,6 +480,7 @@ class StepTableContent(QWidget):
         """
         self._running = running
         if running:
+            self.stop_hover()
             self.hide_yaml_popup()
         self.table.setProperty("running", running)
         self.table.style().unpolish(self.table)
@@ -483,15 +498,13 @@ class StepTableContent(QWidget):
 
     def _clicked_cell(self, row: int, column: int) -> None:
         """
-        A click in the description: highlight the row, show its YAML. A click
-        in the step name or the Result: close the panel and emit
-        `step_clicked`, which shows the step on the right (gui.md §19).
+        A click anywhere on a row - name, description or Result: close the
+        panel and emit `step_clicked`, which shows the step on the right
+        (gui.md §19). A group's name is the exception: it folds the group.
 
-        The one place that opens the panel, so it carries the no-fragment case
-        too rather than trusting every caller to have checked. It opens during
-        a run as well. Any click outside the description closes the panel,
-        which is also how the operator dismisses it without leaving the table.
+        The YAML panel never opens on a click; it opens on a rest (`_entered_cell`).
         """
+        self.stop_hover()
         if self._engineering:
             self._engineering_click(row)
             return
@@ -508,16 +521,63 @@ class StepTableContent(QWidget):
             self.highlight_row(row)
             self.row_clicked.emit(row)
             return
-        if column != _PANEL_COLUMN:
-            self.hide_yaml_popup()
-            self.step_clicked.emit(self._row_step_id(row))
+        self.hide_yaml_popup()
+        self.step_clicked.emit(self._row_step_id(row))
+
+    # --- The hover that opens the panel ---------------------------------------
+
+    def _entered_cell(self, row: int, column: int) -> None:
+        """
+        The pointer reached a cell. On a name or description, start the rest
+        that opens the panel - unless it is already open on that row, or the
+        rest is already running for it. On the Result, no rest.
+        """
+        if self._engineering or not self._click_panel:
             return
+        if column not in _POPUP_COLUMNS:
+            self.stop_hover()
+            return
+        if row == self._active_row and self.yaml_popup.isVisible():
+            return
+        if row == self._hover_row and self._hover_timer.isActive():
+            return
+        self._hover_row = row
+        self._hover_timer.start()
+
+    def stop_hover(self) -> None:
+        """Forget a rest in progress. The panel, if open, stays."""
+        self._hover_timer.stop()
+        self._hover_row = -1
+
+    def _hover_rested(self) -> None:
+        """
+        The rest is over. Open the panel - if the pointer is still on that
+        row's name or description: it may have left the table, which Qt does
+        not report as a cell.
+        """
+        row = self._hover_row
+        self._hover_row = -1
+        if row < 0 or row >= self.table.rowCount() or self.table.isRowHidden(row):
+            return
+        if not self._row_rect(row).contains(QCursor.pos()):
+            log.debug("Step table rest on row %d: the pointer left, no panel.", row)
+            return
+        self.open_yaml_popup(row)
+
+    def open_yaml_popup(self, row: int) -> None:
+        """
+        Highlight `row` and show its YAML beside the pointer.
+
+        The one place that opens the panel, so it carries the no-fragment case
+        too rather than trusting every caller to have checked. It opens during
+        a run as well.
+        """
         item = self.table.item(row, 0)
         source = None
         if item is not None:
             source = item.data(_YAML_ROLE)
         if not isinstance(source, StepSource) or not source.text:
-            log.debug("Step table click on row %d: no recipe text for this row.", row)
+            log.debug("Step table row %d: no recipe text for this row.", row)
             self.hide_yaml_popup()
             return
         self._highlight_row(row)
@@ -532,13 +592,13 @@ class StepTableContent(QWidget):
         self._pointer_timer.start()
         if source.highlights:
             log.debug(
-                "Step table click on row %d: panel shown, lines %d-%d highlighted.",
+                "Step table row %d: panel shown, lines %d-%d highlighted.",
                 row,
                 source.first_line,
                 source.last_line,
             )
         else:
-            log.debug("Step table click on row %d: panel shown, a whole sequence.", row)
+            log.debug("Step table row %d: panel shown, a whole sequence.", row)
 
     def _double_clicked_cell(self, row: int, column: int) -> None:
         """
@@ -546,8 +606,8 @@ class StepTableContent(QWidget):
 
         A double-click arrives as a click followed by a double-click. On the name
         the click has already toggled the group, so the double-click adds nothing;
-        on the description the click opened the panel, so this closes it and
-        toggles.
+        on the description or the Result the click showed the step on the right,
+        and this toggles.
 
         In engineering mode a click selects, so the double-click is the only
         fold control, on every column.
@@ -567,12 +627,11 @@ class StepTableContent(QWidget):
         """
         Keep the panel while the pointer is where the gesture allows; close it otherwise.
 
-        Allowed: the clicked row's name and description cells, the panel itself
-        - so the wheel can scroll it - and the corridor between where the click
-        was and the panel's nearest corner, so the way there does not close it.
-        Anything else - another row, the Result column, outside the table -
-        ends the gesture, and reading down the table does not drag the panel
-        along: the next row has to be clicked in turn.
+        Allowed: the row's name and description cells, the panel itself - so
+        the wheel can scroll it - and the corridor between where the pointer
+        rested and the panel's nearest corner, so the way there does not close
+        it. Anything else - another row, the Result column, outside the table -
+        ends the gesture; resting on the next row opens it there in turn.
         """
         if not self.yaml_popup.isVisible() or self._active_row < 0:
             self.hide_yaml_popup()
@@ -587,7 +646,7 @@ class StepTableContent(QWidget):
         self.hide_yaml_popup()
 
     def _row_rect(self, row: int) -> QRect:
-        """The clicked row's name and description cells, in global coordinates."""
+        """The row's name and description cells, in global coordinates."""
         area = QRect()
         viewport = self.table.viewport()
         for column in _POPUP_COLUMNS:
@@ -611,11 +670,13 @@ class StepTableContent(QWidget):
 
     def set_click_panel_enabled(self, enabled: bool) -> None:
         """
-        Whether a click opens the YAML panel (pypts: always). Off, a click
-        highlights the row and emits `row_clicked` instead.
+        Whether the YAML panel opens on a rest and a click emits `step_clicked`
+        (pypts: always). Off, there is no panel, and a click on the name or the
+        description highlights the row and emits `row_clicked` instead.
         """
         self._click_panel = enabled
         if not enabled:
+            self.stop_hover()
             self.hide_yaml_popup()
 
     def set_result_column_visible(self, visible: bool) -> None:
@@ -669,6 +730,7 @@ class StepTableContent(QWidget):
         """
         if on == self._engineering:
             return
+        self.stop_hover()
         self.hide_yaml_popup()
         self._selected_rows = set()
         self._anchor_row = -1

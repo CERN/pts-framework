@@ -44,6 +44,10 @@ the launcher shows the operator a notice (popup in GUI mode, console banner othe
 run does not stop. From then on the file is read-only to everyone **except CORE**, which
 `core_main()` opens with `open_for_writing()` and which carries out `SetConfigParameter` —
 the operator's changes from the GUI's Edit → Configuration (see *Writing* below).
+**The one exception is the Recipe Editor v2**, which runs without CORE: its `main()` calls
+`bootstrap()` too, so it is the writer in its own process, and saves its own `[recipe_editor]`
+settings (`recipe_editor/editor_settings.py`). Both writers change one line in place, re-reading
+the file first, so pypts and the editor each change only their own lines.
 `set_parameter()` on a reader raises `ConfigWriteError` rather than racing. A reader can
 never be promoted to writer — `open_for_writing()` in a process that already holds a reader
 raises, which is why `core_main()` opens it *before* `Core()` makes its first read.
@@ -103,6 +107,7 @@ Sections currently in the schema:
 | `logging` | `level` — one of `TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL`; ships `TRACE` |
 | `report` | `type` (`html`/`csv`), `theme` |
 | `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
+| `recipe_editor` | The same four keys for the Recipe Editor v2's window (shipped: `light`, `windowed`, 1600 × 1000). Set in the editor's own Edit → Settings; pypts' Settings leaves them out (`OWN_TOOL_SECTIONS`) |
 
 `[watchdog] enabled` was removed in September 2026: a module that stops responding always
 ends the run. An older `config.ini` that still has the section is used as usual; the section
@@ -205,8 +210,10 @@ into place, so an interrupted write cannot leave a half-written config behind.
 ## Structure version — no migration, no repair, discard instead
 
 `CONFIG_VERSION` (in `configuration_schema.py`) is a `MAJOR.MINOR.PATCH` string, currently
-**`1.0.0`**. Only the **major** number decides whether a file is trusted: `1.3.7` loads under a
-`1.0.0` pypts, `2.0.0` does not, and neither does text that is not three dot-separated numbers.
+**`2.0.0`** — raised from `1.0.0` in October 2026 for the mandatory `[recipe_editor]` section,
+so a `1.x` file is discarded until it is deleted and recreated. Only the **major** number
+decides whether a file is trusted: `2.3.7` loads under a `2.0.0` pypts, `3.0.0` does not, and
+neither does text that is not three dot-separated numbers.
 
 **The version is not changed for every schema edit.** It changes only when a change adds
 something new that is mandatory — something an existing file cannot work without. It was
@@ -280,6 +287,7 @@ Two file-format details worth knowing:
 | `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
 | `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` when the window opens (template defaults if there is no config); `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
 | `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
+| `helper_applications/recipe_editor/editor_settings.py` | `bootstrap()` in the editor's `main()` (`open_config()`); the `recipe_editor.*` keys when the window opens; `get_whole_config()` + `bootstrap_problem` for its Settings dialog; `set_parameter()` for a saved setting (`save_setting()`) |
 
 `local_storage.get_log_file_path()` no longer decides a location; it is given one.
 

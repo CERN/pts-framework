@@ -21,6 +21,7 @@ Started by `python -m pypts.helper_applications.recipe_editor [recipe.yml]`,
 | `editor_window.py` | `RecipeEditorWindow` and `main()`: layout, toolbar, menus, the wiring below; `editor_stylesheet()` |
 | `schema_form.py` | `SchemaForm`: the right-hand form, generated from `recipe_schema`; `field_kind()` |
 | `row_drag.py` | `RowDragger`: drag a table row onto another to move its step |
+| `editor_settings.py` | `[recipe_editor]` settings and the recent recipes: `EDITOR_SETTINGS`, `open_config()`, `window_settings()`, `setting_values()`, `save_setting()`, `merged_recents()` |
 | `row_map.py` | `StepRef` and the row ↔ authored-step mapping; no Qt |
 | `problems_panel.py` | `ProblemsPanel`: PROBLEMS, styled as pypts' LOG OUTPUT, with its OK / ! / ERROR badge |
 | `__main__.py`, `__init__.py` | `python -m` entry; package |
@@ -28,7 +29,8 @@ Started by `python -m pypts.helper_applications.recipe_editor [recipe.yml]`,
 Reused, not copied:
 
 - from pypts' GUI (`hmi/gui/`): `StepTableContent`, `get_stylesheet`, `palette`,
-  `gui_theme` (the same `[gui] theme` setting), `top_bar.svg_icon`;
+  `gui_theme` (the OS theme sync), `settings_dialog.SettingsDialog`, `top_bar.svg_icon`;
+- from the utilities: `RecentRecipes`;
 - from the Recipe Creator: `RecipeModel`, `YamlEditor`, `InvalidOverlay`,
   `creator_stylesheet`, `verify_string`, `rc_logging`.
 
@@ -113,6 +115,30 @@ The right column is the form only. Cards, Grid and Outline views were built and 
 out again (2026-10-13): with the table and the YAML beside it, they did not add a useful way
 of editing.
 
+## Settings and recent recipes (`editor_settings.py`)
+
+The editor is set up like pypts, but apart from it: nothing done in the editor changes pypts.
+
+- **Its own section.** Theme, window mode, width and height are `[recipe_editor]` in
+  config.ini (`config_handler.md`). The window opens with them (`window_settings()`;
+  the template's values with no config): `_use_theme()` — `system` follows the OS live — and
+  `show_window()` / `_use_window()`, where `fullscreen` is maximised as in pypts. View → Full
+  Screen (F11) is for the session only.
+- **pypts' Settings dialog.** Edit → Settings, or View → Appearance, opens `SettingsDialog`
+  with `profile=EDITOR_SETTINGS`: Appearance (theme cards, window mode and size, presets, the
+  keep-it countdown) and Advanced → Clear recent recipes. There is no Toggle Dark Mode: the
+  theme is picked, and previewed, there.
+- **It writes config.ini itself.** There is no CORE. `main()` calls `open_config()`
+  (`ConfigHandler.bootstrap()`: creates the file if there is none, never modifies one), so
+  the editor is its process's writer. `_send_setting()` writes through `save_setting()`
+  (`set_parameter()`, one line in place) and hands the dialog a `ConfigParameterResult` on the
+  next event-loop turn — the dialog sends every change before it waits for the first answer.
+  A discarded file saves nothing; the dialog says why.
+- **Recent recipes.** File → Open Recent shows the editor's own list and pypts', newest first,
+  each file once (`merged_recents()`). Opening a file remembers it in the editor's list only
+  (`RecentRecipes(file_locations.editor_recent_recipes_path())`); Clear list, and a file that
+  is gone, change only that list. pypts' list is read, never written.
+
 ## Drag and drop
 
 `RowDragger` watches the step table's viewport from the outside (an event filter), so pypts'
@@ -180,7 +206,14 @@ open or save are logged.
   another sequence; the drop line's half-row rule; a drop through the event filter; the three
   Add step buttons; menus styled with room at the left.
 - `test_recipe_editor_window.py` (third round) — the right column is the form only (no tabs,
-  View holds only dark mode); the PROBLEMS badge in each state, and its stylesheet rules.
+  View holds Appearance and Full Screen); the PROBLEMS badge in each state, and its
+  stylesheet rules.
+- `test_recipe_editor_window.py` (fourth round) — the window takes its theme and size from
+  `[recipe_editor]`, not `[gui]`; template defaults with no config; Settings in Edit; the
+  dialog shows only the editor's keys; pypts' dialog leaves them out; a save changes only the
+  `[recipe_editor]` lines and reaches the open dialog; an unwritable setting is refused; Open
+  Recent merges both lists; opening, clearing and a missing file touch only the editor's list.
+  Every test points config.ini and both lists at `tmp_path` (`isolated_files`).
 - `test_hmi_gui.py` — the click panel switched off, the right-click extender, and both Edit
   menu entries starting their module on the loaded recipe.
 

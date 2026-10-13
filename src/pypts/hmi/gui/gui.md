@@ -816,7 +816,14 @@ Edit > Settings -> GUI._open_settings()
 - **No setting is left out.** `PAGES` places the keys it knows; any other editable key of
   `SCHEMA` gets a page named after its section and a control chosen from its type
   (`pages_for_schema()`), so a new schema key appears with no GUI change. `READ_ONLY_SECTIONS`
-  are skipped.
+  are skipped, and so are `OWN_TOOL_SECTIONS` (`recipe_editor`): those are set in their own
+  tool.
+- **One dialog, two tools.** A `SettingsProfile` names the pages, the theme key, the three
+  window keys, whether every other key gets a page (`every_key`) and the program "restart" and
+  "next start" name. pypts uses `PYPTS_SETTINGS` (the default); the Recipe Editor v2 passes
+  `EDITOR_SETTINGS` (Appearance over `[recipe_editor]`, plus Advanced → Clear recent recipes) and
+  a `send` that writes config.ini itself and answers on the next event-loop turn
+  (`recipe_editor/recipe_editor.md` → Settings).
 - **Every control reads and writes text as the file spells it** (`SettingEditor.value()` /
   `set_value()`; `setting_text()` turns `True` into `"true"`), so only really changed keys are
   sent and an untouched value is never re-sent.
@@ -926,13 +933,13 @@ covers File → Unload Recipe with nothing loaded, and Open Recipe / Open Recent
 
 ---
 
-## 12. The step table's YAML click panel
+## 12. The step table's YAML panel
 
-Clicking a step's **description** — between runs or during one — pops up a panel beside the
-cursor holding **the whole sequence that step belongs to, exactly as the recipe file has it,
-syntax coloured, with the clicked step's lines on a band and scrolled into view** (changed
-2026-10-13: the step name used to open it too; it now shows the step on the right, §19). The
-panel answers the question the three columns cannot — which module, which inputs, what the output is checked
+Resting the pointer **half a second on a step's name or description** — between runs or
+during one — pops up a panel beside the cursor holding **the whole sequence that step belongs
+to, exactly as the recipe file has it, syntax coloured, with that step's lines on a band and
+scrolled into view** (changed 2026-10-13: it opened on a click; a click on a row now shows
+the step on the right, §19). The panel answers the question the three columns cannot — which module, which inputs, what the output is checked
 against, and what surrounds the step — without the operator leaving the GUI for a text editor.
 
 Three files, each with one job:
@@ -1019,16 +1026,27 @@ Placement is the cursor plus a small offset, clamped to `screenAt(cursor).availa
 a row near the right edge flips the panel back over the cursor, and a tall panel near the bottom
 is pushed up rather than hanging off the display.
 
-### The gesture: click to open, move away to close
+### The gesture: rest to open, move away to close, click for the step
 
-**It opens on a click, never on a hover.** `cellClicked` → `_clicked_cell(row, column)` is the one
-place that opens the panel, so it carries the no-source case too, with a DEBUG line saying why
-nothing opened. Only `_PANEL_COLUMN` — `1`, the description — opens it. A click on the step
-name or the Result closes whatever is open and emits `step_clicked` instead (§19); a group's
-name stays its fold control (§12b). `_POPUP_COLUMNS` — `(0, 1)` — is now only what the row
-highlight paints and what the pointer may rest on: the Result cell's background is the verdict
-chip and is never tinted. With the click panel off (Recipe Editor v2) a name or description
-click still selects the row and emits `row_clicked`.
+**It opens on a half-second rest** (changed 2026-10-13, on request). History: it was a 1 s
+hover rest at first (§1.27 of the roadmap), then a click, because a rest still opened a panel
+nobody had asked for; it is a rest again, shorter, because a click now belongs to §19. The
+table has mouse tracking on, so `cellEntered` reports every cell the pointer reaches;
+`_entered_cell()` starts the single-shot `_hover_timer` (`HOVER_DELAY_MS`, 500) for a name or
+description cell — `_POPUP_COLUMNS`, `(0, 1)` — and stops it on the Result, which has its own
+tooltip. Reaching another row restarts it; reaching the row the panel is already open on does
+nothing. `_hover_rested()` opens the panel only if the pointer is still on that row's name or
+description (`_row_rect()` against `QCursor.pos()` — leaving the table is not a cell, so the
+check is made at the end of the rest rather than on the way out). `open_yaml_popup(row)` is the
+one place that opens the panel, so it carries the no-source case too, with a DEBUG line saying
+why nothing opened. `stop_hover()` forgets a rest in progress: a click, `set_running(True)`,
+`show_sequence()`, `clear()`, engineering mode and the panel switched off all call it.
+
+**A click never opens it.** A click anywhere on a row — name, description or Result — closes
+the panel and emits `step_clicked` (§19); a group's name stays its fold control (§12b). With
+the panel off (Recipe Editor v2, `set_click_panel_enabled(False)`) there is no rest, and a name
+or description click selects the row and emits `row_clicked`. `_POPUP_COLUMNS` is also what the
+row highlight paints: the Result cell's background is the verdict chip and is never tinted.
 
 **The table is grey during a run** (2026-10-13). `set_running()` sets the table's `running`
 property and re-polishes it, which switches on the stylesheet rule
@@ -1039,13 +1057,14 @@ highlight and engineering-mode tints.
 
 **It closes when the pointer is somewhere the gesture does not allow** (changed 2026-09-17).
 While the panel is open a `QTimer` (`_POINTER_CHECK_MS`, 100 ms) hands `QCursor.pos()` to
-`pointer_moved_to()`, which keeps the panel while the pointer is on the clicked row's name or
-description cell, on the panel itself — so the wheel can scroll it — or in the corridor between the
-click and the panel's nearest corner (`_CORRIDOR_SLACK`, 12 px), so the way there does not close
-it. Anywhere else hides it. This **replaced** `cellEntered` tracking plus a `Leave` event filter
+`pointer_moved_to()`, which keeps the panel while the pointer is on that row's name or
+description cell, on the panel itself — so the wheel can scroll it — or in the corridor between
+where the pointer rested and the panel's nearest corner (`_CORRIDOR_SLACK`, 12 px), so the way there does not close
+it. Anywhere else hides it. This **replaced** (2026-09-17) closing on a `Leave` event filter
 on the viewport: moving onto the panel is a window change, which is exactly a leave the table would
 have acted on, and a position check does not depend on the order in which Windows delivers
-enter and leave events. `hide_yaml_popup()` stops the timer.
+enter and leave events. `hide_yaml_popup()` stops the pointer timer, not the rest: the next
+row's rest has already started by the time the panel is closed for leaving this one.
 
 A report of the old panel not opening at all right after a recipe was loaded (2026-09-17) could
 not be reproduced here — the table, the full GUI and the real load path all opened it on a
@@ -1064,10 +1083,10 @@ first, because the tint would otherwise stay in the outgoing theme's blue.
 
 **The panel opens during a run too** (changed 2026-10-13; it used to be suppressed for the whole
 run). `set_running(True)` — `gui.py` sends it on `RunStarted` — closes a panel that is already
-open, because `reset_to_pending()` is about to rewrite every row; after that a click opens it as
+open, because `reset_to_pending()` is about to rewrite every row; after that a rest opens it as
 between runs. A run writes only the Result column (`mark_running()`, `show_outcome()`), which
 neither the panel nor the highlight touches, so a verdict arriving leaves both in place.
-`mark_running()` may scroll the table to the running step; the clicked row then moves from under
+`mark_running()` may scroll the table to the running step; the row it is open on then moves from under
 the pointer, and the pointer check closes the panel as for any other move away.
 
 ### The recipe preview (toolbar magnifier, 2026-09-17)
@@ -1421,7 +1440,7 @@ passes on to `CenterContent` (`run_started()`, `sequence_started()`, `step_start
 | File | What |
 |---|---|
 | `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the header's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`); what each step had, for §19 (`review()`) |
-| `run_header.py` | `RunHeader` — the step card, drawn from a `RunDisplay`: `heading_label` (`NOW RUNNING`, or `LOOKING BACK` §19), `step_label`, `description_label`, `state_label` (the chip), `info_label` (the time line), `results_label`, `error_label`; `show_live()` / `show_review()`, `state_text()`; a one-second `QTimer` while a run is on; `elapsed_text()`, `review_state_text()`, the texts `RUNNING_TEXT`, `PENDING_TEXT`, `NO_RESULTS_YET_TEXT`, `NO_VALUES_TEXT` |
+| `run_header.py` | `RunHeader` — the step card, drawn from a `RunDisplay`: `heading_label` (`NOW RUNNING`, or `LOOKING BACK` §19), `step_label`, `description_label`, `state_label` (the chip), `info_label` (the time line), `results_label`, `error_label`; `show_live()` / `show_review()`, `state_text()`; a `QTimer` every `TICK_MS` (100 ms) while a run is on; `elapsed_text()` (`m:ss.t`, `h:mm:ss.t`; tenths cut down, not rounded; the GUI's own timing from event arrival, not the report's `duration_s`), `review_state_text()`, the texts `RUNNING_TEXT`, `PENDING_TEXT`, `NO_RESULTS_YET_TEXT`, `NO_VALUES_TEXT` |
 | `center_view.py` | `CenterContent` owns the `RunDisplay`; `_show_run_view()` refreshes the card and puts the picture on screen — or, with none, hides the picture area |
 | `interaction_panel.py` | `run_header` on top, hidden outside a run (`show_live_header()`, `hide_header()`, `is_showing_header()`); the picture area is `image_label`: `set_image()`, `show_no_picture()`, `is_showing_picture_area()`, `is_showing_logo()`, `is_showing_no_image()`, `set_run_result()`, `run_result_shown()` |
 | `resources.py` | `load_no_image_pixmap()`; `load_run_result_pixmap(file_name)` with `RUN_PASSED_IMAGE` / `RUN_FAILED_IMAGE` — never tinted: the green and red words are the point; transparent background |
@@ -1455,7 +1474,7 @@ Sequences are looked up by name, case-insensitively — a called sequence's
 | heading | `NOW RUNNING` | `LOOKING BACK` |
 | name, description | the innermost running step's (16 px bold; muted, hidden when empty) | the clicked step's |
 | state chip | `Running...` on the `RUNNING` verdict chip | its verdict on that verdict's chip; `Not run yet` (`PENDING`); `Running...` |
-| time line | `Run 4:07 · Step 0:12` (ticking every second; paused time is not taken off), the verdicts so far in `run_display.COUNT_ORDER` (`2 PASS · 1 FAIL`) counted like `RunProgress` (no group rows, every verdict), `Last failure: <step>` | `Took 0:12`; hidden before it has finished |
+| time line | `Run 4:07.3 · Step 0:12.5` (to the tenth, ticking every 100 ms; paused time is not taken off), the verdicts so far in `run_display.COUNT_ORDER` (`2 PASS · 1 FAIL`) counted like `RunProgress` (no group rows, every verdict), `Last failure: <step>` | `Took 0:12.5`; hidden before it has finished |
 | results | `No results yet.` | the values (`describe_step_values()`, as the Result tooltip; `No values recorded.` for none), then the error text in the FAIL chip's colours; hidden for a step not run yet. Selectable |
 
 Between steps the name reads `-` and there is no chip and no results line. `RunStarted`
@@ -1464,15 +1483,16 @@ the logo back, marked with the run's result (table above).
 
 ## 19. Looking back at a step (2026-10-13)
 
-A click on a step row's **name or Result** **during or after a run** puts that step in the
-step card — marked `LOOKING BACK`, with its state chip, `Took 0:12` and its results (§18) —
+A click on a step row — **name, description or Result** — **during or after a run** puts that
+step in the step card — marked `LOOKING BACK`, with its state chip, `Took 0:12.5` and its results (§18) —
 and shows the picture it had, or none.
-The description opens the YAML panel instead (§12; at first one click did both). GUI only:
+The YAML panel opens on a half-second rest instead (§12; at first one click did both, then
+only the description opened it). GUI only:
 nothing is sent, CORE and the engine know nothing of it, and no message or field was added.
 
 | File | What it adds |
 |---|---|
-| `step_table.py` | `step_clicked` (the row's step id, as `Signal(object)`), emitted by `_clicked_cell()` for a click on the name or the Result with the YAML panel on; that click closes the panel. A group's name stays its fold control and emits nothing — a group is looked at through its Result |
+| `step_table.py` | `step_clicked` (the row's step id, as `Signal(object)`), emitted by `_clicked_cell()` for a click on the name, the description or the Result with the YAML panel on; that click closes the panel. A group's name stays its fold control and emits nothing — a group is looked at through its description or Result |
 | `run_display.py` | Every started step is remembered (`_Seen`): the picture on screen once it was innermost, its start and finish (`step_finished(outcome, now)`), its outcome. `review(step_id)` → `StepReview(step, state, image_path, outcome, duration)`, `state` one of `REVIEW_PENDING` / `REVIEW_RUNNING` / `REVIEW_FINISHED`; None before the first run since the recipe was loaded (`has_run`). `is_running_step()` |
 | `run_header.py` | `show_review(review)` — the step card stands on the step until `show_live()` (`step_review_card.py`, a separate card under the header, was folded into it on 2026-10-13) |
 | `interaction_panel.py` | `show_review(review)` — the card, and the picture or `show_no_picture()`; `is_showing_review()` |

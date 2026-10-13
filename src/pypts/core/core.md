@@ -79,7 +79,8 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   itself stopped, or at the deadline: it then releases the held `StopReport`, logs an ERROR
   naming the modules that did not answer, and leaves. Nothing is killed — the threads are
   daemons and the HMI process belongs to the launcher.
-- **Configuration changes** — CORE is the single runtime writer of `config.ini`.
+- **Configuration changes** — CORE is pypts' runtime writer of `config.ini` (the Recipe
+  Editor v2, a process of its own, writes its own `[recipe_editor]` lines — `config_handler.md`).
   `core_main()` calls `ConfigHandler.open_for_writing()` before `Core()` is built (its first
   read would otherwise make the process a reader, which cannot be promoted).
   `set_config_parameter()` refuses `READ_ONLY_SECTIONS`, writes through

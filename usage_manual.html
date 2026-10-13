@@ -202,7 +202,8 @@ with what was loaded: open the recipe again for your edits to take effect.</p>
 state: Idle, Running, Pausing, Paused, Finished or Stopped.</p>
 <p>Hover over any button to see what it does, or why it's greyed out.
 Hover over a step's result to see why it failed (if it did) and the values it measured.
-Click a step's description, between runs or during one, to see the whole sequence that step
+Rest the mouse on a step's name or description for half a second, between runs or during
+one, to see the whole sequence that step
 belongs to, exactly as it is written in the recipe file, with the clicked step
 highlighted and scrolled into view. For a step inside a called sequence, that is the
 called sequence. Clicking a group's description shows the sequence it calls, whole (clicking its name
@@ -218,7 +219,7 @@ decides the picture for each step, or for a whole sequence. A step's picture goe
 step ends.</p>
 <p>Throughout a run, a <strong>step card</strong> sits at the top of the panel: the name of
 the step that is running and what it does, a coloured <em>Running...</em> badge, a small line
-with how long the run and the step have taken (<em>Run 4:07 · Step 0:12</em>), the verdicts so
+with how long the run and the step have taken, to a tenth of a second (<em>Run 4:07.3 · Step 0:12.5</em>), the verdicts so
 far (<em>2 PASS · 1 FAIL</em>) and the last step that failed, and its results once it has
 them. The step's picture appears under the card only when the recipe names one. When a
 question is waiting, the panel shows the question's own picture; a question without one leaves
@@ -231,9 +232,9 @@ or a file that isn't a picture. Under it, the panel says which file it looked fo
 path, which you can select and copy) and what to check: <code>image_path</code> in the
 recipe. A relative path there is read from the recipe's own folder. You are also told which
 pictures are missing when the recipe loads; the run works normally.</p>
-<p><strong>Looking back at a step.</strong> During a run, or after it, click a step's name or
-its result: the right-hand side shows the picture that step had (the description opens the
-recipe panel instead; for a group, click its result, since its name folds it).
+<p><strong>Looking back at a step.</strong> During a run, or after it, click a step — its
+name, description or result: the right-hand side shows that step (for a group, click its
+description or result, since its name folds it).
 The step card then shows that step, marked <em>LOOKING BACK</em>: its verdict on a coloured
 badge, how long it took, the values it measured against what they were checked with, and why
 it failed, if it did; its picture appears under the card if it had one. A step that hasn't
@@ -398,6 +399,8 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       one, and the top of the new one names the old one.</li>
   <li><strong>config.ini</strong>: created on the first start. If it's broken or from an incompatible
       version (a different major number in <code>config_version</code>), PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
+      Version 2.0.0 added the <code>[recipe_editor]</code> section: a file from before it is
+      ignored until you delete it to have it recreated (or add the section and the version by hand).
       Fix the file, or delete it to have it recreated. Saving in <em>Edit → Settings</em> changes only
       that setting's line; your comments and anything you added by hand stay where they are.</li>
 </ul>
@@ -474,7 +477,11 @@ def read_kernel():
       Ctrl+Y or Ctrl+Shift+Z), and the file's
       comments are kept. While the text cannot be loaded, the table keeps its last rows, greyed,
       and PROBLEMS says why. Its log is <code>recipe_editor_&lt;timestamp&gt;.log</code> in the
-      reports folder.</td></tr>
+      reports folder. It has settings of its own (<em>Edit → Settings</em> or <em>View →
+      Appearance</em>, the same dialog as PyPTS): theme, window mode and size, kept in
+      <code>[recipe_editor]</code> in <code>config.ini</code> and saved straight away; they never
+      change PyPTS' window. <em>File → Open Recent</em> lists the recipes opened in the editor and
+      in PyPTS; the editor adds to and clears only its own list.</td></tr>
 </table></div>
 
 <h2 id="trouble">12. Troubleshooting</h2>
