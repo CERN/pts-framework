@@ -50,6 +50,7 @@ HEADER_SINGLE_VALUE: tuple[str, ...] = ("name", "version", "description", "main_
 #: global - see recipe_guide.html at repo root), and a recipe testing
 #: something without a serial number writes its own list, or `[]` for none.
 #: A name that is never set stays an empty cell; nothing complains.
+#: The first name's value also names the report files (report/report.md).
 REPORT_METADATA_DEFAULT: tuple[str, ...] = ("serial_number",)
 
 #: Optional header fields and what an absent one means. An empty

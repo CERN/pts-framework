@@ -36,7 +36,12 @@ from pypts.messages.run_events import (
 )
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import REPORT, HeartbeatManager
-from pypts.utilities.local_storage import make_run_folder
+from pypts.utilities.local_storage import make_run_folder, report_file_stem
+
+#: The CSV's name while the run is going. finish_run() renames it to the board
+#: id and start time, which are only both known at the end; a run that dies
+#: before then leaves its flushed rows under this name.
+LIVE_CSV_NAME = "report.csv"
 
 #: One flat row per executed step. report.csv is the whole record of a run -
 #: there is no second file - so the run-level facts are repeated on every row
@@ -109,6 +114,9 @@ class Report:
         run_dir: the folder of the run in progress (or just finished), or None
               before the first run.
         csv_file: the open, growing report.csv, or None outside a run.
+        csv_path: where the run's CSV is now - report.csv until finish_run()
+              renames it, or None before the first run.
+        file_timestamp: the run's start, `YYYYmmdd_HHMMSS`, for the file names.
         rows: what has been written to the CSV, kept for the HTML pass.
         run_info: the RunStarted of the current run.`
         run_result: the RunFinished verdict, or None while the run is going.
@@ -136,6 +144,7 @@ class Report:
         self.run_dir: Path | None = None
         self.csv_file: IO[str] | None = None
         self.csv_writer: csv.DictWriter | None = None
+        self.csv_path: Path | None = None
         self.rows: list[dict[str, str]] = []
         self.run_info: RunStarted | None = None
         self.run_result: ResultType | None = None
@@ -143,6 +152,7 @@ class Report:
         self.metadata: dict[str, str] = {}
         self.columns: tuple[str, ...] = CSV_COLUMNS
         self.run_started_at = ""
+        self.file_timestamp = ""
         self.goodbye_sent = False
 
     @catch_and_report_errors()
@@ -222,12 +232,15 @@ class Report:
         # this run's verdict and HTML to the previous run's folder.
         self.close_csv()
         self.run_dir = None
+        self.csv_path = None
         self.run_info = None
         self.run_result = None
         self.rows = []
         self.current_sequence = ""
         self.metadata = {}
-        self.run_started_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        started = time.localtime()
+        self.run_started_at = time.strftime("%Y-%m-%d %H:%M:%S", started)
+        self.file_timestamp = time.strftime("%Y%m%d_%H%M%S", started)
 
         # The Sequencer made the folder, and the run log is already in it. Only
         # where it could not - or the Report is driven directly - is one made here.
@@ -240,7 +253,8 @@ class Report:
         # lets the header row be written once and stay correct for the run.
         self.columns = columns_for(event.metadata_names)
 
-        csv_path = self.run_dir / "report.csv"
+        csv_path = self.run_dir / LIVE_CSV_NAME
+        self.csv_path = csv_path
         # SIM115 silenced because the file *must* outlive this method: it
         # grows for the whole run, and close_csv() owns the close.
         self.csv_file = open(csv_path, "w", newline="", encoding="utf-8")  # noqa: SIM115
@@ -334,6 +348,38 @@ class Report:
         self.run_result = result
         self.close_csv()
         self.rewrite_csv()
+        self.rename_csv()
+
+    def board_id(self) -> str:
+        """The value of the recipe's first `report_metadata` global, or "" if it has none."""
+        names = self.metadata_names()
+        if not names:
+            return ""
+        return self.metadata.get(names[0], "")
+
+    def file_stem(self) -> str:
+        """The finished run's CSV and HTML name, without extension."""
+        return report_file_stem(self.board_id(), self.file_timestamp)
+
+    def rename_csv(self) -> None:
+        """
+        Give the finished CSV its final name: board id and start time.
+
+        The Report wrote and closed the file itself, so nothing holds it open.
+        A rename that fails anyway is a WARNING and the run keeps report.csv:
+        a cosmetic name is not worth losing the results over.
+        """
+        if self.run_dir is None or self.csv_path is None:
+            return
+        final_path = self.run_dir / f"{self.file_stem()}.csv"
+        try:
+            self.csv_path.replace(final_path)
+        except OSError as error:
+            log.warning("The results file keeps its name %s.", self.csv_path)
+            log.debug("Renaming it to %s failed: %s", final_path, error)
+            return
+        self.csv_path = final_path
+        log.debug("The run's CSV is now %s.", final_path)
 
     def rewrite_csv(self) -> None:
         """
@@ -344,13 +390,12 @@ class Report:
         have blanks in those columns. This is the one pass that fills them, and
         it is what lets report.html be built from the CSV alone.
         """
-        if self.run_dir is None or not self.rows:
+        if self.csv_path is None or not self.rows:
             return
         run_cells = self.run_level_cells()
         for row in self.rows:
             row.update(run_cells)
-        csv_path = self.run_dir / "report.csv"
-        with open(csv_path, "w", newline="", encoding="utf-8") as handle:
+        with open(self.csv_path, "w", newline="", encoding="utf-8") as handle:
             writer = csv.DictWriter(handle, fieldnames=list(self.columns))
             writer.writeheader()
             writer.writerows(self.rows)
@@ -365,13 +410,14 @@ class Report:
 
     def generate_report(self) -> None:
         """
-        Build report.html from the recorded rows
+        Build the HTML report from the recorded rows, named like the CSV:
+        board id and start time.
         """
         if self.run_dir is None:
             log.warning("No report was generated: no test run has been recorded yet.")
             return
         self.close_csv()
-        html_path = self.run_dir / "report.html"
+        html_path = self.run_dir / f"{self.file_stem()}.html"
         html_path.write_text(self.render_html(), encoding="utf-8")
         log.info("Report generated: %s", html_path)
         log.debug("The report covers %d recorded step rows.", len(self.rows))

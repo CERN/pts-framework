@@ -14,6 +14,8 @@ module's whole output.
 import csv
 import json
 import queue
+import time
+from pathlib import Path
 
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
@@ -70,8 +72,15 @@ def a_step_executed(step_name="First wait", result=ResultType.DONE):
     )
 
 
+def the_one(run_dir, suffix):
+    """The run's only file with this extension - its name depends on the run."""
+    found = [path for path in run_dir.iterdir() if path.suffix == suffix]
+    assert len(found) == 1, found
+    return found[0]
+
+
 def csv_rows(run_dir):
-    with open(run_dir / "report.csv", newline="", encoding="utf-8") as csv_file:
+    with open(the_one(run_dir, ".csv"), newline="", encoding="utf-8") as csv_file:
         return list(csv.DictReader(csv_file))
 
 
@@ -150,8 +159,7 @@ def test_generate_produces_html_and_answers_report_generated(tmp_path):
     )
 
     run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
-    html_path = run_dir / "report.html"
-    assert html_path.is_file()
+    html_path = the_one(run_dir, ".html")
     html_text = html_path.read_text(encoding="utf-8")
     assert "Wait demo" in html_text
     assert "First wait" in html_text
@@ -170,7 +178,10 @@ def test_artifacts_are_grouped_in_one_run_folder(tmp_path):
 
     run_dirs = [path for path in tmp_path.iterdir() if path.is_dir()]
     assert len(run_dirs) == 1
-    assert sorted(path.name for path in run_dirs[0].iterdir()) == ["report.csv", "report.html"]
+    names = sorted(path.name for path in run_dirs[0].iterdir())
+    assert [Path(name).suffix for name in names] == [".csv", ".html"]
+    # Same name, so the pair is obviously one run.
+    assert Path(names[0]).stem == Path(names[1]).stem
 
 
 def test_html_escapes_what_the_recipe_wrote(tmp_path):
@@ -190,7 +201,7 @@ def test_html_escapes_what_the_recipe_wrote(tmp_path):
     drive(report, A_RUN, executed, RunFinished(result=ResultType.DONE), GenerateReport())
 
     run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
-    html_text = (run_dir / "report.html").read_text(encoding="utf-8")
+    html_text = the_one(run_dir, ".html").read_text(encoding="utf-8")
     assert "<script>x</script>" not in html_text
     assert "&lt;script&gt;" in html_text
 
@@ -252,7 +263,7 @@ def test_a_failed_run_dir_does_not_resurrect_the_previous_run(tmp_path, monkeypa
         GenerateReport(),
     )
     first_run_dir = report.run_dir
-    first_html = (first_run_dir / "report.html").read_text(encoding="utf-8")
+    first_html = the_one(first_run_dir, ".html").read_text(encoding="utf-8")
     sent_to_core(report)  # drain what the first run said, so what follows is new
 
     def refuse_to_make_a_run_dir(reports_dir, recipe_name):
@@ -270,7 +281,7 @@ def test_a_failed_run_dir_does_not_resurrect_the_previous_run(tmp_path, monkeypa
     )
 
     assert report.run_dir is None
-    assert (first_run_dir / "report.html").read_text(encoding="utf-8") == first_html
+    assert the_one(first_run_dir, ".html").read_text(encoding="utf-8") == first_html
     sent = sent_to_core(report)
     # The decorator reports the OSError; nothing announces a report to the operator.
     assert [m for m in sent if isinstance(m, ModuleError)]
@@ -502,8 +513,8 @@ def test_the_report_writes_into_the_folder_the_sequencer_made(tmp_path):
     )
 
     assert [path.name for path in reports.iterdir()] == [run_dir.name]
-    assert (run_dir / "report.csv").is_file()
-    assert (run_dir / "report.html").is_file()
+    assert the_one(run_dir, ".csv").is_file()
+    assert the_one(run_dir, ".html").is_file()
 
 
 def test_the_html_header_shows_the_metadata(tmp_path):
@@ -518,7 +529,7 @@ def test_the_html_header_shows_the_metadata(tmp_path):
         GenerateReport(),
     )
 
-    html_text = (report.run_dir / "report.html").read_text(encoding="utf-8")
+    html_text = the_one(report.run_dir, ".html").read_text(encoding="utf-8")
     assert "serial_number" in html_text
     assert "SN-0042" in html_text
     assert "0.2.2" in html_text
@@ -535,7 +546,7 @@ def test_the_html_can_be_rebuilt_from_the_csv_alone(tmp_path):
         RunFinished(result=ResultType.DONE),
         GenerateReport(),
     )
-    csv_path = report.run_dir / "report.csv"
+    csv_path = the_one(report.run_dir, ".csv")
 
     # A fresh Report, told nothing about that run but where its CSV is.
     rebuilt = build_report(tmp_path)
@@ -549,3 +560,98 @@ def test_the_html_can_be_rebuilt_from_the_csv_alone(tmp_path):
     assert "SN-0042" in html_text
     assert "First wait" in html_text
     assert "DONE" in html_text
+
+
+# --------------------------------------------------------------------------
+# File names: board id and start time
+# --------------------------------------------------------------------------
+
+def test_the_finished_files_are_named_after_the_board_and_the_start_time(tmp_path, monkeypatch):
+    """The first `report_metadata` global and the moment the run started."""
+    started = time.struct_time((2026, 10, 13, 14, 25, 30, 0, 286, -1))
+    monkeypatch.setattr(report_module.time, "localtime", lambda *args: started)
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        RunMetadata(values=(("serial_number", "SN-0042"),)),
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+        GenerateReport(),
+    )
+
+    names = sorted(path.name for path in report.run_dir.iterdir())
+    assert names == ["SN_0042_20261013_142530.csv", "SN_0042_20261013_142530.html"]
+
+
+def test_only_the_first_metadata_global_names_the_files(tmp_path):
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        RunStarted(
+            recipe_name="demo",
+            recipe_description="",
+            metadata_names=("board_id", "lot_number"),
+        ),
+        RunMetadata(values=(("board_id", "B7"), ("lot_number", "LOT9"))),
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+        GenerateReport(),
+    )
+
+    html_name = the_one(report.run_dir, ".html").name
+    assert html_name.startswith("B7_")
+    assert "LOT9" not in html_name
+
+
+def test_a_run_that_never_learned_its_board_id_is_named_by_time_alone(tmp_path):
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+        GenerateReport(),
+    )
+
+    for suffix in (".csv", ".html"):
+        assert the_one(report.run_dir, suffix).name.startswith("report_")
+
+
+def test_a_run_that_dies_leaves_its_rows_in_report_csv(tmp_path):
+    """The rename is at the end; until then the rows are where they always were."""
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        RunMetadata(values=(("serial_number", "SN-0042"),)),
+        a_step_executed(),
+    )
+
+    assert [path.name for path in report.run_dir.iterdir()] == ["report.csv"]
+
+
+def test_a_csv_that_cannot_be_renamed_keeps_its_name(tmp_path, monkeypatch):
+    """A cosmetic name is not worth an error: the results stay in report.csv."""
+    report = build_report(tmp_path)
+
+    def refuse(self, target):
+        raise OSError("file is locked")
+
+    monkeypatch.setattr(report_module.Path, "replace", refuse)
+
+    drive(
+        report,
+        A_RUN_WITH_METADATA,
+        RunMetadata(values=(("serial_number", "SN-0042"),)),
+        a_step_executed(),
+        RunFinished(result=ResultType.DONE),
+    )
+
+    assert report.csv_path == report.run_dir / "report.csv"
+    assert csv_rows(report.run_dir)[0]["run_result"] == "DONE"
+    assert not [m for m in sent_to_core(report) if isinstance(m, ModuleError)]

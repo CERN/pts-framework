@@ -661,18 +661,21 @@ def test_the_indexed_demo_recipe_expands_every_parameter_set():
 
 def test_the_user_interaction_demo_recipe_parses():
     """resources/recipes/userinteractionstep_recipes/userinteractionstep_demo.yml is the
-    UserInteraction showcase; the last step reads back the answer the third one stored."""
+    UserInteraction showcase; the last step reads back the answer the fourth one stored."""
     recipe = Recipe.from_file(str(USER_INTERACTION_DEMO))
 
     steps = recipe.sequences["Main"].steps
     assert [step.name for step in steps] == [
         "Check the indicator",
         "Connect the DUT",
+        "Confirm the fixture is closed",
         "Which port",
         "Report the port",
     ]
-    assert steps[2].outputs == {"output": {"type": "global", "global_name": "port"}}
-    assert steps[3].inputs == {"name": {"type": "global", "global_name": "port"}}
+    assert steps[2].options == ("Confirm",)
+    assert steps[2].outputs == {"output": {"type": "equals", "value": "Confirm"}}
+    assert steps[3].outputs == {"output": {"type": "global", "global_name": "port"}}
+    assert steps[4].inputs == {"name": {"type": "global", "global_name": "port"}}
 
 
 def test_the_user_write_demo_recipe_parses():
@@ -686,7 +689,6 @@ def test_the_user_write_demo_recipe_parses():
     assert [step.name for step in steps] == [
         "get_serial_number",
         "Read the meter",
-        "Confirm the fixture is closed",
         "Report the serial number",
     ]
     assert steps[0].outputs == {
@@ -694,7 +696,7 @@ def test_the_user_write_demo_recipe_parses():
     }
     # The last step reads back what the first one wrote - the whole point of
     # storing an answer.
-    assert steps[3].inputs == {
+    assert steps[2].inputs == {
         "name": {"type": "global", "global_name": "serial_number"}
     }
 
@@ -851,22 +853,31 @@ def test_each_showcase_group_holds_the_steps_of_its_demo(showcase):
     """The showcases copy the demos; this is what notices when a demo changes
     and the copy does not. Compared after the build, so Indexed sets and the
     groups a Sequence step calls are compared too. Descriptions may differ -
-    a demo's Main is a group in the showcase, and some say so."""
+    a demo's Main is a group in the showcase, and some say so.
+
+    The groups in CORRECTED_GROUPS are compared by structure only - step
+    types and nesting - because the showcases fix the demos' deliberate FAILs,
+    which changes names and values there."""
     main = Recipe.from_file(str(showcase)).sequences["Main"]
 
-    def shape(steps):
+    def shape(steps, with_values):
         rows = []
         for step in steps:
-            rows.append(
-                (
-                    type(step).__name__,
-                    step.name,
-                    getattr(step, "inputs", None),
-                    getattr(step, "outputs", None),
+            if with_values:
+                rows.append(
+                    (
+                        type(step).__name__,
+                        step.name,
+                        getattr(step, "inputs", None),
+                        getattr(step, "outputs", None),
+                    )
                 )
-            )
+            else:
+                rows.append(type(step).__name__)
             if isinstance(step, SequenceStep):
-                rows.append(shape(step.sequence.steps + step.sequence.teardown_steps))
+                rows.append(
+                    shape(step.sequence.steps + step.sequence.teardown_steps, with_values)
+                )
         return rows
 
     for call in main.steps:
@@ -874,7 +885,53 @@ def test_each_showcase_group_holds_the_steps_of_its_demo(showcase):
         demo = Recipe.from_file(str(demo_file)).sequences[demo_sequence]
         demo_steps = demo.steps[:count] + demo.teardown_steps
         group = call.sequence
-        assert shape(group.steps + group.teardown_steps) == shape(demo_steps), call.name
+        with_values = call.name not in CORRECTED_GROUPS
+        group_shape = shape(group.steps + group.teardown_steps, with_values)
+        assert group_shape == shape(demo_steps, with_values), call.name
+
+
+#: The showcase groups whose demos carry a deliberate FAIL, corrected in the showcases.
+CORRECTED_GROUPS = {"PythonModule steps", "Indexed steps", "Sequence steps"}
+
+
+@pytest.mark.parametrize("showcase", [AUTOMATED_SHOWCASE, FULL_SHOWCASE], ids=lambda p: p.stem)
+def test_the_showcases_carry_no_deliberate_fail(showcase):
+    """What the showcases changed from the demos: every value that failed on
+    purpose now passes. Checked on the built steps, by running the example
+    functions the same way the step would."""
+    import importlib.util
+
+    module_path = DEMOS / "common" / "example_tests.py"
+    spec = importlib.util.spec_from_file_location("example_tests", module_path)
+    example_tests = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(example_tests)
+
+    def python_steps(steps):
+        found = []
+        for step in steps:
+            if isinstance(step, SequenceStep):
+                found.extend(python_steps(step.sequence.steps + step.sequence.teardown_steps))
+            elif isinstance(step, PythonModuleStep):
+                found.append(step)
+        return found
+
+    main = Recipe.from_file(str(showcase)).sequences["Main"]
+    checked = 0
+    for call in main.steps:
+        if call.name not in CORRECTED_GROUPS:
+            continue
+        for step in python_steps([call]):
+            if step.method_name not in ("add", "is_even"):
+                continue
+            checked += 1
+            returned = getattr(example_tests, step.method_name)(**step.inputs)
+            for name, check in step.outputs.items():
+                if check["type"] == "equals":
+                    assert returned[name] == check["value"], step.name
+                elif check["type"] == "passfail":
+                    assert returned[name] is True, step.name
+    # The three formerly failing values and the rest of their groups.
+    assert checked > 10
 
 
 def test_unknown_header_keys_are_tolerated():

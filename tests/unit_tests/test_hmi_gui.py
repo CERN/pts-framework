@@ -1993,10 +1993,9 @@ def test_hiding_the_panel_drops_the_highlight_and_stops_watching(qapp):
     assert content.table.item(0, 0).background().style() == Qt.BrushStyle.NoBrush
 
 
-def test_the_panel_is_suppressed_while_a_recipe_runs(qapp):
-    """The operator asked for it between runs: during one the table is being
-    written to and read for verdicts, and must not be covered. A hold counts
-    as running - set_running(False) only comes with RunFinished."""
+def test_the_panel_opens_while_a_recipe_runs(qapp):
+    """The start of a run closes an open panel - every row is reset - but a
+    click during the run opens it, highlight and all."""
     content, _sources = a_table_with_yaml(qapp)
     content._clicked_cell(0, 0)
     assert content.yaml_popup.isVisible() is True
@@ -2005,11 +2004,26 @@ def test_the_panel_is_suppressed_while_a_recipe_runs(qapp):
     assert content.yaml_popup.isVisible() is False
 
     content._clicked_cell(1, 0)
-    assert content.yaml_popup.isVisible() is False
-
-    content.set_running(False)
-    content._clicked_cell(1, 0)
     assert content.yaml_popup.isVisible() is True
+    assert content._active_row == 1
+    content.hide_yaml_popup()
+
+
+def test_a_verdict_arriving_keeps_the_panel_and_its_highlight(qapp):
+    """A run writes the Result column only; the clicked row stays marked."""
+    from PySide6.QtCore import Qt
+
+    content, _sources = a_table_with_yaml(qapp)
+    content.set_running(True)
+    content._clicked_cell(0, 0)
+    step_id = content._row_step_id(0)
+
+    content.mark_running(StepStarted(step_id=step_id, step_name="x"))
+    content.show_outcome(StepOutcome(step_id=step_id, step_name="x", result=ResultType.PASS))
+
+    assert content.yaml_popup.isVisible() is True
+    assert content._active_row == 0
+    assert content.table.item(0, 0).background().style() != Qt.BrushStyle.NoBrush
     content.hide_yaml_popup()
 
 
@@ -3563,23 +3577,142 @@ def test_the_logo_comes_back_when_the_run_ends(gui, tmp_path):
     assert not panel.run_card.is_ticking()
 
 
-def test_a_prompt_without_a_picture_shows_the_logo_then_the_step_picture_returns(
-    gui, tmp_path
-):
+def test_a_passed_run_ends_on_the_passed_logo(gui, tmp_path):
+    from pypts.hmi.gui.resources import RUN_PASSED_IMAGE
+
     instance, _outbox, inbox = gui
-    image = a_real_png(tmp_path / "probe.png")
-    event = a_picture_recipe_loaded(image)
+    start_picture_run(instance, inbox, a_picture_recipe_loaded(None))
+    panel = instance.center.interaction
+    assert panel.run_result_shown() is None, "not while the run is on"
+
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    instance.poll_core()
+
+    assert panel.run_result_shown() == RUN_PASSED_IMAGE
+    assert panel.current_pixmap() is not None
+    assert not panel.current_pixmap().isNull()
+
+
+def test_a_failed_run_ends_on_the_failed_logo(gui, tmp_path):
+    from pypts.hmi.gui.resources import RUN_FAILED_IMAGE
+
+    instance, _outbox, inbox = gui
+    start_picture_run(instance, inbox, a_picture_recipe_loaded(None))
+
+    inbox.send(RunFinished(result=ResultType.FAIL, outcomes=()))
+    instance.poll_core()
+
+    assert instance.center.interaction.run_result_shown() == RUN_FAILED_IMAGE
+
+
+def test_the_end_of_run_logo_goes_when_the_next_run_starts(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
     start_picture_run(instance, inbox, event)
-    inbox.send(step_started(event.sequences[0].steps[0]))
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    instance.poll_core()
+
+    start_picture_run(instance, inbox, event)
+    inbox.send(RunFinished(result=ResultType.SKIP, outcomes=()))
+    instance.poll_core()
+
+    assert instance.center.interaction.run_result_shown() is None, "SKIP keeps the plain logo"
+
+
+def test_the_end_of_run_logo_goes_when_a_recipe_is_loaded(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    start_picture_run(instance, inbox, event)
+    inbox.send(RunFinished(result=ResultType.FAIL, outcomes=()))
+    instance.poll_core()
+
+    inbox.send(event)
+    instance.poll_core()
+
+    assert instance.center.interaction.run_result_shown() is None
+
+
+def test_each_run_result_has_its_end_of_run_picture():
+    from pypts.hmi.gui.center_view import run_result_image
+    from pypts.hmi.gui.resources import RUN_FAILED_IMAGE, RUN_PASSED_IMAGE
+
+    assert run_result_image(ResultType.PASS) == RUN_PASSED_IMAGE
+    assert run_result_image(ResultType.DONE) == RUN_PASSED_IMAGE
+    assert run_result_image(ResultType.FAIL) == RUN_FAILED_IMAGE
+    assert run_result_image(ResultType.ERROR) == RUN_FAILED_IMAGE
+    assert run_result_image(ResultType.STOP) == RUN_FAILED_IMAGE
+    assert run_result_image(ResultType.SKIP) is None
+
+
+def test_the_end_of_run_pictures_ship_with_the_package(qapp):
+    from pypts.hmi.gui.resources import (
+        RUN_FAILED_IMAGE,
+        RUN_PASSED_IMAGE,
+        load_run_result_pixmap,
+    )
+
+    for name in (RUN_PASSED_IMAGE, RUN_FAILED_IMAGE):
+        pixmap = load_run_result_pixmap(name)
+        assert pixmap is not None and not pixmap.isNull(), name
+
+
+def test_a_prompt_without_a_picture_keeps_the_run_card(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(event.sequences[0].steps[1]))
     instance.poll_core()
     panel = instance.center.interaction
 
     instance.ask_user(UserPromptRequest(request_id=uuid4(), message="Ready?", options=("ok",)))
-    assert panel._current_image_path is None
-    assert not panel.is_showing_run_card()
+    assert panel.is_showing_run_card(), "not the logo: the run is still on"
+    assert panel.message_label.text() == "Ready?"
 
     instance.center.option_buttons[0].click()
-    assert panel._current_image_path == image
+    assert panel.is_showing_run_card()
+
+
+def test_a_prompt_without_a_picture_keeps_the_run_picture(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    fixture = a_real_png(tmp_path / "fixture.png")
+    event = a_picture_recipe_loaded(None, sequence_image=fixture)
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(event.sequences[0].steps[1]))
+    instance.poll_core()
+    panel = instance.center.interaction
+
+    instance.ask_user(UserPromptRequest(request_id=uuid4(), message="Ready?", options=("ok",)))
+    assert not panel.is_showing_run_card()
+    assert panel._current_image_path == fixture
+
+
+def test_a_prompt_with_a_picture_shows_it_then_the_run_card_returns(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(event.sequences[0].steps[1]))
+    instance.poll_core()
+    panel = instance.center.interaction
+    led = a_real_png(tmp_path / "led.png")
+
+    instance.ask_user(
+        UserPromptRequest(request_id=uuid4(), message="LED on?", options=("yes",), image_path=led)
+    )
+    assert not panel.is_showing_run_card()
+    assert panel._current_image_path == led
+
+    instance.center.option_buttons[0].click()
+    assert panel.is_showing_run_card()
+
+
+def test_a_text_question_without_a_picture_keeps_the_run_card(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    start_picture_run(instance, inbox, event)
+    panel = instance.center.interaction
+
+    instance.ask_user_text(UserTextRequest(request_id=uuid4(), message="Serial?"))
+    assert panel.is_showing_run_card()
 
 
 def test_switching_theme_keeps_the_run_card_on_screen(gui, tmp_path):

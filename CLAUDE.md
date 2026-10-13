@@ -90,7 +90,7 @@ src/pypts/
   recipe/        recipe data layer: parser, schema (Pydantic models), validation
   step/          step types (PythonModule, UserInteraction, UserWrite, UserLoading, Wait, Sequence,
                  Indexed — expanded at load time), Runtime seams, step.run_sequence()
-  report/        report.csv (incremental) + report.html, one folder per run
+  report/        CSV (incremental) + HTML, named <board id>_<start time>, one folder per run
   hmi/           hmi_client.py (protocol half every frontend shares), cli/, gui/ (PySide6)
   api/           Pts (headless engine driven from code), open_gui(), headless mode
   messages/      typed message dataclasses, one module per link, QueueWrapper

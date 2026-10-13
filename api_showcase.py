@@ -56,8 +56,6 @@ def answer_like_an_operator(
     its options. Returning None declines, which makes that step an ERROR.
     """
     if isinstance(request, UserTextRequest):
-        if "CLOSED" in request.message:
-            return "CLOSED"
         if "voltage" in request.message:
             return "12.0"
         return "SN-0001"
@@ -67,7 +65,7 @@ def answer_like_an_operator(
         return str(RECIPES / "common" / "example_tests.py")
     if "serial port" in request.message:
         return "COM2"
-    # "Continue" for the connection prompt, "Yes" for the LED.
+    # "Continue" for the connection prompt, "Confirm" for the fixture, "Yes" for the LED.
     return request.options[0]
 
 

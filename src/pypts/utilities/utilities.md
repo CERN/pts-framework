@@ -101,6 +101,9 @@ the configuration).
   become `_`, at most 60 characters; `recipe` if nothing is left; `_2`, `_3`… in the same
   second). Raises `OSError` if it cannot. Called by the Sequencer at every run start, and by
   the Report only when `RunStarted` names no folder.
+- `report_file_stem(board_id, started_at)` — `<board id>_<started_at>`, the name (no
+  extension) of a finished run's CSV and HTML report; the id through `safe_name_part()`,
+  `report` when nothing is left of it. Called by the Report (`report/report.md`).
 - `next_log_file_path(current)` — a new run log beside `current`, named by
   `get_log_file_path()`; if that name is `current` or already exists (same second), `_2`,
   `_3`… is added, so the Logger never just appends to an old file. The GUI calls it when the

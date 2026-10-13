@@ -55,7 +55,9 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
 3. **Normalize** — the recipe language is case-insensitive. Keys of the header, sequences,
    steps and input/output entries are lowercased, and so are a step's `steptype` and an
    entry's `type`. Other values keep their case, and so do input/output *entry names*. An
-   `Indexed` step's `template` is normalized as a step.
+   `Indexed` step's `template` is normalized as a step. The steptype's rule is public as
+   `steptype_key(steptype)` (`"Wait"` → `"wait"`, anything not text → `""`), for a tool that
+   looks a step up in `STEP_TYPE_REQUIRED` or `STEP_SCHEMAS` — the Recipe Creator's form does.
 4. **Validate** (`recipe_schema.py`, via `validate_document()`) —
    `HeaderSchema.model_validate()` on the header, `SequenceSchema.model_validate()` on every
    sequence document, which checks every step through `AnyStepSchema`. **All problems are
@@ -154,6 +156,7 @@ The constants below are plain data, read by the Recipe Creator's verificator and
 | `UNNAMED_STEP_TYPES` | `("sequence",)` — exempt from `step_name`; a Sequence step is named after the sequence it calls |
 | `STEP_COMMON_DEFAULTS` | `description`, `image_path` (None), `skip`, `continue_on_error` (default `True`) — accepted by every steptype |
 | `STEP_TYPE_REQUIRED` | Per lowercase steptype: the extra required keys. **Its keys are the only steptypes a recipe may name** |
+| `STEP_TYPE_NAMES` | Per lowercase steptype: its spelling for an author (`PythonModule`, `Wait`, …), as the guide and demos write it. The Recipe Creator's Add Step menus show these |
 | `STEP_TYPE_DEFAULTS` | Per steptype: its optional keys and their defaults |
 | `EXPANDED_STEP_TYPES` | `("indexed",)` — in the rules, never in the registry |
 | `INPUT_TYPES` | `global` (needs `global_name`). A non-mapping input is a literal |
@@ -222,7 +225,7 @@ empty result (or a missing sequence), never an exception for the GUI.
 The authoritative checklist is `step/step.md` §4. On the recipe side:
 
 1. Add its required keys to `STEP_TYPE_REQUIRED` and its optional keys to
-   `STEP_TYPE_DEFAULTS`, keyed lowercase. A unit test pins these keys against
+   `STEP_TYPE_DEFAULTS`, keyed lowercase, and its spelling to `STEP_TYPE_NAMES`. A unit test pins these keys against
    `step/registry.py`'s `STEP_TYPES`.
 2. Add its model to `recipe_schema.py` (subclass `_OrdinaryStep`, `steptype` a `Literal` of
    the lowercase name) and to the `AnyStepSchema` union; `test_recipe_schema.py`'s

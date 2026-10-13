@@ -285,3 +285,12 @@ def test_no_spin_box_is_left_behind_after_a_steptype_change(window):
     QApplication.sendPostedEvents(None, 0)
     assert "message" in form._specific_editors
     assert not [s for s in form.findChildren(QDoubleSpinBox) if s.isVisible()]
+
+
+def test_undo_to_last_valid_is_on_the_toolbar_only_while_invalid(window):
+    window._model.load_yaml(_RECIPE)
+    assert not window._act_undo_valid_toolbar.isVisible()
+    window._model.set_from_text("name: [unclosed\n")
+    assert window._act_undo_valid_toolbar.isVisible()
+    # The Edit menu keeps its own entry all the time.
+    assert window._act_undo_valid.isVisible()

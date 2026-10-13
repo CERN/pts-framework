@@ -67,7 +67,7 @@ def make_run_folder(reports_dir, recipe_name: str) -> Path:
     Create one run's folder: <reports_dir>/<YYYYmmdd_HHMMSS>_<recipe name>.
 
     A second run in the same second gets `_2`, `_3`... The folder holds the
-    run's report.csv, report.html and run log, and keeps this name.
+    run's CSV, HTML report and run log, and keeps this name.
 
     Raises:
         OSError: the folder cannot be created.
@@ -83,6 +83,20 @@ def make_run_folder(reports_dir, recipe_name: str) -> Path:
         run_dir = Path(reports_dir) / f"{base}_{suffix}"
     run_dir.mkdir(parents=True)
     return run_dir
+
+
+def report_file_stem(board_id: str, started_at: str) -> str:
+    """
+    The name, without extension, of a finished run's CSV and HTML report.
+
+    `<board id>_<YYYYmmdd_HHMMSS>`, the timestamp being when the run started.
+    A run that never learned its board id is `report_<YYYYmmdd_HHMMSS>`. The
+    board id goes through safe_name_part(), so `SN-0042` becomes `SN_0042`.
+    """
+    safe_id = safe_name_part(board_id)
+    if not safe_id:
+        safe_id = "report"
+    return f"{safe_id}_{started_at}"
 
 
 def next_log_file_path(current_log_file_path) -> str:

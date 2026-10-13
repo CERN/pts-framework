@@ -19,7 +19,9 @@ makes one itself when `RunStarted` names none.
   directly - does it make one itself with `utilities.local_storage.make_run_folder()`
   (`<reports_dir>/<YYYYmmdd_HHMMSS>_<recipe name>/`: non-alphanumerics become `_`, at most 60
   characters, `recipe` if nothing is left, `_2`, `_3`… if it already exists). It opens
-  `report.csv` with the header row written and flushed, and logs the folder at INFO.
+  `report.csv` (`LIVE_CSV_NAME`) with the header row written and flushed, logs the folder at
+  INFO, and keeps the start time twice: `run_started_at` for the rows, `file_timestamp`
+  (`YYYYmmdd_HHMMSS`) for the file names.
 - **Incremental CSV** — `record_step()` appends one row per `StepExecuted`, flushed
   immediately, and keeps it in `self.rows`. `SequenceStarted` sets the `sequence_name`
   stamped on the rows that follow. A `StepExecuted` with no run open is a WARNING and is
@@ -30,12 +32,22 @@ makes one itself when `RunStarted` names none.
 - **End of run** — on `RunFinished`, `finish_run()` stores the verdict, closes the CSV, then:
   - `rewrite_csv()` writes `report.csv` once more with every row's run-level cells
     (`run_result`, metadata) filled in.
+  - `rename_csv()` gives it its final name, `file_stem()` + `.csv`. A rename that fails is a
+    WARNING and the file stays `report.csv` - the name is cosmetic, the results are not.
+
+  A run that dies before `RunFinished` leaves its flushed rows in `report.csv`.
 
   The folder keeps its name: it is not renamed with the metadata any more (2026-10-09),
   because the run log is open inside it for the whole run, and Windows will not rename a
   folder with an open file in it.
+- **File names** — `file_stem()` = `utilities.local_storage.report_file_stem(board_id(),
+  file_timestamp)`: `<board id>_<YYYYmmdd_HHMMSS>`, e.g. `SN_0042_20261013_142530.csv` /
+  `.html`. `board_id()` is the value of the recipe's **first** `report_metadata` global
+  (`serial_number` by default); the id goes through `safe_name_part()`, so `SN-0042` becomes
+  `SN_0042`. A run that never learned it, or whose recipe has `report_metadata: []`, is
+  `report_<YYYYmmdd_HHMMSS>`. The timestamp is when the Report received `RunStarted`.
 - **HTML** — CORE sends `GenerateReport` right behind `RunFinished`. `generate_report()` writes
-  a self-contained `report.html` (header with metadata, recipe, verdict, start time and pypts
+  a self-contained `<file_stem()>.html` (header with metadata, recipe, verdict, start time and pypts
   version; a per-result summary; one table row per step, coloured by result) and sends
   `ReportGenerated(report_path)`. With no run recorded it is a WARNING and nothing is sent.
 - **Regenerable from the CSV alone** — every run-level value is on every row, so
@@ -64,7 +76,7 @@ makes one itself when `RunStarted` names none.
 |-------|-----------|
 | No run open | `run_dir is None` — `finish_run` returns early, `generate_report` warns; `record_step` warns whenever `csv_writer is None` |
 | Run open | `run_dir` set, CSV open and growing |
-| Run finished | `run_dir` set, CSV closed and rewritten, `run_result` set |
+| Run finished | `run_dir` set, CSV closed, rewritten and renamed (`csv_path` follows it), `run_result` set |
 | Stopped | `running = False`, CSV closed |
 
 `start_run()` clears all per-run state *before* making the folder, so a failed `mkdir`
@@ -85,8 +97,8 @@ goes out. Same guarantee, and same reasons, as `Sequencer.stop()` / `Sequencer.s
 
 Decorated with `@catch_and_report_errors()`: `start()`, `poll_core()`,
 `handle_core_message()`, `do_periodic_tasks()` (the heartbeat). `stop()` and the per-message
-handlers (`start_run`, `record_step`, `record_metadata`, `finish_run`, `generate_report`,
-`export_report`) are **undecorated** — the error boundary is `handle_core_message()`. See
+handlers (`start_run`, `record_step`, `record_metadata`, `finish_run`, `rename_csv`,
+`generate_report`, `export_report`) are **undecorated** — the error boundary is `handle_core_message()`. See
 `utilities/utilities.md` for the rule.
 
 ## Known gaps

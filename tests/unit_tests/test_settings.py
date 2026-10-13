@@ -1028,7 +1028,7 @@ def test_edit_offers_only_edit_recipe_engineering_mode_and_settings(gui_factory)
     edit_menu = next(menu for menu in menus if menu.title() == "Edit")
 
     assert [action.text() for action in edit_menu.actions() if action.text()] == [
-        "Edit Recipe",
+        "Recipe Editor",
         "Engineering Mode",
         "Settings",
     ]

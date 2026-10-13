@@ -202,7 +202,7 @@ with what was loaded: open the recipe again for your edits to take effect.</p>
 state: Idle, Running, Pausing, Paused, Finished or Stopped.</p>
 <p>Hover over any button to see what it does, or why it's greyed out.
 Hover over a step's result to see why it failed (if it did) and the values it measured.
-Between runs, click a step's name or description to see the whole sequence that step
+Click a step's name or description, between runs or during one, to see the whole sequence that step
 belongs to, exactly as it is written in the recipe file, with the clicked step
 highlighted and scrolled into view. For a step inside a called sequence, that is the
 called sequence. Clicking a group's description shows the sequence it calls, whole (clicking its name
@@ -217,8 +217,11 @@ step ends.</p>
 <p>When the running step has no picture, the panel shows a <strong>run card</strong>
 instead: the step that is running and what it does, how long the run and the step have taken
 (<em>Run 4:07 · Step 0:12</em>), the verdicts so far (<em>2 PASS · 1 FAIL</em>), and the
-last step that failed. When a question is waiting, the panel shows the question's own picture,
-or the CERN logo. Outside a run, it shows the CERN logo.</p>
+last step that failed. When a question is waiting, the panel shows the question's own picture;
+a question without one leaves the run's picture or the run card where it is. Outside a run, it
+shows the CERN logo. When a run ends, the logo says how: <strong>TESTS PASSED</strong> (PASS or
+DONE) or <strong>TESTS FAILED</strong> (FAIL, ERROR or Stop); a run where every step was skipped
+shows the plain logo. That stays until the next run starts or a recipe is opened or unloaded.</p>
 <p><strong>"No image available"</strong> means the recipe names a picture that isn't on disk.
 You are told which ones when the recipe loads; the run works normally.</p>
 
@@ -242,7 +245,7 @@ the sequence continues with the next step.</p>
       (opens <code>config.ini</code> in your editor) · Restart (closes pypts and starts it again,
       so your edits to <code>config.ini</code> take effect; the recipe is not reopened; greyed out
       during a run) · Exit</td></tr>
-  <tr><td>Edit</td><td><strong>Edit Recipe</strong> (opens the Recipe Creator, on the loaded
+  <tr><td>Edit</td><td><strong>Recipe Editor</strong> (opens the Recipe Creator, on the loaded
       recipe if there is one; save there, then open the recipe again here to run it) ·
       <strong>Engineering Mode</strong> (see <em>Engineering mode</em> below; greyed out during a run) ·
       <strong>Settings</strong>: theme, window, folders, log level…; changes apply at the <em>next</em> start, except the theme and the window mode and size, which you try straight away — keep a window within 15 seconds or it goes back; Keep saves it. Save closes Settings once
@@ -360,8 +363,15 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
 <em>Edit → Settings</em> or in <code>config.ini</code>; the logs go with it.</p>
 <ul>
   <li><strong>Report</strong>: each run gets one folder, <code>&lt;timestamp&gt;_&lt;recipe&gt;</code>,
-      containing <code>report.csv</code> (written step by step), <code>report.html</code> and the
-      run's own log, <code>pypts_&lt;timestamp&gt;.log</code>, with every line of that run. An
+      containing the results as CSV (written step by step), the HTML report and the
+      run's own log, <code>pypts_&lt;timestamp&gt;.log</code>, with every line of that run.
+      When the run ends, the CSV and the HTML report are named after the board and the moment the
+      run started: <code>&lt;board ID&gt;_&lt;YYYYmmdd_HHMMSS&gt;.csv</code> and <code>.html</code>,
+      for example <code>SN_0042_20261013_142530.html</code>. The board ID is the value of the first
+      global the recipe lists in <code>report_metadata</code> (usually <code>serial_number</code>);
+      characters other than letters and digits become <code>_</code>. A run that never got a board
+      ID is <code>report_&lt;YYYYmmdd_HHMMSS&gt;</code>. A run that stops before it ends leaves its
+      results in <code>report.csv</code>. An
       engineering-mode retest (<kbd>Space</kbd>) gets no folder; it is in the session log.</li>
   <li><strong>Session log</strong>: one file in the reports folder each time PyPTS starts, and a
       new one each time you unload the recipe. It holds everything outside the runs and names
@@ -416,6 +426,10 @@ def read_kernel():
   <tr><td>Recipe Creator</td>
       <td><code>run_recipe_creator.bat</code> or<br><code>python run_recipe_creator.py</code></td>
       <td>Writing and editing recipes in a window, with live validation.
+      It starts with no recipe: the form is grayed out until you use <em>File &gt; New</em>,
+      <em>File &gt; Open</em> or type a recipe into the editor. Problems are listed at the bottom
+      left (double-click one to jump to its line), messages at the bottom right; drag the divider
+      to give either more room.
       If the YAML text can't be shown as a tree (it doesn't parse, or has the wrong shape), the tree
       and the validation pane are grayed out, the text stays as you typed it, and the log says why.
       Fix it in the editor, press <em>Undo</em>, or press <em>Undo to Last Valid</em>.
