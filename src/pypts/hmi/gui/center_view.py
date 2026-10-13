@@ -27,6 +27,14 @@ owns the area while it is open, and the run's view comes back when it is
 answered; a question without one leaves the run's view where it is. Outside a
 run the area shows the logo - or, once a run has ended, the logo marked
 "TESTS PASSED" or "TESTS FAILED" until the next run or another recipe.
+
+**Looking back at a step** (gui.md §19): a click on a step row during or after
+a run shows that step's picture - the one it had - or its card, under a bar
+naming it. During a run the live view comes back when the next step starts, a
+question arrives, or the operator presses Back to live; after a run, Back
+returns to the end-of-run picture. Clicking the step running now is the live
+view. While a question is open a click shows nothing new: the question needs
+the area.
 """
 
 import time
@@ -39,6 +47,7 @@ from pypts.hmi.gui.interaction_panel import InteractionPanel
 from pypts.hmi.gui.log_panel import LogPanel
 from pypts.hmi.gui.resources import RUN_FAILED_IMAGE, RUN_PASSED_IMAGE
 from pypts.hmi.gui.run_display import RunDisplay
+from pypts.logger.log import log
 from pypts.messages.common_messages import ResultType, StepOutcome
 from pypts.messages.run_events import (
     RecipeLoaded,
@@ -70,11 +79,14 @@ class CenterContent(QWidget):
         # The open question's own picture. Only a question that has one takes
         # the picture area away from the run.
         self._pending_image_path: str | None = None
+        # The step being looked back at (gui.md §19), None for none.
+        self._reviewing: UUID | None = None
         self.run_display = RunDisplay()
 
         self.interaction = InteractionPanel(self.run_display)
         self.interaction.response_given.connect(self._on_interaction_response)
         self.interaction.cancelled.connect(self.cancel_pending)
+        self.interaction.review_closed.connect(self.close_review)
 
         log_label = QLabel("LOG OUTPUT")
         log_label.setObjectName("sectionLabel")
@@ -139,23 +151,67 @@ class CenterContent(QWidget):
         """
         A question without a picture of its own puts the run's view back over
         the logo the panel drew for it - the operator keeps seeing the run.
+        A question also ends a look back at a step: it needs the operator.
         """
+        self._end_review()
         self._pending_image_path = image_path
         self._show_run_view()
 
     def show_idle(self) -> None:
         self.interaction.set_idle()
 
+    # --- Looking back at a step ------------------------------------------------
+
+    def review_step(self, step_id: UUID) -> None:
+        """
+        A click on a step row: show the picture that step had, or its card.
+
+        Nothing before the first run since the recipe was loaded, nothing while a
+        question is open, and the step running now is simply the live view.
+        """
+        if self._pending is not None:
+            log.debug("Step %s clicked: a question is open, nothing to look back at.", step_id)
+            return
+        review = self.run_display.review(step_id)
+        if review is None:
+            log.debug("Step %s clicked: no run to look back at.", step_id)
+            return
+        if self.run_display.running and self.run_display.is_running_step(step_id):
+            log.debug("Step %s clicked: it is the running step, the live view.", step_id)
+            self.close_review()
+            return
+        log.debug("Looking back at step '%s' (%s).", review.step.step_name, review.state)
+        self._reviewing = step_id
+        self.interaction.show_review(review, during_run=self.run_display.running)
+
+    def is_reviewing(self) -> bool:
+        return self._reviewing is not None
+
+    def close_review(self) -> None:
+        """Back to the live view during a run, to the end-of-run picture after one."""
+        self._end_review()
+        if self.run_display.running:
+            self._show_run_view()
+        else:
+            self.show_idle()
+
+    def _end_review(self) -> None:
+        """Forget the step looked at and take the bar down; the caller repaints."""
+        self._reviewing = None
+        self.interaction.hide_review()
+
     # --- The picture area during a run -----------------------------------------
 
     def set_recipe(self, recipe: RecipeLoaded | None) -> None:
         """The recipe whose pictures the run will show; None when unloaded."""
+        self._end_review()
         self.run_display.set_recipe(recipe)
         self.interaction.run_card.stop()
         # The last run's verdict belonged to the recipe it ran.
         self.interaction.set_run_result(None)
 
     def run_started(self) -> None:
+        self._end_review()
         self.interaction.set_run_result(None)
         self.run_display.run_started(time.monotonic())
         self.interaction.run_card.start()
@@ -164,8 +220,9 @@ class CenterContent(QWidget):
     def run_finished(self, result: ResultType) -> None:
         """
         Back to the logo, marked with how the run ended: the run's pictures
-        and card belong to the run.
+        and card belong to the run. Its steps can still be looked back at.
         """
+        self._end_review()
         self.run_display.run_finished()
         self.interaction.run_card.stop()
         self.cancel_pending()
@@ -181,18 +238,25 @@ class CenterContent(QWidget):
         self._show_run_view()
 
     def step_started(self, step_id: UUID) -> None:
+        # The next step: the live view comes back (gui.md §19).
+        self._end_review()
         self.run_display.step_started(step_id, time.monotonic())
         self._show_run_view()
 
     def step_finished(self, outcome: StepOutcome) -> None:
-        self.run_display.step_finished(outcome)
+        self.run_display.step_finished(outcome, time.monotonic())
         self._show_run_view()
 
     def _show_run_view(self) -> None:
-        """The run's picture, or its card - unless a question with a picture owns the area."""
+        """
+        The run's picture, or its card - unless a question with a picture owns
+        the area, or a step is being looked back at.
+        """
         if not self.run_display.running:
             return
         if self._pending is not None and self._pending_image_path:
+            return
+        if self._reviewing is not None:
             return
         image_path = self.run_display.image_path
         if image_path:

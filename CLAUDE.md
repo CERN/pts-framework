@@ -56,6 +56,7 @@ Module context files — **read before touching the module**:
 | `stream_handler/` | `stream_handler/stream_handler.md` |
 | `utilities/` | `utilities/utilities.md` |
 | `helper_applications/recipe_creator/` | `helper_applications/recipe_creator/recipe_creator.md` |
+| `helper_applications/recipe_editor/` | `helper_applications/recipe_editor/recipe_editor.md` |
 
 ## Documentation moves with the code — non-negotiable
 
@@ -99,7 +100,7 @@ src/pypts/
   utilities/     error handling, heartbeats, local storage, recent recipes
   hal/           hardware layer: devices by logical name, one driver process each, SSH driver
   stream_handler/   stub
-  helper_applications/  recipe_creator (incl. verificator), example_finder
+  helper_applications/  recipe_creator (incl. verificator), recipe_editor (v2), example_finder
 resources/recipes/   one folder of demos per step type (<type>step_recipes/, HAL_recipes/,
                      stepimage_recipes/), showcase_recipes/ (all of them: automated, full),
                      common/ (the test code they share)

@@ -116,6 +116,8 @@ _DOCUMENTATION_URL = "https://cern.github.io/pts-framework/"
 #: What Edit > Recipe Editor starts, spelled as `-m` takes it. A string rather than
 #: an import: the operator screen must not import the helper applications.
 RECIPE_CREATOR_MODULE = "pypts.helper_applications.recipe_creator"
+#: Edit > Recipe Editor v2: the editor laid out like this window, to compare with the Creator.
+RECIPE_EDITOR_V2_MODULE = "pypts.helper_applications.recipe_editor"
 
 #: Added to the window title while engineering mode is on, so the taskbar
 #: shows it too.
@@ -396,6 +398,11 @@ class PtsMainWindow(QMainWindow):
         self.edit_recipe_action.setToolTip(
             "Open the Recipe Creator - on the loaded recipe, when there is one."
         )
+        self.edit_recipe_v2_action = edit_menu.addAction("Recipe Editor v2")
+        self.edit_recipe_v2_action.setToolTip(
+            "Open the Recipe Editor v2 - laid out like this window, with the steps as "
+            "they will be shown here - on the loaded recipe, when there is one."
+        )
         self.engineering_action = edit_menu.addAction("Engineering Mode")
         self.engineering_action.setCheckable(True)
         self.engineering_action.setToolTip(
@@ -608,6 +615,7 @@ class GUI(HmiClient):
         # recipe's path, opens.
         self.step_table.open_recipe_requested.connect(self.open_recipe_in_editor)
         self.step_table.open_python_file_requested.connect(self.open_python_file)
+        self.step_table.step_clicked.connect(self.center.review_step)
 
         self.report_dir: str | None = None
 
@@ -633,6 +641,7 @@ class GUI(HmiClient):
             lambda _checked=False: self._open_settings("Appearance")
         )
         self.window.edit_recipe_action.triggered.connect(self.open_recipe_creator)
+        self.window.edit_recipe_v2_action.triggered.connect(self.open_recipe_editor_v2)
         self.window.engineering_action.toggled.connect(self.set_engineering_mode)
         self.window.unload_recipe_action.triggered.connect(
             lambda _checked=False: self.unload_recipe()
@@ -1401,7 +1410,21 @@ class GUI(HmiClient):
         report and continue: a tool that will not start must not take the
         window with it.
         """
-        command = [sys.executable, "-m", RECIPE_CREATOR_MODULE]
+        self._start_recipe_tool(RECIPE_CREATOR_MODULE, "Recipe Creator", "open_recipe_creator")
+
+    @catch_and_report_errors()
+    def open_recipe_editor_v2(self) -> None:
+        """
+        Edit > Recipe Editor v2: start it, on the loaded recipe if there is one -
+        exactly as the Recipe Creator is started, so the two can be compared.
+        """
+        self._start_recipe_tool(
+            RECIPE_EDITOR_V2_MODULE, "Recipe Editor v2", "open_recipe_editor_v2"
+        )
+
+    def _start_recipe_tool(self, module: str, title: str, operation: str) -> None:
+        """`python -m <module> [loaded recipe]` as a process of its own, never waited on."""
+        command = [sys.executable, "-m", module]
         if self._loaded_recipe_path is not None:
             command.append(self._loaded_recipe_path)
         try:
@@ -1409,14 +1432,14 @@ class GUI(HmiClient):
         except OSError as error:
             report_problem(
                 self,
-                f"The Recipe Creator could not be started: {error}",
+                f"The {title} could not be started: {error}",
                 severity=ErrorSeverity.WARNING,
-                operation="open_recipe_creator",
+                operation=operation,
             )
             return
         self._recipe_creator_processes.append(process)
-        log.info("The Recipe Creator was opened.")
-        log.debug("Recipe Creator started (pid %d): %s", process.pid, command)
+        log.info("The %s was opened.", title)
+        log.debug("%s started (pid %d): %s", title, process.pid, command)
 
     # --- Restart ----------------------------------------------------------------
 

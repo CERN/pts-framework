@@ -1306,6 +1306,29 @@ Report generated: ...\20260902_141233_warmup\report.html</code></pre>
 <ul>
 <li>[ ] <strong>TODO:</strong> try a real run by hand with <code>showcase_full.yml</code> (asks for the serial) and check the two file names in the run folder.</li>
 </ul>
+<h3 id="1-67-recipe-editor-v2-done">1.67 Recipe Editor v2: the recipe as the operator sees it, the YAML, and a form — <strong>done (to be compared by hand)</strong></h3>
+<p>2026-10-13, on request: an editing window that looks like the operator window, to compare with the Recipe Creator. Spec: <code>docs/superpowers/specs/2026-10-13-recipe-editor-v2-design.md</code>. Context: <code>helper_applications/recipe_editor/recipe_editor.md</code>; also <code>hmi/gui/gui.md</code> §12, <code>recipe/recipe.md</code> (<code>step_source.py</code>), <code>recipe_creator.md</code> (Shared with the Recipe Editor v2); user side: <code>usage_manual.html</code> §11.</p>
+<ul>
+<li><strong>New package</strong> <code>helper_applications/recipe_editor/</code>: <code>editor_window.py</code>, <code>schema_form.py</code>, <code>row_map.py</code>, <code>problems_panel.py</code>; <code>run_recipe_editor.py</code> / <code>.bat</code> at the root; pypts' <strong>Edit → Recipe Editor v2</strong> (<code>open_recipe_editor_v2()</code>; both editors now start through <code>_start_recipe_tool()</code>).</li>
+<li><strong>Three columns:</strong> pypts' own <code>StepTableContent</code>, filled from <code>parse_recipe(text).to_summary()</code> exactly as on <code>RecipeLoaded</code>, PROBLEMS under it; the YAML; a form generated from <code>recipe_schema</code> (descriptions as ⓘ tooltips, examples as placeholders, problems outlined on their field). One source of truth, the Creator's <code>RecipeModel</code>: one undo history, comments kept.</li>
+<li><strong>Rows to steps:</strong> <code>StepSource.origin</code> (<code>StepOrigin</code>) and <code>step_sources_from_text()</code> in <code>recipe/step_source.py</code> (the file version calls it). A row click selects its authored step (an expanded Indexed row its Indexed step), tints its lines in the YAML and fills the form; the YAML cursor selects the step around it.</li>
+<li><strong>Small public additions elsewhere</strong>, inert where they are not used: <code>StepTableContent.set_click_panel_enabled()</code>, <code>row_clicked</code>, <code>highlight_row()</code> / <code>clear_highlight()</code>, <code>context_menu_extender</code>; <code>top_bar.svg_icon()</code> (was private); <code>RecipeModel.set_path()</code> / <code>DELETE</code> / <code>duplicate_step()</code>; <code>YamlEditor.set_step_lines()</code>; <code>ValidationIssue.document</code> / <code>.path</code>; <code>rc_logging.start_logging(prefix, program_name)</code>.</li>
+<li><strong>Tests:</strong> <code>test_recipe_editor_form.py</code> (33), <code>test_recipe_editor_window.py</code> (23, five edits in a subprocess each), 4 in <code>test_hmi_gui.py</code> (both Edit-menu entries, the click switch, the menu extender), 3 in <code>test_rc_model.py</code>, 2 in <code>test_verificator.py</code>; <code>test_settings.py</code>'s Edit-menu test now lists Recipe Editor v2.</li>
+</ul>
+<p><strong>TODOs this opened:</strong></p>
+<ul>
+<li>[x] First look (2026-10-13), three fixes: no save/discard question with no recipe (re-colouring the empty YAML editor committed it as an edit — <code>YamlEditor</code> now commits only changed text, which fixes the Creator too); no window flashing on a row click (the form's "More" box was shown before it had a parent); the Result column hidden (<code>StepTableContent.set_result_column_visible()</code>). Regression tests in <code>test_recipe_editor_window.py</code> and <code>test_hmi_gui.py</code>.</li>
+<li>[ ] <strong>TODO:</strong> compare the Recipe Creator and the Recipe Editor v2 by hand, light and dark, on the showcases; decide which one stays.</li>
+<li>[ ] <strong>TODO (if wanted):</strong> change a step's type from the form; add, move and delete teardown steps from the toolbar; drag-and-drop in the table.</li>
+</ul>
+<h3 id="1-68-looking-back-at-a-step-done">1.68 Looking back at a step: its picture or card, during or after a run — <strong>done (not yet tried by hand)</strong></h3>
+<p>2026-10-13, on request (“get back to the step execution if I click on the step after / during the run”). Context: <code>hmi/gui/gui.md</code> §19; user side: <code>usage_manual.html</code> (The picture on the right).</p>
+<ul>
+<li><strong>GUI only</strong> — no message, field or route added; CORE, the Sequencer, the Report and the CLI are untouched. Everything shown was already in the GUI process (<code>StepSummary.image_path</code>, <code>StepOutcome</code>).</li>
+<li>A click on a step's name or description during or after a run also shows, on the right, the picture that step had — <strong>recorded at <code>StepStarted</code></strong>, because a Sequence step runs a fresh copy of the called sequence and the rows do not say which one a group calls — or, with none, a <code>StepReviewCard</code> (verdict, duration, values, error). A bar above names the step; <em>Back to live</em> (after a run, <em>Back</em>). The next step starting, a question, a new run or a recipe change ends it; clicking the running step is the live view.</li>
+<li>Files: <code>step_review_card.py</code> (new); <code>run_display.py</code> (<code>review()</code>, <code>StepReview</code>, <code>step_finished(outcome, now)</code>); <code>interaction_panel.py</code> (review bar, third page); <code>center_view.py</code> (<code>review_step()</code>, <code>close_review()</code>); <code>step_table.py</code> (<code>step_clicked</code>); <code>gui.py</code> (the wiring).</li>
+<li>Tests: 8 in <code>test_run_display.py</code>, 8 in <code>test_hmi_gui.py</code>.</li>
+</ul>
 </div>
 </body>
 </html>

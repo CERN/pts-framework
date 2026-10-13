@@ -25,6 +25,7 @@ contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
 `center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel`),
 `run_display.py` / `run_card.py` (`RunDisplay` — which picture the right column shows
 during a run — and `RunCard`, the card shown when there is none, §18),
+`step_review_card.py` (`StepReviewCard` — a step looked back at, §19),
 `log_tail.py` (what fills that panel — §8),
 `run_progress.py` (`RunProgress` — the progress bar in the recipe label row, §15).
 Styling: `palette.py` — **every colour the GUI uses, and the only file allowed a
@@ -41,7 +42,7 @@ One `QWidget` (`MainWindow`, "PTS", 1600×1000), a menu bar, a toolbar, and two
 halves side by side:
 
 ```
-┌─ menubar: File (Open Recipe, Exit) · Edit (Recipe Editor) · View · About ──────┐
+┌─ menubar: File (Open Recipe, Exit) · Edit (Recipe Editor, v2) · View · About ──┐
 ├─ toolbar: [Open] [Start] [Stop]  (16px icons, text under icon) ──────────────┤
 ├──────────────────────────────────────┬───────────────────────────────────────┤
 │ LEFT half                            │ RIGHT half                            │
@@ -270,7 +271,7 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `_open_in_text_editor()` (`QDesktopServices`, Notepad / `xdg-open` fallback), path on hover, Restart → §10, Exit) / Edit (Recipe Editor — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `_open_in_text_editor()` (`QDesktopServices`, Notepad / `xdg-open` fallback), path on hover, Restart → §10, Exit) / Edit (Recipe Editor — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Recipe Editor v2 — `open_recipe_editor_v2()` starts `pypts.helper_applications.recipe_editor` the same way, both through `_start_recipe_tool()`; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" / the run summary, above the splitter; stretches across its row |
 | `run_progress` (`RunProgress`) | the same row, at the window's right edge — the green run progress bar and `6 / 15 (40 %)` (§15) |
 | `QSplitter` 52/48 | left: `view_tabs` over `left_stack`; right: `CenterContent` |
@@ -931,6 +932,8 @@ covers File → Unload Recipe with nothing loaded, and Open Recipe / Open Recent
 Clicking a step's **name or description** — between runs or during one — pops up a panel beside the cursor
 holding **the whole sequence that step belongs to, exactly as the recipe file has it, syntax
 coloured, with the clicked step's lines on a band and scrolled into view**. It answers the
+During or after a run the same click also shows that step's picture or card on the right
+(§19). The panel answers the
 question the three columns cannot — which module, which inputs, what the output is checked
 against, and what surrounds the step — without the operator leaving the GUI for a text editor.
 
@@ -944,7 +947,15 @@ Three files, each with one job:
 
 `step_table.py` is the trigger and `gui.py` the wiring: the GUI calls
 `step_sources_by_sequence` **once**, when `RecipeLoaded` arrives, and hands the right
-sequence's tuple to `show_sequence()`. Each `StepSource` is stored on its row's name cell under
+sequence's tuple to `show_sequence()`.
+
+**Reused by the Recipe Editor v2** (`helper_applications/recipe_editor/`), which shows this very
+table beside the recipe text. Three public additions serve it and do nothing in pypts, which
+never calls them: `set_click_panel_enabled(False)` — a click then highlights the row
+(`highlight_row()`, `clear_highlight()`) and emits `row_clicked(row)` instead of opening the
+panel; `set_result_column_visible(False)` hides the Result column; and
+`context_menu_extender`, a callable given the right-click menu and its row to add entries of
+its own. `top_bar.svg_icon()` (was `_svg_icon`) draws the editor's toolbar icons. Each `StepSource` is stored on its row's name cell under
 `_YAML_ROLE` (`UserRole + 1`), beside the step id — one place per row, nothing parallel to keep
 in step, and it survives `set_dark()`, which only rebuilds the Result column.
 
@@ -1398,7 +1409,7 @@ passes on to `CenterContent` (`run_started()`, `sequence_started()`, `step_start
 
 | File | What |
 |---|---|
-| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the run card's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`) |
+| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the run card's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`); what each step had, for §19 (`review()`) |
 | `run_card.py` | `RunCard` — the card's widget, drawn from a `RunDisplay`; `elapsed_text()`; a one-second `QTimer` while a run is on |
 | `center_view.py` | `CenterContent` owns the `RunDisplay`; `_show_run_view()` puts the picture or the card on screen |
 | `interaction_panel.py` | the picture area is a `QStackedWidget`: `image_label` or `run_card`. `set_image()`, `show_run_card()`, `is_showing_run_card()`, `is_showing_no_image()`, `set_run_result()`, `run_result_shown()` |
@@ -1424,6 +1435,7 @@ card. Sequences are looked up by name, case-insensitively — a called sequence'
 | A run, a picture applies | that picture |
 | A run, none applies | the run card |
 | A named picture is missing or will not load | "No image available" (`_refresh_visual()`; never the logo, which would look like nothing was asked for) |
+| A step row was clicked during or after a run | that step's picture or card, under the review bar — §19 |
 
 **The run card** — the innermost running step's name and description, `Run 4:07 · Step
 0:12` (ticking every second; paused time is not taken off), the verdicts so far in
@@ -1431,6 +1443,43 @@ card. Sequences are looked up by name, case-insensitively — a called sequence'
 every verdict), and `Last failure: <step>` in the FAIL chip's colours while there is one.
 Between steps the name reads `-`. `RunFinished` stops the clock and brings the logo back,
 marked with the run's result (table above).
+
+## 19. Looking back at a step (2026-10-13)
+
+A click on a step row's name or description **during or after a run** also shows, on the
+right, what that step had: its picture, or — with none — a card for it. The same click
+still opens the YAML panel (§12); one gesture does both. GUI only: nothing is sent, CORE
+and the engine know nothing of it, and no message or field was added.
+
+| File | What it adds |
+|---|---|
+| `step_table.py` | `step_clicked` (the row's step id, as `Signal(object)`), emitted by `_clicked_cell()` for a name/description click with the YAML panel on — before the panel opens, so a row without recipe text still counts. A group's name stays its fold control and emits nothing |
+| `run_display.py` | Every started step is remembered (`_Seen`): the picture on screen once it was innermost, its start and finish (`step_finished(outcome, now)`), its outcome. `review(step_id)` → `StepReview(step, state, image_path, outcome, duration)`, `state` one of `REVIEW_PENDING` / `REVIEW_RUNNING` / `REVIEW_FINISHED`; None before the first run since the recipe was loaded (`has_run`). `is_running_step()` |
+| `step_review_card.py` | `StepReviewCard` — heading `LOOKING BACK`, the step's name and description, the state on its verdict chip (`Not run yet`, `Running...`, or the verdict), `Took 0:12`, the values (`describe_step_values()`, as the Result tooltip), the error text in the FAIL chip's colours |
+| `interaction_panel.py` | the review bar above the picture area (`review_caption` — `Step '<name>' - <verdict>` — and `review_back_button`, emitting `review_closed`); the card as the visual stack's third page. `show_review(review, during_run)`, `hide_review()`, `is_showing_review()`, `is_showing_review_card()` |
+| `center_view.py` | `review_step(step_id)`, `close_review()`, `is_reviewing()`; `_show_run_view()` leaves the area alone while reviewing |
+| `gui.py` | `step_table.step_clicked` → `center.review_step` |
+
+**Recorded, not worked out from the recipe.** A `Sequence` step runs its own fresh copy of
+the called sequence (new step ids), and a row does not say which sequence a group calls,
+so the innermost-picture rule of §18 cannot be replayed from `RecipeLoaded`. What was on
+screen is recorded at `StepStarted` instead — exactly what the operator saw. A step not
+started yet in this run shows its own `image_path`, or the card. A `StepFinished` with no
+start (SKIP) is remembered with no picture and a zero duration.
+
+| When | What happens |
+|---|---|
+| Before the first run since the recipe was loaded | nothing — the YAML panel only |
+| A question is open | nothing new: the question needs the area |
+| The clicked step is the innermost one running | the live view (any review ends) |
+| Any other step, during a run | its picture or card; the bar's button reads **Back to live** |
+| Any step, after a run | the same; the button reads **Back**, and returns to the end-of-run picture |
+| The next `StepStarted` | the review ends, the live view comes back |
+| A question arrives (`_question_shown()`) | the review ends |
+| `RunStarted`, `RunFinished`, a recipe loaded or unloaded | the review ends |
+
+`StepFinished` and the sequence events leave a review in place. Engineering mode clicks
+select rows (§17) and look back at nothing.
 
 ---
 

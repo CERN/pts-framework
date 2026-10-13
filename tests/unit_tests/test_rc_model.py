@@ -248,3 +248,30 @@ def test_rc_widgets_importable(qapp):
     assert PaletteYamlHighlighter is not None
     assert YamlEditor is not None
     assert VerificationPanel is not None
+
+
+def test_set_path_writes_a_nested_value_as_one_undo_entry(model):
+    model.set_path(1, ("steps", 0, "wait_time"), 4)
+    assert model.steps(0)[0]["wait_time"] == 4
+    assert model.undo_stack.count() == 1
+    model.undo_stack.undo()
+    assert model.steps(0)[0]["wait_time"] == 1.0
+
+
+def test_set_path_delete_removes_the_key_and_undo_puts_it_back(model):
+    from pypts.helper_applications.recipe_creator.rc_model import DELETE
+
+    model.set_path(1, ("steps", 0, "step_name"), DELETE)
+    assert "step_name" not in model.steps(0)[0]
+    model.undo_stack.undo()
+    assert model.steps(0)[0]["step_name"] == "First wait"
+
+
+def test_duplicate_step_inserts_a_marked_copy_after_it(model):
+    model.duplicate_step(0, 0)
+    steps = model.steps(0)
+    assert [s["step_name"] for s in steps] == ["First wait", "First wait (copy)"]
+    steps[1]["wait_time"] = 9
+    assert steps[0]["wait_time"] == 1.0
+    model.undo_stack.undo()
+    assert len(model.steps(0)) == 1

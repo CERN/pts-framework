@@ -75,7 +75,8 @@ _PAUSE_SVG = (
 )
 
 
-def _svg_icon(svg_str: str, size: int = 16) -> QIcon:
+def svg_icon(svg_str: str, size: int = 16) -> QIcon:
+    """An icon drawn from SVG text - the toolbar's, and the Recipe Editor v2's."""
     renderer = QSvgRenderer(QByteArray(svg_str.encode()))
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -239,24 +240,24 @@ class TopBarContent(QToolBar):
         icon_color = palette.accent_text if self._dark else palette.toolbutton
         disabled = palette.icon_disabled
         open_color = icon_color if self.open_button.isEnabled() else disabled
-        self.open_button.setIcon(_svg_icon(_FOLDER_SVG.format(color=open_color)))
+        self.open_button.setIcon(svg_icon(_FOLDER_SVG.format(color=open_color)))
         unload_color = icon_color if self.unload_button.isEnabled() else disabled
-        self.unload_button.setIcon(_svg_icon(_CROSS_SVG.format(color=unload_color)))
+        self.unload_button.setIcon(svg_icon(_CROSS_SVG.format(color=unload_color)))
         preview_color = icon_color if self.preview_button.isEnabled() else disabled
-        self.preview_button.setIcon(_svg_icon(_MAGNIFIER_SVG.format(color=preview_color)))
+        self.preview_button.setIcon(svg_icon(_MAGNIFIER_SVG.format(color=preview_color)))
         can_start = self.start_button.isEnabled()
         can_pause = self.pause_button.isEnabled()
         can_stop = self.stop_button.isEnabled()
         self.start_button.setIcon(
-            _svg_icon(_PLAY_SVG.format(color=palette.icon_start if can_start else disabled))
+            svg_icon(_PLAY_SVG.format(color=palette.icon_start if can_start else disabled))
         )
         self.pause_button.setIcon(
-            _svg_icon(_PAUSE_SVG.format(color=palette.icon_pause if can_pause else disabled))
+            svg_icon(_PAUSE_SVG.format(color=palette.icon_pause if can_pause else disabled))
         )
         self.stop_button.setIcon(
-            _svg_icon(_STOP_SVG.format(color=palette.icon_stop if can_stop else disabled))
+            svg_icon(_STOP_SVG.format(color=palette.icon_stop if can_stop else disabled))
         )
-        self.report_button.setIcon(_svg_icon(_REPORT_SVG.format(color=icon_color)))
+        self.report_button.setIcon(svg_icon(_REPORT_SVG.format(color=icon_color)))
 
     def _refresh_descriptions(self) -> None:
         """

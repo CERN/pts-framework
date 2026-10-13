@@ -25,6 +25,14 @@ anything left above it, so a lost event cannot leave a stale picture on screen.
 
 **What counts** is what `RunProgress` counts: a step that does work, not a
 `Sequence` call row (`is_group`). Every verdict counts.
+
+**Looking back at a step** (gui.md §19). Every step that starts is remembered
+with the picture that was on screen for it - the innermost one, worked out as
+above at the moment it started - its start and finish times and its outcome.
+`review(step_id)` hands that back for a clicked row. It is recorded rather than
+worked out from the recipe because a Sequence step runs its own copy of the
+called sequence, and the rows do not say which sequence a group calls. A step
+that has not run yet in this run has only its own picture to show.
 """
 
 from dataclasses import dataclass
@@ -61,6 +69,38 @@ class _Running:
     started_at: float = 0.0
 
 
+#: Where a looked-back step is in the run.
+REVIEW_PENDING = "pending"
+REVIEW_RUNNING = "running"
+REVIEW_FINISHED = "finished"
+
+
+@dataclass
+class _Seen:
+    """One step as this run saw it."""
+
+    #: The picture on screen while it ran; None when it was the run card.
+    image_path: str | None
+    started_at: float
+    finished_at: float | None = None
+    outcome: StepOutcome | None = None
+
+
+@dataclass
+class StepReview:
+    """What the picture area shows for a step clicked during or after a run."""
+
+    step: StepSummary
+    #: REVIEW_PENDING, REVIEW_RUNNING or REVIEW_FINISHED.
+    state: str
+    #: The picture it had (or, pending, its own); None: the step's card.
+    image_path: str | None
+    #: None until it has finished.
+    outcome: StepOutcome | None = None
+    #: Seconds from its start to its finish; None until it has finished.
+    duration: float | None = None
+
+
 class RunDisplay:
     """The right column's state during a run, from the events alone."""
 
@@ -73,6 +113,11 @@ class RunDisplay:
         self.counts: dict[ResultType, int] = {}
         #: The name of the latest step that ended FAIL or ERROR, "" for none.
         self.last_failure = ""
+        #: Every step the current (or last) run started, by id.
+        self._seen: dict[UUID, _Seen] = {}
+        #: True from a run's start until the recipe changes: only then is
+        #: there a run to look back at.
+        self.has_run = False
 
     # --- the recipe -------------------------------------------------------------
 
@@ -88,15 +133,19 @@ class RunDisplay:
                 for step in sequence.steps:
                     self._steps[step.step_id] = step
         self.run_finished()
+        self._seen = {}
+        self.has_run = False
 
     # --- the run ----------------------------------------------------------------
 
     def run_started(self, now: float) -> None:
         self._stack = []
         self.running = True
+        self.has_run = True
         self.run_started_at = now
         self.counts = {}
         self.last_failure = ""
+        self._seen = {}
 
     def run_finished(self) -> None:
         self._stack = []
@@ -115,9 +164,18 @@ class RunDisplay:
         if step is not None:
             image_path = step.image_path
         self._stack.append(_Running(_STEP, step_id, image_path, step, now))
+        # What is on screen for it now that it is the innermost entry.
+        self._seen[step_id] = _Seen(self.image_path, now)
 
-    def step_finished(self, outcome: StepOutcome) -> None:
+    def step_finished(self, outcome: StepOutcome, now: float) -> None:
         self._pop(_STEP, outcome.step_id)
+        seen = self._seen.get(outcome.step_id)
+        if seen is None:
+            # A row the engine never started (SKIP): nothing was on screen for it.
+            seen = _Seen(None, now)
+            self._seen[outcome.step_id] = seen
+        seen.finished_at = now
+        seen.outcome = outcome
         step = self._steps.get(outcome.step_id)
         if step is None or step.is_group:
             return
@@ -149,6 +207,27 @@ class RunDisplay:
             if entry.kind == _STEP:
                 return entry.step, entry.started_at
         return None, 0.0
+
+    def is_running_step(self, step_id: UUID) -> bool:
+        """Whether `step_id` is the innermost running step - the live view already shows it."""
+        step, _started_at = self.current_step()
+        return step is not None and step.step_id == step_id
+
+    def review(self, step_id: UUID) -> StepReview | None:
+        """
+        A step to look back at, or None: an unknown row, or no run since the
+        recipe was loaded.
+        """
+        step = self._steps.get(step_id)
+        if step is None or not self.has_run:
+            return None
+        seen = self._seen.get(step_id)
+        if seen is None:
+            return StepReview(step, REVIEW_PENDING, step.image_path)
+        if seen.outcome is None or seen.finished_at is None:
+            return StepReview(step, REVIEW_RUNNING, seen.image_path)
+        duration = seen.finished_at - seen.started_at
+        return StepReview(step, REVIEW_FINISHED, seen.image_path, seen.outcome, duration)
 
     def count_text(self) -> str:
         """"3 PASS · 1 FAIL", in COUNT_ORDER; "" before the first step ends."""

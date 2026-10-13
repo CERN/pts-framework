@@ -25,6 +25,15 @@ Every other row - another step type, a Sequence step's row - has none.
 
 `recipe_file_text(path)` is the whole file, for the toolbar's recipe preview.
 
+**Where the row came from.** Each `StepSource` also carries its `origin`: the
+step *as authored* that produced the row - its sequence, its list (`steps` or
+`teardown_steps`), its position there, and its lines in the whole text. The
+Recipe Editor v2 uses it to go from a table row to the step to edit. The rows of
+an Indexed step all have the Indexed step as their origin, a Sequence step's
+row has the Sequence step (in the caller), and a row inside a called sequence
+has that sequence's step. `step_sources_from_text(text, base_dir)` gives the
+same answer as `step_sources_by_sequence(path)` for text not (yet) on disk.
+
 **The ordering contract.** Rows are produced in the order `Sequence.to_summary()`
 emits them - steps, then teardown_steps, an Indexed step counted once per
 parameter set, and every Sequence step followed by the rows of the sequence it
@@ -50,6 +59,24 @@ _STEP_LISTS = ("steps", "teardown_steps")
 
 
 @dataclass(frozen=True)
+class StepOrigin:
+    """
+    The authored step a row comes from.
+
+    `sequence_name` is the sequence document it is written in, `list_name`
+    `steps` or `teardown_steps`, `index` its position in that list.
+    `first_line` / `last_line` are its lines in the whole recipe text, 0-based
+    and inclusive - not in the sequence's text, as StepSource's are.
+    """
+
+    sequence_name: str
+    list_name: str
+    index: int
+    first_line: int
+    last_line: int
+
+
+@dataclass(frozen=True)
 class StepSource:
     """
     What the click panel shows for one row.
@@ -65,6 +92,8 @@ class StepSource:
     first_line: int
     last_line: int
     python_file: str = ""
+    #: The authored step the row comes from; None where nobody set it.
+    origin: StepOrigin | None = None
 
     @property
     def highlights(self) -> bool:
@@ -113,21 +142,37 @@ def step_sources_by_sequence(path: str) -> dict[str, tuple[StepSource, ...]]:
     """
     try:
         text = Path(path).read_text(encoding="utf-8")
+    except OSError as error:
+        log.debug("No step YAML available for '%s': %s", path, error)
+        return {}
+    # What a PythonModule step's `module:` is resolved against - the recipe's
+    # folder, as recipe_parser sets Recipe.base_dir.
+    base_dir = str(Path(path).resolve().parent)
+    return step_sources_from_text(text, base_dir, path)
+
+
+def step_sources_from_text(
+    text: str, base_dir: str, label: str = "<text>"
+) -> dict[str, tuple[StepSource, ...]]:
+    """
+    step_sources_by_sequence() for recipe text that is not (or not yet) a file.
+
+    `base_dir` is where a PythonModule step's `module:` is looked for; `label`
+    only names the text in the DEBUG lines. Text that does not parse gives {}.
+    """
+    try:
         loaded = list(yaml.safe_load_all(text))
         nodes = list(yaml.compose_all(text, Loader=yaml.SafeLoader))
-    except (OSError, yaml.YAMLError) as error:
-        log.debug("No step YAML available for '%s': %s", path, error)
+    except yaml.YAMLError as error:
+        log.debug("No step YAML available for '%s': %s", label, error)
         return {}
     if len(loaded) != len(nodes):
         # An empty document is data None but no node; the two cannot be paired.
-        log.debug("No step YAML available for '%s': an empty YAML document.", path)
+        log.debug("No step YAML available for '%s': an empty YAML document.", label)
         return {}
 
     lines = text.split("\n")
     documents = _sequence_documents(loaded, nodes, lines)
-    # What a PythonModule step's `module:` is resolved against - the recipe's
-    # folder, as recipe_parser sets Recipe.base_dir.
-    base_dir = str(Path(path).resolve().parent)
 
     sources: dict[str, tuple[StepSource, ...]] = {}
     for document in documents.values():
@@ -135,7 +180,7 @@ def step_sources_by_sequence(path: str) -> dict[str, tuple[StepSource, ...]]:
         try:
             sources[name] = tuple(_rows(document, documents, (), base_dir))
         except (RecipeError, KeyError, ValueError, TypeError, AttributeError) as error:
-            log.debug("No step YAML for sequence '%s' of '%s': %s", name, path, error)
+            log.debug("No step YAML for sequence '%s' of '%s': %s", name, label, error)
     return sources
 
 
@@ -203,6 +248,13 @@ def _rows(
             first, last = _item_lines(
                 item_nodes[position], following, document.first_file_line, text_lines
             )
+            origin = StepOrigin(
+                sequence_name=name,
+                list_name=list_name,
+                index=position,
+                first_line=document.first_file_line + first,
+                last_line=document.first_file_line + last,
+            )
             if indexed_step.is_indexed_step(step_data):
                 # Every generated row points at the Indexed block it came from,
                 # and at the code its own generated step runs.
@@ -213,6 +265,7 @@ def _rows(
                             first_line=first,
                             last_line=last,
                             python_file=_python_file(generated, base_dir),
+                            origin=origin,
                         )
                     )
                 continue
@@ -223,10 +276,13 @@ def _rows(
                         first_line=first,
                         last_line=last,
                         python_file=_python_file(step_data, base_dir),
+                        origin=origin,
                     )
                 )
                 continue
-            source = StepSource(text=document.text, first_line=first, last_line=last)
+            source = StepSource(
+                text=document.text, first_line=first, last_line=last, origin=origin
+            )
             called = documents.get(str(step_data.get("sequence_name")).lower())
             # The parser has refused an unknown name or a cycle already; here
             # they fall back to the call itself and add no rows.
@@ -234,7 +290,11 @@ def _rows(
                 rows.append(source)
                 continue
             # The call's row shows what the call runs: the called sequence, whole.
-            rows.append(StepSource(text=called.text, first_line=NO_LINE, last_line=NO_LINE))
+            rows.append(
+                StepSource(
+                    text=called.text, first_line=NO_LINE, last_line=NO_LINE, origin=origin
+                )
+            )
             rows.extend(_rows(called, documents, chain, base_dir))
     return rows
 

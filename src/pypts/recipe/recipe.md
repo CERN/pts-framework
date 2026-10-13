@@ -17,7 +17,7 @@ objects, but the step classes and the steptype registry belong to `pypts.step`
 | `recipe.py` | `Recipe`, `Sequence`, `RecipeError` — the data objects, plus the `from_file` / `from_yaml_text` facades |
 | `recipe_schema.py` | The format rules: the constants (same names as the old `rules.py`, read by the Recipe Creator and `step_source.py`) and the Pydantic models every document is validated with — `HeaderSchema`, `SequenceSchema`, `AnyStepSchema` and one model per steptype. Only `recipe_parser.py` uses the models |
 | `recipe_parser.py` | The whole load pipeline (below), `normalize_*`, `apply_defaults`, `current_recipe_version()` |
-| `step_source.py` | `step_sources_by_sequence(path)` — for each step-table row, the sequence document it belongs to as written and the step's lines in it, for the GUI's click panel, and the `.py` a PythonModule row runs, for its right-click *Open Python file* |
+| `step_source.py` | `step_sources_by_sequence(path)` / `step_sources_from_text(text, base_dir)` — for each step-table row, the sequence document it belongs to as written and the step's lines in it, for the GUI's click panel, and the `.py` a PythonModule row runs, for its right-click *Open Python file* |
 
 ## Public entry points
 
@@ -214,6 +214,14 @@ file*: the absolute path of the `.py` a PythonModule row runs, resolved against 
 folder by `step/python_module_step.py: find_module_file()` — so it is the file a run would
 use. An `Indexed` row gets its generated step's file; every other row, and a module that
 cannot be found, gets `""`.
+
+Each `StepSource` also carries its `origin` (`StepOrigin`): the step *as authored* the row
+comes from — `sequence_name`, `list_name` (`steps` / `teardown_steps`), `index` in that list,
+and its `first_line` / `last_line` in the **whole** text. Every row of an `Indexed` step has the
+Indexed step, a call row the Sequence step in the caller, a row inside a called sequence that
+sequence's step. The Recipe Editor v2 goes from a table row to the step to edit with it.
+`step_sources_from_text(text, base_dir, label)` is the same for text not on disk;
+`step_sources_by_sequence(path)` reads the file and calls it, so the two always agree.
 
 The row order must match `Sequence.to_summary()` (steps, then teardown, an `Indexed` step once
 per parameter set, each call followed by the rows of the sequence it calls);

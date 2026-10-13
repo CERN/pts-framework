@@ -32,7 +32,8 @@ from pypts.hmi.gui.resources import (
     make_placeholder_pixmap,
 )
 from pypts.hmi.gui.run_card import RunCard
-from pypts.hmi.gui.run_display import RunDisplay
+from pypts.hmi.gui.run_display import RunDisplay, StepReview
+from pypts.hmi.gui.step_review_card import StepReviewCard
 
 #: The button every prompt carries beyond the recipe's own options, so the
 #: operator is never trapped in front of a question they cannot answer. It is
@@ -46,6 +47,11 @@ BROWSE_LABEL = "Browse..."
 #: What a UserPathRequest's `select` may say - the same two words the step uses.
 SELECT_FILE = "file"
 SELECT_FOLDER = "folder"
+
+#: The review bar's button (gui.md §19): during a run it goes back to the live
+#: view, after one back to the end-of-run picture.
+BACK_TO_LIVE_LABEL = "Back to live"
+BACK_LABEL = "Back"
 
 
 def path_problem(text: str, select: str) -> str:
@@ -77,6 +83,8 @@ def path_problem(text: str, select: str) -> str:
 class InteractionPanel(QWidget):
     response_given = Signal(str)
     cancelled = Signal()
+    #: The review bar's Back button (gui.md §19).
+    review_closed = Signal()
 
     def __init__(self, display: RunDisplay | None = None, parent=None):
         super().__init__(parent)
@@ -104,17 +112,35 @@ class InteractionPanel(QWidget):
         self._inner.setContentsMargins(16, 16, 16, 16)
         self._inner.setSpacing(12)
 
+        # The review bar: which step the picture area is looking back at, and
+        # the way back (gui.md §19). Hidden unless a step is being looked at.
+        self._review_bar = QWidget()
+        review_layout = QHBoxLayout(self._review_bar)
+        review_layout.setContentsMargins(0, 0, 0, 0)
+        review_layout.setSpacing(8)
+        self.review_caption = QLabel()
+        self.review_caption.setWordWrap(True)
+        self.review_back_button = QPushButton(BACK_TO_LIVE_LABEL)
+        self.review_back_button.clicked.connect(self.review_closed.emit)
+        review_layout.addWidget(self.review_caption, stretch=1)
+        review_layout.addWidget(self.review_back_button)
+        self._review_bar.setVisible(False)
+        self._inner.addWidget(self._review_bar)
+
         # The picture area: the picture (or the logo, or "No image available")
-        # on one page, the run card on the other (gui.md §18).
+        # on one page, the run card on another (gui.md §18), and the card of a
+        # step looked back at on the third (§19).
         self.image_label = QLabel()
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumHeight(220)
         if display is None:
             display = RunDisplay()
         self.run_card = RunCard(display)
+        self.review_card = StepReviewCard()
         self._visual_stack = QStackedWidget()
         self._visual_stack.addWidget(self.image_label)
         self._visual_stack.addWidget(self.run_card)
+        self._visual_stack.addWidget(self.review_card)
         self._inner.addWidget(self._visual_stack, stretch=1)
 
         self.message_label = QLabel()
@@ -208,6 +234,10 @@ class InteractionPanel(QWidget):
         # than restyled - dark tints it, light draws the file as it is.
         self._logo_pixmap = load_cern_logo_pixmap(palette.logo_tint)
         self.run_card.set_dark(dark)
+        self.review_card.set_dark(dark)
+        self.review_caption.setStyleSheet(
+            f"font-size:12px; font-weight:600; color:{palette.section_label};"
+        )
         frame_bg = palette.panel_background
         border = palette.border
         text_color = palette.text
@@ -392,6 +422,38 @@ class InteractionPanel(QWidget):
 
     def is_showing_run_card(self) -> bool:
         return self._visual_stack.currentWidget() is self.run_card
+
+    def show_review(self, review: StepReview, during_run: bool):
+        """
+        Look back at one step (gui.md §19): the review bar names it, and the
+        picture area shows the picture it had - or, with none, its card.
+        """
+        caption = f"Step '{review.step.step_name}'"
+        if review.outcome is not None:
+            caption = f"{caption} - {review.outcome.result}"
+        self.review_caption.setText(caption)
+        if during_run:
+            self.review_back_button.setText(BACK_TO_LIVE_LABEL)
+        else:
+            self.review_back_button.setText(BACK_LABEL)
+        self._review_bar.setVisible(True)
+        if review.image_path:
+            self._set_image_from_path(review.image_path)
+        else:
+            self._current_image_path = None
+            self.review_card.show_review(review)
+            self._visual_stack.setCurrentWidget(self.review_card)
+
+    def hide_review(self):
+        """Take the review bar down. What the picture area shows next is the caller's."""
+        self._review_bar.setVisible(False)
+
+    def is_showing_review(self) -> bool:
+        """A step is being looked back at. Logical state, like is_idle()."""
+        return not self._review_bar.isHidden()
+
+    def is_showing_review_card(self) -> bool:
+        return self._visual_stack.currentWidget() is self.review_card
 
     def add_button(self, label: str, value: str, primary: bool = False, on_click=None):
         """One prompt button. `on_click` replaces the default answer-with-value

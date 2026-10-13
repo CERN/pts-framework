@@ -346,3 +346,19 @@ def test_verifying_logs_nothing_at_warning_or_above(caplog):
     with caplog.at_level(logging.WARNING):
         verify_string(text)
     assert caplog.records == []
+
+
+def test_a_field_problem_names_its_document_and_path():
+    issues = verify_string(
+        'name: x\nversion: "1"\n---\nsequence_name: Main\nsteps:\n'
+        "  - steptype: Wait\n    step_name: w\n"
+    )
+    assert len(issues) == 1
+    assert issues[0].document == 1
+    assert issues[0].path == ("steps", 0, "wait_time")
+
+
+def test_a_problem_without_a_field_has_no_path():
+    issues = verify_string("name: x\n")
+    assert issues
+    assert issues[0].path == ()

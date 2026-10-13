@@ -23,6 +23,7 @@ between them.
 
 import logging
 import queue
+import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -1881,6 +1882,42 @@ def test_clicking_a_row_shows_its_sequence_with_the_step_picked_out(qapp):
     content.hide_yaml_popup()
 
 
+def test_with_the_click_panel_off_a_click_selects_the_row_instead(qapp):
+    """Recipe Editor v2 shows the YAML beside the table: a click highlights the
+    row and says which, and the panel stays shut. pypts never turns it off."""
+    content, _sources = a_table_with_yaml(qapp)
+    clicked: list[int] = []
+    content.row_clicked.connect(clicked.append)
+    content.set_click_panel_enabled(False)
+
+    content._clicked_cell(1, 0)
+
+    assert content.yaml_popup.isVisible() is False
+    assert clicked == [1]
+    assert content._active_row == 1
+
+
+def test_the_result_column_can_be_hidden_and_pypts_shows_it(qapp):
+    content, _sources = a_table_with_yaml(qapp)
+    assert not content.table.isColumnHidden(2)
+    content.set_result_column_visible(False)
+    assert content.table.isColumnHidden(2)
+
+
+def test_a_tool_can_add_entries_to_the_right_click_menu(qapp):
+    content, _sources = a_table_with_yaml(qapp)
+    seen: list[int] = []
+
+    def extend(menu, row):
+        seen.append(row)
+        menu.addAction("Tool entry")
+
+    content.context_menu_extender = extend
+    menu = content._build_context_menu(1)
+    assert seen == [1]
+    assert "Tool entry" in [action.text() for action in menu.actions()]
+
+
 def test_the_description_opens_the_panel_too_and_the_result_does_not(qapp):
     """The two prose columns are the affordance; the Result column is a verdict
     with its own tooltip, and a click there dismisses instead."""
@@ -3734,3 +3771,218 @@ def test_elapsed_text_reads_minutes_then_hours():
     assert elapsed_text(247.9) == "4:07"
     assert elapsed_text(3727) == "1:02:07"
     assert elapsed_text(-5) == "0:00"
+
+
+# --- Edit > Recipe Editor / Recipe Editor v2 ----------------------------------------
+
+
+class _FakeProcess:
+    pid = 1234
+
+
+@pytest.mark.parametrize(
+    ("action_name", "module"),
+    [
+        ("edit_recipe_action", "pypts.helper_applications.recipe_creator"),
+        ("edit_recipe_v2_action", "pypts.helper_applications.recipe_editor"),
+    ],
+)
+def test_the_edit_menu_starts_each_recipe_tool_on_the_loaded_recipe(
+    gui, monkeypatch, action_name, module
+):
+    from pypts.hmi.gui import gui as gui_module
+
+    instance, _outbox, _inbox = gui
+    started: list[list[str]] = []
+
+    def fake_popen(command):
+        started.append(command)
+        return _FakeProcess()
+
+    monkeypatch.setattr(gui_module.subprocess, "Popen", fake_popen)
+    instance._loaded_recipe_path = "C:/recipes/x.yml"
+
+    getattr(instance.window, action_name).trigger()
+
+    assert started == [[sys.executable, "-m", module, "C:/recipes/x.yml"]]
+
+
+# --------------------------------------------------------------------------
+# Looking back at a step (gui.md §19): a click on a step row during or after
+# a run shows the picture it had, or its card
+# --------------------------------------------------------------------------
+
+
+def click_step(instance, row):
+    instance.step_table._clicked_cell(row, 0)
+    instance.step_table.hide_yaml_popup()
+
+
+def test_a_click_before_any_run_looks_back_at_nothing(gui):
+    instance, _outbox, inbox = gui
+    inbox.send(a_picture_recipe_loaded(None))
+    instance.poll_core()
+
+    click_step(instance, 0)
+
+    assert not instance.center.interaction.is_showing_review()
+
+
+def test_a_finished_step_shows_its_picture_until_the_next_step_starts(gui, tmp_path):
+    from pypts.hmi.gui.interaction_panel import BACK_TO_LIVE_LABEL
+
+    instance, _outbox, inbox = gui
+    image = a_real_png(tmp_path / "probe.png")
+    event = a_picture_recipe_loaded(image)
+    pictured, bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(pictured))
+    inbox.send(finished(pictured))
+    inbox.send(step_started(bare))
+    instance.poll_core()
+    panel = instance.center.interaction
+    assert panel.is_showing_run_card()
+
+    click_step(instance, 0)
+
+    assert panel.is_showing_review()
+    assert panel._current_image_path == image
+    assert panel.review_caption.text() == "Step 'Pictured' - PASS"
+    assert panel.review_back_button.text() == BACK_TO_LIVE_LABEL
+
+    inbox.send(finished(bare))
+    instance.poll_core()
+    assert panel.is_showing_review(), "only a step starting ends it"
+
+    inbox.send(step_started(pictured))
+    instance.poll_core()
+    assert not panel.is_showing_review()
+    assert panel._current_image_path == image
+
+
+def test_a_step_with_no_picture_shows_its_card(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    pictured, bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(pictured))
+    inbox.send(
+        StepFinished(
+            outcome=StepOutcome(
+                step_id=pictured.step_id,
+                step_name=pictured.step_name,
+                result=ResultType.FAIL,
+                error_info="Too low.",
+                outputs=(("voltage", "3.1"),),
+                expectations=(("voltage", "range 11 .. 13"),),
+            )
+        )
+    )
+    inbox.send(step_started(bare))
+    instance.poll_core()
+    panel = instance.center.interaction
+
+    click_step(instance, 0)
+
+    card = panel.review_card
+    assert panel.is_showing_review_card()
+    assert card.step_label.text() == "Pictured"
+    assert card.state_text() == "FAIL"
+    assert card.error_label.text() == "Too low."
+    assert card.values_label.text() == "outputs: voltage = 3.1 (range 11 .. 13)"
+    assert card.duration_label.text().startswith("Took ")
+
+
+def test_back_to_live_brings_the_run_view_back(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(a_real_png(tmp_path / "probe.png"))
+    pictured, bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(pictured))
+    inbox.send(finished(pictured))
+    inbox.send(step_started(bare))
+    instance.poll_core()
+    panel = instance.center.interaction
+    click_step(instance, 0)
+
+    panel.review_back_button.click()
+
+    assert not panel.is_showing_review()
+    assert panel.is_showing_run_card()
+
+
+def test_clicking_the_running_step_is_the_live_view(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    _pictured, bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(bare))
+    instance.poll_core()
+
+    click_step(instance, 1)
+
+    panel = instance.center.interaction
+    assert not panel.is_showing_review()
+    assert panel.is_showing_run_card()
+
+
+def test_a_step_not_run_yet_shows_a_pending_card(gui, tmp_path):
+    from pypts.hmi.gui.step_review_card import PENDING_TEXT
+
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    pictured, _bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(pictured))
+    instance.poll_core()
+
+    click_step(instance, 1)
+
+    card = instance.center.interaction.review_card
+    assert card.state_text() == PENDING_TEXT
+    assert card.duration_label.isHidden()
+
+
+def test_a_question_ends_the_look_back(gui, tmp_path):
+    instance, _outbox, inbox = gui
+    event = a_picture_recipe_loaded(None)
+    pictured, bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(pictured))
+    inbox.send(finished(pictured))
+    inbox.send(step_started(bare))
+    instance.poll_core()
+    click_step(instance, 0)
+    panel = instance.center.interaction
+
+    instance.ask_user(UserPromptRequest(request_id=uuid4(), message="Ready?", options=("ok",)))
+
+    assert not panel.is_showing_review()
+    assert panel.is_showing_run_card()
+
+    click_step(instance, 0)
+    assert not panel.is_showing_review(), "the question needs the area"
+
+
+def test_after_a_run_back_returns_to_the_end_of_run_picture(gui, tmp_path):
+    from pypts.hmi.gui.interaction_panel import BACK_LABEL
+    from pypts.hmi.gui.resources import RUN_PASSED_IMAGE
+
+    instance, _outbox, inbox = gui
+    image = a_real_png(tmp_path / "probe.png")
+    event = a_picture_recipe_loaded(image)
+    pictured, _bare = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(pictured))
+    inbox.send(finished(pictured))
+    inbox.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    instance.poll_core()
+    panel = instance.center.interaction
+
+    click_step(instance, 0)
+    assert panel._current_image_path == image
+    assert panel.review_back_button.text() == BACK_LABEL
+
+    panel.review_back_button.click()
+    assert not panel.is_showing_review()
+    assert panel.run_result_shown() == RUN_PASSED_IMAGE

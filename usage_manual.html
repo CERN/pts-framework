@@ -224,6 +224,16 @@ DONE) or <strong>TESTS FAILED</strong> (FAIL, ERROR or Stop); a run where every 
 shows the plain logo. That stays until the next run starts or a recipe is opened or unloaded.</p>
 <p><strong>"No image available"</strong> means the recipe names a picture that isn't on disk.
 You are told which ones when the recipe loads; the run works normally.</p>
+<p><strong>Looking back at a step.</strong> During a run, or after it, click a step's name or
+description: besides the recipe panel, the right-hand side shows the picture that step had.
+If it had none, you get a card for it instead: its verdict, how long it took, the values it
+measured against what they were checked with, and why it failed, if it did. A step that hasn't
+run yet shows its own picture, or "Not run yet". A bar above names the step you're looking at.
+During a run the live view comes back by itself when the next step starts or a question
+appears, or straight away with <strong>Back to live</strong>; clicking the step that is
+running now also goes back to live. After a run, <strong>Back</strong> returns to the
+TESTS PASSED / TESTS FAILED logo. Before the first run of a recipe, a click only opens the
+recipe panel.</p>
 
 <h3>Answering questions</h3>
 <p>A step can ask one of three things:</p>
@@ -438,6 +448,22 @@ def read_kernel():
       folder (<code>paths.reports_dir</code>). If something goes wrong unexpectedly, a dialog
       says so and names that file; the window stays open &mdash; save your work under a new name.
       A hard crash is written to the same file.</td></tr>
+  <tr><td>Recipe Editor v2</td>
+      <td><code>run_recipe_editor.bat</code> or<br><code>python run_recipe_editor.py</code>,
+      or in pypts <em>Edit &gt; Recipe Editor v2</em> (opens the loaded recipe)</td>
+      <td>The same job as the Recipe Creator, laid out like the pypts window so you see the recipe
+      as the operator will: <strong>left</strong>, the step table exactly as pypts shows it once the
+      recipe is loaded (Indexed steps expanded, called sequences as folding groups; no Result
+      column, as there is no run), with
+      <strong>PROBLEMS</strong> under it; <strong>middle</strong>, the recipe text;
+      <strong>right</strong>, a form for the selected step. Click a row, or put the cursor in a
+      step in the text, to edit it; with nothing selected the form edits the recipe header and the
+      sequence. Hover the &#9432; beside a field for what it means. Edits in the text, the form
+      and the toolbar (add, delete, move, duplicate a step) all share one Undo (Ctrl+Z; Redo is
+      Ctrl+Y or Ctrl+Shift+Z), and the file's
+      comments are kept. While the text cannot be loaded, the table keeps its last rows, greyed,
+      and PROBLEMS says why. Its log is <code>recipe_editor_&lt;timestamp&gt;.log</code> in the
+      reports folder.</td></tr>
 </table></div>
 
 <h2 id="trouble">12. Troubleshooting</h2>

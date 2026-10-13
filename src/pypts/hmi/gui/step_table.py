@@ -44,6 +44,7 @@ outlives the rows: a new sequence shown, the table cleared, or the mode
 switched off, starts from every row ticked and none selected.
 """
 
+from collections.abc import Callable
 from uuid import UUID
 
 from PySide6.QtCore import QPoint, QRect, Qt, QTimer, Signal
@@ -167,6 +168,12 @@ class StepTableContent(QWidget):
     open_recipe_requested = Signal()
     #: Right-click "Open Python file", with the row's `StepSource.python_file`.
     open_python_file_requested = Signal(str)
+    #: A click in the name or description of a row that is not a group's fold
+    #: control. pypts does not use it; the Recipe Editor v2 selects the step.
+    row_clicked = Signal(int)
+    #: The same click with the YAML panel on (pypts), with the row's step id:
+    #: the window shows that step's picture or card (gui.md §19).
+    step_clicked = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
@@ -244,6 +251,13 @@ class StepTableContent(QWidget):
         # click on a tick box must not also move the selection.
         self._tick_just_changed = False
         self.table.itemChanged.connect(self._item_changed)
+
+        # Whether a click opens the YAML panel. Always on in pypts; the Recipe
+        # Editor v2 shows the YAML beside the table and turns it off.
+        self._click_panel = True
+        #: Called with the right-click menu and its row (-1 below the rows),
+        #: to add entries of a tool's own. None in pypts.
+        self.context_menu_extender: Callable[[QMenu, int], None] | None = None
 
     # --- Filling ---------------------------------------------------------------
 
@@ -410,6 +424,8 @@ class StepTableContent(QWidget):
         collapse = menu.addAction("Collapse all")
         expand.triggered.connect(lambda _checked=False: self.expand_all())
         collapse.triggered.connect(lambda _checked=False: self.collapse_all())
+        if self.context_menu_extender is not None:
+            self.context_menu_extender(menu, row)
         return menu
 
     def _python_file(self, row: int) -> str:
@@ -476,6 +492,12 @@ class StepTableContent(QWidget):
         if column not in _POPUP_COLUMNS:
             self.hide_yaml_popup()
             return
+        if not self._click_panel:
+            self.highlight_row(row)
+            self.row_clicked.emit(row)
+            return
+        # Before the panel: a row without recipe text still has a picture.
+        self.step_clicked.emit(self._row_step_id(row))
         item = self.table.item(row, 0)
         source = None
         if item is not None:
@@ -572,6 +594,26 @@ class StepTableContent(QWidget):
             corner_y = panel.bottom()
         box = QRect(self._clicked_at, QPoint(corner_x, corner_y)).normalized()
         return box.adjusted(-_CORRIDOR_SLACK, -_CORRIDOR_SLACK, _CORRIDOR_SLACK, _CORRIDOR_SLACK)
+
+    def set_click_panel_enabled(self, enabled: bool) -> None:
+        """
+        Whether a click opens the YAML panel (pypts: always). Off, a click
+        highlights the row and emits `row_clicked` instead.
+        """
+        self._click_panel = enabled
+        if not enabled:
+            self.hide_yaml_popup()
+
+    def set_result_column_visible(self, visible: bool) -> None:
+        """Show or hide the Result column (pypts: always shown; Recipe Editor v2 hides it)."""
+        self.table.setColumnHidden(2, not visible)
+
+    def highlight_row(self, row: int) -> None:
+        """The click highlight on `row`, for a tool that selects rows itself."""
+        self._highlight_row(row)
+
+    def clear_highlight(self) -> None:
+        self._clear_highlight()
 
     def _highlight_row(self, row: int) -> None:
         """
