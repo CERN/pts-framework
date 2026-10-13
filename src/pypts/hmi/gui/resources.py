@@ -80,24 +80,36 @@ def load_cern_logo_pixmap(tint: str | None = None) -> QPixmap | None:
     return tint_pixmap(pixmap, tint)
 
 
-def load_no_image_pixmap(tint: str | None = None) -> QPixmap | None:
+#: The pictures shown in place of the logo once a run has ended (gui.md §18).
+RUN_PASSED_IMAGE = "CERN_Logo_passed.png"
+RUN_FAILED_IMAGE = "CERN_Logo_failed.png"
+
+
+def load_run_result_pixmap(file_name: str) -> QPixmap | None:
+    """
+    The CERN logo with "TESTS PASSED" or "TESTS FAILED" under it -
+    `RUN_PASSED_IMAGE` or `RUN_FAILED_IMAGE`. Drawn as it is in both themes:
+    the green and red words are the point, and a tint would flatten them.
+    """
+    pixmap = _load_package_pixmap(("images", file_name))
+    if pixmap is None:
+        gui_dir = Path(__file__).resolve().parent
+        pixmap = _load_filesystem_pixmap([gui_dir / "images" / file_name])
+    return pixmap
+
+
+def load_no_image_pixmap() -> QPixmap | None:
     """
     "No image available" - shown where a recipe names a picture that is not
-    there (gui.md §18). Public domain, from Wikimedia Commons; see the
-    `.license` file beside it.
-
-    Args:
-        tint: a colour to flatten the grey artwork to - `Palette.text_muted`,
-            so it reads on either theme.
+    there (gui.md §18). Drawn as it is in both themes: its greys and white
+    are on a transparent background, and a tint would flatten them into one
+    shape.
     """
     pixmap = _load_package_pixmap(("images", "no_image_available.png"))
     if pixmap is None:
         gui_dir = Path(__file__).resolve().parent
         pixmap = _load_filesystem_pixmap([gui_dir / "images" / "no_image_available.png"])
-
-    if pixmap is None or tint is None:
-        return pixmap
-    return tint_pixmap(pixmap, tint)
+    return pixmap
 
 
 def load_app_logo_pixmap() -> QPixmap | None:

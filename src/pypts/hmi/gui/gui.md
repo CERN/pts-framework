@@ -29,7 +29,7 @@ during a run — and `RunCard`, the card shown when there is none, §18),
 `run_progress.py` (`RunProgress` — the progress bar in the recipe label row, §15).
 Styling: `palette.py` — **every colour the GUI uses, and the only file allowed a
 hex literal** (§10) — plus `styles.py` (the light/dark QSS built from those
-tokens) and `resources.py` (logo and "No image available" loaders). The vendored scaffold in `scaffold/` is no longer used by the
+tokens) and `resources.py` (logo, end-of-run logo and "No image available" loaders). The vendored scaffold in `scaffold/` is no longer used by the
 main window (§6 below). The protocol half, `hmi/hmi_client.py`, is complete and
 shared with the CLI. Roadmap §1.15, §1.20, §1.21 record the rework.
 
@@ -41,7 +41,7 @@ One `QWidget` (`MainWindow`, "PTS", 1600×1000), a menu bar, a toolbar, and two
 halves side by side:
 
 ```
-┌─ menubar: File (Open Recipe, Exit) · Edit (Edit Recipe) · View · About ──────┐
+┌─ menubar: File (Open Recipe, Exit) · Edit (Recipe Editor) · View · About ──────┐
 ├─ toolbar: [Open] [Start] [Stop]  (16px icons, text under icon) ──────────────┤
 ├──────────────────────────────────────┬───────────────────────────────────────┤
 │ LEFT half                            │ RIGHT half                            │
@@ -270,7 +270,7 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `_open_in_text_editor()` (`QDesktopServices`, Notepad / `xdg-open` fallback), path on hover, Restart → §10, Exit) / Edit (Edit Recipe — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `_open_in_text_editor()` (`QDesktopServices`, Notepad / `xdg-open` fallback), path on hover, Restart → §10, Exit) / Edit (Recipe Editor — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" / the run summary, above the splitter; stretches across its row |
 | `run_progress` (`RunProgress`) | the same row, at the window's right edge — the green run progress bar and `6 / 15 (40 %)` (§15) |
 | `QSplitter` 52/48 | left: `view_tabs` over `left_stack`; right: `CenterContent` |
@@ -666,8 +666,10 @@ The CERN logo is the fourth: it is artwork, not a stylesheet colour, so
 `load_cern_logo_pixmap(tint)` recolours it through `resources.tint_pixmap()` —
 `SourceIn` over the alpha, so the outline keeps every edge — and `gui.py` and
 `interaction_panel.py` reload it on a theme change. The "No image available" picture
-(§18) is the fifth, the same way: `load_no_image_pixmap(tint)` flattens its grey to
-`text_muted`, in both themes.
+(§18) and the end-of-run logos are deliberately **not** recoloured: `load_no_image_pixmap()`
+and `load_run_result_pixmap()` draw the files as they are, on transparent backgrounds — a
+flat tint would merge the no-image picture's greys and white into one shape and take the
+green and red out of the end-of-run logos.
 
 `Palette` is a frozen dataclass, so `LIGHT` and `DARK` cannot drift: a token added
 to one is a `TypeError` until the other has it too.
@@ -926,7 +928,7 @@ covers File → Unload Recipe with nothing loaded, and Open Recipe / Open Recent
 
 ## 12. The step table's YAML click panel
 
-Between runs, clicking a step's **name or description** pops up a panel beside the cursor
+Clicking a step's **name or description** — between runs or during one — pops up a panel beside the cursor
 holding **the whole sequence that step belongs to, exactly as the recipe file has it, syntax
 coloured, with the clicked step's lines on a band and scrolled into view**. It answers the
 question the three columns cannot — which module, which inputs, what the output is checked
@@ -1011,8 +1013,8 @@ is pushed up rather than hanging off the display.
 ### The gesture: click to open, move away to close
 
 **It opens on a click, never on a hover.** `cellClicked` → `_clicked_cell(row, column)` is the one
-place that opens the panel, so it carries the idle gate and the no-source case too, each with a
-DEBUG line saying why nothing opened. Only `_POPUP_COLUMNS` — `(0, 1)`, the step name and the
+place that opens the panel, so it carries the no-source case too, with a DEBUG line saying why
+nothing opened. Only `_POPUP_COLUMNS` — `(0, 1)`, the step name and the
 description — count: the Result column is a verdict with its own tooltip on it (the reason and
 the measured values), and a click there closes whatever is open.
 
@@ -1041,10 +1043,13 @@ cell exactly as `_state_item()` made it. `_clear_highlight()` clears the brush w
 back. Highlight and panel are one gesture: `hide_yaml_popup()` does both, and `set_dark()` hides
 first, because the tint would otherwise stay in the outgoing theme's blue.
 
-`set_running(bool)` is the gate — `gui.py` drives it from `RunStarted` / `RunFinished` only, and
-a hold counts as running, because a hold produces no `RunFinished` (`RunPaused` / `RunResumed` do
-not touch the gate). During a run the table is being written to and read for verdicts, and the
-operator wants an unobstructed view of it.
+**The panel opens during a run too** (changed 2026-10-13; it used to be suppressed for the whole
+run). `set_running(True)` — `gui.py` sends it on `RunStarted` — closes a panel that is already
+open, because `reset_to_pending()` is about to rewrite every row; after that a click opens it as
+between runs. A run writes only the Result column (`mark_running()`, `show_outcome()`), which
+neither the panel nor the highlight touches, so a verdict arriving leaves both in place.
+`mark_running()` may scroll the table to the running step; the clicked row then moves from under
+the pointer, and the pointer check closes the panel as for any other move away.
 
 ### The recipe preview (toolbar magnifier, 2026-09-17)
 
@@ -1315,7 +1320,7 @@ cached test modules — is in `core/core.md` and `sequencer/sequencer.md`.
 
 ## 17. Engineering mode (2026-10-12)
 
-Edit → **Engineering Mode** (`engineering_action`, checkable, under Edit Recipe) turns the
+Edit → **Engineering Mode** (`engineering_action`, checkable, under Recipe Editor) turns the
 step table into a picker for two things:
 
 - **Quick retest — Space.** Click / Ctrl-click / Shift-click rows, press Space: only those
@@ -1396,9 +1401,10 @@ passes on to `CenterContent` (`run_started()`, `sequence_started()`, `step_start
 | `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the run card's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`) |
 | `run_card.py` | `RunCard` — the card's widget, drawn from a `RunDisplay`; `elapsed_text()`; a one-second `QTimer` while a run is on |
 | `center_view.py` | `CenterContent` owns the `RunDisplay`; `_show_run_view()` puts the picture or the card on screen |
-| `interaction_panel.py` | the picture area is a `QStackedWidget`: `image_label` or `run_card`. `set_image()`, `show_run_card()`, `is_showing_run_card()`, `is_showing_no_image()` |
-| `resources.py` | `load_no_image_pixmap(tint)` |
-| `images/no_image_available.png` | Wikimedia Commons "No image available.svg" (Cburnett, 2007), **public domain** — `LicenseRef-PublicDomain`, sidecar `.license` beside it, text in `LICENSES/` |
+| `interaction_panel.py` | the picture area is a `QStackedWidget`: `image_label` or `run_card`. `set_image()`, `show_run_card()`, `is_showing_run_card()`, `is_showing_no_image()`, `set_run_result()`, `run_result_shown()` |
+| `resources.py` | `load_no_image_pixmap()`; `load_run_result_pixmap(file_name)` with `RUN_PASSED_IMAGE` / `RUN_FAILED_IMAGE` — never tinted: the green and red words are the point; transparent background |
+| `images/CERN_Logo_passed.png`, `images/CERN_Logo_failed.png` | the end-of-run pictures; `.license` sidecars like `CERN_Logo.png`'s |
+| `images/no_image_available.png` | "No image available", CERN 2026, LGPL-2.1-or-later (sidecar `.license` beside it); greys and white on a transparent background, never tinted |
 
 **Which picture.** `SequenceStarted` pushes the sequence's picture onto a stack,
 `StepStarted` the step's; the matching `...Finished` pops it, and anything left above it
@@ -1411,8 +1417,10 @@ card. Sequences are looked up by name, case-insensitively — a called sequence'
 
 | When | The picture area shows |
 |---|---|
-| No run (no recipe, loaded, after a run) | the CERN logo, as before |
-| A question is open | the question's own picture, or the logo when it has none — the run's view comes back once it is answered (`CenterContent._answer()`) |
+| No run (no recipe, or loaded and not yet run) | the CERN logo, as before |
+| After a run | the logo marked "TESTS PASSED" (`CERN_Logo_passed.png`: PASS, DONE) or "TESTS FAILED" (`CERN_Logo_failed.png`: FAIL, ERROR, STOP); SKIP keeps the plain logo — `center_view.run_result_image()`. It stays until the next run starts or a recipe is loaded or unloaded (`InteractionPanel.set_run_result(None)`) |
+| A question with its own picture is open | that picture — the run's view comes back once it is answered (`CenterContent._answer()`) |
+| A question without a picture is open | the run's view stays (its picture, or the run card), never the logo — `CenterContent._question_shown()` |
 | A run, a picture applies | that picture |
 | A run, none applies | the run card |
 | A named picture is missing or will not load | "No image available" (`_refresh_visual()`; never the logo, which would look like nothing was asked for) |
@@ -1421,7 +1429,8 @@ card. Sequences are looked up by name, case-insensitively — a called sequence'
 0:12` (ticking every second; paused time is not taken off), the verdicts so far in
 `run_display.COUNT_ORDER` (`2 PASS · 1 FAIL`) counted like `RunProgress` (no group rows,
 every verdict), and `Last failure: <step>` in the FAIL chip's colours while there is one.
-Between steps the name reads `-`. `RunFinished` stops the clock and brings the logo back.
+Between steps the name reads `-`. `RunFinished` stops the clock and brings the logo back,
+marked with the run's result (table above).
 
 ---
 

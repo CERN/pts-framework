@@ -24,8 +24,11 @@ from PySide6.QtWidgets import (
 
 from pypts.hmi.gui.palette import get_palette
 from pypts.hmi.gui.resources import (
+    RUN_FAILED_IMAGE,
+    RUN_PASSED_IMAGE,
     load_cern_logo_pixmap,
     load_no_image_pixmap,
+    load_run_result_pixmap,
     make_placeholder_pixmap,
 )
 from pypts.hmi.gui.run_card import RunCard
@@ -79,7 +82,12 @@ class InteractionPanel(QWidget):
         super().__init__(parent)
         self._dark = False
         self._logo_pixmap = load_cern_logo_pixmap(get_palette(False).logo_tint)
-        self._no_image_pixmap = load_no_image_pixmap(get_palette(False).text_muted)
+        self._no_image_pixmap = load_no_image_pixmap()
+        self._run_passed_pixmap = load_run_result_pixmap(RUN_PASSED_IMAGE)
+        self._run_failed_pixmap = load_run_result_pixmap(RUN_FAILED_IMAGE)
+        # What the idle picture says about the last run: None (the plain logo),
+        # RUN_PASSED_IMAGE or RUN_FAILED_IMAGE. Set by set_run_result().
+        self._run_result_image: str | None = None
         self._selected_button_index = -1
         self._current_image_path: str | None = None
         self._mode = "idle"
@@ -199,7 +207,6 @@ class InteractionPanel(QWidget):
         # The logo is artwork, not a stylesheet colour, so it is reloaded rather
         # than restyled - dark tints it, light draws the file as it is.
         self._logo_pixmap = load_cern_logo_pixmap(palette.logo_tint)
-        self._no_image_pixmap = load_no_image_pixmap(palette.text_muted)
         self.run_card.set_dark(dark)
         frame_bg = palette.panel_background
         border = palette.border
@@ -361,6 +368,22 @@ class InteractionPanel(QWidget):
         """The picture area shows `image_path`; None shows the logo."""
         self._set_image_from_path(image_path)
 
+    def set_run_result(self, result_image: str | None):
+        """
+        What the idle picture shows instead of the plain logo:
+        `RUN_PASSED_IMAGE`, `RUN_FAILED_IMAGE`, or None for the logo itself.
+        """
+        self._run_result_image = result_image
+        self._refresh_visual()
+
+    def run_result_shown(self) -> str | None:
+        """The end-of-run picture on screen now, or None when it is not one."""
+        if self._visual_stack.currentWidget() is not self.image_label:
+            return None
+        if self._current_image_path:
+            return None
+        return self._run_result_image
+
     def show_run_card(self):
         """The picture area shows the run card instead of a picture."""
         self._current_image_path = None
@@ -441,7 +464,14 @@ class InteractionPanel(QWidget):
         return not os.path.exists(image_path) or QPixmap(image_path).isNull()
 
     def _refresh_idle_visual(self):
-        pixmap = self._logo_pixmap
+        if self._run_result_image == RUN_PASSED_IMAGE:
+            pixmap = self._run_passed_pixmap
+        elif self._run_result_image == RUN_FAILED_IMAGE:
+            pixmap = self._run_failed_pixmap
+        else:
+            pixmap = self._logo_pixmap
+        if pixmap is None or pixmap.isNull():
+            pixmap = self._logo_pixmap
         if pixmap is None or pixmap.isNull():
             pixmap = make_placeholder_pixmap(420, 220)
         self.image_label.setPixmap(

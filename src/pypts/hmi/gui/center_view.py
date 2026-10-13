@@ -22,9 +22,11 @@ longer has an opinion about, since a recipe asks it with a UserWrite step.
 
 **The picture area during a run** (gui.md §18) is decided here, from a
 RunDisplay fed the run's events: the innermost step or sequence picture, or
-the run card when there is none. An open question owns the area while it is
-open - its own picture, or the logo - and the run's view comes back when it is
-answered. Outside a run the area shows the logo.
+the run card when there is none. An open question with a picture of its own
+owns the area while it is open, and the run's view comes back when it is
+answered; a question without one leaves the run's view where it is. Outside a
+run the area shows the logo - or, once a run has ended, the logo marked
+"TESTS PASSED" or "TESTS FAILED" until the next run or another recipe.
 """
 
 import time
@@ -35,8 +37,9 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from pypts.hmi.gui.interaction_panel import InteractionPanel
 from pypts.hmi.gui.log_panel import LogPanel
+from pypts.hmi.gui.resources import RUN_FAILED_IMAGE, RUN_PASSED_IMAGE
 from pypts.hmi.gui.run_display import RunDisplay
-from pypts.messages.common_messages import StepOutcome
+from pypts.messages.common_messages import ResultType, StepOutcome
 from pypts.messages.run_events import (
     RecipeLoaded,
     UserPathRequest,
@@ -45,12 +48,28 @@ from pypts.messages.run_events import (
 )
 
 
+def run_result_image(result: ResultType) -> str | None:
+    """
+    Which end-of-run picture a run's result gets: PASS and DONE passed,
+    FAIL, ERROR and STOP failed. SKIP tested nothing, so it keeps the plain
+    logo (None).
+    """
+    if result in (ResultType.PASS, ResultType.DONE):
+        return RUN_PASSED_IMAGE
+    if result in (ResultType.FAIL, ResultType.ERROR, ResultType.STOP):
+        return RUN_FAILED_IMAGE
+    return None
+
+
 class CenterContent(QWidget):
     """Right-side column: the interaction panel + the log panel."""
 
     def __init__(self) -> None:
         super().__init__()
         self._pending: tuple[object, Callable[[str | None], None]] | None = None
+        # The open question's own picture. Only a question that has one takes
+        # the picture area away from the run.
+        self._pending_image_path: str | None = None
         self.run_display = RunDisplay()
 
         self.interaction = InteractionPanel(self.run_display)
@@ -96,6 +115,7 @@ class CenterContent(QWidget):
             [{"label": opt, "value": opt} for opt in request.options],
             request.image_path,
         )
+        self._question_shown(request.image_path)
 
     def show_text_request(
         self, request: UserTextRequest, answer: Callable[[str | None], None]
@@ -104,6 +124,7 @@ class CenterContent(QWidget):
         self.cancel_pending()
         self._pending = (request.request_id, answer)
         self.interaction.set_text_prompt(request.message, request.image_path)
+        self._question_shown(request.image_path)
 
     def show_path_request(
         self, request: UserPathRequest, answer: Callable[[str | None], None]
@@ -112,6 +133,15 @@ class CenterContent(QWidget):
         self.cancel_pending()
         self._pending = (request.request_id, answer)
         self.interaction.set_path_prompt(request.message, request.select, request.image_path)
+        self._question_shown(request.image_path)
+
+    def _question_shown(self, image_path: str | None) -> None:
+        """
+        A question without a picture of its own puts the run's view back over
+        the logo the panel drew for it - the operator keeps seeing the run.
+        """
+        self._pending_image_path = image_path
+        self._show_run_view()
 
     def show_idle(self) -> None:
         self.interaction.set_idle()
@@ -122,18 +152,25 @@ class CenterContent(QWidget):
         """The recipe whose pictures the run will show; None when unloaded."""
         self.run_display.set_recipe(recipe)
         self.interaction.run_card.stop()
+        # The last run's verdict belonged to the recipe it ran.
+        self.interaction.set_run_result(None)
 
     def run_started(self) -> None:
+        self.interaction.set_run_result(None)
         self.run_display.run_started(time.monotonic())
         self.interaction.run_card.start()
         self._show_run_view()
 
-    def run_finished(self) -> None:
-        """Back to the logo: the run's pictures and card belong to the run."""
+    def run_finished(self, result: ResultType) -> None:
+        """
+        Back to the logo, marked with how the run ended: the run's pictures
+        and card belong to the run.
+        """
         self.run_display.run_finished()
         self.interaction.run_card.stop()
         self.cancel_pending()
         self.show_idle()
+        self.interaction.set_run_result(run_result_image(result))
 
     def sequence_started(self, sequence_name: str) -> None:
         self.run_display.sequence_started(sequence_name)
@@ -152,8 +189,10 @@ class CenterContent(QWidget):
         self._show_run_view()
 
     def _show_run_view(self) -> None:
-        """The run's picture, or its card - unless a question owns the area."""
-        if not self.run_display.running or self._pending is not None:
+        """The run's picture, or its card - unless a question with a picture owns the area."""
+        if not self.run_display.running:
+            return
+        if self._pending is not None and self._pending_image_path:
             return
         image_path = self.run_display.image_path
         if image_path:
@@ -175,6 +214,7 @@ class CenterContent(QWidget):
             return
         _request_id, answer = self._pending
         self._pending = None
+        self._pending_image_path = None
         answer(value)
         self.interaction.set_idle()
         self._show_run_view()

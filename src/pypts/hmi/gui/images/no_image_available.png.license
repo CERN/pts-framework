@@ -1,6 +1,3 @@
-SPDX-FileCopyrightText: 2007 Cburnett (en.wikipedia), public domain
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
 
-SPDX-License-Identifier: LicenseRef-PublicDomain
-
-Source: https://commons.wikimedia.org/wiki/File:No_image_available.svg
-(rendered to a 500 px PNG by Wikimedia Commons)
+SPDX-License-Identifier: LGPL-2.1-or-later

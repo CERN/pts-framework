@@ -434,11 +434,13 @@ class StepTableContent(QWidget):
 
     def set_running(self, running: bool) -> None:
         """
-        Whether a recipe is executing. The panel is an idle-time affordance.
+        Whether a recipe is executing - a hold included: paused is still running.
 
-        A run is when the table is being written to and read for verdicts, and
-        the operator wants an unobstructed view of it - so the panel is
-        suppressed for the whole run, a hold included: paused is still running.
+        The start of a run closes the panel, since every row is about to be
+        reset; after that a click opens it during the run as between runs. A
+        run only rewrites the Result column, which neither the panel nor the
+        row highlight touches. The engineering selection is what the gate
+        freezes.
         """
         self._running = running
         if running:
@@ -457,11 +459,11 @@ class StepTableContent(QWidget):
         """
         A click in the name or the description: highlight the row, show its YAML.
 
-        The one place that opens the panel, so it carries the idle gate and the
-        no-fragment case too rather than trusting every caller to have checked.
-        A click anywhere else - the Result column - closes whatever is open,
-        which is also how the operator dismisses the panel without leaving the
-        table.
+        The one place that opens the panel, so it carries the no-fragment case
+        too rather than trusting every caller to have checked. It opens during
+        a run as well. A click anywhere else - the Result column - closes
+        whatever is open, which is also how the operator dismisses the panel
+        without leaving the table.
         """
         if self._engineering:
             self._engineering_click(row)
@@ -470,10 +472,6 @@ class StepTableContent(QWidget):
             # A group's name is its fold control - during a run too.
             self.hide_yaml_popup()
             self.toggle_row(row)
-            return
-        if self._running:
-            log.debug("Step table click on row %d: no panel while a run is in progress.", row)
-            self.hide_yaml_popup()
             return
         if column not in _POPUP_COLUMNS:
             self.hide_yaml_popup()

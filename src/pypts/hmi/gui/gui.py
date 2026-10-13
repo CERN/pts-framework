@@ -113,7 +113,7 @@ NEW_LOG_WAIT_S = 5.0
 _REPOSITORY_URL = "https://github.com/CERN/pts-framework"
 _DOCUMENTATION_URL = "https://cern.github.io/pts-framework/"
 
-#: What Edit > Edit Recipe starts, spelled as `-m` takes it. A string rather than
+#: What Edit > Recipe Editor starts, spelled as `-m` takes it. A string rather than
 #: an import: the operator screen must not import the helper applications.
 RECIPE_CREATOR_MODULE = "pypts.helper_applications.recipe_creator"
 
@@ -392,7 +392,7 @@ class PtsMainWindow(QMainWindow):
 
         edit_menu = menu_bar.addMenu("Edit")
         edit_menu.setToolTipsVisible(True)  # or the disabled reason is invisible
-        self.edit_recipe_action = edit_menu.addAction("Edit Recipe")
+        self.edit_recipe_action = edit_menu.addAction("Recipe Editor")
         self.edit_recipe_action.setToolTip(
             "Open the Recipe Creator - on the loaded recipe, when there is one."
         )
@@ -1242,7 +1242,7 @@ class GUI(HmiClient):
         self._set_pause_requested(False)
         self.step_table.set_running(False)
         self.top_bar.show_run_finished()
-        self.center.run_finished()
+        self.center.run_finished(result)
         self.window.results_panel.set_results(outcomes)
         if outcomes:
             # Not switched to: the Results tab pulses until it is opened.
@@ -1385,12 +1385,12 @@ class GUI(HmiClient):
         else:
             self.show_status(f"Setting {result.key} not saved: {result.reason}")
 
-    # --- Edit Recipe ------------------------------------------------------------
+    # --- Recipe Editor ------------------------------------------------------------
 
     @catch_and_report_errors()
     def open_recipe_creator(self) -> None:
         """
-        Edit > Edit Recipe: start the Recipe Creator, on the loaded recipe if
+        Edit > Recipe Editor: start the Recipe Creator, on the loaded recipe if
         there is one.
 
         Its own process, started the way it is started by hand (`python -m
