@@ -174,6 +174,25 @@ def test_recover_on_a_live_process_keeps_the_process(device):
     assert device.is_connected() is True
 
 
+def test_recover_escalates_to_a_fresh_process_when_the_driver_cannot(caplog):
+    """The driver's own recover() raised: the device is reconnected on a fresh process."""
+    caplog.set_level(logging.DEBUG)
+    connection = ConnectionDriver("odd1", "hal_test_drivers.FailingRecoverDriver", {})
+    connection.open()
+    try:
+        first = connection.process_id()
+        connection.recover()
+        assert connection.process_id() != first
+        assert connection.ping() == "pong"
+    finally:
+        connection.close()
+    assert any(
+        record.levelno == logging.WARNING
+        and "did not recover and is being connected again" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 @pytest.mark.parametrize(
     ("driver_path", "words"),
     [
@@ -376,6 +395,22 @@ def test_abandoning_an_idle_device_tears_it_down(marking):
 
     assert not connection.is_open()
     assert marks_of(marks)[:2] == ["connect", "teardown"]
+
+
+def test_an_abandoned_device_cannot_be_opened_or_recovered_again(marking):
+    """The run was abandoned: nothing would ever tear a new driver process down."""
+    connection, marks = marking
+
+    assert connection.abandon() is True
+
+    with pytest.raises(DriverError, match="its run was abandoned"):
+        connection.recover()
+    with pytest.raises(DriverError, match="its run was abandoned"):
+        connection.open()
+    assert not connection.is_open()
+    # The teardown of abandon() ran; nothing ever connected again.
+    assert marks_of(marks)[:2] == ["connect", "teardown"]
+    assert marks_of(marks).count("connect") == 1
 
 
 def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_connection(tmp_path):

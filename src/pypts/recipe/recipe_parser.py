@@ -49,7 +49,7 @@ from pypts.recipe.recipe_schema import (
     HeaderSchema,
     SequenceSchema,
 )
-from pypts.step import indexed_step, sequence_step
+from pypts.step import indexed_step, python_module_step, sequence_step
 from pypts.step.operator_prompt import resolve_image_path
 from pypts.step.registry import build_step
 from pypts.step.step import Step
@@ -66,6 +66,9 @@ def load_recipe(path: str) -> Recipe:
     missing = resolve_images(recipe)
     if missing:
         recipe.load_notices = (*recipe.load_notices, _missing_images_notice(recipe, missing))
+    problems = check_python_modules(recipe)
+    if problems:
+        recipe.load_notices = (*recipe.load_notices, _module_problems_notice(recipe, problems))
     return recipe
 
 
@@ -121,6 +124,57 @@ def _resolve_one_image(
         )
         missing.append(entry)
     return resolved
+
+
+def check_python_modules(recipe: Recipe) -> list[str]:
+    """
+    Look at every PythonModule step's `module:` and `method_name:` at load.
+
+    `python_module_step.module_method_problem()` resolves the file the way a
+    run would and AST-scans it for the function, without executing anything;
+    a dotted `module:` is not checked (importing it would run code). A
+    mistake is **not** an error - the scan cannot see dynamically built
+    attributes - so each one is a WARNING, here, once per place it is named,
+    and the run finds the truth when the step runs. Mirrors resolve_images().
+
+    Returns:
+        "<where>: <problem>" for each step whose code was not found.
+    """
+    problems: list[str] = []
+    for sequence in recipe.sequences.values():
+        _check_sequence_modules(recipe, sequence, problems)
+    return problems
+
+
+def _check_sequence_modules(recipe: Recipe, sequence: Sequence, problems: list[str]) -> None:
+    """One sequence's PythonModule steps, and those of what it calls."""
+    for step in sequence.steps + sequence.teardown_steps:
+        if isinstance(step, python_module_step.PythonModuleStep):
+            problem = python_module_step.module_method_problem(
+                step.module, str(step.method_name), recipe.base_dir
+            )
+            entry = f"Sequence '{sequence.name}', step '{step.name}': {problem}"
+            if problem is not None and entry not in problems:
+                log.warning(
+                    "Recipe '%s': %s. The step ends in ERROR if it runs.",
+                    recipe.file_name,
+                    entry,
+                )
+                problems.append(entry)
+        elif isinstance(step, sequence_step.SequenceStep):
+            _check_sequence_modules(recipe, step.sequence, problems)
+
+
+def _module_problems_notice(recipe: Recipe, problems: list[str]) -> str:
+    """The one sentence the operator sees about every module mistake."""
+    if len(problems) == 1:
+        counted = "1 PythonModule step names code that could not be found"
+    else:
+        counted = f"{len(problems)} PythonModule steps name code that could not be found"
+    return (
+        f"Recipe '{recipe.file_name}': {counted} - {'; '.join(problems)}. The recipe "
+        f"was loaded and runs normally; a step whose code is really missing ends in ERROR."
+    )
 
 
 def _missing_images_notice(recipe: Recipe, missing: list[str]) -> str:

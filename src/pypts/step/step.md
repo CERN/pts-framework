@@ -92,6 +92,15 @@ passed as keyword arguments.
   `importlib.util.find_spec` (which imports `pkg` to find `pkg.sub`, but never the module
   itself). None for no such module, or one without a `.py` source (a built-in, an extension);
   it never raises.
+- **`module_method_problem(module_ref, method_name, base_dir)`** (2026-10-15) answers "is
+  there anything visibly wrong with this pair?" without running the module, for the recipe
+  parser's load-time check (`recipe/recipe.md`, pipeline step 9). A file beside the recipe is
+  resolved with `_module_file_beside()` and AST-scanned for a top-level binding of
+  `method_name` — a `def`/`async def`, a class, an import or an assignment, inside top-level
+  `if`/`try`/`with` branches too; a `from x import *` mutes the check. Returns one problem
+  sentence (file not found, file does not parse, name not bound) or None. A dotted name is
+  never checked — `find_spec` would import the parent package. Advisory by design: the parser
+  warns, never refuses.
 
 ### 2.3 `UserInteractionStep` → `UserInteraction` — done
 

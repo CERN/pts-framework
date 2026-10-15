@@ -85,6 +85,25 @@ class OddValuesDriver(Other):
         return "pong"
 
 
+class FailingRecoverDriver(Other):
+    """connect() works; recover() always raises, so a recovery must escalate."""
+
+    def connect(self, config):
+        pass
+
+    def teardown(self):
+        pass
+
+    def recover(self, config):
+        raise RuntimeError("reset line is stuck")
+
+    def process_id(self):
+        return os.getpid()
+
+    def ping(self):
+        return "pong"
+
+
 class MarkingDriver(Other):
     """
     Writes each connect() and teardown() into the file its `marks` key names,

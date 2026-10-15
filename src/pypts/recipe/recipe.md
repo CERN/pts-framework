@@ -96,6 +96,16 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
    said once), the path is kept absolute, and one sentence listing them all is added to
    `load_notices` — the GUI shows "No image available" in its place (`hmi/gui/gui.md` §18).
    `parse_recipe()` alone has no folder, so a recipe from text keeps its paths as written.
+9. **Check Python modules** (`load_recipe` only) — `check_python_modules()` walks the same
+   ground as `resolve_images()` and asks
+   `step/python_module_step.py: module_method_problem()` about every `PythonModule` step: the
+   file the `module:` would run is resolved (never executed) and AST-scanned for a top-level
+   binding of `method_name`. A missing file, a file that does not parse, or a missing name is
+   **not an error** — the scan cannot see dynamically built attributes — so each is one
+   WARNING, said once per place (a called sequence is built more than once but warned about
+   once), and one sentence listing them all goes into `load_notices`. A dotted `module:` is
+   not checked: finding it would import its parent package, a side effect the load must not
+   have. `parse_recipe()` alone has no folder, so a recipe from text is not checked.
 
 ## Key types
 
@@ -105,8 +115,8 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
 - `report_metadata: tuple[str, ...]` — globals the Report stamps on every CSV row and in
   the HTML header
 - `load_notices: tuple[str, ...]` — the sentences the operator sees once it has loaded:
-  the version check's, and the missing-pictures one from `load_recipe`. Empty when all is
-  well; never a reason not to load
+  the version check's, and the missing-pictures and PythonModule-mistakes ones from
+  `load_recipe`. Empty when all is well; never a reason not to load
 - `file_name` — set by both entry points when given; `base_dir` — the file's folder, set only
   by `from_file` (what a `PythonModule` step's relative `module:` resolves against)
 - `to_summary()` — every sequence's `SequenceSummary`, for `RecipeLoaded`

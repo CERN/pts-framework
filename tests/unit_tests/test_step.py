@@ -31,7 +31,11 @@ from pypts.messages.run_events import (
     StepStarted,
     UserPathRequest,
 )
-from pypts.step.python_module_step import PythonModuleStep, find_module_file
+from pypts.step.python_module_step import (
+    PythonModuleStep,
+    find_module_file,
+    module_method_problem,
+)
 from pypts.step.registry import STEP_TYPES, build_step
 from pypts.step.runtime import Runtime
 from pypts.step.sequence_step import SequenceStep
@@ -1606,6 +1610,111 @@ def test_find_module_file_has_nothing_for_a_missing_module(tmp_path):
 def test_find_module_file_has_nothing_for_a_module_without_a_source_file():
     """A built-in module has no file to open."""
     assert find_module_file("sys", "") is None
+
+
+# --- module_method_problem: the parser's load-time look at a PythonModule step --
+
+
+def test_a_top_level_function_is_no_problem(tmp_path):
+    write_module(tmp_path)
+
+    assert module_method_problem("demo_tests.py", "add", str(tmp_path)) is None
+    assert module_method_problem("demo_tests", "flag", str(tmp_path)) is None
+
+
+def test_an_async_function_is_no_problem(tmp_path):
+    (tmp_path / "demo_tests.py").write_text(
+        "async def fetch():\n    return 1\n", encoding="utf-8"
+    )
+
+    assert module_method_problem("demo_tests.py", "fetch", str(tmp_path)) is None
+
+
+def test_a_name_bound_by_import_or_assignment_is_no_problem(tmp_path):
+    """The function may legitimately come from somewhere else - an AST scan
+    that only saw `def` would cry wolf on `from helpers import measure`."""
+    (tmp_path / "demo_tests.py").write_text(
+        "from os.path import join as measure\n"
+        "import platform\n"
+        "add = max\n",
+        encoding="utf-8",
+    )
+
+    assert module_method_problem("demo_tests.py", "measure", str(tmp_path)) is None
+    assert module_method_problem("demo_tests.py", "platform", str(tmp_path)) is None
+    assert module_method_problem("demo_tests.py", "add", str(tmp_path)) is None
+
+
+def test_a_conditional_def_is_no_problem(tmp_path):
+    (tmp_path / "demo_tests.py").write_text(
+        "import sys\n"
+        "if sys.platform == 'win32':\n"
+        "    def probe():\n"
+        "        return 'windows'\n"
+        "else:\n"
+        "    def probe():\n"
+        "        return 'posix'\n",
+        encoding="utf-8",
+    )
+
+    assert module_method_problem("demo_tests.py", "probe", str(tmp_path)) is None
+
+
+def test_a_missing_function_is_a_problem(tmp_path):
+    write_module(tmp_path)
+
+    problem = module_method_problem("demo_tests.py", "addd", str(tmp_path))
+
+    assert problem is not None
+    assert "addd" in problem
+    assert "demo_tests.py" in problem
+
+
+def test_a_star_import_mutes_the_check(tmp_path):
+    """`from x import *` may bind anything, so nothing can be said."""
+    (tmp_path / "demo_tests.py").write_text("from os.path import *\n", encoding="utf-8")
+
+    assert module_method_problem("demo_tests.py", "join", str(tmp_path)) is None
+    assert module_method_problem("demo_tests.py", "no_such_thing", str(tmp_path)) is None
+
+
+def test_a_missing_module_file_is_a_problem(tmp_path):
+    problem = module_method_problem("missing_tests.py", "add", str(tmp_path))
+
+    assert problem is not None
+    assert "missing_tests.py" in problem
+
+
+def test_a_file_that_does_not_parse_is_a_problem(tmp_path):
+    (tmp_path / "demo_tests.py").write_text("def broken(:\n", encoding="utf-8")
+
+    problem = module_method_problem("demo_tests.py", "broken", str(tmp_path))
+
+    assert problem is not None
+    assert "demo_tests.py" in problem
+
+
+def test_a_dotted_name_is_not_checked(tmp_path):
+    """Checking a dotted name would import its parent package at load time -
+    a side effect the check must not have. Right or wrong, it is left to the
+    run (and said so in recipe_guide.html)."""
+    assert module_method_problem("platform", "node", str(tmp_path)) is None
+    assert module_method_problem("no_such_module_anywhere", "x", str(tmp_path)) is None
+
+
+def test_the_check_never_runs_the_module(tmp_path):
+    """The whole point: finding the mistake must not execute user code."""
+    marker = tmp_path / "ran.txt"
+    (tmp_path / "demo_tests.py").write_text(
+        f"from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('ran')\n"
+        f"def add(a, b):\n"
+        f"    return a + b\n",
+        encoding="utf-8",
+    )
+
+    assert module_method_problem("demo_tests.py", "add", str(tmp_path)) is None
+    assert not marker.exists()
 
 
 def test_action_type_is_not_a_key_at_all():

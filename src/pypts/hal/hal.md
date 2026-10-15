@@ -137,7 +137,9 @@ and so removes the `[hardware.*]` sections too; the confirmation says so.
   (`ABANDONED_DEVICES_TIMEOUT_S`, 11 s). No lock is waited for - the stuck run may hold one: an
   idle device gets `teardown()`; a device in a call has its process killed (the call then fails
   as a crash in the stuck thread) and is rescued. The names of the devices not torn down in
-  time come back, for one CRITICAL.
+  time come back, for one CRITICAL. Abandonment is final: `open()` and `recover()` on an
+  abandoned device raise, so test code in the abandoned run that still holds the device cannot
+  switch the instrument back on.
 - **The rescue** (`_rescue()`): when a call on a connected device exceeds its timeout, the stuck
   process is killed - it cannot run `teardown()` - and a fresh driver process is started,
   connected and torn down, all within `RESCUE_TIMEOUT_S` (10 s), **before** the `DriverError`
@@ -163,15 +165,22 @@ and so removes the `[hardware.*]` sections too; the confirmation says so.
 | No active local setup | `DriverError("No local setup is active. ...")` |
 
 Uncaught in test code, each makes the step ERROR through the normal step path. Nothing recovers
-on its own: `device.recover()` calls the driver's `recover()` while the process lives, or starts a
-fresh process and connects when it does not.
+on its own: test code calls `device.recover()`, which escalates until the device is usable or
+hopeless — the driver's own `recover()` (teardown + connect, overridable) while the process
+lives; when that fails or the process is gone, teardown (`close()`) and a fresh process with
+`connect()`. Only when the fresh process cannot connect does a `DriverError` reach test code.
+The one exception is an abandoned device: `open()` and `recover()` refuse it
+(`DriverError("Device 'x' cannot be opened/recovered: its run was abandoned and the device was
+torn down.")`) — a new driver process would belong to a run that will not end, and nothing
+would ever tear it down.
 
 ## Logging
 
 INFO (technician): `Device 'x' connected.`, `Device 'x' disconnected.`,
 `Recovering device 'x'.`, `Device 'x' recovered.`, `Device 'x' was torn down on a fresh
 connection.` WARNING: `Device 'x' did not disconnect cleanly: ...`, `Device 'x' is being
-connected again, to tear it down.` ERROR: `Device 'x' could not be torn down and may still be
+connected again, to tear it down.`, `Device 'x' did not recover and is being connected
+again: ...` ERROR: `Device 'x' could not be torn down and may still be
 energised: ...`. Forwarded records are logged as `Device 'x': <message>`: at their own level
 when the logger is the driver's own module (or a child of it), and at DEBUG when another library
 logs below WARNING. Lines printed through `sys.stdout` / `sys.stderr` in the driver process are

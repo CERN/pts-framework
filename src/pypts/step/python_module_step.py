@@ -16,6 +16,7 @@ One concrete step type per module; the package docstring in __init__.py
 holds the map of the ported types and of what still lives in old_code.
 """
 
+import ast
 import importlib
 import importlib.util
 from pathlib import Path
@@ -149,6 +150,96 @@ def find_module_file(module_ref: str, base_dir: str) -> Path | None:
     if origin.suffix != ".py" or not origin.is_file():
         return None
     return origin
+
+
+def module_method_problem(module_ref: str, method_name: str, base_dir: str) -> str | None:
+    """
+    What is wrong with a `module:`/`method_name:` pair, found without running it.
+
+    The recipe parser asks this at load time, so a typo in step 9 is said
+    before step 1 has driven hardware. Only the file-beside-the-recipe
+    spelling is checked: a dotted name would need its parent package imported
+    (a side effect the load must not have), so it returns None, unchecked.
+    The file itself is never executed - its text is read and AST-scanned for
+    a top-level binding of `method_name`: a def, a class, an import or an
+    assignment, looked for inside top-level if/try/with blocks too. A
+    `from x import *` may bind anything, so it mutes the check.
+
+    An advisory, not a verdict: a module may build its attributes dynamically,
+    which is why the parser warns and never refuses.
+
+    Returns:
+        One sentence naming the problem, or None when none was found.
+    """
+    path = _module_file_beside(module_ref, base_dir)
+    if path is None:
+        if module_ref.endswith(".py"):
+            return (
+                f"module file '{module_ref}' not found next to the recipe "
+                f"(looked in '{base_dir or '.'}')"
+            )
+        return None
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    except (OSError, SyntaxError, ValueError) as error:
+        return f"module '{module_ref}' cannot be read as Python: {error}"
+    names = _top_level_names(tree.body)
+    if names is None or method_name in names:
+        return None
+    return f"module '{module_ref}' has no function '{method_name}' at its top level"
+
+
+def _top_level_names(body: list[ast.stmt]) -> set[str] | None:
+    """
+    Every name the statements bind at module level; None on a star import.
+
+    Defs, classes, imports and plain assignments, recursing into the branches
+    of if/try/with - the common homes of a conditional def. Deliberately no
+    deeper (a def inside a function is not an attribute of the module).
+    """
+    names: set[str] = set()
+    for statement in body:
+        blocks: list[list[ast.stmt]] = []
+        if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(statement.name)
+        elif isinstance(statement, ast.Assign):
+            for target in statement.targets:
+                names.update(_target_names(target))
+        elif isinstance(statement, (ast.AnnAssign, ast.AugAssign)):
+            names.update(_target_names(statement.target))
+        elif isinstance(statement, ast.Import):
+            for alias in statement.names:
+                names.add(alias.asname or alias.name.partition(".")[0])
+        elif isinstance(statement, ast.ImportFrom):
+            for alias in statement.names:
+                if alias.name == "*":
+                    return None
+                names.add(alias.asname or alias.name)
+        elif isinstance(statement, ast.If):
+            blocks = [statement.body, statement.orelse]
+        elif isinstance(statement, (ast.Try, ast.TryStar)):
+            handler_bodies = [handler.body for handler in statement.handlers]
+            blocks = [statement.body, statement.orelse, statement.finalbody, *handler_bodies]
+        elif isinstance(statement, (ast.With, ast.AsyncWith)):
+            blocks = [statement.body]
+        for block in blocks:
+            inner = _top_level_names(block)
+            if inner is None:
+                return None
+            names.update(inner)
+    return names
+
+
+def _target_names(target: ast.expr) -> set[str]:
+    """The plain names an assignment target binds (`a = `, `a, b = `)."""
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names: set[str] = set()
+        for element in target.elts:
+            names.update(_target_names(element))
+        return names
+    return set()
 
 
 class PythonModuleStep(Step):

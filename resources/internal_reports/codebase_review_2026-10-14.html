@@ -70,15 +70,15 @@ table.areas td:first-child { font-weight: 600; white-space: nowrap; }
 <h1>PyPTS codebase review</h1>
 <p class="sub">2026-10-14 · branch <code>architecture_refactor</code> (working tree, uncommitted changes included).<br>
 <b>First pass:</b> 7 reviewers (core, recipe/step, HAL, creator/editor v2, HMI/report, silent failures, test gaps).<br>
-<b>Re-review (same day):</b> 4 reviewers checked the six HIGH fixes against the source and the status of #7–#25.
+<b>Re-review (same day):</b> 4 reviewers checked the six HIGH fixes against the source and the status of #8–#25.
 <code>pytest tests</code>: 1786 passed, 3 skipped · <code>ruff</code> clean · <code>mypy</code> clean.</p>
 
 <div class="stats">
   <div class="stat ok"><b>5</b>high fixed</div>
   <div class="stat m"><b>1</b>high partly fixed (#5)</div>
-  <div class="stat h"><b>5</b>new (2 medium, 3 low)</div>
-  <div class="stat l"><b>16</b>medium/low still open</div>
-  <div class="stat m"><b>3</b>medium/low partly fixed</div>
+  <div class="stat h"><b>4</b>new (1 medium, 3 low)</div>
+  <div class="stat l"><b>13</b>medium/low still open</div>
+  <div class="stat m"><b>1</b>medium/low partly fixed</div>
 </div>
 
 <h2>Re-review: the HIGH findings</h2>
@@ -88,16 +88,13 @@ table.areas td:first-child { font-weight: 600; white-space: nowrap; }
 <tr><td>#2</td><td>passfail truthiness</td><td><span class="st fixed">fixed</span></td><td>Only <code>bool</code> / <code>numpy.bool_</code> (step.py:525-536); refused at load on UserInteraction / UserWrite. UserLoading is not refused at load, by decision (ERROR at run time). Leftover: new N5.</td></tr>
 <tr><td>#3</td><td>Metadata overwrites verdicts</td><td><span class="st fixed">fixed</span></td><td>Metadata columns are <code>meta_&lt;name&gt;</code> (report.py:85-98); no built-in column starts with <code>meta_</code>; duplicates refused at load. <b>CSV format changed</b> for anything reading those columns.</td></tr>
 <tr><td>#4</td><td>Unknown keys dropped</td><td><span class="st fixed">fixed</span></td><td><code>extra="forbid"</code> on every recipe model; removed sequence keys keep their sentence. Nothing that writes recipes emits a refused key, except the dead template in #16.</td></tr>
-<tr><td>#5</td><td>HAL has no safe state</td><td><span class="st partly">partly</span></td><td>A timed-out call is torn down on a fresh process (<code>_rescue</code>); an abandoned run's devices are torn down side by side, without taking locks. Two medium gaps remain: N1 and N2.</td></tr>
+<tr><td>#5</td><td>HAL has no safe state</td><td><span class="st partly">partly</span></td><td>A timed-out call is torn down on a fresh process (<code>_rescue</code>); an abandoned run's devices are torn down side by side, without taking locks. One medium gap remains: N1.</td></tr>
 <tr><td>#6</td><td>Missing report = PASS</td><td><span class="st fixed">fixed</span></td><td>A missing report or a Report error gives exit 2 (headless.py:49-62) and prints "No report was produced." The worry about a Report error arriving after ReportReady is unfounded: ReportReady is the Report's last message (report.py:440).</td></tr>
 </table></div>
 
 <h2>Do these next</h2>
 <ol class="first">
-  <li><b>N1 + N2</b>: close the two gaps in the #5 abandon path: the budget overrun, and <code>recover()</code> after abandon.</li>
-  <li><b>#7 CSV rewrite</b>: one failed write at the end can still empty the only record of the run.</li>
-  <li><b>#8 teardown failure is only a WARNING</b>: still true on a normal close, so the run stays PASS.</li>
-  <li><b>#9 killed device stays cached</b>: now more likely to bite, because the rescue path kills processes more often.</li>
+  <li><b>N1</b>: close the remaining gap in the #5 abandon path: the budget overrun on the idle path.</li>
   <li><b>#16 dead code</b>: it now also holds a template that writes recipes the schema refuses.</li>
 </ol>
 
@@ -108,12 +105,6 @@ table.areas td:first-child { font-weight: 600; white-space: nowrap; }
 <dl><dt>Problem</dt><dd>When a device is idle, <code>abandon()</code> runs <code>teardown</code> with a 10 s timeout. If that times out, it then calls <code>_rescue()</code>, which has 10 s more. The budget assumes "rescue 10 s inside abandon 11 s", but that only holds for a busy device.</dd>
 <dt>Impact</dt><dd>The join gives up at 11 s and reports "may still be energised" while the rescue is still running. CORE then exits and kills the rescue part way through the teardown.</dd>
 <dt>Solution</dt><dd>Give both steps one shared deadline, for example teardown gets half and the rescue gets what is left. Add a test with a <code>teardown</code> that hangs.</dd></dl></div>
-
-<div class="card medium"><div class="head"><span class="num">N2</span><span class="title"><code>recover()</code> can bring a device back after it was abandoned</span><span class="sev medium">medium</span><span class="st new">new</span><span class="tag">hal · bug</span></div>
-<div class="loc">hal/connection_driver.py:158-178 (recover, open: no <code>_abandoned</code> check)</div>
-<dl><dt>Problem</dt><dd>Test code in the stuck run may still hold a reference to the device. If it catches the <code>DriverError</code> from the killed call and calls <code>recover()</code>, a new driver process starts and connects. Nothing tracks that process.</dd>
-<dt>Impact</dt><dd>An instrument that was just torn down is switched back on, and nothing will tear it down again.</dd>
-<dt>Solution</dt><dd>Have <code>open()</code> and <code>recover()</code> raise <code>DriverError</code> once <code>_abandoned</code> is set. Add a test.</dd></dl></div>
 
 <div class="card low"><div class="head"><span class="num">N3</span><span class="title">A failure after the steps empties <code>RunFinished.outcomes</code></span><span class="sev low">low</span><span class="st new">new</span><span class="tag">sequencer</span></div>
 <div class="loc">sequencer/sequencer.py:381-384</div>
@@ -164,7 +155,7 @@ table.areas td:first-child { font-weight: 600; white-space: nowrap; }
 <dl><dt>Problem</dt><dd><code>teardown()</code> ran only on a clean close; timeouts and abandoned runs killed drivers without it.</dd>
 <dt>Impact</dt><dd>A PSU stayed energised after Stop, a hang or a timeout.</dd>
 <dt class="now">Now</dt><dd>A timed-out call is torn down on a fresh driver process. An abandoned run's devices are torn down side by side, without taking locks, within 11 s. A device that is not torn down is a CRITICAL. The abandoned run's events are dropped.</dd>
-<dt>Left</dt><dd>N1 (budget overrun on the idle path), N2 (<code>recover()</code> after abandon) and N4 (races). By design, Stop still does not interrupt a call blocked in a driver, and a hard kill of PyPTS runs none of this.</dd></dl></div>
+<dt>Left</dt><dd>N1 (budget overrun on the idle path) and N4 (races). By design, Stop still does not interrupt a call blocked in a driver, and a hard kill of PyPTS runs none of this.</dd></dl></div>
 
 <div class="card done"><div class="head"><span class="num">#6</span><span class="title">A missing report did not change the result or exit code</span><span class="sev high">high</span><span class="st fixed">fixed</span><span class="tag">api/headless · silent failure</span></div>
 <div class="loc">api/embedding.py:319-343 · api/headless.py:49-62, :117 · status 1.73</div>
@@ -174,41 +165,11 @@ table.areas td:first-child { font-weight: 600; white-space: nowrap; }
 
 <h2>Medium (first pass)</h2>
 
-<div class="card medium"><div class="head"><span class="num">#7</span><span class="title">The final CSV rewrite can destroy the run's only record</span><span class="sev medium">medium</span><span class="st open">open</span><span class="tag">report · data loss</span></div>
-<div class="loc">report/report.py:285-314 (record_step: append at 314, after the write), :400-417 (rewrite_csv, open "w" at 414)</div>
-<dl><dt>Problem</dt><dd><code>rewrite_csv()</code> reopens <code>report.csv</code> with "w", which empties it before writing, so a locked file (Excel) or a full disk leaves it truncated. In <code>record_step()</code> the row is added to <code>self.rows</code> only after the disk write succeeds.</dd>
-<dt>Impact</dt><dd>One measurement, possibly a FAIL, or the whole CSV disappears without a word.</dd>
-<dt>Solution</dt><dd>Append to <code>self.rows</code> first. Write a <code>.tmp</code> file and <code>os.replace()</code> it over the original.</dd></dl></div>
-
-<div class="card medium"><div class="head"><span class="num">#8</span><span class="title">A device that fails teardown/close is only a WARNING, and the run stays PASS</span><span class="sev medium">medium</span><span class="st partly">partly fixed</span><span class="tag">hal · silent failure</span></div>
-<div class="loc">hal/local_setup.py:200-210 · hal/connection_driver.py:182-193 · sequencer.py:460-486 (run_body)</div>
-<dl><dt>Problem</dt><dd>On a normal close a failed teardown is still a <code>log.warning</code> only. Only the abandon path reports it, as a CRITICAL.</dd>
-<dt>Impact</dt><dd>An instrument that did not disconnect cleanly leaves a clean PASS behind.</dd>
-<dt>Solution</dt><dd>Have <code>LocalSetup.close()</code> return its failures. Have <code>run_body()</code> report them with <code>report_problem(ERROR)</code> and raise the run result to ERROR.</dd></dl></div>
-
-<div class="card medium"><div class="head"><span class="num">#9</span><span class="title">A killed or crashed device stays cached and unusable for the rest of the run</span><span class="sev medium">medium</span><span class="st open">open</span><span class="tag">hal · bug</span></div>
-<div class="loc">hal/local_setup.py:126-149 (get_device) · connection_driver.py:374, :412 ("is not open")</div>
-<dl><dt>Problem</dt><dd>A dead <code>ConnectionDriver</code> stays in <code>_devices</code>, and later calls fail with "Device 'x' is not open", with no mention of <code>recover()</code>. The new rescue path kills processes more often, so this now comes up more.</dd>
-<dt>Impact</dt><dd>One timed-out call makes every later step on that device an ERROR.</dd>
-<dt>Solution</dt><dd>In <code>get_device</code>, re-open a cached device that is not open. Mention <code>recover()</code> in the error.</dd></dl></div>
-
-<div class="card medium"><div class="head"><span class="num">#10</span><span class="title">Slow hardware blocks Stop and other threads</span><span class="sev medium">medium</span><span class="st partly">partly fixed</span><span class="tag">hal · gap</span></div>
-<div class="loc">hal/local_setup.py:128-148 (open under the lock) · connection_driver.py:409-458 (_read_message)</div>
-<dl><dt>Problem</dt><dd><code>device.open()</code> still runs inside the setup lock, and <code>_read_message</code> still does not watch Stop. What changed: an abandoned run is now ended within a known time.</dd>
-<dt>Impact</dt><dd>Stop can still wait up to <code>call_timeout_s</code> before the abandon path starts, and other devices still stall while one opens.</dd>
-<dt>Solution</dt><dd>Open devices outside the setup lock, with one lock per name. Have <code>_read_message</code> also watch a stop event.</dd></dl></div>
-
 <div class="card medium"><div class="head"><span class="num">#11</span><span class="title">A discarded config.ini wipes every <code>[hardware.*]</code> section, and the error blames the user</span><span class="sev medium">medium</span><span class="st open">open</span><span class="tag">config · silent failure</span></div>
 <div class="loc">config_handler/config_handler.py:496-540 (_load_or_discard) · hal/local_setup.py:135-140</div>
 <dl><dt>Problem</dt><dd>One bad value replaces the whole config with defaults, so the device sections are gone too. The step then says "Add a [hardware.x] section", even though that section is already in the file.</dd>
 <dt>Impact</dt><dd>The technician is sent to fix the wrong thing.</dd>
 <dt>Solution</dt><dd>When the config was discarded, say so in the device error and include <code>bootstrap_problem</code>, or refuse to run until it is fixed.</dd></dl></div>
-
-<div class="card medium"><div class="head"><span class="num">#12</span><span class="title">Recipe mistakes show up only after earlier steps have driven hardware</span><span class="sev medium">medium</span><span class="st open">open</span><span class="tag">recipe · ergonomics</span></div>
-<div class="loc">step/python_module_step.py:176-181 · recipe/recipe_schema.py:359-364 (RangeOutput), :536-538 (<code>wait_time: Any</code>)</div>
-<dl><dt>Problem</dt><dd>Nothing checks <code>method_name</code> at load. <code>wait_time: abc</code> loads, and so do swapped or non-numeric range limits. The guide now says plainly that these are "Not checked".</dd>
-<dt>Impact</dt><dd>A typo in step 9 is found only after steps 1-8 have run on the DUT.</dd>
-<dt>Solution</dt><dd>AST-scan the module for <code>def method_name</code> and warn if it is missing. Type <code>wait_time</code> as a non-negative number. Refuse a range whose min is greater than its max.</dd></dl></div>
 
 <div class="card medium"><div class="head"><span class="num">#13</span><span class="title">Test-function conventions are hidden: assert gives ERROR, a bare return becomes <code>output</code></span><span class="sev medium">medium</span><span class="st partly">partly fixed</span><span class="tag">step · ergonomics</span></div>
 <div class="loc">step/step.py:598-606, :617-622 · recipe_guide.html:274, :331</div>
@@ -300,11 +261,11 @@ table.areas td:first-child { font-weight: 600; white-space: nowrap; }
 <h2>Per-area impression (after the re-review)</h2>
 <table class="areas">
 <tr><td>Core / sequencer</td><td>The run lifecycle is now guaranteed. Left: N3, and the CORE loop has no error net (#20).</td></tr>
-<tr><td>Recipe / step</td><td>The schema is now strict everywhere, and passfail is honest. Left: load-time checks (#12), the test-function conventions (#13) and the duplicated rules (#15).</td></tr>
-<tr><td>HAL</td><td>The biggest improvement: timeouts and abandoned runs now tear devices down. Left: tighten the abandon path (N1, N2, N4), and the normal-close and cache gaps (#8, #9).</td></tr>
+<tr><td>Recipe / step</td><td>The schema is now strict everywhere, and passfail is honest. Left: the test-function conventions (#13) and the duplicated rules (#15).</td></tr>
+<tr><td>HAL</td><td>The biggest improvement: timeouts and abandoned runs now tear devices down. Left: tighten the abandon path (N1, N4).</td></tr>
 <tr><td>Creator / editor v2</td><td>The verificator follows the stricter schema. Left: dead code (#16), the duplicated and unsafe save (#17), and output types that are not filtered by step type (N5).</td></tr>
-<tr><td>HMI / report / API</td><td>Metadata columns are isolated, and a missing report is no longer a PASS. Left: the CSV rewrite (#7), unescaped fields (#19) and the size of <code>gui.py</code> (#18).</td></tr>
-<tr><td>Tests</td><td>New tests cover every HIGH fix. Left: the end-to-end test (#24), and tests for N1 and N2.</td></tr>
+<tr><td>HMI / report / API</td><td>Metadata columns are isolated, and a missing report is no longer a PASS. Left: unescaped fields (#19) and the size of <code>gui.py</code> (#18).</td></tr>
+<tr><td>Tests</td><td>New tests cover every HIGH fix. Left: the end-to-end test (#24), and a test for N1.</td></tr>
 </table>
 </main>
 </body>

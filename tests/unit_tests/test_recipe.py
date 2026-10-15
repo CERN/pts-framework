@@ -1840,6 +1840,87 @@ def test_a_recipe_from_text_keeps_its_pictures_as_written():
     assert recipe.load_notices == ()
 
 
+# --------------------------------------------------------------------------
+# PythonModule steps: module and method_name looked at when the file loads,
+# a mistake a notice and never a reason not to load
+# --------------------------------------------------------------------------
+
+MODULES = f"""\
+name: Modules
+version: {CURRENT_VERSION}
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: Good
+    module: good_tests.py
+    method_name: add
+  - steptype: PythonModule
+    step_name: Typo in method
+    module: good_tests.py
+    method_name: addd
+  - steptype: PythonModule
+    step_name: Missing file
+    module: not_there_tests.py
+    method_name: add
+  - steptype: Sequence
+    sequence_name: Called
+---
+sequence_name: Called
+steps:
+  - steptype: PythonModule
+    step_name: Inner typo
+    module: good_tests.py
+    method_name: measure
+"""
+
+
+def _modules_recipe(tmp_path, text):
+    (tmp_path / "good_tests.py").write_text(
+        "def add(a, b):\n    return a + b\n", encoding="utf-8"
+    )
+    path = tmp_path / "modules.yml"
+    path.write_text(text, encoding="utf-8")
+    return Recipe.from_file(str(path))
+
+
+def test_a_module_mistake_is_a_notice_and_the_recipe_still_loads(tmp_path, caplog):
+    with caplog.at_level(logging.WARNING):
+        recipe = _modules_recipe(tmp_path, MODULES)
+
+    assert len(recipe.load_notices) == 1
+    notice = recipe.load_notices[0]
+    assert "3 PythonModule steps" in notice
+    assert "addd" in notice
+    assert "not_there_tests.py" in notice
+    assert "measure" in notice
+    assert "runs normally" in notice
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    # The Called document is built twice - as its own tree and as the copy
+    # inside the Sequence step - and its mistake is said once.
+    assert sum("measure" in message for message in warnings) == 1
+    assert sum("addd" in message for message in warnings) == 1
+    assert sum("not_there_tests.py" in message for message in warnings) == 1
+
+
+def test_a_recipe_whose_modules_check_out_has_no_notice(tmp_path):
+    good_only = MODULES.replace("addd", "add").replace(
+        "not_there_tests.py", "good_tests.py"
+    ).replace("method_name: measure", "method_name: add")
+
+    recipe = _modules_recipe(tmp_path, good_only)
+
+    assert recipe.load_notices == ()
+
+
+def test_a_recipe_from_text_does_not_check_modules():
+    """Only a file has a folder to resolve against - same rule as pictures."""
+    recipe = Recipe.from_yaml_text(MODULES)
+
+    assert recipe.load_notices == ()
+
+
 def test_the_picture_demo_loads_with_its_one_missing_picture_named():
     """resources/recipes/stepimage_recipes/stepimage_demo.yml is the
     image_path showcase: a step picture and a sequence picture that are in the

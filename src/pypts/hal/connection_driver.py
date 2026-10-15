@@ -11,7 +11,10 @@ device, so it reads well on the operator's ERROR line.
 teardown() is where a driver leaves its instrument safe, so it must run however
 the device ends. A driver process stuck in a call cannot run it: it is killed,
 and a fresh process connects and tears down instead - the rescue. abandon() does
-the same for a run that will not end.
+the same for a run that will not end, and is final: open() and recover() refuse
+an abandoned device. recover() is for test code that wants to retry: it escalates
+from the driver's own recover() to a fresh process, and only raises when even
+that fresh process cannot connect.
 
 What crosses the Pipe is pickled: arguments and return values must be
 picklable. Calls are one at a time: a lock makes a second thread wait.
@@ -129,7 +132,8 @@ class ConnectionDriver:
         self._lock = threading.Lock()
         #: Set on the process a rescue starts: a rescue that times out is not rescued.
         self._is_rescue = False
-        #: Set by abandon(): the call it kills must not start a second rescue.
+        #: Set by abandon(), never cleared: the call it kills must not start a
+        #: second rescue, and open() and recover() refuse - the device stays down.
         self._abandoned = False
         #: Set once connect() has returned: before that there is nothing to tear down.
         self._connected = False
@@ -158,24 +162,49 @@ class ConnectionDriver:
 
     def recover(self) -> None:
         """
-        Bring the device back: the driver's own recover() while its process is
-        alive, a fresh process and connect() when it is not. The hardware layer
-        never calls this by itself - test code decides.
+        Bring the device back, escalating: the driver's own recover() while its
+        process is alive; when that fails or the process is gone, teardown and
+        a fresh process with connect(). Only when the fresh process cannot
+        connect does the DriverError reach the caller. An abandoned device is
+        refused: it stays down. The hardware layer never calls this by itself -
+        test code decides.
         """
+        if self._abandoned:
+            raise DriverError(
+                f"Device '{self.name}' cannot be recovered: its run was abandoned "
+                f"and the device was torn down."
+            )
         log.info("Recovering device '%s'.", self.name)
         alive = self._process is not None and self._process.is_alive()
         if self._conn is not None and alive:
             log.debug("Device '%s': calling recover(%r).", self.name, masked(self._settings))
-            self._call("recover", [self._settings], {}, trace=False)
-        else:
-            self._discard()
-            self.open()
+            try:
+                self._call("recover", [self._settings], {}, trace=False)
+                log.info("Device '%s' recovered.", self.name)
+                return
+            except DriverError as exc:
+                log.warning(
+                    "Device '%s' did not recover and is being connected again: %s",
+                    self.name,
+                    exc,
+                )
+        self.close()
+        self.open()
         log.info("Device '%s' recovered.", self.name)
 
     # --- what LocalSetup calls ---------------------------------------------------
 
     def open(self) -> None:
-        """Start the driver process and connect the device. Leaves nothing running on failure."""
+        """
+        Start the driver process and connect the device. Leaves nothing running
+        on failure. An abandoned device is refused: its run will not end, so
+        nothing would ever tear a new process down.
+        """
+        if self._abandoned:
+            raise DriverError(
+                f"Device '{self.name}' cannot be opened: its run was abandoned "
+                f"and the device was torn down."
+            )
         self._start(STARTUP_TIMEOUT_S, self._call_timeout_s)
         log.info("Device '%s' connected.", self.name)
 
