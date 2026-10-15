@@ -21,8 +21,10 @@ is lost on cleanup and awkward for a bench with a fixed configuration. These are
 the conventional per-user locations instead:
 
     Windows   config  %LOCALAPPDATA%\\pypts\\config.ini
+              bench   %LOCALAPPDATA%\\pypts\\bench.ini
               data    %LOCALAPPDATA%\\pypts\\{logs,reports}
     Linux     config  ~/.config/pypts/config.ini
+              bench   ~/.config/pypts/bench.ini
               data    ~/.local/share/pypts/{logs,reports}
               state   ~/.local/state/pypts/recent_recipes.json
                       ~/.local/state/pypts/recent_recipes_editor.json
@@ -57,6 +59,9 @@ APP_NAME = "pypts"
 #: The file name inside the config directory.
 CONFIG_FILE_NAME = "config.ini"
 
+#: The bench file beside config.ini: one section per device, bare name.
+BENCH_FILE_NAME = "bench.ini"
+
 #: The file name inside the state directory.
 RECENT_RECIPES_FILE_NAME = "recent_recipes.json"
 
@@ -77,6 +82,15 @@ def config_file_path() -> Path:
     Monkeypatch this in tests; everything else derives from it.
     """
     return config_dir() / CONFIG_FILE_NAME
+
+
+def bench_file_path() -> Path:
+    """
+    Full path of the bench file - the devices - whether or not it exists yet.
+
+    Monkeypatch this in tests, the way `config_file_path` is monkeypatched.
+    """
+    return config_dir() / BENCH_FILE_NAME
 
 
 def state_dir() -> Path:

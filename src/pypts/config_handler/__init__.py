@@ -15,8 +15,12 @@ The file lives in the per-user configuration directory of the platform
 from a template the first time pypts runs. See `config_handler.py` for the
 rules, `configuration_schema.py` for what the file contains, and
 `file_locations.py` for where it is.
+
+The devices of the bench live in their own file, `bench.ini`, beside config.ini;
+`bench_config.py` reads it.
 """
 
+from pypts.config_handler.bench_config import BenchConfig, BenchOutcome, bench_config
 from pypts.config_handler.config_handler import (
     BootstrapOutcome,
     ConfigError,
@@ -29,6 +33,8 @@ from pypts.config_handler.config_handler import (
 )
 
 __all__ = [
+    "BenchConfig",
+    "BenchOutcome",
     "BootstrapOutcome",
     "ConfigError",
     "ConfigFileMissing",
@@ -37,4 +43,5 @@ __all__ = [
     "ConfigSchemaError",
     "ConfigWriteError",
     "Role",
+    "bench_config",
 ]
