@@ -663,7 +663,7 @@ def test_core_routes_hmi_exit_to_every_submodule():
     The shutdown fan-out: each of the three gets exactly its own stop message
     and nothing else, across the two phases the handshake takes.
 
-    Sibling of test_shutdown_holds_stop_report_until_the_sequencer_has_stopped,
+    Sibling of test_shutdown_holds_stop_report_and_stop_hmi_until_the_sequencer_has_stopped,
     which pins *when* the Report is told; this one pins *that all three are
     told*, which is the claim a send dropped from stop_all_modules() or from
     release_stop_report() would break.
