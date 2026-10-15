@@ -273,6 +273,12 @@ class Core:
         #: (StepExecuted / RunFinished / GenerateReport) before it closes.
         self.stop_report_pending = False
 
+        #: True between "shutdown asked" and "the HMI has been told to stop".
+        #: StopHmi is held back like StopReport: the Sequencer may still be
+        #: abandoning a run, and the status line and CRITICALs it sends on the
+        #: way must reach a frontend that is still open.
+        self.stop_hmi_pending = False
+
         #: The loaded recipe, and the only copy of it: CORE owns it, and hands
         #: it to the Sequencer with each RunSequence. None until one is loaded,
         #: and again after UnloadRecipe, which is what makes StartSequence
@@ -482,6 +488,7 @@ class Core:
             case SequencerStopped():
                 self.modules[SEQUENCER].running = False
                 self.release_stop_report()
+                self.release_stop_hmi()
             case ClosingDevices():
                 # The device-teardown phase of a fault shutdown. One line of
                 # free text is all a frontend needs to show it.
@@ -950,8 +957,9 @@ class Core:
         is what closes their window. Nothing here writes an operator-facing line
         of its own; that would say the same thing twice.
 
-        Then the ordinary shutdown, unchanged. StopSequencer and StopHmi go out,
-        StopReport is held back so the Report can drain the aborted run's tail,
+        Then the ordinary shutdown, unchanged. StopSequencer goes out; StopReport
+        is held back so the Report can drain the aborted run's tail, and StopHmi
+        is held back so the status line and CRITICALs reach an open window,
         the five-second budget applies, and CORE leaves when every module has
         answered or the budget runs out. Nothing new is invented for this case,
         which is the point: a watchdog that shut down differently from every
@@ -1012,11 +1020,13 @@ class Core:
             "Stopping every module; the shutdown budget is %.1f s.", self.SHUTDOWN_TIMEOUT_S
         )
         self.to_sequencer.send(StopSequencer())
-        self.to_hmi.send(StopHmi())
-        # StopReport is held back: the Sequencer may still be finishing an
-        # aborted sequence whose events must reach the Report first. It is
-        # released by SequencerStopped, or by the shutdown deadline.
+        # StopReport and StopHmi are held back: the Sequencer may still be
+        # finishing an aborted sequence whose events must reach the Report,
+        # and may still be abandoning a run whose status line and CRITICALs
+        # must reach a frontend that is still open. Both are released by
+        # SequencerStopped, or by the shutdown deadline.
         self.stop_report_pending = True
+        self.stop_hmi_pending = True
 
     def release_stop_report(self) -> None:
         """Send the held StopReport, exactly once."""
@@ -1025,6 +1035,14 @@ class Core:
         self.stop_report_pending = False
         log.debug("Releasing the held StopReport.")
         self.to_report.send(StopReport())
+
+    def release_stop_hmi(self) -> None:
+        """Send the held StopHmi, exactly once."""
+        if not self.stop_hmi_pending:
+            return
+        self.stop_hmi_pending = False
+        log.debug("Releasing the held StopHmi.")
+        self.to_hmi.send(StopHmi())
 
     def check_stop_status(self) -> None:
         """
@@ -1053,8 +1071,9 @@ class Core:
         if self.shutdown_deadline is None or time.time() < self.shutdown_deadline:
             return
 
-        # The Sequencer never answered; stop holding the Report for it.
+        # The Sequencer never answered; stop holding the Report and the HMI.
         self.release_stop_report()
+        self.release_stop_hmi()
 
         # Reached once: self.running is cleared below, so the loop that calls
         # this does not come back round to log the same sentence again.

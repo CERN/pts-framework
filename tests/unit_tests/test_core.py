@@ -580,11 +580,15 @@ def test_a_module_still_running_before_any_stop_request_is_not_abandoned():
     assert core.shutdown_deadline is None
 
 
-def test_shutdown_holds_stop_report_until_the_sequencer_has_stopped():
+def test_shutdown_holds_stop_report_and_stop_hmi_until_the_sequencer_has_stopped():
     """
     The Report is stopped LAST. Stopping it first threw away every step of a run
     aborted by shutdown: the Report closed within one 10 ms tick while the
     Sequencer was still unwinding, so the tail it emitted was never drained.
+
+    StopHmi is held with it: the Sequencer may still be abandoning a run, and
+    the status line and CRITICALs it sends on the way must reach a frontend
+    that is still open, not one already told to close.
     """
     from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
     from pypts.messages.core_report_communication import StopReport
@@ -596,12 +600,13 @@ def test_shutdown_holds_stop_report_until_the_sequencer_has_stopped():
     core.poll_all_sources()
 
     assert list(core.to_sequencer.receive()) == [StopSequencer()]
-    assert list(core.to_hmi.receive()) == [StopHmi()]
+    assert list(core.to_hmi.receive()) == []
     assert list(core.to_report.receive()) == []
 
     core.from_sequencer.send(SequencerStopped())
     core.poll_all_sources()
 
+    assert list(core.to_hmi.receive()) == [StopHmi()]
     assert list(core.to_report.receive()) == [StopReport()]
 
 
@@ -634,7 +639,7 @@ def test_shutdown_deadline_releases_the_held_stop_report(caplog):
     A Sequencer that never answers must not leave the Report held open for ever.
     The deadline releases the stop it was holding, then abandons what is late.
     """
-    from pypts.messages.core_hmi_communication import ShutdownRequested
+    from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
     from pypts.messages.core_report_communication import StopReport
 
     core = build_core_that_spawns_nothing()
@@ -649,6 +654,7 @@ def test_shutdown_deadline_releases_the_held_stop_report(caplog):
         core.check_stop_status()
 
     assert list(core.to_report.receive()) == [StopReport()]
+    assert list(core.to_hmi.receive()) == [StopHmi()]
     assert [r for r in caplog.records if "were left behind" in r.message]
 
 
@@ -685,7 +691,7 @@ def test_a_second_shutdown_request_sends_nothing_new():
     launcher - and the guard must still hold now that the sends have moved.
     """
     from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
-    from pypts.messages.core_sequencer_communication import StopSequencer
+    from pypts.messages.core_sequencer_communication import SequencerStopped, StopSequencer
 
     core = build_core_that_spawns_nothing()
 
@@ -694,6 +700,10 @@ def test_a_second_shutdown_request_sends_nothing_new():
     core.poll_all_sources()
 
     assert list(core.to_sequencer.receive()) == [StopSequencer()]
+
+    core.from_sequencer.send(SequencerStopped())
+    core.poll_all_sources()
+
     assert list(core.to_hmi.receive()) == [StopHmi()]
 
 
@@ -917,15 +927,25 @@ def test_the_operator_is_told_before_the_window_closes():
     """
     from pypts.core.core import HEARTBEAT_FATAL_S, HMI
     from pypts.messages.core_hmi_communication import ModuleErrorReported, StopHmi
+    from pypts.messages.core_sequencer_communication import SequencerStopped
 
     core = build_core_that_spawns_nothing()
     silence(core, HMI, HEARTBEAT_FATAL_S + 1)
 
     core.do_periodic_tasks()
 
+    # StopHmi is held until the Sequencer has stopped, so the window stays
+    # open for the error and for the status line that follows it.
     sent = list(core.to_hmi.receive())
     kinds = [type(message) for message in sent]
     assert ModuleErrorReported in kinds
+    assert StopHmi not in kinds
+
+    core.from_sequencer.send(SequencerStopped())
+    core.poll_all_sources()
+
+    sent += list(core.to_hmi.receive())
+    kinds = [type(message) for message in sent]
     assert StopHmi in kinds
     assert kinds.index(ModuleErrorReported) < kinds.index(StopHmi)
 

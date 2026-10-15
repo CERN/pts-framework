@@ -72,12 +72,14 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
     alone, measurements on a line of their own: `Heartbeat timeout for module: <name>`,
     `Heartbeat fatal for module: <name>`, `Module is responding again: <name>`.
 - **Shutdown choreography** — `stop_all_modules()` is idempotent (the frontend and the
-  launcher both ask). It starts the `SHUTDOWN_TIMEOUT_S` deadline and sends `StopSequencer` +
-  `StopHmi`. `StopReport` is held (`stop_report_pending`) until `SequencerStopped` arrives,
-  so an aborted run's CSV tail and `report.html` are written first — see
-  `release_stop_report()`. `check_stop_status()` ends the loop when every module has reported
-  itself stopped, or at the deadline: it then releases the held `StopReport`, logs an ERROR
-  naming the modules that did not answer, and leaves. Nothing is killed — the threads are
+  launcher both ask). It starts the `SHUTDOWN_TIMEOUT_S` deadline and sends `StopSequencer`.
+  `StopReport` is held (`stop_report_pending`) until `SequencerStopped` arrives, so an aborted
+  run's CSV tail and `report.html` are written first — see `release_stop_report()`. `StopHmi`
+  is held the same way (`stop_hmi_pending`, `release_stop_hmi()`), so the frontend is still
+  open for the status line and CRITICALs the Sequencer sends while abandoning a run. Both are
+  released by `SequencerStopped`, or at the deadline. `check_stop_status()` ends the loop when
+  every module has reported itself stopped, or at the deadline: it then releases the held
+  `StopReport` and `StopHmi`, logs an ERROR naming the modules that did not answer, and leaves. Nothing is killed — the threads are
   daemons and the HMI process belongs to the launcher.
 - **Configuration changes** — CORE is pypts' runtime writer of `config.ini` (the Recipe
   Editor v2, a process of its own, writes its own `[recipe_editor]` lines — `config_handler.md`).
