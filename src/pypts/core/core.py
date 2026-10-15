@@ -63,6 +63,7 @@ from pypts.messages.core_report_communication import (
     StopReport,
 )
 from pypts.messages.core_sequencer_communication import (
+    ClosingDevices,
     CoreToSequencer,
     ForgetRecipe,
     RunSequence,
@@ -481,6 +482,10 @@ class Core:
             case SequencerStopped():
                 self.modules[SEQUENCER].running = False
                 self.release_stop_report()
+            case ClosingDevices():
+                # The device-teardown phase of a fault shutdown. One line of
+                # free text is all a frontend needs to show it.
+                self.to_hmi.send(StatusChanged("Stopping: closing the devices..."))
             case RunStarted():
                 # Decides the routing of the whole run: an engineering-mode
                 # retest has no report, so nothing of it goes to the Report.

@@ -38,6 +38,7 @@ from pypts.hal.connection_driver import ConnectionDriver
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType
 from pypts.messages.core_sequencer_communication import (
+    ClosingDevices,
     PauseSequence,
     ResumeSequence,
     RunSequence,
@@ -584,7 +585,7 @@ def test_an_abandoned_sequence_is_reported_critical_before_sequencer_stopped(
     instance.stop()
 
     messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
-    assert [type(m) for m in messages] == [ModuleError, SequencerStopped]
+    assert [type(m) for m in messages] == [ModuleError, ClosingDevices, SequencerStopped]
     reported = messages[0]
     assert reported.severity is ErrorSeverity.CRITICAL
     assert reported.operation == "Sequencer.stop_running_sequence"
@@ -618,8 +619,13 @@ def test_an_abandoned_run_has_its_devices_made_safe_and_the_unsafe_ones_named(
     instance.stop()
 
     messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
-    assert [type(m) for m in messages] == [ModuleError, ModuleError, SequencerStopped]
-    unsafe = messages[1]
+    assert [type(m) for m in messages] == [
+        ModuleError,
+        ClosingDevices,
+        ModuleError,
+        SequencerStopped,
+    ]
+    unsafe = messages[2]
     assert unsafe.severity is ErrorSeverity.CRITICAL
     assert "psu1" in unsafe.message
     assert "without running teardown" in unsafe.message

@@ -697,6 +697,22 @@ def test_a_second_shutdown_request_sends_nothing_new():
     assert list(core.to_hmi.receive()) == [StopHmi()]
 
 
+def test_closing_devices_is_relayed_to_the_operator_as_status_text():
+    """
+    The Sequencer says it is tearing an abandoned run's devices down; the
+    operator hears it as one status line, on the frontend that is still open.
+    """
+    from pypts.messages.core_hmi_communication import StatusChanged
+    from pypts.messages.core_sequencer_communication import ClosingDevices
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_sequencer.send(ClosingDevices())
+    core.poll_all_sources()
+
+    assert list(core.to_hmi.receive()) == [StatusChanged("Stopping: closing the devices...")]
+
+
 # --------------------------------------------------------------------------
 # Run events reach the Report (roadmap: the report wiring)
 # --------------------------------------------------------------------------

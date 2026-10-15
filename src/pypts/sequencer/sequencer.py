@@ -33,6 +33,7 @@ from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
 from pypts.messages.common_messages import ErrorSeverity, ResultType
 from pypts.messages.core_sequencer_communication import (
+    ClosingDevices,
     CoreToSequencer,
     ForgetRecipe,
     PauseSequence,
@@ -767,6 +768,7 @@ class Sequencer:
         driver leaves its instrument safe. A device that could not be torn
         down is a CRITICAL of its own, naming it.
         """
+        self.core.send(ClosingDevices())
         unsafe = abandon_active_setup(ABANDONED_DEVICES_TIMEOUT_S)
         if not unsafe:
             log.debug("The abandoned run has no device left open.")
