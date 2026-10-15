@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from multiprocessing import Process, Queue, get_start_method, set_start_method
 from typing import Any, NoReturn
 
-from pypts.config_handler import BootstrapOutcome, ConfigHandler
+from pypts.config_handler import BenchOutcome, BootstrapOutcome, ConfigHandler, bench_config
 from pypts.core.core import core_main
 from pypts.hmi.cli.cli import cli_main
 from pypts.logger.log import (
@@ -324,6 +324,11 @@ def start_engine(mode: str, log_level_name: str | None = None) -> Engine:
         # for a support ticket still answers all three - logging_rules.md section 6.
         log_run_log_header(mode, log_file_path)
 
+        # The bench file: read once, after logging, so its lines reach the
+        # run log directly. A discarded file is the operator's to fix; the
+        # engine still starts, with no devices.
+        show_bench_notice(mode)
+
         log.debug("Logging at %s.", logging.getLevelName(log_level))
         if not level_was_understood:
             log.warning(
@@ -425,6 +430,29 @@ def show_config_popup(mode: str, title: str, text: str, *, warning: bool) -> Non
         except Exception:  # noqa: BLE001 - no display, no Qt: the banner below is the fallback
             pass
     _print_config_banner(title, text)
+
+
+def show_bench_notice(mode: str) -> None:
+    """
+    Tell the operator when bench.ini was discarded; silent otherwise.
+
+    Called once logging is up, so the reader's own ERROR line is already in
+    the run log; this is the popup (GUI) or banner (elsewhere) on top of it.
+    A created or loaded bench file needs no notice - creating one is the
+    normal first start.
+    """
+    bench = bench_config()
+    if bench.outcome is not BenchOutcome.DISCARDED:
+        return
+    show_config_popup(
+        mode,
+        "pypts bench file discarded",
+        f"The bench file could not be used:\n\n"
+        f"{bench.problem}\n\n"
+        f"This start has no devices; a step that asks for one will fail.\n"
+        f"Correct it, or delete it to have it recreated:\n{bench.path}",
+        warning=True,
+    )
 
 
 def _open_message_box(title: str, text: str, *, warning: bool) -> None:

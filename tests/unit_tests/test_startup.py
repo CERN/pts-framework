@@ -72,6 +72,62 @@ def test_gui_mode_uses_the_popup_and_skips_the_banner(capsys, monkeypatch):
     assert capsys.readouterr().out == ""
 
 
+def test_a_discarded_bench_file_shows_a_warning_notice(monkeypatch):
+    from pathlib import Path
+
+    from pypts.config_handler import BenchConfig, BenchOutcome
+
+    shown = []
+    monkeypatch.setattr(
+        startup,
+        "show_config_popup",
+        lambda mode, title, text, *, warning: shown.append((mode, title, text, warning)),
+    )
+    monkeypatch.setattr(
+        startup,
+        "bench_config",
+        lambda: BenchConfig(
+            devices={},
+            outcome=BenchOutcome.DISCARDED,
+            problem="the reason",
+            path=Path("bench.ini"),
+        ),
+    )
+
+    startup.show_bench_notice("gui")
+
+    assert len(shown) == 1
+    mode, _title, text, warning = shown[0]
+    assert mode == "gui"
+    assert warning is True
+    assert "the reason" in text
+    assert "bench.ini" in text
+
+
+def test_a_loaded_or_created_bench_file_shows_no_notice(monkeypatch):
+    from pathlib import Path
+
+    from pypts.config_handler import BenchConfig, BenchOutcome
+
+    shown = []
+    monkeypatch.setattr(
+        startup,
+        "show_config_popup",
+        lambda mode, title, text, *, warning: shown.append(title),
+    )
+    for outcome in (BenchOutcome.LOADED, BenchOutcome.CREATED):
+        monkeypatch.setattr(
+            startup,
+            "bench_config",
+            lambda outcome=outcome: BenchConfig(
+                devices={}, outcome=outcome, problem=None, path=Path("bench.ini")
+            ),
+        )
+        startup.show_bench_notice("gui")
+
+    assert shown == []
+
+
 # --------------------------------------------------------------------------
 # The multiprocessing start method
 # --------------------------------------------------------------------------
