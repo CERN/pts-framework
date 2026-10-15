@@ -444,8 +444,11 @@ def read_kernel():
   <li><strong>Optional key</strong>: <code>call_timeout_s</code> (longest one call may take,
       default 60). A call that takes longer is stopped, and PyPTS connects to the device again
       to tear it down (switch it off) before the step fails; the log says whether that worked
-      (<em>may still be energised</em> if not). Closing PyPTS during a run that won't stop does
-      the same for every device of that run, so closing can take up to about 15 seconds. Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
+      (<em>may still be energised</em> if not). Closing PyPTS during a run that won't stop
+      shows <em>Stopping: closing the devices...</em> and gives every device of that run one
+      5-second teardown attempt; a device whose process is then stopped without teardown, or
+      that was in a call, is named in a CRITICAL line telling you to check the bench before
+      touching it. Closing can take up to about 15 seconds. Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
   <li><strong>Edits and defaults</strong>: device sections are read from the configuration PyPTS loaded at start, so a hand edit of <code>config.ini</code> applies from the next start. <strong>Restore default settings</strong> recreates <code>config.ini</code> and removes the <code>[hardware.*]</code> sections too: copy them first.</li>
   <li><strong>SSH</strong>: an unknown host key is refused; add the host to your
       <code>known_hosts</code>, name a file with <code>known_hosts =</code>, or set

@@ -81,10 +81,11 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   (`ask_operator()` answers `None` at once) and its `RunFinished` are no longer sent - CORE is
   shutting down without it, so the `RunStarted`/`RunFinished` pairing does not hold for an
   abandoned run. It reports `CRITICAL` via `report_problem()`, then
-  `tear_down_abandoned_devices()` calls `hal.abandon_active_setup()` with
-  `ABANDONED_DEVICES_TIMEOUT_S`: the run's devices are torn down side by side, and any that
-  were not is a second `CRITICAL` naming them ("may still be energised"; `hal/hal.md`,
-  *Lifetime*). Then the shutdown continues. `SequencerStopped`
+  `tear_down_abandoned_devices()` sends `ClosingDevices` (CORE shows "Stopping: closing the
+  devices...") and calls `hal.abandon_active_setup()` with `ABANDONED_DEVICES_TIMEOUT_S`: each
+  device gets one `teardown()` attempt side by side, and any that was stopped without
+  running it is a second `CRITICAL` naming them ("were stopped without running teardown and
+  may still be energised"; `hal/hal.md`, *Lifetime*). Then the shutdown continues. `SequencerStopped`
   is sent after the join, so it always arrives after any `RunFinished` on the same queue.
   The send sits in a `finally` and goes through `send_goodbye()`, because it comes *after* the
   line that can fail: an exception on its way out to the per-message boundary would otherwise
@@ -126,7 +127,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 | Name | Value | Meaning |
 |------|-------|---------|
 | `SEQUENCE_JOIN_TIMEOUT_S` | 2.0 s | How long `stop()` waits for the sequence thread |
-| `ABANDONED_DEVICES_TIMEOUT_S` | `RESCUE_TIMEOUT_S` + 1 = 11.0 s | How long `stop()` gives an abandoned run's devices, torn down side by side |
+| `ABANDONED_DEVICES_TIMEOUT_S` | `ABANDON_TEARDOWN_TIMEOUT_S` + 1 = 6.0 s | How long `stop()` gives an abandoned run's devices: one teardown attempt each, side by side |
 | `HOLD_POLL_S` | 0.05 s | How often a held run looks at the pause and stop flags |
 
 ## Known gaps

@@ -79,8 +79,9 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   open for the status line and CRITICALs the Sequencer sends while abandoning a run. Both are
   released by `SequencerStopped`, or at the deadline. `check_stop_status()` ends the loop when
   every module has reported itself stopped, or at the deadline: it then releases the held
-  `StopReport` and `StopHmi`, logs an ERROR naming the modules that did not answer, and leaves. Nothing is killed — the threads are
-  daemons and the HMI process belongs to the launcher.
+  `StopReport` and `StopHmi`, logs an ERROR naming the modules that did not answer, and
+  leaves. Nothing is killed — the threads are daemons and the HMI process belongs to the
+  launcher.
 - **Configuration changes** — CORE is pypts' runtime writer of `config.ini` (the Recipe
   Editor v2, a process of its own, writes its own `[recipe_editor]` lines — `config_handler.md`).
   `core_main()` calls `ConfigHandler.open_for_writing()` before `Core()` is built (its first
@@ -102,6 +103,7 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
 | `RunFinished` | Report (followed by `GenerateReport` on the same queue) and HMI; HMI only for a run without a report |
 | `SequenceFinished`, `StepStarted`, `StepFinished`, `RunPaused`, `RunResumed`, the three `User*Request` | HMI only |
 | `StepExecuted` | Report only — it must never cross the HMI boundary; dropped for a run without a report |
+| `ClosingDevices` | HMI, as `StatusChanged("Stopping: closing the devices...")` |
 | `ReportGenerated` | HMI, as `StatusChanged` **and** `ReportReady(report_path, report_dir)` |
 | `ReportExported` (not sent yet) | HMI, as `StatusChanged` |
 
@@ -114,7 +116,7 @@ what they produce.
 
 | Name | Where | Value | Meaning |
 |------|-------|-------|---------|
-| `Core.SHUTDOWN_TIMEOUT_S` | `core.py` | 15.0 s | Budget from `stop_all_modules()` to leaving without the modules that did not answer. Sized for the Sequencer's worst case: the 2 s join plus 11 s tearing down an abandoned run's devices (`sequencer/sequencer.md`); an ordinary shutdown uses a fraction of it. Must stay below the launcher's `CORE_SHUTDOWN_TIMEOUT_S` |
+| `Core.SHUTDOWN_TIMEOUT_S` | `core.py` | 15.0 s | Budget from `stop_all_modules()` to leaving without the modules that did not answer. Sized for the Sequencer's worst case: the 2 s join plus 6 s tearing down an abandoned run's devices (`sequencer/sequencer.md`); an ordinary shutdown uses a fraction of it. Must stay below the launcher's `CORE_SHUTDOWN_TIMEOUT_S` |
 | `Core.THREAD_JOIN_TIMEOUT_S` | `core.py` | 5.0 s | How long `join_submodules()` waits per thread after the loop ended |
 | `HEARTBEAT_TIMEOUT_S` | `utilities/heartbeat_manager.py` | 5.0 s | Silence before a WARNING |
 | `HEARTBEAT_FATAL_S` | `utilities/heartbeat_manager.py` | 15.0 s | Silence that ends the run |

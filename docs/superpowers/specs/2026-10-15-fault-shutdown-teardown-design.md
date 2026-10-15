@@ -1,7 +1,7 @@
 # Fault-shutdown device teardown: close 5 s, then kill, no rescue
 
 **Date:** 2026-10-15
-**Status:** approved
+**Status:** implemented (2026-10-15)
 
 ## Problem
 

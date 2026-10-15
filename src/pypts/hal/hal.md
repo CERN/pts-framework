@@ -26,7 +26,7 @@ def read_kernel():
 | `__init__.py` | The public API: `get_device`, `LocalSetup`, `ConnectionDriver`, `BaseDriver`, `DriverError`, the six device types |
 | `base_driver.py` | `BaseDriver` (ABC: `connect`, `teardown`, `recover`), `DriverError`, `LIFECYCLE_METHODS`, `operations_of()` |
 | `device_types.py` | `PSU`, `DMM`, `Scope`, `SSH`, `Load`, `Other`; `DEVICE_TYPES`, `DEVICE_TYPE_NAMES` |
-| `connection_driver.py` | `ConnectionDriver`, one device as test code sees it, with its rescue (`RESCUE_TIMEOUT_S`) and `abandon()`; below it, the driver process: `driver_process_main()`, `load_driver_class()`, `answer()` |
+| `connection_driver.py` | `ConnectionDriver`, one device as test code sees it, with its rescue (`RESCUE_TIMEOUT_S`) and `abandon()` (`ABANDON_TEARDOWN_TIMEOUT_S`); below it, the driver process: `driver_process_main()`, `load_driver_class()`, `answer()` |
 | `local_setup.py` | `LocalSetup`, the devices of one run, with `abandon()`; `get_device()`; `abandon_active_setup()`; `split_section()`; the section readers |
 | `drivers/loopback.py` | `LoopbackDriver` (Other): no hardware; tests, demo, smoke check |
 | `drivers/ssh.py` | `SshDriver` (SSH): the reference driver, paramiko |
@@ -134,10 +134,12 @@ and so removes the `[hardware.*]` sections too; the confirmation says so.
   (`get_device()` on it raises "this run was abandoned"; a device that finished opening
   meanwhile is closed again), and every device it opened is torn down by
   `ConnectionDriver.abandon()` on a thread of its own, side by side, all within the time limit
-  (`ABANDONED_DEVICES_TIMEOUT_S`, 11 s). No lock is waited for - the stuck run may hold one: an
-  idle device gets `teardown()`; a device in a call has its process killed (the call then fails
-  as a crash in the stuck thread) and is rescued. The names of the devices not torn down in
-  time come back, for one CRITICAL. Abandonment is final: `open()` and `recover()` on an
+  (`ABANDONED_DEVICES_TIMEOUT_S`, 6 s). No lock is waited for - the stuck run may hold one: an
+  idle device gets one `teardown()` within `ABANDON_TEARDOWN_TIMEOUT_S` (5 s) and its process
+  is killed if that hangs; a device in a call has its process killed at once (the call then
+  fails as a crash in the stuck thread). Nothing reconnects: `abandon()` returns False
+  whenever `teardown()` did not run, and the names of those devices come back, for one
+  CRITICAL ("stopped without running teardown"). Abandonment is final: `open()` and `recover()` on an
   abandoned device raise, so test code in the abandoned run that still holds the device cannot
   switch the instrument back on.
 - **The rescue** (`_rescue()`): when a call on a connected device exceeds its timeout, the stuck
@@ -146,7 +148,7 @@ and so removes the `[hardware.*]` sections too; the confirmation says so.
   reaches test code, so the device is torn down before the next step. A rescue that fails is an
   ERROR line (`... could not be torn down and may still be energised: ...`). Not for a timeout
   before `connect()` returned (start-up has its own error), not for the rescue's own process
-  (`_is_rescue`), and not after `abandon()` (`_abandoned`), which rescues by itself.
+  (`_is_rescue`), and not after `abandon()` (`_abandoned`): an abandoned device is reported, never rescued.
 
 ## Failure
 

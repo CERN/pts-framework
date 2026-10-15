@@ -25,7 +25,7 @@ message, a union or a field means changing this file in the same commit.
 | `common_messages.py` | `ModuleError`, `Heartbeat` and the payloads `ErrorSeverity`, `ResultType`, `StepOutcome` |
 | `run_events.py` | Run progress, operator commands about a run, the three operator questions, and the payloads `StepSummary`, `SequenceSummary` |
 | `core_hmi_communication.py` | `HmiToCore` / `CoreToHmi` and the messages only that link carries |
-| `core_sequencer_communication.py` | `CoreToSequencer` / `SequencerToCore`, `RunSequence`, `ForgetRecipe`, `StopSequencer`, `SequencerStopped` |
+| `core_sequencer_communication.py` | `CoreToSequencer` / `SequencerToCore`, `RunSequence`, `ForgetRecipe`, `StopSequencer`, `SequencerStopped`, `ClosingDevices` |
 | `core_report_communication.py` | `CoreToReport` / `ReportToCore`, `GenerateReport`, `ExportReport`, `StopReport`, `ReportStopped`, `ReportGenerated`, `ReportExported` |
 | `to_logger_communication.py` | `LoggerControl`: `SetStdoutEnabled`, `SwitchLogFile`, `StartRunLog`, `EndRunLog`, `StopLogger` |
 | `blocking_messages.py` | `PendingRequests` — the waiting half of a request/response pair; see *Waiting for an answer* |
@@ -171,7 +171,7 @@ that stops being true.
 | Direction | Messages |
 |---|---|
 | `CoreToSequencer` (9) | **CMD** `RunSequence(recipe, sequence_name, excluded_step_ids=(), write_report=True)` (the live, validated Recipe *and* the sequence to run; the last two copied from `StartSequence` - the one message carrying a rich object, allowed because this link never leaves the Core process; CORE owns the loaded recipe and hands it over per run, so the Sequencer keeps only its last run's) · `ForgetRecipe()` (the operator unloaded the recipe: drop the last run's recipe and the test modules loaded from files; refused with an ERROR while a sequence runs; no answer) · `StopSequence()` (abort the run, keep the module alive; defined in `run_events.py` - the operator sends it on HmiToCore and CORE relays the same object here) · `PauseSequence()` · `ResumeSequence()` (hold the run before its next main step / end the hold; relayed the same way) · `StopSequencer()` (shut the module down)<br>**EVT** `UserPromptResponse` · `UserTextResponse` · `UserPathResponse` — answers relayed back from the HMI |
-| `SequencerToCore` (16) | **EVT** `SequencerStopped()` · the 6 run-progress events · `RunPaused` · `RunResumed` (routed to the HMI only) · `StepExecuted` (routed to the Report, never the HMI) · `RunMetadata` (routed to both) · the 3 operator requests · `Heartbeat` · `ModuleError` |
+| `SequencerToCore` (17) | **EVT** `SequencerStopped()` · `ClosingDevices()` (no fields; the device-teardown phase of a fault shutdown, relayed by CORE to the HMI as `StatusChanged("Stopping: closing the devices...")`) · the 6 run-progress events · `RunPaused` · `RunResumed` (routed to the HMI only) · `StepExecuted` (routed to the Report, never the HMI) · `RunMetadata` (routed to both) · the 3 operator requests · `Heartbeat` · `ModuleError` |
 
 ## CORE ↔ Report — `core_report_communication.py` (thread of the Core process)
 
