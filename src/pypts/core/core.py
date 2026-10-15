@@ -960,14 +960,14 @@ class Core:
         Then the ordinary shutdown, unchanged. StopSequencer goes out; StopReport
         is held back so the Report can drain the aborted run's tail, and StopHmi
         is held back so the status line and CRITICALs reach an open window,
-        the five-second budget applies, and CORE leaves when every module has
+        the SHUTDOWN_TIMEOUT_S budget applies, and CORE leaves when every module has
         answered or the budget runs out. Nothing new is invented for this case,
         which is the point: a watchdog that shut down differently from every
         other exit would be a second shutdown path to keep working.
 
         The silent module will not answer - it is why we are here - so the
         budget is spent waiting for it. That is the honest cost of reusing the
-        one path, and five seconds at the end of a dead run is not worth a
+        one path, and SHUTDOWN_TIMEOUT_S at the end of a dead run is not worth a
         special case.
         """
         # The mechanism only. The operator's sentence is written by
