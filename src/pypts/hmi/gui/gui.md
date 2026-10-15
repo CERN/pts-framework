@@ -18,10 +18,10 @@ groundwork laid before it).
 Status of the code beside this file: **the operator screen has visual parity
 with the master-branch GIF reference.** `gui.py` is the assembler;
 `PtsMainWindow(QMainWindow)` owns the native menu bar, `QToolBar`, left/right
-`QSplitter` (the left pane under Run | Results tabs), and `QStatusBar`. Panel
+`QSplitter` (the left pane under Run | Summary tabs), and `QStatusBar`. Panel
 contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
-`view_tabs.py` (`ViewTabBar` — the Run | Results tabs, §14),
-`step_table.py` (Run tab), `results_panel.py` (Results tab),
+`view_tabs.py` (`ViewTabBar` — the Run | Summary tabs, §14),
+`step_table.py` (Run tab), `summary_panel.py` / `run_record.py` (Summary tab),
 `center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel`),
 `run_display.py` / `run_header.py` (`RunDisplay` — which picture the right column shows
 during a run — and `RunHeader`, the step card on top of it, §18),
@@ -214,7 +214,7 @@ has a typed, owned equivalent:
 | second value pushed on the same queue (`file`/`wrt`/`ID`) | **solved by giving each follow-up its own request/response pair.** `wrt` became `UserTextRequest` (UserWrite); `file` became `UserPathRequest`/`UserPathResponse` (UserLoading, 2026-09-15) — one request, one response carrying the path, answered by `answer_user_path()` from the path page (§7, *Three questions, one panel*). The serial-port `ID` mode was dropped |
 | `WAIT_FOR_TERMINATION` global + nested QEventLoop on abort | nothing blocks: Stop sends the command and the *events* drive the buttons — `RunFinished` (result STOP) is the "engine has stopped" confirmation the old global tried to be |
 | root-logger tap into the log box | the GUI logs normally; its records go to the Logger like everyone's. The log box is fed the other way round: `log_tail.py` reads the run log file the Logger writes, so the panel shows *every* process, not just the GUI's own records (§8) |
-| `StepResultModel` over live `StepResult` trees | `RunFinished.outcomes` is a flat tuple of `StepOutcome` (execution order); `results_panel.build_result_tree()` turns it into a tree of `ResultNode`s: each step row opens into **Inputs** and **Outputs** groups, one row per value (`voltage = 12.1`) with its check in the Info column (`range 11 .. 13`). Expanded on `set_results()`, as the old tree was. The values come as text on `StepOutcome` (M-3). The step table's Result tooltip lists them too, on every verdict, under the failure reason when there is one |
+| `StepResultModel` over live `StepResult` trees | `RunFinished.outcomes` is a flat tuple of `StepOutcome` (execution order), its values as text (M-3). Each step's values are shown by the step table's Result tooltip, on every verdict, under the failure reason when there is one, and by the step card when the step is looked back at (§19). The per-value result tree was ported first and removed on 2026-10-14: the Summary tab sums up the run instead (§14) |
 | GUI-side `Recipe` parse to pre-fill the table | `RecipeLoaded` carries the whole pickle-safe summary — `main_sequence` plus per-sequence `StepSummary(step_id, step_name, description)` rows built by `Recipe.to_summary()` — so the table pre-fills at load time with no second parse |
 
 What the new GUI already has for free: the whole protocol (`HmiClient`), the
@@ -235,11 +235,14 @@ not render yet, and the shared-protocol tests that pin all of it.
    frontend sends it, CORE relays the same object to the Sequencer, and the
    confirmation is the run's own `RunFinished(STOP)`. The CLI's verb is
    `stop_sequence` (plain `stop` was already an exit alias).
-3. **Which sequence runs — the dropdown.** Filled from the summary, defaulted
-   to `main_sequence`; Start sends `StartSequence(selected)`. Changing the
-   selection re-fills the table from local data.
+3. **Which sequence runs — the main one.** (Changed 2026-10-14: there was a
+   sequence dropdown; it was removed on request.) `GUI.show_sequence()` fills
+   the table with `main_sequence` on `RecipeLoaded` and remembers it
+   (`_shown_sequence_name`); Start and the Space retest send
+   `StartSequence(<that name>)`. `open_recipe_and_start(path, sequence_name)`
+   — the API's way in — shows and runs the sequence it names instead.
 4. **Button states — event-driven, exactly as proposed.** `RecipeLoaded`
-   enables Start; `RunStarted` disables Open/Start/combo and enables Stop;
+   enables Start; `RunStarted` disables Open/Start and enables Stop;
    `RunFinished` (any result) restores. Nothing blocks; the old nested
    QEventLoop has no successor. The window's [X] follows the same principle:
    the first close is a `ShutdownRequested`, the real close happens on
@@ -269,14 +272,14 @@ upstream template) is still an open roadmap TODO before v1.0.
 
 | Qt element | Content |
 |---|---|
-| `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Start / Pause / Stop, sequence combo, and (far right) the report button: always enabled — opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that |
+| `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Close / Recipe / Start / Pause / Stop / Report, each a `QToolButton` in `ToolButtonTextUnderIcon` with a small label (`_labelled_button()`, `OPEN_LABEL` … `REPORT_LABEL`; Start reads `RESUME_LABEL` while paused). `styles.py` gives them `padding: 2px 8px; font-size: 10px`. No sequence chooser (§5.3). The report button sits beside Stop and is always enabled — it opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that. Then the spacer and the run metadata (§10b) |
 | `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `_open_in_text_editor()` (`QDesktopServices`, Notepad / `xdg-open` fallback), path on hover, Restart → §10, Exit) / Edit (Recipe Editor — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Recipe Editor v2 — `open_recipe_editor_v2()` starts `pypts.helper_applications.recipe_editor` the same way, both through `_start_recipe_tool()`; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" / the run summary, above the splitter; stretches across its row |
 | `run_progress` (`RunProgress`) | the same row, at the window's right edge — the green run progress bar and `6 / 15 (40 %)` (§15) |
 | `QSplitter` 52/48 | left: `view_tabs` over `left_stack`; right: `CenterContent` |
-| `view_tabs` (`ViewTabBar`) | Run \| Results; `currentChanged` drives `left_stack` (§14) |
+| `view_tabs` (`ViewTabBar`) | Run \| Summary; `currentChanged` drives `left_stack` (§14) |
 | `left_stack` `TAB_RUN` | `run_stack`: the idle placeholder (CERN logo + "Open a YAML recipe…") until a sequence is shown, then `StepTableContent` |
-| `left_stack` `TAB_RESULTS` | `ResultsPanel` (badges + `QTreeView`) |
+| `left_stack` `TAB_SUMMARY` | `SummaryPanel` — the last run summed up, four cards in a scroll area (§14) |
 | `QStatusBar` | status label (stretch=1) |
 
 ---
@@ -436,7 +439,7 @@ Stop, and the sequence carries on to the next step.
 | `StepTable` with badge delegate | verdict colours render (§9); the rounded-pill delegate is still open | ✓ full |
 | `LogPanel` (coloured prefixes) | ✓ ported (§1.20), fed from the run log (§8) | ✓ |
 | `InteractionPanel` (image/buttons/kbd) | ✓ ported (§1.20) | ✓ |
-| `ResultsPanel` (badges + tree) | ✓ ported (§1.20) | ✓ |
+| `ResultsPanel` (badges + tree) | ported (§1.20), replaced by the Summary tab on 2026-10-14 (§14) | ✓ |
 | Light/dark QSS + OS theme sync | ✓ ported (§1.20) | ✓ |
 | `styles.py` colour tokens | ✓ ported (§1.20) | ✓ |
 | `resources.py` logo loader | ✓ ported (§1.20) | ✓ |
@@ -444,8 +447,8 @@ Stop, and the sequence carries on to the next step.
 | XYGraph live plot | **missing** | ✓ (spike) |
 
 Note: master's `StepResultModel` walked live `recipe.StepResult` objects —
-those can't cross the process boundary. The port adapted it to work from
-`StepOutcome` (plain values, pickle-safe) sent in `RunFinished`.
+those can't cross the process boundary. The port worked from `StepOutcome`
+(plain values, pickle-safe) sent in `RunFinished`; it is gone since the Summary tab (§14).
 
 ## 8. The LOG OUTPUT panel — where its lines come from
 
@@ -613,8 +616,7 @@ meant: not a missing feature, a stylesheet rule cancelling one.
 
 So `styles.py` carries **no** `QTableWidget::item` rule in either palette, and
 says why at the point where one would go. The step table is the only
-`QTableWidget` in the GUI (`ResultsPanel` is a `QTreeView`, which that selector
-does not match), so dropping it costs nothing elsewhere. Cell spacing comes from
+`QTableWidget` in the GUI, so dropping it costs nothing elsewhere. Cell spacing comes from
 the font size and the row height instead of `padding:`.
 
 If a future `::item` rule is genuinely wanted, the verdict badges have to move
@@ -655,7 +657,7 @@ repaint when the theme changes — a stylesheet swap does nothing for them:
 | Widget | What it repaints | How |
 |---|---|---|
 | `StepTableContent` | the Result column | `set_dark()` re-reads each cell's own text (`Pending` / `Running...` / the verdict name — each is a chip key) and rebuilds the item |
-| `ResultsPanel` | the tree's Result column and the three badges | the model carries `dark`; `set_dark()` flips it, recolours the badges and invalidates the viewport |
+| `SummaryPanel` | the verdict chip, the badges, the slowest steps and the failures | `set_dark()` restyles every label and badge from the palette and redraws the page: the chip, the slowest steps and the failures carry their colours in their text |
 | `LogPanel` | its whole backlog | lines already on screen keep the `QTextCharFormat` they were written with, so the panel remembers its lines and re-appends them |
 
 That last one was a real bug, not a precaution: a run that started in light and
@@ -884,7 +886,7 @@ the machine running it.
 
 ## 10b. The top bar's run metadata
 
-`TopBarContent.metadata_label` sits between the spacer and the report button, and shows
+`TopBarContent.metadata_label` sits after the spacer, at the toolbar's right end, and shows
 what the run has learned about the unit on the bench — `serial_number: SN-0042` — so the
 operator can see which unit the bench believes is in front of them without opening a
 report.
@@ -1243,21 +1245,50 @@ when Pause is pressed may be a question that must be answered before the hold be
 Stop works in every state. The step table's panel gate (§12) stays on for the whole
 run, a hold included.
 
-## 14. The Run | Results tabs
+## 14. The Run | Summary tabs
 
 The left pane has two tabs, `ViewTabBar` in `view_tabs.py`; the right column (prompts,
 log) is never covered by them. `TAB_RUN` shows `run_stack` — the idle placeholder, then
-the step table from the first `show_selected_sequence()` on. `TAB_RESULTS` shows the
-`ResultsPanel`. `PtsMainWindow.show_tab()` opens one, as a click would.
+the step table from the first `show_sequence()` on. `TAB_SUMMARY` shows the
+`SummaryPanel`. `PtsMainWindow.show_tab()` opens one, as a click would.
 
-| When | Results panel | Tab |
+**The Summary tab (2026-10-14)** replaced the Results tab, whose per-value result tree the
+step card (§18, §19) and the Result tooltip had made redundant. It sums up the run as a
+whole. **No new message:** everything comes from the events the window already handles;
+`HmiClient.show_run_started()` is passed the whole `RunStarted` for it (`hmi/hmi.md`).
+
+| File | What |
+|---|---|
+| `run_record.py` | `RunRecord` — no Qt. One run, from `RunStarted` on: `RunRecord.start(event, sequence_name, recipe, now, wall)`; `step_started()` / `step_finished()` / `finish()` / `set_metadata()` / `report_ready()`; then `duration()`, `counts()`, `counts_text()`, `pass_rate_text()`, `failures()`, `slowest()` (`StepTime`, `SLOWEST_COUNT` = 5), `run_folder()`, `csv_path()` |
+| `summary_panel.py` | `SummaryPanel` — the view: `set_recipe()`, `set_record()`, `refresh()`, `set_dark()`; signals `failure_clicked(UUID)` and `open_requested(str)`. `SummaryBadge`, the card `_Card`, a file row `_FileRow`; the texts `NO_RUN_TEXT`, `NO_RECIPE_TEXT`, `NO_FAILURES_TEXT`, `NO_TIMES_TEXT`, `NO_REPORT_TEXT`, `REPORT_PENDING_TEXT`; the file names `FILES` |
+
+The page, in a scroll area — before the first run, `No run yet.` and the loaded recipe
+(name, version, how many sequences, the main one); after it, four cards:
+
+| Card | Shows |
+|---|---|
+| RESULT | the run's verdict on its chip (`Running...` until `RunFinished`); the recipe and its version; `Sequence: <name>` — the one this window last asked to run (`GUI.start_sequence()` remembers it: `RunStarted` does not name it); `Started <local time> · took 4:07.3` (`still running` before the end); `pypts <version>`; for an engineering retest (`write_report` False), that it wrote no report |
+| METRICS | one badge per verdict that occurred, in `run_display.COUNT_ORDER`, and TOTAL; the pass rate — PASS over PASS + FAIL + ERROR, the steps that were judged (`92 % passed (12 of 13 judged steps)`), hidden when none was; the 5 slowest steps with their times |
+| FAILURES | every FAIL and ERROR step on its chip, as a link, with its reason; else `No failures.` A click: `GUI.show_failure()` opens the Run tab, scrolls the row into view (`StepTableContent.scroll_to_step()`) and looks back at the step (§19) — the step card shows it, and a click outside the step table ends it as usual |
+| UNIT & REPORT | the `report_metadata` values (`serial_number: SN-1`); the run's files — Report, Results (CSV), Run log, Run folder — each by its last part (the whole path on hover) with an **Open** button: `GUI.open_run_file()` hands it to `QDesktopServices`; one that is gone, or that nothing opens, is a WARNING (`report_problem`). Before `ReportReady`: `The report is written when the run ends.` Hidden for a retest with no metadata and no run log |
+
+**What counts** is what the step card and `RunProgress` count: not a `Sequence` call row —
+the group rows come from the `RecipeLoaded` the run started under. **Times** are the GUI's
+own (`time.monotonic()` at each event), like the step card's: they can differ from the
+report's `duration_s` by the time a message takes. **The CSV** is `<stem>.csv` beside the
+report, or `report.csv` when the Report could not rename it — whichever is on disk.
+
+| When | `RunRecord` / Summary tab | Tab |
 |---|---|---|
-| Recipe loaded / sequence chosen (`show_selected_sequence`) | kept | Run |
-| `RunStarted` | emptied (`set_results(())`) | Run; any pulse stops |
-| `StepFinished` | rebuilt from `_run_outcomes` — live, openable during the run | unchanged |
-| `RunFinished` | `set_results(outcomes)` | unchanged; if `outcomes` is not empty, Results pulses |
+| Recipe loaded, or a sequence shown (`show_sequence`) | the record is kept — the summary outlives a reload | Run |
+| `RunStarted` | a new record (`set_record()`) | Run; any pulse stops |
+| `StepStarted` / `StepFinished` | timed and counted — live, openable during the run | unchanged |
+| `RunMetadata` | `set_metadata()` | unchanged |
+| `RunFinished` | `finish(result, outcomes)` — its outcomes replace the ones collected | unchanged; if `outcomes` is not empty, Summary pulses |
+| `ReportReady` | `report_ready()` — the files appear | unchanged |
+| `RecipeUnloaded` | no record, no recipe | Run |
 
-**The pulse.** The GUI never jumps to Results by itself; it asks for a look instead.
+**The pulse.** The GUI never jumps to Summary by itself; it asks for a look instead.
 `ViewTabBar.start_pulse(index)` gives that tab the selected-tab background
 (`tab_selected_background`, the open Run tab's colour) and fades it to
 `tab_pulse_background` and back — light `#D6E6F7` → `#9CC3F0`, dark `#005BAC` →
@@ -1286,7 +1317,7 @@ the table already receives.
 
 | When | `RunProgress` |
 |---|---|
-| `show_selected_sequence()` (a recipe loaded, or the combo changed) | `show_sequence(summary)` — counts the rows, back to 0 |
+| `show_sequence()` (a recipe loaded, or `open_recipe_and_start()` naming a sequence) | `show_sequence(summary)` — counts the rows, back to 0 |
 | `RunStarted` | `reset()` — back to 0 on the sequence already shown |
 | `StepFinished` | `step_finished(outcome)` — one tick if the row counts |
 | `RunFinished` | nothing — the bar keeps its final fill until the next run or selection |
@@ -1327,7 +1358,7 @@ icon colour, `icon_disabled` when greyed, and its tooltip says why (`No recipe i
 | What | Back to |
 |---|---|
 | GUI state | `current_recipe`, `_requested_recipe_path`, `_loaded_recipe_path`, `_recipe_yaml`, `_recipe_text`, `_run_outcomes`, `_running_recipe_name`, `_run_state`, `report_dir`, a pending start and the pause flag all cleared |
-| Top bar | `TopBarContent.show_recipe_unloaded()` — combo emptied and greyed, Start / Pause / Stop / preview / × greyed, run metadata cleared; Open stays enabled |
+| Top bar | `TopBarContent.show_recipe_unloaded()` — Start / Pause / Stop / Recipe / Close greyed, run metadata cleared; Open stays enabled |
 | Left pane | `step_table.clear()` (no rows, popup closed), `run_progress.clear()` (hidden), results emptied, pulse stopped, `run_stack` on the idle logo, the Run tab open |
 | Centre | `center.cancel_pending()` + `set_recipe(None)` (the header's clock stops) + `show_idle()` |
 | Labels | `No recipe loaded`, title `pyPTS`, `Status: Idle` |
@@ -1379,7 +1410,7 @@ the defaults.
 | `set_engineering_mode(on)` | `engineering_action.toggled` lands here: INFO `Engineering mode switched on.` / `... off.`, `step_table.set_engineering_mode(on)`, the status bar's `engineering_label` (`ENGINEERING MODE`, `QLabel#engineeringLabel`, `palette.danger`) shown or hidden, and `update_window_title()`. |
 | `update_window_title()` | The one place the window title is set after construction: `pyPTS`, or `pyPTS: <recipe name>` with a recipe loaded (`current_recipe`), plus `ENGINEERING_TITLE_SUFFIX` (`  [ENGINEERING MODE]`) while the mode is on — so the taskbar shows the mode too. Also called by `show_recipe_loaded()` and `show_recipe_unloaded()`. |
 | `retest_shortcut` | A `QShortcut` for Space on the step table, `WidgetWithChildrenShortcut` — so it fires only while the table has the focus, and a space typed into the interaction panel stays a space. Calls `run_selected_steps()`. |
-| `run_selected_steps()` | Sends `start_sequence(<combo sequence>, step_table.retest_exclusions(), write_report=False)`. Does nothing (one DEBUG line) outside engineering mode, with no recipe, during a run, or when nothing picked would run. |
+| `run_selected_steps()` | Sends `start_sequence(<the sequence on show>, step_table.retest_exclusions(), write_report=False)`. Does nothing (one DEBUG line) outside engineering mode, with no recipe, during a run, or when nothing picked would run. |
 | `_start_or_resume()` | In engineering mode, Start sends `step_table.left_out_exclusions()` with the report. Resume is unchanged. |
 | `show_run_started()` / `show_run_finished()` | Grey and restore `engineering_action`: the mode cannot change during a run. |
 
@@ -1439,8 +1470,8 @@ passes on to `CenterContent` (`run_started()`, `sequence_started()`, `step_start
 
 | File | What |
 |---|---|
-| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the header's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`); what each step had, for §19 (`review()`) |
-| `run_header.py` | `RunHeader` — the step card, drawn from a `RunDisplay`: `heading_label` (`NOW RUNNING`, or `LOOKING BACK` §19), `step_label`, `description_label`, `state_label` (the chip), `info_label` (the time line), `results_label`, `error_label`; `show_live()` / `show_review()`, `state_text()`; a `QTimer` every `TICK_MS` (100 ms) while a run is on; `elapsed_text()` (`m:ss.t`, `h:mm:ss.t`; tenths cut down, not rounded; the GUI's own timing from event arrival, not the report's `duration_s`), `review_state_text()`, the texts `RUNNING_TEXT`, `PENDING_TEXT`, `NO_RESULTS_YET_TEXT`, `NO_VALUES_TEXT` |
+| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the header's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`); what each step had, for §19 (`review()`); `counts_text()`, `steps_counts_text()` |
+| `run_header.py` | `RunHeader` — the step card, drawn from a `RunDisplay`: `heading_label` (`NOW RUNNING`, or `LOOKING BACK` §19), `step_label`, `description_label`, `state_label` (the chip), `info_label` (the time line), `results_label`, `error_label`, and for a looked-back group `steps_heading_label` and `steps_label` in `steps_area` (§19); `show_live()` / `show_review()`, `state_text()`; a `QTimer` every `TICK_MS` (100 ms) while a run is on; `elapsed_text()` (`m:ss.t`, `h:mm:ss.t`; tenths cut down, not rounded; the GUI's own timing from event arrival, not the report's `duration_s`), `review_state_text()`, the texts `RUNNING_TEXT`, `PENDING_TEXT`, `NO_RESULTS_YET_TEXT`, `NO_VALUES_TEXT` |
 | `center_view.py` | `CenterContent` owns the `RunDisplay`; `_show_run_view()` refreshes the card and puts the picture on screen — or, with none, hides the picture area |
 | `interaction_panel.py` | `run_header` on top, hidden outside a run (`show_live_header()`, `hide_header()`, `is_showing_header()`); the picture area is `image_label`: `set_image()`, `show_no_picture()`, `is_showing_picture_area()`, `is_showing_logo()`, `is_showing_no_image()`, `set_run_result()`, `run_result_shown()` |
 | `resources.py` | `load_no_image_pixmap()`; `load_run_result_pixmap(file_name)` with `RUN_PASSED_IMAGE` / `RUN_FAILED_IMAGE` — never tinted: the green and red words are the point; transparent background |
@@ -1476,6 +1507,12 @@ Sequences are looked up by name, case-insensitively — a called sequence's
 | state chip | `Running...` on the `RUNNING` verdict chip | its verdict on that verdict's chip; `Not run yet` (`PENDING`); `Running...` |
 | time line | `Run 4:07.3 · Step 0:12.5` (to the tenth, ticking every 100 ms; paused time is not taken off), the verdicts so far in `run_display.COUNT_ORDER` (`2 PASS · 1 FAIL`) counted like `RunProgress` (no group rows, every verdict), `Last failure: <step>` | `Took 0:12.5`; hidden before it has finished |
 | results | `No results yet.` | the values (`describe_step_values()`, as the Result tooltip; `No values recorded.` for none), then the error text in the FAIL chip's colours; hidden for a step not run yet. Selectable |
+| steps | hidden | a group row only (§19): `Steps: 4 PASS · 1 SKIP`, then every step under it; hidden for a step |
+
+Every line but the chip takes the card's full width and wraps. Only the chip is added with
+`AlignLeft`, to stay a pill: a word-wrapped `QLabel` given an alignment gets its narrow
+preferred width and too little height, which cut long results lines off (fixed 2026-10-14,
+`test_run_header.py`).
 
 Between steps the name reads `-` and there is no chip and no results line. `RunStarted`
 shows the card and starts the clock; `RunFinished` stops the clock, hides it and brings
@@ -1493,8 +1530,8 @@ nothing is sent, CORE and the engine know nothing of it, and no message or field
 | File | What it adds |
 |---|---|
 | `step_table.py` | `step_clicked` (the row's step id, as `Signal(object)`), emitted by `_clicked_cell()` for a click on the name, the description or the Result with the YAML panel on; that click closes the panel. A group's name stays its fold control and emits nothing — a group is looked at through its description or Result |
-| `run_display.py` | Every started step is remembered (`_Seen`): the picture on screen once it was innermost, its start and finish (`step_finished(outcome, now)`), its outcome. `review(step_id)` → `StepReview(step, state, image_path, outcome, duration)`, `state` one of `REVIEW_PENDING` / `REVIEW_RUNNING` / `REVIEW_FINISHED`; None before the first run since the recipe was loaded (`has_run`). `is_running_step()` |
-| `run_header.py` | `show_review(review)` — the step card stands on the step until `show_live()` (`step_review_card.py`, a separate card under the header, was folded into it on 2026-10-13) |
+| `run_display.py` | Every started step is remembered (`_Seen`): the picture on screen once it was innermost, its start and finish (`step_finished(outcome, now)`), its outcome. `review(step_id)` → `StepReview(step, state, image_path, outcome, duration, steps)`, `state` one of `REVIEW_PENDING` / `REVIEW_RUNNING` / `REVIEW_FINISHED`; None before the first run since the recipe was loaded (`has_run`). For a group row `steps` holds a `StepReview` of every step under it (below); `()` for a step. `is_running_step()` |
+| `run_header.py` | `show_review(review)` — the step card stands on the step until `show_live()` (`step_review_card.py`, a separate card under the header, was folded into it on 2026-10-13); a group's steps list (below) |
 | `interaction_panel.py` | `show_review(review)` — the card, and the picture or `show_no_picture()`; `is_showing_review()` |
 | `center_view.py` | `review_step(step_id)`, `close_review()`, `is_reviewing()`; `_show_run_view()` leaves the card and the picture area alone while reviewing |
 | `gui.py` | `step_table.step_clicked` → `center.review_step`, then `OutsideClickWatcher.watch()` |
@@ -1528,6 +1565,36 @@ it). The step table and its YAML panel — a window of its own — count as insi
 
 `StepFinished` and the sequence events leave a look-back in place. Engineering mode clicks
 select rows (§17) and look back at nothing.
+
+### A group's steps (2026-10-14)
+
+Looking back at a group row (a `Sequence` step, clicked on its description or Result) shows
+its own results as for any step, and under them every step inside it, **at any depth, in
+run order**. Which steps those are comes from the rows: `RunDisplay.set_recipe()` stores,
+for each group, the rows after it in its `SequenceSummary` that sit deeper
+(`_deeper_rows()`) — the same rule the step table folds by. Their ids are the ones the run's
+events carry, because the parser builds each call's copy at load time. `review()` adds a
+`StepReview` of each (`_review_one()`, the same states) as `StepReview.steps`.
+
+`RunHeader` draws them under the results:
+
+- `steps_heading_label` — `steps_heading_text()`: `Steps: 4 PASS · 1 SKIP`, the finished
+  steps counted by `steps_counts_text()` in `COUNT_ORDER`, group rows left out (as the
+  time line counts); `Steps` alone while none has finished.
+- `steps_label` — `steps_html()`, a rich-text table: one row per step with its state chip
+  (the verdict, `Not run yet` or `Running...`, on the same chips as the card's), its name
+  indented one `_STEP_INDENT` per level below the group (a group marked `_GROUP_MARK` ▸),
+  and `elapsed_text()` of its duration; a FAIL or ERROR with a reason has it on a row of its
+  own under the name, in `palette.danger`. Names and reasons are HTML-escaped. Selectable.
+- `steps_area` — a frameless `QScrollArea` around the label. The label word-wraps and the
+  area never scrolls sideways (a long reason would push the durations out of sight);
+  `_fit_steps()` makes it as tall as the list at its width, up to `STEPS_MAX_HEIGHT`
+  (240 px), past which it scrolls. `resizeEvent()` refits it. The clock redraws the card
+  every `TICK_MS`; the list is only set again when its text changed.
+
+The colours are in the text, so `set_dark()` redraws the list of a look-back in progress.
+The list is a snapshot taken at the click, like the rest of the card: a step under a
+running group that finishes later does not change it.
 
 ---
 

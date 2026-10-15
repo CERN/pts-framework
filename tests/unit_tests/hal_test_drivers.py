@@ -8,7 +8,9 @@ driver process.
 """
 
 import ctypes
+import os
 import threading
+import time
 
 from pypts.hal.base_driver import BaseDriver
 from pypts.hal.device_types import Other
@@ -81,3 +83,31 @@ class OddValuesDriver(Other):
 
     def ping(self):
         return "pong"
+
+
+class MarkingDriver(Other):
+    """
+    Writes each connect() and teardown() into the file its `marks` key names,
+    so a teardown in a fresh driver process can be seen from the test. Its
+    connect() hangs while a file named like that one plus `.hang` exists.
+    """
+
+    def __init__(self):
+        self._marks = ""
+
+    def connect(self, config):
+        self._marks = config["marks"]
+        if os.path.exists(self._marks + ".hang"):
+            time.sleep(60)
+        self._mark("connect")
+
+    def teardown(self):
+        if self._marks:
+            self._mark("teardown")
+
+    def hang(self, seconds):
+        time.sleep(seconds)
+
+    def _mark(self, word):
+        with open(self._marks, "a", encoding="utf-8") as handle:
+            handle.write(word + "\n")

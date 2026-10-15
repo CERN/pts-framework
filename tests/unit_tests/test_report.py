@@ -17,6 +17,8 @@ import queue
 import time
 from pathlib import Path
 
+import pytest
+
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
 from pypts.messages.core_report_communication import (
@@ -411,9 +413,10 @@ def test_the_metadata_names_become_columns_from_the_first_row(tmp_path):
 
     run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
     rows = csv_rows(run_dir)
-    assert "serial_number" in rows[0]
+    assert "meta_serial_number" in rows[0]
+    assert "serial_number" not in rows[0]
     # Nothing has set it yet, so it is blank rather than absent.
-    assert rows[0]["serial_number"] == ""
+    assert rows[0]["meta_serial_number"] == ""
 
 
 def test_the_run_level_facts_are_on_every_row(tmp_path):
@@ -435,9 +438,35 @@ def test_the_run_level_facts_are_on_every_row(tmp_path):
         assert row["recipe_description"] == "Two short waits"
         assert row["recipe_version"] == "1.2"
         assert row["pypts_version"] == "0.2.2"
-        assert row["serial_number"] == "SN-0042"
+        assert row["meta_serial_number"] == "SN-0042"
         assert row["run_result"] == "DONE"
         assert row["run_started_at"]
+
+
+@pytest.mark.parametrize("name", ["result", "step_name", "run_result", "recipe_name"])
+def test_a_metadata_global_named_like_a_report_column_overwrites_nothing(tmp_path, name):
+    """
+    A global called `result` once replaced every step's verdict when the run
+    finished: a FAIL step read PASS. Metadata columns are prefixed, so the two
+    can never share a column.
+    """
+    report = build_report(tmp_path)
+
+    drive(
+        report,
+        RunStarted(recipe_name="demo", recipe_description="", metadata_names=(name,)),
+        RunMetadata(values=((name, "PASS"),)),
+        a_step_executed(step_name="Measure", result=ResultType.FAIL),
+        RunFinished(result=ResultType.FAIL),
+        GenerateReport(),
+    )
+
+    (row,) = csv_rows(report.run_dir)
+    assert row["result"] == "FAIL"
+    assert row["step_name"] == "Measure"
+    assert row["run_result"] == "FAIL"
+    assert row["recipe_name"] == "demo"
+    assert row[f"meta_{name}"] == "PASS"
 
 
 def test_rows_written_before_the_serial_was_known_are_backfilled(tmp_path):
@@ -447,7 +476,7 @@ def test_rows_written_before_the_serial_was_known_are_backfilled(tmp_path):
 
     drive(report, A_RUN_WITH_METADATA, a_step_executed(step_name="get_serial_number"))
     run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
-    assert csv_rows(run_dir)[0]["serial_number"] == ""
+    assert csv_rows(run_dir)[0]["meta_serial_number"] == ""
 
     drive(
         report,
@@ -457,7 +486,7 @@ def test_rows_written_before_the_serial_was_known_are_backfilled(tmp_path):
     )
 
     rows = csv_rows(report.run_dir)
-    assert [row["serial_number"] for row in rows] == ["SN-0042", "SN-0042"]
+    assert [row["meta_serial_number"] for row in rows] == ["SN-0042", "SN-0042"]
     assert [row["run_result"] for row in rows] == ["PASS", "PASS"]
 
 
@@ -473,7 +502,7 @@ def test_a_metadata_name_the_recipe_never_sets_stays_blank(tmp_path):
     )
 
     rows = csv_rows(report.run_dir)
-    assert rows[0]["serial_number"] == ""
+    assert rows[0]["meta_serial_number"] == ""
     assert [m for m in sent_to_core(report) if isinstance(m, ModuleError)] == []
 
 
@@ -492,7 +521,7 @@ def test_the_run_folder_keeps_its_name_at_the_end_of_the_run(tmp_path):
 
     assert report.run_dir == original
     assert "SN_0042" not in original.name
-    assert csv_rows(original)[0]["serial_number"] == "SN-0042"
+    assert csv_rows(original)[0]["meta_serial_number"] == "SN-0042"
 
 
 def test_the_report_writes_into_the_folder_the_sequencer_made(tmp_path):
@@ -530,8 +559,8 @@ def test_the_html_header_shows_the_metadata(tmp_path):
     )
 
     html_text = the_one(report.run_dir, ".html").read_text(encoding="utf-8")
-    assert "serial_number" in html_text
-    assert "SN-0042" in html_text
+    # The header names the global as the recipe does, not by its CSV column.
+    assert "<strong>serial_number:</strong> SN-0042" in html_text
     assert "0.2.2" in html_text
 
 

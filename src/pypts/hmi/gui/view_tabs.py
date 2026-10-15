@@ -3,10 +3,10 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-ViewTabBar: the Run | Results tabs above the left pane.
+ViewTabBar: the Run | Summary tabs above the left pane.
 
 A plain QTabBar, plus one thing a stylesheet cannot do: make a single tab pulse.
-When a run ends with results the operator has not looked at, the Results tab
+When a run ends with results the operator has not looked at, the Summary tab
 takes the selected-tab background and breathes slowly to a darker blue and
 back until the tab is opened (gui.md §14).
 """
@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QTabBar
 from pypts.hmi.gui.palette import get_palette
 
 TAB_RUN = 0
-TAB_RESULTS = 1
+TAB_SUMMARY = 1
 
 #: One fade in and out, in milliseconds. Slow on purpose: it is a reminder,
 #: not an alarm.
@@ -39,7 +39,7 @@ class ViewTabBar(QTabBar):
         self.setExpanding(False)
         self.setDrawBase(False)
         self.addTab("Run")
-        self.addTab("Results")
+        self.addTab("Summary")
 
         self._dark = False
         #: The tab that is pulsing, or None.

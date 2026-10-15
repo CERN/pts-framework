@@ -26,8 +26,8 @@ def read_kernel():
 | `__init__.py` | The public API: `get_device`, `LocalSetup`, `ConnectionDriver`, `BaseDriver`, `DriverError`, the six device types |
 | `base_driver.py` | `BaseDriver` (ABC: `connect`, `teardown`, `recover`), `DriverError`, `LIFECYCLE_METHODS`, `operations_of()` |
 | `device_types.py` | `PSU`, `DMM`, `Scope`, `SSH`, `Load`, `Other`; `DEVICE_TYPES`, `DEVICE_TYPE_NAMES` |
-| `connection_driver.py` | `ConnectionDriver`, one device as test code sees it; below it, the driver process: `driver_process_main()`, `load_driver_class()`, `answer()` |
-| `local_setup.py` | `LocalSetup`, the devices of one run; `get_device()`; `split_section()`; the section readers |
+| `connection_driver.py` | `ConnectionDriver`, one device as test code sees it, with its rescue (`RESCUE_TIMEOUT_S`) and `abandon()`; below it, the driver process: `driver_process_main()`, `load_driver_class()`, `answer()` |
+| `local_setup.py` | `LocalSetup`, the devices of one run, with `abandon()`; `get_device()`; `abandon_active_setup()`; `split_section()`; the section readers |
 | `drivers/loopback.py` | `LoopbackDriver` (Other): no hardware; tests, demo, smoke check |
 | `drivers/ssh.py` | `SshDriver` (SSH): the reference driver, paramiko |
 | `drivers/weather.py` | `OpenMeteoDriver` (Other): a weather station on the internet, standard library only; the showcase driver |
@@ -128,8 +128,23 @@ and so removes the `[hardware.*]` sections too; the confirmation says so.
 - **PyPTS dies**: its end of the Pipe closes, and the driver process calls `teardown()` and
   exits, once the call in progress returns. A call that never returns keeps the driver process
   alive.
-- **PyPTS exits normally with a device still open** (an abandoned run): the driver process is a
-  daemon, so multiprocessing terminates it at exit **without** `teardown()`.
+- **An abandoned run** (the Sequencer's stop gave up on its thread): its `with` block never
+  ends, so `Sequencer.tear_down_abandoned_devices()` calls `abandon_active_setup()`. That
+  empties the active slot and calls `LocalSetup.abandon()`: the setup opens nothing more
+  (`get_device()` on it raises "this run was abandoned"; a device that finished opening
+  meanwhile is closed again), and every device it opened is torn down by
+  `ConnectionDriver.abandon()` on a thread of its own, side by side, all within the time limit
+  (`ABANDONED_DEVICES_TIMEOUT_S`, 11 s). No lock is waited for - the stuck run may hold one: an
+  idle device gets `teardown()`; a device in a call has its process killed (the call then fails
+  as a crash in the stuck thread) and is rescued. The names of the devices not torn down in
+  time come back, for one CRITICAL.
+- **The rescue** (`_rescue()`): when a call on a connected device exceeds its timeout, the stuck
+  process is killed - it cannot run `teardown()` - and a fresh driver process is started,
+  connected and torn down, all within `RESCUE_TIMEOUT_S` (10 s), **before** the `DriverError`
+  reaches test code, so the device is torn down before the next step. A rescue that fails is an
+  ERROR line (`... could not be torn down and may still be energised: ...`). Not for a timeout
+  before `connect()` returned (start-up has its own error), not for the rescue's own process
+  (`_is_rescue`), and not after `abandon()` (`_abandoned`), which rescues by itself.
 
 ## Failure
 
@@ -140,7 +155,7 @@ and so removes the `[hardware.*]` sections too; the confirmation says so.
 | Return value not picklable | `DriverError("Device 'x': 'op' failed: TypeError: 'op' returned a value that cannot be sent: ...")` |
 | Argument cannot be unpickled in the driver process | `DriverError("Device 'x': 'op' failed: <Type>: the call could not be read in the driver process: ...")` |
 | Return value cannot be unpickled in PyPTS | `DriverError("Device 'x': the answer 'op' could not be read: ...")` |
-| Call exceeds `call_timeout_s` | `DriverError("... did not answer 'op' within N s; its driver process was stopped.")` |
+| Call exceeds `call_timeout_s` | The rescue runs, then `DriverError("... did not answer 'op' within N s; its driver process was stopped and the device torn down on a fresh connection.")` - or `...; it could not be torn down.` |
 | Driver process dies | `DriverError("Device 'x' stopped unexpectedly (exit code N).")` |
 | Cannot import / build / connect | `DriverError("Device 'x' could not be opened: ...")`, or the failed `'connect'` |
 | Unknown device | `DriverError("No device 'x' is configured. ... Configured devices: ...")` |
@@ -154,8 +169,10 @@ fresh process and connects when it does not.
 ## Logging
 
 INFO (technician): `Device 'x' connected.`, `Device 'x' disconnected.`,
-`Recovering device 'x'.`, `Device 'x' recovered.` WARNING: `Device 'x' did not disconnect
-cleanly: ...`. Forwarded records are logged as `Device 'x': <message>`: at their own level
+`Recovering device 'x'.`, `Device 'x' recovered.`, `Device 'x' was torn down on a fresh
+connection.` WARNING: `Device 'x' did not disconnect cleanly: ...`, `Device 'x' is being
+connected again, to tear it down.` ERROR: `Device 'x' could not be torn down and may still be
+energised: ...`. Forwarded records are logged as `Device 'x': <message>`: at their own level
 when the logger is the driver's own module (or a child of it), and at DEBUG when another library
 logs below WARNING. Lines printed through `sys.stdout` / `sys.stderr` in the driver process are
 DEBUG (`Device 'x' printed: ...`), as are every call and its return value (cut to
@@ -166,10 +183,14 @@ the arguments of ordinary calls are traced as given.
 
 1. Derive from the device type it belongs to (`from pypts.hal import PSU`), never from
    `BaseDriver` directly: a driver of no device type is refused.
-2. Implement `connect(config)` (all values are text), `teardown()` (harmless when nothing is
-   open) and the device type's verbs. Every other public method becomes an operation too.
+2. Implement `connect(config)` (all values are text), `teardown()` and the device type's verbs.
+   Every other public method becomes an operation too. **`teardown()` is where the instrument
+   is left safe** - outputs and loads off - and then disconnected. There is no separate
+   safe-state method: teardown runs at every end of a device, on a fresh connection when the
+   driver was stuck (the rescue), so it must work right after `connect()` on an instrument in
+   any state, and be harmless when nothing is open.
 3. Log with `logging.getLogger(__name__)`. Do not name a method `name`, `device_type`, `operations`,
-   `open`, `close`, `recover` or `is_open` (`connection_driver.RESERVED_NAMES`). Do not start
+   `open`, `close`, `recover`, `is_open` or `abandon` (`connection_driver.RESERVED_NAMES`). Do not start
    `multiprocessing` processes from a driver: the driver process is a daemon, and a daemon
    cannot have children.
 4. Import the vendor library at the top of the driver module, with an `ImportError` that names
@@ -223,8 +244,12 @@ because its bare `drivers` rule would otherwise hide the shipped drivers.
   is full every thread of the driver process that logs or prints blocks until the next call.
 - `sys.stdout` / `sys.stderr` in the driver process are a line forwarder, not a real stream:
   `encoding` is `None`, and there is no `buffer` and no `fileno()`.
-- An abandoned run's devices stay open until CORE exits, and are then terminated without
-  `teardown()`.
+- A rescue reconnects with the same settings; an instrument that refuses a second connection
+  while the first is half-open, or a `connect()` slower than `RESCUE_TIMEOUT_S` (an SSH host
+  with a long `connect_timeout_s`), cannot be torn down this way.
+- PyPTS killed outright (the launcher's terminate, a crash) runs none of this: the driver
+  process's own `teardown()` at the end of the Pipe is the only net, and only when it is not
+  stuck in a call.
 - Output a C library writes straight to the process's file descriptors (not through
   `sys.stdout`) is not forwarded. It goes to PyPTS's own console, if there is one.
 - No automatic recovery policy, only `device.recover()` from test code.

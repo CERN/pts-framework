@@ -1021,6 +1021,16 @@ class StepTableContent(QWidget):
         self.table.setItem(row, 2, item)
         # A step inside a folded group stays folded: the table follows the run to
         # the group row that is showing instead.
+        self._scroll_to_row(row)
+
+    def scroll_to_step(self, step_id: UUID) -> None:
+        """Bring a step's row into view - the Summary tab's failure links (gui.md §14)."""
+        row = self._find_row(step_id)
+        if row is not None:
+            self._scroll_to_row(row)
+
+    def _scroll_to_row(self, row: int) -> None:
+        """The row into view - or, folded away, the group row that is showing."""
         shown_item = self.table.item(self._visible_row_for(row), 0)
         if shown_item is not None:
             self.table.scrollToItem(shown_item, QAbstractItemView.ScrollHint.EnsureVisible)

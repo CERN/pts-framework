@@ -11,11 +11,13 @@ import logging
 import os
 import subprocess
 import sys
+import threading
+import time
 
 import pytest
 from hal_test_drivers import TwoArgumentError
 
-from pypts.hal import DriverError
+from pypts.hal import DriverError, connection_driver
 from pypts.hal.connection_driver import ConnectionDriver
 
 LOOPBACK = "pypts.hal.drivers.loopback.LoopbackDriver"
@@ -313,3 +315,99 @@ def test_a_return_value_pypts_cannot_read_is_a_driver_error(odd_device):
     with pytest.raises(DriverError, match=words):
         odd_device.two_argument_error()
     assert odd_device.ping() == "pong"
+
+
+# --------------------------------------------------------------------------
+# Making a device safe when its driver is stuck or its run is abandoned
+# --------------------------------------------------------------------------
+
+MARKING = "hal_test_drivers.MarkingDriver"
+
+
+def marks_of(path):
+    if not path.exists():
+        return []
+    return path.read_text(encoding="utf-8").split()
+
+
+@pytest.fixture
+def marking(tmp_path):
+    """A device whose connect() and teardown() can be seen, even in a fresh process."""
+    marks = tmp_path / "marks.txt"
+    connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)}, call_timeout_s=0.5)
+    connection.open()
+    yield connection, marks
+    connection.close()
+
+
+def test_a_call_that_times_out_is_torn_down_on_a_fresh_connection(marking):
+    """The stuck process cannot tear down; a fresh one connects and does, before the error."""
+    connection, marks = marking
+
+    with pytest.raises(DriverError, match="torn down on a fresh connection"):
+        connection.hang(30)
+
+    assert not connection.is_open()
+    assert marks_of(marks)[:3] == ["connect", "connect", "teardown"]
+
+
+def test_a_rescue_that_cannot_connect_is_bounded_and_said(marking, monkeypatch, caplog):
+    connection, marks = marking
+    monkeypatch.setattr(connection_driver, "RESCUE_TIMEOUT_S", 1.0)
+    (marks.parent / (marks.name + ".hang")).write_text("", encoding="utf-8")
+    began = time.monotonic()
+
+    with pytest.raises(DriverError, match="could not be torn down"):
+        connection.hang(30)
+
+    # The call's 0.5 s, the rescue's 1 s, and the kills - nowhere near the hang.
+    assert time.monotonic() - began < 10.0
+    assert marks_of(marks) == ["connect"]
+    assert any(
+        record.levelno == logging.ERROR and "may still be energised" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_abandoning_an_idle_device_tears_it_down(marking):
+    connection, marks = marking
+
+    assert connection.abandon() is True
+
+    assert not connection.is_open()
+    assert marks_of(marks)[:2] == ["connect", "teardown"]
+
+
+def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_connection(tmp_path):
+    """The abandoned run holds the device's lock: abandon() must not wait for it."""
+    marks = tmp_path / "marks.txt"
+    connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)}, call_timeout_s=60.0)
+    connection.open()
+    failures = []
+
+    def stuck_step():
+        try:
+            connection.hang(60)
+        except DriverError as exc:
+            failures.append(str(exc))
+
+    zombie = threading.Thread(target=stuck_step)
+    zombie.start()
+    try:
+        deadline = time.monotonic() + 5.0
+        while not connection._lock.locked() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        began = time.monotonic()
+
+        assert connection.abandon() is True
+
+        assert time.monotonic() - began < 10.0
+        zombie.join(timeout=5.0)
+        assert not zombie.is_alive()
+        # The killed call ends the step; it does not rescue a second time.
+        assert len(failures) == 1
+        assert "torn down on a fresh connection" not in failures[0]
+        assert marks_of(marks)[:3] == ["connect", "connect", "teardown"]
+        assert not connection.is_open()
+    finally:
+        connection.close()

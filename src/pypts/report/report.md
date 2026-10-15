@@ -58,13 +58,24 @@ makes one itself when `RunStarted` names none.
 
 ## CSV columns
 
-`columns_for(metadata_names)` = `RUN_COLUMNS` + the recipe's `report_metadata` names +
-`STEP_COLUMNS`. `CSV_COLUMNS` is the set for a run that declares no metadata.
+`columns_for(metadata_names)` = `RUN_COLUMNS` + one `metadata_column(name)` per
+`report_metadata` name + `STEP_COLUMNS`. `CSV_COLUMNS` is the set for a run that declares no
+metadata.
+
+**Metadata columns are prefixed** with `METADATA_PREFIX` (`meta_`): `serial_number` is the
+column `meta_serial_number`. The names are the recipe's, and without the prefix a global
+called `result` shared the step verdict's column - `rewrite_csv()` then overwrote every
+row's verdict with it, so a FAIL step read PASS (codebase review #3, 2026-10-14). No built-in
+column starts with `meta_`, so no name can clash and none has to be refused. The prefix
+lives only at the CSV boundary (`columns_for()`, `run_level_cells()`, the HTML header's
+lookup): `RunMetadata`, `self.metadata`, the HTML header's label and `board_id()` use the
+bare name. A CSV written before the prefix has bare metadata columns, and the HTML rebuilt
+from it with `rows_from_csv()` shows no metadata.
 
 | Group | Columns |
 |-------|---------|
 | `RUN_COLUMNS` (repeated on every row) | `recipe_name`, `recipe_description`, `recipe_version`, `pypts_version`, `run_started_at`, `run_result` |
-| metadata | one column per `report_metadata` name, in recipe order |
+| metadata | `meta_<name>` per `report_metadata` name, in recipe order |
 | `STEP_COLUMNS` | `sequence_name`, `step_name`, `step_id`, `step_type`, `result`, `inputs`, `outputs`, `error_info`, `started_at`, `duration_s` |
 
 `inputs` / `outputs` are JSON (`default=str`); times are local `YYYY-mm-dd HH:MM:SS`;

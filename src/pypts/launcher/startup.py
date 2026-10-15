@@ -54,8 +54,10 @@ from pypts.messages.to_logger_communication import LoggerControl, StopLogger
 from pypts.utilities.common import RESTART_EXIT_CODE
 from pypts.utilities.local_storage import get_log_file_path
 
-#: How long CORE gets to shut itself down cleanly before it is killed.
-CORE_SHUTDOWN_TIMEOUT_S = 5.0
+#: How long CORE gets to shut itself down cleanly before it is killed. Above
+#: Core.SHUTDOWN_TIMEOUT_S (15 s), so CORE can log which module was late
+#: before it is terminated.
+CORE_SHUTDOWN_TIMEOUT_S = 20.0
 
 #: How long the Logger gets to drain whatever is still queued.
 LOGGER_SHUTDOWN_TIMEOUT_S = 5.0

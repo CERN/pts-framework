@@ -41,6 +41,8 @@ import traceback
 import uuid
 from typing import TYPE_CHECKING, Any
 
+import numpy
+
 from pypts.logger.log import log
 from pypts.messages.common_messages import ResultType, StepOutcome
 from pypts.messages.run_events import (
@@ -489,7 +491,8 @@ class Step:
         PASS when every one of them passed, FAIL when any one did not. `pass`
         (a value recorded, not a measurement) and `global` (a value stored in
         the run's one variable scope) leave the verdict alone. A step with no
-        judging entry is DONE.
+        judging entry is DONE. A `passfail` value that is not a bool (Python's
+        or numpy's) raises ValueError, which run() turns into ERROR.
 
         Args:
             failures: if given, one sentence is appended for every check that
@@ -521,7 +524,16 @@ class Step:
                     pass
                 case "passfail":
                     judged = True
-                    passed = bool(step_output[output_name])
+                    value = step_output[output_name]
+                    # Only a real bool is a verdict: bool("FAIL") is True. A
+                    # numpy comparison gives numpy.bool_, which is not a bool.
+                    if not isinstance(value, (bool, numpy.bool_)):
+                        raise ValueError(
+                            f"Step '{self.name}': passfail on output '{output_name}' "
+                            f"needs True or False, got {render_value(value)} "
+                            f"({type(value).__name__})."
+                        )
+                    passed = bool(value)
                 case "equals":
                     judged = True
                     passed = step_output[output_name] == output_config["value"]
@@ -586,7 +598,11 @@ class Step:
             try:
                 step_input = self.process_inputs(runtime)
                 raw_output = self._step(runtime, step_input)
-            except Exception as exc:  # noqa: BLE001 - a failure must become a StepResult
+            # SystemExit too: sys.exit() in test code is a step that never
+            # returned - ERROR whatever the exit code - not the end of the run.
+            # Let through, it would skip every later step and leave the
+            # Sequencer's thread without a word.
+            except (Exception, SystemExit) as exc:  # noqa: BLE001 - a failure must become a StepResult
                 step_result.set_error(exc, step_input)
             else:
                 step_output: dict[str, Any] = {}

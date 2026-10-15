@@ -48,8 +48,9 @@ LIVE_CSV_NAME = "report.csv"
 #: rather than kept somewhere else. `recipe_name` always worked this way; the
 #: rest joined it when report.html stopped needing anything but the CSV.
 #:
-#: The recipe's `report_metadata` names are appended to these at run start,
-#: which is why the full set is computed per run rather than being a constant.
+#: The recipe's `report_metadata` names are added to these at run start, each
+#: under METADATA_PREFIX, which is why the full set is computed per run rather
+#: than being a constant.
 RUN_COLUMNS = (
     "recipe_name",
     "recipe_description",
@@ -77,9 +78,24 @@ STEP_COLUMNS = (
 CSV_COLUMNS = RUN_COLUMNS + STEP_COLUMNS
 
 
+#: What a metadata column's name starts with. The names are the recipe's, so
+#: without it a global called `result` would share - and, when the run
+#: finished, overwrite - the step verdict's column. No built-in column starts
+#: with it.
+METADATA_PREFIX = "meta_"
+
+
+def metadata_column(name: str) -> str:
+    """The CSV column of one `report_metadata` global."""
+    return METADATA_PREFIX + name
+
+
 def columns_for(metadata_names: tuple[str, ...]) -> tuple[str, ...]:
     """The header row of one run: the run-level columns, its metadata, the step ones."""
-    return RUN_COLUMNS + tuple(metadata_names) + STEP_COLUMNS
+    metadata_columns = []
+    for name in metadata_names:
+        metadata_columns.append(metadata_column(name))
+    return RUN_COLUMNS + tuple(metadata_columns) + STEP_COLUMNS
 
 
 def rows_from_csv(csv_path: Path) -> list[dict[str, str]]:
@@ -317,7 +333,7 @@ class Report:
             "run_result": str(self.run_result) if self.run_result is not None else "",
         }
         for name in self.metadata_names():
-            cells[name] = self.metadata.get(name, "")
+            cells[metadata_column(name)] = self.metadata.get(name, "")
         return cells
 
     def metadata_names(self) -> tuple[str, ...]:
@@ -451,7 +467,7 @@ class Report:
 
         metadata_lines = []
         for name in self.metadata_names():
-            value = first_row.get(name, "")
+            value = first_row.get(metadata_column(name), "")
             if value:
                 metadata_lines.append(
                     f"<strong>{html.escape(name)}:</strong> {html.escape(value)}<br>"

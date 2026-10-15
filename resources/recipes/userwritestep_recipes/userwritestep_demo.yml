@@ -12,7 +12,7 @@
 # A UserWrite step carries its question directly on the step - `message` and
 # `image_path` are fields, not inputs entries. What the operator types
 # arrives as the step's `output`, so the ordinary vocabulary stores it in a
-# `global` or judges it (`equals`, `passfail`). There is no
+# `global` or judges it (`equals`; `passfail` is refused). There is no
 # `allow_empty`: the OK button stays disabled until something is typed, so the
 # only answers that exist are some text and Cancel, and Cancel is an ERROR.
 #

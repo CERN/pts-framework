@@ -63,6 +63,10 @@ LOAD_TIMEOUT_S = 30.0
 #: Report writes the HTML after RunFinished, so ReportReady always comes later.
 REPORT_TIMEOUT_S = 15.0
 
+#: The package whose errors mean the run's record may be missing or partial.
+#: A ModuleError's source is the dotted module of whatever reported it.
+REPORT_PACKAGE = "pypts.report"
+
 #: The operation CORE reports a refused recipe under.
 LOAD_REFUSAL = "Core.load_recipe"
 
@@ -126,6 +130,10 @@ class RunResult:
     report_dir: str | None = None
     #: Errors reported while the run was going; the run carried on past them.
     errors: tuple[str, ...] = ()
+    #: Why the run's record may be missing or partial: every error the Report
+    #: reported (also in `errors`), and a sentence of its own when no report
+    #: arrived. Empty when the report is whole.
+    report_errors: tuple[str, ...] = ()
 
     @property
     def passed(self) -> bool:
@@ -242,6 +250,7 @@ class ApiClient(HmiClient):
         started = False
         steps: list[StepVerdict] = []
         errors: list[str] = []
+        report_errors: list[str] = []
         while True:
             message = self._next_message("the run was going")
             if message is None:
@@ -266,15 +275,16 @@ class ApiClient(HmiClient):
             elif isinstance(message, ModuleErrorReported):
                 if not started and message.error.operation in START_REFUSALS:
                     raise PtsError(f"The run did not start: {message.error.message}")
-                errors.append(message.error.message)
+                self._collect_error(message, errors, report_errors)
             elif isinstance(message, RunFinished):
-                report_dir = self._wait_for_report(errors)
+                report_dir = self._wait_for_report(errors, report_errors)
                 return RunResult(
                     sequence=sequence_name,
                     result=message.result,
                     steps=tuple(steps),
                     report_dir=report_dir,
                     errors=tuple(errors),
+                    report_errors=tuple(report_errors),
                 )
 
     # --- Helpers ------------------------------------------------------------------
@@ -306,7 +316,7 @@ class ApiClient(HmiClient):
             else:
                 self.answer_user_path(request, value)
 
-    def _wait_for_report(self, errors: list[str]) -> str | None:
+    def _wait_for_report(self, errors: list[str], report_errors: list[str]) -> str | None:
         deadline = time.monotonic() + REPORT_TIMEOUT_S
         while time.monotonic() < deadline and self.running:
             try:
@@ -316,9 +326,22 @@ class ApiClient(HmiClient):
             if isinstance(message, ReportReady):
                 return message.report_dir
             if isinstance(message, ModuleErrorReported):
-                errors.append(message.error.message)
-        log.debug("No report arrived within %.1f s of the run finishing.", REPORT_TIMEOUT_S)
+                self._collect_error(message, errors, report_errors)
+        # A WARNING, not DEBUG: a run with no record must not pass unnoticed.
+        missing = f"No report was produced within {REPORT_TIMEOUT_S:g} s of the run finishing."
+        log.warning("%s", missing)
+        report_errors.append(missing)
         return None
+
+    @staticmethod
+    def _collect_error(
+        message: ModuleErrorReported, errors: list[str], report_errors: list[str]
+    ) -> None:
+        """Keep an error of the run; one from the Report also says the record is not whole."""
+        errors.append(message.error.message)
+        source = message.error.source
+        if source == REPORT_PACKAGE or source.startswith(REPORT_PACKAGE + "."):
+            report_errors.append(message.error.message)
 
     def _next_message(self, what: str) -> Any | None:
         """

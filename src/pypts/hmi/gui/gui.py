@@ -8,14 +8,15 @@ The PySide6 frontend: the operator screen.
 Layout:
 
   QMenuBar  File / Edit / View / About
-  QToolBar  Open | Unload | Preview | Start | Pause | Stop  ··· Open report folder
+  QToolBar  Open | Close | Recipe | Start | Pause | Stop | Report  ··· run metadata
+            (each icon with a small label under it; no sequence chooser)
   recipe_label                                  run_progress
   ┌────────────────────────┬──────────────────────────────┐
-  │ [ Run | Results ] (52%)│ CenterContent (48%)          │
+  │ [ Run | Summary ] (52%)│ CenterContent (48%)          │
   │  Run: run_stack        │  InteractionPanel            │
   │   idle logo, then      │  LogPanel                    │
   │   StepTable            │                              │
-  │  Results: ResultsPanel │                              │
+  │  Summary: SummaryPanel │                              │
   └────────────────────────┴──────────────────────────────┘
   QStatusBar  status label
 
@@ -25,7 +26,9 @@ HmiClient owns the protocol; GUI is the assembler (gui.md §6).
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
+from uuid import UUID
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, QUrl
 from PySide6.QtGui import QCloseEvent, QDesktopServices, QKeySequence, QMouseEvent, QShortcut
@@ -49,14 +52,15 @@ from pypts.hmi.gui.gui_theme import detect_system_dark_mode, install_system_them
 from pypts.hmi.gui.log_tail import LogTail
 from pypts.hmi.gui.palette import get_palette
 from pypts.hmi.gui.resources import load_cern_logo_pixmap
-from pypts.hmi.gui.results_panel import ResultsPanel
 from pypts.hmi.gui.run_progress import RunProgress
+from pypts.hmi.gui.run_record import RunRecord
 from pypts.hmi.gui.settings_dialog import SettingsDialog, setting_text
 from pypts.hmi.gui.step_table import StepTableContent
 from pypts.hmi.gui.step_yaml_popup import StepYamlPopup
 from pypts.hmi.gui.styles import get_stylesheet
+from pypts.hmi.gui.summary_panel import SummaryPanel
 from pypts.hmi.gui.top_bar import TopBarContent
-from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN, ViewTabBar
+from pypts.hmi.gui.view_tabs import TAB_RUN, TAB_SUMMARY, ViewTabBar
 from pypts.hmi.hmi_client import HmiClient
 from pypts.logger.log import (
     DEFAULT_LOG_LEVEL,
@@ -82,6 +86,7 @@ from pypts.messages.core_hmi_communication import (
 from pypts.messages.run_events import (
     RecipeLoaded,
     RunPaused,
+    RunStarted,
     StepStarted,
     UserPathRequest,
     UserPromptRequest,
@@ -326,7 +331,7 @@ class PtsMainWindow(QMainWindow):
     The application main window.
 
     Builds the menu bar, native toolbar, body splitter
-    (Run | Results tabs 52% / right interaction 48%), and status bar.
+    (Run | Summary tabs 52% / right interaction 48%), and status bar.
     Content widgets are injected; the window owns layout, not logic.
     [X] is intercepted: it issues a shutdown request and only really closes
     when CORE sends StopHmi.
@@ -337,7 +342,7 @@ class PtsMainWindow(QMainWindow):
         on_close_request,
         top_bar: TopBarContent,
         step_table: StepTableContent,
-        results_panel: ResultsPanel,
+        summary_panel: SummaryPanel,
         center: CenterContent,
         window_size: tuple[int, int] = (1280, 720),
     ) -> None:
@@ -346,7 +351,7 @@ class PtsMainWindow(QMainWindow):
         self.allow_close = False
 
         self.step_table = step_table
-        self.results_panel = results_panel
+        self.summary_panel = summary_panel
         self.top_bar = top_bar
 
         self.setWindowTitle("pyPTS")
@@ -387,7 +392,7 @@ class PtsMainWindow(QMainWindow):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
 
-        # Left pane: the Run | Results tabs over the page each one shows.
+        # Left pane: the Run | Summary tabs over the page each one shows.
         # Run is the idle placeholder until a sequence is shown, then the table.
         self.run_stack = QStackedWidget()
         self.run_stack.addWidget(self._build_idle_placeholder())
@@ -395,7 +400,7 @@ class PtsMainWindow(QMainWindow):
 
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self.run_stack)      # TAB_RUN
-        self.left_stack.addWidget(results_panel)       # TAB_RESULTS
+        self.left_stack.addWidget(summary_panel)       # TAB_SUMMARY
 
         self.view_tabs = ViewTabBar()
         self.view_tabs.currentChanged.connect(self.left_stack.setCurrentIndex)
@@ -524,7 +529,7 @@ class PtsMainWindow(QMainWindow):
         return page
 
     def show_tab(self, index: int) -> None:
-        """Open TAB_RUN or TAB_RESULTS, as a click on it would."""
+        """Open TAB_RUN or TAB_SUMMARY, as a click on it would."""
         self.view_tabs.setCurrentIndex(index)
 
     def paint_idle_logo(self, dark: bool) -> None:
@@ -597,6 +602,10 @@ class GUI(HmiClient):
         #: it asked for has loaded. `_sequence_to_start` None means the main one.
         self._start_when_loaded = False
         self._sequence_to_start: str | None = None
+        #: The sequence the step table shows, which Start and the Space retest
+        #: run: the recipe's main one, or the one open_recipe_and_start() named.
+        #: There is no sequence chooser. "" with no recipe.
+        self._shown_sequence_name = ""
 
         #: Sequence name -> one rendered YAML fragment per step table row, read
         #: back off disk once per load for the step table's hover panel.
@@ -610,13 +619,12 @@ class GUI(HmiClient):
             on_start=self._start_or_resume,
             on_stop=self.stop_sequence,
             on_pause=self._pause,
-            on_sequence_selected=self.show_selected_sequence,
             on_open_report=self.open_report_folder,
             on_preview=self.show_recipe_preview,
             on_unload=self.unload_recipe,
         )
         self.step_table = StepTableContent()
-        _results = ResultsPanel()
+        _summary = SummaryPanel()
         self.center = CenterContent()
 
         theme, window_mode, width, height = window_settings()
@@ -627,7 +635,7 @@ class GUI(HmiClient):
             self.request_shutdown,
             self.top_bar,
             self.step_table,
-            _results,
+            _summary,
             self.center,
             window_size=(width, height),
         )
@@ -688,6 +696,13 @@ class GUI(HmiClient):
         )
 
         self.report_dir: str | None = None
+
+        #: The run the Summary tab sums up - the last one, until an unload.
+        self.run_record: RunRecord | None = None
+        #: The sequence this window last asked CORE to run: RunStarted does not name it.
+        self._started_sequence_name = ""
+        self.window.summary_panel.failure_clicked.connect(self.show_failure)
+        self.window.summary_panel.open_requested.connect(self.open_run_file)
 
         #: What the GUI process exits with. RESTART_EXIT_CODE asks the launcher to
         #: start pypts again once everything has stopped - see restart().
@@ -1015,7 +1030,7 @@ class GUI(HmiClient):
             app.setStyleSheet(get_stylesheet(dark))
         self.top_bar.set_dark(dark)
         self.center.set_dark(dark)
-        self.window.results_panel.set_dark(dark)
+        self.window.summary_panel.set_dark(dark)
         self.window.view_tabs.set_dark(dark)
         # These two colour themselves per item, which no stylesheet can reach.
         self.step_table.set_dark(dark)
@@ -1080,12 +1095,14 @@ class GUI(HmiClient):
         self.window.recipe_label.setText("Pausing after the current step...")
         self._show_run_state("Pausing")
 
-    def _start_or_resume(self, sequence_name: str) -> None:
+    def _start_or_resume(self) -> None:
         """
-        The Start button: starts a sequence, or - while a pause is requested or
-        held - resumes the run. Resume needs no wait: it also cancels a pause
-        whose hold has not begun, and the engine answers that with nothing at all.
+        The Start button: starts the sequence on show, or - while a pause is
+        requested or held - resumes the run. Resume needs no wait: it also
+        cancels a pause whose hold has not begun, and the engine answers that
+        with nothing at all.
         """
+        sequence_name = self._shown_sequence_name
         if self._pause_requested:
             log.debug("The operator asked to resume the run.")
             self.resume_sequence()
@@ -1147,7 +1164,7 @@ class GUI(HmiClient):
         if excluded is None:
             log.debug("Space ignored: no ticked step is selected.")
             return
-        sequence_name = self.top_bar.sequence_combo.currentText()
+        sequence_name = self._shown_sequence_name
         log.debug("Retest of sequence '%s' with %d steps left out.", sequence_name, len(excluded))
         self.start_sequence(sequence_name, excluded, write_report=False)
 
@@ -1166,13 +1183,15 @@ class GUI(HmiClient):
         self._run_state = state
         self.show_status(state)
 
-    # --- Sequence dropdown ------------------------------------------------------
+    # --- The sequence on show --------------------------------------------------
 
-    def show_selected_sequence(self, sequence_name: str) -> None:
+    def show_sequence(self, sequence_name: str) -> None:
+        """Put one sequence of the loaded recipe in the step table: the one Start runs."""
         if self.current_recipe is None:
             return
         for sequence in self.current_recipe.sequences:
             if sequence.sequence_name == sequence_name:
+                self._shown_sequence_name = sequence_name
                 self.step_table.show_sequence(
                     sequence, self._recipe_yaml.get(sequence_name, ())
                 )
@@ -1232,10 +1251,11 @@ class GUI(HmiClient):
             self._requested_recipe_path = None
         self.step_table.set_running(False)
         self.center.set_recipe(event)
+        self.window.summary_panel.set_recipe(event)
         self.top_bar.show_recipe_loaded(event)
         self.top_bar.set_preview_available(bool(self._recipe_text.strip()))
         self.window.unload_recipe_action.setEnabled(not self._run_in_progress)
-        self.show_selected_sequence(event.main_sequence)
+        self.show_sequence(event.main_sequence)
         self.window.recipe_label.setText(
             f"Loaded {event.recipe_name}\nReady to start"
         )
@@ -1258,6 +1278,7 @@ class GUI(HmiClient):
         self._loaded_recipe_path = None
         self._start_when_loaded = False
         self._sequence_to_start = None
+        self._shown_sequence_name = ""
         self._recipe_yaml = {}
         self._recipe_text = ""
         self._run_outcomes = []
@@ -1274,7 +1295,10 @@ class GUI(HmiClient):
         self.center.cancel_pending()
         self.center.set_recipe(None)
         self.center.show_idle()
-        self.window.results_panel.set_results(())
+        self.run_record = None
+        self._started_sequence_name = ""
+        self.window.summary_panel.set_recipe(None)
+        self.window.summary_panel.set_record(None)
         self.window.view_tabs.stop_pulse()
         self.window.run_stack.setCurrentIndex(0)
         self.window.show_tab(TAB_RUN)
@@ -1287,8 +1311,12 @@ class GUI(HmiClient):
     def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
         super().show_run_metadata(values)
         self.top_bar.show_run_metadata(values)
+        if self.run_record is not None:
+            self.run_record.set_metadata(values)
+            self.window.summary_panel.refresh()
 
-    def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
+    def show_run_started(self, event: RunStarted) -> None:
+        recipe_name = event.recipe_name
         self._run_in_progress = True
         self._set_recipe_opening_enabled(False)
         # A restart would take the run down with it.
@@ -1304,8 +1332,15 @@ class GUI(HmiClient):
         self.window.run_progress.reset()
         self.center.show_idle()
         self.center.run_started()
-        # The last run's results go, and the operator is taken to this run.
-        self.window.results_panel.set_results(())
+        # The last run's summary goes, and the operator is taken to this run.
+        self.run_record = RunRecord.start(
+            event,
+            self._started_sequence_name,
+            self.current_recipe,
+            time.monotonic(),
+            datetime.now(),  # noqa: DTZ005 - local time, shown to the operator
+        )
+        self.window.summary_panel.set_record(self.run_record)
         self.window.view_tabs.stop_pulse()
         self.window.run_stack.setCurrentWidget(self.step_table)
         self.window.show_tab(TAB_RUN)
@@ -1322,10 +1357,12 @@ class GUI(HmiClient):
         self.step_table.set_running(False)
         self.top_bar.show_run_finished()
         self.center.run_finished(result)
-        self.window.results_panel.set_results(outcomes)
+        if self.run_record is not None:
+            self.run_record.finish(result, outcomes, time.monotonic())
+            self.window.summary_panel.refresh()
         if outcomes:
-            # Not switched to: the Results tab pulses until it is opened.
-            self.window.view_tabs.start_pulse(TAB_RESULTS)
+            # Not switched to: the Summary tab pulses until it is opened.
+            self.window.view_tabs.start_pulse(TAB_SUMMARY)
         self.window.recipe_label.setText(
             run_summary(self._running_recipe_name, result, outcomes)
         )
@@ -1359,21 +1396,49 @@ class GUI(HmiClient):
     def show_step_started(self, event: StepStarted) -> None:
         self.step_table.mark_running(event)
         self.center.step_started(event.step_id)
+        if self.run_record is not None:
+            self.run_record.step_started(event.step_id, time.monotonic())
 
     def show_step_finished(self, outcome: StepOutcome) -> None:
         self.step_table.show_outcome(outcome)
         self.center.step_finished(outcome)
         self.window.run_progress.step_finished(outcome)
         self._run_outcomes.append(outcome)
-        # Live: the Results tab can be opened during the run.
-        self.window.results_panel.set_results(tuple(self._run_outcomes))
+        # Live: the Summary tab can be opened during the run.
+        if self.run_record is not None:
+            self.run_record.step_finished(outcome, time.monotonic())
+            self.window.summary_panel.refresh()
 
     def show_report_ready(self, event: ReportReady) -> None:
         self.report_dir = event.report_dir
+        if self.run_record is not None:
+            self.run_record.report_ready(event)
+            self.window.summary_panel.refresh()
         if self._run_state:
             # CORE's "Report generated: <path>" status line lands just before
             # this; the bar goes back to saying how the run ended.
             self.show_status(self._run_state)
+
+    def start_sequence(
+        self,
+        sequence_name: str,
+        excluded_step_ids: tuple[UUID, ...] = (),
+        write_report: bool = True,
+    ) -> None:
+        """As HmiClient's, remembering the name for the Summary tab."""
+        self._started_sequence_name = sequence_name
+        super().start_sequence(sequence_name, excluded_step_ids, write_report)
+
+    def show_failure(self, step_id: UUID) -> None:
+        """
+        A failure clicked on the Summary tab: the Run tab, the step's row in
+        view, and the step in the step card - a look back (gui.md §19), which
+        a click outside the step table ends as usual.
+        """
+        self.window.show_tab(TAB_RUN)
+        self.step_table.scroll_to_step(step_id)
+        self.center.review_step(step_id)
+        self.outside_click_watcher.watch()
 
     # --- Settings ---------------------------------------------------------------
 
@@ -1622,9 +1687,8 @@ class GUI(HmiClient):
             )
             return
 
-        # The window shows what is about to run, exactly as if it had been chosen.
-        self.top_bar.sequence_combo.setCurrentText(sequence_name)
-        self.show_selected_sequence(sequence_name)
+        # The window shows what is about to run.
+        self.show_sequence(sequence_name)
         self.start_sequence(sequence_name)
 
     @catch_and_report_errors()
@@ -1702,6 +1766,32 @@ class GUI(HmiClient):
             )
             return
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+    @catch_and_report_errors()
+    def open_run_file(self, path: str) -> None:
+        """
+        An Open button on the Summary tab: the report in the browser, the CSV
+        and the run log in whatever this machine opens them with, the folder
+        in the file manager. One that is gone, or that nothing opens, is a
+        warning. Decorated to report and continue, like open_report_folder().
+        """
+        target = Path(path)
+        if not target.exists():
+            report_problem(
+                self,
+                f"There is no such file or folder any more: {target}",
+                severity=ErrorSeverity.WARNING,
+                operation="open_run_file",
+            )
+            return
+        log.debug("Opening %s from the Summary tab.", target)
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+            report_problem(
+                self,
+                f"This machine has no application set up to open {target}",
+                severity=ErrorSeverity.WARNING,
+                operation="open_run_file",
+            )
 
     @catch_and_report_errors()
     def open_config_file(self) -> None:

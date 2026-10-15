@@ -19,6 +19,7 @@ import logging
 import uuid
 from pathlib import Path
 
+import numpy
 import pytest
 
 from pypts.messages.common_messages import ResultType, StepOutcome
@@ -234,6 +235,27 @@ def test_passfail_equals_and_range_verdicts():
     assert judge({"v": {"type": "equals", "value": "yes"}}, {"v": "no"}) is ResultType.FAIL
     assert judge({"v": {"type": "range", "min": "10", "max": "20"}}, {"v": "15"}) is ResultType.PASS
     assert judge({"v": {"type": "range", "min": "10", "max": "20"}}, {"v": "25"}) is ResultType.FAIL
+
+
+@pytest.mark.parametrize(
+    ("value", "verdict"),
+    [
+        (True, ResultType.PASS),
+        (False, ResultType.FAIL),
+        (numpy.True_, ResultType.PASS),
+        (numpy.False_, ResultType.FAIL),
+    ],
+)
+def test_passfail_judges_a_python_or_numpy_bool(value, verdict):
+    """`numpy.array(...).mean() > 4.9` is a numpy bool, not a Python one."""
+    assert judge({"ok": {"type": "passfail"}}, {"ok": value}) is verdict
+
+
+@pytest.mark.parametrize("value", ["FAIL", "False", "0", "", 0, 1, None, [False]])
+def test_passfail_refuses_what_is_not_a_bool(value):
+    """bool("FAIL") is True: a returned "FAIL" used to judge PASS."""
+    with pytest.raises(ValueError, match="needs True or False"):
+        judge({"ok": {"type": "passfail"}}, {"ok": value})
 
 
 def test_pass_is_done_whatever_came_back():
@@ -599,6 +621,21 @@ def test_a_declared_output_the_step_never_returned_is_a_step_error():
     assert "did not return it" in result.error_summary
     # ...and it names what the step did return, which is where the typo shows.
     assert "volts" in result.error_summary
+
+
+def test_a_passfail_value_that_is_not_a_bool_is_a_step_error():
+    """Not FAIL: the test code returned something passfail cannot judge."""
+    step = ReturnsDict(
+        step_name="check_led",
+        payload={"led_on": "FAIL"},
+        outputs={"led_on": {"type": "passfail"}},
+    )
+
+    result = step.run(Runtime())
+
+    assert result.result is ResultType.ERROR
+    assert "led_on" in result.error_summary
+    assert "'FAIL' (str)" in result.error_summary
 
 
 def test_a_step_that_returned_nothing_at_all_says_so():

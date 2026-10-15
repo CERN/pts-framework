@@ -178,9 +178,11 @@ Read from the schema, by helper:
   missing type.
 - `_valid_keys_hint(steptype)` — the keys a step model takes; also the hint for a
   key an Indexed or Sequence step refuses, whose reason is already the message.
-- `REMOVED_SEQUENCE_KEYS` (the warning for a removed sequence key) and
-  `RENAMED_STEP_TYPES` (the note added to an unknown steptype) are schema
-  constants.
+- `_document_keys_hint(model)` — the keys the header or a sequence takes, the
+  hint for an unknown key there (a removed sequence key's reason is already the
+  message: `validate_document()` words it from `REMOVED_SEQUENCE_KEYS`).
+- `RENAMED_STEP_TYPES` (the note added to an unknown steptype) is a schema
+  constant.
 
 What stays worded here describes the file, not a field: the structural
 pre-checks in `_run`, `_QUOTE_HINT`, "each step must be a mapping" and
@@ -208,7 +210,7 @@ Results are sorted: errors first (by line number), then warnings.
 ```python
 issue.severity  # "error" | "warning"
 issue.field     # where: "header", "sequence 'Main', steps[1] 'Pause'", "recipe" (a load
-                #   refusal); a warning keeps the dotted form "sequence 'Main'.locals"
+                #   refusal); a warning keeps the dotted form "header.version"
 issue.message   # what is wrong; for an error, `f"{field}: {message}"` is the framework's sentence
 issue.hint      # fix suggestion, with a YAML example where useful
 issue.line      # 1-based line number in the YAML source, or None
@@ -228,13 +230,13 @@ The verificator never prints to stdout.
 
 **Errors — whatever the framework refuses:** everything `HeaderSchema` and
 `SequenceSchema` check (`recipe/recipe.md`, Format rules: required fields, value
-types, unknown step keys, the input/output vocabulary, Sequence and Indexed step
+types, unknown keys anywhere, the input/output vocabulary, Sequence and Indexed step
 shapes), then everything the framework's load refuses. Plus duplicate sequence
 names and a `main_sequence` that names nothing, named with a hint.
 
 **Warnings — what loads but looks wrong:** a `version` written as a number, an
-empty `name`/`version`, a removed sequence key (`setup_steps`, `parameters`,
-`outputs`, `locals`), an unknown sequence key (ignored by the framework).
+empty `name`/`version`. An unknown or removed header/sequence key is an error,
+not a warning: the framework refuses it.
 
 ## Known limitations
 

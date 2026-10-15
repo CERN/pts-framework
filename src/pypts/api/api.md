@@ -58,6 +58,11 @@ if __name__ == "__main__":
   `Sequencer.execute_sequence` *before* `RunStarted` it refuses a start. Any other error is a
   load warning (a version notice) or goes into `RunResult.errors`. A new refusal path in CORE
   or the Sequencer has to be added to `LOAD_REFUSAL` / `START_REFUSALS`.
+- **A run whose record is not whole says so.** An error whose `source` is in the
+  `REPORT_PACKAGE` (`pypts.report`) goes into `RunResult.report_errors` as well as `errors`,
+  during the run and while `_wait_for_report()` waits. If `ReportReady` does not arrive within
+  `REPORT_TIMEOUT_S` (15 s), a WARNING is logged and its sentence ("No report was produced
+  within 15 s of the run finishing.") is added to `report_errors`; `report_dir` stays `None`.
 - **Three kinds of question, one `answer` function.** It is called with a `UserPromptRequest`
   (return one of `options`), a `UserTextRequest` (return the text) or a `UserPathRequest`
   (return the path of an existing file or folder - `request.select` says which), and returns
@@ -93,7 +98,8 @@ console: load, run, print each step, exit.
 - **Every question is declined** (`decline_question()`: a console line and a WARNING), so the
   step is an ERROR - as in the CLI. No answers file, by decision.
 - **Exit codes:** `0` PASS/DONE · `1` FAIL · `2` ERROR, STOP or SKIP (not judged; also
-  Ctrl+C) · `3` no run - missing or refused recipe, unknown sequence, engine failed to start
+  Ctrl+C), **or any verdict - FAIL included - with a non-empty `report_errors`**: a run
+  without its whole record is not judged (`exit_code_for(result, report_errors)`) · `3` no run - missing or refused recipe, unknown sequence, engine failed to start
   or stopped mid-run. A rejected command line is `3` too (`startup.USAGE_EXIT_CODE`, not
   argparse's `2`), in every mode.
 - The recipe file and the sequence name are checked before running; a missing file before

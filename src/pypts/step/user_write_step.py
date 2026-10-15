@@ -18,8 +18,8 @@ reading off an instrument that has no interface.
         output: {type: global, global_name: serial_number}
 
 The typed string is the step's output, so the ordinary outputs
-vocabulary stores it (`global`) or judges it (`equals`, `passfail`)
-with no machinery of its own.
+vocabulary stores it (`global`) or judges it (`equals`) with no
+machinery of its own. `passfail` is refused by the schema: text is never a bool.
 
 **The framework has no opinion about what is being asked for.** An earlier
 design had a SerialNumberRequest message and a serial-number page in the GUI,

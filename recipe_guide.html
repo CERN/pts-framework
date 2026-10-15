@@ -203,10 +203,10 @@ globals:                         # the run's variables and their starting values
 <tr><td><code>version</code></td><td>yes</td><td>The PyPTS version the recipe was written for. Its <code>major.minor</code> is compared with the running PyPTS; a mismatch is logged and shown to the operator, and the recipe still loads. Quote it (<code>'0.2'</code>); a bare <code>0.2</code> also works</td></tr>
 <tr><td><code>description</code></td><td>no (<code>""</code>)</td><td>GUI, log</td></tr>
 <tr><td><code>main_sequence</code></td><td>no (the first sequence)</td><td>The sequence that runs; the others are groups it calls with <code>Sequence</code> steps (§10). No <code>Sequence</code> step may call it. Matched without case</td></tr>
-<tr><td><code>report_metadata</code></td><td>no (<code>[serial_number]</code>)</td><td>List of global names whose values the report stamps on every CSV row and in the HTML header; <code>[]</code> for none. The <strong>first</strong> one's value also names the report files: <code>&lt;value&gt;_&lt;start time&gt;.csv</code> / <code>.html</code>. Each entry is a name written as text — a number is refused</td></tr>
+<tr><td><code>report_metadata</code></td><td>no (<code>[serial_number]</code>)</td><td>List of global names whose values the report stamps on every CSV row and in the HTML header; <code>[]</code> for none. The <strong>first</strong> one's value also names the report files: <code>&lt;value&gt;_&lt;start time&gt;.csv</code> / <code>.html</code>. Each entry is a name written as text — a number is refused — and may appear only once. In the CSV each one is a column named <code>meta_&lt;name&gt;</code> (<code>meta_serial_number</code>), so any global name is safe, even <code>result</code>; the HTML header shows the name as written</td></tr>
 <tr><td><code>globals</code></td><td>no (<code>{}</code>)</td><td>Flat <code>name: value</code> mapping: the run's variables and their starting values</td></tr>
 </tbody></table>
-<p>Any other header key is ignored.</p>
+<p>Any other header key is <strong>refused</strong> when the recipe loads (<code>main_sequnce: Extra inputs are not permitted</code>) — a misspelled key used to be ignored silently. That includes the old header <code>continue_on_error</code> and <code>recipe_version</code>: <code>continue_on_error</code> goes on the step (§9), and <code>version</code> says which PyPTS the recipe is for.</p>
 <p><strong><code>serial_number</code> is not injected.</strong> The engine has no concept of a serial number. Capture it with a <code>UserWrite</code> step that stores it in the <code>serial_number</code> global, as the example in §2 does; the report picks it up through <code>report_metadata</code>. <code>resources/recipes/userwritestep_recipes/userwritestep_demo.yml</code> shows it running.</p>
 <hr>
 <h2 id="4-sequence-document">4. Sequence document</h2>
@@ -224,7 +224,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <tr><td><code>image_path</code></td><td>no</td><td>A picture the GUI shows while the sequence runs, for every step that has none of its own (§5.1)</td></tr>
 <tr><td><code>teardown_steps</code></td><td>no (<code>[]</code>)</td><td>Run after <code>steps</code> after a pass, a failure or a stop. Inside a teardown everything runs to the end: <code>continue_on_error: false</code> does not stop it</td></tr>
 </tbody></table>
-<p>Any other sequence key is ignored (the Recipe Creator warns about it). Removed on purpose: <code>setup_steps</code> (put those steps at the front of <code>steps</code>), <code>locals</code> (use <code>globals</code>), and <code>parameters</code> / <code>outputs</code> (a called sequence shares the run's globals).</p>
+<p>Any other sequence key is <strong>refused</strong> when the recipe loads, so a typo such as <code>teardown_step:</code> cannot quietly drop the teardown. Removed on purpose, and refused with what to do instead: <code>setup_steps</code> (put those steps at the front of <code>steps</code>), <code>locals</code> (use <code>globals</code>), and <code>parameters</code> / <code>outputs</code> (a called sequence shares the run's globals).</p>
 <hr>
 <h2 id="5-step-common-fields">5. Step — common fields</h2>
 <pre><code class="language-yaml">- steptype: PythonModule     # required; selects the step type (§10)
@@ -271,6 +271,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <li>a dotted import name — <code>mypackage.tests</code>, or the standard library.</li>
 </ol>
 <p>A file is loaded once and shared by every step that names it. There is no project-wide search: the recipe says where its code is. The module is not imported when the recipe loads, so a wrong <code>module</code> or <code>method_name</code> is an <code>ERROR</code> on that step when it runs.</p>
+<p>An exception raised by the function is an <code>ERROR</code> on the step, and so is <code>sys.exit()</code> — whatever the exit code, even 0. It does not end the run: the run carries on or halts as for any other <code>ERROR</code>, and the teardown still runs.</p>
 <hr>
 <h2 id="7-outputs-judging-and-storing-results">7. <code>outputs</code> — judging and storing results</h2>
 <pre><code class="language-yaml">outputs:
@@ -279,7 +280,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
   ok:       {type: passfail}</code></pre>
 <p>Each entry names one value the step returned and says what to do with it. An entry is always a mapping and always names its <code>type</code>:</p>
 <table><thead><tr><th><code>type</code></th><th>Extra keys</th><th>Effect on the result</th></tr></thead><tbody>
-<tr><td><code>passfail</code></td><td>—</td><td><code>PASS</code> if the value is truthy, else <code>FAIL</code></td></tr>
+<tr><td><code>passfail</code></td><td>—</td><td><code>PASS</code> if the value is <code>True</code>, <code>FAIL</code> if it is <code>False</code>. Python's or numpy's bool only: any other value — <code>"FAIL"</code>, <code>0</code>, <code>None</code> — is an <code>ERROR</code>. Refused on <code>UserInteraction</code> and <code>UserWrite</code>, which return text: use <code>equals</code></td></tr>
 <tr><td><code>equals</code></td><td><code>value</code></td><td><code>PASS</code> if the value <code>== value</code> (no coercion), else <code>FAIL</code></td></tr>
 <tr><td><code>range</code></td><td><code>min</code>, <code>max</code></td><td><code>PASS</code> if <code>min ≤ float(value) ≤ max</code>, else <code>FAIL</code></td></tr>
 <tr><td><code>pass</code></td><td>—</td><td>Not a measurement: the result is <code>DONE</code>, whatever came back; the step need not return it</td></tr>
@@ -348,6 +349,8 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <ul>
 <li><code>options</code>` is a list of strings. Each string is both the button label and the value the step returns as <code>output</code>`.
 </li>
+<li>Judge the answer with <code>equals</code>`. <code>passfail</code>` is refused at load time: the answer is a button's text, never <code>True</code>` or <code>False</code>`.
+</li>
 <li>An empty <code>options</code>` list is refused at load time. A missing <code>image_path</code>` is not: "No image available" is shown (§5.1).
 </li>
 <li>The GUI always adds its own Cancel button. Cancelling, a timeout or a stop makes the step <code>ERROR</code>`; the run carries on unless <code>continue_on_error: false</code>`.
@@ -361,7 +364,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
   message: Scan or type the serial number of the unit under test.
   outputs:
     output: { type: global, global_name: serial_number }</code></pre>
-<p>Text-entry mode only. The typed string is stored per <code>outputs</code>`. The old serial-port picker mode (<code>ID</code>` key) is not available.</p>
+<p>Text-entry mode only. The typed string is stored or judged (<code>equals</code>`) per <code>outputs</code>`; <code>passfail</code>` is refused at load time, as on <code>UserInteraction</code>`. The old serial-port picker mode (<code>ID</code>` key) is not available.</p>
 <h3 id="userloading-operator-picks-a-file-or-folder"><code>UserLoading</code>` — operator picks a file or folder</h3>
 <pre><code class="language-yaml">- steptype: UserLoading
   step_name: pick_calibration_file
@@ -459,7 +462,7 @@ teardown_steps:
 <li>A duplicate sequence name (compared without case), and a <code>main_sequence</code> that names no sequence.</li>
 <li>Once all of the above is clean, whatever the framework's real load still refuses: <code>select</code> that is neither <code>file</code> nor <code>folder</code>, an empty <code>method_name</code> or <code>options</code>, a <code>Sequence</code> step calling a sequence that does not exist, the main sequence, or itself in a loop. These are found one at a time and carry no line number.</li>
 </ul>
-<p><strong>Warnings</strong> — the recipe loads, but something looks wrong: <code>version</code> written as a number, an empty <code>name</code> or <code>version</code>, a removed sequence key (<code>setup_steps</code>, <code>parameters</code>, <code>outputs</code>, <code>locals</code>), an unknown sequence key (ignored).</p>
+<p><strong>Warnings</strong> — the recipe loads, but something looks wrong: <code>version</code> written as a number, an empty <code>name</code> or <code>version</code>. An unknown or removed key in the header or a sequence is an error, as it is for the framework.</p>
 <p><strong>Not checked</strong>, because the framework does not check it at load time either: that <code>module</code>/<code>method_name</code> exist, that a <code>global</code> input names a global something will have set, or the value of <code>wait_time</code>. A missing <code>image_path</code> file is not reported either: it never stops a recipe, and the framework tells the operator about it when the recipe is loaded (§5.1).</p>
 </div>
 </body>

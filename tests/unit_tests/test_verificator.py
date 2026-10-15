@@ -94,6 +94,9 @@ REFUSED = {
     "report_metadata naming a number": VALID.replace(
         "name: Demo", "name: Demo\nreport_metadata: [3]"
     ),
+    "report_metadata naming a global twice": VALID.replace(
+        "name: Demo", "name: Demo\nreport_metadata: [serial_number, serial_number]"
+    ),
     "select is neither file nor folder": VALID
     + "  - steptype: UserLoading\n    step_name: pick\n    message: m\n    select: directory\n",
     "an empty method_name": VALID
@@ -103,6 +106,18 @@ REFUSED = {
     "empty options": VALID
     + "  - steptype: UserInteraction\n    step_name: q\n    message: m\n    options: []\n",
     "a call of the main sequence": VALID + "  - steptype: Sequence\n    sequence_name: Main\n",
+    "an unknown header key": VALID.replace("name: Demo", "name: Demo\nmain_sequnce: Main"),
+    "an unknown sequence key": VALID.replace("steps:", "teardown_step: []\nsteps:"),
+    "a removed sequence key": VALID.replace("steps:", "setup_steps: []\nsteps:"),
+    "a typo in an output entry": with_step(
+        "    outputs:\n      r: {type: range, min: 1, max: 2, mx: 3}\n"
+    ),
+    "passfail on a UserInteraction": VALID
+    + "  - steptype: UserInteraction\n    step_name: q\n    message: m\n    options: [Pass]\n"
+    + "    outputs:\n      output: {type: passfail}\n",
+    "passfail on a UserWrite": VALID
+    + "  - steptype: UserWrite\n    step_name: q\n    message: m\n"
+    + "    outputs:\n      output: {type: passfail}\n",
     "main_sequence names nothing": VALID.replace("name: Demo", "name: Demo\nmain_sequence: Nope"),
 }
 
@@ -301,13 +316,29 @@ def test_a_document_label_counts_from_one():
 # -- warnings are for what loads -----------------------------------------------------
 
 
-def test_a_removed_sequence_key_is_a_warning_and_the_recipe_loads():
+def test_a_removed_sequence_key_is_an_error_with_its_reason():
     text = VALID.replace("steps:", "locals: {}\nsteps:")
-    assert framework_refusal(text) == ""
-    assert errors(text) == []
-    (warning,) = warnings(text)
-    assert warning.field == "sequence 'Main'.locals"
-    assert warning.hint == REMOVED_SEQUENCE_KEYS["locals"]
+    (issue,) = errors(text)
+    assert issue.field == "sequence 'Main'"
+    assert issue.message == f"locals: {REMOVED_SEQUENCE_KEYS['locals']}"
+    assert issue.line == 5
+    assert warnings(text) == []
+
+
+def test_an_unknown_sequence_key_names_the_keys_a_sequence_takes():
+    text = VALID.replace("steps:", "teardown_step: []\nsteps:")
+    (issue,) = errors(text)
+    assert issue.message == "teardown_step: Extra inputs are not permitted"
+    assert issue.hint.startswith("Valid keys for a sequence:")
+    assert "teardown_steps" in issue.hint
+
+
+def test_an_unknown_header_key_names_the_keys_a_header_takes():
+    text = VALID.replace("name: Demo", "name: Demo\nmain_sequnce: Main")
+    (issue,) = errors(text)
+    assert issue.message == "main_sequnce: Extra inputs are not permitted"
+    assert issue.hint.startswith("Valid keys for the header:")
+    assert "main_sequence" in issue.hint
 
 
 def test_a_version_written_as_a_number_is_a_warning():

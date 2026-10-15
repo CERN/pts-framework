@@ -18,9 +18,7 @@ from PySide6.QtCore import QByteArray, QEvent, QPoint, QSize, Qt
 from PySide6.QtGui import QHelpEvent, QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
-    QComboBox,
     QFileDialog,
-    QHBoxLayout,
     QLabel,
     QSizePolicy,
     QToolBar,
@@ -68,6 +66,17 @@ _STOP_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"'
     ' fill="{color}"><rect x="3" y="3" width="10" height="10" rx="1.5"/></svg>'
 )
+#: The small words under each toolbar icon. Start reads RESUME_LABEL while a
+#: run is paused or pausing.
+OPEN_LABEL = "Open"
+UNLOAD_LABEL = "Close"
+PREVIEW_LABEL = "Recipe"
+START_LABEL = "Start"
+RESUME_LABEL = "Resume"
+PAUSE_LABEL = "Pause"
+STOP_LABEL = "Stop"
+REPORT_LABEL = "Report"
+
 _PAUSE_SVG = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"'
     ' fill="{color}"><rect x="3" y="2" width="4" height="12" rx="1"/>'
@@ -100,16 +109,29 @@ def describe(widget: QWidget, title: str, detail: str) -> None:
     widget.setAccessibleDescription(detail)
 
 
+def _labelled_button(label: str) -> QToolButton:
+    """A toolbar button: its icon, and `label` in small type under it."""
+    button = QToolButton()
+    button.setAutoRaise(True)
+    button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextUnderIcon)
+    button.setIconSize(QSize(16, 16))
+    button.setText(label)
+    return button
+
+
 class TopBarContent(QToolBar):
-    """Open / Unload / Preview / sequence chooser / Start / Pause / Stop. A native QToolBar."""
+    """
+    Open / Close / Recipe / Start / Pause / Stop / Report, each icon labelled.
+    A native QToolBar. There is no sequence chooser: Start runs the sequence
+    the GUI shows - the recipe's main one.
+    """
 
     def __init__(
         self,
         on_open: Callable[[str], None],
-        on_start: Callable[[str], None],
+        on_start: Callable[[], None],
         on_stop: Callable[[], None],
         on_pause: Callable[[], None],
-        on_sequence_selected: Callable[[str], None],
         on_open_report: Callable[[], None],
         on_preview: Callable[[], None] = lambda: None,
         on_unload: Callable[[], None] = lambda: None,
@@ -123,7 +145,6 @@ class TopBarContent(QToolBar):
         self._on_start = on_start
         self._on_stop = on_stop
         self._on_pause = on_pause
-        self._on_sequence_selected = on_sequence_selected
         self._on_open_report = on_open_report
         self._on_preview = on_preview
         self._on_unload = on_unload
@@ -137,47 +158,31 @@ class TopBarContent(QToolBar):
         #: this through set_paused().
         self._shows_resume = False
 
-        self.open_button = QToolButton()
-        self.open_button.setAutoRaise(True)
-        self.open_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.open_button.setIconSize(QSize(16, 16))
+        self.open_button = _labelled_button(OPEN_LABEL)
         self.open_button.clicked.connect(self.choose_recipe_file)
 
         # Unload the recipe: back to the window as it opened, with a fresh run
         # log. Greyed while there is nothing loaded and while a run is on.
-        self.unload_button = QToolButton()
-        self.unload_button.setAutoRaise(True)
-        self.unload_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.unload_button.setIconSize(QSize(16, 16))
+        self.unload_button = _labelled_button(UNLOAD_LABEL)
         self.unload_button.clicked.connect(lambda _checked=False: self._on_unload())
 
         # The whole loaded recipe, read-only. Allowed during a run too: looking
         # changes nothing. Greyed until there is a recipe to look at.
-        self.preview_button = QToolButton()
-        self.preview_button.setAutoRaise(True)
-        self.preview_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.preview_button.setIconSize(QSize(16, 16))
+        self.preview_button = _labelled_button(PREVIEW_LABEL)
         self.preview_button.clicked.connect(lambda _checked=False: self._on_preview())
 
-        self.start_button = QToolButton()
-        self.start_button.setAutoRaise(True)
-        self.start_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.start_button.setIconSize(QSize(16, 16))
-        self.start_button.clicked.connect(
-            lambda: self._on_start(self.sequence_combo.currentText())
-        )
+        self.start_button = _labelled_button(START_LABEL)
+        self.start_button.clicked.connect(lambda _checked=False: self._on_start())
 
-        self.pause_button = QToolButton()
-        self.pause_button.setAutoRaise(True)
-        self.pause_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.pause_button.setIconSize(QSize(16, 16))
+        self.pause_button = _labelled_button(PAUSE_LABEL)
         self.pause_button.clicked.connect(self._on_pause)
 
-        self.stop_button = QToolButton()
-        self.stop_button.setAutoRaise(True)
-        self.stop_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.stop_button.setIconSize(QSize(16, 16))
+        self.stop_button = _labelled_button(STOP_LABEL)
         self.stop_button.clicked.connect(self._on_stop)
+
+        # Beside Stop: the report of the run just ended is what is wanted next.
+        self.report_button = _labelled_button(REPORT_LABEL)
+        self.report_button.clicked.connect(self._on_open_report)
 
         # What the run has learned about the unit on the bench: the globals the
         # recipe named in `report_metadata`, most often its serial number. Empty
@@ -187,24 +192,8 @@ class TopBarContent(QToolBar):
         self.metadata_label.setObjectName("runMetadataLabel")
         self.metadata_label.setVisible(False)
 
-        self.sequence_combo: QComboBox = QComboBox()
-        self.sequence_combo.currentTextChanged.connect(self._sequence_changed)
-
-        combo_container = QWidget()
-        combo_layout = QHBoxLayout(combo_container)
-        combo_layout.setContentsMargins(4, 0, 4, 0)
-        combo_layout.setSpacing(4)
-        combo_layout.addWidget(QLabel("Sequence:"))
-        combo_layout.addWidget(self.sequence_combo)
-
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-
-        self.report_button = QToolButton()
-        self.report_button.setAutoRaise(True)
-        self.report_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
-        self.report_button.setIconSize(QSize(16, 16))
-        self.report_button.clicked.connect(self._on_open_report)
 
         self.addWidget(self.open_button)
         self.addWidget(self.unload_button)
@@ -212,12 +201,10 @@ class TopBarContent(QToolBar):
         self.addWidget(self.start_button)
         self.addWidget(self.pause_button)
         self.addWidget(self.stop_button)
-        self.addWidget(combo_container)
+        self.addWidget(self.report_button)
         self.addWidget(spacer)
         self.addWidget(self.metadata_label)
-        self.addWidget(self.report_button)
 
-        self.sequence_combo.setEnabled(False)
         self.unload_button.setEnabled(False)
         self.preview_button.setEnabled(False)
         self.start_button.setEnabled(False)
@@ -291,10 +278,13 @@ class TopBarContent(QToolBar):
             else "Open a recipe first.",
         )
         if self._running and self._shows_resume:
+            self.start_button.setText(RESUME_LABEL)
             describe(self.start_button, "Resume", "Continue the run.")
         elif self.start_button.isEnabled():
-            describe(self.start_button, "Start", "Run the selected sequence from its first step.")
+            self.start_button.setText(START_LABEL)
+            describe(self.start_button, "Start", "Run the recipe from its first step.")
         else:
+            self.start_button.setText(START_LABEL)
             describe(self.start_button, "Start", self._why_no_start())
         if self._running and self._shows_resume:
             describe(self.pause_button, "Pause", "The run is paused - Start resumes it.")
@@ -319,13 +309,6 @@ class TopBarContent(QToolBar):
             "Open report folder",
             "Open this run's report folder. Before the first run of a session, "
             "opens the folder holding every report.",
-        )
-        describe(
-            self.sequence_combo,
-            "Sequence",
-            "Which sequence of the loaded recipe Start will run."
-            if self.sequence_combo.isEnabled()
-            else "Open a recipe first.",
         )
 
     def _why_no_start(self) -> str:
@@ -390,10 +373,6 @@ class TopBarContent(QToolBar):
         self.preview_button.setEnabled(available)
         self._refresh_controls()
 
-    def _sequence_changed(self, sequence_name: str) -> None:
-        if sequence_name:
-            self._on_sequence_selected(sequence_name)
-
     # --- State transitions, each caused by a message ---------------------------
 
     def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
@@ -410,17 +389,10 @@ class TopBarContent(QToolBar):
         self.metadata_label.setVisible(False)
 
     def show_recipe_loaded(self, event: RecipeLoaded) -> None:
-        """A recipe is in: offer its sequences, allow starting and unloading."""
+        """A recipe is in: allow starting and unloading."""
         self._recipe_loaded = True
         self.unload_button.setEnabled(True)
         self.clear_run_metadata()
-        self.sequence_combo.blockSignals(True)
-        self.sequence_combo.clear()
-        for sequence in event.sequences:
-            self.sequence_combo.addItem(sequence.sequence_name)
-        self.sequence_combo.setCurrentText(event.main_sequence)
-        self.sequence_combo.blockSignals(False)
-        self.sequence_combo.setEnabled(True)
         self.start_button.setEnabled(True)
         self.pause_button.setEnabled(False)
         self.stop_button.setEnabled(False)
@@ -431,7 +403,6 @@ class TopBarContent(QToolBar):
         self._running = True
         self.open_button.setEnabled(False)
         self.unload_button.setEnabled(False)
-        self.sequence_combo.setEnabled(False)
         self.start_button.setEnabled(False)
         self.pause_button.setEnabled(True)
         self.stop_button.setEnabled(True)
@@ -442,7 +413,6 @@ class TopBarContent(QToolBar):
         self._running = False
         self.open_button.setEnabled(True)
         self.unload_button.setEnabled(self._recipe_loaded)
-        self.sequence_combo.setEnabled(True)
         self.start_button.setEnabled(True)
         self.pause_button.setEnabled(False)
         self.stop_button.setEnabled(False)
@@ -452,10 +422,6 @@ class TopBarContent(QToolBar):
         """No recipe any more: the controls go back to how the window opened."""
         self._recipe_loaded = False
         self.clear_run_metadata()
-        self.sequence_combo.blockSignals(True)
-        self.sequence_combo.clear()
-        self.sequence_combo.blockSignals(False)
-        self.sequence_combo.setEnabled(False)
         self.unload_button.setEnabled(False)
         self.preview_button.setEnabled(False)
         self.start_button.setEnabled(False)

@@ -341,6 +341,72 @@ def test_a_run_whose_report_never_arrives_still_returns(engine, monkeypatch):
 
     assert result.result is ResultType.DONE
     assert result.report_dir is None
+    assert result.report_errors == ("No report was produced within 0.2 s of the run finishing.",)
+
+
+def report_error_reported(message):
+    return ModuleErrorReported(
+        ModuleError(
+            source="pypts.report.report",
+            severity=ErrorSeverity.ERROR,
+            message=message,
+            operation="Report.write_step_row",
+        )
+    )
+
+
+def test_an_error_from_the_report_is_a_report_error_too(engine):
+    """The record may be partial: the caller must be able to tell it from other errors."""
+    client, core = engine
+    with_a_recipe_loaded(client, core)
+    core.on(
+        StartSequence,
+        lambda message: [
+            started(),
+            report_error_reported("the CSV could not be written"),
+            *finished(ResultType.PASS),
+        ],
+    )
+
+    result = client.run()
+
+    assert result.errors == ("the CSV could not be written",)
+    assert result.report_errors == ("the CSV could not be written",)
+
+
+def test_an_error_from_the_report_after_the_run_is_a_report_error(engine):
+    client, core = engine
+    with_a_recipe_loaded(client, core)
+    core.on(
+        StartSequence,
+        lambda message: [
+            started(),
+            RunFinished(result=ResultType.PASS),
+            report_error_reported("the HTML could not be written"),
+            ReportReady(report_path="C:/reports/run/report.html", report_dir="C:/reports/run"),
+        ],
+    )
+
+    result = client.run()
+
+    assert result.report_errors == ("the HTML could not be written",)
+
+
+def test_an_error_from_another_module_is_not_a_report_error(engine):
+    client, core = engine
+    with_a_recipe_loaded(client, core)
+    core.on(
+        StartSequence,
+        lambda message: [
+            started(),
+            error_reported("the step blew up", "Sequencer.execute_sequence"),
+            *finished(ResultType.ERROR),
+        ],
+    )
+
+    result = client.run()
+
+    assert result.report_errors == ()
 
 
 def test_the_engine_stopping_mid_run_raises(engine):

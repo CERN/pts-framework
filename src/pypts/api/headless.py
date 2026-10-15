@@ -30,7 +30,9 @@ EXIT_PASSED = 0
 #: At least one step failed.
 EXIT_FAILED = 1
 
-#: The run ended in ERROR or STOP, or skipped everything - it did not judge the unit.
+#: The run ended in ERROR or STOP, or skipped everything - it did not judge the
+#: unit. Also a run of any verdict, FAIL included, that was not recorded: no
+#: report arrived, or the Report reported an error.
 EXIT_NOT_JUDGED = 2
 
 #: There was no run: a missing recipe, a refused recipe, an unknown sequence,
@@ -44,8 +46,15 @@ class HeadlessPts(Pts):
     MODE = "headless"
 
 
-def exit_code_for(result: ResultType) -> int:
-    """The exit code a finished run ends the process with."""
+def exit_code_for(result: ResultType, report_errors: tuple[str, ...] = ()) -> int:
+    """
+    The exit code a finished run ends the process with.
+
+    A run whose record is missing or partial is not judged, whatever its
+    verdict: without the record not even a FAIL can be audited.
+    """
+    if report_errors:
+        return EXIT_NOT_JUDGED
     if result in (ResultType.PASS, ResultType.DONE):
         return EXIT_PASSED
     if result is ResultType.FAIL:
@@ -105,7 +114,7 @@ def headless_main(
             return EXIT_NOT_JUDGED
 
     print_result(result)
-    return exit_code_for(result.result)
+    return exit_code_for(result.result, result.report_errors)
 
 
 def decline_question(request: Question) -> None:
@@ -129,5 +138,7 @@ def print_result(result: RunResult) -> None:
     for error in result.errors:
         print(f"ERROR {error}")
     print(f"Run finished: {result.result} ({len(result.steps)} steps)")
-    if result.report_dir is not None:
+    if result.report_dir is None:
+        print("No report was produced.")
+    else:
         print(f"Report: {result.report_dir}")

@@ -19,21 +19,27 @@ any question:
   - its results: the values it was given and returned against what they were
     checked with, and the reason it failed, if it did - "No results yet."
     while it runs
+  - looking back at a sequence (a group row): its steps - the verdict counts,
+    then every step under it at any depth, indented, with its state, how long
+    it took and why it failed; in a scroll area no taller than STEPS_MAX_HEIGHT
 
 The state is in RunDisplay; this is only the view.
 """
 
+import html
 import time
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QResizeEvent
+from PySide6.QtWidgets import QFrame, QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from pypts.hmi.gui.palette import UNKNOWN_VERDICT, get_palette
+from pypts.hmi.gui.palette import UNKNOWN_VERDICT, Palette, get_palette
 from pypts.hmi.gui.run_display import (
     REVIEW_FINISHED,
     REVIEW_PENDING,
     RunDisplay,
     StepReview,
+    steps_counts_text,
 )
 from pypts.utilities.common import describe_step_values
 
@@ -51,6 +57,16 @@ RUNNING_TEXT = "Running..."
 #: The results line while the step runs, and for a finished one with none.
 NO_RESULTS_YET_TEXT = "No results yet."
 NO_VALUES_TEXT = "No values recorded."
+
+#: Above a looked-back sequence's steps, followed by their verdict counts.
+STEPS_HEADING = "Steps"
+
+#: The tallest the steps list grows, in pixels, before it scrolls.
+STEPS_MAX_HEIGHT = 240
+
+#: Before a group's name in the steps list, and the indent for one level deeper.
+_GROUP_MARK = "▸"
+_STEP_INDENT = "&nbsp;" * 4
 
 #: The chip keys in `Palette.verdicts` for the two states without a verdict.
 _PENDING_CHIP = "PENDING"
@@ -97,6 +113,50 @@ def _review_chip_key(review: StepReview) -> str:
     return _RUNNING_CHIP
 
 
+def steps_heading_text(steps: tuple[StepReview, ...]) -> str:
+    """"Steps: 4 PASS · 1 SKIP", or "Steps" while none has finished."""
+    counts = steps_counts_text(steps)
+    if not counts:
+        return STEPS_HEADING
+    return f"{STEPS_HEADING}: {counts}"
+
+
+def steps_html(steps: tuple[StepReview, ...], group_depth: int, palette: Palette) -> str:
+    """
+    A looked-back sequence's steps as a rich-text table, one row each: the state
+    chip, the name indented below the group, how long it took. A FAIL or ERROR
+    with a reason has it on a row of its own under the name.
+    """
+    rows = []
+    for review in steps:
+        chip = palette.verdicts.get(_review_chip_key(review), UNKNOWN_VERDICT)
+        state = html.escape(review_state_text(review))
+        indent = _STEP_INDENT * max(review.step.depth - group_depth - 1, 0)
+        name = html.escape(review.step.step_name)
+        if review.step.is_group:
+            name = f"{_GROUP_MARK} {name}"
+        took = ""
+        if review.duration is not None:
+            took = elapsed_text(review.duration)
+        rows.append(
+            "<tr>"
+            f'<td><span style="background-color:{chip.background}; color:{chip.text};'
+            f' font-weight:600;">&nbsp;{state}&nbsp;</span></td>'
+            f'<td style="color:{palette.text};">{indent}{name}</td>'
+            f'<td style="color:{palette.text_muted};" align="right">{took}</td>'
+            "</tr>"
+        )
+        outcome = review.outcome
+        if outcome is not None and outcome.error_info:
+            reason = html.escape(outcome.error_info).replace("\n", "<br>")
+            rows.append(
+                "<tr><td></td>"
+                f'<td colspan="2" style="color:{palette.danger};">'
+                f"{indent}{_STEP_INDENT}{reason}</td></tr>"
+            )
+    return '<table cellspacing="0" cellpadding="2">' + "".join(rows) + "</table>"
+
+
 class RunHeader(QWidget):
     """The step card. show_live() follows the run; show_review() stands on one step."""
 
@@ -122,20 +182,40 @@ class RunHeader(QWidget):
         self.error_label = QLabel()
         self.error_label.setWordWrap(True)
         self.error_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        # A looked-back sequence's steps (§19): the heading with the counts, and
+        # the list in a scroll area, so a long sequence cannot push the picture
+        # and a question off the column.
+        self.steps_heading_label = QLabel()
+        self.steps_label = QLabel()
+        self.steps_label.setTextFormat(Qt.TextFormat.RichText)
+        # Wrapped to the card's width, never scrolled sideways: a long reason
+        # would push the durations out of sight.
+        self.steps_label.setWordWrap(True)
+        self.steps_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.steps_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        self.steps_area = QScrollArea()
+        self.steps_area.setWidget(self.steps_label)
+        self.steps_area.setWidgetResizable(True)
+        self.steps_area.setFrameShape(QFrame.Shape.NoFrame)
+        self.steps_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.steps_area.viewport().setAutoFillBackground(False)
+        self.steps_label.setAutoFillBackground(False)
 
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(4)
-        for label in (
-            self.heading_label,
-            self.step_label,
-            self.description_label,
-            self.state_label,
-            self.info_label,
-            self.results_label,
-            self.error_label,
-        ):
-            column.addWidget(label, alignment=Qt.AlignmentFlag.AlignLeft)
+        # Only the chip is held to its own width. A word-wrapped label given an
+        # alignment gets its preferred width and the height for it, so a long
+        # line is wrapped narrow and cut off: the text labels take the full width.
+        column.addWidget(self.heading_label)
+        column.addWidget(self.step_label)
+        column.addWidget(self.description_label)
+        column.addWidget(self.state_label, alignment=Qt.AlignmentFlag.AlignLeft)
+        column.addWidget(self.info_label)
+        column.addWidget(self.results_label)
+        column.addWidget(self.error_label)
+        column.addWidget(self.steps_heading_label)
+        column.addWidget(self.steps_area)
 
         self._timer = QTimer(self)
         self._timer.setInterval(TICK_MS)
@@ -157,7 +237,14 @@ class RunHeader(QWidget):
             f"font-size:12px; color:{failed.text}; background-color:{failed.background};"
             "border-radius:4px; padding:2px 8px;"
         )
+        self.steps_heading_label.setStyleSheet(
+            f"font-size:11px; font-weight:600; color:{palette.section_label};"
+        )
+        self.steps_label.setStyleSheet("font-size:12px; background:transparent;")
         self._paint_chip()
+        if self._review is not None:
+            # The steps list carries its colours in its text.
+            self._set_steps(self._review)
 
     # --- the clock -------------------------------------------------------------
 
@@ -216,6 +303,7 @@ class RunHeader(QWidget):
             self._set_chip(RUNNING_TEXT, _RUNNING_CHIP)
             parts.append(f"Step {elapsed_text(now - step_started_at)}")
             self._set_results([NO_RESULTS_YET_TEXT], "")
+        self._hide_steps()
         if display.count_text():
             parts.append(display.count_text())
         if display.last_failure:
@@ -231,6 +319,7 @@ class RunHeader(QWidget):
             self._set_info("")
         else:
             self._set_info(f"Took {elapsed_text(review.duration)}")
+        self._set_steps(review)
         outcome = review.outcome
         if outcome is None:
             if review.state == REVIEW_PENDING:
@@ -260,6 +349,41 @@ class RunHeader(QWidget):
         self.results_label.setVisible(bool(lines))
         self.error_label.setText(error_text)
         self.error_label.setVisible(bool(error_text))
+
+    def _set_steps(self, review: StepReview) -> None:
+        """A sequence's steps under its results; nothing for a step."""
+        if not review.steps:
+            self._hide_steps()
+            return
+        palette = get_palette(self._dark)
+        self.steps_heading_label.setText(steps_heading_text(review.steps))
+        self.steps_heading_label.setVisible(True)
+        text = steps_html(review.steps, review.step.depth, palette)
+        # The clock redraws the card ten times a second: only a change is laid out.
+        if text != self.steps_label.text():
+            self.steps_label.setText(text)
+            self._fit_steps()
+        self.steps_area.setVisible(True)
+
+    def _fit_steps(self) -> None:
+        """The steps area as tall as its list at the width it has, up to STEPS_MAX_HEIGHT."""
+        width = self.steps_area.viewport().width()
+        if width > 0:
+            list_height = self.steps_label.heightForWidth(width)
+        else:
+            list_height = self.steps_label.sizeHint().height()
+        self.steps_area.setFixedHeight(min(list_height, STEPS_MAX_HEIGHT))
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt's name
+        """A wrapped list is taller or shorter at a new width."""
+        super().resizeEvent(event)
+        if not self.steps_area.isHidden():
+            self._fit_steps()
+
+    def _hide_steps(self) -> None:
+        self.steps_heading_label.setVisible(False)
+        self.steps_area.setVisible(False)
+        self.steps_label.clear()
 
     def _set_chip(self, text: str, key: str) -> None:
         """The state chip: `text` on the verdict colours of `key`; "" hides it."""

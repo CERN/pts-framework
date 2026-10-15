@@ -485,6 +485,11 @@ not details:
   A declared output the step did not return names itself rather than surfacing as
   `KeyError: 'voltage'`, and the `StepResult` keeps the outputs the step *had* produced -
   judging can fail after the measurement was taken, and that measurement is what explains it.
+- **`sys.exit()` in test code is this step's `ERROR`.** The body's `except` catches
+  `SystemExit` as well as `Exception` - and nothing wider - whatever the exit code, even 0:
+  the step never returned, so there is nothing to judge. Let through, it would unwind the
+  whole run past every `except Exception`, and the thread's end would swallow it silently.
+  The run then halts or carries on as for any other `ERROR`, teardown included.
 - **The operator's ERROR line comes from the exception, not from the traceback text.**
   `set_error()` stores both: the whole traceback on `error_info`, which is what the CSV and
   the tooltip read and what the DEBUG line prints, and one line on `error_summary`, built
@@ -594,6 +599,13 @@ The `outputs` vocabulary is `passfail`, `equals`, `range` (they judge), `pass` (
 this value, it is not a measurement) and `global` (store it). The verdict is `PASS` when
 every judging entry passed, `FAIL` when any did not, and `DONE` when the step has no
 judging entry; `pass` and `global` never touch it.
+
+`passfail` judges a bool only — Python's or `numpy.bool_` (what a numpy comparison
+returns). Any other value raises `ValueError` in `process_outputs()`, so the step is
+`ERROR`: `bool("FAIL")` is `True`, and truthiness used to judge that PASS. The schema
+refuses `passfail` on `UserInteraction` and `UserWrite` (`_refuse_passfail()` in
+`recipe_schema.py`), whose output is always text; `UserLoading` is left to the run-time
+check.
 
 Two consequences worth knowing:
 

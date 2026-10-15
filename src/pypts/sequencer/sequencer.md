@@ -28,8 +28,14 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   runs the steps (`run_body()` → `run_sequence_body()` from the step layer), logs the run
   summary, ends the run log, and only then emits `RunFinished`. That order is what puts every
   line of the run - its first to the summary - in the run log, and the run's last lines before
-  the Report sees `RunFinished`. The end is in a `finally`, so a run that raises still returns
-  the Logger to the session log.
+  the Report sees `RunFinished`. **Once `RunStarted` is out, `RunFinished` always follows**:
+  the end - run log closed, then `RunFinished` - is in a `finally`, and the run is `ERROR`
+  until `run_body()` and the summary have both returned. An `Exception` or `SystemExit`
+  escaping either (devices that would not close, a broken summary) is reported with
+  `report_error()` and the run is sent as `ERROR`, with whatever step outcomes it already had;
+  otherwise the frontends would show the run as going for ever and the Report would never
+  finish the CSV. A refusal before `RunStarted` (no recipe, no such sequence) sends neither, and
+  an abandoned run (see *Stop*) sends no `RunFinished`: nobody is listening any more.
 - **Engineering mode** — `RunSequence.excluded_step_ids` and `.write_report` reach
   `execute_sequence()` through `run_sequence()` (as thread arguments). The exclusions go on the
   `Runtime` (`excluded_step_ids`, `step/step.md` §3); the step layer records each SKIP.
@@ -70,8 +76,15 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   response arrives. The event loop must keep turning; `ask_operator` runs on the sequence
   thread, not the event loop thread.
 - **Stop** — `stop_running_sequence()` sets `stop_requested` and joins the sequence thread
-  up to `SEQUENCE_JOIN_TIMEOUT_S` (2 s). If the thread is still alive after that, it
-  reports `CRITICAL` via `report_problem()` and continues the shutdown. `SequencerStopped`
+  up to `SEQUENCE_JOIN_TIMEOUT_S` (2 s). If the thread is still alive after that, the run is
+  **abandoned**: `run_abandoned` is set, so the run's events (the `emit` seam), its questions
+  (`ask_operator()` answers `None` at once) and its `RunFinished` are no longer sent - CORE is
+  shutting down without it, so the `RunStarted`/`RunFinished` pairing does not hold for an
+  abandoned run. It reports `CRITICAL` via `report_problem()`, then
+  `tear_down_abandoned_devices()` calls `hal.abandon_active_setup()` with
+  `ABANDONED_DEVICES_TIMEOUT_S`: the run's devices are torn down side by side, and any that
+  were not is a second `CRITICAL` naming them ("may still be energised"; `hal/hal.md`,
+  *Lifetime*). Then the shutdown continues. `SequencerStopped`
   is sent after the join, so it always arrives after any `RunFinished` on the same queue.
   The send sits in a `finally` and goes through `send_goodbye()`, because it comes *after* the
   line that can fail: an exception on its way out to the per-message boundary would otherwise
@@ -113,10 +126,11 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 | Name | Value | Meaning |
 |------|-------|---------|
 | `SEQUENCE_JOIN_TIMEOUT_S` | 2.0 s | How long `stop()` waits for the sequence thread |
+| `ABANDONED_DEVICES_TIMEOUT_S` | `RESCUE_TIMEOUT_S` + 1 = 11.0 s | How long `stop()` gives an abandoned run's devices, torn down side by side |
 | `HOLD_POLL_S` | 0.05 s | How often a held run looks at the pause and stop flags |
 
 ## Known gaps
 
 - `WaitStep` does not honour `stop_requested` mid-sleep (step layer issue, not sequencer).
-- A run abandoned by `stop_running_sequence()` leaves its devices open until CORE exits; the
-  next run's bench replaces it as the active one.
+- An abandoned run's thread is not stopped, only cut off: its test code runs on until it ends or
+  CORE's process exits. Its teardown *steps* do not run; only the devices are torn down.

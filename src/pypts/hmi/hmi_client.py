@@ -169,8 +169,8 @@ class HmiClient:
                 self.show_recipe_loaded(message)
             case RecipeUnloaded():
                 self.show_recipe_unloaded()
-            case RunStarted(recipe_name=name, recipe_description=description):
-                self.show_run_started(name, description)
+            case RunStarted():
+                self.show_run_started(message)
                 if message.run_log_path:
                     self.follow_run_log(message.run_log_path)
             case RunFinished(result=result, outcomes=outcomes):
@@ -372,8 +372,10 @@ class HmiClient:
         """CORE holds no recipe any more."""
         log.debug("RecipeUnloaded received.")
 
-    def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
-        log.debug("RunStarted received for recipe '%s'.", recipe_name)
+    def show_run_started(self, event: RunStarted) -> None:
+        """The run has begun. Passed whole: a frontend that sums the run up needs
+        its version, its folder and whether a report is written."""
+        log.debug("RunStarted received for recipe '%s'.", event.recipe_name)
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
         log.debug("RunFinished received: %s over %d steps.", result.name, len(outcomes))

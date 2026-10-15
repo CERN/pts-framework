@@ -86,7 +86,7 @@ see <a href="recipe_guide.html">recipe_guide.html</a>.</p>
 Python function, waiting, or asking the operator a question. Every step ends with a verdict
 (<code>PASS</code>, <code>FAIL</code>, <code>DONE</code>, <code>SKIP</code>, <code>ERROR</code>
 or <code>STOP</code>). Every run leaves a <strong>report</strong> and a <strong>run log</strong>.</p>
-<p>The usual workflow is: <strong>open a recipe → pick a sequence → start → answer questions →
+<p>The usual workflow is: <strong>open a recipe → start → answer questions →
 read the result</strong>.</p>
 
 <h2 id="start">2. Starting it</h2>
@@ -139,23 +139,33 @@ the window.</p>
 <ol>
   <li><strong>Open</strong> (toolbar, or <em>File → Open Recipe</em>) and pick a <code>.yml</code>
       file. The step table fills in, and the window title shows the recipe name.</li>
-  <li>Pick a <strong>sequence</strong> in the drop-down. The recipe's main sequence is
-      selected by default.</li>
   <li><strong>Start</strong>. Each row goes <em>Pending → Running... → verdict</em>.
       The small green bar at the right of the line above the table shows how far the run
       is, e.g. <code>6 / 15 (40 %)</code>. It counts every step, including the steps inside
       groups and skipped ones, but not the group rows themselves. It keeps its final value
       when the run ends, and starts again from 0 on the next run.</li>
   <li>When a step asks something, answer it in the right-hand panel (see below).</li>
-  <li>The left side has two tabs. <strong>Run</strong> shows the step table.
-      <strong>Results</strong> shows PASS/FAIL counts and a result tree. Each step opens into
-      its <strong>Inputs</strong> and <strong>Outputs</strong>, e.g. <code>voltage = 12.1</code>
-      with its check (<code>range 11 .. 13</code>). It fills in as each step finishes, so you
-      can look during a run.</li>
-  <li>When the run ends, the <strong>Results</strong> tab pulses blue until you click it.
-      The window doesn't switch tabs for you. Starting a run clears the results and goes back to
-      <strong>Run</strong>, and so do opening a recipe and picking a sequence (those two keep the
-      last results).</li>
+  <li>The left side has two tabs. <strong>Run</strong> shows the step table; a step's values
+      (e.g. <code>voltage = 12.1 (range 11 .. 13)</code>) are on its Result cell's tooltip, and
+      on the step card when you click the step. <strong>Summary</strong> sums up the run in four
+      cards:
+      <ul>
+        <li><strong>Result</strong> — the verdict, the recipe and its version, the sequence,
+            when it started and how long it took, the pypts version. An engineering retest
+            says it wrote no report.</li>
+        <li><strong>Metrics</strong> — how many steps ended each way, the pass rate (PASS out of
+            the steps that were judged: PASS, FAIL and ERROR), and the 5 slowest steps.</li>
+        <li><strong>Failures</strong> — every FAIL and ERROR step with its reason. Click one to
+            see it on the Run tab, in the step card.</li>
+        <li><strong>Unit &amp; report</strong> — the run's metadata (e.g. the serial number), and
+            the report, the CSV, the run log and the run folder, each with an <strong>Open</strong>
+            button. The files appear once the report is written, at the end of the run.</li>
+      </ul>
+      It fills in as each step finishes, so you can look during a run. Group rows (a called
+      sequence) are not counted.</li>
+  <li>When the run ends, the <strong>Summary</strong> tab pulses blue until you click it.
+      The window doesn't switch tabs for you. Starting a run replaces the summary and goes back to
+      <strong>Run</strong>, and so does opening a recipe (which keeps the last summary).</li>
 </ol>
 
 <p><strong>Groups in the step table.</strong> A row with a small triangle
@@ -174,26 +184,29 @@ Python code, or whose file can't be found. Both work during a run too, but the r
 with what was loaded: open the recipe again for your edits to take effect.</p>
 
 <h3>The toolbar</h3>
+<p>Each button has a small label under its icon: <em>Open · Close · Recipe · Start · Pause ·
+Stop · Report</em>. There is no sequence chooser: the GUI shows and runs the recipe's main
+sequence. (A program that opens the GUI through the API can still name another one.)</p>
 <div class="wrap"><table>
   <tr><th>Button</th><th>Does</th></tr>
   <tr><td>Open</td><td>Loads a recipe. Greyed out during a run.</td></tr>
-  <tr><td>Unload (×, next to Open)</td><td>Closes the loaded recipe: the window goes back to how
+  <tr><td>Close (×, next to Open)</td><td>Closes the loaded recipe: the window goes back to how
       it looked at start-up (no recipe, no results, status Idle), and the run log carries on in a
       new file, so the log panel starts empty. Test modules the recipe loaded are read again the
       next time they are used, so edits to them take effect without restarting. Greyed out when
       no recipe is loaded and during a run.</td></tr>
-  <tr><td>Preview (magnifying glass)</td><td>Shows the whole loaded recipe file, as written,
+  <tr><td>Recipe (magnifying glass)</td><td>Shows the whole loaded recipe file, as written,
       in a scrollable panel under the button. Click anywhere outside it, or press Esc, to close
       it. Works during a run too. Greyed out until a recipe is loaded.</td></tr>
-  <tr><td>Start</td><td>Runs the selected sequence. While the run is paused it lights up again
-      and <strong>resumes</strong> the run instead.</td></tr>
+  <tr><td>Start</td><td>Runs the recipe. While the run is paused it lights up again, reads
+      <em>Resume</em>, and <strong>resumes</strong> the run instead.</td></tr>
   <tr><td>Pause</td><td>Holds the run once the current step has finished. Until then
       the label reads <em>Pausing after the current step...</em>, then which step the run waits
       before. If that step is a question, answer it first. Pause greys out; press
       <strong>Start</strong> to carry on (or to cancel a pause that hasn't begun). Stop still
       works. Teardown steps are never held.</td></tr>
   <tr><td>Stop</td><td>Aborts the run. Steps that didn't run end as <code>STOP</code>.</td></tr>
-  <tr><td>Report (far right)</td><td>Opens this run's report folder, or the reports folder if
+  <tr><td>Report (next to Stop)</td><td>Opens this run's report folder, or the reports folder if
       there hasn't been a run yet.</td></tr>
 </table></div>
 <p>When a run ends, the label above the step table shows a summary, e.g.
@@ -237,7 +250,10 @@ name, description or result: the right-hand side shows that step (for a group, c
 description or result, since its name folds it).
 The step card then shows that step, marked <em>LOOKING BACK</em>: its verdict on a coloured
 badge, how long it took, the values it measured against what they were checked with, and why
-it failed, if it did; its picture appears under the card if it had one. A step that hasn't
+it failed, if it did; its picture appears under the card if it had one. For a group (a
+sequence it calls), the card also lists every step inside it, nested ones indented: a count
+of the verdicts (<em>Steps: 4 PASS · 1 SKIP</em>), then each step with its verdict, how long it
+took and why it failed. A long list scrolls inside the card. A step that hasn't
 run yet shows "Not run yet", and its own picture if it has one. To leave, click anywhere outside the
 step table. During a run it also ends by itself when the next step starts or a question
 appears, and clicking the step that is running now goes straight back to it. After a run,
@@ -352,14 +368,15 @@ if __name__ == "__main__":
 prompt.</p>
 <pre><code>python -m pypts --mode headless --recipe bench.yml
 python -m pypts --mode headless --recipe bench.yml --sequence Calibration</code></pre>
-<p>It prints each step as it finishes (with its inputs and outputs), the final result and the report folder. Then it exits
+<p>It prints each step as it finishes (with its inputs and outputs), the final result and the report folder, or <code>No report was produced.</code> Then it exits
 with a code you can check:</p>
 <div class="wrap"><table>
   <tr><th>Exit code</th><th>Meaning</th></tr>
   <tr><td><code>0</code></td><td>Passed (<code>PASS</code> or <code>DONE</code>)</td></tr>
   <tr><td><code>1</code></td><td>A step failed (<code>FAIL</code>)</td></tr>
   <tr><td><code>2</code></td><td>Not judged: the run ended in <code>ERROR</code> or <code>STOP</code>,
-      skipped everything, or was interrupted with <kbd>Ctrl+C</kbd></td></tr>
+      skipped everything, or was interrupted with <kbd>Ctrl+C</kbd>. Also any run, even a failed one,
+      whose record isn't whole: no report was produced, or the report reported an error</td></tr>
   <tr><td><code>3</code></td><td>Nothing ran: bad arguments, the recipe is missing or refused, the
       sequence doesn't exist, or the engine failed</td></tr>
 </table></div>
@@ -389,7 +406,9 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       for example <code>SN_0042_20261013_142530.html</code>. The board ID is the value of the first
       global the recipe lists in <code>report_metadata</code> (usually <code>serial_number</code>);
       characters other than letters and digits become <code>_</code>. A run that never got a board
-      ID is <code>report_&lt;YYYYmmdd_HHMMSS&gt;</code>. A run that stops before it ends leaves its
+      ID is <code>report_&lt;YYYYmmdd_HHMMSS&gt;</code>. In the CSV, each <code>report_metadata</code>
+      global is a column named <code>meta_</code> plus its name, for example
+      <code>meta_serial_number</code>. A run that stops before it ends leaves its
       results in <code>report.csv</code>. An
       engineering-mode retest (<kbd>Space</kbd>) gets no folder; it is in the session log.</li>
   <li><strong>Session log</strong>: one file in the reports folder each time PyPTS starts, and a
@@ -423,7 +442,10 @@ def read_kernel():
   <li><strong>Install the driver's library</strong>: <code>pip install pts-framework[ssh]</code>
       (also <code>[ni]</code>, <code>[serial]</code>, or <code>[hardware]</code> for all).</li>
   <li><strong>Optional key</strong>: <code>call_timeout_s</code> (longest one call may take,
-      default 60). Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
+      default 60). A call that takes longer is stopped, and PyPTS connects to the device again
+      to tear it down (switch it off) before the step fails; the log says whether that worked
+      (<em>may still be energised</em> if not). Closing PyPTS during a run that won't stop does
+      the same for every device of that run, so closing can take up to about 15 seconds. Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
   <li><strong>Edits and defaults</strong>: device sections are read from the configuration PyPTS loaded at start, so a hand edit of <code>config.ini</code> applies from the next start. <strong>Restore default settings</strong> recreates <code>config.ini</code> and removes the <code>[hardware.*]</code> sections too: copy them first.</li>
   <li><strong>SSH</strong>: an unknown host key is refused; add the host to your
       <code>known_hosts</code>, name a file with <code>known_hosts =</code>, or set

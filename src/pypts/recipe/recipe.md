@@ -170,7 +170,7 @@ Three more constants serve a tool that checks a recipe rather than loads it:
 | Name | Meaning |
 |------|---------|
 | `OUTPUT_SCHEMAS` | Each output type's model, keyed as `OUTPUT_TYPES` (as `STEP_SCHEMAS` is for steptypes) |
-| `REMOVED_SEQUENCE_KEYS` | The four removed sequence keys above, each with the sentence telling an author what to do instead |
+| `REMOVED_SEQUENCE_KEYS` | The four removed sequence keys above, each with the sentence telling an author what to do instead: the reason `validate_document()` gives when a sequence carries one |
 | `RENAMED_STEP_TYPES` | Old steptype names (lowercased: `waitstep`, `sshconnectstep`, …) with what replaced them |
 
 **The author-facing words live on the fields.** Every field an author can write carries
@@ -186,12 +186,19 @@ What the models add to the constants:
 
 - A bare key (`description:`, read by YAML as `None`) counts as absent: an optional field
   keeps its default, a required one is `Field required` (`_RecipeModel`).
-- Unknown keys are ignored in the header and in a sequence document, and **refused on a
-  step** (`extra="forbid"`) — every step key becomes a constructor argument.
+- An unknown key is **refused everywhere** — header, sequence, step, output entry,
+  parameter set (`extra="forbid"` on `_RecipeModel`, inherited by every model). A typo
+  (`teardown_step`, `main_sequnce`, `mx`) used to load in the header, a sequence or an
+  output entry and quietly drop what it meant. A key in `REMOVED_SEQUENCE_KEYS` on a
+  sequence is refused with its sentence instead of `Extra inputs are not permitted`
+  (`recipe_parser.validate_document`). The old header `continue_on_error` and
+  `recipe_version` are refused as plain unknown keys.
 - A text field (`name`, `step_name`, `message`, `module`, …) takes text or a number, read
   as its text; a YAML boolean, date or list is refused. Mapping keys (`globals`, `inputs`,
   `outputs`) and global names stay exactly as written - a global is found by plain dict
-  lookup. `report_metadata` entries must be strings (a number is refused, not coerced).
+  lookup. `report_metadata` entries must be strings (a number is refused, not coerced), and
+  each name may appear once (`_report_names()`): it is one report column. Any name is
+  allowed otherwise - the Report prefixes metadata columns (`report/report.md`).
 - Every ordinary step also takes the `Step` constructor's `id`, `inputs` and `outputs`.
 - An `Indexed` template may leave out `step_name` (it is checked under the indexed step's
   name); a `parameter_sets` entry (`ParameterSet`) carries `inputs` and/or `expect` and

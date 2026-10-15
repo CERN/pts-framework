@@ -8,6 +8,11 @@ every operation of the driver is a method of this object. close() calls
 teardown() and ends the process. Every failure is a DriverError that names the
 device, so it reads well on the operator's ERROR line.
 
+teardown() is where a driver leaves its instrument safe, so it must run however
+the device ends. A driver process stuck in a call cannot run it: it is killed,
+and a fresh process connects and tears down instead - the rescue. abandon() does
+the same for a run that will not end.
+
 What crosses the Pipe is pickled: arguments and return values must be
 picklable. Calls are one at a time: a lock makes a second thread wait.
 
@@ -47,12 +52,24 @@ STARTUP_TIMEOUT_S = 30.0
 #: How long close() waits for the driver process to end before killing it.
 EXIT_TIMEOUT_S = 5.0
 
+#: The longest a rescue - a fresh driver process, connect(), teardown() - may take.
+RESCUE_TIMEOUT_S = 10.0
+
 #: How often a wait for the driver process looks whether it is still alive.
 LIVENESS_POLL_S = 0.2
 
 #: Names ConnectionDriver itself uses. A driver operation with one of these
 #: names cannot be reached - do not give a driver method these names.
-RESERVED_NAMES = ("name", "device_type", "operations", "open", "close", "recover", "is_open")
+RESERVED_NAMES = (
+    "name",
+    "device_type",
+    "operations",
+    "open",
+    "close",
+    "recover",
+    "is_open",
+    "abandon",
+)
 
 #: The longest a call argument or return value gets in the DEBUG trace.
 TRACE_MAX_CHARS = 300
@@ -70,6 +87,14 @@ PRINTED = "printed"
 RESULT = "result"
 #: ("error", type name, message, traceback) - the call raised.
 ERROR = "error"
+
+
+def _left_until(deadline: float) -> float:
+    """The seconds left until a time.monotonic() deadline, never less than a tenth."""
+    left = deadline - time.monotonic()
+    if left < 0.1:
+        return 0.1
+    return left
 
 
 def _shortened(value: Any) -> str:
@@ -102,6 +127,12 @@ class ConnectionDriver:
         self._process: BaseProcess | None = None
         self._conn: PipeEnd | None = None
         self._lock = threading.Lock()
+        #: Set on the process a rescue starts: a rescue that times out is not rescued.
+        self._is_rescue = False
+        #: Set by abandon(): the call it kills must not start a second rescue.
+        self._abandoned = False
+        #: Set once connect() has returned: before that there is nothing to tear down.
+        self._connected = False
 
     # --- what test code calls ----------------------------------------------------
 
@@ -145,6 +176,63 @@ class ConnectionDriver:
 
     def open(self) -> None:
         """Start the driver process and connect the device. Leaves nothing running on failure."""
+        self._start(STARTUP_TIMEOUT_S, self._call_timeout_s)
+        log.info("Device '%s' connected.", self.name)
+
+    def close(self) -> None:
+        """teardown(), then end the process. Never raises: a failure is a WARNING."""
+        if self._conn is None and self._process is None:
+            return
+        try:
+            if self._conn is not None:
+                self._call("teardown", [], {})
+        except DriverError as exc:
+            log.warning("Device '%s' did not disconnect cleanly: %s", self.name, exc)
+        finally:
+            self._discard()
+        log.info("Device '%s' disconnected.", self.name)
+
+    def abandon(self) -> bool:
+        """
+        Tear the device down for a run that will not end. Never raises.
+
+        That run may be blocked in a call on this device, holding its lock, so
+        nothing here waits for the lock. An idle device is torn down as close()
+        would do it; a busy one has its driver process killed - the call in
+        progress then fails as a crash - and is torn down by a rescue.
+
+        Returns:
+            True if teardown ran, or nothing was open to tear down.
+        """
+        self._abandoned = True
+        if not self._lock.acquire(blocking=False):
+            log.debug("Device '%s' is in a call; killing its driver process.", self.name)
+            process = self._process
+            if process is not None and process.is_alive():
+                process.kill()
+            return self._rescue()
+        try:
+            if self._conn is None:
+                return True
+            try:
+                self._exchange("teardown", [], {}, RESCUE_TIMEOUT_S, trace=True)
+            except DriverError as exc:
+                log.warning("Device '%s' did not disconnect cleanly: %s", self.name, exc)
+                # A teardown that timed out was killed (and one that crashed is
+                # gone), and _read_message() does not rescue an abandoned
+                # device: that is done here. One the driver refused is not.
+                if not self.is_open():
+                    return self._rescue()
+                return False
+            return True
+        finally:
+            self._discard()
+            self._lock.release()
+
+    # --- the process ------------------------------------------------------------
+
+    def _start(self, hello_timeout_s: float, connect_timeout_s: float) -> None:
+        """Start the driver process and call connect(). Leaves nothing running on failure."""
         if self.is_open():
             raise DriverError(f"Device '{self.name}' is already open.")
         log.debug("Starting the driver process of device '%s': %s.", self.name, self._driver_path)
@@ -171,31 +259,48 @@ class ConnectionDriver:
         self._process = process
         self._conn = parent_end
         try:
-            self._receive_hello()
+            self._receive_hello(hello_timeout_s)
             log.debug("Device '%s': calling connect(%r).", self.name, masked(self._settings))
-            self._call("connect", [self._settings], {}, trace=False)
+            self._call("connect", [self._settings], {}, trace=False, timeout_s=connect_timeout_s)
         except BaseException:
             self._kill()
             raise
-        log.info("Device '%s' connected.", self.name)
+        self._connected = True
 
-    def close(self) -> None:
-        """teardown(), then end the process. Never raises: a failure is a WARNING."""
-        if self._conn is None and self._process is None:
-            return
+    def _rescue(self) -> bool:
+        """
+        Tear the device down on a fresh connection, its own process having been killed.
+
+        The kill freed the instrument, so a new driver process can connect and
+        run teardown(), which is where a driver leaves its instrument safe.
+        Bounded by RESCUE_TIMEOUT_S, and never rescues itself. Never raises.
+
+        Returns:
+            True if teardown ran.
+        """
+        log.warning("Device '%s' is being connected again, to tear it down.", self.name)
+        deadline = time.monotonic() + RESCUE_TIMEOUT_S
+        rescuer = ConnectionDriver(
+            self.name, self._driver_path, self._settings, call_timeout_s=RESCUE_TIMEOUT_S
+        )
+        rescuer._is_rescue = True
         try:
-            if self._conn is not None:
-                self._call("teardown", [], {})
+            rescuer._start(RESCUE_TIMEOUT_S, _left_until(deadline))
+            rescuer._call("teardown", [], {}, timeout_s=_left_until(deadline))
         except DriverError as exc:
-            log.warning("Device '%s' did not disconnect cleanly: %s", self.name, exc)
+            log.error(
+                "Device '%s' could not be torn down and may still be energised: %s",
+                self.name,
+                exc,
+            )
+            return False
         finally:
-            self._discard()
-        log.info("Device '%s' disconnected.", self.name)
+            rescuer._discard()
+        log.info("Device '%s' was torn down on a fresh connection.", self.name)
+        return True
 
-    # --- the process ------------------------------------------------------------
-
-    def _receive_hello(self) -> None:
-        message = self._read_message(STARTUP_TIMEOUT_S, "at start-up")
+    def _receive_hello(self, timeout_s: float) -> None:
+        message = self._read_message(timeout_s, "at start-up")
         kind = message[0]
         if kind == FATAL:
             raise DriverError(f"Device '{self.name}' could not be opened: {message[1]}")
@@ -244,32 +349,50 @@ class ConnectionDriver:
     # --- one call -----------------------------------------------------------------
 
     def _call(
-        self, method: str, args: list[Any], kwargs: dict[str, Any], trace: bool = True
+        self,
+        method: str,
+        args: list[Any],
+        kwargs: dict[str, Any],
+        trace: bool = True,
+        timeout_s: float | None = None,
     ) -> Any:
+        if timeout_s is None:
+            timeout_s = self._call_timeout_s
         with self._lock:
-            if self._conn is None:
-                raise DriverError(f"Device '{self.name}' is not open.")
-            # Pickled whole before anything is written, so a refusal leaves the Pipe clean.
-            # Any exception: pickle refuses with PicklingError, TypeError, ValueError, ...
-            try:
-                data = ForkingPickler.dumps((method, args, kwargs))
-            except Exception as exc:
-                raise DriverError(
-                    f"Device '{self.name}': the arguments of '{method}' cannot be sent: {exc}"
-                ) from exc
-            try:
-                self._conn.send_bytes(data)
-            except OSError:
-                raise self._stopped_unexpectedly() from None
-            if trace:
-                log.debug(
-                    "Device '%s': calling %s(*%s, **%s).",
-                    self.name,
-                    method,
-                    _shortened(args),
-                    _shortened(kwargs),
-                )
-            reply = self._read_message(self._call_timeout_s, f"'{method}'")
+            return self._exchange(method, args, kwargs, timeout_s, trace)
+
+    def _exchange(
+        self,
+        method: str,
+        args: list[Any],
+        kwargs: dict[str, Any],
+        timeout_s: float,
+        trace: bool,
+    ) -> Any:
+        """One call and its answer. The caller holds the lock."""
+        if self._conn is None:
+            raise DriverError(f"Device '{self.name}' is not open.")
+        # Pickled whole before anything is written, so a refusal leaves the Pipe clean.
+        # Any exception: pickle refuses with PicklingError, TypeError, ValueError, ...
+        try:
+            data = ForkingPickler.dumps((method, args, kwargs))
+        except Exception as exc:
+            raise DriverError(
+                f"Device '{self.name}': the arguments of '{method}' cannot be sent: {exc}"
+            ) from exc
+        try:
+            self._conn.send_bytes(data)
+        except OSError:
+            raise self._stopped_unexpectedly() from None
+        if trace:
+            log.debug(
+                "Device '%s': calling %s(*%s, **%s).",
+                self.name,
+                method,
+                _shortened(args),
+                _shortened(kwargs),
+            )
+        reply = self._read_message(timeout_s, f"'{method}'")
 
         if reply[0] == RESULT:
             value = reply[1]
@@ -300,10 +423,21 @@ class ConnectionDriver:
                     if time.monotonic() < deadline:
                         continue
                     self._kill()
-                    raise DriverError(
+                    stopped = (
                         f"Device '{self.name}' did not answer {waiting_for} within "
-                        f"{timeout_s:.1f} s; its driver process was stopped."
+                        f"{timeout_s:.1f} s; its driver process was stopped"
                     )
+                    # The stuck process could not tear down, so a fresh one
+                    # does. Not before connect() returned (start-up has its
+                    # own error), not for a rescue's own process, and not for
+                    # an abandoned device: abandon() rescues by itself.
+                    if not self._connected or self._is_rescue or self._abandoned:
+                        raise DriverError(stopped + ".")
+                    if self._rescue():
+                        raise DriverError(
+                            stopped + " and the device torn down on a fresh connection."
+                        )
+                    raise DriverError(stopped + "; it could not be torn down.")
                 data = self._conn.recv_bytes()
             except (EOFError, OSError):
                 raise self._stopped_unexpectedly() from None

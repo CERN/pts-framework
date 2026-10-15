@@ -20,7 +20,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   statement of `main()`, before the first `Queue()`. This makes Linux behave like Windows
   and avoids the Qt fork hazard (plan 005).
 - **Shutdown** — `stop_core()` sends `HmiStopped` + `ShutdownRequested` to CORE, joins
-  up to `CORE_SHUTDOWN_TIMEOUT_S` (5.0 s), and terminates if CORE does not stop in time.
+  up to `CORE_SHUTDOWN_TIMEOUT_S` (20.0 s), and terminates if CORE does not stop in time.
 
 ## The engine half, shared with `pypts.api`
 
@@ -49,7 +49,7 @@ launcher (main process)
 
 | Name | Value | Meaning |
 |------|-------|---------|
-| `CORE_SHUTDOWN_TIMEOUT_S` | 5.0 s | Join timeout before CORE is terminated |
+| `CORE_SHUTDOWN_TIMEOUT_S` | 20.0 s | Join timeout before CORE is terminated; above `Core.SHUTDOWN_TIMEOUT_S` (15 s), so CORE can log who was late first |
 | `LOGGER_SHUTDOWN_TIMEOUT_S` | 5.0 s | Logger drain budget |
 
 ## Rules

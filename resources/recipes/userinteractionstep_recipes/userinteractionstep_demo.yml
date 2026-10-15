@@ -12,7 +12,8 @@
 # `message`, `options` and `image_path` are fields, not inputs entries,
 # the way a Wait step's `wait_time` is. Only the answer goes through a mapping:
 # the chosen option arrives as the step's `output`, so the ordinary vocabulary
-# judges it (`equals`, `passfail`) or stores it in a `global`.
+# judges it (`equals`) or stores it in a `global`. `passfail` is refused:
+# the answer is a button's text, never True or False.
 #
 # Every prompt also grows a **Cancel** button the recipe does not write. It is
 # not one of the options: pressing it answers nothing, and a step with no

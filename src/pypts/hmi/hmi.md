@@ -79,8 +79,9 @@ Settings dialog calls it — the CLI has no command for it).
 ## Key messages (CORE → HMI)
 
 `RecipeLoaded`, `RecipeUnloaded` (hook `show_recipe_unloaded()`; the default logs at DEBUG),
-`RunStarted` (also hook `follow_run_log(path)` when it names a run log; the default logs at
-DEBUG), `RunPaused` / `RunResumed` (hooks `show_run_paused()` /
+`RunStarted` (hook `show_run_started(event)`, passed the whole message — the GUI's Summary
+tab needs its version, its folder and `write_report`; also hook `follow_run_log(path)` when
+it names a run log; the defaults log at DEBUG), `RunPaused` / `RunResumed` (hooks `show_run_paused()` /
 `show_run_resumed()`; the defaults log at DEBUG), `SequenceStarted`, `StepStarted`, `StepFinished`,
 `SequenceFinished`, `RunFinished` (also hook `run_log_finished()`; the default does
 nothing), `ReportReady`, `UserPromptRequest`, `UserTextRequest`,

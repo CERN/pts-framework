@@ -38,7 +38,6 @@ from pypts.recipe.recipe_parser import SchemaProblem
 from pypts.recipe.recipe_schema import (
     INDEXED_STEP_REFUSED_KEYS,
     OUTPUT_SCHEMAS,
-    REMOVED_SEQUENCE_KEYS,
     RENAMED_STEP_TYPES,
     SEQUENCE_STEP_REFUSED_KEYS,
     STEP_SCHEMAS,
@@ -336,7 +335,6 @@ def _run(content: str, ctx: _Context) -> None:
         context = recipe_parser.sequence_context(seq_doc, number)
         problems, _ = recipe_parser.validate_document(seq_doc, SequenceSchema, context)
         _report_problems(problems, seq_doc, SequenceSchema, seq_lm, number - 1, ctx)
-        _warn_about_sequence(seq_doc, seq_lm, context, ctx)
         # A number is a sequence name too: the framework reads it as its text.
         name = seq_doc.get("sequence_name")
         name_line = seq_lm.get("sequence_name")
@@ -427,31 +425,6 @@ def _warn_about_header(
             )
 
 
-def _warn_about_sequence(
-    doc: dict[str, Any], lm: _LineMap, context: str, ctx: _Context
-) -> None:
-    """A sequence document's unknown keys load and are ignored - worth a word."""
-    known = set(SequenceSchema.model_fields)
-    for key in doc:
-        if key in known:
-            continue
-        removed = REMOVED_SEQUENCE_KEYS.get(key)
-        if removed is not None:
-            ctx.warning(
-                field=f"{context}.{key}",
-                message=f"'{key}' is not part of the current recipe format.",
-                hint=removed,
-                line=lm.get(key),
-            )
-        else:
-            ctx.warning(
-                field=f"{context}.{key}",
-                message=f"Unknown sequence key '{key}' - it will be ignored.",
-                hint=f"Known sequence keys: {', '.join(sorted(known))}.",
-                line=lm.get(key),
-            )
-
-
 # ---------------------------------------------------------------------------
 # Cross-document references
 # ---------------------------------------------------------------------------
@@ -527,6 +500,8 @@ def _hint(problem: SchemaProblem, doc: dict[str, Any], model: type[BaseModel]) -
         return _step_hint(problem, step, path[2:])
 
     field = str(path[0]) if path else ""
+    if problem.kind == "extra_forbidden" and len(path) == 1:
+        return _document_keys_hint(model)
     # report_metadata entries are names, not text fields: a number is refused there.
     if problem.kind == "string_type" and field != "report_metadata":
         return _QUOTE_HINT
@@ -638,6 +613,15 @@ def _output_no_type_hint(entry_name: int | str) -> str:
         + "\nExamples:\n"
         + "\n".join(examples)
     )
+
+
+def _document_keys_hint(model: type[BaseModel]) -> str:
+    """Every key the header or a sequence takes, read from its model."""
+    if model is HeaderSchema:
+        what = "the header"
+    else:
+        what = "a sequence"
+    return f"Valid keys for {what}: {', '.join(sorted(model.model_fields))}."
 
 
 def _valid_keys_hint(steptype: str) -> str:

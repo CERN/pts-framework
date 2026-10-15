@@ -33,6 +33,12 @@ def test_exit_code_for_each_run_result(result, code):
     assert headless.exit_code_for(result) == code
 
 
+@pytest.mark.parametrize("result", list(ResultType))
+def test_a_run_without_its_record_is_not_judged_whatever_its_verdict(result):
+    """A FAIL with no report is still 2: without the record nothing can be audited."""
+    assert headless.exit_code_for(result, ("No report was produced.",)) == 2
+
+
 # --------------------------------------------------------------------------
 # headless_main()
 # --------------------------------------------------------------------------
@@ -45,10 +51,15 @@ LOADED = LoadedRecipe(
 class FakePts:
     """Everything headless_main() uses of Pts, with the answers scripted."""
 
-    def __init__(self, load=LOADED, result=ResultType.PASS, run_error=None):
+    def __init__(
+        self, load=LOADED, result=ResultType.PASS, run_error=None, report_dir="C:/r/1",
+        report_errors=(),
+    ):
         self.load = load
         self.result = result
         self.run_error = run_error
+        self.report_dir = report_dir
+        self.report_errors = report_errors
         self.run_calls = []
         self.closed = False
 
@@ -70,7 +81,12 @@ class FakePts:
         step = StepVerdict("First step", self.result)
         on_step(step)
         return RunResult(
-            sequence=sequence or "Main", result=self.result, steps=(step,), report_dir="C:/r/1"
+            sequence=sequence or "Main",
+            result=self.result,
+            steps=(step,),
+            report_dir=self.report_dir,
+            errors=self.report_errors,
+            report_errors=self.report_errors,
         )
 
 
@@ -104,6 +120,28 @@ def test_a_failing_run_exits_one(monkeypatch, recipe):
     use_fake(monkeypatch, FakePts(result=ResultType.FAIL))
 
     assert headless.headless_main(recipe, "Cal") == 1
+
+
+def test_a_passing_run_with_no_report_exits_two_and_says_so(monkeypatch, capsys, recipe):
+    no_report = ("No report was produced within 15 s of the run finishing.",)
+    use_fake(monkeypatch, FakePts(report_dir=None, report_errors=no_report))
+
+    assert headless.headless_main(recipe) == 2
+
+    printed = capsys.readouterr().out
+    assert "No report was produced." in printed
+    assert "Report:" not in printed
+
+
+def test_a_report_error_exits_two_even_after_a_fail(monkeypatch, capsys, recipe):
+    use_fake(
+        monkeypatch,
+        FakePts(result=ResultType.FAIL, report_errors=("the CSV could not be written",)),
+    )
+
+    assert headless.headless_main(recipe) == 2
+
+    assert "ERROR the CSV could not be written" in capsys.readouterr().out
 
 
 def test_a_missing_recipe_exits_three_without_starting_anything(monkeypatch, capsys, tmp_path):

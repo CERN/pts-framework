@@ -10,6 +10,7 @@ from pypts.hmi.gui.run_display import (
     REVIEW_PENDING,
     REVIEW_RUNNING,
     RunDisplay,
+    steps_counts_text,
 )
 from pypts.messages.common_messages import ResultType, StepOutcome
 from pypts.messages.run_events import RecipeLoaded, SequenceSummary, StepSummary
@@ -276,3 +277,53 @@ def test_a_skipped_step_that_never_started_is_finished_with_no_picture():
     assert review.state == REVIEW_FINISHED
     assert review.outcome.result == ResultType.SKIP
     assert review.image_path is None
+
+
+def test_a_group_is_looked_back_at_with_every_step_under_it():
+    display, rows = _display()
+    display.step_started(rows["call"].step_id, 101.0)
+    display.step_started(rows["inner"].step_id, 102.0)
+    display.step_finished(_outcome(rows["inner"]), 104.0)
+    display.step_started(rows["inner_bare"].step_id, 104.0)
+    display.step_finished(_outcome(rows["inner_bare"], ResultType.FAIL), 105.0)
+    display.step_finished(_outcome(rows["call"], ResultType.FAIL), 105.0)
+
+    review = display.review(rows["call"].step_id)
+
+    assert [inner.step.step_name for inner in review.steps] == ["inner", "inner_bare"]
+    assert [inner.outcome.result for inner in review.steps] == [ResultType.PASS, ResultType.FAIL]
+    assert review.steps[0].duration == 2.0
+    assert steps_counts_text(review.steps) == "1 PASS · 1 FAIL"
+    assert display.review(rows["plain"].step_id).steps == ()
+
+
+def test_a_group_steps_reach_every_depth_and_stop_at_its_own():
+    """G opens a(1), H(1) -> b(2), c(1); d is back at G's depth."""
+    rows = [
+        _row("G", is_group=True),
+        _row("a", depth=1),
+        _row("H", depth=1, is_group=True),
+        _row("b", depth=2),
+        _row("c", depth=1),
+        _row("d"),
+    ]
+    display = RunDisplay()
+    display.set_recipe(
+        RecipeLoaded(
+            recipe_name="r",
+            recipe_version="0.2",
+            main_sequence="Main",
+            sequences=(SequenceSummary(sequence_name="Main", steps=tuple(rows)),),
+        )
+    )
+    display.run_started(100.0)
+    display.step_finished(_outcome(rows[2]), 101.0)
+    display.step_finished(_outcome(rows[3]), 101.0)
+
+    outer = display.review(rows[0].step_id)
+    inner = display.review(rows[2].step_id)
+
+    assert [step.step.step_name for step in outer.steps] == ["a", "H", "b", "c"]
+    assert [step.step.step_name for step in inner.steps] == ["b"]
+    assert outer.steps[0].state == REVIEW_PENDING
+    assert steps_counts_text(outer.steps) == "1 PASS", "the H call row is not counted"

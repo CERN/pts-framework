@@ -9,6 +9,7 @@ test_hal_connection.py.
 
 import importlib
 import threading
+import time
 from typing import ClassVar
 
 import pytest
@@ -32,6 +33,7 @@ from pypts.hal.device_types import DEVICE_TYPE_NAMES, DEVICE_TYPES
 from pypts.hal.drivers.loopback import LoopbackDriver
 from pypts.hal.local_setup import (
     DEFAULT_CALL_TIMEOUT_S,
+    abandon_active_setup,
     hardware_sections,
     hardware_sections_from_config,
     ini_hardware_sections,
@@ -205,6 +207,10 @@ class _FakeConnection:
     def close(self):
         self.events.append("close")
 
+    def abandon(self):
+        self.events.append("abandon")
+        return True
+
 
 @pytest.fixture
 def fake_connections(monkeypatch):
@@ -365,3 +371,61 @@ def test_a_newer_local_setup_replaces_an_older_one(fake_connections):
     old.__exit__(None, None, None)
     with pytest.raises(DriverError, match="No local setup is active"):
         get_device("loop1")
+
+
+# --------------------------------------------------------------------------
+# A run that will not end: its devices are made safe without it
+# --------------------------------------------------------------------------
+
+
+def test_abandoning_takes_the_setup_away_and_makes_every_device_safe(fake_connections):
+    setup = LocalSetup(lambda: SECTIONS)
+    setup.__enter__()
+    ssh = setup.get_device("ssh1")
+    loop = setup.get_device("loop1")
+
+    assert abandon_active_setup(time_limit_s=5.0) == []
+
+    assert ssh.events == ["open", "abandon"]
+    assert loop.events == ["open", "abandon"]
+    with pytest.raises(DriverError, match="No local setup is active"):
+        get_device("loop1")
+
+
+def test_an_abandoned_setup_opens_no_device_for_the_run_it_was_taken_from(fake_connections):
+    """The stuck run's next get_device() must not quietly reopen what was just made safe."""
+    setup = LocalSetup(lambda: SECTIONS)
+    setup.__enter__()
+    abandon_active_setup(time_limit_s=5.0)
+
+    with pytest.raises(DriverError, match="abandoned"):
+        setup.get_device("ssh1")
+    assert fake_connections == []
+    # Its own with-block ending later is harmless.
+    setup.__exit__(None, None, None)
+
+
+def test_devices_are_made_safe_side_by_side_and_the_slow_ones_named(fake_connections):
+    setup = LocalSetup(lambda: SECTIONS)
+    setup.__enter__()
+    ssh = setup.get_device("ssh1")
+    loop = setup.get_device("loop1")
+    release = threading.Event()
+
+    def slow():
+        release.wait(10.0)
+        return True
+
+    ssh.abandon = slow
+    loop.abandon = lambda: False
+    began = time.monotonic()
+
+    unsafe = abandon_active_setup(time_limit_s=0.5)
+
+    release.set()
+    assert time.monotonic() - began < 3.0
+    assert sorted(unsafe) == ["loop1", "ssh1"]
+
+
+def test_abandoning_with_no_active_setup_does_nothing():
+    assert abandon_active_setup(time_limit_s=1.0) == []

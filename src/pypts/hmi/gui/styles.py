@@ -83,8 +83,10 @@ QToolBar {{
 QToolBar QToolButton {{
     border: none;
     border-radius: 6px;
-    padding: 6px 14px;
-    font-size: 11px;
+    /* Icon with a small label under it (top_bar.py): slim vertical padding
+       keeps the bar about as tall as it was with icons alone. */
+    padding: 2px 8px;
+    font-size: 10px;
     color: {palette.toolbutton};
 }}
 QToolBar QToolButton:hover {{

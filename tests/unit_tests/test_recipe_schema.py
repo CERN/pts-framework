@@ -15,7 +15,7 @@ from typing import Any
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from pypts.recipe.recipe_parser import steptype_key
+from pypts.recipe.recipe_parser import steptype_key, validate_document
 from pypts.recipe.recipe_schema import (
     OUTPUT_SCHEMAS,
     OUTPUT_TYPES,
@@ -155,6 +155,22 @@ def test_header_report_metadata_names_are_stripped():
     assert header.report_metadata == ["batch_id", "operator"]
 
 
+def test_header_report_metadata_refuses_a_name_given_twice():
+    """Two columns of one name: the second would hide the first."""
+    problems = _problems(HeaderSchema, _header(report_metadata=["sn", "lot", " sn"]))
+    assert len(problems) == 1
+    loc, message = problems[0]
+    assert loc == ("report_metadata",)
+    assert "'sn'" in message
+
+
+@pytest.mark.parametrize("name", ["result", "step_name", "run_result", "recipe_name"])
+def test_header_report_metadata_may_share_a_name_with_a_report_column(name):
+    """The Report prefixes metadata columns, so a global called `result` clashes with nothing."""
+    header = HeaderSchema.model_validate(_header(report_metadata=[name]))
+    assert header.report_metadata == [name]
+
+
 def test_header_report_metadata_may_be_empty():
     assert HeaderSchema.model_validate(_header(report_metadata=[])).report_metadata == []
 
@@ -167,8 +183,10 @@ def test_header_report_metadata_must_be_a_list_of_names(written):
     assert all(loc[0] == "report_metadata" for loc, _ in problems)
 
 
-def test_header_unknown_key_is_ignored():
-    assert _problems(HeaderSchema, _header(bogus_key="hello")) == []
+def test_header_unknown_key_is_refused():
+    assert _problems(HeaderSchema, _header(bogus_key="hello")) == [
+        (("bogus_key",), "Extra inputs are not permitted")
+    ]
 
 
 def test_header_reports_every_problem_at_once():
@@ -214,9 +232,26 @@ def test_sequence_bare_teardown_steps_means_none():
     assert SequenceSchema.model_validate(raw).teardown_steps == []
 
 
-def test_sequence_unknown_key_is_ignored():
+def test_sequence_unknown_key_is_refused():
     raw = {"sequence_name": "Main", "steps": [_wait()], "bogus_key": 1}
-    assert _problems(SequenceSchema, raw) == []
+    assert _problems(SequenceSchema, raw) == [(("bogus_key",), "Extra inputs are not permitted")]
+
+
+@pytest.mark.parametrize("key", sorted(REMOVED_SEQUENCE_KEYS))
+def test_a_removed_sequence_key_is_refused_with_its_reason(key):
+    raw = {"sequence_name": "Main", "steps": [_wait()], key: []}
+    problems, _ = validate_document(raw, SequenceSchema, "sequence 'Main'")
+    assert [str(problem) for problem in problems] == [
+        f"sequence 'Main': {key}: {REMOVED_SEQUENCE_KEYS[key]}"
+    ]
+
+
+def test_a_removed_sequence_key_is_only_a_sequence_s_reason():
+    """`outputs` is removed from a sequence; in the header it is merely unknown."""
+    problems, _ = validate_document(_header(outputs=[]), HeaderSchema, "header")
+    assert [str(problem) for problem in problems] == [
+        "header: outputs: Extra inputs are not permitted"
+    ]
 
 
 def test_teardown_steps_are_validated_too():
@@ -413,6 +448,14 @@ def test_an_unknown_output_type_is_refused():
     assert "'local'" in problems[0][1]
 
 
+def test_a_typo_in_an_output_entry_is_refused():
+    """`mx` for `max` used to load and be ignored."""
+    entry = {"type": "range", "min": 1, "max": 2, "mx": 3}
+    problems = _step_problems(_module(outputs={"r": entry}))
+    location = ("steps", 0, "pythonmodule", "outputs", "r", "range", "mx")
+    assert problems == [(location, "Extra inputs are not permitted")]
+
+
 def test_a_range_output_needs_both_bounds():
     problems = _step_problems(_module(outputs={"r": {"type": "range", "min": 1}}))
     assert problems == [
@@ -427,6 +470,46 @@ def test_an_equals_output_written_bare_has_no_value():
 
 def test_an_output_must_be_a_mapping():
     assert _step_problems(_module(outputs={"r": "pass"}))
+
+
+@pytest.mark.parametrize(
+    ("steptype", "extra"),
+    [
+        ("userinteraction", {"message": "m", "options": ["Pass", "Fail"]}),
+        ("userwrite", {"message": "m"}),
+    ],
+)
+def test_an_operator_step_refuses_passfail(steptype, extra):
+    """Its output is text, so passfail could never judge it; equals can."""
+    step = {"steptype": steptype, "step_name": "q", "outputs": {"r": {"type": "passfail"}}}
+    step.update(extra)
+    problems = _step_problems(step)
+    assert len(problems) == 1
+    assert "passfail cannot judge" in problems[0][1]
+    assert "equals" in problems[0][1]
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"steptype": "userinteraction", "step_name": "q", "message": "m", "options": ["Pass"]},
+        {"steptype": "userwrite", "step_name": "q", "message": "m"},
+    ],
+)
+def test_an_operator_step_may_still_judge_with_equals(step):
+    step["outputs"] = {"r": {"type": "equals", "value": "Pass"}}
+    assert _step_problems(step) == []
+
+
+def test_a_userloading_step_is_not_refused_passfail():
+    """Left to the run-time check, by choice."""
+    step = {
+        "steptype": "userloading",
+        "step_name": "q",
+        "message": "m",
+        "outputs": {"r": {"type": "passfail"}},
+    }
+    assert _step_problems(step) == []
 
 
 def test_a_wait_step_may_carry_inputs_and_outputs():

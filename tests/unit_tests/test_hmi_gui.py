@@ -343,11 +343,11 @@ def test_a_run_restart_resets_the_verdicts_to_pending(gui):
     assert result_column_texts(instance.step_table.table) == ["Pending", "Pending"]
 
 
-def test_sequence_dropdown_refills_the_table(gui):
+def test_showing_another_sequence_refills_the_table(gui):
     instance, _outbox, inbox = gui
     load_demo_recipe(instance, inbox)
 
-    instance.top_bar.sequence_combo.setCurrentText("Extra")
+    instance.show_sequence("Extra")
 
     table = instance.step_table.table
     assert table.rowCount() == 1
@@ -452,7 +452,7 @@ def test_the_progress_bar_empties_on_run_start_and_on_a_new_selection(gui):
     instance.poll_core()
     assert progress.label.text() == "0 / 2 (0 %)"
 
-    instance.top_bar.sequence_combo.setCurrentText("Extra")
+    instance.show_sequence("Extra")
     assert progress.label.text() == "0 / 1 (0 %)"
 
 
@@ -471,34 +471,84 @@ def test_run_lifecycle_drives_the_button_states(gui):
 
     load_demo_recipe(instance, inbox)
     assert top.start_button.isEnabled()
-    assert top.sequence_combo.isEnabled()
     assert not top.stop_button.isEnabled()
 
     inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
     instance.poll_core()
     assert not top.open_button.isEnabled()
     assert not top.start_button.isEnabled()
-    assert not top.sequence_combo.isEnabled()
     assert top.stop_button.isEnabled()
 
     inbox.send(RunFinished(result=ResultType.DONE))
     instance.poll_core()
     assert top.open_button.isEnabled()
     assert top.start_button.isEnabled()
-    assert top.sequence_combo.isEnabled()
     assert not top.stop_button.isEnabled()
 
 
-def test_start_sends_the_selected_sequence(gui, qtbot):
+def test_start_sends_the_main_sequence(gui, qtbot):
     instance, outbox, inbox = gui
     load_demo_recipe(instance, inbox)
     top = instance.top_bar
 
-    top.sequence_combo.setCurrentText("Extra")
     top.start_button.click()
 
     sent = drain(outbox)
-    assert StartSequence(sequence_name="Extra") in sent
+    assert StartSequence(sequence_name="Main") in sent
+
+
+def test_there_is_no_sequence_chooser(gui):
+    from PySide6.QtWidgets import QComboBox
+
+    instance, _outbox, _inbox = gui
+
+    assert not hasattr(instance.top_bar, "sequence_combo")
+    assert instance.top_bar.findChildren(QComboBox) == []
+
+
+def test_every_toolbar_button_has_a_small_label_and_report_sits_beside_stop(gui):
+    from PySide6.QtCore import Qt
+
+    instance, _outbox, _inbox = gui
+    top = instance.top_bar
+    buttons = (
+        top.open_button,
+        top.unload_button,
+        top.preview_button,
+        top.start_button,
+        top.pause_button,
+        top.stop_button,
+        top.report_button,
+    )
+
+    assert [button.text() for button in buttons] == [
+        "Open",
+        "Close",
+        "Recipe",
+        "Start",
+        "Pause",
+        "Stop",
+        "Report",
+    ]
+    for button in buttons:
+        assert button.toolButtonStyle() == Qt.ToolButtonStyle.ToolButtonTextUnderIcon
+    in_bar = [action for action in top.actions() if top.widgetForAction(action) is not None]
+    widgets = [top.widgetForAction(action) for action in in_bar]
+    assert widgets.index(top.report_button) == widgets.index(top.stop_button) + 1
+
+
+def test_start_is_labelled_resume_while_paused(gui):
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    instance.poll_core()
+    top = instance.top_bar
+
+    top.set_paused(True)
+    assert top.start_button.text() == "Resume"
+
+    top.set_paused(False)
+    assert top.start_button.text() == "Start"
 
 
 def test_stop_button_sends_stop_sequence(gui):
@@ -1319,7 +1369,7 @@ def test_open_recipe_and_start_starts_the_sequence_it_names(gui):
     load_demo_recipe(instance, inbox)
 
     assert drain(outbox) == [StartSequence("Extra")]
-    assert instance.top_bar.sequence_combo.currentText() == "Extra"
+    assert instance.step_table.table.item(0, 0).text() == "Only wait"
 
 
 def test_open_recipe_and_start_refuses_a_sequence_the_recipe_does_not_have(gui):
@@ -1447,47 +1497,6 @@ def test_a_passing_rows_tooltip_lists_its_values(gui):
     assert tooltip == "inputs: channel = 1\noutputs: voltage = 12.1 (range 11 .. 13)"
 
 
-def test_the_results_tree_opens_each_step_into_its_values(qapp):
-    from PySide6.QtCore import QModelIndex, Qt
-
-    from pypts.hmi.gui.results_panel import StepResultModel
-
-    model = StepResultModel((a_measured_outcome(),))
-
-    step_row = model.index(0, 0)
-    assert model.data(step_row) == "Measure voltage"
-    assert model.data(model.index(0, 1)) == "PASS"
-    assert model.rowCount(step_row) == 2
-
-    inputs_group = model.index(0, 0, step_row)
-    outputs_group = model.index(1, 0, step_row)
-    assert model.data(inputs_group) == "Inputs"
-    assert model.data(outputs_group) == "Outputs"
-    assert model.data(model.index(0, 0, inputs_group)) == "channel = 1"
-
-    voltage = model.index(0, 0, outputs_group)
-    assert model.data(voltage) == "voltage = 12.1"
-    assert model.data(model.index(0, 2, outputs_group)) == "range 11 .. 13"
-    # A value row has no verdict chip, and walks back up to its step.
-    assert model.data(model.index(0, 1, outputs_group)) == ""
-    assert model.data(model.index(0, 1, outputs_group), Qt.BackgroundRole) is None
-    assert model.parent(voltage) == outputs_group
-    assert model.parent(outputs_group) == step_row
-    assert model.parent(step_row) == QModelIndex()
-
-
-def test_a_step_with_no_values_has_no_groups(qapp):
-    from uuid import uuid4
-
-    from pypts.hmi.gui.results_panel import StepResultModel
-
-    model = StepResultModel(
-        (StepOutcome(step_id=uuid4(), step_name="Wait", result=ResultType.DONE),)
-    )
-
-    assert model.rowCount(model.index(0, 0)) == 0
-
-
 def test_pending_rows_are_repainted_too(gui):
     """A theme switch before a run must not leave the Pending column behind."""
     from PySide6.QtGui import QColor
@@ -1526,18 +1535,18 @@ def test_the_log_panel_redraws_its_backlog_on_a_theme_change(gui):
 
 
 def test_every_top_bar_control_describes_itself(gui):
-    """Tooltip and the accessible pair, on all five controls plus the combo."""
+    """Tooltip and the accessible pair, on every control."""
     instance, _outbox, _inbox = gui
     top = instance.top_bar
 
     controls = (
         top.open_button,
         top.unload_button,
+        top.preview_button,
         top.start_button,
         top.pause_button,
         top.stop_button,
         top.report_button,
-        top.sequence_combo,
     )
     for control in controls:
         assert control.toolTip() != ""
@@ -1552,7 +1561,6 @@ def test_a_disabled_control_says_why_it_is_disabled(gui):
 
     assert top.start_button.isEnabled() is False
     assert "Open a recipe first" in top.start_button.toolTip()
-    assert "Open a recipe first" in top.sequence_combo.toolTip()
     assert "Nothing is running" in top.stop_button.toolTip()
 
 
@@ -1560,7 +1568,7 @@ def test_loading_a_recipe_rewrites_the_start_description(gui, inbox_recipe_loade
     instance, _outbox, _inbox = inbox_recipe_loaded
 
     assert instance.top_bar.start_button.isEnabled() is True
-    assert "Run the selected sequence" in instance.top_bar.start_button.toolTip()
+    assert "Run the recipe from its first step" in instance.top_bar.start_button.toolTip()
 
 
 @pytest.fixture
@@ -2794,12 +2802,16 @@ def test_a_new_recipe_clears_the_metadata_of_the_last_run(gui):
 
 
 # --------------------------------------------------------------------------
-# The Run | Results tabs (gui.md section 14)
+# The Run | Summary tabs (gui.md section 14)
 # --------------------------------------------------------------------------
 
 
 def results_tree_rows(instance):
-    return instance.window.results_panel.tree_view.model().rowCount()
+    """How many steps the Summary tab sums up - 0 with no run."""
+    record = instance.window.summary_panel.record()
+    if record is None:
+        return 0
+    return len(record.outcomes)
 
 
 def finish_a_step(instance, inbox, step):
@@ -2813,20 +2825,20 @@ def test_the_left_pane_opens_on_the_run_tab(gui):
     instance, _outbox, _inbox = gui
     tabs = instance.window.view_tabs
 
-    assert [tabs.tabText(index) for index in range(tabs.count())] == ["Run", "Results"]
+    assert [tabs.tabText(index) for index in range(tabs.count())] == ["Run", "Summary"]
     assert tabs.currentIndex() == TAB_RUN
     assert instance.window.left_stack.currentWidget() is instance.window.run_stack
     assert tabs.pulsing_tab() is None
 
 
-def test_the_results_tab_shows_the_results_panel(gui):
-    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+def test_the_summary_tab_shows_the_summary_panel(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RUN, TAB_SUMMARY
 
     instance, _outbox, inbox = gui
     load_demo_recipe(instance, inbox)
 
-    instance.window.view_tabs.setCurrentIndex(TAB_RESULTS)
-    assert instance.window.left_stack.currentWidget() is instance.window.results_panel
+    instance.window.view_tabs.setCurrentIndex(TAB_SUMMARY)
+    assert instance.window.left_stack.currentWidget() is instance.window.summary_panel
 
     instance.window.view_tabs.setCurrentIndex(TAB_RUN)
     assert instance.window.run_stack.currentWidget() is instance.step_table
@@ -2848,7 +2860,7 @@ def test_the_results_fill_live_after_every_step(gui):
 
 
 def test_a_finished_run_pulses_the_results_tab_until_it_is_opened(gui):
-    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+    from pypts.hmi.gui.view_tabs import TAB_RUN, TAB_SUMMARY
 
     instance, _outbox, inbox = gui
     load_demo_recipe(instance, inbox)
@@ -2858,20 +2870,20 @@ def test_a_finished_run_pulses_the_results_tab_until_it_is_opened(gui):
 
     tabs = instance.window.view_tabs
     assert tabs.currentIndex() == TAB_RUN  # not switched to
-    assert tabs.pulsing_tab() == TAB_RESULTS
+    assert tabs.pulsing_tab() == TAB_SUMMARY
 
-    tabs.setCurrentIndex(TAB_RESULTS)
+    tabs.setCurrentIndex(TAB_SUMMARY)
     assert tabs.pulsing_tab() is None
 
 
 def test_a_run_finished_while_on_the_results_tab_does_not_pulse(gui):
-    from pypts.hmi.gui.view_tabs import TAB_RESULTS
+    from pypts.hmi.gui.view_tabs import TAB_SUMMARY
 
     instance, _outbox, inbox = gui
     load_demo_recipe(instance, inbox)
     inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
     instance.poll_core()
-    instance.window.view_tabs.setCurrentIndex(TAB_RESULTS)
+    instance.window.view_tabs.setCurrentIndex(TAB_SUMMARY)
 
     inbox.send(RunFinished(result=ResultType.PASS, outcomes=(a_measured_outcome(),)))
     instance.poll_core()
@@ -2889,7 +2901,7 @@ def test_a_run_with_no_results_does_not_pulse(gui):
 
 
 def test_a_new_run_clears_the_results_stops_the_pulse_and_opens_run(gui):
-    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+    from pypts.hmi.gui.view_tabs import TAB_RUN, TAB_SUMMARY
 
     instance, _outbox, inbox = gui
     load_demo_recipe(instance, inbox)
@@ -2897,7 +2909,7 @@ def test_a_new_run_clears_the_results_stops_the_pulse_and_opens_run(gui):
     inbox.send(RunFinished(result=ResultType.PASS, outcomes=(a_measured_outcome(),)))
     instance.poll_core()
     assert results_tree_rows(instance) == 1
-    assert instance.window.view_tabs.pulsing_tab() == TAB_RESULTS
+    assert instance.window.view_tabs.pulsing_tab() == TAB_SUMMARY
 
     inbox.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
     instance.poll_core()
@@ -2907,18 +2919,18 @@ def test_a_new_run_clears_the_results_stops_the_pulse_and_opens_run(gui):
     assert instance.window.view_tabs.currentIndex() == TAB_RUN
 
 
-def test_loading_a_recipe_or_choosing_a_sequence_opens_the_run_tab(gui):
-    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+def test_loading_a_recipe_or_showing_a_sequence_opens_the_run_tab(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RUN, TAB_SUMMARY
 
     instance, _outbox, inbox = gui
     tabs = instance.window.view_tabs
 
-    tabs.setCurrentIndex(TAB_RESULTS)
+    tabs.setCurrentIndex(TAB_SUMMARY)
     load_demo_recipe(instance, inbox)
     assert tabs.currentIndex() == TAB_RUN
 
-    tabs.setCurrentIndex(TAB_RESULTS)
-    instance.top_bar.sequence_combo.setCurrentText("Extra")
+    tabs.setCurrentIndex(TAB_SUMMARY)
+    instance.show_sequence("Extra")
     assert tabs.currentIndex() == TAB_RUN
     assert instance.window.run_stack.currentWidget() is instance.step_table
 
@@ -2932,6 +2944,149 @@ def test_loading_a_recipe_keeps_the_last_results(gui):
     load_demo_recipe(instance, inbox)
 
     assert results_tree_rows(instance) == 1
+
+
+def a_failed_run(instance, inbox):
+    """Main started from the Start button: First wait PASS, Second wait FAIL."""
+    event = load_demo_recipe(instance, inbox)
+    first, second = event.sequences[0].steps
+    instance.top_bar.start_button.click()
+    inbox.send(
+        RunStarted(recipe_name="Wait demo", recipe_description="", pypts_version="0.9")
+    )
+    inbox.send(StepStarted(step_id=first.step_id, step_name=first.step_name))
+    inbox.send(StepFinished(outcome=a_measured_outcome(first.step_id)))
+    inbox.send(StepStarted(step_id=second.step_id, step_name=second.step_name))
+    failed = StepOutcome(
+        step_id=second.step_id,
+        step_name=second.step_name,
+        result=ResultType.FAIL,
+        error_info="Too <low>.",
+    )
+    inbox.send(StepFinished(outcome=failed))
+    inbox.send(RunMetadata(values=(("serial_number", "SN-1"),)))
+    inbox.send(
+        RunFinished(
+            result=ResultType.FAIL, outcomes=(a_measured_outcome(first.step_id), failed)
+        )
+    )
+    instance.poll_core()
+    return event
+
+
+def test_the_summary_tab_says_there_is_no_run_yet_and_names_the_recipe(gui):
+    instance, _outbox, inbox = gui
+    panel = instance.window.summary_panel
+
+    assert not panel.empty_label.isHidden()
+    assert panel.result_card.isHidden()
+
+    load_demo_recipe(instance, inbox)
+
+    assert "Wait demo v1.0.0 - 2 sequences, main sequence Main" in panel.empty_hint_label.text()
+
+
+def test_the_summary_tab_sums_up_a_finished_run(gui):
+    from pypts.hmi.gui.summary_panel import FILE_REPORT, FILE_RUN_LOG
+    from pypts.messages.core_hmi_communication import ReportReady
+
+    instance, _outbox, inbox = gui
+    a_failed_run(instance, inbox)
+    panel = instance.window.summary_panel
+
+    assert panel.empty_label.isHidden()
+    assert panel.verdict_label.text() == "FAIL"
+    assert panel.title_label.text() == "Wait demo v1.0.0"
+    details = panel.details_label.text()
+    assert "Sequence: Main" in details
+    assert "took 0:00." in details
+    assert "pypts 0.9" in details
+    assert panel.no_report_label.isHidden()
+    assert panel.badges[ResultType.PASS].text().startswith("<b style='font-size:16px'>1</b>")
+    assert panel.badges[ResultType.ERROR].isHidden()
+    assert panel.pass_rate_label.text() == "50 % passed (1 of 2 judged steps)"
+    assert "Second wait" in panel.slowest_label.text()
+    assert "Too &lt;low&gt;." in panel.failures_label.text()
+    assert panel.metadata_label.text() == "serial_number: SN-1"
+    # No report yet: the files wait for it.
+    assert not panel.report_pending_label.isHidden()
+    assert panel.files[FILE_REPORT].path_label.isHidden()
+
+    inbox.send(ReportReady(report_path="C:/r/BOARD_1.html", report_dir="C:/r"))
+    instance.poll_core()
+
+    assert panel.report_pending_label.isHidden()
+    assert panel.files[FILE_REPORT].path_label.text() == "BOARD_1.html"
+    assert panel.files[FILE_REPORT].path_label.toolTip() == "C:/r/BOARD_1.html"
+    assert panel.files[FILE_RUN_LOG].path_label.isHidden(), "RunStarted named no run log"
+
+
+def test_an_engineering_retest_says_it_wrote_no_report(gui):
+    instance, _outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description="", write_report=False))
+    instance.poll_core()
+    panel = instance.window.summary_panel
+
+    assert panel.verdict_label.text() == "Running..."
+    assert not panel.no_report_label.isHidden()
+    assert panel.report_card.isHidden()
+
+
+def test_a_failure_clicked_on_the_summary_shows_the_step_on_the_run_tab(gui):
+    from pypts.hmi.gui.view_tabs import TAB_RUN, TAB_SUMMARY
+
+    instance, _outbox, inbox = gui
+    event = a_failed_run(instance, inbox)
+    second = event.sequences[0].steps[1]
+    instance.window.show_tab(TAB_SUMMARY)
+
+    instance.window.summary_panel.failures_label.linkActivated.emit(str(second.step_id))
+
+    assert instance.window.view_tabs.currentIndex() == TAB_RUN
+    assert instance.center.is_reviewing()
+    assert instance.center.interaction.run_header.step_label.text() == "Second wait"
+    assert instance.outside_click_watcher.is_watching()
+
+
+def test_an_open_button_opens_the_file_or_warns_when_it_is_gone(gui, tmp_path, monkeypatch):
+    from PySide6.QtGui import QDesktopServices
+
+    from pypts.hmi.gui.summary_panel import FILE_FOLDER
+
+    opened = []
+    monkeypatch.setattr(
+        QDesktopServices, "openUrl", staticmethod(lambda url: opened.append(url) or True)
+    )
+    instance, outbox, inbox = gui
+    load_demo_recipe(instance, inbox)
+    inbox.send(RunStarted(recipe_name="Wait demo", recipe_description="", run_dir=str(tmp_path)))
+    instance.poll_core()
+
+    instance.window.summary_panel.files[FILE_FOLDER].open_button.click()
+
+    assert [url.toLocalFile() for url in opened] == [tmp_path.as_posix()]
+
+    drain(outbox)
+    instance.open_run_file(str(tmp_path / "gone.html"))
+
+    assert len(opened) == 1
+    errors = [message for message in drain(outbox) if isinstance(message, ModuleError)]
+    assert [error.severity for error in errors] == [ErrorSeverity.WARNING]
+    assert errors[0].message.startswith("There is no such file or folder any more")
+
+
+def test_the_summary_takes_the_new_theme(gui):
+    from pypts.hmi.gui.palette import get_palette
+
+    instance, _outbox, inbox = gui
+    a_failed_run(instance, inbox)
+
+    instance._apply_theme(True)
+
+    fail = get_palette(True).verdicts["FAIL"]
+    assert fail.background in instance.window.summary_panel.verdict_label.styleSheet()
+    assert fail.background in instance.window.summary_panel.failures_label.text()
 
 
 # --------------------------------------------------------------------------
@@ -3019,7 +3174,7 @@ def test_the_unload_button_sits_right_after_open(gui):
 
 
 def test_recipe_unloaded_puts_the_window_back_as_it_opened(gui):
-    from pypts.hmi.gui.view_tabs import TAB_RESULTS, TAB_RUN
+    from pypts.hmi.gui.view_tabs import TAB_RUN, TAB_SUMMARY
     from pypts.messages.core_hmi_communication import RecipeUnloaded
 
     instance, _outbox, inbox = gui
@@ -3029,7 +3184,7 @@ def test_recipe_unloaded_puts_the_window_back_as_it_opened(gui):
     inbox.send(RunFinished(result=ResultType.PASS, outcomes=(a_measured_outcome(),)))
     inbox.send(RunMetadata(values=(("serial_number", "SN-1"),)))
     instance.poll_core()
-    assert instance.window.view_tabs.pulsing_tab() == TAB_RESULTS
+    assert instance.window.view_tabs.pulsing_tab() == TAB_SUMMARY
 
     inbox.send(RecipeUnloaded())
     instance.poll_core()
@@ -3046,8 +3201,6 @@ def test_recipe_unloaded_puts_the_window_back_as_it_opened(gui):
     assert results_tree_rows(instance) == 0
     assert instance.step_table.table.rowCount() == 0
     assert window.run_progress.isVisibleTo(window) is False
-    assert top.sequence_combo.count() == 0
-    assert not top.sequence_combo.isEnabled()
     assert not top.start_button.isEnabled()
     assert not top.preview_button.isEnabled()
     assert not top.unload_button.isEnabled()
@@ -3573,7 +3726,7 @@ def test_the_engineering_menu_is_off_limits_during_a_run(gui):
     instance, _outbox, inbox = gui
     load_demo_recipe(instance, inbox)
 
-    instance.show_run_started("Wait demo", "")
+    instance.show_run_started(RunStarted(recipe_name="Wait demo", recipe_description=""))
     assert instance.window.engineering_action.isEnabled() is False
 
     instance.show_run_finished(ResultType.DONE, ())
@@ -4126,6 +4279,87 @@ def test_a_step_not_run_yet_says_so_on_its_chip(gui, tmp_path):
     assert card.state_text() == PENDING_TEXT
     assert card.info_label.isHidden(), "no duration before it has run"
     assert card.results_label.isHidden()
+
+
+def a_group_recipe_loaded():
+    """Main: 'Checks' calls 'Measure' and 'Fans' (-> 'Spin'), then 'After'."""
+    rows = (
+        StepSummary(step_id=uuid4(), step_name="Checks", description="", is_group=True),
+        StepSummary(step_id=uuid4(), step_name="Measure", description="", depth=1),
+        StepSummary(step_id=uuid4(), step_name="Fans", description="", depth=1, is_group=True),
+        StepSummary(step_id=uuid4(), step_name="Spin <fast>", description="", depth=2),
+        StepSummary(step_id=uuid4(), step_name="After", description=""),
+    )
+    return RecipeLoaded(
+        recipe_name="Pictures",
+        recipe_version="1.0.0",
+        main_sequence="Main",
+        sequences=(SequenceSummary(sequence_name="Main", steps=rows),),
+    )
+
+
+def test_a_looked_back_sequence_lists_every_step_under_it(gui):
+    instance, _outbox, inbox = gui
+    event = a_group_recipe_loaded()
+    checks, measure, fans, spin, _after = event.sequences[0].steps
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(checks))
+    inbox.send(step_started(measure))
+    inbox.send(
+        StepFinished(
+            outcome=StepOutcome(
+                step_id=measure.step_id,
+                step_name=measure.step_name,
+                result=ResultType.FAIL,
+                error_info="Too low.",
+            )
+        )
+    )
+    inbox.send(step_started(fans))
+    inbox.send(step_started(spin))
+    inbox.send(finished(spin))
+    inbox.send(finished(fans))
+    inbox.send(finished(checks, ResultType.FAIL))
+    instance.poll_core()
+    card = instance.center.interaction.run_header
+
+    # Column 1: a group's name is its fold control.
+    instance.step_table._clicked_cell(0, 1)
+
+    assert card.step_label.text() == "Checks"
+    assert card.state_text() == "FAIL"
+    assert card.steps_heading_label.text() == "Steps: 1 PASS · 1 FAIL"
+    assert not card.steps_area.isHidden()
+    steps = card.steps_label.text()
+    assert steps.index("Measure") < steps.index("Fans") < steps.index("Spin &lt;fast&gt;")
+    assert "Too low." in steps
+    assert "After" not in steps
+
+    instance.step_table._clicked_cell(1, 1)
+
+    assert card.step_label.text() == "Measure"
+    assert card.steps_heading_label.isHidden()
+    assert card.steps_area.isHidden()
+
+
+def test_a_looked_back_sequence_takes_the_new_theme(gui):
+    from pypts.hmi.gui.palette import get_palette
+
+    instance, _outbox, inbox = gui
+    event = a_group_recipe_loaded()
+    checks, measure = event.sequences[0].steps[:2]
+    start_picture_run(instance, inbox, event)
+    inbox.send(step_started(checks))
+    inbox.send(step_started(measure))
+    inbox.send(finished(measure))
+    inbox.send(step_started(event.sequences[0].steps[2]))
+    instance.poll_core()
+    card = instance.center.interaction.run_header
+    instance.step_table._clicked_cell(0, 1)
+
+    card.set_dark(True)
+
+    assert get_palette(True).verdicts["PASS"].background in card.steps_label.text()
 
 
 def test_a_question_ends_the_look_back(gui, tmp_path):

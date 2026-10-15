@@ -151,7 +151,7 @@ def report_and_reraise(
 
 def report_error(
     instance,
-    exc: Exception,
+    exc: BaseException,
     *,
     severity: ErrorSeverity = ErrorSeverity.ERROR,
     source: str | None = None,

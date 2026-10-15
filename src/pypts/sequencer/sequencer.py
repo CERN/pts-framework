@@ -22,7 +22,12 @@ from uuid import UUID
 
 from pypts._version import __version__
 from pypts.config_handler import ConfigHandler
-from pypts.hal.local_setup import LocalSetup, hardware_sections_from_config
+from pypts.hal.connection_driver import RESCUE_TIMEOUT_S
+from pypts.hal.local_setup import (
+    LocalSetup,
+    abandon_active_setup,
+    hardware_sections_from_config,
+)
 from pypts.logger.log import end_run_log, log, start_run_log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
@@ -69,6 +74,11 @@ def reports_dir_from_config() -> str:
 #: How long stop() waits for a sequence that is still running.
 SEQUENCE_JOIN_TIMEOUT_S = 2.0
 
+#: How long stop() gives an abandoned run's devices, all torn down side by
+#: side: one rescue each, and a second for the processes to end. Inside CORE's
+#: shutdown budget together with the join above (core.md).
+ABANDONED_DEVICES_TIMEOUT_S = RESCUE_TIMEOUT_S + 1.0
+
 #: How often a held run looks at the pause and stop flags. Short enough that
 #: Resume and Stop feel immediate; the hold is on the sequence thread, so this
 #: costs the event loop nothing.
@@ -102,6 +112,9 @@ class Sequencer:
               moves the hold by one step boundary or one HOLD_POLL_S.
         sequence_thread: the thread a sequence is running on, or None if none
               has been started yet.
+        run_abandoned: set when stop() gives up on the sequence thread. From
+              then on that run's events, questions and RunFinished are not
+              sent: CORE is shutting down without it.
         recipe: the validated Recipe that came with the last RunSequence, or
               None until one has, and again after ForgetRecipe. A live object,
               not a copy - the two threads share one process. CORE holds the
@@ -121,6 +134,7 @@ class Sequencer:
         self.running = True
         self.stop_requested = False
         self.pause_requested = False
+        self.run_abandoned = False
         self.pending = PendingRequests()
         self.heartbeat_manager = HeartbeatManager(self.core, SEQUENCER)
         self.sequence_thread: threading.Thread | None = None
@@ -240,6 +254,7 @@ class Sequencer:
         # Cleared here rather than at the end of a run
         self.stop_requested = False
         self.pause_requested = False
+        self.run_abandoned = False
 
         log.debug("Starting the sequence thread for '%s'.", sequence_name)
         self.sequence_thread = threading.Thread(
@@ -358,26 +373,38 @@ class Sequencer:
                 write_report=write_report,
             )
         )
+        # Once RunStarted is out, RunFinished must follow whatever happens -
+        # without it every frontend shows the run as going for ever and the
+        # Report never finishes the CSV. So the run is ERROR until it has
+        # ended cleanly, and RunFinished is sent from the finally below.
+        result = ResultType.ERROR
+        real_results: list[StepResult] = []
         try:
-            result, real_results = self.run_body(
+            steps_result, real_results = self.run_body(
                 runtime, sequence, run_globals, metadata_names, reported_metadata
             )
             self.log_run_summary(
                 self.recipe.name,
                 sequence_name,
-                result,
+                steps_result,
                 real_results,
                 time.perf_counter() - run_began,
             )
+            result = steps_result
+        except (Exception, SystemExit) as error:  # noqa: BLE001 - the run must still be finished
+            report_error(self, error, operation="Sequencer.execute_sequence")
         finally:
             # Before RunFinished: the summary above is the run log's last line,
             # and whatever follows the run is the session's again.
             if run_log_path:
                 end_run_log()
                 log.info("The run's log is %s", run_log_path)
-        self.core.send(
-            RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in real_results))
-        )
+            if not self.run_abandoned:
+                self.core.send(
+                    RunFinished(
+                        result=result, outcomes=tuple(r.to_outcome() for r in real_results)
+                    )
+                )
 
     def log_engineering_run(
         self, sequence: Sequence, excluded_step_ids: tuple[UUID, ...], write_report: bool
@@ -507,6 +534,8 @@ class Sequencer:
         """
 
         def emit(event: Any) -> None:
+            if self.run_abandoned:
+                return
             self.core.send(event)
             if metadata_names:
                 self.send_changed_metadata(run_globals, metadata_names, reported)
@@ -648,6 +677,8 @@ class Sequencer:
         declined, or the run was stopped. The three are deliberately not told
         apart here: what to do about it belongs to the step that asked.
         """
+        if self.run_abandoned:
+            return None
         request_id = request.request_id
         self.pending.start(request_id)
         self.core.send(request)
@@ -711,6 +742,9 @@ class Sequencer:
         thread.join(timeout=SEQUENCE_JOIN_TIMEOUT_S)
 
         if thread.is_alive():
+            # From here the run's events go nowhere: CORE is shutting down
+            # without it, and must not keep receiving a run it has let go.
+            self.run_abandoned = True
             # The bench may be mid-step with teardown never run: the operator
             # must hear this, not just the log. What CORE *does* about it is
             # the open error-policy TODO; this only makes the abandonment loud.
@@ -722,3 +756,25 @@ class Sequencer:
                 severity=ErrorSeverity.CRITICAL,
                 operation="Sequencer.stop_running_sequence",
             )
+            self.tear_down_abandoned_devices()
+
+    def tear_down_abandoned_devices(self) -> None:
+        """
+        Tear down the devices of a run that was abandoned, before saying goodbye.
+
+        Its LocalSetup will never reach __exit__, and its driver processes are
+        daemons, which end with PyPTS without teardown() - which is where a
+        driver leaves its instrument safe. A device that could not be torn
+        down is a CRITICAL of its own, naming it.
+        """
+        unsafe = abandon_active_setup(ABANDONED_DEVICES_TIMEOUT_S)
+        if not unsafe:
+            log.debug("The abandoned run has no device left open.")
+            return
+        report_problem(
+            self,
+            f"Device(s) {', '.join(unsafe)} could not be torn down and may still be energised. "
+            f"Check the bench before touching it.",
+            severity=ErrorSeverity.CRITICAL,
+            operation="Sequencer.tear_down_abandoned_devices",
+        )

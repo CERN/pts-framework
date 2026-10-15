@@ -19,7 +19,7 @@ from pypts.logger.log import log
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ModuleError, ResultType, StepOutcome
 from pypts.messages.core_hmi_communication import CoreToHmi, HmiToCore, ReportReady
-from pypts.messages.run_events import RecipeLoaded
+from pypts.messages.run_events import RecipeLoaded, RunStarted
 from pypts.utilities.common import describe_step_values
 
 #: Seconds between polls of the CORE inbox, in the background thread.
@@ -209,8 +209,8 @@ class CLI(HmiClient):
                 names.append(sequence.sequence_name)
         print(f"Sequences: {', '.join(names)}")
 
-    def show_run_started(self, recipe_name: str, recipe_description: str) -> None:
-        print(f"Running {recipe_name}: {recipe_description}")
+    def show_run_started(self, event: RunStarted) -> None:
+        print(f"Running {event.recipe_name}: {event.recipe_description}")
 
     def show_run_finished(self, result: ResultType, outcomes: tuple[StepOutcome, ...]) -> None:
         print(f"Run finished: {result} ({len(outcomes)} steps)")

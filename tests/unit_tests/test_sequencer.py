@@ -62,6 +62,7 @@ from pypts.messages.run_events import (
 )
 from pypts.recipe.recipe import Recipe
 from pypts.recipe.recipe_parser import current_recipe_version
+from pypts.sequencer import sequencer as sequencer_module
 from pypts.sequencer.sequencer import Sequencer
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
@@ -593,6 +594,83 @@ def test_an_abandoned_sequence_is_reported_critical_before_sequencer_stopped(
     release.set()
 
 
+def test_an_abandoned_run_has_its_devices_made_safe_and_the_unsafe_ones_named(
+    sequencer, monkeypatch
+):
+    """
+    Its LocalSetup will never reach __exit__, so the Sequencer takes the
+    devices away from it before saying goodbye; one that could not be torn
+    down is a CRITICAL of its own, naming it.
+    """
+    from pypts.messages.common_messages import ErrorSeverity
+
+    instance, outbox, inbox = sequencer
+    monkeypatch.setattr("pypts.sequencer.sequencer.SEQUENCE_JOIN_TIMEOUT_S", 0.05)
+    abandoned = []
+
+    def abandon(time_limit_s):
+        abandoned.append(time_limit_s)
+        return ["psu1"]
+
+    monkeypatch.setattr(sequencer_module, "abandon_active_setup", abandon)
+    release = start_a_blocking_sequence(instance, inbox)
+
+    instance.stop()
+
+    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
+    assert [type(m) for m in messages] == [ModuleError, ModuleError, SequencerStopped]
+    unsafe = messages[1]
+    assert unsafe.severity is ErrorSeverity.CRITICAL
+    assert "psu1" in unsafe.message
+    assert "may still be energised" in unsafe.message
+    assert len(abandoned) == 1
+    release.set()
+
+
+#: A step that ignores Stop for longer than the Sequencer waits for it.
+SLOW_STEP_RECIPE = f"""\
+name: Slow
+version: {CURRENT_VERSION}
+description: A step that outlives the join.
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: Slow
+    module: slow_code.py
+    method_name: take_a_while
+  - steptype: Wait
+    step_name: After
+    wait_time: '0'
+"""
+
+
+def test_an_abandoned_run_sends_nothing_more(sequencer, monkeypatch, tmp_path):
+    """Once abandoned, the run's events go nowhere: CORE is shutting down without it."""
+    instance, outbox, inbox = sequencer
+    monkeypatch.setattr("pypts.sequencer.sequencer.SEQUENCE_JOIN_TIMEOUT_S", 0.05)
+    (tmp_path / "slow_code.py").write_text(
+        "import time\n\ndef take_a_while():\n    time.sleep(1.0)\n", encoding="utf-8"
+    )
+    recipe = Recipe.from_yaml_text(SLOW_STEP_RECIPE)
+    recipe.base_dir = str(tmp_path)
+    inbox.put(RunSequence(recipe, "Main"))
+    instance.poll_core()
+    deadline = time.monotonic() + REACHED_TIMEOUT_S
+    while not any(isinstance(m, StepStarted) for m in list(outbox.queue)):
+        assert time.monotonic() < deadline, "the step never started"
+        time.sleep(0.01)
+
+    instance.stop()
+    stopped_at = len(drain(outbox))
+    instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
+
+    assert stopped_at > 0
+    late = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
+    assert late == []
+
+
 # --------------------------------------------------------------------------
 # The engine itself - Phase 1
 # --------------------------------------------------------------------------
@@ -678,6 +756,116 @@ def test_a_step_that_halts_the_run_reports_error_not_stop(sequencer):
     finished = [m.outcome for m in messages if isinstance(m, StepFinished)]
     assert [o.result for o in finished] == [ResultType.ERROR, ResultType.SKIP]
     assert "stopped at step 'Bad wait'" in finished[1].error_info
+    run_finished = [m for m in messages if isinstance(m, RunFinished)]
+    assert [m.result for m in run_finished] == [ResultType.ERROR]
+
+
+#: A recipe whose test code ends the program, with a teardown behind it.
+EXITING_RECIPE = f"""\
+name: Exits
+version: {CURRENT_VERSION}
+description: Test code that calls sys.exit().
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: Exits
+    module: exiting_code.py
+    method_name: leave
+  - steptype: Wait
+    step_name: Never runs
+    wait_time: '0'
+teardown_steps:
+  - steptype: Wait
+    step_name: Cleans up
+    wait_time: '0'
+"""
+
+
+def load_exiting_recipe(instance, tmp_path, exit_code):
+    (tmp_path / "exiting_code.py").write_text(
+        f"import sys\n\ndef leave():\n    sys.exit({exit_code})\n", encoding="utf-8"
+    )
+    recipe = Recipe.from_yaml_text(EXITING_RECIPE)
+    recipe.base_dir = str(tmp_path)
+    instance.recipe = recipe
+
+
+@pytest.mark.parametrize("exit_code", ["", "0", "3"])
+def test_test_code_that_calls_sys_exit_is_a_step_error(sequencer, tmp_path, exit_code):
+    """
+    sys.exit() is not a way out of the run: the step is ERROR whatever the
+    code - it never returned, so there is nothing to judge - the run halts the
+    way it does on any ERROR, its teardown still runs, and RunFinished is sent.
+    """
+    instance, outbox, _inbox = sequencer
+    load_exiting_recipe(instance, tmp_path, exit_code)
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    finished = {}
+    for message in messages:
+        if isinstance(message, StepFinished):
+            finished[message.outcome.step_name] = message.outcome
+    assert finished["Exits"].result is ResultType.ERROR
+    assert "SystemExit" in finished["Exits"].error_info
+    assert finished["Cleans up"].result is ResultType.DONE
+    run_finished = [m for m in messages if isinstance(m, RunFinished)]
+    assert [m.result for m in run_finished] == [ResultType.ERROR]
+
+
+def test_a_failure_after_the_steps_still_finishes_the_run_as_error(sequencer, monkeypatch):
+    """
+    Every step passed, then the end of the run broke: RunFinished is still
+    sent - or every frontend shows the run as going for ever - and the run is
+    ERROR, with the steps' outcomes kept.
+    """
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    def broken_summary(*args):
+        raise RuntimeError("the summary broke")
+
+    monkeypatch.setattr(instance, "log_run_summary", broken_summary)
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    errors = [m for m in messages if isinstance(m, ModuleError)]
+    assert any("the summary broke" in m.message for m in errors)
+    run_finished = [m for m in messages if isinstance(m, RunFinished)]
+    assert [m.result for m in run_finished] == [ResultType.ERROR]
+    assert run_finished[0].outcomes
+    assert all(o.result is ResultType.DONE for o in run_finished[0].outcomes)
+
+
+@pytest.mark.parametrize("raised", [RuntimeError("devices broke"), SystemExit(0)])
+def test_a_failure_outside_the_steps_still_sends_run_finished(sequencer, monkeypatch, raised):
+    """
+    Not only step failures: the run's devices failing to close, or a
+    sys.exit() outside any step, must not leave the run without its end.
+    """
+    instance, outbox, inbox = sequencer
+    load_wait_recipe(instance, inbox)
+
+    class BreakingLocalSetup:
+        def __init__(self, read_sections):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            raise raised
+
+    monkeypatch.setattr(sequencer_module, "LocalSetup", BreakingLocalSetup)
+
+    instance.execute_sequence("Main")
+
+    messages = drain(outbox)
+    assert any(isinstance(m, ModuleError) for m in messages)
     run_finished = [m for m in messages if isinstance(m, RunFinished)]
     assert [m.result for m in run_finished] == [ResultType.ERROR]
 

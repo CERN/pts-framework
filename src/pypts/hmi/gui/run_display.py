@@ -33,6 +33,10 @@ above at the moment it started - its start and finish times and its outcome.
 worked out from the recipe because a Sequence step runs its own copy of the
 called sequence, and the rows do not say which sequence a group calls. A step
 that has not run yet in this run has only its own picture to show.
+
+A group row (a `Sequence` step) is looked back at with every step under it, at
+any depth, in run order (`StepReview.steps`): the rows that follow it and sit
+deeper, as the step table folds them.
 """
 
 from dataclasses import dataclass
@@ -99,6 +103,32 @@ class StepReview:
     outcome: StepOutcome | None = None
     #: Seconds from its start to its finish; None until it has finished.
     duration: float | None = None
+    #: For a group row, every step under it at any depth, in run order; () for a step.
+    steps: tuple["StepReview", ...] = ()
+
+
+def counts_text(counts: dict[ResultType, int]) -> str:
+    """"3 PASS · 1 FAIL", in COUNT_ORDER; "" for no counts."""
+    parts = []
+    for result_type in COUNT_ORDER:
+        count = counts.get(result_type, 0)
+        if count:
+            parts.append(f"{count} {result_type.name}")
+    return " · ".join(parts)
+
+
+def steps_counts_text(steps: tuple[StepReview, ...]) -> str:
+    """
+    The verdicts of a group's finished steps, counted as the header counts
+    them - group rows left out. "" while none has finished.
+    """
+    counts: dict[ResultType, int] = {}
+    for review in steps:
+        if review.step.is_group or review.outcome is None:
+            continue
+        result = review.outcome.result
+        counts[result] = counts.get(result, 0) + 1
+    return counts_text(counts)
 
 
 class RunDisplay:
@@ -106,6 +136,8 @@ class RunDisplay:
 
     def __init__(self) -> None:
         self._steps: dict[UUID, StepSummary] = {}
+        #: Every group row's steps, at any depth, in run order.
+        self._group_steps: dict[UUID, tuple[UUID, ...]] = {}
         self._sequence_images: dict[str, str | None] = {}
         self._stack: list[_Running] = []
         self.running = False
@@ -124,14 +156,17 @@ class RunDisplay:
     def set_recipe(self, recipe: RecipeLoaded | None) -> None:
         """Index every row and every sequence picture; None forgets them."""
         self._steps = {}
+        self._group_steps = {}
         self._sequence_images = {}
         if recipe is not None:
             for sequence in recipe.sequences:
                 # Names are unique regardless of case, and a called sequence's
                 # SequenceStarted carries the same name as its own document.
                 self._sequence_images[sequence.sequence_name.lower()] = sequence.image_path
-                for step in sequence.steps:
+                for index, step in enumerate(sequence.steps):
                     self._steps[step.step_id] = step
+                    if step.is_group:
+                        self._group_steps[step.step_id] = _deeper_rows(sequence.steps, index)
         self.run_finished()
         self._seen = {}
         self.has_run = False
@@ -221,7 +256,17 @@ class RunDisplay:
         step = self._steps.get(step_id)
         if step is None or not self.has_run:
             return None
-        seen = self._seen.get(step_id)
+        review = self._review_one(step)
+        if step.is_group:
+            steps = []
+            for inner_id in self._group_steps.get(step_id, ()):
+                steps.append(self._review_one(self._steps[inner_id]))
+            review.steps = tuple(steps)
+        return review
+
+    def _review_one(self, step: StepSummary) -> StepReview:
+        """One step as this run saw it, without the steps under it."""
+        seen = self._seen.get(step.step_id)
         if seen is None:
             return StepReview(step, REVIEW_PENDING, step.image_path)
         if seen.outcome is None or seen.finished_at is None:
@@ -231,9 +276,15 @@ class RunDisplay:
 
     def count_text(self) -> str:
         """"3 PASS · 1 FAIL", in COUNT_ORDER; "" before the first step ends."""
-        parts = []
-        for result_type in COUNT_ORDER:
-            count = self.counts.get(result_type, 0)
-            if count:
-                parts.append(f"{count} {result_type.name}")
-        return " · ".join(parts)
+        return counts_text(self.counts)
+
+
+def _deeper_rows(rows: tuple[StepSummary, ...], index: int) -> tuple[UUID, ...]:
+    """The rows after `rows[index]` that sit deeper than it - the steps of the group it is."""
+    depth = rows[index].depth
+    found = []
+    for row in rows[index + 1 :]:
+        if row.depth <= depth:
+            break
+        found.append(row.step_id)
+    return tuple(found)

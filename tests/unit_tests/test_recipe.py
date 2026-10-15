@@ -27,6 +27,7 @@ from pypts.messages.common_messages import ResultType
 from pypts.recipe import step_source
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
 from pypts.recipe.recipe_parser import current_recipe_version
+from pypts.recipe.recipe_schema import REMOVED_SEQUENCE_KEYS
 from pypts.step.python_module_step import PythonModuleStep
 from pypts.step.runtime import Runtime
 from pypts.step.sequence_step import SequenceStep
@@ -86,10 +87,9 @@ def test_recipe_is_parsed_from_yaml():
     assert main.teardown_steps == []
 
 
-def test_setup_steps_is_not_a_key_at_all():
+def test_setup_steps_is_refused_with_what_to_do_instead():
     """`setup_steps` ran in front of `steps` and meant nothing else. It is
-    gone, and it is an unknown sequence key like any other - ignored, not
-    honoured, and not a special case in the validator either."""
+    gone; a recipe still spelling it used to load without its setup."""
     text = VALID.replace(
         "steps:\n",
         """\
@@ -100,8 +100,30 @@ setup_steps:
 steps:
 """,
     )
-    main = Recipe.from_yaml_text(text).sequences["Main"]
-    assert [step.name for step in main.steps] == ["Only wait"]
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert REMOVED_SEQUENCE_KEYS["setup_steps"] in str(error.value)
+
+
+def test_a_misspelled_sequence_key_is_refused():
+    """`teardown_step` for `teardown_steps` used to load with no teardown."""
+    text = VALID + "teardown_step:\n  - steptype: Wait\n    step_name: Off\n    wait_time: '0'\n"
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "teardown_step: Extra inputs are not permitted" in str(error.value)
+
+
+def test_a_misspelled_header_key_is_refused():
+    """`main_sequnce` used to load and run the first sequence instead."""
+    text = VALID.replace("main_sequence: Main", "main_sequnce: Main")
+
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "main_sequnce: Extra inputs are not permitted" in str(error.value)
 
 
 def test_recipe_is_data_only_and_carries_no_execution_logic():
@@ -934,14 +956,18 @@ def test_the_showcases_carry_no_deliberate_fail(showcase):
     assert checked > 10
 
 
-def test_unknown_header_keys_are_tolerated():
+def test_the_old_header_keys_are_refused_as_unknown():
     """continue_on_error and recipe_version appear in old example recipes;
-    nothing reads them (F1, F2). Tolerated so old files load; roadmap TODO."""
+    nothing reads them (F1, F2). They are refused like any unknown key: a
+    header continue_on_error looked like it ended the run, and never did."""
     text = VALID.replace(
         "name: Wait demo", "name: Wait demo\nrecipe_version: 1.0.0\ncontinue_on_error: true"
     )
-    recipe = Recipe.from_yaml_text(text)
-    assert recipe.name == "Wait demo"
+    with pytest.raises(RecipeError) as error:
+        Recipe.from_yaml_text(text)
+
+    assert "recipe_version: Extra inputs are not permitted" in str(error.value)
+    assert "continue_on_error: Extra inputs are not permitted" in str(error.value)
 
 
 def test_invalid_recipe_never_reaches_the_sequencer(tmp_path):

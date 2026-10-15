@@ -233,9 +233,12 @@ class Core:
     #: Without it CORE waits forever for a module that will never answer, and
     #: the only thing that ends the run is the launcher's own join timeout
     #: terminating the process - which loses the log line saying who was to
-    #: blame. Five seconds because it matches the launcher's budget and the
-    #: heartbeat timeout; a module quiet for that long is already presumed dead.
-    SHUTDOWN_TIMEOUT_S = 5.0
+    #: blame. Fifteen seconds because the Sequencer may need nearly all of it:
+    #: SEQUENCE_JOIN_TIMEOUT_S (2 s) for a running sequence, then up to
+    #: ABANDONED_DEVICES_TIMEOUT_S (11 s) tearing down the devices of one that
+    #: would not stop. An ordinary shutdown takes a fraction of it. The
+    #: launcher's CORE_SHUTDOWN_TIMEOUT_S must stay above it.
+    SHUTDOWN_TIMEOUT_S = 15.0
 
     def __init__(
         self,

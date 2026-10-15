@@ -43,6 +43,7 @@ from pypts.logger.log import log
 from pypts.recipe.recipe import Recipe, RecipeError, Sequence
 from pypts.recipe.recipe_schema import (
     OUTPUT_TYPES,
+    REMOVED_SEQUENCE_KEYS,
     SEQUENCE_DEFAULTS,
     STEP_TYPE_REQUIRED,
     HeaderSchema,
@@ -271,10 +272,18 @@ def validate_document(
     One normalized document against its model: ([], the model) or (every
     problem, None). `context` names the document, as sequence_context() does.
     """
+    # A key the format removed is refused like any unknown key, but with what
+    # to write instead - only a sequence ever had them.
+    removed_keys: dict[str, str] = {}
+    if schema_cls is SequenceSchema:
+        removed_keys = REMOVED_SEQUENCE_KEYS
     try:
         return [], schema_cls.model_validate(raw)
     except ValidationError as error:
-        return [_describe_problem(context, raw, detail) for detail in error.errors()], None
+        problems = []
+        for detail in error.errors():
+            problems.append(_describe_problem(context, raw, detail, removed_keys))
+        return problems, None
 
 
 def sequence_context(document: dict[str, Any], number: int) -> str:
@@ -286,7 +295,10 @@ def sequence_context(document: dict[str, Any], number: int) -> str:
 
 
 def _describe_problem(
-    context: str, document: dict[str, Any], detail: ErrorDetails
+    context: str,
+    document: dict[str, Any],
+    detail: ErrorDetails,
+    removed_keys: dict[str, str],
 ) -> SchemaProblem:
     """
     Pydantic's message, at a location an author can find in the file.
@@ -318,6 +330,8 @@ def _describe_problem(
     elif kind == "model_type":
         # "...or instance of ParameterSet" names a Python class, not a recipe word.
         message = "Input should be a valid dictionary"
+    elif kind == "extra_forbidden" and len(location) == 1 and location[0] in removed_keys:
+        message = removed_keys[str(location[0])]
 
     path = _document_path(location)
     parts = _readable_parts(path, document)

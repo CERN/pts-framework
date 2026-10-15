@@ -207,10 +207,11 @@ class _RecipeModel(BaseModel):
     as a float and `step_name: 7` as an int, and both load today. Mapping keys
     and global names are not text fields: they stay exactly as written, because
     a global is found by plain dict lookup and `7` and `'7'` are two globals.
-    Unknown keys are ignored unless a model says otherwise - a step does.
+    An unknown key is refused, everywhere: a misspelled `teardown_steps` or
+    `max` that loaded and was ignored would quietly drop what it meant.
     """
 
-    model_config = ConfigDict(extra="ignore", coerce_numbers_to_str=True)
+    model_config = ConfigDict(extra="forbid", coerce_numbers_to_str=True)
 
     @model_validator(mode="before")
     @classmethod
@@ -244,6 +245,16 @@ def _report_name(name: str) -> str:
     if not name:
         _refuse("a report_metadata entry must be the name of a global")
     return name
+
+
+def _report_names(names: list[str]) -> list[str]:
+    """The report_metadata list: each name is a CSV column, so none may come twice."""
+    seen: set[str] = set()
+    for name in names:
+        if name in seen:
+            _refuse(f"report_metadata names '{name}' twice; each global is one report column")
+        seen.add(name)
+    return names
 
 
 class HeaderSchema(_RecipeModel):
@@ -284,11 +295,14 @@ class HeaderSchema(_RecipeModel):
         examples=[{"serial_number": "", "voltage": 0}],
     )
     # Strict: a column called `3` is a mistake, not a name to coerce.
-    report_metadata: list[Annotated[StrictStr, AfterValidator(_report_name)]] = Field(
+    report_metadata: Annotated[
+        list[Annotated[StrictStr, AfterValidator(_report_name)]],
+        AfterValidator(_report_names),
+    ] = Field(
         default_factory=lambda: list(REPORT_METADATA_DEFAULT),
         description=(
             "The names of globals stamped on every row of the report. Each entry is "
-            "a name written as text; a number is not a name."
+            "a name written as text, given once; a number is not a name."
         ),
         examples=[["serial_number", "lot_number"]],
     )
@@ -327,7 +341,12 @@ class PassOutput(_RecipeModel):
 
 
 class PassfailOutput(_RecipeModel):
-    type: Literal["passfail"] = Field(description="Passes if the returned value is true.")
+    type: Literal["passfail"] = Field(
+        description=(
+            "Passes if the returned value is True, fails if it is False; any other "
+            "value is an ERROR."
+        )
+    )
 
 
 class EqualsOutput(_RecipeModel):
@@ -376,9 +395,7 @@ OUTPUT_SCHEMAS: dict[str, type[BaseModel]] = {
 
 
 class _StepFields(_RecipeModel):
-    """STEP_COMMON_DEFAULTS: what every steptype accepts. A step refuses unknown keys."""
-
-    model_config = ConfigDict(extra="forbid")
+    """STEP_COMMON_DEFAULTS: what every steptype accepts."""
 
     description: str = Field(default="", description="What the step does, for the operator.")
     image_path: str | None = Field(
@@ -451,6 +468,22 @@ class PythonModuleStepSchema(_OrdinaryStep):
     )
 
 
+def _refuse_passfail(outputs: dict[Any, Any], returns: str) -> dict[Any, Any]:
+    """
+    Refuse a `passfail` entry on a step whose output is always text.
+
+    passfail judges a bool, and text is never one, so the step could only
+    ever end in ERROR. Said at load, before any hardware has run.
+    """
+    for name, entry in outputs.items():
+        if isinstance(entry, PassfailOutput):
+            _refuse(
+                f"output '{name}': passfail cannot judge this step, it returns {returns}. "
+                "Use {type: equals, value: <expected text>} instead"
+            )
+    return outputs
+
+
 class UserInteractionStepSchema(_OrdinaryStep):
     steptype: Literal["userinteraction"] = Field(
         description="Asks the operator a question with buttons; the chosen one is the output."
@@ -464,6 +497,11 @@ class UserInteractionStepSchema(_OrdinaryStep):
         examples=[["Continue", "Abort"]],
     )
 
+    @field_validator("outputs")
+    @classmethod
+    def _no_passfail(cls, outputs: dict[Any, Any]) -> dict[Any, Any]:
+        return _refuse_passfail(outputs, "the text of the button pressed")
+
 
 class UserWriteStepSchema(_OrdinaryStep):
     steptype: Literal["userwrite"] = Field(
@@ -473,6 +511,11 @@ class UserWriteStepSchema(_OrdinaryStep):
         description="The prompt shown before the operator types their answer.",
         examples=["Scan or type the serial number."],
     )
+
+    @field_validator("outputs")
+    @classmethod
+    def _no_passfail(cls, outputs: dict[Any, Any]) -> dict[Any, Any]:
+        return _refuse_passfail(outputs, "the text the operator typed")
 
 
 class UserLoadingStepSchema(_OrdinaryStep):
@@ -543,8 +586,6 @@ INDEXED_STEP_REFUSED_KEYS: dict[str, str] = {
 
 class ParameterSet(_RecipeModel):
     """One entry of an Indexed step's `parameter_sets`: what makes one case different."""
-
-    model_config = ConfigDict(extra="forbid")
 
     inputs: dict[str, Any] = Field(
         default_factory=dict,
@@ -699,8 +740,8 @@ class SequenceSchema(_RecipeModel):
 
 
 #: Sequence keys the format once had and removed on purpose, with what to do
-#: instead. They load - a sequence ignores unknown keys - so a tool that checks
-#: a recipe (the Recipe Creator) names them rather than calling them unknown.
+#: instead. A sequence refuses them as it refuses any unknown key, and the
+#: parser gives this sentence as the reason rather than 'Extra inputs'.
 REMOVED_SEQUENCE_KEYS: dict[str, str] = {
     "setup_steps": (
         "'setup_steps' was removed. Steps that belonged in setup_steps go at "

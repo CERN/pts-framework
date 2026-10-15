@@ -112,7 +112,7 @@ what they produce.
 
 | Name | Where | Value | Meaning |
 |------|-------|-------|---------|
-| `Core.SHUTDOWN_TIMEOUT_S` | `core.py` | 5.0 s | Budget from `stop_all_modules()` to leaving without the modules that did not answer |
+| `Core.SHUTDOWN_TIMEOUT_S` | `core.py` | 15.0 s | Budget from `stop_all_modules()` to leaving without the modules that did not answer. Sized for the Sequencer's worst case: the 2 s join plus 11 s tearing down an abandoned run's devices (`sequencer/sequencer.md`); an ordinary shutdown uses a fraction of it. Must stay below the launcher's `CORE_SHUTDOWN_TIMEOUT_S` |
 | `Core.THREAD_JOIN_TIMEOUT_S` | `core.py` | 5.0 s | How long `join_submodules()` waits per thread after the loop ended |
 | `HEARTBEAT_TIMEOUT_S` | `utilities/heartbeat_manager.py` | 5.0 s | Silence before a WARNING |
 | `HEARTBEAT_FATAL_S` | `utilities/heartbeat_manager.py` | 15.0 s | Silence that ends the run |
