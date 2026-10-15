@@ -26,7 +26,7 @@ from pypts.hal.connection_driver import ABANDON_TEARDOWN_TIMEOUT_S
 from pypts.hal.local_setup import (
     LocalSetup,
     abandon_active_setup,
-    hardware_sections_from_config,
+    bench_sections,
 )
 from pypts.logger.log import end_run_log, log, start_run_log
 from pypts.messages import QueueWrapper, unhandled
@@ -120,7 +120,7 @@ class Sequencer:
               None until one has, and again after ForgetRecipe. A live object,
               not a copy - the two threads share one process. CORE holds the
               loaded recipe; this is only what the current run was given.
-        read_hardware_sections: returns the device sections of config.ini by
+        read_hardware_sections: returns the device sections of bench.ini by
               logical name; handed to the LocalSetup each run builds.
         reports_dir: returns the folder each run's folder is made in.
     """
@@ -141,11 +141,11 @@ class Sequencer:
         self.sequence_thread: threading.Thread | None = None
         self.recipe: Recipe | None = None
         self.goodbye_sent = False
-        #: Where a run's devices are declared - the [hardware.<name>] sections
-        #: of config.ini. Read only when test code first asks for a device, so
-        #: a run that uses none never reads them. Tests replace it.
+        #: Where a run's devices are declared - the sections of bench.ini.
+        #: Read only when test code first asks for a device, so a run that
+        #: uses none never reads them. Tests replace it.
         self.read_hardware_sections: Callable[[], Mapping[str, Mapping[str, Any]]] = (
-            hardware_sections_from_config
+            bench_sections
         )
         #: Where each run's folder is made - `paths.reports_dir`. Read once per
         #: run. Tests replace it, so a test run does not write into the reports

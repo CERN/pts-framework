@@ -34,9 +34,8 @@ from pypts.hal.drivers.loopback import LoopbackDriver
 from pypts.hal.local_setup import (
     DEFAULT_CALL_TIMEOUT_S,
     abandon_active_setup,
-    hardware_sections,
-    hardware_sections_from_config,
-    ini_hardware_sections,
+    bench_sections,
+    ini_device_sections,
     split_section,
 )
 
@@ -254,34 +253,62 @@ def test_split_section_explains_a_bad_section(section, words):
 
 
 def test_the_removed_python_key_is_refused():
-    """Review Focus 4: a config.ini written for the previous version."""
-    words = r"Device 'x'.*'python' key.*Remove it from \[hardware\.x\]"
+    """Review Focus 4: a bench.ini written for the previous version."""
+    words = r"Device 'x'.*'python' key.*Remove it from the \[x\] section"
     with pytest.raises(DriverError, match=words):
         split_section("x", {"driver": "pkg.X", "python": "C:/py32/python.exe"})
 
 
-def test_hardware_sections_keeps_only_devices_and_strips_the_prefix():
-    whole = {
-        "gui": {"theme": "dark"},
-        "hardware.ssh1": {"host": "h", "port": 22},
-        "hardware.": {"driver": "nameless"},
+def test_ini_device_sections_reads_every_section_as_a_device(tmp_path):
+    path = tmp_path / "setup.ini"
+    path.write_text("[loop1]\ndriver = pkg.Loop\n[dmm1]\ndriver = pkg.Dmm\n", encoding="utf-8")
+    assert ini_device_sections(path) == {
+        "loop1": {"driver": "pkg.Loop"},
+        "dmm1": {"driver": "pkg.Dmm"},
     }
-    assert hardware_sections(whole) == {"ssh1": {"host": "h", "port": "22"}}
 
 
-def test_ini_hardware_sections_reads_a_file(tmp_path):
-    path = tmp_path / "bench.ini"
-    path.write_text("[hardware.loop1]\ndriver = pkg.Loop\n[other]\nx = 1\n", encoding="utf-8")
-    assert ini_hardware_sections(path) == {"loop1": {"driver": "pkg.Loop"}}
+def test_bench_sections_returns_the_devices_of_the_bench_file(monkeypatch):
+    import importlib
+    from pathlib import Path
+
+    bench_module = importlib.import_module("pypts.config_handler.bench_config")
+    from pypts.config_handler import BenchConfig, BenchOutcome
+
+    monkeypatch.setattr(
+        bench_module,
+        "bench_config",
+        lambda: BenchConfig(
+            devices={"loop1": {"driver": "pkg.Loop"}},
+            outcome=BenchOutcome.LOADED,
+            problem=None,
+            path=Path("bench.ini"),
+        ),
+    )
+
+    assert bench_sections() == {"loop1": {"driver": "pkg.Loop"}}
 
 
-def test_hardware_sections_from_config_asks_the_config_handler(monkeypatch):
-    class _Config:
-        def get_whole_config(self):
-            return {"hardware.loop1": {"driver": "pkg.Loop"}, "gui": {"theme": "dark"}}
+def test_bench_sections_raises_when_the_bench_file_was_discarded(monkeypatch):
+    import importlib
+    from pathlib import Path
 
-    monkeypatch.setattr("pypts.config_handler.ConfigHandler", _Config)
-    assert hardware_sections_from_config() == {"loop1": {"driver": "pkg.Loop"}}
+    bench_module = importlib.import_module("pypts.config_handler.bench_config")
+    from pypts.config_handler import BenchConfig, BenchOutcome
+
+    monkeypatch.setattr(
+        bench_module,
+        "bench_config",
+        lambda: BenchConfig(
+            devices={},
+            outcome=BenchOutcome.DISCARDED,
+            problem="it is broken",
+            path=Path("bench.ini"),
+        ),
+    )
+
+    with pytest.raises(DriverError, match=r"discarded.*it is broken"):
+        bench_sections()
 
 
 def test_a_device_opens_once_and_is_reused(fake_connections):

@@ -1483,9 +1483,9 @@ def test_a_run_that_uses_no_device_never_reads_the_hardware_sections(sequencer):
     assert all(o.result is ResultType.DONE for o in finished)
 
 
-def test_the_default_reads_config_ini(sequencer):
+def test_the_default_reads_bench_ini(sequencer):
     instance, _, _ = sequencer
-    assert instance.read_hardware_sections is hal_local_setup.hardware_sections_from_config
+    assert instance.read_hardware_sections is hal_local_setup.bench_sections
 
 
 # --------------------------------------------------------------------------

@@ -62,7 +62,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   `with LocalSetup(self.read_hardware_sections):` (`hal/hal.md` → *Lifetime*). Test code opens a
   device on first `get_device()`; every device closes when the block ends — after the teardown
   steps, before `RunFinished`. `read_hardware_sections` defaults to
-  `hal.local_setup.hardware_sections_from_config` and is only called on the first `get_device()`, so a
+  `hal.local_setup.bench_sections` (the devices of bench.ini) and is only called on the first `get_device()`, so a
   run that uses no device never reads the device sections; tests replace it.
 - **Forgetting the recipe** — `self.recipe` is written only by `RunSequence` and keeps the
   last run's recipe afterwards. `ForgetRecipe` (CORE sends it when the operator unloads the

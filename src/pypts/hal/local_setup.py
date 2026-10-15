@@ -1,11 +1,11 @@
 """
 The local setup: the devices of one run, by logical name.
 
-A LocalSetup reads its devices from `[hardware.<name>]` sections, opens a
-device the first time it is asked for it, and closes every device it opened
-when it is closed. Entering it (`with setup:`) also makes it the *active*
-setup, which is what get_device() asks - the Sequencer enters one per run, and
-a script outside PyPTS does the same with
+A LocalSetup reads its devices from bench.ini's sections - one per device,
+bare name - opens a device the first time it is asked for it, and closes every
+device it opened when it is closed. Entering it (`with setup:`) also makes it
+the *active* setup, which is what get_device() asks - the Sequencer enters one
+per run, and a script outside PyPTS does the same with
 `with LocalSetup.from_ini("bench.ini"):`.
 
 pypts.config_handler is imported inside the one function that needs it: a
@@ -31,7 +31,7 @@ DEFAULT_CALL_TIMEOUT_S = 60.0
 
 def split_section(name: str, section: Mapping[str, Any]) -> tuple[str, float, dict[str, str]]:
     """
-    One `[hardware.<name>]` section as (driver class path, call timeout, the
+    One device section as (driver class path, call timeout, the
     driver's own keys). `driver` and `call_timeout_s` are read here; every
     other key goes to the driver's connect(), as text.
     """
@@ -41,12 +41,12 @@ def split_section(name: str, section: Mapping[str, Any]) -> tuple[str, float, di
     if "python" in settings:
         raise DriverError(
             f"Device '{name}': the 'python' key is not supported any more - every driver runs "
-            f"on PyPTS's own Python. Remove it from [hardware.{name}]."
+            f"on PyPTS's own Python. Remove it from the [{name}] section."
         )
     driver_path = settings.pop("driver", "").strip()
     if not driver_path:
         raise DriverError(
-            f"Device '{name}': [hardware.{name}] has no 'driver' key naming its driver class."
+            f"Device '{name}': the [{name}] section has no 'driver' key naming its driver class."
         )
     timeout_text = settings.pop("call_timeout_s", "").strip()
     if timeout_text:
@@ -64,37 +64,36 @@ def split_section(name: str, section: Mapping[str, Any]) -> tuple[str, float, di
     return driver_path, call_timeout_s, settings
 
 
-def hardware_sections(whole: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, str]]:
-    """The device sections of a whole configuration, by logical name, values as text."""
-    from pypts.config_handler.configuration_schema import HARDWARE_PREFIX, is_hardware_section
+def ini_device_sections(path: str | os.PathLike[str]) -> dict[str, dict[str, str]]:
+    """
+    The devices of an INI file of one's own - a setup outside PyPTS.
 
-    devices: dict[str, dict[str, str]] = {}
-    for section, values in whole.items():
-        if not is_hardware_section(section):
-            continue
-        text_values: dict[str, str] = {}
-        for key, value in values.items():
-            text_values[key] = str(value)
-        devices[section[len(HARDWARE_PREFIX) :]] = text_values
-    return devices
-
-
-def ini_hardware_sections(path: str | os.PathLike[str]) -> dict[str, dict[str, str]]:
-    """The device sections of an INI file of one's own - a setup outside PyPTS."""
+    The file has bench.ini's format: every section is one device, bare name.
+    Read as utf-8-sig so a file saved by Notepad, BOM and all, still opens.
+    """
     parser = configparser.ConfigParser(interpolation=None)
-    with open(path, encoding="utf-8") as handle:
+    with open(path, encoding="utf-8-sig") as handle:
         parser.read_file(handle)
-    whole: dict[str, dict[str, str]] = {}
-    for section in parser.sections():
-        whole[section] = dict(parser[section])
-    return hardware_sections(whole)
+    return {section: dict(parser[section]) for section in parser.sections()}
 
 
-def hardware_sections_from_config() -> dict[str, dict[str, str]]:
-    """The device sections of this process's config.ini - what the Sequencer reads."""
-    from pypts.config_handler import ConfigHandler
+def bench_sections() -> dict[str, dict[str, str]]:
+    """
+    The devices of this machine's bench.ini - what the Sequencer reads.
 
-    return hardware_sections(ConfigHandler().get_whole_config())
+    Raises:
+        DriverError: the bench file was discarded at startup; the message
+            carries the real reason, so the step's error names the file to
+            fix rather than a section to add.
+    """
+    from pypts.config_handler.bench_config import BenchOutcome, bench_config
+
+    bench = bench_config()
+    if bench.outcome is BenchOutcome.DISCARDED:
+        raise DriverError(
+            f"bench.ini was discarded at startup, so this start has no devices: {bench.problem}"
+        )
+    return bench.devices
 
 
 class LocalSetup:
@@ -116,8 +115,8 @@ class LocalSetup:
 
     @classmethod
     def from_ini(cls, path: str | os.PathLike[str]) -> "LocalSetup":
-        """A local setup described by an INI file of `[hardware.<name>]` sections."""
-        return cls(lambda: ini_hardware_sections(path))
+        """A local setup described by an INI file in bench.ini's format: one section per device."""
+        return cls(lambda: ini_device_sections(path))
 
     def device_names(self) -> list[str]:
         with self._lock:
@@ -135,8 +134,8 @@ class LocalSetup:
             if section is None:
                 known = ", ".join(sorted(sections)) or "none"
                 raise DriverError(
-                    f"No device '{name}' is configured. Add a [hardware.{name}] section to "
-                    f"config.ini. Configured devices: {known}."
+                    f"No device '{name}' is configured. Add a [{name}] section to "
+                    f"bench.ini. Configured devices: {known}."
                 )
             driver_path, call_timeout_s, settings = split_section(name, section)
             device = ConnectionDriver(name, driver_path, settings, call_timeout_s=call_timeout_s)
