@@ -37,17 +37,24 @@ continues, `_read_message`) is explicitly **out of scope** and stays as it is.
   = 6.0 s`. The worst case now fits the budget; the original overrun bug disappears.
 - `SHUTDOWN_TIMEOUT_S = 15.0` stays; only its sizing comment in `core.py` is updated.
 
-### 2. GUI feedback — one new status message
+### 2. GUI feedback — one new event, relayed as status text
 
-- New frozen dataclass `ClosingDevices()`, sent by the Sequencer when
+(Amended 2026-10-15 after reading the code, both points approved.)
+
+- New dataclass `ClosingDevices()`, sent by the Sequencer when
   `tear_down_abandoned_devices()` begins (before the per-device threads start). It rides
-  two links — Sequencer→CORE and CORE→HMI — each getting the dataclass in its union and
-  a `case` in the recipient's handler, per the messaging rules; `test_messages.py` pins
-  the unions.
-- **GUI:** shows the status text "Stopping: closing devices…". Exact placement (status
-  bar / title area) is decided against the current GUI layout during implementation. No
-  clearing is needed: `StopHmi` follows and the window closes.
-- **CLI:** prints one line for the same message.
+  **one** link — Sequencer→CORE — and CORE relays it as the existing
+  `StatusChanged("Stopping: closing the devices…")`, the same pattern as
+  `ReportGenerated` → `StatusChanged("Report generated: …")`. Both frontends already
+  render `StatusChanged` (`show_status()`: GUI status label, CLI print), so no frontend
+  code changes.
+- **Hold StopHmi:** CORE today sends `StopHmi` immediately in `stop_all_modules()`, so
+  the GUI would close before teardown starts and never show the text. `StopHmi` is now
+  held back and released by `SequencerStopped` or by the shutdown deadline — exactly
+  mirroring the existing `StopReport` hold (`stop_report_pending` /
+  `release_stop_report()`). An ordinary shutdown is unaffected: the Sequencer answers in
+  milliseconds. Side benefit: the abandonment CRITICALs now reach the GUI before it
+  closes.
 
 ### 3. Honest reporting stays
 
