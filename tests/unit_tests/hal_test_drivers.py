@@ -108,7 +108,8 @@ class MarkingDriver(Other):
     """
     Writes each connect() and teardown() into the file its `marks` key names,
     so a teardown in a fresh driver process can be seen from the test. Its
-    connect() hangs while a file named like that one plus `.hang` exists.
+    connect() hangs while a file named like that one plus `.hang` exists, and
+    its teardown() hangs while one named plus `.tdhang` exists.
     """
 
     def __init__(self):
@@ -121,6 +122,8 @@ class MarkingDriver(Other):
         self._mark("connect")
 
     def teardown(self):
+        if self._marks and os.path.exists(self._marks + ".tdhang"):
+            time.sleep(60)
         if self._marks:
             self._mark("teardown")
 

@@ -413,7 +413,25 @@ def test_an_abandoned_device_cannot_be_opened_or_recovered_again(marking):
     assert marks_of(marks).count("connect") == 1
 
 
-def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_connection(tmp_path):
+def test_abandoning_a_device_whose_teardown_hangs_kills_it_without_reconnecting(
+    marking, monkeypatch
+):
+    """The driver's stability is not PyPTS's job: one teardown attempt, then the kill."""
+    connection, marks = marking
+    monkeypatch.setattr(connection_driver, "ABANDON_TEARDOWN_TIMEOUT_S", 0.5)
+    (marks.parent / (marks.name + ".tdhang")).write_text("", encoding="utf-8")
+    began = time.monotonic()
+
+    assert connection.abandon() is False
+
+    # One timeout and the kill - nowhere near the hang, and no rescue's 10 s.
+    assert time.monotonic() - began < 5.0
+    assert not connection.is_open()
+    # The hung teardown never marked, and nothing ever connected again.
+    assert marks_of(marks) == ["connect"]
+
+
+def test_abandoning_a_device_mid_call_kills_it_without_reconnecting(tmp_path):
     """The abandoned run holds the device's lock: abandon() must not wait for it."""
     marks = tmp_path / "marks.txt"
     connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)}, call_timeout_s=60.0)
@@ -434,15 +452,15 @@ def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_connect
             time.sleep(0.01)
         began = time.monotonic()
 
-        assert connection.abandon() is True
+        assert connection.abandon() is False
 
-        assert time.monotonic() - began < 10.0
+        assert time.monotonic() - began < 5.0
         zombie.join(timeout=5.0)
         assert not zombie.is_alive()
-        # The killed call ends the step; it does not rescue a second time.
+        # The killed call ends the step as a crash; nothing rescues it.
         assert len(failures) == 1
         assert "torn down on a fresh connection" not in failures[0]
-        assert marks_of(marks)[:3] == ["connect", "connect", "teardown"]
+        assert marks_of(marks) == ["connect"]
         assert not connection.is_open()
     finally:
         connection.close()

@@ -58,6 +58,11 @@ EXIT_TIMEOUT_S = 5.0
 #: The longest a rescue - a fresh driver process, connect(), teardown() - may take.
 RESCUE_TIMEOUT_S = 10.0
 
+#: How long abandon() gives an idle device's teardown() before the driver
+#: process is killed. Short on purpose: shutdown is waiting, and a driver
+#: that hangs in its own teardown() is reported, not compensated for.
+ABANDON_TEARDOWN_TIMEOUT_S = 5.0
+
 #: How often a wait for the driver process looks whether it is still alive.
 LIVENESS_POLL_S = 0.2
 
@@ -226,9 +231,11 @@ class ConnectionDriver:
         Tear the device down for a run that will not end. Never raises.
 
         That run may be blocked in a call on this device, holding its lock, so
-        nothing here waits for the lock. An idle device is torn down as close()
-        would do it; a busy one has its driver process killed - the call in
-        progress then fails as a crash - and is torn down by a rescue.
+        nothing here waits for the lock. An idle device is given one teardown()
+        within ABANDON_TEARDOWN_TIMEOUT_S; one that hangs is killed, as is a
+        busy device's driver process. Nothing reconnects afterwards - a driver
+        that did not tear down in time is the caller's CRITICAL to report, not
+        this layer's problem to fix.
 
         Returns:
             True if teardown ran, or nothing was open to tear down.
@@ -239,19 +246,17 @@ class ConnectionDriver:
             process = self._process
             if process is not None and process.is_alive():
                 process.kill()
-            return self._rescue()
+            return False
         try:
             if self._conn is None:
                 return True
             try:
-                self._exchange("teardown", [], {}, RESCUE_TIMEOUT_S, trace=True)
+                self._exchange("teardown", [], {}, ABANDON_TEARDOWN_TIMEOUT_S, trace=True)
             except DriverError as exc:
+                # A teardown that timed out was killed by _read_message(), one
+                # that crashed is gone, and one the driver refused did not run:
+                # in every case teardown did not happen, which is the answer.
                 log.warning("Device '%s' did not disconnect cleanly: %s", self.name, exc)
-                # A teardown that timed out was killed (and one that crashed is
-                # gone), and _read_message() does not rescue an abandoned
-                # device: that is done here. One the driver refused is not.
-                if not self.is_open():
-                    return self._rescue()
                 return False
             return True
         finally:
@@ -459,7 +464,7 @@ class ConnectionDriver:
                     # The stuck process could not tear down, so a fresh one
                     # does. Not before connect() returned (start-up has its
                     # own error), not for a rescue's own process, and not for
-                    # an abandoned device: abandon() rescues by itself.
+                    # an abandoned device: one is reported, never rescued.
                     if not self._connected or self._is_rescue or self._abandoned:
                         raise DriverError(stopped + ".")
                     if self._rescue():

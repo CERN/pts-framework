@@ -233,10 +233,10 @@ class Core:
     #: Without it CORE waits forever for a module that will never answer, and
     #: the only thing that ends the run is the launcher's own join timeout
     #: terminating the process - which loses the log line saying who was to
-    #: blame. Fifteen seconds because the Sequencer may need nearly all of it:
-    #: SEQUENCE_JOIN_TIMEOUT_S (2 s) for a running sequence, then up to
-    #: ABANDONED_DEVICES_TIMEOUT_S (11 s) tearing down the devices of one that
-    #: would not stop. An ordinary shutdown takes a fraction of it. The
+    #: blame. Fifteen seconds holds the worst case with margin: the Sequencer
+    #: may need SEQUENCE_JOIN_TIMEOUT_S (2 s) for a running sequence, then up
+    #: to ABANDONED_DEVICES_TIMEOUT_S (6 s) tearing down the devices of one
+    #: that would not stop. An ordinary shutdown takes a fraction of it. The
     #: launcher's CORE_SHUTDOWN_TIMEOUT_S must stay above it.
     SHUTDOWN_TIMEOUT_S = 15.0
 

@@ -22,7 +22,7 @@ from uuid import UUID
 
 from pypts._version import __version__
 from pypts.config_handler import ConfigHandler
-from pypts.hal.connection_driver import RESCUE_TIMEOUT_S
+from pypts.hal.connection_driver import ABANDON_TEARDOWN_TIMEOUT_S
 from pypts.hal.local_setup import (
     LocalSetup,
     abandon_active_setup,
@@ -75,9 +75,9 @@ def reports_dir_from_config() -> str:
 SEQUENCE_JOIN_TIMEOUT_S = 2.0
 
 #: How long stop() gives an abandoned run's devices, all torn down side by
-#: side: one rescue each, and a second for the processes to end. Inside CORE's
-#: shutdown budget together with the join above (core.md).
-ABANDONED_DEVICES_TIMEOUT_S = RESCUE_TIMEOUT_S + 1.0
+#: side: one teardown attempt each, and a second for the kills to land.
+#: Inside CORE's shutdown budget together with the join above (core.md).
+ABANDONED_DEVICES_TIMEOUT_S = ABANDON_TEARDOWN_TIMEOUT_S + 1.0
 
 #: How often a held run looks at the pause and stop flags. Short enough that
 #: Resume and Stop feel immediate; the hold is on the sequence thread, so this
@@ -773,8 +773,8 @@ class Sequencer:
             return
         report_problem(
             self,
-            f"Device(s) {', '.join(unsafe)} could not be torn down and may still be energised. "
-            f"Check the bench before touching it.",
+            f"Device(s) {', '.join(unsafe)} were stopped without running teardown and may "
+            f"still be energised. Check the bench before touching it.",
             severity=ErrorSeverity.CRITICAL,
             operation="Sequencer.tear_down_abandoned_devices",
         )

@@ -622,6 +622,7 @@ def test_an_abandoned_run_has_its_devices_made_safe_and_the_unsafe_ones_named(
     unsafe = messages[1]
     assert unsafe.severity is ErrorSeverity.CRITICAL
     assert "psu1" in unsafe.message
+    assert "without running teardown" in unsafe.message
     assert "may still be energised" in unsafe.message
     assert len(abandoned) == 1
     release.set()
