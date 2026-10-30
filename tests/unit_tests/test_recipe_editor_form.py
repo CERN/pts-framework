@@ -1,7 +1,7 @@
 """The Recipe Editor v2's form: generated from the schema, written through the model."""
 
 import pytest
-from PySide6.QtWidgets import QApplication, QCheckBox, QGroupBox, QLineEdit
+from PySide6.QtWidgets import QApplication, QCheckBox, QComboBox, QGroupBox, QLineEdit
 
 from pypts.helper_applications.recipe_creator.rc_model import RecipeModel
 from pypts.helper_applications.recipe_editor import schema_form
@@ -22,6 +22,7 @@ from pypts.recipe.recipe_schema import (
     HeaderSchema,
     ParameterSet,
     SequenceSchema,
+    output_types_for,
 )
 
 _RECIPE = """\
@@ -221,12 +222,71 @@ def test_a_global_input_keeps_its_kind(model, form):
     }
 
 
+_OPERATOR_RECIPE = """\
+name: Operator test
+version: "1.0"
+---
+sequence_name: Main
+steps:
+  - steptype: UserWrite
+    step_name: Serial
+    message: Type it.
+    outputs:
+      answer: {type: equals, value: ok}
+  - steptype: UserWrite
+    step_name: Wrong
+    message: Type it.
+    outputs:
+      answer: {type: passfail}
+"""
+
+
+@pytest.fixture
+def operator_form(qapp):
+    recipe = RecipeModel()
+    recipe.load_yaml(_OPERATOR_RECIPE)
+    widget = SchemaForm(recipe)
+    yield widget
+    widget.deleteLater()
+
+
+def _output_combo(form: SchemaForm) -> QComboBox:
+    return _field(form, "outputs").editor.findChildren(QComboBox)[0]
+
+
+def test_an_operator_step_is_offered_no_passfail_output(operator_form):
+    operator_form.show_step(_ref(0), 0)
+    combo = _output_combo(operator_form)
+    items = [combo.itemText(i) for i in range(combo.count())]
+    assert "passfail" not in items
+    assert sorted(items) == sorted(output_types_for("userwrite"))
+
+
+def test_a_pythonmodule_step_is_offered_every_output_type(form):
+    form.show_step(_ref(1), 0)
+    combo = _output_combo(form)
+    items = {combo.itemText(i) for i in range(combo.count())}
+    assert items == set(OUTPUT_SCHEMAS)
+
+
+def test_a_refused_output_type_already_in_the_recipe_stays_shown(operator_form):
+    operator_form.show_step(_ref(1), 0)
+    combo = _output_combo(operator_form)
+    items = [combo.itemText(i) for i in range(combo.count())]
+    assert combo.currentText() == "passfail"
+    assert items.count("passfail") == 1
+
+
 def test_adding_an_output_rebuilds_the_form_with_it(model, form):
-    form.show_step(_ref(0), 0)
-    form._add_entry(1, ("steps", 0, "outputs"), "result", {"type": "pass"})
-    assert schema_form.plain(model.steps(0)[0]["outputs"]) == {"result_1": {"type": "pass"}}
+    # Step 1, the PythonModule: a Wait refuses outputs and its form has no group.
+    form.show_step(_ref(1), 0)
+    form._add_entry(1, ("steps", 1, "outputs"), "result", {"type": "pass"})
+    assert schema_form.plain(model.steps(0)[1]["outputs"]) == {
+        "result": {"type": "range", "min": 4.9, "max": 5.1},
+        "result_1": {"type": "pass"},
+    }
     titles = [group.title() for group in form.widget().findChildren(QGroupBox)]
-    assert "Outputs (1)" in titles
+    assert "Outputs (2)" in titles
 
 
 def test_the_template_is_a_nested_form(form):

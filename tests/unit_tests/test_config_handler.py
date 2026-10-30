@@ -472,8 +472,8 @@ def test_a_retired_logs_dir_line_is_kept_and_warned_about_once(config, config_pa
     assert caplog.text.count("'paths.logs_dir' is not part of the schema") == 1
 
 
-def test_a_hardware_section_is_kept_as_text_without_a_warning(config, config_path, caplog):
-    """`[hardware.<name>]` declares a device: the hardware layer reads it, untyped."""
+def test_a_hardware_section_is_kept_as_text_and_warned_about_once(config, config_path, caplog):
+    """A leftover `[hardware.<name>]` is an unknown section: kept as text, one WARNING."""
     config_path.write_text(
         config_path.read_text(encoding="utf-8")
         + "\n[hardware.dmm1]\ndriver = nidmm\nresource = PXI1Slot2\ntimeout_s = 2.5\n",
@@ -486,7 +486,7 @@ def test_a_hardware_section_is_kept_as_text_without_a_warning(config, config_pat
 
     assert reopened.get_parameter("hardware.dmm1.driver") == "nidmm"
     assert reopened.get_parameter("hardware.dmm1.timeout_s") == "2.5"
-    assert "hardware.dmm1" not in caplog.text
+    assert caplog.text.count("Configuration section [hardware.dmm1] is not part of the schema") == 1
 
 
 def test_a_secret_is_masked_in_the_active_configuration_lines(config, config_path, caplog):

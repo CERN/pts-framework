@@ -8,7 +8,7 @@ reached exactly like a bench instrument: by logical name, through get_device().
 
 Nothing here knows the station is a web API, which URL it calls or how its
 answer is laid out - that is the driver's business
-(src/pypts/hal/drivers/weather.py). Swap the [hardware.meteo1] section for a
+(src/pypts/hal/drivers/weather.py). Swap the [meteo1] section of bench.ini for a
 real sensor whose driver offers the same verbs and these functions do not change.
 
 Each function returns a dict; the recipe's `outputs` judge its keys.

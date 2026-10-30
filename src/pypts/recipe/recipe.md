@@ -15,7 +15,7 @@ objects, but the step classes and the steptype registry belong to `pypts.step`
 | File | Owns |
 |------|------|
 | `recipe.py` | `Recipe`, `Sequence`, `RecipeError` — the data objects, plus the `from_file` / `from_yaml_text` facades |
-| `recipe_schema.py` | The format rules: the constants (same names as the old `rules.py`, read by the Recipe Creator and `step_source.py`) and the Pydantic models every document is validated with — `HeaderSchema`, `SequenceSchema`, `AnyStepSchema` and one model per steptype. Only `recipe_parser.py` uses the models |
+| `recipe_schema.py` | The format rules: the constants (same names as the old `rules.py`, read by the Recipe Creator and `step_source.py`) and the Pydantic models every document is validated with — `HeaderSchema`, `SequenceSchema`, `AnyStepSchema` and one model per steptype. `recipe_parser.py` validates with the models; the Recipe Creator's verificator and the Recipe Editor's form read them too (`STEP_SCHEMAS`, `OUTPUT_SCHEMAS`) |
 | `recipe_parser.py` | The whole load pipeline (below), `normalize_*`, `apply_defaults`, `current_recipe_version()` |
 | `step_source.py` | `step_sources_by_sequence(path)` / `step_sources_from_text(text, base_dir)` — for each step-table row, the sequence document it belongs to as written and the step's lines in it, for the GUI's click panel, and the `.py` a PythonModule row runs, for its right-click *Open Python file* |
 
@@ -79,15 +79,15 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
    Warn-only during the refactor: an ERROR in the log and the sentence added to
    `Recipe.load_notices`; the recipe still loads, and CORE shows the notice to the operator.
    Hard refusal is planned for ~v1.0.
-6. **Expand** — every `Indexed` step becomes one ordinary step mapping per parameter set
-   (`step/indexed_step.py`). Nothing downstream ever sees the steptype.
-7. **Build** — first the checks that need the whole file: duplicate sequence names
-   (case-insensitive), at least one sequence, `main_sequence` exists (case-insensitive; empty
-   means the first sequence). Then each sequence, each step through
-   `step.registry.build_step()` (a `KeyError`, `ValueError` or `TypeError` from a constructor
-   becomes a `RecipeError` naming sequence, position and step), and a `Sequence` step gets a
-   fresh copy of the sequence it calls (below). `_build_sequence()` fills a sequence's
-   absent optional keys from `SEQUENCE_DEFAULTS` with `apply_defaults()`.
+6. **Whole-file checks** — duplicate sequence names (case-insensitive), at least one
+   sequence, `main_sequence` exists (case-insensitive; empty means the first sequence).
+7. **Build** — each sequence, each step through `step.registry.build_step()` (a `KeyError`,
+   `ValueError` or `TypeError` from a constructor becomes a `RecipeError` naming sequence,
+   position and step). The first thing `_build_steps()` does is expand every `Indexed` step
+   into one ordinary step mapping per parameter set (`step/indexed_step.py`) — so steps
+   inside called sequences expand too, and nothing downstream ever sees the steptype. A
+   `Sequence` step gets a fresh copy of the sequence it calls (below). `_build_sequence()`
+   fills a sequence's absent optional keys from `SEQUENCE_DEFAULTS` with `apply_defaults()`.
 8. **Resolve pictures** (`load_recipe` only, once `base_dir` is set) — `resolve_images()`
    makes every `image_path` absolute: each sequence's, each step's (teardown steps and the
    copies inside called sequences included), against the recipe's folder, with
@@ -100,8 +100,9 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
    ground as `resolve_images()` and asks
    `step/python_module_step.py: module_method_problem()` about every `PythonModule` step: the
    file the `module:` would run is resolved (never executed) and AST-scanned for a top-level
-   binding of `method_name`. A missing file, a file that does not parse, or a missing name is
-   **not an error** — the scan cannot see dynamically built attributes — so each is one
+   binding of `method_name`. A missing file (only when `module:` ends in `.py` — a suffix-less
+   name that resolves to no file is presumed dotted and not checked), a file that does not
+   parse, or a missing name is **not an error** — the scan cannot see dynamically built attributes — so each is one
    WARNING, said once per place (a called sequence is built more than once but warned about
    once), and one sentence listing them all goes into `load_notices`. A dotted `module:` is
    not checked: finding it would import its parent package, a side effect the load must not
@@ -133,7 +134,7 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
 ## Sequence steps — the call tree
 
 A `steptype: Sequence` step calls another sequence document by `sequence_name`
-(`step/step.md` §2.8; design in `plans/sequence_step_design.md`). The parser builds a
+(`step/step.md` §2.8). The parser builds a
 **fresh copy** of the called sequence for every call (`_build_steps()` →
 `_called_sequence()`), so no two calls share a `Step` or a UUID, and a sequence may be called
 any number of times. Refused with sequence, position and chain: an unknown `sequence_name`, a
@@ -158,7 +159,6 @@ The constants below are plain data, read by the Recipe Creator's verificator and
 | Name | Meaning |
 |------|---------|
 | `HEADER_REQUIRED` | `name`, `version` |
-| `HEADER_SINGLE_VALUE` | Header fields that may not be a list or mapping |
 | `HEADER_DEFAULTS` | `description`, `main_sequence` (empty = first), `globals` (`{}`), `report_metadata` |
 | `REPORT_METADATA_DEFAULT` | `("serial_number",)` — a convention, not a constraint; `[]` means none |
 | `SEQUENCE_REQUIRED` / `SEQUENCE_DEFAULTS` | `sequence_name`, `steps` (at least one) / `description`, `image_path` (None), `teardown_steps` |
@@ -175,11 +175,13 @@ The constants below are plain data, read by the Recipe Creator's verificator and
 Removed sequence keys, on purpose: `setup_steps`, `parameters` / `outputs`, `locals`. There is
 one variable scope, `globals`, for the whole run.
 
-Three more constants serve a tool that checks a recipe rather than loads it:
+More constants serve a tool that checks or edits a recipe rather than loads it:
 
 | Name | Meaning |
 |------|---------|
 | `OUTPUT_SCHEMAS` | Each output type's model, keyed as `OUTPUT_TYPES` (as `STEP_SCHEMAS` is for steptypes) |
+| `PASSFAIL_REFUSED_STEP_TYPES` | Steptypes that refuse a `passfail` output (`userinteraction`, `userwrite`), each with what the step returns instead — the reason in the refusal |
+| `output_types_for(steptype)` | `OUTPUT_SCHEMAS` without what the (lowercased) steptype refuses: the output-type list the Recipe Creator's and Editor v2's forms offer |
 | `REMOVED_SEQUENCE_KEYS` | The four removed sequence keys above, each with the sentence telling an author what to do instead: the reason `validate_document()` gives when a sequence carries one |
 | `RENAMED_STEP_TYPES` | Old steptype names (lowercased: `waitstep`, `sshconnectstep`, …) with what replaced them |
 
@@ -209,10 +211,19 @@ What the models add to the constants:
   lookup. `report_metadata` entries must be strings (a number is refused, not coerced), and
   each name may appear once (`_report_names()`): it is one report column. Any name is
   allowed otherwise - the Report prefixes metadata columns (`report/report.md`).
-- Every ordinary step also takes the `Step` constructor's `id`, `inputs` and `outputs`.
-- An `Indexed` template may leave out `step_name` (it is checked under the indexed step's
-  name); a `parameter_sets` entry (`ParameterSet`) carries `inputs` and/or `expect` and
-  nothing else.
+- Every ordinary step also takes the `Step` constructor's `id`, `inputs` and `outputs` —
+  except `Wait`, which refuses `inputs` and `outputs` with the reasons in
+  `WAIT_STEP_REFUSED_KEYS`: `wait_time` is written directly on the step, and a wait
+  returns nothing to judge or store.
+- A `UserInteraction` or `UserWrite` step refuses a `passfail` output: its value is always
+  text, never the bool passfail judges (`PASSFAIL_REFUSED_STEP_TYPES`, the one declaration
+  both the refusal and `output_types_for()` read). A `UserLoading` also returns text (a
+  path) but is left to the run-time check, by choice.
+- An `Indexed` step refuses `id`, `inputs` and `outputs` on itself
+  (`INDEXED_STEP_REFUSED_KEYS`, each key with its reason). Its `template` may leave out
+  `step_name` (it is checked under the indexed step's name) but may not carry an `id` or be
+  a `Sequence` or `Indexed` step; a `parameter_sets` entry (`ParameterSet`) must carry at
+  least one of `inputs`/`expect` and nothing else.
 
 ## `step_source.py` — the click panel's YAML
 
@@ -224,7 +235,10 @@ step's `first_line` / `last_line` in it (0-based, inclusive), which the panel hi
 A row inside a called sequence gets that sequence's document; every row an `Indexed` step
 expands into highlights the authored `Indexed` block. Line positions come from
 `yaml.compose_all` nodes; a list item is bounded by the next item's first line, with the blank
-lines and comments in front of it trimmed off.
+lines and comments in front of it trimmed off. A `Sequence` step's own row shows the *called*
+sequence's whole document with nothing highlighted (`first_line = NO_LINE`), followed by that
+sequence's rows. `recipe_file_text(path)` is the whole file as written, for the toolbar's
+recipe preview.
 
 A `StepSource` also carries `python_file`, for the step table's right-click *Open Python
 file*: the absolute path of the `.py` a PythonModule row runs, resolved against the recipe's
@@ -264,5 +278,5 @@ The authoritative checklist is `step/step.md` §4. On the recipe side:
 ## Known gaps
 
 - Nested sequences: stage 1 (engine and parser) is done; only-main-runs and the "never called
-  from main" warning come with stage 2 (roadmap, `plans/sequence_step_design.md`).
+  from main" warning come with stage 2 (roadmap).
 - The version check is warn-only until the compatibility policy (~v1.0).

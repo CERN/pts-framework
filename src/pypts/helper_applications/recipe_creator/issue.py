@@ -9,10 +9,10 @@ class ValidationIssue:
     """One problem found in a recipe file.
 
     severity  'error'   - the recipe will not load; the problem must be fixed.
-              'warning' - the recipe will load but something looks wrong or
-                          uses a removed feature.
-    field     Dotted path to the field in question, e.g.
-              'header.name', "sequence 'Main'.steps[2].wait_time".
+              'warning' - the recipe will load but something looks wrong.
+    field     Where the problem is, e.g. 'header' or
+              "sequence 'Main', steps[1] 'Pause'"; only a warning keeps the
+              dotted form ('header.version').
     message   Short description of what is wrong.
     hint      What to do to fix it, with a YAML example where useful.
     line      1-based line number in the YAML source, or None if not trackable.

@@ -5,7 +5,7 @@
 """
 The execution context a step runs against.
 
-The old Runtime (old_code/recipe.py) carried much more: the Qt thread that
+The old engine's Runtime carried much more: the Qt thread that
 hosted the event proxy, a class-level stop Event shared by every run in the
 process, the event and report queues, and the reporting metadata (serial
 number, pypts version, ...). None of that came along:

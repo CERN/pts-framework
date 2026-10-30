@@ -852,7 +852,8 @@ def test_a_failure_after_the_steps_still_finishes_the_run_as_error(sequencer, mo
 def test_a_failure_outside_the_steps_still_sends_run_finished(sequencer, monkeypatch, raised):
     """
     Not only step failures: the run's devices failing to close, or a
-    sys.exit() outside any step, must not leave the run without its end.
+    sys.exit() outside any step, must not leave the run without its end -
+    and the steps all ran, so RunFinished still carries their outcomes.
     """
     instance, outbox, inbox = sequencer
     load_wait_recipe(instance, inbox)
@@ -875,6 +876,8 @@ def test_a_failure_outside_the_steps_still_sends_run_finished(sequencer, monkeyp
     assert any(isinstance(m, ModuleError) for m in messages)
     run_finished = [m for m in messages if isinstance(m, RunFinished)]
     assert [m.result for m in run_finished] == [ResultType.ERROR]
+    assert run_finished[0].outcomes
+    assert all(o.result is ResultType.DONE for o in run_finished[0].outcomes)
 
 
 def test_stop_requested_is_checked_between_steps_not_inside_one(sequencer):

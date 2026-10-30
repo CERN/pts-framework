@@ -19,7 +19,8 @@ carries no `id`.
 The parser builds a fresh copy of the called sequence for every call
 (recipe_parser._build_steps), so two calls of one group never share a Step
 object or a UUID. At run time the step runs its copy through run_sequence(),
-the same body the Sequencer runs for main - see plans/sequence_step_design.md.
+the same body the Sequencer runs for main. The design record is step/step.md
+section 2.8.
 """
 
 from typing import TYPE_CHECKING, Any
@@ -35,6 +36,7 @@ if TYPE_CHECKING:
 SEQUENCE_STEPTYPE = "sequence"
 
 #: The keys a Sequence step refuses, each with the sentence the author reads.
+#: recipe_schema.SequenceStepSchema refuses them with these sentences.
 REFUSED_KEYS: dict[str, str] = {
     "step_name": (
         "a Sequence step is named after the sequence it calls and cannot carry 'step_name'"
@@ -55,26 +57,6 @@ def is_sequence_step(step_data: Any) -> bool:
         return False
     steptype = step_data.get("steptype")
     return isinstance(steptype, str) and steptype.lower() == SEQUENCE_STEPTYPE
-
-
-def check_sequence_step(step_data: dict[str, Any]) -> list[str]:
-    """
-    Everything about a Sequence step's own shape, as a list of problems.
-
-    Whether the named sequence exists, is not the main sequence and does not
-    end up calling itself needs the whole file, so the parser checks that.
-    """
-    problems = []
-    for key, reason in REFUSED_KEYS.items():
-        if step_data.get(key) is not None:
-            problems.append(reason)
-
-    target = step_data.get("sequence_name")
-    # Absent is the required-field check's to report; present must name a sequence.
-    names_nothing = not isinstance(target, str) or not target.strip()
-    if target is not None and names_nothing:
-        problems.append("'sequence_name' must be the name of a sequence in this recipe")
-    return problems
 
 
 class SequenceStep(Step):

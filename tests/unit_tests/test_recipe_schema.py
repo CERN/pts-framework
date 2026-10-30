@@ -19,6 +19,7 @@ from pypts.recipe.recipe_parser import steptype_key, validate_document
 from pypts.recipe.recipe_schema import (
     OUTPUT_SCHEMAS,
     OUTPUT_TYPES,
+    PASSFAIL_REFUSED_STEP_TYPES,
     REMOVED_SEQUENCE_KEYS,
     RENAMED_STEP_TYPES,
     STEP_REQUIRED,
@@ -26,6 +27,7 @@ from pypts.recipe.recipe_schema import (
     STEP_TYPE_NAMES,
     STEP_TYPE_REQUIRED,
     UNNAMED_STEP_TYPES,
+    WAIT_STEP_REFUSED_KEYS,
     HeaderSchema,
     IndexedStepSchema,
     ParameterSet,
@@ -36,6 +38,7 @@ from pypts.recipe.recipe_schema import (
     UserLoadingStepSchema,
     UserWriteStepSchema,
     WaitStepSchema,
+    output_types_for,
 )
 from pypts.step.sequence_step import REFUSED_KEYS
 
@@ -501,6 +504,25 @@ def test_an_operator_step_may_still_judge_with_equals(step):
     assert _step_problems(step) == []
 
 
+def test_passfail_refused_step_types_name_real_steptypes():
+    assert set(PASSFAIL_REFUSED_STEP_TYPES) <= set(STEP_SCHEMAS)
+
+
+def test_output_types_for_leaves_out_what_a_steptype_refuses():
+    """The list a tool offers matches what the step's schema accepts."""
+    for steptype in PASSFAIL_REFUSED_STEP_TYPES:
+        offered = output_types_for(steptype)
+        assert "passfail" not in offered
+        assert sorted(offered) == sorted(set(OUTPUT_TYPES) - {"passfail"})
+
+
+def test_output_types_for_gives_the_full_set_everywhere_else():
+    assert output_types_for("pythonmodule") == OUTPUT_SCHEMAS
+    # Not refused at load, by choice: left to the run-time check.
+    assert output_types_for("userloading") == OUTPUT_SCHEMAS
+    assert output_types_for("") == OUTPUT_SCHEMAS
+
+
 def test_a_userloading_step_is_not_refused_passfail():
     """Left to the run-time check, by choice."""
     step = {
@@ -512,9 +534,11 @@ def test_a_userloading_step_is_not_refused_passfail():
     assert _step_problems(step) == []
 
 
-def test_a_wait_step_may_carry_inputs_and_outputs():
-    """WaitStep takes them through Step's constructor, as every ordinary step does."""
-    assert _step_problems(_wait(inputs={"a": 1}, outputs={"r": {"type": "pass"}})) == []
+@pytest.mark.parametrize("key", sorted(WAIT_STEP_REFUSED_KEYS))
+def test_a_wait_step_refuses_inputs_and_outputs_with_the_reason(key):
+    """A Wait resolves no inputs and returns nothing: `wait_time` is its one value."""
+    problems = _step_problems(_wait(**{key: {"a": 1}}))
+    assert problems == [(("steps", 0, "wait", key), WAIT_STEP_REFUSED_KEYS[key])]
 
 
 # -- Sequence steps --------------------------------------------------------------

@@ -9,12 +9,16 @@ teardown() and ends the process. Every failure is a DriverError that names the
 device, so it reads well on the operator's ERROR line.
 
 teardown() is where a driver leaves its instrument safe, so it must run however
-the device ends. A driver process stuck in a call cannot run it: it is killed,
-and a fresh process connects and tears down instead - the rescue. abandon() does
-the same for a run that will not end, and is final: open() and recover() refuse
-an abandoned device. recover() is for test code that wants to retry: it escalates
-from the driver's own recover() to a fresh process, and only raises when even
-that fresh process cannot connect.
+the device ends. close() is one serialized ladder: teardown() on the live
+process; failing that - the process hung, crashed or was stopped - a fresh
+process connects and tears down instead (the rescue); failing that too, the
+ERROR line says the device may still be energised, and that is where the
+framework stops: the driver's stability is the driver's own job. abandon()
+runs the same ladder for a run that will not end, without waiting for the
+device's lock, and is final: open() and recover() refuse an abandoned device.
+recover() is for test code that wants to retry: it escalates from the driver's
+own recover() to a fresh process, and only raises when even that fresh process
+cannot connect.
 
 What crosses the Pipe is pickled: arguments and return values must be
 picklable. Calls are one at a time: a lock makes a second thread wait.
@@ -59,15 +63,15 @@ EXIT_TIMEOUT_S = 5.0
 RESCUE_TIMEOUT_S = 10.0
 
 #: How long abandon() gives an idle device's teardown() before the driver
-#: process is killed. Short on purpose: shutdown is waiting, and a driver
-#: that hangs in its own teardown() is reported, not compensated for.
+#: process is killed and the ladder moves on to the rescue. Short on purpose:
+#: shutdown is waiting.
 ABANDON_TEARDOWN_TIMEOUT_S = 5.0
 
 #: How often a wait for the driver process looks whether it is still alive.
 LIVENESS_POLL_S = 0.2
 
-#: Names ConnectionDriver itself uses. A driver operation with one of these
-#: names cannot be reached - do not give a driver method these names.
+#: Names ConnectionDriver itself uses, so a driver operation with one of them
+#: could never be reached. load_driver_class() refuses such a driver.
 RESERVED_NAMES = (
     "name",
     "device_type",
@@ -135,10 +139,8 @@ class ConnectionDriver:
         self._process: BaseProcess | None = None
         self._conn: PipeEnd | None = None
         self._lock = threading.Lock()
-        #: Set on the process a rescue starts: a rescue that times out is not rescued.
-        self._is_rescue = False
-        #: Set by abandon(), never cleared: the call it kills must not start a
-        #: second rescue, and open() and recover() refuse - the device stays down.
+        #: Set by abandon(), never cleared: close(), open() and recover()
+        #: refuse - the device stays down.
         self._abandoned = False
         #: Set once connect() has returned: before that there is nothing to tear down.
         self._connected = False
@@ -214,54 +216,81 @@ class ConnectionDriver:
         log.info("Device '%s' connected.", self.name)
 
     def close(self) -> None:
-        """teardown(), then end the process. Never raises: a failure is a WARNING."""
-        if self._conn is None and self._process is None:
-            return
-        try:
-            if self._conn is not None:
-                self._call("teardown", [], {})
-        except DriverError as exc:
-            log.warning("Device '%s' did not disconnect cleanly: %s", self.name, exc)
-        finally:
-            self._discard()
-        log.info("Device '%s' disconnected.", self.name)
+        """
+        The teardown ladder, in one serialized escalation. Never raises.
 
-    def abandon(self) -> bool:
+        teardown() on the live process; failing that - it hung, crashed or was
+        already stopped - teardown on a fresh process (the rescue); failing
+        that too, the rescue's ERROR line has said the device may still be
+        energised, and the ladder stops there. An abandoned device is refused:
+        abandon() already ran the ladder, and the device stays down.
+        """
+        if self._abandoned:
+            return
+        if self._conn is None and self._process is None and not self._connected:
+            return
+        torn_down = False
+        if self._conn is not None:
+            try:
+                self._call("teardown", [], {})
+                torn_down = True
+            except DriverError as exc:
+                log.warning("Device '%s' did not disconnect cleanly: %s", self.name, exc)
+        self._discard()
+        if not torn_down and self._connected:
+            torn_down = self._rescue()
+        self._connected = False
+        if torn_down:
+            log.info("Device '%s' disconnected.", self.name)
+
+    def abandon(self, time_limit_s: float | None = None) -> bool:
         """
         Tear the device down for a run that will not end. Never raises.
 
-        That run may be blocked in a call on this device, holding its lock, so
-        nothing here waits for the lock. An idle device is given one teardown()
-        within ABANDON_TEARDOWN_TIMEOUT_S; one that hangs is killed, as is a
-        busy device's driver process. Nothing reconnects afterwards - a driver
-        that did not tear down in time is the caller's CRITICAL to report, not
-        this layer's problem to fix.
+        The same ladder as close(), on one shared time budget, except that the
+        lock is never waited for - the stuck run may hold it. An idle device
+        gets one teardown() within ABANDON_TEARDOWN_TIMEOUT_S; a busy device's
+        driver process is killed at once (the call then fails as a crash in
+        the stuck thread). A device that is not down after that is torn down
+        on a fresh process (_rescue) with whatever budget is left. Nothing
+        reconnects afterwards: abandonment is final - open() and recover()
+        refuse - and a device that could not be torn down is the caller's
+        CRITICAL to report, not this layer's problem to fix.
 
         Returns:
             True if teardown ran, or nothing was open to tear down.
         """
         self._abandoned = True
+        if time_limit_s is None:
+            # The full ladder: one teardown attempt, then the rescue.
+            time_limit_s = ABANDON_TEARDOWN_TIMEOUT_S + RESCUE_TIMEOUT_S
+        deadline = time.monotonic() + max(time_limit_s, 0.0)
         if not self._lock.acquire(blocking=False):
             log.debug("Device '%s' is in a call; killing its driver process.", self.name)
             process = self._process
             if process is not None and process.is_alive():
                 process.kill()
-            return False
-        try:
-            if self._conn is None:
-                return True
+        else:
             try:
-                self._exchange("teardown", [], {}, ABANDON_TEARDOWN_TIMEOUT_S, trace=True)
-            except DriverError as exc:
-                # A teardown that timed out was killed by _read_message(), one
-                # that crashed is gone, and one the driver refused did not run:
-                # in every case teardown did not happen, which is the answer.
-                log.warning("Device '%s' did not disconnect cleanly: %s", self.name, exc)
-                return False
+                if self._conn is not None:
+                    try:
+                        budget = min(ABANDON_TEARDOWN_TIMEOUT_S, _left_until(deadline))
+                        self._exchange("teardown", [], {}, budget, trace=True)
+                        return True
+                    except DriverError as exc:
+                        # A teardown that timed out was killed by
+                        # _read_message(), one that crashed is gone, and one
+                        # the driver refused did not run: in every case
+                        # teardown did not happen, so the ladder goes on.
+                        log.warning(
+                            "Device '%s' did not disconnect cleanly: %s", self.name, exc
+                        )
+            finally:
+                self._discard()
+                self._lock.release()
+        if not self._connected:
             return True
-        finally:
-            self._discard()
-            self._lock.release()
+        return self._rescue(min(RESCUE_TIMEOUT_S, _left_until(deadline)))
 
     # --- the process ------------------------------------------------------------
 
@@ -301,25 +330,27 @@ class ConnectionDriver:
             raise
         self._connected = True
 
-    def _rescue(self) -> bool:
+    def _rescue(self, time_limit_s: float | None = None) -> bool:
         """
-        Tear the device down on a fresh connection, its own process having been killed.
+        Tear the device down on a fresh connection, its own process being gone.
 
         The kill freed the instrument, so a new driver process can connect and
         run teardown(), which is where a driver leaves its instrument safe.
-        Bounded by RESCUE_TIMEOUT_S, and never rescues itself. Never raises.
+        The last rung of the ladder: a rescue that fails is an ERROR, and
+        nothing tries again. Never raises.
 
         Returns:
             True if teardown ran.
         """
         log.warning("Device '%s' is being connected again, to tear it down.", self.name)
-        deadline = time.monotonic() + RESCUE_TIMEOUT_S
+        if time_limit_s is None:
+            time_limit_s = RESCUE_TIMEOUT_S
+        deadline = time.monotonic() + time_limit_s
         rescuer = ConnectionDriver(
-            self.name, self._driver_path, self._settings, call_timeout_s=RESCUE_TIMEOUT_S
+            self.name, self._driver_path, self._settings, call_timeout_s=time_limit_s
         )
-        rescuer._is_rescue = True
         try:
-            rescuer._start(RESCUE_TIMEOUT_S, _left_until(deadline))
+            rescuer._start(_left_until(deadline), _left_until(deadline))
             rescuer._call("teardown", [], {}, timeout_s=_left_until(deadline))
         except DriverError as exc:
             log.error(
@@ -457,21 +488,13 @@ class ConnectionDriver:
                     if time.monotonic() < deadline:
                         continue
                     self._kill()
-                    stopped = (
+                    # The stuck process could not tear down. Nothing rescues
+                    # here: the device is torn down on a fresh process when it
+                    # is closed - close() and abandon() own that ladder.
+                    raise DriverError(
                         f"Device '{self.name}' did not answer {waiting_for} within "
-                        f"{timeout_s:.1f} s; its driver process was stopped"
+                        f"{timeout_s:.1f} s; its driver process was stopped."
                     )
-                    # The stuck process could not tear down, so a fresh one
-                    # does. Not before connect() returned (start-up has its
-                    # own error), not for a rescue's own process, and not for
-                    # an abandoned device: one is reported, never rescued.
-                    if not self._connected or self._is_rescue or self._abandoned:
-                        raise DriverError(stopped + ".")
-                    if self._rescue():
-                        raise DriverError(
-                            stopped + " and the device torn down on a fresh connection."
-                        )
-                    raise DriverError(stopped + "; it could not be torn down.")
                 data = self._conn.recv_bytes()
             except (EOFError, OSError):
                 raise self._stopped_unexpectedly() from None
@@ -595,6 +618,13 @@ def load_driver_class(dotted: str) -> type[BaseDriver]:
             f"'{dotted}' belongs to no device type; derive it from one of "
             f"{', '.join(DEVICE_TYPE_NAMES)}."
         )
+    reserved = sorted(set(operations_of(found)) & set(RESERVED_NAMES))
+    if reserved:
+        raise ValueError(
+            f"'{dotted}' uses names ConnectionDriver reserves for itself: "
+            f"{', '.join(reserved)}. Rename these methods - as operations "
+            f"they could never be called."
+        )
     return found
 
 
@@ -617,8 +647,9 @@ def driver_process_main(conn: PipeEnd, driver_path: str, log_level: int) -> None
     The driver process: build the driver, say hello, answer calls until the Pipe closes.
 
     PyPTS's end closes after close(), or because PyPTS died. Either way the
-    driver's teardown() runs: the last chance to release the instrument, and
-    harmless when nothing is open.
+    driver's teardown() has run by then, exactly once: close() sends it as a
+    call, and the net in the finally covers every other end of the Pipe - a
+    teardown run twice sends its "output off" commands twice.
     """
     channel = _Channel(conn)
     root = logging.getLogger()
@@ -638,6 +669,9 @@ def driver_process_main(conn: PipeEnd, driver_path: str, log_level: int) -> None
 
     operations = operations_of(driver_class)
     channel.send((HELLO, driver_class.DEVICE_TYPE, operations))
+    # True while a teardown call is the driver's last lifecycle call: the
+    # finally below must not run teardown() a second time.
+    torn_down = False
     try:
         while True:
             try:
@@ -657,6 +691,11 @@ def driver_process_main(conn: PipeEnd, driver_path: str, log_level: int) -> None
             else:
                 reply = answer(driver, operations, request)
                 method_name = f"'{request[0]}'"
+                if reply[0] == RESULT:
+                    if request[0] == "teardown":
+                        torn_down = True
+                    elif request[0] in ("connect", "recover"):
+                        torn_down = False
             try:
                 channel.send(reply)
             except OSError:
@@ -673,6 +712,7 @@ def driver_process_main(conn: PipeEnd, driver_path: str, log_level: int) -> None
                 except OSError:
                     return
     finally:
-        with contextlib.suppress(Exception):
-            driver.teardown()
+        if not torn_down:
+            with contextlib.suppress(Exception):
+                driver.teardown()
         conn.close()

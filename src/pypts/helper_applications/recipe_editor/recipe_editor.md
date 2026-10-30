@@ -9,7 +9,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 A second recipe editor, **laid out like the pypts operator window**, so an author sees the
 recipe the way an operator will once it is loaded. It sits beside the Recipe Creator
 (`helper_applications/recipe_creator/`), which is unchanged, so the two can be compared;
-pypts' Edit menu starts either one. Design: `docs/superpowers/specs/2026-10-13-recipe-editor-v2-design.md`.
+pypts' Edit menu starts either one.
 
 Started by `python -m pypts.helper_applications.recipe_editor [recipe.yml]`,
 `run_recipe_editor.py` / `.bat`, or pypts' **Edit → Recipe Editor v2** (on the loaded recipe).
@@ -32,7 +32,9 @@ Reused, not copied:
   `gui_theme` (the OS theme sync), `settings_dialog.SettingsDialog`, `top_bar.svg_icon`;
 - from the utilities: `RecentRecipes`;
 - from the Recipe Creator: `RecipeModel`, `YamlEditor`, `InvalidOverlay`,
-  `creator_stylesheet`, `verify_string`, `rc_logging`.
+  `creator_stylesheet`, `verify_and_parse`, `rc_logging`, and `rc_io.save_recipe_text` —
+  Save As adopts the chosen path only after the write succeeds (`recipe_creator.md`,
+  Shared with the Recipe Editor v2).
 
 ## The window
 
@@ -77,18 +79,21 @@ undo history for all three, and ruamel keeps the file's comments through a form 
 `model.changed` the window rewrites the YAML text if it differs, refreshes the form, and
 starts a 250 ms timer for `_refresh_view()`:
 
-1. **Verify** — `verify_string(text)` → PROBLEMS, the gutter's error dots, the status bar,
-   the form's field outlines.
-2. **Parse as pypts does** — `recipe_parser.parse_recipe(text, file, check_version=False)`;
-   the chosen sequence's `to_summary()` goes to `StepTableContent.show_sequence()`, the very
-   call pypts makes on `RecipeLoaded`. The groups the author had unfolded stay unfolded
-   (matched by name and the names of the groups above).
+1. **Verify and parse, in one pass** — `verify_and_parse(text)`: the issues go to PROBLEMS,
+   the gutter's error dots, the status bar and the form's field outlines; the `Recipe` is
+   the framework's own load (`recipe_parser.parse_recipe`, run once, inside the
+   verificator), so the text is not parsed a second time.
+2. **Show it as pypts does** — the chosen sequence's `to_summary()` goes to
+   `StepTableContent.show_sequence()`, the very call pypts makes on `RecipeLoaded`. The
+   groups the author had unfolded stay unfolded (matched by name and the names of the
+   groups above).
 3. **Map the rows** — `step_sources_from_text(text, base_dir)` gives each row's
    `StepSource.origin`; `row_map.refs_for_rows()` makes them `StepRef`s, `all_refs()` lists
    every authored step for the cursor direction.
 
-If the text cannot be shown as a tree (`RecipeModel` invalid), or parses but pypts would refuse
-it (a load error), the table keeps its last rows and is disabled; PROBLEMS says why. With no
+If the text cannot be shown as a tree (`RecipeModel` invalid), or pypts would refuse to load
+it (`verify_and_parse` returns no Recipe), the table keeps its last rows and is disabled;
+PROBLEMS says why. With no
 recipe at all (start-up), the table is grayed under "No recipe open: …" and Save is disabled;
 New, Open and closing ask nothing then — there is nothing to lose (`_may_discard()`).
 File → New starts from a recipe with one Wait step, so it loads from the first moment.
@@ -159,10 +164,11 @@ selected, and `field_kind()` picks each field's widget from its annotation:
 |---|---|
 | `bool` | checkbox |
 | `str`, `str \| None` | text field; emptied, an optional key is removed (`DELETE`) |
+| `main_sequence` (header) | a sequence chooser — a dropdown of the recipe's sequence names; the blank entry removes the key |
 | `Any` | value field — the text read as YAML (`2` a number, `[A, B]` a list) |
 | typed `None` (a refused key), a `Literal` tag, `SequenceSchema.steps` / `teardown_steps` | not shown |
 | `inputs` | rows: name · value / global · value or global_name |
-| `outputs` | rows: name · type (`OUTPUT_SCHEMAS`) · that type's own fields |
+| `outputs` | rows: name · type (`output_types_for(steptype)` — a type the steptype refuses is left out, but one the recipe already names stays shown) · that type's own fields |
 | Indexed `template` | the same form, nested, for the template's type |
 | Indexed `parameter_sets` | a table: the template's inputs and outputs (and any key a set uses) as columns |
 | `dict` (header `globals`) | name · initial value rows |
@@ -208,6 +214,9 @@ open or save are logged.
 - `test_recipe_editor_window.py` (third round) — the right column is the form only (no tabs,
   View holds Appearance and Full Screen); the PROBLEMS badge in each state, and its
   stylesheet rules.
+- `test_recipe_editor_window.py` (save layer) — a failed Save As keeps the current file and
+  shows the dialog; a successful one adopts the new path. The shared writer itself:
+  `test_rc_io.py`.
 - `test_recipe_editor_window.py` (fourth round) — the window takes its theme and size from
   `[recipe_editor]`, not `[gui]`; template defaults with no config; Settings in Edit; the
   dialog shows only the editor's keys; pypts' dialog leaves them out; a save changes only the

@@ -30,7 +30,7 @@ POLL_INTERVAL_S = 0.05
 INPUT_POLL_S = 0.1
 
 HELP_TEXT = (
-    "Available commands: load_recipe <path>, start_sequence <name>, stop_sequence, "
+    "Available commands: load_recipe <path>, start_sequence <name>, stop_sequence (or stop), "
     "status, exit, help"
 )
 
@@ -148,7 +148,7 @@ class CLI(HmiClient):
             command = ""
 
         match command:
-            case "exit" | "quit" | "stop":
+            case "exit" | "quit":
                 print("Shutting down...")
                 self.request_shutdown()
                 return False
@@ -157,8 +157,8 @@ class CLI(HmiClient):
                     self.start_sequence(parts[1])
                 else:
                     print("Usage: start_sequence <sequence_name>")
-            case "stop_sequence":
-                # Aborts the run only; plain `stop` above exits the shell.
+            case "stop_sequence" | "stop":
+                # Aborts the run only; `exit` and `quit` leave the shell.
                 self.stop_sequence()
             case "load_recipe":
                 if len(parts) == 2:

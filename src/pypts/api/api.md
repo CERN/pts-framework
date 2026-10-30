@@ -38,10 +38,14 @@ if __name__ == "__main__":
 |------|--------------|--------|
 | `Pts(log_level=None)` | Logger and CORE are started | whatever `start_engine()` raises |
 | `load_recipe(path)` | `RecipeLoaded`, or CORE's refusal | `PtsError` with CORE's reason; timeout 30 s |
-| `run(sequence=None, answer=None, on_step=None)` | `RunFinished`, then `ReportReady` (15 s budget) | `PtsError` if the start is refused or the engine stops |
+| `run(sequence=None, answer=None, on_step=None)` | `RunFinished`, then `ReportReady` (15 s budget) | `PtsError` if no recipe is loaded ("No recipe is loaded. Call load_recipe() first."), the start is refused or the engine stops |
 | `stop()` | — (sends `StopSequence`; thread-safe) | — |
 | `close()` / `with` | the shutdown handshake, CORE, then the Logger | — |
-| `open_gui(...)` | the window is closed | `ValueError` on bad arguments; `PtsError` for a missing file or no PySide6, before any process starts |
+| `open_gui(..., log_level=None)` | the window is closed | `ValueError` on bad arguments; `PtsError` for a missing file or no PySide6, before any process starts |
+
+`open_gui()`'s `log_level=None` overrides `[logging] level`, like `Pts(log_level=...)`.
+`Pts.loaded_recipe` — the `LoadedRecipe` CORE holds, or `None` before the first
+successful load.
 
 ## How it is built
 

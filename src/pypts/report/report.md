@@ -31,7 +31,8 @@ makes one itself when `RunStarted` names none.
   until the run ends.
 - **End of run** — on `RunFinished`, `finish_run()` stores the verdict, closes the CSV, then:
   - `rewrite_csv()` writes `report.csv` once more with every row's run-level cells
-    (`run_result`, metadata) filled in.
+    (`run_result`, metadata) filled in. With no recorded rows it returns early and
+    `report.csv` stays as written — header only.
   - `rename_csv()` gives it its final name, `file_stem()` + `.csv`. A rename that fails is a
     WARNING and the file stays `report.csv` - the name is cosmetic, the results are not.
 
@@ -47,12 +48,17 @@ makes one itself when `RunStarted` names none.
   `SN_0042`. A run that never learned it, or whose recipe has `report_metadata: []`, is
   `report_<YYYYmmdd_HHMMSS>`. The timestamp is when the Report received `RunStarted`.
 - **HTML** — CORE sends `GenerateReport` right behind `RunFinished`. `generate_report()` writes
-  a self-contained `<file_stem()>.html` (header with metadata, recipe, verdict, start time and pypts
-  version; a per-result summary; one table row per step, coloured by result) and sends
-  `ReportGenerated(report_path)`. With no run recorded it is a WARNING and nothing is sent.
-- **Regenerable from the CSV alone** — every run-level value is on every row, so
-  `render_html()` needs only rows; `rows_from_csv(path)` reads a past run's CSV back into
-  them. A run in which no step executed has no rows to regenerate from.
+  a self-contained `<file_stem()>.html` (header with metadata, recipe, verdict, start time,
+  and a `Generated: <time> by pypts <version>` line; a per-result summary; one table row per
+  step, coloured by result; every value is passed through `html.escape()`, so recipe text
+  never becomes markup) and sends `ReportGenerated(report_path)`. The verdict falls back to
+  `in progress` when no `RunFinished` arrived. With no run recorded it is a WARNING and
+  nothing is sent.
+- **Regenerable from the CSV — rows only** — every run-level value is on every row, and
+  `rows_from_csv(path)` reads a past run's CSV back into `self.rows`. But `render_html()`
+  takes no rows argument — it reads `self.rows` — and it takes the metadata *names* from
+  `self.run_info`, so a rebuild from any CSV shows no metadata header lines. A run in which
+  no step executed has no rows to regenerate from.
 - **Export** — `ExportReport` is a **stub at both ends**: `export_report()` only logs a
   WARNING, and nothing sends the message.
 
@@ -69,8 +75,8 @@ row's verdict with it, so a FAIL step read PASS (codebase review #3, 2026-10-14)
 column starts with `meta_`, so no name can clash and none has to be refused. The prefix
 lives only at the CSV boundary (`columns_for()`, `run_level_cells()`, the HTML header's
 lookup): `RunMetadata`, `self.metadata`, the HTML header's label and `board_id()` use the
-bare name. A CSV written before the prefix has bare metadata columns, and the HTML rebuilt
-from it with `rows_from_csv()` shows no metadata.
+bare name. The metadata names themselves come from `self.run_info`, not from the CSV, so an
+HTML rebuilt with `rows_from_csv()` shows no metadata whatever the CSV's vintage.
 
 | Group | Columns |
 |-------|---------|

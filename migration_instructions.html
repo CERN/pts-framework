@@ -137,38 +137,38 @@ summary { cursor: pointer; font-weight: 600; }
 <h1 id="migration-instructions">Migration instructions</h1>
 <p>How to run an existing recipe against the new architecture.</p>
 <h2 id="entry-point">Entry point</h2>
-<p><strong>Old:</strong> User package had its own <code><strong>main</strong>.py</code>` calling <code>run_pts()</code>` + <code>create_and_start_gui()</code>`. Recipe ran inside the same process.</p>
+<p><strong>Old:</strong> User package had its own <code><strong>main</strong>.py</code> calling <code>run_pts()</code> + <code>create_and_start_gui()</code>. Recipe ran inside the same process.</p>
 <p><strong>New:</strong> Run the framework directly:</p>
 <pre><code class="language-bash">python -m pypts          # GUI
 python -m pypts --mode cli</code></pre>
-<p>Load your recipe from the GUI file picker, or (CLI) type <code>load_recipe &lt;path&gt;</code>` then <code>start_sequence &lt;name&gt;</code>`.</p>
-<p>Or keep a short <code><strong>main</strong>.py</code>` that uses <code>pypts.api</code>` - <code>open_gui("recipe.yml")</code>` opens the window with your recipe loaded (<code>start=True</code>` also starts it), and <code>Pts</code>` runs it with no window. See <code>api_showcase.py</code>` in the repository root.</p>
+<p>Load your recipe from the GUI file picker, or (CLI) type <code>load_recipe &lt;path&gt;</code> then <code>start_sequence &lt;name&gt;</code>.</p>
+<p>Or keep a short <code><strong>main</strong>.py</code> that uses <code>pypts.api</code> - <code>open_gui("recipe.yml")</code> opens the window with your recipe loaded (<code>start=True</code> also starts it), and <code>Pts</code> runs it with no window. See <code>api_showcase.py</code> in the repository root.</p>
 <h2 id="step-type-names">Step-type names</h2>
-<p>The <code>steptype</code>` field values changed — the <code>Step</code>` suffix was dropped:</p>
-<table><thead><tr><th>Old</th><th>New</th></tr></thead><tbody><tr><td><code>PythonModuleStep</code>`</td><td><code>PythonModule</code>`</td></tr><tr><td><code>UserInteractionStep</code>`</td><td><code>UserInteraction</code>`</td></tr><tr><td><code>WaitStep</code>`</td><td><code>Wait</code>`</td></tr><tr><td><code>UserWriteStep</code>`</td><td><code>UserWrite</code>`</td></tr><tr><td><code>UserLoadingStep</code>`</td><td><code>UserLoading</code>`</td></tr><tr><td><code>IndexedStep</code>`</td><td>handled at load time — wrap steps in an indexed input</td></tr></tbody></table>
-<p>Rename every <code>steptype:</code>` value in your recipe YAML accordingly.</p>
+<p>The <code>steptype</code> field values changed — the <code>Step</code> suffix was dropped:</p>
+<table><thead><tr><th>Old</th><th>New</th></tr></thead><tbody><tr><td><code>PythonModuleStep</code></td><td><code>PythonModule</code></td></tr><tr><td><code>UserInteractionStep</code></td><td><code>UserInteraction</code></td></tr><tr><td><code>WaitStep</code></td><td><code>Wait</code></td></tr><tr><td><code>UserWriteStep</code></td><td><code>UserWrite</code></td></tr><tr><td><code>UserLoadingStep</code></td><td><code>UserLoading</code></td></tr><tr><td><code>IndexedStep</code></td><td><code>Indexed</code>, with a <code>template:</code> step and <code>parameter_sets:</code> — expanded into ordinary steps at load time</td></tr><tr><td><code>SequenceStep</code></td><td><code>Sequence</code>, with <code>sequence_name:</code> naming the called sequence — the old spelling <code>sequencestep</code> is even accepted as an alias</td></tr></tbody></table>
+<p>Rename every <code>steptype:</code> value in your recipe YAML accordingly.</p>
 <h2 id="step-types-that-no-longer-exist">Step types that no longer exist</h2>
-<table><thead><tr><th>Old steptype</th><th>What to do</th></tr></thead><tbody><tr><td><code>SequenceStep</code>`</td><td>Dropped. Inline the steps or restructure the recipe.</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated. Replace with a <code>UserInteraction</code>` step (for the prompt) followed by a <code>PythonModule</code>` step (for the method call).</td></tr></tbody></table>
+<table><thead><tr><th>Old steptype</th><th>What to do</th></tr></thead><tbody><tr><td><code>UserRunMethodStep</code></td><td>Deprecated. Replace with a <code>UserInteraction</code> step (for the prompt) followed by a <code>PythonModule</code> step (for the method call).</td></tr></tbody></table>
 <h2 id="pythonmodulestep-action-type">PythonModuleStep — action_type</h2>
-<p><code>read_attribute</code>` and <code>write_attribute</code>` are dropped. If your step uses these, replace them with a <code>PythonModule</code>` step that calls a wrapper method instead.</p>
+<p><code>read_attribute</code> and <code>write_attribute</code> are dropped. If your step uses these, replace them with a <code>PythonModule</code> step that calls a wrapper method instead.</p>
 <h2 id="userwritestep-serial-port-mode">UserWriteStep — serial-port mode</h2>
-<p>The <code>ID</code>` option (serial-port picker) is dropped. The <code>wrt</code>` text-entry mode is available as <code>UserWrite</code>`. If you relied on <code>ID</code>`, implement the serial-port dialog in a <code>PythonModule</code>` step.</p>
+<p>The <code>ID</code> option (serial-port picker) is dropped. The <code>wrt</code> text-entry mode is available as <code>UserWrite</code>. If you relied on <code>ID</code>, implement the serial-port dialog in a <code>PythonModule</code> step.</p>
 <h2 id="userloadingstep-file-or-folder">UserLoadingStep — file or folder</h2>
-<p>Available as <code>UserLoading</code>`. Move the message (and image) onto the step as <code>message</code>` / <code>image_path</code>` fields, add <code>select: file</code>` (default) or <code>select: folder</code>`, and store the chosen path with <code>outputs: {output: {type: global, global_name: ...}}</code>`. There is no <code>loadFile_key</code>` button any more, and no file filter or start folder.</p>
+<p>Available as <code>UserLoading</code>. Move the message (and image) onto the step as <code>message</code> / <code>image_path</code> fields, add <code>select: file</code> (default) or <code>select: folder</code>, and store the chosen path with <code>outputs: {output: {type: global, global_name: ...}}</code>. There is no <code>loadFile_key</code> button any more, and no file filter or start folder.</p>
 <h2 id="module-loading">Module loading</h2>
-<p>Both file-based (path relative to recipe) and package-based (<code>test_package</code>` in the header) loading still work. The <code>test_package</code>` package must be installed.</p>
+<p>File-based loading resolves <code>module:</code> beside the recipe (a path relative to the recipe's folder). Code from an installed package is loaded by giving <code>module:</code> a dotted import name instead. A <code>test_package</code> key in the header is now a load error ("Extra inputs are not permitted") and must be removed.</p>
 <h2 id="reports">Reports</h2>
-<p>Reports are now written to a per-run subfolder under <code>reports_dir</code>` (configured in <code>config.ini</code>`). The path is shown in the GUI after the run, and sent to the log. There is no longer a single overwritten <code>report.csv</code>`.</p>
+<p>Reports are now written to a per-run subfolder under <code>reports_dir</code> (configured in <code>config.ini</code>). The path is shown in the GUI after the run, and sent to the log. There is no longer a single overwritten <code>report.csv</code>.</p>
 <h2 id="globals-used-as-magic-keys">Globals used as magic keys</h2>
-<p>The old engine read certain globals by convention (e.g. <code>cancel_key</code>`, <code>ssh_client</code>`, <code>ID_key</code>`, <code>wrt_key</code>`). The new engine does not. You can remove those from your recipe.</p>
+<p>The old engine read certain globals by convention (e.g. <code>cancel_key</code>, <code>ssh_client</code>, <code>ID_key</code>, <code>wrt_key</code>). The new engine does not. You can remove those from your recipe. A recipe that used <code>ssh_client</code> now declares the host as a <code>bench.ini</code> device (<code>driver = pypts.hal.drivers.ssh.SshDriver</code>) and the test code calls <code>pypts.hal.get_device("&lt;name&gt;")</code>.</p>
 <h2 id="config-file">Config file</h2>
 <p>The new framework writes a config on first run:</p>
 <ul>
-<li>Windows: <code>%LOCALAPPDATA%\pypts\config.ini</code>`
+<li>Windows: <code>%LOCALAPPDATA%\pypts\config.ini</code>
 </li>
-<li>Linux: <code>~/.config/pypts/config.ini</code>`
+<li>Linux: <code>~/.config/pypts/config.ini</code>
 </ul>
-<p>Edit it to set <code>[paths] reports_dir</code>` if you want reports somewhere specific.</p>
+<p>Edit it to set <code>[paths] reports_dir</code> if you want reports somewhere specific.</p>
 </div>
 </body>
 </html>

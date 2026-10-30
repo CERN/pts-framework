@@ -15,6 +15,10 @@ it pulls in PySide6, and `verify_string` has to be usable without a display.
 """
 
 from pypts.helper_applications.recipe_creator.issue import ValidationIssue
-from pypts.helper_applications.recipe_creator.verificator import verify_file, verify_string
+from pypts.helper_applications.recipe_creator.verificator import (
+    verify_and_parse,
+    verify_file,
+    verify_string,
+)
 
-__all__ = ["ValidationIssue", "verify_file", "verify_string"]
+__all__ = ["ValidationIssue", "verify_and_parse", "verify_file", "verify_string"]

@@ -107,7 +107,7 @@ a `SEQUENCER:` in front of it is noise to the person the line was written for.
 
 ### 4.1 The lifecycle phrases are fixed
 
-These five, and no variations on them:
+These six, and no variations on them:
 
 | Phrase | Level | When |
 |---|---|---|
@@ -119,6 +119,12 @@ These five, and no variations on them:
 | `<NAME> module stopped.` | INFO | last statement of the module's life |
 
 INFO gets two of them, so the operator sees the system come up and go down and nothing else.
+
+Accepted deviations, verified in the code: CORE has no `stop()` and never logs
+`CORE module stopping.`; the CLI has no event loop of its own, so it logs neither loop line
+nor `CLI module stopping.`; the frontends' shared `HmiClient.stop()` logs
+`The frontend is stopping.` at DEBUG (the GUI logs `GUI module stopping.` beside it); and
+`LAUNCHER` logs no lifecycle lines at all.
 
 ---
 
@@ -187,8 +193,9 @@ Notes on that shape:
 
 - **Every step gets a `started` line and a result line.** A step that takes thirty seconds
   must not leave the panel silent, and the operator counts progress off `n/total`.
-- **Durations** come from `StepOutcome.duration_s`, which `step.py` already measures. The
-  sequence duration is wall clock, measured in the Sequencer.
+- **Durations** are measured in `Step.run()` and carried on `StepExecuted.duration_s`
+  (`StepOutcome` carries no duration field). The sequence duration is wall clock, measured
+  in `step.py`'s `run_sequence()`.
 - **The run summary is three separate records**, not one multi-line record. Each then carries
   its own timestamp, and `log_tail` does not have to treat the second and third lines as
   traceback continuations.
@@ -252,24 +259,35 @@ Three rules it follows:
 - **A reason appears only on `FAIL`.** One failing check fails the step, so every sentence in
   the list explains the verdict it is printed beside.
 
-An `ERROR` verdict is different: `error_info` is the traceback, so the operator's line carries
-its **last line only** — `TimeoutError: the instrument did not answer` — and the stack stays at
-DEBUG.
+An `ERROR` verdict is different: the operator's line carries `error_summary`, built by
+`exception_headline()` — the exception type and message on one line,
+`TimeoutError: the instrument did not answer` — while `error_info` keeps the full traceback,
+which stays at DEBUG.
 
 ---
 
 ## 7. Errors
 
-`utilities/error_handling.py` writes **two** records for one failure:
+`utilities/error_handling.py` writes nothing itself in the normal path: it sends a
+`ModuleError` to CORE (the one exception is its no-outbox fallback, which writes the records
+itself because there is nobody to send them to). CORE writes the records — two or three for
+one failure (`core/core.md` → *Error reporting*):
 
 ```
-ERROR  Step 'read_voltage' could not run: [WinError 2] The system cannot find the file specified.
-DEBUG  Traceback for the failure in 'PythonModuleStep.execute':
+ERROR  A problem occurred in the test engine: [WinError 2] The system cannot find the file specified.
+DEBUG  Reported by 'pypts.sequencer.sequencer' in 'Sequencer.run_sequence' (FileNotFoundError), severity ERROR.
+DEBUG  Traceback for the failure in 'Sequencer.run_sequence':
        Traceback (most recent call last):
          ...
 ```
 
-The ERROR line is a generic operator-facing frame — *what was being done* — with `str(exc)`
+A step that could not run gets its ERROR line from `step/step.py` instead:
+
+```
+ERROR  Step 4/12 'read_voltage' could not run (1.1 s): FileNotFoundError: [WinError 2] The system cannot find the file specified.
+```
+
+The operator's line is a generic frame — *what was being done* — with the failure's own text
 appended. The technician always learns **what** failed, even when **why** stays technical.
 There is deliberately no table mapping exception types to friendly sentences: it would have to
 be maintained forever and would still miss the case in front of you.

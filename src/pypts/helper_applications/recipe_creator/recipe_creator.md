@@ -25,6 +25,11 @@ error. So a recipe verifies without errors exactly when the framework would
 load it. `check_version=False` keeps the framework's version check — a log line
 for the technician — out of a check that runs on every edit.
 
+`verify_and_parse(content)` returns the issues **and** the `Recipe` that load
+built (`None` exactly when there is an error), so a caller that also shows the
+recipe — the Recipe Editor v2 — does not parse the same text a second time.
+`verify_string` is that, keeping only the issues.
+
 What is the verificator's own: the line of every issue (`_LineMap.nearest()` —
 a missing field points at the step or document it is missing from), the choice
 of hint (`_hint()`, by where the problem is and Pydantic's error type — the
@@ -33,22 +38,22 @@ structural pre-checks (not YAML, empty, a document that is not a mapping, a
 first document that is not a header), the cross-document checks (duplicate
 sequence names, `main_sequence` naming nothing — both also refused by the
 load, but named here with a hint and alongside everything else), and the
-warnings: what loads but looks wrong.
+warnings: what loads but looks wrong. The structural pre-checks also refuse a
+header with no sequence documents after it.
 
 ## Files
 
 | File | Owns |
 |---|---|
 | `recipe_creator_new.py` | Entry point and main window — what `__main__.py` runs |
+| `rc_io.py` | `save_recipe_text()` — the save both editors share: writes the file, reports a failure itself (log and dialog), returns whether it succeeded |
 | `rc_logging.py` | The Creator's own log file and its handler for uncaught errors — see Logging below |
 | `rc_model.py` | `RecipeModel` and the `QUndoCommand` subclasses |
-| `rc_widgets.py` | The custom widgets, and `creator_stylesheet()` — the Creator's own rules on top of pypts' stylesheet |
-| `customGUIModules.py` | Editor widgets (YAML editor, highlighter) |
-| `recipe_creator.py` | **Dead code.** `__main__.py` runs `recipe_creator_new.py` |
+| `rc_widgets.py` | The custom widgets — including `YamlEditor` and `PaletteYamlHighlighter`, which replaces the stock highlighter — and `creator_stylesheet()`, the Creator's own rules on top of pypts' stylesheet |
+| `customGUIModules.py` | The plain-text YAML editor base: `ScintillaYamlEditor` and the stock `YamlHighlighter` that `YamlEditor` builds on |
 | `issue.py` | `ValidationIssue` dataclass — the single result type |
-| `verificator.py` | Validation pipeline: `verify_file(path)` and `verify_string(content)` |
-| `__init__.py` | Public exports: `ValidationIssue`, `verify_file`, `verify_string` |
-| `verification_rule_alignment.html` | Why the verificator's rules drifted from the framework's, and what was done about it |
+| `verificator.py` | Validation pipeline: `verify_file(path)`, `verify_string(content)` and `verify_and_parse(content)` |
+| `__init__.py` | Public exports: `ValidationIssue`, `verify_and_parse`, `verify_file`, `verify_string` |
 
 ## Logging
 
@@ -75,7 +80,14 @@ Tests: `tests/unit_tests/test_rc_logging.py` (the hard crash runs in a subproces
 ## Shared with the Recipe Editor v2
 
 `helper_applications/recipe_editor/` builds on this package: `RecipeModel`, `YamlEditor`,
-`InvalidOverlay`, `creator_stylesheet()`, `verify_string()` and `rc_logging`. For it:
+`InvalidOverlay`, `creator_stylesheet()`, `verify_and_parse()`, `save_recipe_text()` and
+`rc_logging`. For it:
+
+- `rc_io.save_recipe_text(parent, path, text)` writes the recipe and reports a failure itself
+  (ERROR with the traceback at DEBUG, and a "Save failed" dialog). Both windows' Save As
+  adopt the chosen path as the current file **only when it returns True** — a failed Save As
+  must not steal the current file from the next Save. Tests:
+  `tests/unit_tests/test_rc_io.py`, and the save-layer tests in both window test files.
 
 - `RecipeModel.set_path(document, path, value)` sets one value anywhere in the recipe as one
   undo entry (`DELETE` removes the key); `duplicate_step(seq_idx, step_idx)` inserts a copy
@@ -102,14 +114,18 @@ A change to any of these is a change to both editors.
   from `rc_widgets.py`: square text buttons (`_small_button()`, objectName `rcSmallButton`,
   no padding — the shared `QPushButton` padding clipped their glyphs) and framed group boxes.
   Kept out of the shared file on purpose.
-- **No recipe yet.** At start-up the model is empty (`RecipeModel.is_empty()`): the tree is
-  grayed out under an overlay saying File > New / Open or type in the editor, and Save, Add
-  Step, Delete and Validate are disabled. `set_header_field()` ignores an edit then. While the
+- **No recipe yet.** At start-up the model is empty (`RecipeModel.is_empty()`): the whole
+  left panel (header strip, step view, step buttons) is grayed out under an overlay saying
+  File > New / Open or type in the editor, and Save, Save As, Add Step, Delete and Validate
+  are disabled. `set_header_field()` ignores an edit then. While the
   text is invalid the same overlay says so instead, and *Undo to Last Valid* appears on the
   toolbar (it is always in the Edit menu).
 - **Step types.** The form looks a step's own fields up through
   `recipe_parser.steptype_key()`, so `Wait`, `wait` and `WAIT` all show `wait_time`; the Add
-  Step menus list `STEP_TYPE_NAMES` (`PythonModule`, `Wait`, …).
+  Step menus list `STEP_TYPE_NAMES` (`PythonModule`, `Wait`, …). An outputs row's type list
+  is `recipe_schema.output_types_for(steptype)` — no `passfail` on a UserInteraction or
+  UserWrite; a type the recipe already names but the steptype refuses stays shown and
+  selected, for the verificator to flag, never silently rewritten.
 
 **Never delete a form widget on the spot — `deleteLater()` it.** A field commits its edit
 from inside its own signal (`editingFinished`, `currentTextChanged`, `valueChanged`); the
@@ -141,8 +157,9 @@ The window follows the same rule: it looks steptypes up through
 
 **Do not reimplement normalization here.** A second copy of that rule is exactly
 what drifted: the verificator used to read raw keys and reported "missing
-required field" for fields that were plainly present. See
-`verification_rule_alignment.html` and
+required field" for fields that were plainly present. 2026-09-16: that
+case-insensitivity drift was fixed by delegating to the framework's
+normalize/validate/load. See
 `tests/unit_tests/test_verificator_case_insensitivity.py`.
 
 `_LineMap` keeps an exact-case map **and** a lowercased fallback, exact matches
@@ -162,7 +179,9 @@ output type's own sentence sits on its `steptype` / `type` tag field
 a problem is about. So a new step type, input or output form, or header,
 sequence or step field needs no edit here —
 `tests/unit_tests/test_recipe_schema.py` fails until every field has its
-description, and every required one an example.
+description, and every required one an example. `recipe_guide.html` does **not**
+follow the schema automatically — a recipe-format change must still update the
+guide by hand; that is what CLAUDE.md's recipe-format rule means.
 
 Read from the schema, by helper:
 
@@ -177,7 +196,7 @@ Read from the schema, by helper:
   type (`OUTPUT_SCHEMAS`) with its tag field's description, for an unknown or
   missing type.
 - `_valid_keys_hint(steptype)` — the keys a step model takes; also the hint for a
-  key an Indexed or Sequence step refuses, whose reason is already the message.
+  key an Indexed, Sequence or Wait step refuses, whose reason is already the message.
 - `_document_keys_hint(model)` — the keys the header or a sequence takes, the
   hint for an unknown key there (a removed sequence key's reason is already the
   message: `validate_document()` words it from `REMOVED_SEQUENCE_KEYS`).
@@ -194,6 +213,7 @@ cross-reference hints, the header warnings, and `_FALLBACK_HINT`
 
 ```python
 from pypts.helper_applications.recipe_creator import (
+    verify_and_parse,
     verify_file,
     verify_string,
     ValidationIssue,
@@ -201,9 +221,12 @@ from pypts.helper_applications.recipe_creator import (
 
 issues: list[ValidationIssue] = verify_file("path/to/recipe.yml")
 issues: list[ValidationIssue] = verify_string(yaml_text)
+issues, recipe = verify_and_parse(yaml_text)  # recipe: Recipe | None
 ```
 
 Results are sorted: errors first (by line number), then warnings.
+`verify_and_parse` also returns the `Recipe` the framework's load built —
+`None` exactly when there is an error.
 
 ## ValidationIssue fields
 
@@ -219,12 +242,15 @@ issue.is_warning
 str(issue)      # "[ERROR] (line 2) header: version: Field required"
 ```
 
-## Integration with recipe_creator
+## Integration with the Creator window
 
-`recipe_creator` calls `verify_string(content)` on every edit and `verify_file`
-on save. It gets back a `list[ValidationIssue]` and is responsible for rendering
-them (e.g., showing `message` in an error list and `hint` in a detail panel).
-The verificator never prints to stdout.
+`RecipeCreatorNewWindow` verifies with `verify_string(content)` on a 200 ms
+timer after each valid model change, and via the Validate action. Save is plain
+`save_recipe_text()` — no verification pass of its own. The window gets back a
+`list[ValidationIssue]` and is responsible for rendering them (`message` in the
+problems panel, `hint` in its detail area). The verificator never prints to
+stdout. `verify_file` stays exported as a file-path convenience with no
+in-repo caller.
 
 ## What is checked
 

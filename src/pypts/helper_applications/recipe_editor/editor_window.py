@@ -10,10 +10,11 @@ the recipe schema (`schema_form.SchemaForm`).
 **One source of truth: the text, in the Recipe Creator's `RecipeModel`.** The
 YAML editor, the form and the toolbar all edit through it, so there is one undo
 history and the file's comments survive a form edit. After every change the text
-is parsed as pypts parses a file (`recipe_parser.parse_recipe`) and the chosen
-sequence's `to_summary()` goes into the table; while the text does not load, the
-table keeps its last rows, grayed. `row_map` takes a clicked row to the step it
-was authored as, and a line of the YAML to the step around it.
+is verified and parsed in one pass (`verify_and_parse`, whose Recipe is the
+framework's own load) and the chosen sequence's `to_summary()` goes into the
+table; while the text does not load, the table keeps its last rows, grayed.
+`row_map` takes a clicked row to the step it was authored as, and a line of the
+YAML to the step around it.
 
 **Set up like pypts, apart from it.** Theme, window mode and size come from
 `[recipe_editor]` in config.ini and are changed in the same Settings dialog pypts
@@ -53,8 +54,9 @@ from PySide6.QtWidgets import (
 
 from pypts._version import __version__
 from pypts.config_handler import file_locations
-from pypts.helper_applications.recipe_creator import verify_string
+from pypts.helper_applications.recipe_creator import verify_and_parse
 from pypts.helper_applications.recipe_creator.issue import ValidationIssue
+from pypts.helper_applications.recipe_creator.rc_io import save_recipe_text
 from pypts.helper_applications.recipe_creator.rc_logging import start_logging
 from pypts.helper_applications.recipe_creator.rc_model import RecipeModel
 from pypts.helper_applications.recipe_creator.rc_widgets import (
@@ -93,7 +95,6 @@ from pypts.hmi.gui.styles import get_stylesheet
 from pypts.hmi.gui.top_bar import svg_icon
 from pypts.messages.core_hmi_communication import ConfigParameterResult
 from pypts.messages.run_events import SequenceSummary
-from pypts.recipe import recipe_parser
 from pypts.recipe.recipe_schema import STEP_TYPE_NAMES
 from pypts.recipe.step_source import step_sources_from_text
 from pypts.utilities.recent_recipes import RecentRecipes
@@ -768,16 +769,14 @@ class RecipeEditorWindow(QMainWindow):
             return
 
         text = self._model.to_yaml()
-        issues = verify_string(text)
+        issues, recipe = verify_and_parse(text)
         self.problems.show_issues(issues)
         self.form.set_issues(issues)
         self.yaml_editor.set_error_lines({i.line for i in issues if i.line and i.is_error})
         self.status_label.setText("Status: " + _issue_summary(issues))
 
-        try:
-            recipe = recipe_parser.parse_recipe(text, self._file_path, check_version=False)
-        except Exception as error:  # noqa: BLE001 - any refusal: keep the last good rows
-            log.debug("Recipe Editor v2: the text does not load yet: %s", error)
+        if recipe is None:
+            # The framework refuses the load; PROBLEMS says why. Keep the last good rows.
             self.step_table.setEnabled(False)
             return
         self.step_table.setEnabled(True)
@@ -1124,16 +1123,13 @@ class RecipeEditorWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self, "Save As", self._file_path or "", "YAML Files (*.yml *.yaml)"
         )
-        if path:
+        # The path becomes the current file only once something is saved there.
+        if path and self._save_to(path):
             self._file_path = path
-            self._save_to(path)
+            self._update_title()
 
     def _save_to(self, path: str) -> bool:
-        try:
-            Path(path).write_text(self._model.to_yaml(), encoding="utf-8")
-        except OSError as error:
-            log.error("Recipe '%s' could not be saved: %s", path, error)
-            QMessageBox.critical(self, "Save failed", str(error))
+        if not save_recipe_text(self, path, self._model.to_yaml()):
             return False
         self._model.undo_stack.setClean()
         self._update_title()

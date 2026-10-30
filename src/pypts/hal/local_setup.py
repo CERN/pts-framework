@@ -110,6 +110,11 @@ class LocalSetup:
         self._sections: Mapping[str, Mapping[str, Any]] | None = None
         self._devices: dict[str, ConnectionDriver] = {}
         self._lock = threading.RLock()
+        #: Guards _abandoned and the registration of a new device, so a device
+        #: that finishes opening beside abandon() is either in abandon's copy
+        #: or refused and closed here. Never held across a driver call -
+        #: abandon() must not block on a lock the stuck run may hold.
+        self._registry_lock = threading.Lock()
         #: Set by abandon(): this setup's run will not end, and opens nothing more.
         self._abandoned = False
 
@@ -140,11 +145,15 @@ class LocalSetup:
             driver_path, call_timeout_s, settings = split_section(name, section)
             device = ConnectionDriver(name, driver_path, settings, call_timeout_s=call_timeout_s)
             device.open()
-            if self._abandoned:
-                # Abandoned while this was opening: it missed the teardown.
+            with self._registry_lock:
+                abandoned = self._abandoned
+                if not abandoned:
+                    self._devices[name] = device
+            if abandoned:
+                # Abandoned while this was opening: it missed the teardown,
+                # and was registered nowhere, so it is closed here.
                 device.close()
                 self._refuse_if_abandoned(name)
-            self._devices[name] = device
             return device
 
     def _refuse_if_abandoned(self, name: str) -> None:
@@ -160,39 +169,27 @@ class LocalSetup:
 
         Its with-block will never reach __exit__, and it may be blocked inside
         a device call - holding that device's lock - or inside get_device(),
-        holding this setup's. So nothing here takes a lock: the setup opens
-        nothing more from now on, and each device is torn down on a thread of
-        its own (ConnectionDriver.abandon()), side by side, for at most
-        `time_limit_s` in all.
+        holding this setup's. So neither of those is waited for: the setup
+        opens nothing more from now on, and each device runs its teardown
+        ladder (ConnectionDriver.abandon()) in turn, newest first, on one
+        shared deadline of `time_limit_s` in all. A device the deadline has
+        already passed still gets its driver process killed, and is reported.
 
         Returns:
             The names of the devices that could not be torn down in time.
         """
-        self._abandoned = True
-        devices = dict(self._devices)
-        outcomes: dict[str, bool] = {}
-
-        def tear_down(name: str, device: ConnectionDriver) -> None:
+        with self._registry_lock:
+            self._abandoned = True
+            devices = dict(self._devices)
+        deadline = time.monotonic() + time_limit_s
+        unsafe = []
+        for name in reversed(list(devices)):
             try:
-                outcomes[name] = device.abandon()
+                safe = devices[name].abandon(deadline - time.monotonic())
             except Exception as exc:  # noqa: BLE001 - one device must not keep the others open
                 log.warning("Device '%s' did not close: %s", name, exc)
-                outcomes[name] = False
-
-        workers = []
-        for name, device in devices.items():
-            worker = threading.Thread(
-                target=tear_down, args=(name, device), name=f"Abandon {name}", daemon=True
-            )
-            worker.start()
-            workers.append(worker)
-        deadline = time.monotonic() + time_limit_s
-        for worker in workers:
-            worker.join(max(deadline - time.monotonic(), 0.0))
-
-        unsafe = []
-        for name in devices:
-            if not outcomes.get(name, False):
+                safe = False
+            if not safe:
                 unsafe.append(name)
         return sorted(unsafe)
 

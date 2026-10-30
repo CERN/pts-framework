@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
+from pypts.helper_applications.recipe_creator.rc_io import save_recipe_text
 from pypts.helper_applications.recipe_creator.rc_logging import start_logging
 from pypts.helper_applications.recipe_creator.rc_model import RecipeModel
 from pypts.helper_applications.recipe_creator.rc_widgets import (
@@ -502,20 +503,18 @@ class RecipeCreatorNewWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(
             self, "Save As", self._file_path or "", "YAML Files (*.yml *.yaml)"
         )
-        if path:
+        # The path becomes the current file only once something is saved there.
+        if path and self._save_to(path):
             self._file_path = path
-            self._save_to(path)
-
-    def _save_to(self, path: str) -> None:
-        try:
-            Path(path).write_text(self._model.to_yaml(), encoding="utf-8")
-            self._model.undo_stack.setClean()
             self._update_title()
-            self._log_msg(f"Saved: {path}")
-        except Exception as exc:
-            log.error("Recipe '%s' could not be saved: %s", path, exc)
-            log.debug("Traceback for the failed save:", exc_info=True)
-            QMessageBox.critical(self, "Save failed", str(exc))
+
+    def _save_to(self, path: str) -> bool:
+        if not save_recipe_text(self, path, self._model.to_yaml()):
+            return False
+        self._model.undo_stack.setClean()
+        self._update_title()
+        self._log_msg(f"Saved: {path}")
+        return True
 
     def _ask_discard(self) -> bool:
         result = QMessageBox.question(

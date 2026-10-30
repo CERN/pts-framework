@@ -317,11 +317,19 @@ def test_step_finished_writes_the_colored_verdict(gui):
     )
     instance.poll_core()
 
+    # The chips the table paints with, from the one file allowed to own the
+    # colours. The fixtures pin the light theme, so get_palette(False) is what
+    # _state_item() reads; a palette retune must not fail this test.
+    from PySide6.QtGui import QColor
+
+    from pypts.hmi.gui.palette import get_palette
+
+    verdicts = get_palette(False).verdicts
     table = instance.step_table.table
     assert result_column_texts(table) == ["PASS", "FAIL"]
-    assert table.item(0, 2).background().color().name().upper() == "#C8E6C9"
-    assert table.item(0, 2).foreground().color().name().upper() == "#1B4F24"
-    assert table.item(1, 2).background().color().name().upper() == "#F28B82"
+    assert table.item(0, 2).background().color() == QColor(verdicts["PASS"].background)
+    assert table.item(0, 2).foreground().color() == QColor(verdicts["PASS"].text)
+    assert table.item(1, 2).background().color() == QColor(verdicts["FAIL"].background)
     assert "expected 45" in table.item(1, 2).toolTip()
 
 
@@ -1114,7 +1122,7 @@ def test_a_gui_without_a_run_log_says_so_and_does_not_poll(gui):
     instance, _outbox, _inbox = gui
 
     # The fixture's GUI was built with no path - init_logging() was never told one.
-    assert instance.log_tail is None
+    assert instance.log_follower.session_tail is None
     assert instance.log_timer.isActive() is False
     assert "No run log to follow." in instance.center.log_panel.toPlainText()
 
@@ -1673,7 +1681,7 @@ def test_a_finished_run_forgets_it_was_paused(gui, inbox_run_started):
     instance.poll_core()
 
     top = instance.top_bar
-    assert instance._pause_requested is False
+    assert instance._run_state.paused is False
     assert top.pause_button.isEnabled() is False
     assert top.start_button.isEnabled() is True
     assert top.start_button.accessibleName() == "Start"
@@ -3243,7 +3251,7 @@ def test_unloading_switches_the_run_log_and_the_panel_follows_the_new_file(
     assert new_log != old_log
     assert instance.center.log_panel.toPlainText() == ""
     instance.poll_log()
-    assert instance.log_tail is None
+    assert instance.log_follower.session_tail is None
 
     # The Logger creates it; the panel picks it up on the next tick.
     new_log.write_text(a_record("INFO", "After the unload.") + "\n", encoding="utf-8")
@@ -3297,7 +3305,7 @@ def test_a_new_run_log_that_never_appears_is_reported_in_the_panel(gui, tmp_path
     monkeypatch.setattr(gui_module, "switch_log_file", fake_switch)
     instance.start_new_log_file()
 
-    instance._new_log_deadline = 0.0  # already past
+    instance.log_follower._new_log_deadline = 0.0  # already past
     instance.poll_log()
 
     assert "Could not open the run log" in instance.center.log_panel.toPlainText()
@@ -3314,7 +3322,7 @@ def test_unloading_without_a_run_log_leaves_the_panel_alone(gui):
     instance.poll_core()
 
     assert "No run log to follow." in instance.center.log_panel.toPlainText()
-    assert instance.log_tail is None
+    assert instance.log_follower.session_tail is None
 
 
 # --------------------------------------------------------------------------
@@ -3359,7 +3367,7 @@ def test_the_panel_follows_the_run_log_and_comes_back_without_clearing(
     shown = instance.center.log_panel.toPlainText()
     order = [shown.index(text) for text in ("Before the run.", "During the run.", "After the run.")]
     assert order == sorted(order)
-    assert instance.run_log_tail is None  # done with, and released
+    assert instance.log_follower.run_tail is None  # done with, and released
     instance.stop_log_tail()
 
 
@@ -3400,11 +3408,11 @@ def test_a_run_log_that_never_appears_is_reported_in_the_panel(gui, tmp_path, mo
     instance, _session = a_gui_following_a_session_log(gui, tmp_path, monkeypatch)
 
     instance.follow_run_log(str(tmp_path / "missing" / "pypts_run.log"))
-    instance._run_log_deadline = 0.0  # already past
+    instance.log_follower._run_log_deadline = 0.0  # already past
     instance.poll_log()
 
     assert "Could not open the run log" in instance.center.log_panel.toPlainText()
-    assert instance.run_log_tail is None
+    assert instance.log_follower.run_tail is None
     instance.stop_log_tail()
 
 
@@ -3421,7 +3429,7 @@ def test_a_run_shorter_than_one_tick_still_shows_its_lines_first(gui, tmp_path, 
 
     shown = instance.center.log_panel.toPlainText()
     assert shown.index("The whole run.") < shown.index("After the run.")
-    assert instance.run_log_tail is None
+    assert instance.log_follower.run_tail is None
     instance.stop_log_tail()
 
 

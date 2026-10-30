@@ -232,7 +232,7 @@ class Report:
                 self.finish_run(result)
             case GenerateReport():
                 self.generate_report()
-            case ExportReport():
+            case ExportReport():  # NOT SENT YET - and export_report() is itself a stub
                 self.export_report()
             case StopReport():
                 self.stop()
@@ -443,10 +443,11 @@ class Report:
         """
         The whole report as one self-contained page: header, summary, table.
 
-        Everything it shows comes from the rows, which is what makes
-        report.html regenerable from report.csv alone - point rows_from_csv()
-        at a past run and render it again. The run-level values are on every
-        row, so the first one answers for all of them.
+        The rows carry every run-level value, so the first one answers for all
+        of them, and rows_from_csv() can point self.rows at a past run's CSV
+        and render it again. Not quite from the CSV alone, though: the
+        metadata *names* come from self.run_info, so a rebuilt report shows no
+        metadata header lines.
         """
         # A run in which no step executed has no rows to read, so the live
         # path falls back to what it holds. Regenerating from a CSV that has
@@ -457,12 +458,12 @@ class Report:
             first_row = self.run_level_cells()
         title = html.escape(first_row.get("recipe_name", ""))
         description = html.escape(first_row.get("recipe_description", ""))
-        verdict = first_row.get("run_result", "")
+        verdict = html.escape(first_row.get("run_result", ""))
         if not verdict:
             verdict = "in progress"
-        version_line = first_row.get("recipe_version", "")
-        pypts_version = first_row.get("pypts_version", "")
-        started_at = first_row.get("run_started_at", "")
+        version_line = html.escape(first_row.get("recipe_version", ""))
+        pypts_version = html.escape(first_row.get("pypts_version", ""))
+        started_at = html.escape(first_row.get("run_started_at", ""))
         generated_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
 
         metadata_lines = []

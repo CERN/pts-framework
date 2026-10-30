@@ -421,8 +421,8 @@ class _StepFields(_RecipeModel):
     )
 
 
-class _OrdinaryStep(_StepFields):
-    """The arguments of pypts.step.step.Step's constructor, which every built step takes."""
+class _NamedStep(_StepFields):
+    """_StepFields plus the name and id every step that is built as itself carries."""
 
     step_name: str = Field(
         description="The step's name, shown in the step table and the report.",
@@ -433,6 +433,11 @@ class _OrdinaryStep(_StepFields):
         description="A stable id for the step. If omitted, the step gets a fresh one.",
         examples=["my-stable-id"],
     )
+
+
+class _OrdinaryStep(_NamedStep):
+    """The arguments of pypts.step.step.Step's constructor, which every built step takes."""
+
     inputs: dict[Any, InputEntry] = Field(
         default_factory=dict,
         description=(
@@ -468,13 +473,37 @@ class PythonModuleStepSchema(_OrdinaryStep):
     )
 
 
-def _refuse_passfail(outputs: dict[Any, Any], returns: str) -> dict[Any, Any]:
+#: Steptypes that refuse a `passfail` output, with what the step returns
+#: instead - always text, never the bool passfail judges. Their schemas below
+#: refuse it at validation (_refuse_passfail); output_types_for() keeps it off
+#: the list a tool offers. A UserLoading also returns text (a path), but is
+#: left to the run-time check, by choice.
+PASSFAIL_REFUSED_STEP_TYPES: dict[str, str] = {
+    "userinteraction": "the text of the button pressed",
+    "userwrite": "the text the operator typed",
+}
+
+
+def output_types_for(steptype: str) -> dict[str, type[BaseModel]]:
+    """
+    The output types a step of this (lowercased) steptype may name:
+    OUTPUT_SCHEMAS, without `passfail` where the steptype refuses it - for the
+    output-type list a tool offers. An unknown steptype gets the full set.
+    """
+    if steptype in PASSFAIL_REFUSED_STEP_TYPES:
+        return {name: model for name, model in OUTPUT_SCHEMAS.items() if name != "passfail"}
+    return dict(OUTPUT_SCHEMAS)
+
+
+def _refuse_passfail(outputs: dict[Any, Any], steptype: str) -> dict[Any, Any]:
     """
     Refuse a `passfail` entry on a step whose output is always text.
 
     passfail judges a bool, and text is never one, so the step could only
-    ever end in ERROR. Said at load, before any hardware has run.
+    ever end in ERROR. Said at load, before any hardware has run. What the
+    step returns instead is PASSFAIL_REFUSED_STEP_TYPES' sentence.
     """
+    returns = PASSFAIL_REFUSED_STEP_TYPES[steptype]
     for name, entry in outputs.items():
         if isinstance(entry, PassfailOutput):
             _refuse(
@@ -500,7 +529,7 @@ class UserInteractionStepSchema(_OrdinaryStep):
     @field_validator("outputs")
     @classmethod
     def _no_passfail(cls, outputs: dict[Any, Any]) -> dict[Any, Any]:
-        return _refuse_passfail(outputs, "the text of the button pressed")
+        return _refuse_passfail(outputs, "userinteraction")
 
 
 class UserWriteStepSchema(_OrdinaryStep):
@@ -515,7 +544,7 @@ class UserWriteStepSchema(_OrdinaryStep):
     @field_validator("outputs")
     @classmethod
     def _no_passfail(cls, outputs: dict[Any, Any]) -> dict[Any, Any]:
-        return _refuse_passfail(outputs, "the text the operator typed")
+        return _refuse_passfail(outputs, "userwrite")
 
 
 class UserLoadingStepSchema(_OrdinaryStep):
@@ -533,9 +562,23 @@ class UserLoadingStepSchema(_OrdinaryStep):
     )
 
 
-class WaitStepSchema(_OrdinaryStep):
+#: What a Wait step refuses on itself, with the sentence the author reads.
+WAIT_STEP_REFUSED_KEYS: dict[str, str] = {
+    "inputs": "a Wait step takes no 'inputs': 'wait_time' is written directly on the step",
+    "outputs": "a Wait step returns nothing, so it takes no 'outputs'",
+}
+
+
+class WaitStepSchema(_NamedStep):
     steptype: Literal["wait"] = Field(description="Pauses the run for a fixed time.")
     wait_time: Any = Field(description="How long to wait, in seconds.", examples=[2])
+    inputs: None = None
+    outputs: None = None
+
+    @field_validator(*WAIT_STEP_REFUSED_KEYS, mode="before")
+    @classmethod
+    def _refuse_key(cls, value: Any, info: ValidationInfo) -> NoReturn:
+        _refuse(WAIT_STEP_REFUSED_KEYS[str(info.field_name)])
 
 
 class SequenceStepSchema(_StepFields):

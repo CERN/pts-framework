@@ -4,8 +4,8 @@
 
 """
 The test functions hal_demo.yml calls: test code reaching bench devices by
-logical name. The names are declared in config.ini, one [hardware.<name>]
-section each - see the comment at the top of hal_demo.yml.
+logical name. The names are declared in bench.ini (beside config.ini), one
+[<name>] section each - see the comment at the top of hal_demo.yml.
 """
 
 from pypts.hal import get_device

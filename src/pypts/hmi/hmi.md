@@ -13,7 +13,7 @@ Two concrete frontends (GUI and CLI) share one protocol base class.
 | File | Owns |
 |------|------|
 | `hmi_client.py` | `HmiClient` — the protocol base class shared by GUI and CLI |
-| `cli/cli.py` | `Cli` — text-based frontend, runs in the launcher process |
+| `cli/cli.py` | `CLI` — text-based frontend, runs in the launcher process |
 | `gui/` | PySide6 GUI — runs in its own process; see `gui/gui.md` |
 
 A third subclass lives outside this folder: `pypts.api.embedding.ApiClient`, the frontend with
@@ -22,10 +22,12 @@ no presentation that `pypts.api.Pts` drives from code (`api/api.md`).
 ## `HmiClient` (the protocol half)
 
 Owns:
-- **Polling** — a background thread calls `poll_core()` on a tick, reads messages from
-  `from_core`, dispatches to `show_*` hooks.
-- **Sending** — `send(message)` wraps `self.core.send(message)`. All outbound messages
-  go here.
+- **Polling** — `poll_core()` drains `from_core` and dispatches to the `show_*` hooks;
+  each frontend drives it on its own tick (CLI: a background thread; GUI: a `QTimer`;
+  `ApiClient`: `start_polling()`).
+- **Sending** — each command method (`load_recipe()`, `start_sequence()`,
+  `stop_sequence()`, …) sends its message through `self.core.send(...)`; there is no
+  shared `send()` wrapper.
 - **Handshake** — `wait_until_stopped(grace_s)` spins until `self.running` is `False`
   (set by `stop()` when `StopHmi` is handled) or the grace period expires. `stop()` sends
   `HmiStopped` from a `finally`, because it swallows what `on_stop()` raises — the GUI closes
@@ -87,6 +89,7 @@ it names a run log; the defaults log at DEBUG), `RunPaused` / `RunResumed` (hook
 nothing), `ReportReady`, `UserPromptRequest`, `UserTextRequest`,
 `UserPathRequest` (hook `ask_user_path()`; the default declines with a WARNING, like
 `ask_user_text()`), `ModuleErrorReported`, `StatusChanged`, `StopHmi`, `ConfigParameterResult` (hook
-`show_config_parameter_result()`; the default logs at DEBUG).
+`show_config_parameter_result()`; the default logs at DEBUG), `RunMetadata` (hook
+`show_run_metadata(values)`, passed the `(name, value)` tuples; the default logs at DEBUG).
 
 Full catalogue: `messages/messages.md`.

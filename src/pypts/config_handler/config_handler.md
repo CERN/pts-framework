@@ -10,17 +10,20 @@ re-reading the four modules.
 
 ---
 
-## The four files
+## The files
 
 | File | Owns |
 |---|---|
-| `file_locations.py` | *Where* the file is. `platformdirs`, and the seam tests monkeypatch. |
+| `file_locations.py` | *Where* the files are. `platformdirs`, and the seam tests monkeypatch; `bench_file_path()` puts `bench.ini` beside `config.ini`. |
 | `configuration_schema.py` | *What* the file contains: section → key → type, default, allowed values; `CONFIG_VERSION`. |
 | `config_template.ini` | The shipped defaults **and** the comments the user reads. |
 | `template_writer.py` | Writing the file without throwing the comments away: `render()` a new file from the template, `replace_value()` one value in an existing file. |
 | `config_handler.py` | The singleton: load, create, validate, get/set, dump. |
+| `bench_config.py` | Reads — or creates from the template — `bench.ini`, the bench's device file: `BenchConfig`, `BenchOutcome`, `bench_config()` (computed once per process, never raises). |
+| `bench_template.ini` | The comments a new `bench.ini` starts with, ending in a commented example section. It declares no device. |
 
-`__init__.py` re-exports `ConfigHandler`, `Role` and the five exception types. Nothing else
+`__init__.py` re-exports `ConfigHandler`, `Role`, `BootstrapOutcome`, the five exception
+types, and the bench file's `BenchConfig`, `BenchOutcome` and `bench_config()`. Nothing else
 is public.
 
 ---
@@ -69,10 +72,11 @@ launcher/startup.py
             ├─ reads, version matches, validates → outcome LOADED
             └─ anything wrong → defaults in memory, no write → outcome DISCARDED
   show_config_popup(...)            # launcher: popup (GUI) / banner (CLI) for CREATED/DISCARDED
-  _validate()                        # every value converted to its declared type
   get_parameter("paths.reports_dir") # decides where the session log goes
   init_logging(...)
   config.replay_bootstrap_log()      # the buffered narration finally reaches the run log
+  show_bench_notice(mode)            # calls bench_config() and shows the popup/banner when
+                                     # bench.ini was DISCARDED; CREATED/LOADED show nothing
 
 any other process / module
   ConfigHandler().get_parameter(...) # read-only; raises ConfigFileMissing if bootstrap never ran
@@ -92,10 +96,13 @@ That is exactly what lets a child process find the same file with nothing passed
 
 ```
 Windows   config  %LOCALAPPDATA%\pypts\config.ini
-          data    %LOCALAPPDATA%\pypts\{logs,reports}
+          data    %LOCALAPPDATA%\pypts\reports
 Linux     config  ~/.config/pypts/config.ini
-          data    ~/.local/share/pypts/{logs,reports}
+          data    ~/.local/share/pypts/reports
 ```
+
+`bench.ini` — the bench's device file (`bench_config.py`) — lives beside `config.ini` in the
+same config directory.
 
 Sections currently in the schema:
 
@@ -124,12 +131,11 @@ settings: the Settings dialog does not offer them and CORE refuses a
   Windows) without hardcoding a Windows path (wrong on Linux). Once written they are
   ordinary values the user may edit, and nothing recomputes them.
 
-**Hardware sections.** A `[hardware.<logical name>]` section declares one device for the
-hardware layer (`hal/hal.md` → *Configuration*). The schema types none of its keys — they are
-the driver's — so it is kept verbatim and returned as text, like an unknown section, but
-**without** the WARNING (the section gets a DEBUG note instead): `configuration_schema.is_hardware_section()` tells the two apart.
-Nothing in it is mandatory, so `CONFIG_VERSION` did not change. The template ends with a
-commented example.
+**Devices are not in this file.** The bench's devices are declared in `bench.ini` — one
+bare-named section per device, read by `bench_config.py` (`hal/hal.md` → *Configuration*).
+A leftover `[hardware.<logical name>]` section in `config.ini` is an unknown section like
+any other: kept verbatim, returned as text, reported once at WARNING, consumed by nothing —
+the nudge to move the device to `bench.ini`.
 
 ---
 
@@ -139,7 +145,6 @@ commented example.
 config = ConfigHandler()
 config.get_parameter("paths.reports_dir")            # -> Path
 config.get_parameter("gui.window_width")             # -> int
-config.get_parameter("hardware.dmm1.timeout_s")      # -> str: a device section, untyped
 config.get_parameter("paths.nothing", default=None)  # -> None instead of raising
 ```
 
@@ -282,8 +287,11 @@ Two file-format details worth knowing:
 
 | Caller | Uses |
 |---|---|
-| `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.reports_dir` (the session log), `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()` |
+| `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.reports_dir` (the session log), `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()`; `bench_config()` in `show_bench_notice()` — the discarded-bench notice |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
+| `sequencer/sequencer.py` | `paths.reports_dir` (via `reports_dir_from_config()`), once per run, for the run folder |
+| `hal/local_setup.py` | `bench_config()` — the cached device sections, read on a run's first `get_device()` |
+| `helper_applications/recipe_creator/rc_logging.py` | `paths.reports_dir` for the helper tools' log files, falling back to the default reports dir when there is no configuration to read |
 | `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
 | `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` when the window opens (template defaults if there is no config); `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
 | `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
@@ -328,7 +336,7 @@ invisible.
 otherwise outlive the `tmp_path` it was pointed at. **Only tests may call it**: a process that
 dropped its configuration mid-run would be reading a different file from its own threads.
 
-`tests/unit_tests/test_config_handler.py` (~47 tests) covers creation, reading, the singleton
+`tests/unit_tests/test_config_handler.py` (58 tests) covers creation, reading, the singleton
 and its thread safety, write permission, validation, unknown sections, the structure-version
 mismatch, the bootstrap-log narration, comment preservation, and the schema/template
 agreement.
@@ -345,8 +353,8 @@ Roadmap §1.3 is the authority; the TODOs live there, not in code comments. In s
   and to act on it — not planned.
 - **`restore_default()` and `dump()` have no framework caller** — API surface only the tests
   exercise.
-- **Device sections are untyped.** A wrong key in `[hardware.<name>]` is found only when the
-  driver reads it (at the first `get_device()`), not at start-up.
+- **Device sections (in `bench.ini`) are untyped.** A wrong key in a device section is found
+  only when the driver reads it (at the first `get_device()`), not at start-up.
 - **Secrets are masked in the log, not protected on disk.** `_note_active_configuration()`,
   `dump()` and `set_parameter()`'s INFO line ("Setting '...' changed to '******'."), and CORE's
   refused-change DEBUG line, show a key named like a password (`utilities/common.py` →

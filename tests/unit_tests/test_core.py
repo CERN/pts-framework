@@ -1172,6 +1172,61 @@ def test_every_watchdog_module_has_a_friendly_source_name():
 
 
 # --------------------------------------------------------------------------
+# The main loop survives its own machinery failing
+# --------------------------------------------------------------------------
+
+
+def test_a_failure_in_the_periodic_tasks_is_reported_and_starts_the_shutdown(
+    monkeypatch, caplog
+):
+    """
+    CORE is the module errors are reported *to*, so an exception out of its own
+    periodic machinery must not kill it silently: the reason goes in the log,
+    the operator is shown it, and the ordinary shutdown choreography runs -
+    nothing new is invented for this case.
+    """
+    from pypts.messages.core_hmi_communication import ModuleErrorReported
+    from pypts.messages.core_sequencer_communication import StopSequencer
+
+    core = build_core_that_spawns_nothing()
+
+    def broken_watchdog():
+        raise RuntimeError("the watchdog tripped over its own feet")
+
+    monkeypatch.setattr(core, "do_periodic_tasks", broken_watchdog)
+
+    with caplog.at_level(logging.DEBUG):
+        core.main_loop()  # must return on its own, not raise
+
+    assert core.shutting_down is True
+    assert core.running is False
+    assert any(isinstance(m, StopSequencer) for m in core.to_sequencer.receive())
+    reported = [m for m in core.to_hmi.receive() if isinstance(m, ModuleErrorReported)]
+    assert reported
+    assert "tripped over its own feet" in reported[0].error.message
+    assert reported[0].error.operation == "Core.main_loop"
+
+
+def test_a_broken_shutdown_check_still_lets_core_leave(monkeypatch):
+    """
+    The one failure the shutdown choreography cannot absorb is a failure of the
+    choreography itself: check_stop_status() is what clears `running`, so
+    waiting on the deadline it manages would spin forever. Leaving is all
+    that is left.
+    """
+    core = build_core_that_spawns_nothing()
+
+    def broken_check():
+        raise RuntimeError("the deadline arithmetic went wrong")
+
+    monkeypatch.setattr(core, "check_stop_status", broken_check)
+
+    core.main_loop()  # must return on its own, not raise and not spin
+
+    assert core.running is False
+
+
+# --------------------------------------------------------------------------
 # SetConfigParameter - CORE is the single runtime writer of config.ini
 # --------------------------------------------------------------------------
 

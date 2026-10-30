@@ -529,6 +529,39 @@ def test_step_result_captures_errors_with_traceback():
     assert "Traceback" in result.error_info
 
 
+def test_a_failing_assert_is_the_dut_failing_the_check_not_a_software_fault():
+    """assert in test code is the author's own pass/fail check (decision
+    2026-10-16): a failing one is FAIL with the assert's message as the
+    reason, never ERROR - a bad DUT must not read as a broken test setup."""
+
+    class Asserts(Step):
+        def _step(self, runtime, step_input):
+            voltage = 4.2
+            assert 4.9 <= voltage <= 5.1, "voltage 4.2 is not between 4.9 and 5.1"
+
+    result = Asserts(step_name="check_rail", inputs={"channel": 2}).run(Runtime())
+
+    assert result.result is ResultType.FAIL
+    assert "voltage 4.2 is not between 4.9 and 5.1" in result.error_info
+    # A FAIL reason, not an error: no traceback, no operator ERROR line.
+    assert "Traceback" not in result.error_info
+    assert result.error_summary == ""
+    # The reason keeps the inputs, as any FAIL reason does.
+    assert "channel = 2" in result.error_info
+
+
+def test_a_bare_assert_still_gives_the_fail_a_reason():
+    class Asserts(Step):
+        def _step(self, runtime, step_input):
+            voltage = 4.2
+            assert voltage >= 4.9
+
+    result = Asserts(step_name="check_rail").run(Runtime())
+
+    assert result.result is ResultType.FAIL
+    assert "assert" in result.error_info
+
+
 def test_a_skipped_step_is_not_executed():
     step = Raises(step_name="never", skip=True)
     result = step.run(Runtime())
@@ -1841,52 +1874,8 @@ def test_skipping_an_indexed_step_skips_every_generated_step():
     assert [generated["skip"] for generated in expanded] == [True, True]
 
 
-def test_an_indexed_step_may_not_carry_an_id():
-    """One id would be handed to N steps, and the step table is keyed by id."""
-    from pypts.step.indexed_step import check_indexed_step
-
-    problems = check_indexed_step(an_indexed_step(id="12345678-1234-5678-1234-567812345678"))
-
-    assert any("'id'" in problem for problem in problems)
-
-
-def test_mappings_on_the_indexed_step_itself_are_refused():
-    """They would apply to nothing; silently ignoring them would be worse."""
-    from pypts.step.indexed_step import check_indexed_step
-
-    problems = check_indexed_step(an_indexed_step(inputs={"a": {"value": 1}}))
-
-    assert any("template" in problem for problem in problems)
-
-
-def test_an_empty_or_malformed_set_list_is_refused():
-    from pypts.step.indexed_step import check_indexed_step
-
-    assert check_indexed_step(an_indexed_step(parameter_sets=[]))
-    assert check_indexed_step(an_indexed_step(parameter_sets="not a list"))
-    assert check_indexed_step(an_indexed_step(parameter_sets=[{}]))
-
-
-def test_an_unknown_key_in_a_set_names_what_would_have_worked():
-    from pypts.step.indexed_step import check_indexed_step
-
-    problems = check_indexed_step(
-        an_indexed_step(parameter_sets=[{"inputs": {"a": 1}, "outputs": {"sum": 2}}])
-    )
-
-    assert any("outputs" in problem and "inputs, expect" in problem for problem in problems)
-
-
-def test_an_indexed_step_cannot_be_the_template_of_another():
-    from pypts.step.indexed_step import check_indexed_step
-
-    problems = check_indexed_step(an_indexed_step(template=an_indexed_step()))
-
-    assert any("template" in problem for problem in problems)
-
-
 def test_expanding_a_broken_indexed_step_raises_rather_than_guessing():
-    """The parser validates first; this is the guard for a caller that did not."""
+    """The schema validates first; this is the guard for a caller that did not."""
     from pypts.step.indexed_step import expand_indexed_step
 
     with pytest.raises(ValueError):

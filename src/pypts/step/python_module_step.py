@@ -13,7 +13,7 @@ resolves against the recipe's own folder, or imports a dotted name - the old
 rglob search is gone too.
 
 One concrete step type per module; the package docstring in __init__.py
-holds the map of the ported types and of what still lives in old_code.
+says who owns what, and step/step.md holds the type catalogue.
 """
 
 import ast
@@ -67,8 +67,8 @@ def load_python_module(module_ref: str, base_dir: str) -> ModuleType:
       so stdlib and installed code work too.
 
     Deliberately not ported: the old engine's recursive project-wide search
-    for the file (old_code/steps.py __load_module) - a heuristic with a bare
-    except at its heart. Here the recipe says where its code is.
+    for the file (its __load_module) - a heuristic with a bare except at its
+    heart. Here the recipe says where its code is.
     """
     path = _module_file_beside(module_ref, base_dir)
     if path is not None:

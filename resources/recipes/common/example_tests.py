@@ -10,7 +10,7 @@ and the two showcases - which name it as `module: ../common/example_tests.py`.
 
 Framework-free on purpose: a PythonModuleStep calls a plain function with the
 recipe's resolved inputs as keyword arguments, and judges whatever comes back.
-A dict is judged key by key against the step's output_mapping; anything else
+A dict is judged key by key against the step's outputs; anything else
 is wrapped as {"output": value}.
 """
 

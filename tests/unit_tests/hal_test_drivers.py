@@ -43,6 +43,19 @@ class FailingConnectDriver(Other):
         pass
 
 
+class ReservedNameDriver(Other):
+    """Names a method 'close', which ConnectionDriver reserves for itself."""
+
+    def connect(self, config):
+        pass
+
+    def teardown(self):
+        pass
+
+    def close(self):
+        pass
+
+
 class UnsendableResultDriver(Other):
     """Returns a value pickle cannot carry back."""
 
@@ -109,7 +122,8 @@ class MarkingDriver(Other):
     Writes each connect() and teardown() into the file its `marks` key names,
     so a teardown in a fresh driver process can be seen from the test. Its
     connect() hangs while a file named like that one plus `.hang` exists, and
-    its teardown() hangs while one named plus `.tdhang` exists.
+    its teardown() hangs while one named plus `.tdhang` exists - or once,
+    deleting the file first, when one named plus `.tdhang_once` exists.
     """
 
     def __init__(self):
@@ -122,9 +136,13 @@ class MarkingDriver(Other):
         self._mark("connect")
 
     def teardown(self):
-        if self._marks and os.path.exists(self._marks + ".tdhang"):
-            time.sleep(60)
         if self._marks:
+            once = self._marks + ".tdhang_once"
+            if os.path.exists(once):
+                os.remove(once)
+                time.sleep(60)
+            if os.path.exists(self._marks + ".tdhang"):
+                time.sleep(60)
             self._mark("teardown")
 
     def hang(self, seconds):

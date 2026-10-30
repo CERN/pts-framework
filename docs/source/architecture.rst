@@ -15,12 +15,14 @@ The launcher (``python -m pypts``) starts three processes, always with ``spawn``
 
 All communication is by typed dataclass messages on a ``QueueWrapper``. Modules never
 call each other and never touch queues directly; everything goes through CORE, except
-log records, which go straight to the Logger. Only the HMI↔CORE link crosses a process
-boundary. Every message handler is a ``match`` closed with ``unhandled()``, so a
-forgotten message raises instead of being silently dropped.
+log records, which go straight to the Logger. Of the message links, only HMI↔CORE
+crosses a process boundary. The hardware layer also starts one driver process per
+opened device, Pipe-connected, outside the message layer. Every message handler is a
+``match`` closed with ``unhandled()``, so a forgotten message raises instead of being
+silently dropped.
 
 Where to read more:
 
 - ``src/pypts/messages/messages.md`` — every link and message.
 - ``src/pypts/<module>/<module>.md`` — the context file beside each module.
-- ``pypts_implementation_status.html`` — status and roadmap.
+- ``pypts_implementation_status.html`` — status.

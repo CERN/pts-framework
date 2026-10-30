@@ -208,6 +208,23 @@ def test_html_escapes_what_the_recipe_wrote(tmp_path):
     assert "&lt;script&gt;" in html_text
 
 
+def test_html_escapes_the_run_level_values_too(tmp_path):
+    """The header lines come from the recipe as well, not only the table."""
+    report = build_report(tmp_path)
+    run = RunStarted(
+        recipe_name="Wait demo",
+        recipe_description="Two short waits",
+        recipe_version="1.0 <beta>",
+    )
+
+    drive(report, run, a_step_executed(), RunFinished(result=ResultType.DONE), GenerateReport())
+
+    run_dir = next(path for path in tmp_path.iterdir() if path.is_dir())
+    html_text = the_one(run_dir, ".html").read_text(encoding="utf-8")
+    assert "<beta>" not in html_text
+    assert "1.0 &lt;beta&gt;" in html_text
+
+
 # --------------------------------------------------------------------------
 # Run boundaries and robustness
 # --------------------------------------------------------------------------

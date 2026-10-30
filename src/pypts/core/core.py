@@ -234,12 +234,13 @@ class Core:
     #: Without it CORE waits forever for a module that will never answer, and
     #: the only thing that ends the run is the launcher's own join timeout
     #: terminating the process - which loses the log line saying who was to
-    #: blame. Fifteen seconds holds the worst case with margin: the Sequencer
-    #: may need SEQUENCE_JOIN_TIMEOUT_S (2 s) for a running sequence, then up
-    #: to ABANDONED_DEVICES_TIMEOUT_S (6 s) tearing down the devices of one
-    #: that would not stop. An ordinary shutdown takes a fraction of it. The
-    #: launcher's CORE_SHUTDOWN_TIMEOUT_S must stay above it.
-    SHUTDOWN_TIMEOUT_S = 15.0
+    #: blame. Twenty-five seconds holds the worst case with margin: the
+    #: Sequencer may need SEQUENCE_JOIN_TIMEOUT_S (2 s) for a running
+    #: sequence, then up to ABANDONED_DEVICES_TIMEOUT_S (16 s) tearing down
+    #: the devices of one that would not stop. An ordinary shutdown takes a
+    #: fraction of it. The launcher's CORE_SHUTDOWN_TIMEOUT_S must stay
+    #: above it.
+    SHUTDOWN_TIMEOUT_S = 25.0
 
     def __init__(
         self,
@@ -405,8 +406,23 @@ class Core:
         log.debug("CORE entered its main event loop.")
         while self.running:
             self.poll_all_sources()
-            self.do_periodic_tasks()
-            self.check_stop_status()
+            # Guarded like poll(), and for the same reason: CORE is the module
+            # errors are reported *to*, so an exception out of its own periodic
+            # machinery must not kill it without a reason in the log. Unlike a
+            # bad message, a broken periodic task repeats every tick, so this
+            # does not carry on: the failure is reported once and the ordinary
+            # shutdown runs. If it strikes again during that shutdown - the
+            # shutdown checker itself is what is broken - leaving is all that
+            # is left, because nothing would ever clear self.running.
+            try:
+                self.do_periodic_tasks()
+                self.check_stop_status()
+            except Exception as exc:  # noqa: BLE001 - report_own_error() does the logging
+                self.report_own_error(exc, "Core.main_loop")
+                if self.shutting_down:
+                    self.running = False
+                else:
+                    self.stop_all_modules()
             time.sleep(0.01)
         log.debug("CORE left its main event loop.")
 
@@ -794,9 +810,10 @@ class Core:
         operator. CORE deciding what reaches the frontend is what keeps the
         runtime log readable during a long run.
 
-        Two records, per logging_rules.md section 7: one the operator can read, naming
-        the part of the software that failed and what it said, and one at DEBUG
-        naming the method and the exception type, with the traceback under it.
+        Two or three records, per logging_rules.md section 7: one the operator
+        can read, naming the part of the software that failed and what it said,
+        one at DEBUG naming the method, the exception type and the severity, and
+        a separate DEBUG record with the traceback, only when there is one.
         The traceback never appears above DEBUG - in the operator's panel it
         hides the line that matters.
         """

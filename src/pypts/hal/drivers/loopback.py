@@ -2,9 +2,10 @@
 Loopback - a device with nothing behind it.
 
 Used by the hardware layer's own tests and by the hal demo recipe, and the
-quickest way to see the layer work on a machine with no instrument:
+quickest way to see the layer work on a machine with no instrument - one
+section in bench.ini:
 
-    [hardware.loop1]
+    [loop1]
     driver = pypts.hal.drivers.loopback.LoopbackDriver
 """
 

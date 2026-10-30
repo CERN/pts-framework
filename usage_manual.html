@@ -275,13 +275,15 @@ the sequence continues with the next step.</p>
 <h3>Menus</h3>
 <div class="wrap"><table>
   <tr><th>Menu</th><th>Items</th></tr>
-  <tr><td>File</td><td>Open Recipe · Open Recent (last 10 recipes that loaded) · Unload Recipe
+  <tr><td>File</td><td>Open Recipe · Open Recent (last 10 recipes that loaded · Clear list) · Unload Recipe
       (the same as the × button) · Open Config
       (opens <code>config.ini</code> in your editor) · Restart (closes pypts and starts it again,
       so your edits to <code>config.ini</code> take effect; the recipe is not reopened; greyed out
       during a run) · Exit</td></tr>
   <tr><td>Edit</td><td><strong>Recipe Editor</strong> (opens the Recipe Creator, on the loaded
       recipe if there is one; save there, then open the recipe again here to run it) ·
+      <strong>Recipe Editor v2</strong> (opens the loaded recipe in the new editor — see
+      <a href="#tools">Helper tools</a>) ·
       <strong>Engineering Mode</strong> (see <em>Engineering mode</em> below; greyed out during a run) ·
       <strong>Settings</strong>: theme, window, folders, log level…; changes apply at the <em>next</em> start, except the theme and the window mode and size, which you try straight away — keep a window within 15 seconds or it goes back; Keep saves it. Save closes Settings once
 everything is saved, and only stays open to tell you about a setting that could not be saved. The <strong>Storage</strong> page shows the base folder and opens it in the file manager with <strong>Open</strong>; pypts never deletes reports or run logs, so remove what you no longer need there. <strong>Advanced → Clear recent recipes</strong> empties the Open Recent list straight away. <strong>Advanced → Restore default settings</strong> puts every setting back and restarts pypts; it does not work during a run.</td></tr>
@@ -294,7 +296,7 @@ everything is saved, and only stays open to tell you about a setting that could 
 bar says <strong>ENGINEERING MODE</strong> and the window title ends in
 <strong>[ENGINEERING MODE]</strong> (so the taskbar shows it too), a click in the step table picks rows instead of
 showing the step's YAML, and a group folds and unfolds by double-click. It lasts until you
-switch it off or close pypts; loading, unloading or switching the sequence starts your picks
+switch it off or close pypts; loading or unloading a recipe starts your picks
 afresh.</p>
 <ul>
   <li><strong>Quick retest — <kbd>Space</kbd>.</strong> Click a row to pick it,
@@ -320,10 +322,11 @@ afresh.</p>
       The main one is marked <code>(main)</code>.</td></tr>
   <tr><td><code>start_sequence &lt;name&gt;</code></td><td>Runs that sequence. Results print
       as steps finish.</td></tr>
-  <tr><td><code>stop_sequence</code></td><td>Aborts the current run.</td></tr>
+  <tr><td><code>stop_sequence</code> (or <code>stop</code>)</td><td>Aborts the current
+      run.</td></tr>
   <tr><td><code>status</code></td><td>Shows the current status.</td></tr>
   <tr><td><code>help</code></td><td>Lists the commands.</td></tr>
-  <tr><td><code>exit</code> (or <code>quit</code>, <code>stop</code>)</td><td>Leaves PyPTS.
+  <tr><td><code>exit</code> (or <code>quit</code>)</td><td>Leaves PyPTS.
       <kbd>Ctrl+C</kbd> does the same.</td></tr>
 </table></div>
 <pre><code>pypts&gt; load_recipe resources/recipes/waitstep_recipes/wait_recipe.yml
@@ -334,8 +337,7 @@ pypts&gt; start_sequence Main
 pypts&gt; exit</code></pre>
 <div class="warn"><strong>Careful:</strong> the CLI can't answer questions yet. Any step that asks
 the operator something (a choice, text, or a path) is declined and ends as <code>ERROR</code>.
-Use the GUI or the API for recipes that ask questions. Also, <code>stop</code> exits the
-program. To abort a run, type <code>stop_sequence</code>.</div>
+Use the GUI or the API for recipes that ask questions.</div>
 
 <h3>Without Qt</h3>
 <p>CLI mode doesn't need PySide6, so it works on a bench with no display.</p>
@@ -392,6 +394,8 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
   <tr><th>What</th><th>Windows</th><th>Linux</th></tr>
   <tr><td>Settings (<code>config.ini</code>)</td><td><code>%LOCALAPPDATA%\pypts\config.ini</code></td>
       <td><code>~/.config/pypts/config.ini</code></td></tr>
+  <tr><td>Devices (<code>bench.ini</code>)</td><td><code>%LOCALAPPDATA%\pypts\bench.ini</code></td>
+      <td><code>~/.config/pypts/bench.ini</code></td></tr>
   <tr><td>Reports and logs</td><td><code>%LOCALAPPDATA%\pypts\reports</code></td>
       <td><code>~/.local/share/pypts/reports</code></td></tr>
 </table></div>
@@ -422,13 +426,17 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       ignored until you delete it to have it recreated (or add the section and the version by hand).
       Fix the file, or delete it to have it recreated. Saving in <em>Edit → Settings</em> changes only
       that setting's line; your comments and anything you added by hand stay where they are.</li>
+  <li><strong>bench.ini</strong>: created empty from a template on the first start, beside
+      <code>config.ini</code>. One bare-named section per device (<code>[ssh1]</code>) — see
+      <a href="#hardware">§10</a>.</li>
 </ul>
 
 <h2 id="hardware">10. Hardware devices</h2>
-<p>Test code reaches a device by a <strong>logical name</strong>; <code>config.ini</code> says what
-that name is. Each device runs its driver in a process of its own, opened the first time a run
+<p>Test code reaches a device by a <strong>logical name</strong>; <code>bench.ini</code> (beside
+<code>config.ini</code>) says what that name is — one section per device, named after the device.
+Each device runs its driver in a process of its own, opened the first time a run
 asks for it and closed when the run ends.</p>
-<pre><code>[hardware.ssh1]
+<pre><code>[ssh1]
 driver = pypts.hal.drivers.ssh.SshDriver
 host = 192.168.0.10
 username = tester
@@ -442,14 +450,16 @@ def read_kernel():
   <li><strong>Install the driver's library</strong>: <code>pip install pts-framework[ssh]</code>
       (also <code>[ni]</code>, <code>[serial]</code>, or <code>[hardware]</code> for all).</li>
   <li><strong>Optional key</strong>: <code>call_timeout_s</code> (longest one call may take,
-      default 60). A call that takes longer is stopped, and PyPTS connects to the device again
-      to tear it down (switch it off) before the step fails; the log says whether that worked
-      (<em>may still be energised</em> if not). Closing PyPTS during a run that won't stop
-      shows <em>Stopping: closing the devices...</em> and gives every device of that run one
-      5-second teardown attempt; a device whose process is then stopped without teardown, or
-      that was in a call, is named in a CRITICAL line telling you to check the bench before
-      touching it. Closing can take up to about 15 seconds. Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
-  <li><strong>Edits and defaults</strong>: device sections are read from the configuration PyPTS loaded at start, so a hand edit of <code>config.ini</code> applies from the next start. <strong>Restore default settings</strong> recreates <code>config.ini</code> and removes the <code>[hardware.*]</code> sections too: copy them first.</li>
+      default 60). A call that takes longer is stopped and the step fails; the device is torn
+      down (switched off) when the run closes it: a teardown attempt first, then - if the
+      driver hung, crashed or was stopped - PyPTS connects to the device again and tears it
+      down on a fresh connection. The log says whether that worked (<em>may still be
+      energised</em> if not). Closing PyPTS during a run that won't stop shows
+      <em>Stopping: closing the devices...</em> and runs the same escalation for every device
+      of that run, one after another, within a shared 16-second budget; a device that was
+      still not torn down is named in a CRITICAL line telling you to check the bench before
+      touching it. Closing can take up to about 25 seconds. Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
+  <li><strong>Edits and defaults</strong>: <code>bench.ini</code> is read once, at start, so a hand edit applies from the next start (<em>File → Restart</em> in the GUI). <strong>Restore default settings</strong> recreates <code>config.ini</code> only; <code>bench.ini</code> and your device sections are not touched.</li>
   <li><strong>SSH</strong>: an unknown host key is refused; add the host to your
       <code>known_hosts</code>, name a file with <code>known_hosts =</code>, or set
       <code>accept_unknown_host = true</code>. A <code>password</code> key works, but the file is
@@ -460,6 +470,9 @@ def read_kernel():
       is a weather station on the internet (keys <code>latitude</code>, <code>longitude</code>, <code>place</code>,
       <code>http_timeout_s</code>; needs internet access); <code>resources/recipes/HAL_recipes/meteo_demo.yml</code>
       uses one.</li>
+  <li><strong>Writing your own driver</strong>: one class with <code>connect()</code>,
+      <code>teardown()</code> and the instrument's verbs. The walkthrough, with a complete
+      example, is <code>resources/how_to_write_a_driver.html</code>.</li>
   <li><strong>Outside PyPTS</strong>: <code>with LocalSetup.from_ini("bench.ini"):</code> (from
       <code>pypts.hal</code>) makes <code>get_device()</code> work in a script of your own. Put that code under
       <code>if __name__ == "__main__":</code>: each device's process starts by re-reading your script.</li>
@@ -515,6 +528,8 @@ def read_kernel():
   <tr><td>"GUI mode needs PySide6…"</td><td>Install PySide6, or start with <code>--mode cli</code>.</td></tr>
   <tr><td>"pypts configuration discarded"</td><td>Your <code>config.ini</code> is broken or outdated.
       The run continues on defaults. Fix the file, or delete it.</td></tr>
+  <tr><td>"pypts bench file discarded"</td><td>Your <code>bench.ini</code> could not be read; that
+      start has no devices. Fix the file, or delete it to have it recreated, then restart.</td></tr>
   <tr><td>"No image available" in the right-hand panel</td><td>The recipe names a picture that
       isn't there. The message shown when the recipe loaded lists which ones. Put the files next
       to the recipe (or fix the paths in it); the run itself is not affected.</td></tr>

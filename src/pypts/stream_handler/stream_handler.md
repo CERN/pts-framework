@@ -7,8 +7,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 # stream_handler — placeholder (not implemented)
 
 **No code.** The package holds an empty `__init__.py` and this file. Nothing imports it.
-Building it is **roadmap Phase 3** (`pypts_implementation_status.html` → *Phase 3 — Frontends
-to spec*).
+Building it is **roadmap Phase 3** (`pypts_implementation_status.html`).
 
 ## Planned role
 

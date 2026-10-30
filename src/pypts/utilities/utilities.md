@@ -17,7 +17,7 @@ Two decorators, two functions — pick carefully:
 | Name | Use for | On failure |
 |------|---------|------------|
 | `@catch_and_report_errors()` | Event loop methods | Sends `ModuleError`, returns `None`, loop continues |
-| `@report_and_reraise()` | Step execution layer | Sends `ModuleError`, re-raises so `StepResult` gets `ERROR` |
+| `@report_and_reraise()` | Designed for the step execution layer; currently applied nowhere — `Step.run()` catches broadly itself and turns a failure into a `StepResult` ERROR | Sends `ModuleError`, re-raises |
 | `report_error(self, exc, severity=…)` | Recognised exceptions | Sends `ModuleError`, does not raise |
 | `report_problem(self, message, severity=…)` | Refusals / bad state | Sends `ModuleError`, does not raise |
 
@@ -49,6 +49,8 @@ not the call chain. A method carries it only when a failure inside it has nowher
 | `handle_core_message()` | one bad message fails alone, without abandoning the rest of the batch |
 | `do_periodic_tasks()` | called straight from the loop body; heartbeats depend on it |
 | a thread entry point (`start()`, `Sequencer.execute_sequence()`) | there is no outer frame on that thread |
+| `HmiClient.stop()` | a failure there would lose the `HmiStopped` goodbye |
+| the GUI's `poll_log()` and its operator-action Qt slots (12 methods in `gui.py`) | an exception escaping a Qt slot has nowhere else to be reported |
 
 Everything below those is **undecorated** and lets its failure unwind to one of them. Stacking
 them down a call chain does not add a net — only the innermost one ever fires — and it lets a
@@ -94,7 +96,8 @@ the configuration).
   `<folder>/<prefix>_<YYYYmmdd_HHMMSS>.log` as a string, in naive local time (the Logger
   uses local time too). `LOG_FILE_PREFIX = "pypts"`. The launcher calls it with the reports
   folder (the session log), the Sequencer with a run folder (the run log), both with the
-  default prefix; the Recipe Creator with `prefix="recipe_creator"` for its own log
+  default prefix; the Recipe Creator with `prefix="recipe_creator"` and the Recipe Editor v2
+  with `prefix="recipe_editor"` for their own logs — both through `rc_logging.start_logging()`
   (`helper_applications/recipe_creator/rc_logging.py`).
 - `make_run_folder(reports_dir, recipe_name)` — creates and returns
   `<reports_dir>/<YYYYmmdd_HHMMSS>_<recipe name>` (`safe_name_part()`: non-alphanumerics

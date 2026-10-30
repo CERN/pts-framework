@@ -495,15 +495,22 @@ def test_a_typo_in_a_step_key_is_named_before_anything_is_built():
     assert "steps[1] 'Only wait': skipp: Extra inputs are not permitted" in message
 
 
+def _valid_with_outputs(output: str) -> str:
+    """VALID with its Wait swapped for a UserWrite carrying `output` - a Wait refuses outputs."""
+    step = "  - steptype: UserWrite\n    step_name: Only wait\n    message: m\n"
+    return VALID.replace(
+        "  - steptype: Wait\n    step_name: Only wait\n    wait_time: '0.01'\n",
+        step + output,
+    )
+
+
 def test_a_nested_problem_reads_without_the_union_tag():
-    output = "    outputs:\n      r: {type: range, min: 1}\n"
-    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n" + output)
+    text = _valid_with_outputs("    outputs:\n      r: {type: range, min: 1}\n")
     assert "steps[1] 'Only wait': outputs -> r -> max: Field required" in _problem(text)
 
 
 def test_an_output_named_like_its_type_keeps_its_name():
-    output = "    outputs:\n      range: {type: range, min: 1}\n"
-    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n" + output)
+    text = _valid_with_outputs("    outputs:\n      range: {type: range, min: 1}\n")
     assert "steps[1] 'Only wait': outputs -> range -> max: Field required" in _problem(text)
 
 
@@ -514,8 +521,7 @@ def test_a_template_problem_reads_as_the_template_s():
 
 def test_a_numeric_output_name_reads_as_a_name():
     """`1:` under outputs is a key, not a list position - and its union tag still goes."""
-    output = "    outputs:\n      1: {type: equals}\n"
-    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n" + output)
+    text = _valid_with_outputs("    outputs:\n      1: {type: equals}\n")
     assert "steps[1] 'Only wait': outputs -> 1 -> value: Field required" in _problem(text)
 
 
@@ -546,8 +552,7 @@ def test_a_bare_steptype_reads_as_a_missing_one():
 
 
 def test_a_bare_output_type_reads_as_a_missing_one():
-    output = "    outputs:\n      r: {type: }\n"
-    text = VALID.replace("    wait_time: '0.01'\n", "    wait_time: '0.01'\n" + output)
+    text = _valid_with_outputs("    outputs:\n      r: {type: }\n")
     assert "steps[1] 'Only wait': outputs -> r -> type: Field required" in _problem(text)
 
 

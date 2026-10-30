@@ -200,6 +200,7 @@ def test_recover_escalates_to_a_fresh_process_when_the_driver_cannot(caplog):
         ("hal_test_drivers.NoDeviceTypeDriver", "belongs to no device type"),
         ("hal_test_drivers.BrokenConstructorDriver", "constructor exploded"),
         ("hal_test_drivers.FailingConnectDriver", "instrument is switched off"),
+        ("hal_test_drivers.ReservedNameDriver", "reserves for itself: close"),
     ],
 )
 def test_a_device_that_cannot_open_says_why_and_leaves_nothing_running(driver_path, words):
@@ -359,27 +360,72 @@ def marking(tmp_path):
     connection.close()
 
 
-def test_a_call_that_times_out_is_torn_down_on_a_fresh_connection(marking):
-    """The stuck process cannot tear down; a fresh one connects and does, before the error."""
+def test_a_normal_close_runs_teardown_exactly_once(tmp_path):
+    """close() sends teardown as a call; the driver process's own net must not repeat it."""
+    marks = tmp_path / "marks.txt"
+    connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)})
+    connection.open()
+
+    connection.close()
+
+    assert marks_of(marks) == ["connect", "teardown"]
+
+
+def test_a_pipe_that_closes_without_a_teardown_call_still_tears_down(tmp_path):
+    """PyPTS died without a close(): the driver process's own net runs teardown."""
+    marks = tmp_path / "marks.txt"
+    connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)})
+    connection.open()
+    process = connection._process
+    pipe_end = connection._conn
+    assert process is not None
+    assert pipe_end is not None
+
+    pipe_end.close()
+    process.join(10.0)
+
+    assert process.exitcode == 0
+    assert marks_of(marks) == ["connect", "teardown"]
+    connection._conn = None
+    connection._process = None
+
+
+def test_a_call_that_times_out_only_stops_the_process_until_close(marking):
+    """No inline rescue: the timeout kills and reports; close() owns the ladder."""
     connection, marks = marking
 
-    with pytest.raises(DriverError, match="torn down on a fresh connection"):
+    with pytest.raises(DriverError, match="its driver process was stopped"):
         connection.hang(30)
 
     assert not connection.is_open()
-    assert marks_of(marks)[:3] == ["connect", "connect", "teardown"]
+    # The stuck process never tore down, and nothing reconnected yet.
+    assert marks_of(marks) == ["connect"]
 
 
-def test_a_rescue_that_cannot_connect_is_bounded_and_said(marking, monkeypatch, caplog):
+def test_closing_a_device_whose_process_was_stopped_tears_it_down_on_a_fresh_connection(marking):
+    """The second rung of the ladder: close() reconnects and tears down."""
+    connection, marks = marking
+    with pytest.raises(DriverError, match="its driver process was stopped"):
+        connection.hang(30)
+
+    connection.close()
+
+    assert not connection.is_open()
+    assert marks_of(marks) == ["connect", "connect", "teardown"]
+
+
+def test_a_close_rescue_that_cannot_connect_is_bounded_and_said(marking, monkeypatch, caplog):
+    """The last rung: the rescue fails, the ERROR says so, and nothing tries again."""
     connection, marks = marking
     monkeypatch.setattr(connection_driver, "RESCUE_TIMEOUT_S", 1.0)
+    with pytest.raises(DriverError, match="its driver process was stopped"):
+        connection.hang(30)
     (marks.parent / (marks.name + ".hang")).write_text("", encoding="utf-8")
     began = time.monotonic()
 
-    with pytest.raises(DriverError, match="could not be torn down"):
-        connection.hang(30)
+    connection.close()
 
-    # The call's 0.5 s, the rescue's 1 s, and the kills - nowhere near the hang.
+    # The rescue's 1 s and the kills - nowhere near the hang.
     assert time.monotonic() - began < 10.0
     assert marks_of(marks) == ["connect"]
     assert any(
@@ -394,7 +440,7 @@ def test_abandoning_an_idle_device_tears_it_down(marking):
     assert connection.abandon() is True
 
     assert not connection.is_open()
-    assert marks_of(marks)[:2] == ["connect", "teardown"]
+    assert marks_of(marks) == ["connect", "teardown"]
 
 
 def test_an_abandoned_device_cannot_be_opened_or_recovered_again(marking):
@@ -409,29 +455,49 @@ def test_an_abandoned_device_cannot_be_opened_or_recovered_again(marking):
         connection.open()
     assert not connection.is_open()
     # The teardown of abandon() ran; nothing ever connected again.
-    assert marks_of(marks)[:2] == ["connect", "teardown"]
-    assert marks_of(marks).count("connect") == 1
+    assert marks_of(marks) == ["connect", "teardown"]
 
 
-def test_abandoning_a_device_whose_teardown_hangs_kills_it_without_reconnecting(
-    marking, monkeypatch
-):
-    """The driver's stability is not PyPTS's job: one teardown attempt, then the kill."""
+def test_abandoning_a_device_whose_teardown_hangs_once_rescues_it(marking, monkeypatch):
+    """The ladder's second rung: the hung teardown is killed, a fresh process tears down."""
     connection, marks = marking
     monkeypatch.setattr(connection_driver, "ABANDON_TEARDOWN_TIMEOUT_S", 0.5)
+    (marks.parent / (marks.name + ".tdhang_once")).write_text("", encoding="utf-8")
+    began = time.monotonic()
+
+    assert connection.abandon() is True
+
+    # One timeout, the kill, and the rescue - nowhere near the hang.
+    assert time.monotonic() - began < 15.0
+    assert not connection.is_open()
+    # The hung teardown never marked; the fresh process connected and did.
+    assert marks_of(marks) == ["connect", "connect", "teardown"]
+
+
+def test_abandoning_a_device_whose_teardown_always_hangs_is_bounded_and_reported(
+    marking, monkeypatch, caplog
+):
+    """The driver's stability is not PyPTS's job: the ladder ends, the device is named."""
+    connection, marks = marking
+    monkeypatch.setattr(connection_driver, "ABANDON_TEARDOWN_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(connection_driver, "RESCUE_TIMEOUT_S", 3.0)
     (marks.parent / (marks.name + ".tdhang")).write_text("", encoding="utf-8")
     began = time.monotonic()
 
     assert connection.abandon() is False
 
-    # One timeout and the kill - nowhere near the hang, and no rescue's 10 s.
-    assert time.monotonic() - began < 5.0
+    # The teardown's 0.5 s, the rescue's 3 s, and the kills - nowhere near the hang.
+    assert time.monotonic() - began < 15.0
     assert not connection.is_open()
-    # The hung teardown never marked, and nothing ever connected again.
-    assert marks_of(marks) == ["connect"]
+    # Neither teardown ever marked; the rescue's connect() did.
+    assert marks_of(marks) == ["connect", "connect"]
+    assert any(
+        record.levelno == logging.ERROR and "may still be energised" in record.getMessage()
+        for record in caplog.records
+    )
 
 
-def test_abandoning_a_device_mid_call_kills_it_without_reconnecting(tmp_path):
+def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_process(tmp_path):
     """The abandoned run holds the device's lock: abandon() must not wait for it."""
     marks = tmp_path / "marks.txt"
     connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)}, call_timeout_s=60.0)
@@ -452,15 +518,16 @@ def test_abandoning_a_device_mid_call_kills_it_without_reconnecting(tmp_path):
             time.sleep(0.01)
         began = time.monotonic()
 
-        assert connection.abandon() is False
+        assert connection.abandon() is True
 
-        assert time.monotonic() - began < 5.0
+        assert time.monotonic() - began < 15.0
         zombie.join(timeout=5.0)
         assert not zombie.is_alive()
-        # The killed call ends the step as a crash; nothing rescues it.
+        # The killed call ends the step as a crash in the stuck thread.
         assert len(failures) == 1
-        assert "torn down on a fresh connection" not in failures[0]
-        assert marks_of(marks) == ["connect"]
+        assert "stopped unexpectedly" in failures[0]
+        # The rescue connected and tore down; the stuck process never did.
+        assert marks_of(marks) == ["connect", "connect", "teardown"]
         assert not connection.is_open()
     finally:
         connection.close()

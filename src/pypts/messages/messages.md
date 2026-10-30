@@ -46,9 +46,11 @@ has already happened · **STUB** declared, nothing sends or carries it out yet.
 
 Every message marked **STUB** here also carries a `NOT SENT YET` comment in the source, on the
 dataclass and again on the branch that receives it. The marker means one specific thing:
-**the receiving end is written and works; nothing constructs the message.** Only the Report
-link's export pair (`ExportReport` / `ReportExported`) is in that state today —
-`SetConfigParameter` left it in September 2026, when the GUI's Settings dialog started
+**declared, routed and matched; nothing constructs the message.** Only the Report
+link's export pair (`ExportReport` / `ReportExported`) is in that state today — and
+`ExportReport`'s receiver, `Report.export_report()`, is itself a stub that only logs
+"exporting is not available yet".
+`SetConfigParameter` left the set in September 2026, when the GUI's Settings dialog started
 sending it. Grep for it to find the set:
 
 ```bash
@@ -158,7 +160,7 @@ reaches a union, which is what stops those comments from quietly going stale.
 | `StatusChanged(text)` | EVT | One line of free text for the frontend's status bar. Anything with structure has its own message now. **Not logged above DEBUG**: the fact behind it was already written to the run log by whichever module owns it, so logging the status text too would say it twice - see `logger/logging_rules.md` section 5. |
 | `ModuleErrorReported(error)` | EVT | An error CORE decided the operator should see (severity above WARNING). |
 | `ReportReady(report_path, report_dir)` | EVT | The run's report is on disk. Sent by CORE when the Report answers `ReportGenerated`; the structured sibling of the `StatusChanged` sent beside it. `report_dir` is what a frontend's "open report folder" control opens. |
-| the 7 progress events + `RunPaused` + `RunResumed` + `RunMetadata` + the 3 requests | EVT | Forwarded from the Sequencer, unchanged. `RunMetadata` is what the GUI's top bar shows beside the recipe name, so the operator can see which unit the bench believes is in front of them. |
+| the 6 run events + `RecipeLoaded` + `RunPaused` + `RunResumed` + `RunMetadata` + the 3 requests | EVT | The 6 run events are forwarded from the Sequencer, unchanged, as are `RunPaused`, `RunResumed`, `RunMetadata` and the 3 requests; `RecipeLoaded` is built by CORE's `load_recipe()` itself. `RunMetadata` is what the GUI's top bar shows beside the recipe name, so the operator can see which unit the bench believes is in front of them. |
 | `Heartbeat` | EVT | CORE's own, at 1 Hz, and the only message that travels this way for the frontend's benefit rather than the operator's. `HmiClient.check_core_is_alive()` watches it: quiet for 5 s is a WARNING, quiet for 15 s closes the window. Without it a CORE killed outright — or one whose event loop has wedged while the process stays up — leaves the frontend showing a run that stopped long ago, with nobody left to send it `StopHmi`. CORE keeps beating all through a shutdown for the same reason: the HMI is being stopped then, and must not read the silence as an engine that died under it. |
 
 Everything on this link is **pickled**: it is the one link that still crosses a process

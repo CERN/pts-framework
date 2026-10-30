@@ -48,7 +48,12 @@ import yaml
 from pypts.helper_applications.recipe_creator.customGUIModules import ScintillaYamlEditor
 from pypts.hmi.gui.palette import get_palette
 from pypts.recipe.recipe_parser import steptype_key
-from pypts.recipe.recipe_schema import INPUT_TYPES, OUTPUT_TYPES, STEP_TYPE_REQUIRED
+from pypts.recipe.recipe_schema import (
+    INPUT_TYPES,
+    OUTPUT_TYPES,
+    STEP_TYPE_REQUIRED,
+    output_types_for,
+)
 
 
 # ── Small helpers ─────────────────────────────────────────────────────────────
@@ -722,6 +727,7 @@ class MappingRowsWidget(QWidget):
         self._seq_idx = seq_idx
         self._step_idx = step_idx
         self._key = mapping_key  # "inputs" or "outputs"
+        self._steptype = ""
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -751,6 +757,7 @@ class MappingRowsWidget(QWidget):
         if self._step_idx >= len(steps):
             return
         step = steps[self._step_idx]
+        self._steptype = steptype_key(step.get("steptype"))
         mapping = step.get(self._key) or {}
         for name, spec in mapping.items():
             self._rows_layout.addWidget(self._build_row(name, spec))
@@ -768,7 +775,7 @@ class MappingRowsWidget(QWidget):
         if self._key == "inputs":
             types = ["literal"] + list(INPUT_TYPES.keys())
         else:
-            types = list(OUTPUT_TYPES.keys())
+            types = list(output_types_for(self._steptype))
 
         type_combo = QComboBox()
         type_combo.addItems(types)
@@ -778,6 +785,15 @@ class MappingRowsWidget(QWidget):
             current_type = "literal"
         if current_type in types:
             type_combo.setCurrentText(current_type)
+        elif (
+            self._key == "outputs"
+            and isinstance(current_type, str)
+            and current_type in OUTPUT_TYPES
+        ):
+            # A type this steptype refuses stays visible, so committing another
+            # field does not silently rewrite it; the verificator names the problem.
+            type_combo.insertItem(0, current_type)
+            type_combo.setCurrentIndex(0)
         type_combo.setFixedWidth(90)
         rl.addWidget(type_combo)
 

@@ -2,12 +2,12 @@
 Open-Meteo - a weather station on the internet, read like an instrument.
 
 The showcase driver: no hardware, no API key, standard library only, and yet
-everything a real instrument driver does - settings read from its
-[hardware.<name>] section, a check at connect(), readings with units fixed by
+everything a real instrument driver does - settings read from its bench.ini
+section ([<name>]), a check at connect(), readings with units fixed by
 the driver, and one readable DriverError for every way the far end can fail.
 A new driver can follow its shape as well as ssh.py's.
 
-Keys of its [hardware.<name>] section (all text):
+Keys of its bench.ini section ([<name>], all text):
 
     latitude         default 46.23  (CERN, Meyrin)
     longitude        default 6.05

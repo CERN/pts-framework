@@ -7,10 +7,10 @@
 # meteo_demo_tests.py asks for the device by logical name; PyPTS starts its
 # driver process on first use and closes it when the run ends.
 #
-# The device is declared in config.ini (File -> Open Config), not in the
+# The device is declared in bench.ini (beside config.ini), not in the
 # recipe:
 #
-#   [hardware.meteo1]
+#   [meteo1]
 #   driver = pypts.hal.drivers.weather.OpenMeteoDriver
 #   place = CERN Meyrin
 #   latitude = 46.23

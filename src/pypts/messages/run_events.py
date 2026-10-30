@@ -9,8 +9,8 @@ Emitted by the Sequencer, forwarded unchanged by CORE to the HMI, so each one
 belongs to two unions and is defined once here. A message says what happened,
 never how to draw it.
 
-`NOT SENT YET` means one thing throughout `messages/`: **the receiving end is
-written and works; nothing constructs the message.** Grep for it to find the
+`NOT SENT YET` means one thing throughout `messages/`: **declared, routed and
+matched; nothing constructs the message.** Grep for it to find the
 whole set. The receivers were built first on purpose - the Sequencer, CORE, the
 CLI and the GUI all had to agree on the contract before the engine existed, and
 `mypy` plus `test_messages.py` keep every branch honest in the meantime. The

@@ -1,50 +1,44 @@
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+
 # pypts
 
 ## Overview
 
-This framework orchestrates automation and monitoring tasks by running its modules
-concurrently — the engine and the operator's frontend as separate processes, the Sequencer
-and the Report as threads inside the engine. It is built for extensibility, reliability, and
-clear communication between modules using well-structured message patterns.
+A Python test-automation framework: it runs YAML "recipes" (sequences of steps) against the
+hardware on a bench and produces CSV + HTML reports. Three modes: GUI (the default), CLI and
+headless (`python -m pypts --mode headless --recipe x.yml`); a fourth way in is the Python
+API (`pypts.api.Pts`), which drives the same engine from code. The engine and the GUI are
+separate processes; the Sequencer and the Report are threads inside the engine; the CLI and
+headless mode run inside the launcher process.
 
 ## Architecture
 
-### Launcher
-
-- `launcher/startup.py`. Creates the HMI ↔ CORE links and the log queue, and starts the
-  Logger, CORE and — in GUI mode — the frontend. It is the parent of all of them, and it must
-  stay the simplest component in the system.
-
-### CORE
-
-- The mediator, and the engine process. Runs the Sequencer and the Report as **threads of its
-  own process**, routes every message between modules, and supervises their heartbeats. It is
-  the only module that talks to more than one other.
-
-### HMI (GUI/CLI)
-
-- The operator's view. Both frontends share one implementation of the protocol
-  (`hmi/hmi_client.py`) and differ only in presentation.
-
-### Sequencer
-
-- Runs the sequences of a loaded recipe and reports progress. The engine skeleton is real -
-  the recipe data layer (`recipe/`), the step lifecycle and registry (`step/`), and
-  `execute_sequence()` running a sequence on its own thread - with one step type (WaitStep)
-  ported so far; the other nine are still in `old_code/`.
-
-### Report
-
-- Builds and exports the artefacts of a run. Also still to be ported.
-
-### Logger
-
-- The single writer of the run log file. Every process reaches it through one shared queue.
+| Module | Role |
+|---|---|
+| `launcher/` | entry point (`python -m pypts`): pins spawn, parses the arguments, builds the HMI ↔ CORE links and the log queue, and starts the Logger, CORE and — in GUI mode — the frontend process. The CLI runs in the launcher process itself. |
+| `core/` | the mediator and the engine process: routes every message between modules, runs the Sequencer and the Report as its threads, watches heartbeats, orchestrates shutdown. The only module that talks to more than one other. |
+| `sequencer/` | the event loop that executes a loaded recipe; `execute_sequence()` runs each sequence on a worker thread of its own |
+| `recipe/` | the recipe data layer: parser, schema (Pydantic models), validation |
+| `step/` | the six registered step types — PythonModule, UserInteraction, UserWrite, UserLoading, Wait, Sequence — plus Indexed, expanded into generated steps at load time; the Runtime seams; `run_sequence()`, the body the Sequencer runs |
+| `report/` | writes an incremental `report.csv` during the run and the HTML at the end, in the run's folder; the report files are named `<board id>_<start time>` |
+| `hmi/` | the operator's view: `hmi_client.py` is the protocol half every frontend shares; `cli/` and `gui/` (PySide6) differ only in presentation |
+| `api/` | embedding: `Pts` (the engine driven from code), `open_gui()`, and headless mode |
+| `messages/` | the typed message dataclasses, one module per link, and `QueueWrapper` |
+| `config_handler/` | the per-user `config.ini`, and `bench.ini` beside it — the bench's devices, one bare-named section each (`bench_config.py`) |
+| `logger/` | the Logger process: the single writer of the run log. Every process reaches it through one shared queue. |
+| `utilities/` | error handling, heartbeats, local storage, recent recipes |
+| `hal/` | the hardware layer: devices by logical name, one driver process each; an SSH driver ships |
+| `stream_handler/` | stub — live instrument data during a run is a roadmap item |
+| `helper_applications/` | the Recipe Creator (with the recipe verificator) and the Recipe Editor v2 — separate programs with their own entry points |
 
 ## Communication model
 
 Modules never touch a queue directly and never call each other. Every link is wrapped in a
-`QueueWrapper`, and everything that travels on it is a frozen dataclass declared in
+`QueueWrapper`, and everything that travels on it is a plain dataclass declared in
 `pypts/messages/`.
 
 ```
@@ -55,7 +49,7 @@ launcher ──ShutdownRequested──► CORE
   every process ─ LogRecord + control messages ─► Logger   (not CORE-mediated)
 ```
 
-Three rules hold the model together:
+Four rules hold the model together:
 
 - **One transport.** `QueueWrapper` wraps anything with `put()` and `get_nowait()`. The
   HMI ↔ CORE pair is a `multiprocessing.Queue` because it crosses a process boundary; CORE's
@@ -67,18 +61,20 @@ Three rules hold the model together:
 - **No silent messages.** Every handler is a `match` closed with `unhandled()`, which a type
   checker rejects unless every member of the link's union is matched, and which raises at run
   time otherwise. There is no `case _: pass` anywhere.
-- **One trace.** `QueueWrapper.send()` and `QueueWrapper.receive()` each log a DEBUG line
-  naming the link and the message, so `--log-level DEBUG` writes every message in the system
-  to the run log twice — once where it was sent, once where it was taken off the queue. A send
-  with no matching receive is a lost message, and that is the point of tracing both. Because
-  it sits on the transport, no module has to remember to log anything, and the two edits below
-  are still the whole procedure for adding a message. The link name is also what identifies
-  the Sequencer and the Report in the log at all: the format names the process, and theirs is
-  `Core`.
+- **One trace.** `QueueWrapper.send()` and `QueueWrapper.receive()` each log a TRACE line
+  (custom level 5, `logger/levels.py`), so `--log-level TRACE` writes every message in the
+  system to the run log twice — once where it was sent, once where it was taken off the
+  queue. A send with no matching receive is a lost message, and that is the point of tracing
+  both. Because it sits on the transport, no module has to remember to log anything, and the
+  two edits below are still the whole procedure for adding a message. The link name is also
+  what identifies the Sequencer and the Report in the log at all: the format names the
+  process, and theirs is `Core`.
 
-Anything crossing the HMI ↔ CORE boundary is pickled, so it must stay a frozen dataclass of
-plain values. `tests/unit_tests/test_messages.py` round-trips every one of them and fails if
-that stops being true.
+Anything crossing the HMI ↔ CORE boundary is pickled, so it must stay a plain dataclass of
+pickle-friendly values — no queues, Qt objects or device handles. Engine-internal messages
+never cross that boundary and may carry richer values: `StepExecuted` deliberately carries
+`dict[str, Any]`, and must never join the HMI unions. `tests/unit_tests/test_messages.py`
+round-trips every boundary message and fails if that stops being true.
 
 ## Adding a message
 
@@ -87,7 +83,7 @@ Two edits:
 1. **Declare it** in the link module under `pypts/messages/`, and add it to that link's union.
 
    ```python
-   @dataclass(frozen=True, slots=True)
+   @dataclass
    class StartSequence:
        sequence_name: str
 
@@ -114,7 +110,7 @@ A message shared by two links — anything CORE forwards rather than repacks —
 | `queue_wrapper.py` | `QueueWrapper`, its TRACE-level message trace, `unhandled()`, `UnhandledMessage` |
 | `links.py` | the name of each direction, as it appears in the trace |
 | `common_messages.py` | vocabulary shared by more than one link: `ModuleError`, `Heartbeat`, `ResultType`, `StepOutcome` |
-| `run_events.py` | what the engine reports during a run, and the two questions it asks the operator |
+| `run_events.py` | what the engine reports during a run, and the three questions it asks the operator |
 | `core_hmi_communication.py` | CORE ↔ HMI |
 | `core_sequencer_communication.py` | CORE ↔ Sequencer |
 | `core_report_communication.py` | CORE ↔ Report |
@@ -131,7 +127,8 @@ the exception — `to_logger_communication.py` — because nothing is ever sent 
   rather than silence.
 - One process boundary, chosen deliberately: the operator's UI survives an engine crash.
   Everything else runs in the engine process, so nothing else pays to pickle.
-- Flexible frontend: CLI or GUI, sharing one implementation of the protocol.
+- Flexible frontend: CLI or GUI, sharing one implementation of the protocol — and no frontend
+  at all in headless mode.
 - The transport is swappable without touching a single module — the same `QueueWrapper`
   serves a process boundary and a thread boundary.
 

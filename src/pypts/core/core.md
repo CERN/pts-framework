@@ -22,7 +22,12 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   `handle_report_message`, one per link. Each ends with `unhandled()` so no message is
   silently dropped. `poll()` wraps each inbox: CORE cannot use `@catch_and_report_errors()`
   (it is the module errors are reported *to*), so a failure while handling a message is
-  logged and the rest of that batch stays queued for the next tick.
+  logged and the rest of that batch stays queued for the next tick. The two periodic calls
+  (`do_periodic_tasks()`, `check_stop_status()`) are guarded in `main_loop()` too, but a
+  failure there is not carried past: it is reported through `report_own_error()` and starts
+  the ordinary shutdown, because a broken periodic task repeats every tick. If it strikes
+  again while already shutting down — the shutdown checker itself is what is broken, so
+  nothing would ever clear `running` — CORE just leaves the loop.
 - **Routing** — CORE never interprets recipe content; it forwards the same object. See
   *Routing table* below.
 - **Recipe loading** — `load_recipe()` handles `LoadRecipe` with `Recipe.from_file()`. On
@@ -47,11 +52,12 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   `RunFinished` go to the HMI only, no `GenerateReport` is sent, and `StepExecuted` is dropped
   (one DEBUG line at `RunStarted` says so). CORE routes on the Sequencer's `RunStarted`, not on
   the `StartSequence` it relayed, because the Sequencer may refuse the run.
-- **Error reporting** — `handle_module_error()` logs every `ModuleError` twice
-  (`logger/logging_rules.md` §7): one operator line at the level in `LOG_LEVEL_FOR_SEVERITY`,
-  naming the part of the software through `describe_source()` / `FRIENDLY_SOURCE_NAME`
-  (unknown sources read "the software"), and one DEBUG line with operation, exception type
-  and traceback. Anything that is not a WARNING is also sent to the HMI as
+- **Error reporting** — `handle_module_error()` writes two or three records per
+  `ModuleError` (`logger/logging_rules.md` §7): one operator line at the level in
+  `LOG_LEVEL_FOR_SEVERITY`, naming the part of the software through `describe_source()` /
+  `FRIENDLY_SOURCE_NAME` (unknown sources read "the software"), one DEBUG line with
+  operation, exception type and severity, and a separate DEBUG traceback record only when a
+  traceback is present. Anything that is not a WARNING is also sent to the HMI as
   `ModuleErrorReported`. CORE's own failures go through `report_own_error()`, which builds the
   same `ModuleError` by hand — CORE has no outbox to itself, so `report_error()` cannot be used.
 - **Heartbeats, both directions.**
@@ -116,7 +122,7 @@ what they produce.
 
 | Name | Where | Value | Meaning |
 |------|-------|-------|---------|
-| `Core.SHUTDOWN_TIMEOUT_S` | `core.py` | 15.0 s | Budget from `stop_all_modules()` to leaving without the modules that did not answer. Sized for the Sequencer's worst case: the 2 s join plus 6 s tearing down an abandoned run's devices (`sequencer/sequencer.md`); an ordinary shutdown uses a fraction of it. Must stay below the launcher's `CORE_SHUTDOWN_TIMEOUT_S` |
+| `Core.SHUTDOWN_TIMEOUT_S` | `core.py` | 25.0 s | Budget from `stop_all_modules()` to leaving without the modules that did not answer. Sized for the Sequencer's worst case: the 2 s join plus 16 s tearing down an abandoned run's devices (`sequencer/sequencer.md`); an ordinary shutdown uses a fraction of it. Must stay below the launcher's `CORE_SHUTDOWN_TIMEOUT_S` |
 | `Core.THREAD_JOIN_TIMEOUT_S` | `core.py` | 5.0 s | How long `join_submodules()` waits per thread after the loop ended |
 | `HEARTBEAT_TIMEOUT_S` | `utilities/heartbeat_manager.py` | 5.0 s | Silence before a WARNING |
 | `HEARTBEAT_FATAL_S` | `utilities/heartbeat_manager.py` | 15.0 s | Silence that ends the run |
@@ -136,7 +142,7 @@ a new watched module needs entries in `self.modules`, `FRIENDLY_MODULE_NAME` and
 
 ## Known gaps / open TODOs (see roadmap)
 
-- Error-handling policy for CORE (§1.11): today CORE logs, shows the operator and — only for
-  a silent module — shuts down. What it *does* about other critical failures is an open
-  design question.
+- Error-handling policy for CORE (§1.11): today CORE logs, shows the operator and shuts down
+  only for a silent module or for a failure of its own periodic machinery. What it *does*
+  about other critical failures is an open design question.
 - `ExportReport` has no trigger in CORE; only the `ReportExported` receiving branch exists.

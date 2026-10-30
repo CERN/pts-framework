@@ -788,3 +788,45 @@ def test_merged_recents_are_newest_first_each_file_once():
         ("/b.yml", "B"),
         ("/a.yml", "A"),
     ]
+
+
+# -- the save layer ------------------------------------------------------------------
+
+
+def test_a_failed_save_as_keeps_the_current_file(window, qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QMessageBox
+
+    original = tmp_path / "original.yml"
+    original.write_text(_RECIPE, encoding="utf-8")
+    window.open_file(str(original))
+
+    bad_target = tmp_path / "a_directory"
+    bad_target.mkdir()
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(bad_target), ""))
+    )
+    seen = {}
+    monkeypatch.setattr(
+        QMessageBox, "critical", staticmethod(lambda *args: seen.setdefault("dialog", args))
+    )
+
+    window._on_save_as()
+
+    assert "dialog" in seen
+    assert window._file_path == str(original)
+    assert original.read_text(encoding="utf-8") == _RECIPE
+
+
+def test_save_as_takes_the_new_file_once_it_is_written(window, qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+
+    window._model.load_yaml(_RECIPE)
+    target = tmp_path / "saved.yml"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(target), ""))
+    )
+
+    window._on_save_as()
+
+    assert window._file_path == str(target)
+    assert target.read_text(encoding="utf-8") == window._model.to_yaml()

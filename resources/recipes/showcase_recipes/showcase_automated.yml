@@ -27,13 +27,13 @@
 # one message about a missing picture: the Step pictures demo names a file that is not there, to show the
 # "No image available" placeholder.
 #
-# The HAL groups need devices declared in config.ini (File -> Open Config);
+# The HAL groups need devices declared in bench.ini (beside config.ini);
 # without them those steps end ERROR, which is what a missing device looks like:
 #
-#   [hardware.loop1]
+#   [loop1]
 #   driver = pypts.hal.drivers.loopback.LoopbackDriver
 #
-#   [hardware.meteo1]
+#   [meteo1]
 #   driver = pypts.hal.drivers.weather.OpenMeteoDriver
 #   place = CERN Meyrin
 #   latitude = 46.23
@@ -321,7 +321,7 @@ steps:
 # ===========================================================================
 ---
 sequence_name: HAL loopback
-description: A device reached by logical name - needs [hardware.loop1].
+description: A device reached by logical name - needs [loop1] in bench.ini.
 steps:
   - steptype: PythonModule
     step_name: Loopback echo
@@ -334,7 +334,7 @@ steps:
       echoed: {type: equals, value: hello}
 ---
 sequence_name: Meteo
-description: A weather station on the internet - needs [hardware.meteo1].
+description: A weather station on the internet - needs [meteo1] in bench.ini.
 steps:
   - steptype: PythonModule
     step_name: Temperature at CERN

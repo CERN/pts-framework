@@ -15,12 +15,18 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 - **Queue construction** — builds the HMI↔CORE link (the only cross-process pair) and
   the Logger queue. Passes them into child processes as constructor arguments.
 - **Config bootstrap** — runs `ConfigHandler.bootstrap()` before spawning anything.
-  Shows a popup (GUI) or console banner (CLI) if the config was discarded.
+  Shows a notice if the config was discarded: a popup in GUI mode — falling back to a
+  console banner when the message box cannot open — and a console banner in every other
+  mode (cli, api, headless).
+- **Bench notice** — after logging is up, `start_engine()` calls `show_bench_notice(mode)`:
+  a popup (GUI) or console banner titled "pypts bench file discarded" when `bench_config()`
+  returned `BenchOutcome.DISCARDED`. A created or loaded bench file shows nothing.
 - **Spawn pinning** — pins `multiprocessing.set_start_method("spawn")` as the first
-  statement of `main()`, before the first `Queue()`. This makes Linux behave like Windows
-  and avoids the Qt fork hazard (plan 005).
+  statement of `start_engine()`, before the first `Queue()` — every path, headless included
+  (via `Pts`), goes through it. This makes Linux behave like Windows and avoids the Qt fork
+  hazard (plan 005).
 - **Shutdown** — `stop_core()` sends `HmiStopped` + `ShutdownRequested` to CORE, joins
-  up to `CORE_SHUTDOWN_TIMEOUT_S` (20.0 s), and terminates if CORE does not stop in time.
+  up to `CORE_SHUTDOWN_TIMEOUT_S` (30.0 s), and terminates if CORE does not stop in time.
 
 ## The engine half, shared with `pypts.api`
 
@@ -29,7 +35,7 @@ starts exactly what `python -m pypts` starts:
 
 | Function | Does |
 |----------|------|
-| `start_engine(mode, log_level_name)` | pins spawn, bootstraps config, starts the Logger, `init_logging()`, starts CORE; returns an `Engine` (the processes and both HMI links). Stops what it started if it fails. `mode` is `gui` / `cli` / `api`. |
+| `start_engine(mode, log_level_name)` | pins spawn, bootstraps config, starts the Logger, `init_logging()`, starts CORE; returns an `Engine` (the processes and both HMI links). Stops what it started if it fails. `mode` is `gui` / `cli` / `api` / `headless`. |
 | `run_gui(engine, recipe_path, start, sequence_name)` | spawns the GUI process and joins it. The last three are for `pypts.api.open_gui()`. Returns True if the GUI exited with `RESTART_EXIT_CODE`; `main()` acts on it, the API ignores it. |
 | `stop_engine(engine)` | `stop_core()`, then `StopLogger` and the Logger join. |
 
@@ -49,7 +55,7 @@ launcher (main process)
 
 | Name | Value | Meaning |
 |------|-------|---------|
-| `CORE_SHUTDOWN_TIMEOUT_S` | 20.0 s | Join timeout before CORE is terminated; above `Core.SHUTDOWN_TIMEOUT_S` (15 s), so CORE can log who was late first |
+| `CORE_SHUTDOWN_TIMEOUT_S` | 30.0 s | Join timeout before CORE is terminated; above `Core.SHUTDOWN_TIMEOUT_S` (25 s), so CORE can log who was late first |
 | `LOGGER_SHUTDOWN_TIMEOUT_S` | 5.0 s | Logger drain budget |
 
 ## Rules

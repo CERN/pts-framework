@@ -66,10 +66,10 @@ from pypts.utilities.heartbeat_manager import HMI, HeartbeatManager, HeartbeatWa
 #: How long stop_and_wait() gives CORE to answer a shutdown request before the
 #: frontend stops on its own. Without a bound, a wedged CORE would hang the exit.
 #: Sized for the held StopHmi: it now waits for the Sequencer to stop, which can
-#: take the join (2 s) plus the abandoned devices' teardown (6 s), about 8 s in
-#: the worst case. Keep it above that, and below CORE's SHUTDOWN_TIMEOUT_S (15 s)
-#: and the launcher's CORE_SHUTDOWN_TIMEOUT_S (20 s).
-SHUTDOWN_GRACE_S = 12.0
+#: take the join (2 s) plus the abandoned devices' teardown (16 s), about 18 s in
+#: the worst case. Keep it above that, and below CORE's SHUTDOWN_TIMEOUT_S (25 s)
+#: and the launcher's CORE_SHUTDOWN_TIMEOUT_S (30 s).
+SHUTDOWN_GRACE_S = 22.0
 
 
 class HmiClient:

@@ -28,8 +28,10 @@ exposes two doors:
   reason the recipe was refused.
 - ``Pts.run(sequence=None, answer=None, on_step=None)`` blocks until the run has
   finished and returns a ``RunResult`` (verdict, one ``StepVerdict`` per step, report
-  folder). ``answer`` is called for every operator question and returns the button or
-  the text; without it every question is declined.
+  folder). ``answer`` is called for every operator question and returns the button,
+  the text, or — for a ``UserPathRequest`` — the path of an existing file or folder
+  (``request.select`` says which); ``None`` declines, and without ``answer`` every
+  question is declined.
 - ``Pts.stop()`` aborts the running sequence and is safe to call from another thread.
 - Create ``Pts`` / call ``open_gui()`` under ``if __name__ == "__main__":`` — pypts
   starts its processes with spawn.

@@ -10,18 +10,18 @@ The module context file for `src/pypts/step/`. `__init__.py` says how the layer 
 (the lifecycle, the Runtime seams, the emission model); this file says **which step types
 the old engine had, which of them exist here, and which are never coming** — with the
 decision behind each, so the state of the port can be read off one table instead of
-re-derived from `old_code/steps.py` every time.
+re-derived from the old engine's `steps.py` (removed with `old_code/` in 827ec19) every time.
 
 The roadmap stays the authority on status and phase and wins where they overlap.
-`recipe_guide.html` (repo root) §10 is the reference for what each old type *did*, in
-recipe terms, and is worth reading before porting one.
+`recipe_guide.html` (repo root) §10 covers the current types; its §11 is the short status
+table of the old ones.
 
 ---
 
 ## 1. The catalogue
 
-Ten classes existed in `old_code/steps.py` (the whole file is commented out — it is read,
-never run). Seven are ported; the other three are not wanted.
+Ten classes existed in the old engine's `steps.py` (removed in 827ec19). Seven are ported;
+the other three are not wanted.
 
 | # | Old class | YAML today | Status | Decision |
 |---|---|---|---|---|
@@ -49,8 +49,11 @@ gone before anything is built.
 
 `wait_step.py`. Sleeps. The one deliberate change from the old type: `wait_time` is a
 **direct field on the step**, not an `inputs` entry — a fixed wait has no inputs to
-resolve and no outputs to judge, so it carries neither mapping. Returns `{}`, so the
-verdict is always `DONE`.
+resolve and no outputs to judge, so it carries neither mapping, and writing one is
+refused when the recipe loads (`recipe_schema.WAIT_STEP_REFUSED_KEYS`, each key with
+its reason). Returns `{}`, so the verdict is `DONE` — but a negative or non-numeric
+`wait_time` raises in `_step()`, ending the step `ERROR`; the schema accepts any value,
+so this is found at run time, not at load.
 
 Known gap: the sleep is one `time.sleep()`, so it does not honour `runtime.should_stop()`.
 The framework contract only promises a stop at the next *step* boundary, so this is a
@@ -116,10 +119,10 @@ way a PythonModule's `inputs` entries do. Only the *answer* goes through a mappi
 - steptype: UserInteraction
   step_name: Check the LED
   message: Is the red LED lit?
-  options: [Yes, No]
+  options: ['Yes', 'No']     # quoted: bare Yes/No are YAML booleans (guide §12.1)
   image_path: led.png        # optional, any step may have one (§3.8)
   outputs:
-    output: {type: equals, value: Yes}
+    output: {type: equals, value: 'Yes'}
 ```
 
 The step returns the chosen string, which `Step.run()` wraps as `{"output": choice}` — so
@@ -209,7 +212,7 @@ Cancel. One less key in every recipe that wants the obvious behaviour.
 
 - **`wrt`** — the text dialog. This is the port. The old engine's defect (the typed
   text immediately overwritten by the literal string `"wrt"` when `process_outputs`
-  ran — recipe_guide §16 F14) cannot recur: there is no button whose label competes
+  ran — the historical defect F14) cannot recur: there is no button whose label competes
   with the answer, because there are no buttons.
 - **`ID`** — the serial-port dialog (port, baudrate, `*IDN?`). **Dropped**
   (decision 2026-09-02). It is instrument identification over RS-232, not a person
@@ -235,9 +238,10 @@ to the run folder's name and puts in the GUI's top bar. The convention itself li
 `user_loading_step.py`. Ask the operator to pick a file or a folder; the chosen path is
 the step's output. The third prompting type, shaped exactly like `UserWrite` — the
 question on the step, only the answer through a mapping, `resolve_image_path()` and
-`ask_or_raise()` from `operator_prompt.py`. Landed 2026-09-15 (engine side; the GUI's
-chooser and the API's answer come in later stages — until then `HmiClient`'s default
-`ask_user_path()` declines, so the step ends ERROR).
+`ask_or_raise()` from `operator_prompt.py`. Landed 2026-09-15 (engine side). The GUI's
+chooser exists (`GUI.ask_user_path()` → the interaction panel's path prompt); only
+`HmiClient`'s *default* `ask_user_path()` still declines, so the CLI — or a frontend that
+does not override it — ends the step ERROR.
 
 ```yaml
 - steptype: UserLoading
@@ -301,7 +305,8 @@ not having anywhere else to put it. So: no `SSHConnect` / `SSHClose` entries in
 
 **Landed 2026-10-08 (roadmap §1.54).** SSH is the hardware layer's `SshDriver`
 (`pypts.hal.drivers.ssh`), reached from test code with `pypts.hal.get_device("<name>")`.
-Credentials live in `[hardware.<name>]` in `config.ini`, masked in the log. The session belongs
+Credentials live in the device's bare `[<name>]` section of `bench.ini`, masked in the
+connect/recover trace. The session belongs
 to the run's local setup, which closes it after the teardown steps on every outcome, abort included —
 what the old `teardown_steps` rule stood in for. The live client stays in the driver's own
 process; only picklable values cross. Details: `hal/hal.md`.
@@ -311,8 +316,7 @@ process; only picklable values cross. Details: `hal/hal.md`.
 Call another sequence of the same recipe as a group. **Dropped on 2026-09-01, brought back
 on 2026-09-16**: a recipe needs one executable sequence (`main_sequence`) and a way to group
 tests below it, in other sequence documents, run as nested groups inside main — to any depth.
-The design is `plans/sequence_step_design.md` (HTML: `resources/internal_reports/`); this
-section says how the engine does it. `sequence_step.py`.
+This section is the design record and says how the engine does it. `sequence_step.py`.
 
 ```yaml
 - steptype: Sequence
@@ -323,10 +327,10 @@ section says how the engine does it. `sequence_step.py`.
 ```
 
 **The call.** Named after the sequence it calls, so a Sequence step **refuses** `step_name`
-(`rules.UNNAMED_STEP_TYPES` exempts it from the common requirement); it also refuses
+(`recipe_schema.UNNAMED_STEP_TYPES` exempts it from the common requirement); it also refuses
 `inputs` (a called sequence shares the run's globals — §3.5), `outputs` (its verdict is its
-steps') and `id` (every call gets ids of its own). `check_sequence_step()` holds those
-sentences; the validator calls it. An `Indexed` step whose `template` is a Sequence step is
+steps') and `id` (every call gets ids of its own). `sequence_step.REFUSED_KEYS` holds those
+sentences; `recipe_schema.SequenceStepSchema` refuses the keys with them. An `Indexed` step whose `template` is a Sequence step is
 refused too: a sequence is a group, `Indexed` parametrizes one step, and the two do not mix.
 An `Indexed` step *inside* a called sequence is expanded as usual.
 
@@ -365,10 +369,10 @@ and starts the path; `in_teardown`; and `halt_reason`. `StepExecuted.group_path`
 path (`Main/PowerCycle`) for the Report.
 
 **Stage 1 is transitional.** Every sequence document is still built, each as the root of its
-own tree, so the sequence dropdown keeps working; only-main-runs, the "never called from main"
-warning, the step table's indentation, the report's `group_path` column and the verificator /
-Recipe Creator follow in stages 2–5 (roadmap). Until stage 4 the Creator's add-step menu offers
-`Sequence` but writes a `step_name` the parser refuses.
+own tree, so any sequence can still be started. Done since: the step table indents group rows
+and the verificator checks `Sequence` steps. Still open (roadmap): only-main-runs, the "never
+called from main" warning, the report's `group_path` column, and the Creator's add-step form,
+which offers `Sequence` but writes a `step_name` the parser refuses (`rc_model._default_step`).
 
 ### 2.9 `IndexedStep` → `Indexed` — done, in a different shape
 
@@ -408,7 +412,8 @@ parameter set, and everything downstream deals with plain steps:
   the Sequencer or either frontend knows the steptype exists.
 - Refused, rather than silently ignored: `id`, `inputs` and `outputs` on the
   `Indexed` step itself (they would apply to nothing, or to N steps at once), an `Indexed`
-  step as its own `template`, an empty `parameter_sets`, and an unknown key in a set.
+  step as its own `template`, a `template` carrying an `id`, an empty `parameter_sets`, a
+  set with neither `inputs` nor `expect`, and an unknown key in a set.
   `skip: true` on it skips every generated step.
 - The wrapper's `description` and `image_path` go on every generated step, unless the
   `template` states its own (`indexed_step._build_one()`).
@@ -423,10 +428,13 @@ recur, because there is no wrapper.
 Where the rules live: `STEP_TYPE_REQUIRED["indexed"]` in `recipe/recipe_schema.py`,
 listed in `EXPANDED_STEP_TYPES` so the registry-vs-rules pinning test knows it is
 parse-time only; the shape checks in `recipe_schema.IndexedStepSchema` (with
-`ParameterSet`), which also validates the `template` as the step it will become;
-`indexed_step.check_indexed_step()` repeats them as the guard of
-`expand_indexed_step()`; the expansion itself in
-`recipe_parser._expand_indexed_steps()`, between validation and build.
+`ParameterSet`) — the one holder of those rules — which also validates the
+`template` as the step it will become; the expansion itself in
+`recipe_parser._expand_indexed_steps()`, called first thing inside
+`recipe_parser._build_steps()`, so steps inside called sequences expand too.
+`expand_indexed_step()` keeps one guard of its own for a caller that skipped
+validation: no `template` mapping or no parameter set raises `ValueError`
+rather than silently expanding to nothing.
 
 ---
 
@@ -457,9 +465,9 @@ must not do.
 comes back `ERROR` **or** `FAIL`, the run ends there. Four things about it are decisions,
 not details:
 
-- **A `FAIL` halts too, not only an `ERROR`.** This is the answer to §16 **F7** — *"should a
-  FAIL stop a sequence? Today only ERROR does"* — which the old engine left open and
-  undocumented. The default is unchanged by it: a failing measurement still never halts
+- **A `FAIL` halts too, not only an `ERROR`.** This is the answer to the old open question
+  **F7** — *"should a FAIL stop a sequence? Today only ERROR does"* — which the old engine
+  left open and undocumented. The default is unchanged by it: a failing measurement still never halts
   anything on its own, because a failing DUT should still be fully characterised. The flag
   is the only thing that makes a FAIL matter to control flow.
 - **The operator's step lines are written here**, in `run_steps()` and `log_step_outcome()`,
@@ -494,6 +502,13 @@ not details:
   A declared output the step did not return names itself rather than surfacing as
   `KeyError: 'voltage'`, and the `StepResult` keeps the outputs the step *had* produced -
   judging can fail after the measurement was taken, and that measurement is what explains it.
+- **A failing `assert` in test code is this step's `FAIL`, not an `ERROR`** (2026-10-16).
+  An assert is the author's own pass/fail check, so `AssertionError` gets an `except` of
+  its own in `run()`, before the `Exception` net: the verdict is `FAIL` and the assert's
+  message - or `an assert in the test function failed` when it has none - goes through
+  `build_fail_reason()` like any failing check, inputs included. No traceback, no
+  `error_summary`: a bad DUT must not read as a software fault. The rule is written for
+  the recipe author in `recipe_guide.html` §6.2 ("Writing the test function").
 - **`sys.exit()` in test code is this step's `ERROR`.** The body's `except` catches
   `SystemExit` as well as `Exception` - and nothing wider - whatever the exit code, even 0:
   the step never returned, so there is nothing to judge. Let through, it would unwind the
@@ -567,9 +582,9 @@ Two knobs because one was global and one was local. With `continue_on_error` its
 step there is no global setting left for `critical` to override, so `critical: true` and
 `continue_on_error: false` became one statement spelled two ways.
 
-A recipe that still writes `critical:` gets a `TypeError` from the constructor, which
-`recipe_parser._build_step_or_refuse()` turns into a `RecipeError` naming the sequence, the
-step and the key. Loud, and the fix is a rename.
+A recipe that still writes `critical:` is refused at validation by the models
+(`Extra inputs are not permitted`, naming the sequence and the step). Loud, and the fix is
+a rename.
 
 ### 3.3 Dropped with their types
 
@@ -583,7 +598,9 @@ step and the key. Loud, and the fix is a rename.
 
 ### 3.4 `inputs` and `outputs` — done
 
-The two mappings every step type may carry. They were `input_mapping` and
+The two mappings a step may carry — except `Wait` (§2.1), `Sequence` (§2.8) and
+`Indexed` (§2.9, which puts them on its `template`), which refuse them with a
+reason each. They were `input_mapping` and
 `output_mapping`; the names are now **`inputs` and `outputs`** (2026-09-02), because the
 `_mapping` suffix named the implementation and the shorter word names the thing.
 
@@ -629,13 +646,14 @@ Two consequences worth knowing:
 **Checked when the recipe loads** (§3.5's removal is why): every `inputs`/`outputs`
 entry names a `type` the engine knows, and carries the keys that type needs. A typo -
 or the dropped `local` - is a `RecipeError` naming the step and the entry, instead of
-a run that dies at step nine. The vocabulary is `rules.INPUT_TYPES` /
-`rules.OUTPUT_TYPES`.
+a run that dies at step nine. The vocabulary is `recipe_schema.INPUT_TYPES` /
+`recipe_schema.OUTPUT_TYPES`.
 
-**What is still not checked when a recipe loads:** that `method_name` exists on the
-module, that the argument names match its signature, and that a `global_name` a step reads
-was ever written. All three fail as a `StepResult(ERROR)` on the bench, with tests in
-`test_step.py` pinning that. Moving them to load time is a roadmap TODO.
+**What is still not checked when a recipe loads:** that the argument names match the
+function's signature, and that a `global_name` a step reads was ever written. Both fail as
+a `StepResult(ERROR)` on the bench, with tests in `test_step.py` pinning that; moving them
+to load time is a roadmap TODO. (A wrong `method_name` is a load-time WARNING —
+`check_python_modules()`, §2.2 — and a run-time ERROR.)
 
 ### 3.5 One variable scope — done
 
@@ -730,8 +748,8 @@ types, which put it on their request.
    `_step()` — never a queue, never `PendingRequests` directly (§2.3) — and reaches for
    `operator_prompt.ask_or_raise()` and `resolve_image_path()` rather than repeating them
    (§2.4).
-   The constructor arguments *are* the type's YAML keys, so an unknown key is a `TypeError`
-   at load time.
+   The constructor arguments *are* the type's YAML keys; an unknown key is refused by the
+   step's Pydantic model when the recipe loads — the constructors never see it.
 2. Its entry in `STEP_TYPES` (`step/registry.py`), keyed **lowercase** — the YAML spelling
    is case-insensitive and drops the class's `Step` suffix (`Wait`, not `WaitStep`).
 3. Its required and optional fields in `STEP_TYPE_REQUIRED` / `STEP_TYPE_DEFAULTS`
@@ -745,7 +763,7 @@ step accepts whatever its type — `description`, `image_path`, `skip`, `continu
 common arguments of `Step.__init__` and are declared once, in `STEP_COMMON_DEFAULTS`. A new
 type gets them for free and must not repeat them; the old format's per-type
 `continue_on_error` is why putting it on the wrong one of the ten types was a load-time
-`TypeError` (§16 F9).
+`TypeError` (the historical defect F9).
 
 Then document it in `recipe_guide.html` §10 and update the table in §1 above.
 

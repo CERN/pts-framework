@@ -806,8 +806,7 @@ def confirm_restore_defaults(parent: QWidget | None = None) -> bool:
         "Restore default settings",
         "Put every setting back to its default value?\n\n"
         "config.ini is recreated from the template and pypts restarts. "
-        "Changes not saved yet are lost. The devices declared in [hardware.*] sections "
-        "are removed too, so copy them first.",
+        "Changes not saved yet are lost. The devices in bench.ini are not touched.",
         QMessageBox.StandardButton.Cancel | QMessageBox.StandardButton.RestoreDefaults,
         QMessageBox.StandardButton.Cancel,
     )

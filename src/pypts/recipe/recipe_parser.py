@@ -17,11 +17,14 @@ This module owns the whole loading pipeline, in order:
     check version              warn-only: a recipe written for another pypts is
                                an ERROR in the log and a notice to the operator,
                                and still loads (hard refusal ~v1.0)
-    expand                     an Indexed step becomes one ordinary step mapping
-                               per parameter set (pypts.step.indexed_step)
+    whole-file checks          duplicate sequence names, at least one sequence,
+                               main_sequence exists
     build                      Recipe -> Sequences -> Steps (via the step registry);
-                               a Sequence step gets a fresh copy of the sequence
-                               it calls, built the same way
+                               each sequence's Indexed steps expand as it is built,
+                               one ordinary step mapping per parameter set
+                               (pypts.step.indexed_step), and a Sequence step gets
+                               a fresh copy of the sequence it calls, built the
+                               same way
 
 recipe.py holds the data classes this returns, plus the `Recipe.from_file` /
 `Recipe.from_yaml_text` facades that delegate here - callers may use either

@@ -8,3 +8,7 @@ todo:
 - How to properly deploy it?
 - Is our project running the python 3.12? 
 - how to decide what widget to load? - based on the recipe definition. Needs to ingtegrate the XY graph still
+
+- Revert the shipped logging level from TRACE back to INFO before v1.0 (config_template.ini
+  [logging] level and the default in configuration_schema.py; TRACE is on only for the
+  duration of the refactor)

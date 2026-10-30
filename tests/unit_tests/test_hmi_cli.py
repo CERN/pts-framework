@@ -18,8 +18,8 @@ from pypts.messages.run_events import StopSequence
 
 
 def test_known_commands_are_dispatched_to_core(monkeypatch):
-    """Each shell verb sends its message; `stop_sequence` aborts the run while
-    plain `stop` stays an exit alias."""
+    """Each shell verb sends its message; `stop` aborts the run like
+    `stop_sequence` — only `exit` and `quit` leave the application."""
     from pypts.hmi.cli.cli import CLI
 
     outbox: queue.Queue = queue.Queue()
@@ -31,6 +31,7 @@ def test_known_commands_are_dispatched_to_core(monkeypatch):
             "load_recipe recipes/wait_recipe.yml",
             "start_sequence Main",
             "stop_sequence",
+            "stop",
             "exit",
         ]
     )
@@ -46,6 +47,7 @@ def test_known_commands_are_dispatched_to_core(monkeypatch):
     assert sent == [
         LoadRecipe(recipe_path="recipes/wait_recipe.yml"),
         StartSequence(sequence_name="Main"),
+        StopSequence(),
         StopSequence(),
         ShutdownRequested(),
     ]

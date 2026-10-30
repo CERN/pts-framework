@@ -5,8 +5,8 @@
 """
 steptype name -> step class, and the one function that builds a step.
 
-This is the replacement for the old factory's eval() over the steptype
-string (old_code/recipe.py) - arbitrary code execution driven by a recipe
+This is the replacement for the old engine's factory, an eval() over the
+steptype string - arbitrary code execution driven by a recipe
 file, with a NameError as its only diagnostic. Here a recipe can only ever
 select from this dict, and an unknown name gets an error that lists what
 would have worked.

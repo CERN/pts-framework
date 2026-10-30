@@ -29,7 +29,7 @@ Still a stub: `stream_handler/` (empty).
 
 | Document | Owns |
 |---|---|
-| `pypts_implementation_status.html` (root) | **Status, plan, TODOs** — single source of truth. Read before planning. |
+| `pypts_implementation_status.html` (root) | **Status** — single source of truth. Read before planning. |
 | `usage_manual.html` (root) | Everything a user sees, types or gets back: modes, options, exit codes, GUI, files, helper tools. |
 | `recipe_guide.html` (root) | The recipe format: step types, inputs/outputs, verificator gaps. |
 | `src/pypts/<module>/<module>.md` | How a module works: files, rules, decisions, how to extend, known gaps. |
@@ -69,8 +69,8 @@ message, field, route, behaviour, log line, or implemented-vs-stub status.
   Every identifier and file a document names must exist.
 - Delete what is no longer true; no stale sentence beside a corrected one.
 - A routing change touches `core/core.md` **and** `messages/messages.md`.
-- A recipe-format change touches `recipe_guide.html` **and** the verificator (sync rule in
-  `recipe_creator.md`).
+- A recipe-format change touches `recipe_guide.html` by hand (the verificator follows the
+  schema automatically — sync rule in `recipe_creator.md`).
 - New work items go into the roadmap as TODOs, not into code comments.
 - Drift you were not asked to fix: say so in your report, ask before a large fix.
 
@@ -95,25 +95,30 @@ src/pypts/
   hmi/           hmi_client.py (protocol half every frontend shares), cli/, gui/ (PySide6)
   api/           Pts (headless engine driven from code), open_gui(), headless mode
   messages/      typed message dataclasses, one module per link, QueueWrapper
-  config_handler/ per-user config.ini
+  config_handler/ per-user config.ini and bench.ini (the bench's devices)
   logger/        Logger process: the single run-log writer
   utilities/     error handling, heartbeats, local storage, recent recipes
   hal/           hardware layer: devices by logical name, one driver process each, SSH driver
   stream_handler/   stub
-  helper_applications/  recipe_creator (incl. verificator), recipe_editor (v2), example_finder
+  helper_applications/  recipe_creator (incl. verificator), recipe_editor (v2)
 resources/recipes/   one folder of demos per step type (<type>step_recipes/, HAL_recipes/,
                      stepimage_recipes/), showcase_recipes/ (all of them: automated, full),
-                     common/ (the test code they share)
+                     common/ (the test code they share), Old_recipes/ (historical, the
+                     old engine's format — they do not load)
 ```
 
-**Processes:** CORE (with Sequencer + Report threads), the HMI frontend, and the Logger. Only
-HMI↔CORE crosses a process boundary, so everything on it must stay **pickle-safe** — no
-queues, Qt objects or device handles. A thread entry point never calls `init_logging()`.
+**Processes:** CORE (with Sequencer + Report threads), the HMI frontend, and the Logger; the
+HAL adds one driver process per opened device (Pipe-connected, outside the message layer). Of
+the message links, only HMI↔CORE crosses a process boundary, so everything on it must stay
+**pickle-safe** — no queues, Qt objects or device handles. A thread entry point never calls
+`init_logging()`.
 
 **Messaging:** modules never call each other or touch queues — everything goes through CORE,
 except log records, which go straight to the Logger. Each link is a module
-`messages/<a>_<b>_communication.py` with a union type per direction; `QueueWrapper` traces
-every `send()`/`receive()` at DEBUG. Every handler is a `match` closed with `unhandled()`. To
+`messages/<a>_<b>_communication.py` with a union type per direction, plus
+`to_logger_communication.py` and the shared modules; `QueueWrapper` traces every
+`send()`/`receive()` at TRACE (visible with `--log-level TRACE`). Every handler is a `match`
+closed with `unhandled()`. To
 add a message: declare the dataclass and add it to the union, then add a `case` in the
 recipient's handler (`mypy` and `test_messages.py` catch the gap). Catalogue:
 `messages/messages.md`.
@@ -128,11 +133,12 @@ recipient's handler (`mypy` and `test_messages.py` catch the gap). Catalogue:
 python -m pypts                       # GUI (default)
 python -m pypts --mode cli            # CLI
 python -m pypts --mode headless --recipe x.yml [--sequence Name]   # exit codes: api/api.md
-python -m pypts --log-level TRACE     # adds the full message trace to the run log
-python run_pypts.py / run_recipe_creator.py         # same, with src on the path (.bat wrappers too)
+python -m pypts --log-level TRACE     # the full message trace (TRACE is the shipped default)
+python run_pypts.py / run_recipe_creator.py / run_recipe_editor.py   # same, with src on the path (.bat wrappers too)
 ```
 
-Config: `%LOCALAPPDATA%\pypts\config.ini` / `~/.config/pypts/config.ini`. **Never change
+Config: `%LOCALAPPDATA%\pypts\config.ini` / `~/.config/pypts/config.ini`, with `bench.ini`
+beside it — the bench's devices, one bare `[name]` section each, read once per start. **Never change
 `CONFIG_VERSION` on your own** — only when a change adds something mandatory, and ask if
 unsure (rules in `config_handler/config_handler.md`).
 

@@ -140,7 +140,7 @@ summary { cursor: pointer; font-weight: 600; }
 <h2 id="1-the-model-in-30-seconds">1. The model in 30 seconds</h2>
 <p>A recipe is a <strong>multi-document YAML file</strong>:</p>
 <pre><code>document 1        recipe header   — name, version, description, main_sequence, globals, report_metadata
-document 2..N     sequences       — each: sequence_name, description, steps, teardown_steps</code></pre>
+document 2..N     sequences       — each: sequence_name, description, image_path, steps, teardown_steps</code></pre>
 <p>A <strong>sequence</strong> is an ordered list of <strong>steps</strong>. A <strong>step</strong> has a <code>steptype</code> (which kind of step it is, §10), a <code>step_name</code>, the fields its type needs, <code>inputs</code> (where its arguments come from, §6) and <code>outputs</code> (what to do with what it returned, §7).</p>
 <p><strong>One variable scope: <code>globals</code>, for the whole run.</strong> Steps never talk to each other directly — one stores a value with a <code>global</code> output, a later one reads it with a <code>global</code> input. Anything narrower is a step's own <code>inputs</code> and <code>outputs</code>.</p>
 <p>Every step produces one <code>ResultType</code>. A sequence's result is the most severe of its steps' (§8).</p>
@@ -200,7 +200,7 @@ globals:                         # the run's variables and their starting values
   tolerance: 0.1</code></pre>
 <table><thead><tr><th>Field</th><th>Required</th><th>Purpose</th></tr></thead><tbody>
 <tr><td><code>name</code></td><td>yes</td><td>GUI header, report metadata</td></tr>
-<tr><td><code>version</code></td><td>yes</td><td>The PyPTS version the recipe was written for. Its <code>major.minor</code> is compared with the running PyPTS; a mismatch is logged and shown to the operator, and the recipe still loads. Quote it (<code>'0.2'</code>); a bare <code>0.2</code> also works</td></tr>
+<tr><td><code>version</code></td><td>yes</td><td>The PyPTS version the recipe was written for. Its <code>major.minor</code> is compared with the running PyPTS; a mismatch is logged and shown to the operator, and the recipe still loads. Quote it (<code>'0.2'</code>); a bare <code>0.2</code> also works, but a trailing zero is lost — <code>version: 0.10</code> is the YAML float 0.1 and loads as <code>"0.1"</code> — which is why quoting is the rule; the verificator warns when the version is written as a number</td></tr>
 <tr><td><code>description</code></td><td>no (<code>""</code>)</td><td>GUI, log</td></tr>
 <tr><td><code>main_sequence</code></td><td>no (the first sequence)</td><td>The sequence that runs; the others are groups it calls with <code>Sequence</code> steps (§10). No <code>Sequence</code> step may call it. Matched without case</td></tr>
 <tr><td><code>report_metadata</code></td><td>no (<code>[serial_number]</code>)</td><td>List of global names whose values the report stamps on every CSV row and in the HTML header; <code>[]</code> for none. The <strong>first</strong> one's value also names the report files: <code>&lt;value&gt;_&lt;start time&gt;.csv</code> / <code>.html</code>. Each entry is a name written as text — a number is refused — and may appear only once. In the CSV each one is a column named <code>meta_&lt;name&gt;</code> (<code>meta_serial_number</code>), so any global name is safe, even <code>result</code>; the HTML header shows the name as written</td></tr>
@@ -240,7 +240,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <ul>
 <li><strong>An unknown key is refused</strong> when the recipe loads — every key becomes an argument of the step, so a typo (<code>skipp: true</code>) is an error, not a silently ignored line.</li>
 <li><code>skip</code> and <code>continue_on_error</code> take <code>true</code>/<code>false</code>; a text field takes text or a number (§12).</li>
-<li>Two step types differ: a <code>Sequence</code> step is named after the sequence it calls and takes no <code>step_name</code>, <code>id</code>, <code>inputs</code> or <code>outputs</code>; an <code>Indexed</code> step puts <code>inputs</code> and <code>outputs</code> on its <code>template</code> (§10).</li>
+<li>Three step types differ: a <code>Sequence</code> step is named after the sequence it calls and takes no <code>step_name</code>, <code>id</code>, <code>inputs</code> or <code>outputs</code>; an <code>Indexed</code> step takes no <code>id</code> and puts <code>inputs</code> and <code>outputs</code> on its <code>template</code> (§10); a <code>Wait</code> step takes no <code>inputs</code> or <code>outputs</code> — <code>wait_time</code> is written directly on the step.</li>
 </ul>
 <h3 id="5-1-image-path">5.1 <code>image_path</code> — a picture while the step runs</h3>
 <p>Any step, of any type, and any sequence may name a picture. The GUI shows it on the right while that step (or sequence) runs — a wiring diagram, where to put the probe, what the fixture should look like.</p>
@@ -270,8 +270,15 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <li>a file next to the recipe — <code>example_tests.py</code> or <code>example_tests</code>, relative to the recipe's folder (or an absolute path);</li>
 <li>a dotted import name — <code>mypackage.tests</code>, or the standard library.</li>
 </ol>
-<p>A file is loaded once and shared by every step that names it. There is no project-wide search: the recipe says where its code is. The module is not imported when the recipe loads, but a file-style <code>module</code> is looked at: the file is resolved and scanned — without running it — for a top-level function named <code>method_name</code> (a name bound by an import or an assignment counts too). A file that is not there, does not parse, or has no such name is a <strong>warning</strong> when the recipe loads, never a refusal: a module may build its functions dynamically, so only the run knows the truth. A dotted <code>module</code> is not checked at load — checking it would import code. Either way, a <code>module</code> or <code>method_name</code> that really is wrong is an <code>ERROR</code> on that step when it runs.</p>
-<p>An exception raised by the function is an <code>ERROR</code> on the step, and so is <code>sys.exit()</code> — whatever the exit code, even 0. It does not end the run: the run carries on or halts as for any other <code>ERROR</code>, and the teardown still runs.</p>
+<p>A file is loaded once and shared by every step that names it. There is no project-wide search: the recipe says where its code is. The module is not imported when the recipe loads, but a file-style <code>module</code> is looked at: the file is resolved and scanned — without running it — for a top-level function named <code>method_name</code> (a name bound by an import or an assignment counts too). A file that is not there, does not parse, or has no such name is a <strong>warning</strong> when the recipe loads, never a refusal. Only the <code>.py</code> spelling is checked for a missing file: a suffix-less name that resolves to no file is taken for a dotted import and not checked. Why a warning and not an error: a module may build its functions dynamically, so only the run knows the truth. A dotted <code>module</code> is not checked at load — checking it would import code. Either way, a <code>module</code> or <code>method_name</code> that really is wrong is an <code>ERROR</code> on that step when it runs.</p>
+<p>What happens when the function raises is §6.2's rule: a failing <code>assert</code> is a <code>FAIL</code>, anything else — <code>sys.exit()</code> included — an <code>ERROR</code>.</p>
+<h3 id="6-2-writing-the-test-function">6.2 Writing the test function</h3>
+<p>A <code>PythonModule</code> step calls one plain function. Each <code>inputs</code> entry arrives as a keyword argument of that name, and the function has two ways to say how the test went:</p>
+<ul>
+<li><strong>Return the measurement</strong> and let the recipe judge it with a <code>range</code>, <code>equals</code> or <code>passfail</code> entry (§7). A mapping is used as it is; any other value becomes the output named <code>output</code>. Preferred when there is a value worth reporting: the limits live in the recipe, and the report keeps what was measured.</li>
+<li><strong><code>assert</code></strong> the check directly — a failing assert is that step's <code>FAIL</code>, with the assert's message as the reason: <code>assert 4.9 &lt;= voltage &lt;= 5.1, f"voltage {voltage} is out of range"</code>. Always write the message; a bare assert fails with nothing to read but the step's inputs. (An <code>assert</code> vanishes under <code>python -O</code>; run pypts without it.)</li>
+</ul>
+<p><strong>Anything else that gets out of the function is an <code>ERROR</code></strong> — any other exception, and <code>sys.exit()</code> whatever the exit code, even 0. The distinction is what the technician reads: <code>FAIL</code> means the DUT failed a check, <code>ERROR</code> means the test itself could not run — so never raise an ordinary exception to report a bad measurement, and never catch a real fault just to return something in its place. Neither a <code>FAIL</code> nor an <code>ERROR</code> ends the run by itself: the run carries on — or halts, if the step says <code>continue_on_error: false</code> (§9.1) — and the teardown still runs.</p>
 <hr>
 <h2 id="7-outputs-judging-and-storing-results">7. <code>outputs</code> — judging and storing results</h2>
 <pre><code class="language-yaml">outputs:
@@ -287,7 +294,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <tr><td><code>global</code></td><td><code>global_name</code></td><td>Stores the value in that global; leaves the result alone</td></tr>
 </tbody></table>
 <p><strong>What a step returns:</strong> a mapping is used as it is; <code>None</code> is an empty one; any other value is the output named <code>output</code>. So a function that returns <code>5.0</code> is judged with <code>outputs: {output: {type: range, ...}}</code>.</p>
-<p><strong>Result rule:</strong> a step with at least one judging entry (<code>passfail</code>/<code>equals</code>/<code>range</code>) is <code>PASS</code> when every one of them passes and <code>FAIL</code> when any one does not. A step with no judging entry — only <code>pass</code>/<code>global</code> entries, or no outputs — is <code>DONE</code>. <code>pass</code> and <code>global</code> entries never touch the result. An entry other than <code>pass</code> whose value the step did not return is an <code>ERROR</code> naming what it did return.</p>
+<p><strong>Result rule:</strong> a step with at least one judging entry (<code>passfail</code>/<code>equals</code>/<code>range</code>) is <code>PASS</code> when every one of them passes and <code>FAIL</code> when any one does not. A step with no judging entry — only <code>pass</code>/<code>global</code> entries, or no outputs — is <code>DONE</code>. A failing <code>assert</code> in the test function is a <code>FAIL</code> whatever the outputs say (§6.2). <code>pass</code> and <code>global</code> entries never touch the result. An entry other than <code>pass</code> whose value the step did not return is an <code>ERROR</code> naming what it did return.</p>
 <hr>
 <h2 id="8-result-model">8. Result model</h2>
 <p><code>ResultType</code> is an <code>IntEnum</code>; the ordering is the aggregation rule:</p>
@@ -302,17 +309,17 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 </ul>
 <hr>
 <h2 id="9-execution-control">9. Execution control</h2>
-<h3 id="9-1-continue-on-error">9.1 <code>continue_on_error</code>`</h3>
+<h3 id="9-1-continue-on-error">9.1 <code>continue_on_error</code></h3>
 <pre><code class="language-yaml">- steptype: PythonModule
   step_name: power_on
   continue_on_error: false   # end the run if this step errors or fails
   ...</code></pre>
-<p>Default is <code>true</code>` (carry on). Set <code>false</code>` when stopping is safer — power supply never came up, fixture is open. It is accepted on every step type and only on steps: there is no recipe-level form. On an <code>Indexed</code>` step it applies to every generated step. Teardown steps always run to the end regardless. <code>critical:</code>` is no longer supported and is refused at load time.</p>
+<p>Default is <code>true</code> (carry on). Set <code>false</code> when stopping is safer — power supply never came up, fixture is open. It is accepted on every step type and only on steps: there is no recipe-level form. On an <code>Indexed</code> step it applies to every generated step. Teardown steps always run to the end regardless. <code>critical:</code> is no longer supported and is refused at load time.</p>
 <h3 id="9-2-abort">9.2 Abort</h3>
-<p>A stop request is checked <em>between</em> steps, never inside one, so a step can leave its hardware in a known state. Every step that did not run is still recorded as <code>SKIP</code>` with the reason "Not run: the run was stopped by the operator.", so the step table and the CSV have a row for each; the run's result is <code>STOP</code>`. Interactive steps poll for the stop every 100 ms while waiting for the operator.</p>
+<p>A stop request is checked <em>between</em> steps, never inside one, so a step can leave its hardware in a known state. Every step that did not run is still recorded as <code>SKIP</code> with the reason "Not run: the run was stopped by the operator.", so the step table and the CSV have a row for each; the run's result is <code>STOP</code>. Interactive steps poll for the stop every 100 ms while waiting for the operator.</p>
 <hr>
 <h2 id="10-step-type-catalogue">10. Step type catalogue</h2>
-<p>Six step types are available (plus <code>Indexed</code>`, which is expanded at load time). <code>steptype</code>` values are case-insensitive.</p>
+<p>Six step types are available (plus <code>Indexed</code>, which is expanded at load time). <code>steptype</code> values are case-insensitive.</p>
 <h3 id="pythonmodule-run-user-python"><code>PythonModule</code> — run user Python</h3>
 <pre><code class="language-yaml">- steptype: PythonModule
   step_name: measure_voltage
@@ -328,16 +335,16 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <ul>
 <li>Calls the function <code>method_name</code> of <code>module</code> (found as §6.1 says). Methods only; the old <code>action_type</code> and its <code>read_attribute</code>/<code>write_attribute</code> are gone.</li>
 <li>Every <code>inputs</code> entry is passed as a keyword argument of that name.</li>
-<li>Return value: a mapping is used as it is; <code>None</code> is <code>{}</code>; anything else is <code>{"output": value}</code> (§7).</li>
+<li>Return value: a mapping is used as it is; <code>None</code> is <code>{}</code>; anything else is <code>{"output": value}</code> (§7). How the function reports pass, fail and fault: §6.2.</li>
 <li>Required fields: <code>step_name</code>, <code>module</code>, <code>method_name</code> (not empty).</li>
 </ul>
-<h3 id="wait-sleep"><code>Wait</code>` — sleep</h3>
+<h3 id="wait-sleep"><code>Wait</code> — sleep</h3>
 <pre><code class="language-yaml">- steptype: Wait
   step_name: settle
   description: Let the rail settle
   wait_time: 3               # seconds (int or float)</code></pre>
-<p>Always returns <code>DONE</code>`.</p>
-<h3 id="userinteraction-prompt-operator-with-buttons"><code>UserInteraction</code>` — prompt operator with buttons</h3>
+<p>Returns <code>DONE</code> — but a negative or non-numeric <code>wait_time</code> raises when the step runs, ending it <code>ERROR</code>: the schema accepts any value, so this is found at run time, not at load. <code>inputs</code> and <code>outputs</code> are refused at load time: <code>wait_time</code> is the step's one value, and a wait returns nothing to judge or store.</p>
+<h3 id="userinteraction-prompt-operator-with-buttons"><code>UserInteraction</code> — prompt operator with buttons</h3>
 <pre><code class="language-yaml">- steptype: UserInteraction
   step_name: confirm_wiring
   description: Operator confirms the harness is connected
@@ -347,25 +354,25 @@ teardown_steps:              # optional; runs after the steps, whatever happened
   outputs:
     output: { type: equals, value: Next }</code></pre>
 <ul>
-<li><code>options</code>` is a list of strings. Each string is both the button label and the value the step returns as <code>output</code>`.
+<li><code>options</code> is a list of strings. Each string is both the button label and the value the step returns as <code>output</code>.
 </li>
-<li>Judge the answer with <code>equals</code>`. <code>passfail</code>` is refused at load time: the answer is a button's text, never <code>True</code>` or <code>False</code>`.
+<li>Judge the answer with <code>equals</code>. <code>passfail</code> is refused at load time: the answer is a button's text, never <code>True</code> or <code>False</code>.
 </li>
-<li>An empty <code>options</code>` list is refused at load time. A missing <code>image_path</code>` is not: "No image available" is shown (§5.1).
+<li>An empty <code>options</code> list is refused at load time. A missing <code>image_path</code> is not: "No image available" is shown (§5.1).
 </li>
-<li>The GUI always adds its own Cancel button. Cancelling, a timeout or a stop makes the step <code>ERROR</code>`; the run carries on unless <code>continue_on_error: false</code>`.
+<li>The GUI always adds its own Cancel button. Cancelling, a timeout or a stop makes the step <code>ERROR</code>; the run carries on unless <code>continue_on_error: false</code>.
 </li>
-<li>The old dict format (<code>- next: Next</code>`) and the <code>cancel_key</code>` global are not supported.
+<li>The old dict format (<code>- next: Next</code>) and the <code>cancel_key</code> global are not supported.
 </ul>
-<h3 id="userwrite-operator-types-a-value"><code>UserWrite</code>` — operator types a value</h3>
+<h3 id="userwrite-operator-types-a-value"><code>UserWrite</code> — operator types a value</h3>
 <pre><code class="language-yaml">- steptype: UserWrite
   step_name: get_serial_number
   description: Scan or type the serial number
   message: Scan or type the serial number of the unit under test.
   outputs:
     output: { type: global, global_name: serial_number }</code></pre>
-<p>Text-entry mode only. The typed string is stored or judged (<code>equals</code>`) per <code>outputs</code>`; <code>passfail</code>` is refused at load time, as on <code>UserInteraction</code>`. The old serial-port picker mode (<code>ID</code>` key) is not available.</p>
-<h3 id="userloading-operator-picks-a-file-or-folder"><code>UserLoading</code>` — operator picks a file or folder</h3>
+<p>Text-entry mode only. The typed string is stored or judged (<code>equals</code>) per <code>outputs</code>; <code>passfail</code> is refused at load time, as on <code>UserInteraction</code>. The old serial-port picker mode (<code>ID</code> key) is not available.</p>
+<h3 id="userloading-operator-picks-a-file-or-folder"><code>UserLoading</code> — operator picks a file or folder</h3>
 <pre><code class="language-yaml">- steptype: UserLoading
   step_name: pick_calibration_file
   description: Choose the calibration file for this unit
@@ -375,13 +382,13 @@ teardown_steps:              # optional; runs after the steps, whatever happened
   outputs:
     output: { type: global, global_name: calibration_file }</code></pre>
 <ul>
-<li>The chosen path is stored per <code>outputs</code>` as an absolute, resolved path string; a later step reads it with <code>inputs: {path: {type: global, global_name: calibration_file}}</code>`.
+<li>The chosen path is stored per <code>outputs</code> as an absolute, resolved path string; a later step reads it with <code>inputs: {path: {type: global, global_name: calibration_file}}</code>.
 </li>
-<li><code>select</code>` other than <code>file</code>`/<code>folder</code>` is refused at load time. There is no file filter, no start folder and no save-as mode.
+<li><code>select</code> other than <code>file</code>/<code>folder</code> is refused at load time. There is no file filter, no start folder and no save-as mode.
 </li>
-<li>The step checks the answer itself: a path that does not exist, or a folder where a file was asked for (or the other way round), is <code>ERROR</code>`. Cancelling, a timeout or a stop is <code>ERROR</code>` too.
+<li>The step checks the answer itself: a path that does not exist, or a folder where a file was asked for (or the other way round), is <code>ERROR</code>. Cancelling, a timeout or a stop is <code>ERROR</code> too.
 </li>
-<li>One request, one response: the old type's second value on the response queue is gone. Worked example: <code>resources/recipes/userloadingstep_recipes/userloadingstep_demo.yml</code>` (GUI mode — the CLI declines).
+<li>One request, one response: the old type's second value on the response queue is gone. Worked example: <code>resources/recipes/userloadingstep_recipes/userloadingstep_demo.yml</code> (GUI mode — the CLI declines).
 </ul>
 <h3 id="sequence-call-a-group-of-steps"><code>Sequence</code> — call a group of steps</h3>
 <pre><code class="language-yaml">---
@@ -423,24 +430,46 @@ teardown_steps:
 <li>Worked example: <code>resources/recipes/sequencestep_recipes/sequencestep_demo.yml</code> (runs headless).
 </li>
 </ul>
-<p><strong>Not yet in the frontends:</strong> the GUI and CLI still offer every sequence to start and show group rows without indentation; the report has no group column yet; the Recipe Creator and its verificator do not know the step yet. These follow in the next stages (roadmap).</p>
+<p><strong>Frontend status:</strong> the step table indents group rows, and the verificator checks <code>Sequence</code> steps (§13). Still open (roadmap): every sequence can still be started, not only main; the report has no group column yet; and the Recipe Creator's add-step form writes a <code>step_name</code> the step refuses.</p>
+<h3 id="indexed-repeat-a-step-over-parameter-sets"><code>Indexed</code> — repeat a step over parameter sets</h3>
+<pre><code class="language-yaml">- steptype: Indexed
+  step_name: Add numbers       # the base name of every generated step
+  template:                    # one ordinary step, written as usual
+    steptype: PythonModule
+    module: example_tests.py
+    method_name: add
+  parameter_sets:              # at least one entry
+    - inputs: {a: 1, b: 1}
+      expect: {sum: 2}
+    - inputs: {a: 2, b: 3}
+      expect: {sum: 5}</code></pre>
+<p>Run the same step once per parameter set. An <code>Indexed</code> step is <strong>expanded when the recipe loads</strong>: each set becomes one ordinary step built from the <code>template</code>, so the step table pre-fills with N rows and the CSV gets N rows. N is fixed at load time — "run once per device an earlier step found" is not expressible. Nothing downstream ever sees the steptype.</p>
+<ul>
+<li>A set's <code>inputs</code> are direct values, merged key by key over the <code>template</code>'s own <code>inputs</code>; its <code>expect</code> entries are shorthand <code>equals</code> checks on the named outputs. A check that needs <code>range</code>, <code>passfail</code> or <code>global</code> goes on the <code>template</code>, which takes the full <code>inputs</code>/<code>outputs</code> vocabulary (§6, §7).</li>
+<li>A set carries <code>inputs</code> and/or <code>expect</code> — at least one of the two, and nothing else.</li>
+<li>Generated steps are named after their parameters — <code>Add numbers [a=2, b=3]</code> — so a failed row explains itself without opening the recipe; a set with no <code>inputs</code> falls back to a counter: <code>Add numbers 1/10</code>.</li>
+<li>The <code>template</code> needs no <code>step_name</code> of its own: the <code>Indexed</code> step's <code>step_name</code> is the base name.</li>
+<li>The wrapper's <code>description</code> and <code>image_path</code> go on every generated step unless the <code>template</code> names its own; <code>skip</code> and <code>continue_on_error</code> on the wrapper apply to every generated step.</li>
+<li><strong>Refused at load time:</strong> <code>id</code>, <code>inputs</code> or <code>outputs</code> on the <code>Indexed</code> step itself (they belong on the <code>template</code>); an empty <code>parameter_sets</code>; a set with neither <code>inputs</code> nor <code>expect</code>, or with any other key; a <code>template</code> that carries an <code>id</code> or is a <code>Sequence</code> or <code>Indexed</code> step.</li>
+<li>Worked example: <code>resources/recipes/indexedstep_recipes/indexedstep_demo.yml</code> (runs headless).</li>
+</ul>
 <hr>
 <h2 id="11-step-types-not-yet-available">11. Step types not yet available</h2>
-<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>SSHConnectStep</code>` / <code>SSHCloseStep</code>`</td><td>Not step types in the new architecture — becomes a framework facility (HAL or service, not decided; Phase 5)</td></tr><tr><td><code>SequenceStep</code>`</td><td>Available as <code>steptype: Sequence</code> (§10) — call another sequence of the recipe as a group, nested to any depth</td></tr><tr><td><code>UserRunMethodStep</code>`</td><td>Deprecated — use <code>UserInteraction</code>` + <code>PythonModule</code>` in sequence</td></tr><tr><td><code>IndexedStep</code>`</td><td>Available as <code>steptype: Indexed</code>` (<code>template</code>` + <code>parameter_sets</code>`), expanded at load time; the old <code>indexed: true</code>` input flag is gone</td></tr></tbody></table>
+<table><thead><tr><th>Old type</th><th>Status in new architecture</th></tr></thead><tbody><tr><td><code>SSHConnectStep</code> / <code>SSHCloseStep</code></td><td>Not step types in the new architecture — SSH is a framework facility: the hardware layer's <code>SshDriver</code> (<code>pypts.hal.drivers.ssh</code>), reached from test code with <code>pypts.hal.get_device("&lt;name&gt;")</code>; credentials live in the device's bare <code>[&lt;name&gt;]</code> section of <code>bench.ini</code></td></tr><tr><td><code>SequenceStep</code></td><td>Available as <code>steptype: Sequence</code> (§10) — call another sequence of the recipe as a group, nested to any depth</td></tr><tr><td><code>UserRunMethodStep</code></td><td>Deprecated — use <code>UserInteraction</code> + <code>PythonModule</code> in sequence</td></tr><tr><td><code>IndexedStep</code></td><td>Available as <code>steptype: Indexed</code> (<code>template</code> + <code>parameter_sets</code>, §10), expanded at load time; the old <code>indexed: true</code> input flag is gone</td></tr></tbody></table>
 <hr>
 <h2 id="12-yaml-pitfalls">12. YAML pitfalls</h2>
 <ol>
-<li><strong><code>yes</code>`/<code>no</code>`/<code>on</code>`/<code>off</code>`/<code>true</code>` are booleans in YAML 1.1.</strong> An option written <code>options: [Yes, No]</code>`
-<p>produces the booleans <code>True</code>`/<code>False</code>`, not the strings <code>"Yes"</code>`/<code>"No"</code>`. Always quote: <code>options: ['Yes', 'No']</code>`, and quote the matching <code>equals</code>` value too.</p>
+<li><strong><code>yes</code>/<code>no</code>/<code>on</code>/<code>off</code>/<code>true</code> are booleans in YAML 1.1.</strong> An option written <code>options: [Yes, No]</code>
+<p>produces the booleans <code>True</code>/<code>False</code>, not the strings <code>"Yes"</code>/<code>"No"</code>. Always quote: <code>options: ['Yes', 'No']</code>, and quote the matching <code>equals</code> value too.</p>
 </li>
 <li><strong>A text field takes text or a number, nothing else.</strong> <code>step_name</code>, <code>message</code>, <code>description</code>, <code>module</code>,
 <p><code>method_name</code> and the header's <code>name</code> refuse a YAML boolean (<code>message: yes</code>), a date (<code>description: 2024-01-01</code>) or a list when the recipe loads, with <code>message: Input should be a valid string</code>. Quote the value: <code>message: 'yes'</code>. A number is read as its text (<code>version: 0.2</code>, <code>step_name: 7</code>). <code>skip</code> and <code>continue_on_error</code> take <code>true</code>/<code>false</code>.</p>
 </li>
-<li><strong><code>None</code>` is a string, not null.</strong> YAML null is <code>null</code>`, <code>~</code>`, or empty. Recipes use <code>None</code>`
+<li><strong><code>None</code> is a string, not null.</strong> YAML null is <code>null</code>, <code>~</code>, or empty. Recipes use <code>None</code>
 <p>as a placeholder; quote it where needed.</p>
 </li>
-<li><strong>Quoting changes the type.</strong> <code>value: 45</code>` ≠ <code>value: '45'</code>` for <code>equals</code>`. <code>range</code>` is safe
-<p>(it calls <code>float()</code>`).</p>
+<li><strong>Quoting changes the type.</strong> <code>value: 45</code> ≠ <code>value: '45'</code> for <code>equals</code>. <code>range</code> is safe
+<p>(it calls <code>float()</code>).</p>
 </li>
 <li><strong>The leading <code>-</code> before <code>steptype</code></strong> makes a step a list element. Omitting it turns
 <p><code>steps</code> into one mapping instead of a list of steps, and the recipe is refused: <code>steps: Input should be a valid list</code>.</p>
@@ -459,6 +488,7 @@ teardown_steps:
 <p><strong>Errors</strong> — the recipe will not load:</p>
 <ul>
 <li>Everything the framework's recipe models check: required fields, value types, unknown step keys, the <code>inputs</code>/<code>outputs</code> vocabulary, <code>Sequence</code> and <code>Indexed</code> step shapes, <code>report_metadata</code>. The message is the framework's own, for example <code>sequence 'Main', steps[1] 'Pause': wait_time: Field required</code>.</li>
+<li>The file's structure: an empty file, a document that is not a YAML mapping, a first document that is not the header (or looks like a sequence), and a header with no sequence documents after it.</li>
 <li>A duplicate sequence name (compared without case), and a <code>main_sequence</code> that names no sequence.</li>
 <li>Once all of the above is clean, whatever the framework's real load still refuses: <code>select</code> that is neither <code>file</code> nor <code>folder</code>, an empty <code>method_name</code> or <code>options</code>, a <code>Sequence</code> step calling a sequence that does not exist, the main sequence, or itself in a loop. These are found one at a time and carry no line number.</li>
 </ul>

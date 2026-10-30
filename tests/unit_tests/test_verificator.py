@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from pypts.helper_applications.recipe_creator import verify_string
+from pypts.helper_applications.recipe_creator import verify_and_parse, verify_string
 from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.recipe.recipe_schema import (
     REMOVED_SEQUENCE_KEYS,
@@ -70,6 +70,15 @@ def with_step(extra: str) -> str:
     return VALID + extra
 
 
+def with_outputs(extra: str) -> str:
+    """VALID with its Wait swapped for a UserWrite, plus `extra` - a Wait refuses outputs."""
+    text = VALID.replace(
+        "  - steptype: Wait\n    step_name: Pause\n    wait_time: 1\n",
+        "  - steptype: UserWrite\n    step_name: Pause\n    message: m\n",
+    )
+    return text + extra
+
+
 # -- the verdict is the framework's ------------------------------------------------
 
 
@@ -89,8 +98,9 @@ REFUSED = {
     "a text field written as a YAML boolean": VALID.replace(
         "step_name: Pause", "step_name: Pause\n    description: yes"
     ),
-    "an unknown output type": with_step("    outputs:\n      r: {type: local}\n"),
-    "a range without max": with_step("    outputs:\n      r: {type: range, min: 1}\n"),
+    "an unknown output type": with_outputs("    outputs:\n      r: {type: local}\n"),
+    "a range without max": with_outputs("    outputs:\n      r: {type: range, min: 1}\n"),
+    "outputs on a Wait": with_step("    outputs:\n      r: {type: pass}\n"),
     "report_metadata naming a number": VALID.replace(
         "name: Demo", "name: Demo\nreport_metadata: [3]"
     ),
@@ -109,7 +119,7 @@ REFUSED = {
     "an unknown header key": VALID.replace("name: Demo", "name: Demo\nmain_sequnce: Main"),
     "an unknown sequence key": VALID.replace("steps:", "teardown_step: []\nsteps:"),
     "a removed sequence key": VALID.replace("steps:", "setup_steps: []\nsteps:"),
-    "a typo in an output entry": with_step(
+    "a typo in an output entry": with_outputs(
         "    outputs:\n      r: {type: range, min: 1, max: 2, mx: 3}\n"
     ),
     "passfail on a UserInteraction": VALID
@@ -220,7 +230,7 @@ def test_a_missing_output_key_hint_uses_the_author_s_entry_name():
 
 
 def test_a_numeric_output_name_is_the_name_in_the_example():
-    (issue,) = errors(with_step("    outputs:\n      1: {type: equals}\n"))
+    (issue,) = errors(with_outputs("    outputs:\n      1: {type: equals}\n"))
     assert "1: {type: equals, value: 5}" in issue.hint
 
 
@@ -228,6 +238,13 @@ def test_an_unknown_output_type_hint_lists_the_types_with_their_meaning():
     (issue,) = errors(REFUSED["an unknown output type"])
     assert "'local' is not a valid output type" in issue.hint
     assert RangeOutput.model_fields["type"].description in issue.hint
+
+
+def test_a_refused_wait_key_gets_the_valid_keys_hint():
+    """The refusal's reason is the message; the hint says what a Wait does take."""
+    (issue,) = errors(REFUSED["outputs on a Wait"])
+    assert issue.message == "outputs: a Wait step returns nothing, so it takes no 'outputs'"
+    assert issue.hint.startswith("Valid keys for a wait step:")
 
 
 INDEXED = """\
@@ -293,7 +310,7 @@ def test_a_main_sequence_naming_nothing_points_at_main_sequence():
 
 
 def test_a_numeric_output_name_is_a_name_not_a_position():
-    (issue,) = errors(with_step("    outputs:\n      1: {type: equals}\n"))
+    (issue,) = errors(with_outputs("    outputs:\n      1: {type: equals}\n"))
     assert issue.message == "outputs -> 1 -> value: Field required"
     assert issue.line == 10
 
@@ -393,3 +410,34 @@ def test_a_problem_without_a_field_has_no_path():
     issues = verify_string("name: x\n")
     assert issues
     assert issues[0].path == ()
+
+
+# -- verify_and_parse keeps the framework's load ------------------------------------
+
+
+def test_verify_and_parse_returns_the_loaded_recipe():
+    issues, recipe = verify_and_parse(VALID)
+    assert issues == []
+    assert isinstance(recipe, Recipe)
+    assert [summary.sequence_name for summary in recipe.to_summary()] == ["Main"]
+
+
+def test_verify_and_parse_keeps_the_recipe_despite_warnings():
+    text = VALID.replace("version: '0.2'", "version: 0.2")
+    issues, recipe = verify_and_parse(text)
+    assert issues
+    assert all(issue.is_warning for issue in issues)
+    assert isinstance(recipe, Recipe)
+
+
+def test_verify_and_parse_returns_none_on_a_validation_error():
+    issues, recipe = verify_and_parse(REFUSED["wait_time missing"])
+    assert any(issue.is_error for issue in issues)
+    assert recipe is None
+
+
+def test_verify_and_parse_returns_none_on_a_load_refusal():
+    """A recipe every field of which is valid, refused only by the full load (pass 6)."""
+    issues, recipe = verify_and_parse(REFUSED["a call of a sequence that does not exist"])
+    assert any(issue.is_error and issue.field == "recipe" for issue in issues)
+    assert recipe is None

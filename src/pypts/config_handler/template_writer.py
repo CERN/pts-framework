@@ -28,7 +28,7 @@ Both are line based, which keeps the output diffable: change one value and
 import re
 from pathlib import Path
 
-#: A section header, e.g. `[hardware.dmm1]`.
+#: A section header, e.g. `[logging]`.
 SECTION_RE = re.compile(r"^\s*\[(?P<name>[^]]+)\]\s*$")
 
 #: A key assignment, e.g. `level = INFO`. Only `=` is accepted as the separator;

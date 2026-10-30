@@ -2,12 +2,12 @@
 SSH - a remote shell, over paramiko. The reference driver: a new driver
 follows its shape.
 
-Keys of its [hardware.<name>] section (all text):
+Keys of its bench.ini section ([<name>], all text):
 
     host                 required
     username             required
     port                 default 22
-    password             optional - config.ini is plain text, prefer key_filename
+    password             optional - bench.ini is plain text, prefer key_filename
     key_filename         optional, path to a private key
     known_hosts          optional, a known_hosts file read beside the system one
     accept_unknown_host  default false: a host whose key is not known is refused
@@ -26,7 +26,7 @@ except ImportError as exc:
 from pypts.hal.base_driver import DriverError
 from pypts.hal.device_types import SSH
 
-#: How a yes is written in config.ini - the configuration's own vocabulary.
+#: How a yes is written in bench.ini - the configuration's own vocabulary.
 TRUE_TEXT = ("1", "yes", "true", "on")
 
 DEFAULT_PORT = 22
@@ -43,7 +43,7 @@ class SshDriver(SSH):
         host = config.get("host", "").strip()
         username = config.get("username", "").strip()
         if not host or not username:
-            raise DriverError("SSH needs 'host' and 'username' in its [hardware.<name>] section.")
+            raise DriverError("SSH needs 'host' and 'username' in its bench.ini [<name>] section.")
         port_text = config.get("port", "").strip()
         if port_text:
             if not port_text.isdigit():

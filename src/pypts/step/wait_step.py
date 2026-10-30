@@ -6,7 +6,7 @@
 WaitStep - sleep for a fixed time.
 
 One concrete step type per module; the package docstring in __init__.py
-holds the map of the ported types and of what still lives in old_code.
+says who owns what, and step/step.md holds the type catalogue.
 """
 
 import time

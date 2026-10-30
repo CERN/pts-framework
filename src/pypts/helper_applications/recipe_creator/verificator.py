@@ -2,10 +2,11 @@
 Recipe verificator: validate a recipe YAML file or string and return every
 problem found in one pass, with line-numbered diagnostics and a fix hint each.
 
-The public surface is two functions:
+The public surface is three functions:
 
-    verify_file(path)    -> list[ValidationIssue]
-    verify_string(text)  -> list[ValidationIssue]
+    verify_file(path)      -> list[ValidationIssue]
+    verify_string(text)    -> list[ValidationIssue]
+    verify_and_parse(text) -> tuple[list[ValidationIssue], Recipe | None]
 
 The verdict is the framework's. Errors come from the same Pydantic models the
 framework loads a recipe with (recipe_parser.validate_document against
@@ -17,8 +18,8 @@ without errors exactly when the framework would load it.
 
 What is this file's own: the line of every issue, which field's hint fits it
 (the words are the schema's own field descriptions and examples), and the
-warnings about what loads but looks wrong (a removed key, a version written as
-a number).
+warnings about what loads but looks wrong (an empty name or version, a version
+written as a number).
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ from pydantic import BaseModel
 
 from pypts.helper_applications.recipe_creator.issue import ValidationIssue
 from pypts.recipe import recipe_parser
-from pypts.recipe.recipe import RecipeError
+from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.recipe.recipe_parser import SchemaProblem
 from pypts.recipe.recipe_schema import (
     INDEXED_STEP_REFUSED_KEYS,
@@ -41,6 +42,7 @@ from pypts.recipe.recipe_schema import (
     RENAMED_STEP_TYPES,
     SEQUENCE_STEP_REFUSED_KEYS,
     STEP_SCHEMAS,
+    WAIT_STEP_REFUSED_KEYS,
     HeaderSchema,
     IndexedStepSchema,
     SequenceSchema,
@@ -77,9 +79,23 @@ def verify_file(path: Path | str) -> list[ValidationIssue]:
 
 def verify_string(content: str) -> list[ValidationIssue]:
     """Verify a recipe YAML string. Returns all issues, errors before warnings."""
+    issues, _ = verify_and_parse(content)
+    return issues
+
+
+def verify_and_parse(content: str) -> tuple[list[ValidationIssue], Recipe | None]:
+    """
+    Verify a recipe YAML string and keep the framework's load.
+
+    The issues are `verify_string`'s. The `Recipe` is the one pass 6 built, so
+    a caller that also shows the recipe - the Recipe Editor v2 - does not parse
+    the same text a second time. It is None exactly when there is an error:
+    a recipe verifies without errors exactly when the framework would load it.
+    """
     ctx = _Context()
-    _run(content, ctx)
-    return sorted(ctx.issues, key=lambda i: (i.severity != "error", i.line or 0))
+    recipe = _run(content, ctx)
+    issues = sorted(ctx.issues, key=lambda i: (i.severity != "error", i.line or 0))
+    return issues, recipe
 
 
 # ---------------------------------------------------------------------------
@@ -201,8 +217,12 @@ def _line_map_keys(doc: dict[str, Any], path: tuple) -> tuple:
     return tuple(keys)
 
 
-def _run(content: str, ctx: _Context) -> None:
-    """parse -> structure -> header -> sequences -> cross-refs -> the framework's load."""
+def _run(content: str, ctx: _Context) -> Recipe | None:
+    """parse -> structure -> header -> sequences -> cross-refs -> the framework's load.
+
+    Returns the Recipe the framework's load built, or None when an error
+    stopped the pipeline before pass 6 or the load itself refused.
+    """
     # Pass 1 - YAML parsing
     try:
         nodes = list(yaml.compose_all(content))
@@ -217,7 +237,7 @@ def _run(content: str, ctx: _Context) -> None:
                 "unquoted special character such as ':' or '#' inside a value."
             ),
         )
-        return
+        return None
 
     if not docs:
         ctx.error(
@@ -229,7 +249,7 @@ def _run(content: str, ctx: _Context) -> None:
                 "'sequence_name:'), separated by '---'."
             ),
         )
-        return
+        return None
 
     # Pass 2 - each document must be a mapping. `number` counts every document
     # from 1, header included, as the framework's messages do. The first one is
@@ -245,7 +265,7 @@ def _run(content: str, ctx: _Context) -> None:
             ),
             line=nodes[0].start_mark.line + 1,
         )
-        return
+        return None
 
     valid: list[tuple[int, dict[str, Any], yaml.Node]] = []
     for i, (doc, node) in enumerate(zip(docs, nodes)):
@@ -292,7 +312,7 @@ def _run(content: str, ctx: _Context) -> None:
             ),
             line=header_node.start_mark.line + 1,
         )
-        return
+        return None
     if not has_name and not has_seq:
         ctx.error(
             field="document 1",
@@ -303,7 +323,7 @@ def _run(content: str, ctx: _Context) -> None:
             ),
             line=header_node.start_mark.line + 1,
         )
-        return
+        return None
 
     if not sequences:
         ctx.error(
@@ -349,7 +369,8 @@ def _run(content: str, ctx: _Context) -> None:
     # Pass 6 - the framework's own load. Only once everything above is clean:
     # it stops at its first problem, and every one before it is already named.
     if not ctx.has_errors():
-        _check_full_load(content, ctx)
+        return _check_full_load(content, ctx)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -377,10 +398,10 @@ def _report_problems(
         )
 
 
-def _check_full_load(content: str, ctx: _Context) -> None:
+def _check_full_load(content: str, ctx: _Context) -> Recipe | None:
     """What only building the recipe finds: a step constructor's refusal, a bad call."""
     try:
-        recipe_parser.parse_recipe(content, check_version=False)
+        return recipe_parser.parse_recipe(content, check_version=False)
     except RecipeError as error:
         ctx.error(
             field="recipe",
@@ -391,6 +412,7 @@ def _check_full_load(content: str, ctx: _Context) -> None:
                 "from 1 with every Indexed step already expanded."
             ),
         )
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -543,6 +565,8 @@ def _step_hint(problem: SchemaProblem, step: Any, rest: tuple[int | str, ...]) -
     if steptype == "indexed" and field in INDEXED_STEP_REFUSED_KEYS:
         return _valid_keys_hint(steptype)
     if steptype == "sequence" and field in SEQUENCE_STEP_REFUSED_KEYS:
+        return _valid_keys_hint(steptype)
+    if steptype == "wait" and field in WAIT_STEP_REFUSED_KEYS:
         return _valid_keys_hint(steptype)
     # Inside a parameter set, 'Extra inputs' is about the set, not the step.
     if steptype == "indexed" and field == "parameter_sets":

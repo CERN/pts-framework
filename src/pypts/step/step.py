@@ -6,7 +6,7 @@
 The base Step, its StepResult, and the two loops that run steps.
 
 The lifecycle every step shares, owned by the base class and ported from
-old_code/recipe.py:
+the old engine's recipe.py:
 
     resolve inputs  ->  _step()  ->  judge outputs  ->  StepResult
 
@@ -598,6 +598,14 @@ class Step:
             try:
                 step_input = self.process_inputs(runtime)
                 raw_output = self._step(runtime, step_input)
+            # An assert in test code is the author's own pass/fail check, so a
+            # failing one is the DUT failing that check - FAIL with the
+            # assert's message as the reason, not a software fault. Must come
+            # before the Exception net, which would make it an ERROR.
+            except AssertionError as exc:
+                failure = str(exc) or "an assert in the test function failed"
+                reason = build_fail_reason([failure], step_input, {})
+                step_result.set_result(ResultType.FAIL, step_input, {}, reason)
             # SystemExit too: sys.exit() in test code is a step that never
             # returned - ERROR whatever the exit code - not the end of the run.
             # Let through, it would skip every later step and leave the

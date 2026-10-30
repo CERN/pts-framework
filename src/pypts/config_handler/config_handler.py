@@ -49,7 +49,6 @@ from pypts.config_handler.configuration_schema import (
     SCHEMA,
     TRUE_VALUES,
     Field,
-    is_hardware_section,
     schema_for_section,
 )
 from pypts.logger.log import log
@@ -587,18 +586,11 @@ class ConfigHandler:
         for section, options in raw.items():
             fields = schema_for_section(section)
             if fields is None:
-                if is_hardware_section(section):
-                    self._note(
-                        logging.DEBUG,
-                        f"Configuration section [{section}] declares a device; its values "
-                        f"are kept as text for the hardware layer.",
-                    )
-                else:
-                    self._note(
-                        logging.WARNING,
-                        f"Configuration section [{section}] is not part of the schema; "
-                        f"its values are available as text and nothing else reads them.",
-                    )
+                self._note(
+                    logging.WARNING,
+                    f"Configuration section [{section}] is not part of the schema; "
+                    f"its values are available as text and nothing else reads them.",
+                )
                 values[section] = dict(options)
                 continue
 

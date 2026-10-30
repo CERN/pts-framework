@@ -17,10 +17,10 @@ wait_time does rather than the way PythonModuleStep's `inputs` entries do:
     - steptype: UserInteraction
       step_name: Check the LED
       message: Is the red LED lit?
-      options: [Yes, No]
+      options: ['Yes', 'No']
       image_path: led.png
       outputs:
-        output: {type: equals, value: Yes}
+        output: {type: equals, value: 'Yes'}
 
 The chosen option comes back as the step's output, so the ordinary
 outputs vocabulary judges it (`equals`) or stores it (`global`) with no

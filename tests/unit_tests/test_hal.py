@@ -155,6 +155,7 @@ def test_load_driver_class_finds_a_driver():
         ("pypts.hal.drivers.loopback.Nope", "has no class 'Nope'"),
         ("pypts.hal.base_driver.DriverError", "is not a driver"),
         ("pypts.hal.base_driver.BaseDriver", "belongs to no device type"),
+        ("hal_test_drivers.ReservedNameDriver", "reserves for itself: close"),
     ],
 )
 def test_load_driver_class_explains_a_bad_path(dotted, words):
@@ -206,8 +207,10 @@ class _FakeConnection:
     def close(self):
         self.events.append("close")
 
-    def abandon(self):
+    def abandon(self, time_limit_s):
         self.events.append("abandon")
+        self.abandon_time_limits = getattr(self, "abandon_time_limits", [])
+        self.abandon_time_limits.append(time_limit_s)
         return True
 
 
@@ -419,6 +422,28 @@ def test_abandoning_takes_the_setup_away_and_makes_every_device_safe(fake_connec
         get_device("loop1")
 
 
+def test_a_device_that_finishes_opening_beside_abandon_is_closed_not_leaked(
+    fake_connections, monkeypatch
+):
+    """The abandon flag and the registration are one atomic step: a device
+    that finishes opening after abandon() copied the list is closed here,
+    never silently left running (review N4)."""
+    setup = LocalSetup(lambda: SECTIONS)
+    setup.__enter__()
+
+    def open_and_lose_the_race(self):
+        self.events.append("open")
+        abandon_active_setup(time_limit_s=0.5)
+
+    monkeypatch.setattr(_FakeConnection, "open", open_and_lose_the_race)
+
+    with pytest.raises(DriverError, match="abandoned"):
+        setup.get_device("ssh1")
+
+    (ssh,) = fake_connections
+    assert ssh.events == ["open", "close"]
+
+
 def test_an_abandoned_setup_opens_no_device_for_the_run_it_was_taken_from(fake_connections):
     """The stuck run's next get_device() must not quietly reopen what was just made safe."""
     setup = LocalSetup(lambda: SECTIONS)
@@ -432,26 +457,35 @@ def test_an_abandoned_setup_opens_no_device_for_the_run_it_was_taken_from(fake_c
     setup.__exit__(None, None, None)
 
 
-def test_devices_are_made_safe_side_by_side_and_the_slow_ones_named(fake_connections):
+def test_devices_are_made_safe_in_turn_on_one_deadline_and_the_unsafe_ones_named(
+    fake_connections,
+):
+    """Serialized on purpose: one ladder at a time, newest device first."""
     setup = LocalSetup(lambda: SECTIONS)
     setup.__enter__()
     ssh = setup.get_device("ssh1")
     loop = setup.get_device("loop1")
-    release = threading.Event()
+    order = []
 
-    def slow():
-        release.wait(10.0)
+    def slow_ssh(time_limit_s):
+        order.append(("ssh1", time_limit_s))
+        time.sleep(0.3)
+        return False
+
+    def quick_loop(time_limit_s):
+        order.append(("loop1", time_limit_s))
         return True
 
-    ssh.abandon = slow
-    loop.abandon = lambda: False
-    began = time.monotonic()
+    ssh.abandon = slow_ssh
+    loop.abandon = quick_loop
 
     unsafe = abandon_active_setup(time_limit_s=0.5)
 
-    release.set()
-    assert time.monotonic() - began < 3.0
-    assert sorted(unsafe) == ["loop1", "ssh1"]
+    assert unsafe == ["ssh1"]
+    # Newest first, and the budget each device saw shrank as time passed.
+    assert [name for name, _ in order] == ["loop1", "ssh1"]
+    assert order[0][1] == pytest.approx(0.5, abs=0.2)
+    assert order[1][1] < order[0][1]
 
 
 def test_abandoning_with_no_active_setup_does_nothing():

@@ -36,7 +36,7 @@ frontends knows this steptype exists. The cost is that N is fixed when the recip
 loads - a count that depends on what an earlier step measured is not expressible,
 and would need a runtime construct instead.
 
-This replaces `old_code/steps.py`'s `IndexedStep`, which wrapped a deep-copied
+This replaces the old engine's `IndexedStep`, which wrapped a deep-copied
 template at *run* time, iterated to the length of the shortest of several
 parallel `indexed: true` lists (silently truncating), and then discarded its own
 `outputs` mapping so the results it aggregated could never be stored (F25).
@@ -44,8 +44,6 @@ Row-wise sets have neither problem: one set is one coherent case.
 """
 
 from typing import Any
-
-from pypts.step.sequence_step import is_sequence_step
 
 #: The steptype, lowercase as the registry and the rules spell them.
 INDEXED_STEPTYPE = "indexed"
@@ -56,9 +54,6 @@ TEMPLATE_KEY = "template"
 #: The list of parameter sets, one per generated step.
 SETS_KEY = "parameter_sets"
 
-#: What one set may carry: direct input values, and expected output values.
-SET_KEYS = ("inputs", "expect")
-
 
 def is_indexed_step(step_data: Any) -> bool:
     """Whether this step mapping is an indexed step and needs expanding."""
@@ -66,87 +61,6 @@ def is_indexed_step(step_data: Any) -> bool:
         return False
     steptype = step_data.get("steptype")
     return isinstance(steptype, str) and steptype.lower() == INDEXED_STEPTYPE
-
-
-def check_indexed_step(step_data: dict[str, Any]) -> list[str]:
-    """
-    Everything about an indexed step's own shape, as a list of problems.
-
-    The guard expand_indexed_step() runs before it expands anything. A recipe
-    file meets the same rules earlier, in recipe_schema.IndexedStepSchema, with
-    every other problem in the file; the *template* is checked there as the
-    ordinary step it becomes.
-
-    Returns:
-        Human-readable problems; an empty list means the shape is fine.
-    """
-    problems = []
-
-    # One id would be handed to N steps, and the step table is keyed by id.
-    if step_data.get("id") is not None:
-        problems.append(
-            f"an {INDEXED_STEPTYPE} step becomes several steps and cannot carry an 'id'"
-        )
-
-    # Silently ignoring these would be worse: an author who writes them expects
-    # them to apply, and they would apply to nothing.
-    for mapping_name in ("inputs", "outputs"):
-        if step_data.get(mapping_name) is not None:
-            problems.append(
-                f"'{mapping_name}' belongs on the '{TEMPLATE_KEY}', not on the "
-                f"{INDEXED_STEPTYPE} step itself"
-            )
-
-    template = step_data.get(TEMPLATE_KEY)
-    if template is not None:
-        if not isinstance(template, dict):
-            problems.append(f"'{TEMPLATE_KEY}' must be a step mapping")
-        elif is_indexed_step(template):
-            problems.append(f"an {INDEXED_STEPTYPE} step cannot be the '{TEMPLATE_KEY}'")
-        elif is_sequence_step(template):
-            problems.append(
-                f"a Sequence step cannot be the '{TEMPLATE_KEY}': a sequence is a group "
-                f"of steps and {INDEXED_STEPTYPE} parametrizes a single step"
-            )
-        elif template.get("id") is not None:
-            problems.append(f"the '{TEMPLATE_KEY}' cannot carry an 'id': it becomes N steps")
-
-    problems.extend(_check_sets(step_data.get(SETS_KEY)))
-    return problems
-
-
-def _check_sets(sets: Any) -> list[str]:
-    """The parameter_sets list and every set in it."""
-    if sets is None:
-        # Its absence is already reported by the required-field check.
-        return []
-    if not isinstance(sets, list):
-        return [f"'{SETS_KEY}' must be a list of parameter sets"]
-    if not sets:
-        return [f"'{SETS_KEY}' must contain at least one set"]
-
-    problems = []
-    for position, one_set in enumerate(sets, start=1):
-        where = f"{SETS_KEY}[{position}]"
-        if not isinstance(one_set, dict):
-            problems.append(f"{where}: a parameter set must be a mapping")
-            continue
-
-        unknown = [key for key in one_set if key not in SET_KEYS]
-        if unknown:
-            problems.append(
-                f"{where}: unknown key(s) {', '.join(sorted(unknown))}. "
-                f"A set may carry: {', '.join(SET_KEYS)}"
-            )
-        for key in SET_KEYS:
-            value = one_set.get(key)
-            if value is not None and not isinstance(value, dict):
-                problems.append(f"{where}: '{key}' must be a mapping of names to values")
-        if not any(isinstance(one_set.get(key), dict) and one_set[key] for key in SET_KEYS):
-            problems.append(
-                f"{where}: a set must carry at least one of {', '.join(SET_KEYS)}"
-            )
-    return problems
 
 
 def expand_indexed_step(step_data: dict[str, Any]) -> list[dict[str, Any]]:
@@ -157,20 +71,20 @@ def expand_indexed_step(step_data: dict[str, Any]) -> list[dict[str, Any]]:
     had written them all out by hand - which is what an indexed step is: a way
     of not writing them out by hand.
 
-    Raises:
-        ValueError: if the shape is wrong. Validation (recipe_schema) has
-            normally reported it already and the parser never gets here; this is
-            the guard for a caller that skipped validation.
-    """
-    problems = check_indexed_step(step_data)
-    if problems:
-        raise ValueError("; ".join(problems))
+    The shape rules live in recipe_schema.IndexedStepSchema, which the parser
+    runs before it expands anything.
 
+    Raises:
+        ValueError: if there is no template mapping or no parameter set - the
+            guard for a caller that skipped validation, so it cannot silently
+            expand to nothing.
+    """
     template = step_data.get(TEMPLATE_KEY)
     sets = step_data.get(SETS_KEY)
-    if not isinstance(template, dict) or not isinstance(sets, list):
+    if not isinstance(template, dict) or not isinstance(sets, list) or not sets:
         raise ValueError(
-            f"an {INDEXED_STEPTYPE} step requires '{TEMPLATE_KEY}' and '{SETS_KEY}'"
+            f"an {INDEXED_STEPTYPE} step requires a '{TEMPLATE_KEY}' mapping and "
+            f"a non-empty '{SETS_KEY}' list"
         )
 
     base_name = str(step_data.get("step_name", "") or template.get("step_name", ""))

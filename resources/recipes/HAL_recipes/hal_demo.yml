@@ -4,18 +4,18 @@
 
 # The hardware layer showcase: test code asks for a device by its logical name,
 # PyPTS opens it on first use and closes it when the run ends. The devices are
-# declared in config.ini (File -> Open Config), not in the recipe:
+# declared in bench.ini (beside config.ini), not in the recipe:
 #
-#   [hardware.loop1]
+#   [loop1]
 #   driver = pypts.hal.drivers.loopback.LoopbackDriver
 #
-#   [hardware.ssh1]
+#   [ssh1]
 #   driver = pypts.hal.drivers.ssh.SshDriver
 #   host = <a machine you can reach>
 #   username = <you>
 #   key_filename = <your private key>
 #
-# Without [hardware.ssh1] the second step ends ERROR with "No device 'ssh1' is
+# Without [ssh1] the second step ends ERROR with "No device 'ssh1' is
 # configured" - which is itself what that looks like. The SSH driver needs
 # pip install pts-framework[ssh].
 name: HAL demo

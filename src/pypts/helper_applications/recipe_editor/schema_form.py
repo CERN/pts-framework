@@ -56,6 +56,7 @@ from pypts.recipe.recipe_schema import (
     STEP_TYPE_NAMES,
     HeaderSchema,
     SequenceSchema,
+    output_types_for,
 )
 
 # -- what widget a field gets ------------------------------------------------------
@@ -471,7 +472,7 @@ class SchemaForm(QScrollArea):
             if kind == INPUTS:
                 column.addWidget(self._inputs_group(document, path, info))
             elif kind == OUTPUTS:
-                column.addWidget(self._outputs_group(document, path, info))
+                column.addWidget(self._outputs_group(document, path, info, steptype))
             elif kind == TEMPLATE:
                 column.addWidget(self._template_group(document, path))
             elif kind == PARAMETER_SETS:
@@ -778,14 +779,14 @@ class SchemaForm(QScrollArea):
         return group
 
     def _outputs_group(
-        self, document: int, path: tuple[int | str, ...], info: FieldInfo
+        self, document: int, path: tuple[int | str, ...], info: FieldInfo, steptype: str
     ) -> QGroupBox:
         value = self._value(document, path)
         mapping = dict(value) if isinstance(value, dict) else {}
         group = QGroupBox(f"Outputs ({len(mapping)})")
         group.setToolTip(info.description or "")
         layout = QVBoxLayout(group)
-        type_names = sorted(OUTPUT_SCHEMAS)
+        type_names = sorted(output_types_for(steptype))
         rows: list[tuple[QLineEdit, QComboBox, dict[str, QLineEdit]]] = []
 
         def commit() -> None:
@@ -825,7 +826,9 @@ class SchemaForm(QScrollArea):
             declared = ""
             if isinstance(entry, dict):
                 declared = str(entry.get("type", "")).lower()
-            if declared in OUTPUT_SCHEMAS:
+            # A declared type the steptype refuses is not in type_names: it is
+            # inserted and shown, and the verificator names the problem.
+            if declared in type_names:
                 type_combo.setCurrentText(declared)
             else:
                 type_combo.insertItem(0, declared or "?")

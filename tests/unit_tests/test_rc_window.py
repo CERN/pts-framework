@@ -11,7 +11,16 @@ import sys
 import textwrap
 
 import pytest
-from PySide6.QtWidgets import QApplication, QDoubleSpinBox, QPushButton
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QDoubleSpinBox,
+    QFileDialog,
+    QMessageBox,
+    QPushButton,
+)
+
+from pypts.recipe.recipe_schema import output_types_for
 
 _RECIPE = """\
 name: Window test
@@ -139,6 +148,47 @@ def test_an_edit_does_not_crash_the_creator(action):
 
 
 # -- the step form ------------------------------------------------------------------
+
+
+_OPERATOR_RECIPE = """\
+name: Operator test
+version: "1.0"
+---
+sequence_name: Main
+steps:
+  - steptype: UserWrite
+    step_name: Serial
+    message: Type it.
+    outputs:
+      answer: {type: equals, value: ok}
+  - steptype: UserWrite
+    step_name: Wrong
+    message: Type it.
+    outputs:
+      answer: {type: passfail}
+"""
+
+
+def _output_combo(window) -> QComboBox:
+    return window._list_view._form._outputs_rows.findChildren(QComboBox)[0]
+
+
+def test_an_operator_step_is_offered_no_passfail_output(window):
+    window._model.load_yaml(_OPERATOR_RECIPE)
+    _select(window._list_view, 0)
+    combo = _output_combo(window)
+    items = [combo.itemText(i) for i in range(combo.count())]
+    assert "passfail" not in items
+    assert sorted(items) == sorted(output_types_for("userwrite"))
+
+
+def test_a_refused_output_type_already_in_the_recipe_stays_shown(window):
+    window._model.load_yaml(_OPERATOR_RECIPE)
+    _select(window._list_view, 1)
+    combo = _output_combo(window)
+    items = [combo.itemText(i) for i in range(combo.count())]
+    assert combo.currentText() == "passfail"
+    assert items.count("passfail") == 1
 
 
 def test_a_wait_step_shows_its_wait_time(window):
@@ -285,6 +335,44 @@ def test_no_spin_box_is_left_behind_after_a_steptype_change(window):
     QApplication.sendPostedEvents(None, 0)
     assert "message" in form._specific_editors
     assert not [s for s in form.findChildren(QDoubleSpinBox) if s.isVisible()]
+
+
+# -- the save layer ------------------------------------------------------------------
+
+
+def test_a_failed_save_as_keeps_the_current_file(window, tmp_path, monkeypatch):
+    original = tmp_path / "original.yml"
+    original.write_text(_RECIPE, encoding="utf-8")
+    window.open_file(str(original))
+
+    bad_target = tmp_path / "a_directory"
+    bad_target.mkdir()
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(bad_target), ""))
+    )
+    seen = {}
+    monkeypatch.setattr(
+        QMessageBox, "critical", staticmethod(lambda *args: seen.setdefault("dialog", args))
+    )
+
+    window._on_save_as()
+
+    assert "dialog" in seen
+    assert window._file_path == str(original)
+    assert original.read_text(encoding="utf-8") == _RECIPE
+
+
+def test_save_as_takes_the_new_file_once_it_is_written(window, tmp_path, monkeypatch):
+    window._model.load_yaml(_RECIPE)
+    target = tmp_path / "saved.yml"
+    monkeypatch.setattr(
+        QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(target), ""))
+    )
+
+    window._on_save_as()
+
+    assert window._file_path == str(target)
+    assert target.read_text(encoding="utf-8") == window._model.to_yaml()
 
 
 def test_undo_to_last_valid_is_on_the_toolbar_only_while_invalid(window):

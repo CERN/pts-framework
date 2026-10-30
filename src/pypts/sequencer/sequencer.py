@@ -22,7 +22,7 @@ from uuid import UUID
 
 from pypts._version import __version__
 from pypts.config_handler import ConfigHandler
-from pypts.hal.connection_driver import ABANDON_TEARDOWN_TIMEOUT_S
+from pypts.hal.connection_driver import ABANDON_TEARDOWN_TIMEOUT_S, RESCUE_TIMEOUT_S
 from pypts.hal.local_setup import (
     LocalSetup,
     abandon_active_setup,
@@ -75,10 +75,13 @@ def reports_dir_from_config() -> str:
 #: How long stop() waits for a sequence that is still running.
 SEQUENCE_JOIN_TIMEOUT_S = 2.0
 
-#: How long stop() gives an abandoned run's devices, all torn down side by
-#: side: one teardown attempt each, and a second for the kills to land.
-#: Inside CORE's shutdown budget together with the join above (core.md).
-ABANDONED_DEVICES_TIMEOUT_S = ABANDON_TEARDOWN_TIMEOUT_S + 1.0
+#: How long stop() gives an abandoned run's devices, torn down one after
+#: another on one shared deadline: each runs the teardown ladder (a clean
+#: close, then teardown on a fresh process). Sized for one full ladder plus
+#: a second for the kills to land; a device the deadline passes is killed
+#: and reported. Inside CORE's shutdown budget together with the join above
+#: (core.md).
+ABANDONED_DEVICES_TIMEOUT_S = ABANDON_TEARDOWN_TIMEOUT_S + RESCUE_TIMEOUT_S + 1.0
 
 #: How often a held run looks at the pause and stop flags. Short enough that
 #: Resume and Stop feel immediate; the hold is on the sequence thread, so this
@@ -379,10 +382,13 @@ class Sequencer:
         # Report never finishes the CSV. So the run is ERROR until it has
         # ended cleanly, and RunFinished is sent from the finally below.
         result = ResultType.ERROR
+        # run_body() fills this in place once the steps are over, before it
+        # closes the devices - so a failure after the steps (devices that
+        # would not close) still leaves RunFinished its outcomes.
         real_results: list[StepResult] = []
         try:
-            steps_result, real_results = self.run_body(
-                runtime, sequence, run_globals, metadata_names, reported_metadata
+            steps_result = self.run_body(
+                runtime, sequence, run_globals, metadata_names, reported_metadata, real_results
             )
             self.log_run_summary(
                 self.recipe.name,
@@ -465,8 +471,17 @@ class Sequencer:
         run_globals: dict[str, Any],
         metadata_names: tuple[str, ...],
         reported_metadata: dict[str, str],
-    ) -> tuple[ResultType, list[StepResult]]:
-        """Everything between RunStarted and the summary: the steps, and their verdict."""
+        real_results: list[StepResult],
+    ) -> ResultType:
+        """
+        Everything between RunStarted and the summary: the steps, and their verdict.
+
+        Args:
+            real_results: the caller's holder for the run's outcomes, filled in
+                place as soon as the steps are over - *before* the devices
+                close, so even a close that fails leaves the caller the
+                outcomes of the steps that ran.
+        """
         # A metadata global may be set in the recipe's own header rather than
         # by a step, so the first look happens before anything runs.
         self.send_changed_metadata(run_globals, metadata_names, reported_metadata)
@@ -480,11 +495,12 @@ class Sequencer:
             except Exception as error:  # noqa: BLE001 - step failures must not crash the sequencer
                 report_error(self, error, operation="Sequencer.execute_sequence")
                 result = ResultType.ERROR
+            # Totals count real steps: a called sequence's row only stands for
+            # the steps inside it, which are listed themselves.
+            real_results.extend(real_step_results(step_results))
         if self.stop_requested:
             result = ResultType.STOP
-        # Totals count real steps: a called sequence's row only stands for the
-        # steps inside it, which are listed themselves.
-        return result, real_step_results(step_results)
+        return result
 
     def log_run_summary(
         self,

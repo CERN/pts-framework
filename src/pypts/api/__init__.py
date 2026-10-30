@@ -20,8 +20,8 @@ Two doors, and deliberately nothing more:
             result = pts.run()
         print(result.result, result.report_dir)
 
-Everything a caller needs is importable from here. resources/examples/
-api_showcase.py walks through every case.
+Everything a caller needs is importable from here. api_showcase.py, at the
+repository root, walks through every case.
 """
 
 from pypts.api.embedding import (

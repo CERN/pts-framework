@@ -7,8 +7,9 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 # The GUI — how the old one worked, and how the new one maps onto it
 
 The context file for `src/pypts/hmi/gui/`. It records how the old GUI
-(`old_code/gui.py`, 868 lines, plus `event_proxy.py`, `pts.py`, `startup.py`,
-`thread_context.py`, `__main__.py`) actually worked — its screen, its pipeline,
+(the old engine's `gui.py`, 868 lines, plus `event_proxy.py`, `pts.py`, `startup.py`,
+`thread_context.py`, `__main__.py` — the `old_code/` reference copy has since been
+removed; history in git) actually worked — its screen, its pipeline,
 its threading rules — and how each part maps onto the new architecture, so the
 new GUI reproduces the *principle* without inheriting the implementation.
 Read this before touching the module; the roadmap stays the authority on
@@ -25,7 +26,8 @@ contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
 `center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel`),
 `run_display.py` / `run_header.py` (`RunDisplay` — which picture the right column shows
 during a run — and `RunHeader`, the step card on top of it, §18),
-`log_tail.py` (what fills that panel — §8),
+`log_tail.py` / `log_follower.py` (what fills that panel — §8),
+`run_state.py` (`RunState` — where the run is, one owner, §13),
 `run_progress.py` (`RunProgress` — the progress bar in the recipe label row, §15).
 Styling: `palette.py` — **every colour the GUI uses, and the only file allowed a
 hex literal** (§10) — plus `styles.py` (the light/dark QSS built from those
@@ -129,7 +131,7 @@ index.** `update_sequence` writes `str(step.id)` into the name item's
 find their row by scanning column 0 for that UUID. So the table tolerates any
 event order, and a step can be updated twice (Running... → verdict) without
 the GUI tracking a cursor. Result cells get the verdict's color pair
-(`get_step_result_colors`, `old_code/utils.py:38`):
+(`get_step_result_colors` in the old engine's `utils.py` — removed with `old_code/`):
 
 | Result | background | text |
 |---|---|---|
@@ -209,7 +211,7 @@ has a typed, owned equivalent:
 | `event_queue` + `RecipeEventProxy` in a `QThread` (blocking `get()`) | the `CoreToHmi` `QueueWrapper` + a `QTimer` (50 ms) on the Qt thread calling `poll_core()` — non-blocking `receive()`, so no proxy thread and no sleep(1) race |
 | nine `*_signal = Signal(dict)` + `getattr(self, name + "_signal")` | the `match` in `HmiClient.handle_core_message()` closed with `unhandled()` → typed `show_*` / `ask_*` hooks the GUI overrides. mypy and `test_messages.py` replace "hope the dict has the key" |
 | ViewModel dicts built in the proxy | the messages *are* the view models: `StepStarted(step_id, step_name)`, `StepFinished(outcome: StepOutcome)`, `RunFinished(result, outcomes)` — plain values, already pickle-tested |
-| proxy suppressing `SequenceStep` rows | not needed yet (no nested steps); when `SequenceStep` lands, the same policy belongs in the presentation layer, not the transport |
+| proxy suppressing `SequenceStep` rows | nested `Sequence` steps exist; the call row is a folding group (`StepSummary.is_group`, §12b) — shown, not suppressed |
 | live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `UserTextRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_user_text()`. The hooks **default to declining** so a blocked step is never stranded. All three are live end to end — `UserInteractionStep` asks the first (roadmap §1.28), `UserWriteStep` the second, `UserLoadingStep` the third (`UserPathRequest`/`UserPathResponse`, answered by `answer_user_path()`). The old GUI's dedicated serial-number dialog has no successor **on purpose**: asking for a serial number is a recipe's `get_serial_number` step, not something the framework does — see `recipe_guide.html` (repo root) |
 | second value pushed on the same queue (`file`/`wrt`/`ID`) | **solved by giving each follow-up its own request/response pair.** `wrt` became `UserTextRequest` (UserWrite); `file` became `UserPathRequest`/`UserPathResponse` (UserLoading, 2026-09-15) — one request, one response carrying the path, answered by `answer_user_path()` from the path page (§7, *Three questions, one panel*). The serial-port `ID` mode was dropped |
 | `WAIT_FOR_TERMINATION` global + nested QEventLoop on abort | nothing blocks: Stop sends the command and the *events* drive the buttons — `RunFinished` (result STOP) is the "engine has stopped" confirmation the old global tried to be |
@@ -234,7 +236,8 @@ not render yet, and the shared-protocol tests that pin all of it.
    to `run_events.py` (the shared-message rule in `src/pypts/README.md`); a
    frontend sends it, CORE relays the same object to the Sequencer, and the
    confirmation is the run's own `RunFinished(STOP)`. The CLI's verb is
-   `stop_sequence` (plain `stop` was already an exit alias).
+   `stop_sequence` (plain `stop` is an alias for `stop_sequence`; only `exit`/`quit`
+   leave the shell).
 3. **Which sequence runs — the main one.** (Changed 2026-10-14: there was a
    sequence dropdown; it was removed on request.) `GUI.show_sequence()` fills
    the table with `main_sequence` on `RecipeLoaded` and remembers it
@@ -247,8 +250,9 @@ not render yet, and the shared-protocol tests that pin all of it.
    QEventLoop has no successor. The window's [X] follows the same principle:
    the first close is a `ShutdownRequested`, the real close happens on
    `StopHmi`.
-5. **Colors — kept.** `result_colors.py`, the §2 table verbatim, keyed by
-   `ResultType`.
+5. **Colors — the hues were kept, the file was not.** The colour pairs of the §2
+   table live on as `Palette.verdicts` in `palette.py` (§10), keyed by
+   `ResultType`; `result_colors.py` was removed.
 
 ## 6. The scaffold — why it was abandoned
 
@@ -273,14 +277,14 @@ upstream template) is still an open roadmap TODO before v1.0.
 | Qt element | Content |
 |---|---|
 | `addToolBar(top_bar)` | `TopBarContent(QToolBar)` — Open / Close / Recipe / Start / Pause / Stop / Report, each a `QToolButton` in `ToolButtonTextUnderIcon` with a small label (`_labelled_button()`, `OPEN_LABEL` … `REPORT_LABEL`; Start reads `RESUME_LABEL` while paused). `styles.py` gives them `padding: 2px 8px; font-size: 10px`. No sequence chooser (§5.3). The report button sits beside Stop and is always enabled — it opens this run's report folder once `ReportReady` names one, the `paths.reports_dir` root before that. Then the spacer and the run metadata (§10b) |
-| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Open Config — hands `config.ini` to the machine's default editor via `_open_in_text_editor()` (`QDesktopServices`, Notepad / `xdg-open` fallback), path on hover, Restart → §10, Exit) / Edit (Recipe Editor — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Recipe Editor v2 — `open_recipe_editor_v2()` starts `pypts.helper_applications.recipe_editor` the same way, both through `_start_recipe_tool()`; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
+| `setMenuBar` (built in `_build_menu()`) | File (Open Recipe, Open Recent → §9, Unload Recipe → §16, Open Config — hands `config.ini` to the machine's default editor via `_open_in_text_editor()` (`QDesktopServices`, Notepad / `xdg-open` fallback), path on hover, Restart → §10a, Exit) / Edit (Recipe Editor — `open_recipe_creator()` starts `python -m pypts.helper_applications.recipe_creator [loaded recipe]` as its own process, never waited on; Recipe Editor v2 — `open_recipe_editor_v2()` starts `pypts.helper_applications.recipe_editor` the same way, both through `_start_recipe_tool()`; Engineering Mode — checkable, §17; Settings → §10c, with the Storage page, Clear recent recipes and Restore default settings → §10a) / View (Appearance — Settings on its Appearance page; Full Screen, F11) / About (GitHub, Wiki - both open a URL, §12) |
 | `recipe_label` (`QLabel`) | "Loaded…" / "Running…" / the run summary, above the splitter; stretches across its row |
 | `run_progress` (`RunProgress`) | the same row, at the window's right edge — the green run progress bar and `6 / 15 (40 %)` (§15) |
 | `QSplitter` 52/48 | left: `view_tabs` over `left_stack`; right: `CenterContent` |
 | `view_tabs` (`ViewTabBar`) | Run \| Summary; `currentChanged` drives `left_stack` (§14) |
 | `left_stack` `TAB_RUN` | `run_stack`: the idle placeholder (CERN logo + "Open a YAML recipe…") until a sequence is shown, then `StepTableContent` |
 | `left_stack` `TAB_SUMMARY` | `SummaryPanel` — the last run summed up, four cards in a scroll area (§14) |
-| `QStatusBar` | status label (stretch=1) |
+| `QStatusBar` | status label (stretch=1), then two permanent labels at the right: a faint `pypts <version>` and `ENGINEERING MODE` (hidden outside the mode, §17) |
 
 ---
 
@@ -288,8 +292,8 @@ upstream template) is still an open roadmap TODO before v1.0.
 
 Between the old code (§1–§2) and the current `architecture_refactor` branch,
 a new GUI was built on the `master` branch that is **the visual design target**.
-A verbatim copy lives at **`src/pypts/old_code/hmi/`** (copied 2026-08-31).
-Read that code before touching any widget in this folder.
+(A verbatim copy lived at `src/pypts/old_code/hmi/` until `old_code/` was removed;
+`master` and git history remain the reference.)
 
 ### Layout (master, 1600×1000, splitter 52/48)
 
@@ -315,7 +319,7 @@ Read that code before touching any widget in this folder.
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### Styling tokens (from `old_code/hmi/gui_components/styles.py`)
+### Styling tokens (from master's `gui_components/styles.py`; the `old_code/` copy is gone)
 
 - CERN Blue `#0033A0` — primary buttons
 - Light tab bar: `header_background` `#F0F4FA` behind the tabs, `text_muted` `#718096`
@@ -340,7 +344,7 @@ a real hold (§13): it made the prompt rows ignore the mouse while "paused", and
 step running when Pause is pressed may be a question the operator must answer before
 the hold can begin.
 
-### File layout in `old_code/hmi/` (master reference copy)
+### File layout of the master reference GUI (historical — the `old_code/hmi/` copy was removed)
 
 | File | Owns |
 |---|---|
@@ -359,7 +363,7 @@ the hold can begin.
 
 ### Answering a prompt — the exactly-once contract, and the Cancel button
 
-A `UserPromptRequest` reaches `PtsGui.ask_user()`, which hands `CenterContent.show_prompt()`
+A `UserPromptRequest` reaches `GUI.ask_user()`, which hands `CenterContent.show_prompt()`
 the request plus a closure that answers it. `CenterContent` holds **one** `_pending` pair at
 a time, and `_answer()` clears it *before* invoking the callback — so a step waiting on the
 other side is answered exactly once, however many times a button is clicked.
@@ -436,7 +440,7 @@ Stop, and the sequence carries on to the next step.
 |---|---|---|
 | `PtsMainWindow(QMainWindow)` GIF layout | ✓ (§1.21) | ✓ |
 | `PtsToolBar` with SVG icons + state | ✓ ported (§1.20) | ✓ full |
-| `StepTable` with badge delegate | verdict colours render (§9); the rounded-pill delegate is still open | ✓ full |
+| `StepTable` with badge delegate | verdict colours render (§9b); the rounded-pill delegate is still open | ✓ full |
 | `LogPanel` (coloured prefixes) | ✓ ported (§1.20), fed from the run log (§8) | ✓ |
 | `InteractionPanel` (image/buttons/kbd) | ✓ ported (§1.20) | ✓ |
 | `ResultsPanel` (badges + tree) | ported (§1.20), replaced by the Summary tab on 2026-10-14 (§14) | ✓ |
@@ -468,9 +472,9 @@ The chain, launcher first:
 | `startup.py` | decides the run log path at startup (`get_log_file_path()`), and passes it to `gui_main` alongside the log queue. After that only an unload changes it (§16) |
 | `gui_main()` | hands it to `init_logging(log_queue, log_level, log_file_path)` |
 | `logger/log.py` | remembers it; `get_log_path()` hands it back to whoever in this process wants to read the log |
-| `GUI.start_log_tail()` | opens a `LogTail` on that path and starts a second `QTimer` at `LOG_POLL_INTERVAL_MS` (200 ms) |
-| `GUI.poll_log()` | appends what `LogTail.new_lines()` returns to `CenterContent.log_panel` |
-| `GUI.follow_run_log()` / `run_log_finished()` | during a run, also follow the run's own log (below) |
+| `GUI.start_log_tail()` | hands it to the `LogFollower` (`log_follower.py`) and starts a second `QTimer` at `LOG_POLL_INTERVAL_MS` (200 ms) |
+| `GUI.poll_log()` | appends what `LogFollower.poll()` returns to `CenterContent.log_panel` |
+| `GUI.follow_run_log()` / `run_log_finished()` | during a run, the follower also reads the run's own log (below) |
 
 `log_tail.py` owns the reading and the presentation of a record:
 
@@ -495,19 +499,26 @@ Two things follow from the path being *passed in* rather than looked up:
   follow. It says `No run log to follow.` in the panel and starts no timer. The
   window is otherwise unaffected.
 - When an unload switches the run log, `start_new_log_file()` empties the panel and
-  `poll_log()` waits for the new file through `_wait_for_new_log()` (§16).
+  `LogFollower.poll()` waits for the new file (§16).
 
 **A run is logged in its own folder, and the panel follows it without clearing.**
-`RunStarted.run_log_path` reaches `follow_run_log()`; the panel opens that file as
-`run_log_tail` once the Logger has created it (`_open_run_log()`, the same bounded wait as an
-unload's new file, then `Could not open the run log: …`). `get_log_path()` keeps naming the
-session log throughout. The Logger writes one file at a time, so `_read_in_order()` reads
+`RunStarted.run_log_path` reaches `follow_run_log()`; the follower opens that file as its
+`run_tail` once the Logger has created it (the same bounded wait as an unload's new file,
+then `Could not open the run log: …`). `get_log_path()` keeps naming the session log
+throughout. The Logger writes one file at a time, so the follower reads
 session-then-run until the run log has shown a line, and run-then-session from then on (or
 after `run_log_finished()`) - decided by the files, because the Logger is back in the session
 log before `RunFinished` reaches the GUI; when the
 second file of a tick has grown, the first is read once more to its end first, so a line
 written across the switch is never shown out of order. Once the session log grows after the
 run, the run log is complete and is closed.
+
+**All of that lives in `LogFollower` (`log_follower.py`), not in the GUI.** The follower
+owns both tails, the pending run log and the waits; `poll()` returns the panel's lines
+(notices included), and the GUI only appends them and runs the timer. The module has no Qt
+in it, so `test_log_follower.py` pins the ordering rules with two plain files. A file that
+exists but cannot be opened is reported through a callback the GUI passes in
+(`_report_log_open_failure()` → `report_error()`, WARNING).
 
 A `DEBUG`-level toggle for this panel is not implemented. If it is ever wanted,
 it is `LogTail.min_level` plus a checkable item in the View menu — nothing else.
@@ -583,7 +594,7 @@ builds it every time.
 
 ---
 
-## 9. The step table: sizing, wrapping, and the `::item` trap
+## 9b. The step table: sizing, wrapping, and the `::item` trap
 
 `step_table.py`. Three columns, and each is sized by a different policy because
 each has a different job:
@@ -643,7 +654,8 @@ What lives there, and why it is split three ways:
 **The verdict chips keep their hue and change their value.** An operator reads a
 bench screen by colour, so green is PASS and red is FAIL in both themes — that
 part is not negotiable, and it is the same set the old GUI used
-(`old_code/utils.py get_step_result_colors`). What could not stay was the *value*:
+(`get_step_result_colors` in the old engine's `utils.py`, removed with `old_code/`).
+What could not stay was the *value*:
 a pastel fill that reads as a soft chip on white glares on charcoal. So the dark
 theme inverts the relationship — the fill goes dark and the text carries the
 colour. Same for the toolbar: `#1B5E20` reads as "go" on white and vanishes on
@@ -714,7 +726,7 @@ change.
 
 ---
 
-## 10. Settings → Storage, Advanced → Clear recent recipes and Restore default settings
+## 10a. Settings → Storage, Advanced → Clear recent recipes and Restore default settings
 
 What used to be one Edit → Remove Cache dialog is now three plain things inside Settings
 (§10c). **pypts deletes no reports and no run logs.** They are test records — a report is the
@@ -752,8 +764,9 @@ Edit > Settings (or View > Appearance) -> GUI._open_settings()
 ```
 
 **File → Restart** (`restart_action`, right after Open Config) calls `GUI.restart()` with
-`"pypts is restarting at the operator's request."`, so a hand edit of `config.ini` (a
-`[hardware.*]` section, say) takes effect without leaving pypts by hand. No question; greyed out
+`"pypts is restarting at the operator's request."`, so a hand edit of `config.ini` (the
+`[logging]` level, say) or of `bench.ini` (a device section) takes effect without leaving
+pypts by hand — both files are read once per start. No question; greyed out
 from `show_run_started()` to `show_run_finished()`. The new window opens with no recipe.
 `restart(reason)` logs `reason` at INFO; Restore default settings passes
 `"pypts is restarting, so the configuration is recreated from the template."`.
@@ -909,8 +922,9 @@ a sighted operator and a screen reader are told the same thing.
 **The wording is state-driven, not fixed.** `_refresh_descriptions()` runs from
 `_refresh_controls()` on every transition, and a disabled control says *why*:
 `Start` reads "Open a recipe first." before a recipe is loaded and "A run is
-already in progress." during one; `Pause` becomes **Resume** while the run is
-held or pausing (`set_paused()`, called only by the GUI, which owns that state — §13). A greyed button that
+already in progress." during one; **Start** reads **Resume** while the run is
+held or pausing, and Pause is greyed with a paused tooltip (`set_paused()`, called
+only by the GUI, which owns that state — §13). A greyed button that
 does not explain itself is the one that gets filed as a bug.
 
 **And the trap that made all of this invisible.** Qt shows **no tooltip for a
@@ -1217,22 +1231,27 @@ DEBUG hooks and offer no command.
 | `RunResumed` | the hold ended (by Resume or Stop) | Pause lit, Start grey | "Running {recipe}..." |
 | `RunStarted` / `RunFinished` | reset | `RunFinished`: Start lit, Pause grey | `RunFinished`: the run summary (below) |
 
-**One owner.** `GUI._pause_requested` is the only copy of the pause state;
-`TopBarContent.set_paused()` just renders it (`_shows_resume`, plus the Start/Pause
-enabled states while a run is on) and never resets it itself. Start is `_start_or_resume`:
-it sends `ResumeSequence` while `_pause_requested`, `StartSequence` otherwise. Start
-resumes from the click on, not from `RunPaused`, because the hold only begins when the
-current step ends — a long wait — and Resume is also how a pause that has not begun is
-cancelled (the engine answers that with no event).
+**One owner.** `GUI._run_state` — a `RunState` (`run_state.py`): IDLE, RUNNING, PAUSING,
+PAUSED, FINISHED or STOPPED — is the only copy of where the run is, and `_set_run_state()`
+is its only writer. The setter renders everything the state determines: the status-bar
+word (the member's value), `TopBarContent.set_paused(state.paused)` (which just shows
+`_shows_resume` plus the Start/Pause enabled states while a run is on, and never resets
+anything itself), and the enabled state of what a run forbids — recipe opening, Restart,
+engineering mode (`state.in_progress`). Start is `_start_or_resume`: it sends
+`ResumeSequence` while `_run_state.paused` (PAUSING or PAUSED), `StartSequence` otherwise.
+Start resumes from the click on (PAUSING), not from `RunPaused` (PAUSED), because the hold
+only begins when the current step ends — a long wait — and Resume is also how a pause that
+has not begun is cancelled (the engine answers that with no event).
 
 **Run summary.** `RunFinished` sets `recipe_label` (above the step table) to
 `run_summary()`: "Done - {recipe}: {result}" over "N steps: 3 PASS, 1 FAIL, ...", or
 "Stopped - {recipe}" for `STOP`; counts in the order PASS, FAIL, ERROR, DONE, SKIP, STOP,
 zeros left out. Whatever label a pause, a Resume or a `RunResumed` left is replaced.
 
-**Status bar.** One state word for the run (`_show_run_state`): Running, Pausing, Paused,
-Finished or Stopped. CORE's "Report generated: <path>" `StatusChanged` arrives right after
-`RunFinished`; the `ReportReady` behind it puts the state word back.
+**Status bar.** One state word for the run — the `RunState` value `_set_run_state()` shows:
+Idle, Running, Pausing, Paused, Finished or Stopped. CORE's "Report generated: <path>"
+`StatusChanged` arrives right after `RunFinished`; the `ReportReady` behind it puts the
+state word back.
 
 **Crossing messages are self-correcting.** Resume sets the label on the click *and* on
 `RunResumed`. A `RunPaused` that crosses a Resume click sets Resume/"Paused..." again,
@@ -1357,7 +1376,7 @@ icon colour, `icon_disabled` when greyed, and its tooltip says why (`No recipe i
 
 | What | Back to |
 |---|---|
-| GUI state | `current_recipe`, `_requested_recipe_path`, `_loaded_recipe_path`, `_recipe_yaml`, `_recipe_text`, `_run_outcomes`, `_running_recipe_name`, `_run_state`, `report_dir`, a pending start and the pause flag all cleared |
+| GUI state | `current_recipe`, `_requested_recipe_path`, `_loaded_recipe_path`, `_recipe_yaml`, `_recipe_text`, `_run_outcomes`, `_running_recipe_name`, `report_dir` and a pending start all cleared; `_set_run_state(IDLE)` puts the status word, the pause flag and the greyed menus back |
 | Top bar | `TopBarContent.show_recipe_unloaded()` — Start / Pause / Stop / Recipe / Close greyed, run metadata cleared; Open stays enabled |
 | Left pane | `step_table.clear()` (no rows, popup closed), `run_progress.clear()` (hidden), results emptied, pulse stopped, `run_stack` on the idle logo, the Run tab open |
 | Centre | `center.cancel_pending()` + `set_recipe(None)` (the header's clock stops) + `show_idle()` |
@@ -1374,10 +1393,10 @@ The recents list stays — it is the operator's history, not the recipe's.
    `get_log_path()` name the new file. The Logger opens the new file, then closes the old one.
 4. `log_run_log_header("gui", path)` — the three startup lines, word for word — and INFO
    `Run log continues from <old file name>`: the top of the new file.
-5. The tail stops, the panel empties, and `poll_log()` calls `_wait_for_new_log()` each tick
-   until the file exists, then `start_log_tail()`. If it has not appeared within
-   `NEW_LOG_WAIT_S` (5 s) — the Logger could not open it and kept the old one — the panel says
-   `Could not open the run log: <path>` and a WARNING is logged.
+5. The tail stops, the panel empties, and `LogFollower.expect_new_session_log()` makes
+   `poll()` wait each tick until the file exists, then follow it. If it has not appeared
+   within `NEW_LOG_WAIT_S` (5 s, `log_follower.py`) — the Logger could not open it and kept
+   the old one — the panel says `Could not open the run log: <path>` and a WARNING is logged.
 
 Steps 2–4 travel on the one log queue from one process, so their order is the files' order.
 With no run log (a test, a frontend started by hand) the switch is skipped and the panel is
@@ -1389,7 +1408,7 @@ cached test modules — is in `core/core.md` and `sequencer/sequencer.md`.
 
 ## 17. Engineering mode (2026-10-12)
 
-Edit → **Engineering Mode** (`engineering_action`, checkable, under Recipe Editor) turns the
+Edit → **Engineering Mode** (`engineering_action`, checkable, after Recipe Editor v2) turns the
 step table into a picker for two things:
 
 - **Quick retest — Space.** Click / Ctrl-click / Shift-click rows, press Space: only those
@@ -1459,7 +1478,7 @@ name `image_path` on any step and on a sequence (`recipe_guide.html`, `step/step
 the GUI shows it while that step or sequence runs, and **nothing** when no picture applies —
 the picture area is hidden (`show_no_picture()`) and a stretch at the bottom of the panel
 keeps the card and any question at the top. (Changed 2026-10-13: a run card used to fill
-the picture area then, and for a while the plain logo did.) Design: `docs/superpowers/specs/2026-10-12-step-image-design.md`.
+the picture area then, and for a while the plain logo did.)
 
 **No new message.** The pictures arrive once, in `RecipeLoaded`: absolute paths on
 `StepSummary.image_path` and `SequenceSummary.image_path`, resolved by the recipe parser.

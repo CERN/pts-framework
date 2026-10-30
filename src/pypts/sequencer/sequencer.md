@@ -10,8 +10,10 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 ## What it owns
 
-- **Event loop** — `sequencer_main()` polls `from_core`, dispatches to handlers,
-  sends heartbeats. Four methods carry `@catch_and_report_errors()` and no others:
+- **Event loop** — `sequencer_main()` builds the Sequencer and calls `start()`;
+  `main_loop()` polls `from_core` (`poll_core()`), dispatches (`handle_core_message()`) and
+  sends heartbeats (`do_periodic_tasks()`). Five methods carry `@catch_and_report_errors()`
+  and no others:
   `poll_core()`, `handle_core_message()` (one bad message fails alone), `do_periodic_tasks()`
   and the two thread entry points `start()` and `execute_sequence()`. The handlers below them
   — `run_sequence()`, `forget_recipe()`, `stop_sequence()`, `pause_sequence()`,
@@ -22,7 +24,9 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   rule, and why, is in `utilities/utilities.md`.
 - **Recipe execution** — `run_sequence()` starts a worker thread for `execute_sequence()`.
   The event loop keeps turning while the sequence thread runs; this is what lets
-  heartbeats keep flowing and `StopSequence` be processed mid-run.
+  heartbeats keep flowing and `StopSequence` be processed mid-run. A `RunSequence` while a
+  sequence thread is alive is refused with `report_problem()` ("Cannot start '…': a test is
+  already running. Stop the running test first.").
 - **`execute_sequence()`** — resolves the sequence, builds a `Runtime`, makes the run
   folder and starts the run log in it (`start_run_folder()`), emits `RunStarted` naming both,
   runs the steps (`run_body()` → `run_sequence_body()` from the step layer), logs the run
@@ -30,9 +34,11 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   line of the run - its first to the summary - in the run log, and the run's last lines before
   the Report sees `RunFinished`. **Once `RunStarted` is out, `RunFinished` always follows**:
   the end - run log closed, then `RunFinished` - is in a `finally`, and the run is `ERROR`
-  until `run_body()` and the summary have both returned. An `Exception` or `SystemExit`
-  escaping either (devices that would not close, a broken summary) is reported with
-  `report_error()` and the run is sent as `ERROR`, with whatever step outcomes it already had;
+  until `run_body()` and the summary have both returned. `run_body()` fills the caller's
+  outcome list in place as soon as the steps are over - *before* the devices close - so an
+  `Exception` or `SystemExit` escaping either (devices that would not close, a broken summary)
+  is reported with `report_error()` and the run is sent as `ERROR` with the outcomes of the
+  steps that ran;
   otherwise the frontends would show the run as going for ever and the Report would never
   finish the CSV. A refusal before `RunStarted` (no recipe, no such sequence) sends neither, and
   an abandoned run (see *Stop*) sends no `RunFinished`: nobody is listening any more.
@@ -82,8 +88,11 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   shutting down without it, so the `RunStarted`/`RunFinished` pairing does not hold for an
   abandoned run. It reports `CRITICAL` via `report_problem()`, then
   `tear_down_abandoned_devices()` sends `ClosingDevices` (CORE shows "Stopping: closing the
-  devices...") and calls `hal.abandon_active_setup()` with `ABANDONED_DEVICES_TIMEOUT_S`: each
-  device gets one `teardown()` attempt side by side, and any that was stopped without
+  devices...") and calls `hal.abandon_active_setup()` with `ABANDONED_DEVICES_TIMEOUT_S`: the
+  devices run their teardown ladder one after another, newest first, on that shared deadline
+  (an idle device gets one `teardown()` attempt, then teardown on a fresh process; a device
+  still in a call has its driver process killed at once and goes straight to the
+  fresh-process teardown), and any that was stopped without
   running it is a second `CRITICAL` naming them ("were stopped without running teardown and
   may still be energised"; `hal/hal.md`, *Lifetime*). Then the shutdown continues. `SequencerStopped`
   is sent after the join, so it always arrives after any `RunFinished` on the same queue.
@@ -127,7 +136,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 | Name | Value | Meaning |
 |------|-------|---------|
 | `SEQUENCE_JOIN_TIMEOUT_S` | 2.0 s | How long `stop()` waits for the sequence thread |
-| `ABANDONED_DEVICES_TIMEOUT_S` | `ABANDON_TEARDOWN_TIMEOUT_S` + 1 = 6.0 s | How long `stop()` gives an abandoned run's devices: one teardown attempt each, side by side |
+| `ABANDONED_DEVICES_TIMEOUT_S` | `ABANDON_TEARDOWN_TIMEOUT_S` + `RESCUE_TIMEOUT_S` + 1 = 16.0 s | How long `stop()` gives an abandoned run's devices, torn down in turn on one shared deadline: a teardown attempt each, then teardown on a fresh process |
 | `HOLD_POLL_S` | 0.05 s | How often a held run looks at the pause and stop flags |
 
 ## Known gaps

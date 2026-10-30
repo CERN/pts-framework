@@ -25,10 +25,7 @@ edit, and nothing recomputes them.
 
 The schema is a flat list of named sections and nothing else. A section the user
 adds that is not in it is not an error: it is kept as it was written, reported
-once at WARNING, and its values come back as text. The one family of sections it
-knows without typing them is `[hardware.<name>]`: each declares a device for the
-hardware layer (pypts.hal), whose keys belong to the device's driver - kept as
-text, without a warning. See hal/hal.md.
+once at WARNING, and its values come back as text.
 """
 
 from dataclasses import dataclass
@@ -99,7 +96,7 @@ SCHEMA: dict[str, dict[str, Field]] = {
     "logging": {
         # TRACE for the duration of the refactor, so every run carries the
         # message trace.
-        # This reverts to INFO before v1.0 - see the TODO in the roadmap.
+        # This reverts to INFO before v1.0.
         "level": Field("str", "TRACE", choices=LOG_LEVELS),
     },
     "report": {
@@ -134,24 +131,12 @@ SCHEMA: dict[str, dict[str, Field]] = {
 #: either, so the rule holds even for a frontend that forgets it.
 READ_ONLY_SECTIONS = ("meta", "operating_system")
 
-#: The prefix of a device section: `[hardware.ssh1]` declares the device the
-#: hardware layer knows as 'ssh1'. Its keys are the driver's, so none is typed
-#: here; they come back as text. Nothing in such a section is mandatory, which
-#: is why adding this did not change CONFIG_VERSION.
-HARDWARE_PREFIX = "hardware."
-
-
-def is_hardware_section(section: str) -> bool:
-    """Whether a section declares a device: `hardware.` followed by a logical name."""
-    return section.startswith(HARDWARE_PREFIX) and len(section) > len(HARDWARE_PREFIX)
-
 
 def schema_for_section(section: str) -> dict[str, Field] | None:
     """
     The fields a section is validated against, or None if it is not part of the
     schema at all.
 
-    A plain lookup. A device section is not in the schema either - its keys are
-    the driver's - and is_hardware_section() is what tells the two apart.
+    A plain lookup.
     """
     return SCHEMA.get(section)
