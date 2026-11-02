@@ -1,0 +1,53 @@
+# SPDX-FileCopyrightText: 2026 CERN <home.cern>
+#
+# SPDX-License-Identifier: LGPL-2.1-or-later
+
+# The live graph showcase - `graph` on a step, and the streams the test code
+# pushes into it (sine_tests.py beside this file).
+#
+# A test function registers a named stream and pushes (x, y) samples. A step
+# that names the stream with `graph:` shows it as a graph in the GUI's right
+# column while that step runs, and takes it away when the step ends. Every
+# stream is also written to <run folder>/streams/<name>.csv. Clicking a
+# finished step afterwards shows its graph as a static picture.
+#
+# Watch the right column in the GUI:
+#   1. "Blocking sine"          the step itself pushes "sine" for 10 s - the
+#                               graph draws live while the step runs
+#   2. "Start background sine"  starts "bg_sine" on a thread and returns at
+#                               once; no graph is named, so the column follows
+#                               the stack (run card)
+#   3. "Watch it"               waits 12 s with `graph: bg_sine` - the part
+#                               pushed so far appears at once, then it goes on
+#                               live
+#
+# Runs headless too - the graph is ignored, the CSVs are still written:
+#   python -m pypts --mode headless --recipe resources/recipes/stepgraph_recipes/stepgraph_demo.yml
+name: Graph demo
+description: Live graphs of pushed streams - blocking and in the background.
+version: 0.2
+report_metadata: []
+---
+sequence_name: Main
+description: A blocking sine, a background sine, and watching it.
+steps:
+  - steptype: PythonModule
+    step_name: Blocking sine
+    description: Pushes the "sine" stream for duration_s seconds; its graph draws live.
+    module: sine_tests.py
+    method_name: run_sine
+    graph: sine
+    inputs:
+      duration_s: 10
+  - steptype: PythonModule
+    step_name: Start background sine
+    description: Starts "bg_sine" on a thread and returns at once.
+    module: sine_tests.py
+    method_name: start_sine
+    inputs:
+      duration_s: 10
+  - steptype: Wait
+    step_name: Watch it
+    description: Waits while "bg_sine" finishes; shows its graph.
+    graph: bg_sine
+    wait_time: 12

@@ -4461,3 +4461,234 @@ def test_the_watcher_lets_go_once_the_look_back_ends_another_way(gui, tmp_path, 
     press_on(monkeypatch, watcher, instance.step_table.table.viewport())
 
     assert not watcher.is_watching()
+
+
+# --------------------------------------------------------------------------
+# The graph in the right column (gui.md §18, §19): one more state of the one
+# decider, drawn from <run_dir>/streams/<safe name>.csv
+# --------------------------------------------------------------------------
+
+
+def a_graph_recipe_loaded(graph="sine", graph_image=None):
+    """Main: 'Watch' (graph, optionally also a picture), 'Bare' (none)."""
+    rows = (
+        StepSummary(
+            step_id=uuid4(),
+            step_name="Watch",
+            description="Draws a stream.",
+            image_path=graph_image,
+            graph=graph,
+        ),
+        StepSummary(step_id=uuid4(), step_name="Bare", description="Has none."),
+    )
+    return RecipeLoaded(
+        recipe_name="Graphs",
+        recipe_version="1.0.0",
+        main_sequence="Main",
+        sequences=(SequenceSummary(sequence_name="Main", steps=rows),),
+    )
+
+
+def a_recorded_stream(run_dir, name="sine"):
+    """A stream file written exactly as the engine writes one."""
+    from pypts.stream_handler import StreamSession
+
+    session = StreamSession(run_dir)
+    stream = session.register(name, unit="V")
+    stream.push([0.0, 1.0, 2.0], [0.0, 0.5, 1.0])
+    session.close()
+
+
+def a_center_running_graphs(qtbot, run_dir, event=None):
+    """A CenterContent with a graph recipe loaded and its run started in `run_dir`."""
+    from pypts.hmi.gui.center_view import CenterContent
+
+    if event is None:
+        event = a_graph_recipe_loaded()
+    center = CenterContent()
+    qtbot.addWidget(center)
+    center.set_recipe(event)
+    center.show_idle()
+    center.run_started(str(run_dir))
+    center.sequence_started("Main")
+    watch, bare = event.sequences[0].steps
+    return center, watch, bare
+
+
+def graph_step_outcome(step, result=ResultType.PASS):
+    return StepOutcome(step_id=step.step_id, step_name=step.step_name, result=result)
+
+
+def test_graph_step_shows_graph_then_pops(qtbot, tmp_path):
+    a_recorded_stream(tmp_path)
+    center, watch, _bare = a_center_running_graphs(qtbot, tmp_path)
+    panel = center.interaction
+
+    center.step_started(watch.step_id)
+    assert panel.is_showing_graph()
+    assert panel.stream_graph.shown_name() == "sine"
+    assert not panel.stream_graph.is_waiting()
+
+    center.step_finished(graph_step_outcome(watch))
+    assert not panel.is_showing_graph()
+    assert not panel.is_showing_picture_area()
+
+
+def test_graph_step_before_its_file_exists_waits(qtbot, tmp_path):
+    center, watch, _bare = a_center_running_graphs(qtbot, tmp_path)
+
+    center.step_started(watch.step_id)
+
+    assert center.interaction.is_showing_graph()
+    assert center.interaction.stream_graph.is_waiting()
+
+
+def test_own_graph_wins_over_own_picture_on_screen(qtbot, tmp_path):
+    image = a_real_png(tmp_path / "probe.png")
+    a_recorded_stream(tmp_path)
+    event = a_graph_recipe_loaded(graph_image=image)
+    center, watch, _bare = a_center_running_graphs(qtbot, tmp_path, event)
+
+    center.step_started(watch.step_id)
+
+    assert center.interaction.is_showing_graph()
+    assert center.interaction._current_image_path is None
+
+
+def test_graph_step_without_run_dir_shows_no_picture(qtbot, tmp_path):
+    center, watch, _bare = a_center_running_graphs(qtbot, "")
+    panel = center.interaction
+
+    center.step_started(watch.step_id)
+
+    assert not panel.is_showing_graph()
+    assert not panel.is_showing_picture_area()
+
+
+def test_question_picture_wins_then_graph_returns(qtbot, tmp_path):
+    a_recorded_stream(tmp_path)
+    center, watch, _bare = a_center_running_graphs(qtbot, tmp_path)
+    panel = center.interaction
+    center.step_started(watch.step_id)
+    led = a_real_png(tmp_path / "led.png")
+    answers = []
+
+    center.show_prompt(
+        UserPromptRequest(request_id=uuid4(), message="LED on?", options=("yes",), image_path=led),
+        answers.append,
+    )
+    assert not panel.is_showing_graph()
+    assert panel._current_image_path == led
+
+    center.option_buttons[0].click()
+    assert answers == ["yes"]
+    assert panel.is_showing_graph()
+    assert panel.stream_graph.shown_name() == "sine"
+
+
+def test_question_without_picture_keeps_graph(qtbot, tmp_path):
+    a_recorded_stream(tmp_path)
+    center, watch, _bare = a_center_running_graphs(qtbot, tmp_path)
+    panel = center.interaction
+    center.step_started(watch.step_id)
+
+    center.show_prompt(
+        UserPromptRequest(request_id=uuid4(), message="Ready?", options=("ok",)), lambda _v: None
+    )
+
+    assert panel.is_showing_graph()
+    assert panel.message_label.text() == "Ready?"
+
+
+def test_run_finished_tears_graph_down_and_shows_verdict(qtbot, tmp_path):
+    from pypts.hmi.gui.resources import RUN_PASSED_IMAGE
+
+    a_recorded_stream(tmp_path)
+    center, watch, _bare = a_center_running_graphs(qtbot, tmp_path)
+    panel = center.interaction
+    center.step_started(watch.step_id)
+    assert panel.is_showing_graph()
+
+    center.run_finished(ResultType.PASS)
+
+    assert not panel.is_showing_graph()
+    assert panel.stream_graph.shown_name() is None
+    assert panel.run_result_shown() == RUN_PASSED_IMAGE
+
+
+def test_look_back_at_graph_step_draws_static_graph(qtbot, tmp_path):
+    from pypts.stream_handler import stream_csv_path
+
+    a_recorded_stream(tmp_path)
+    center, watch, bare = a_center_running_graphs(qtbot, tmp_path)
+    panel = center.interaction
+    center.step_started(watch.step_id)
+    center.step_finished(graph_step_outcome(watch))
+    center.step_started(bare.step_id)
+    center.step_finished(graph_step_outcome(bare))
+    center.run_finished(ResultType.PASS)
+
+    center.review_step(watch.step_id)
+    assert panel.is_showing_review()
+    assert panel.is_showing_graph()
+    assert panel.stream_graph.shown_name() == "sine"
+
+    center.close_review()
+    assert not panel.is_showing_graph()
+
+    stream_csv_path(tmp_path, "sine").unlink()
+    center.review_step(watch.step_id)
+    assert panel.is_showing_review()
+    assert not panel.is_showing_graph()
+    assert not panel.is_showing_picture_area()
+
+
+def test_a_new_recipe_forgets_the_run_folder(qtbot, tmp_path):
+    a_recorded_stream(tmp_path)
+    center, watch, _bare = a_center_running_graphs(qtbot, tmp_path)
+    center.step_started(watch.step_id)
+    center.step_finished(graph_step_outcome(watch))
+    center.run_finished(ResultType.PASS)
+    center.review_step(watch.step_id)
+    assert center.interaction.is_showing_graph()
+
+    center.set_recipe(a_graph_recipe_loaded())
+
+    assert not center.interaction.is_showing_graph()
+
+
+def test_gui_graph_path_matches_container_for_unsafe_name(gui, tmp_path):
+    from pypts.messages.run_events import SequenceStarted
+
+    instance, _outbox, inbox = gui
+    a_recorded_stream(tmp_path, "ch?1")
+    event = a_graph_recipe_loaded(graph="ch?1")
+    watch, _bare = event.sequences[0].steps
+    inbox.send(event)
+    inbox.send(RunStarted(recipe_name="Graphs", recipe_description="", run_dir=str(tmp_path)))
+    inbox.send(SequenceStarted(sequence_name="Main"))
+    inbox.send(step_started(watch))
+    instance.poll_core()
+    panel = instance.center.interaction
+
+    assert panel.is_showing_graph()
+    assert panel.stream_graph.shown_name() == "ch?1"
+    assert not panel.stream_graph.is_waiting(), "the GUI found the file the container wrote"
+
+
+def test_look_back_during_live_graph_returns_to_the_graph(qtbot, tmp_path):
+    a_recorded_stream(tmp_path)
+    center, watch, bare = a_center_running_graphs(qtbot, tmp_path)
+    panel = center.interaction
+    center.step_started(bare.step_id)
+    center.step_finished(graph_step_outcome(bare))
+    center.step_started(watch.step_id)
+    assert panel.is_showing_graph()
+
+    center.review_step(bare.step_id)
+    assert center.is_reviewing()
+    assert not panel.is_showing_graph()
+
+    center.close_review()
+    assert panel.is_showing_graph()
+    assert panel.stream_graph.shown_name() == "sine"

@@ -433,7 +433,10 @@ class ConfigHandler:
             shown = MASK
         else:
             shown = text
-        log.info("Setting '%s' changed to '%s'.", key, shown)
+        if field is not None and field.quiet:
+            log.debug("Setting '%s' changed to '%s'.", key, shown)
+        else:
+            log.info("Setting '%s' changed to '%s'.", key, shown)
         log.debug("Written to %s.", self._path)
 
     def restore_default(self) -> None:

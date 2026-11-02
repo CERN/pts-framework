@@ -245,6 +245,14 @@ or a file that isn't a picture. Under it, the panel says which file it looked fo
 path, which you can select and copy) and what to check: <code>image_path</code> in the
 recipe. A relative path there is read from the recipe's own folder. You are also told which
 pictures are missing when the recipe loads; the run works normally.</p>
+<p><strong>A live graph instead of a picture.</strong> A step can name a data stream with
+<code>graph:</code> (see <code>recipe_guide.html</code> §5.2). While that step runs, the
+panel draws the stream as an XY graph under the step card, live, from the moment the step
+starts; if the test code has already pushed samples, you see them at once. Until the stream
+exists the panel says <em>Waiting for stream &lt;name&gt;</em>. The graph goes when the step
+ends. Clicking a finished step that had a graph shows its whole recording, static. The demo is
+<code>resources/recipes/stepgraph_recipes/stepgraph_demo.yml</code>. The graph needs the
+GUI's <code>pyqtgraph</code> (installed with PyPTS) and PySide6 6.9.2 or later.</p>
 <p><strong>Looking back at a step.</strong> During a run, or after it, click a step — its
 name, description or result: the right-hand side shows that step (for a group, click its
 description or result, since its name folds it).
@@ -259,6 +267,21 @@ step table. During a run it also ends by itself when the next step starts or a q
 appears, and clicking the step that is running now goes straight back to it. After a run,
 leaving returns to the TESTS PASSED / TESTS FAILED logo. Before the first run of a recipe,
 clicking a name or a result does nothing.</p>
+
+<h3>The log</h3>
+<p>Under the picture, <strong>LOG OUTPUT</strong> shows the run log as it is written:
+INFO and above, coloured by level. The three buttons on the right of its title,
+<strong>INFO</strong>, <strong>WARNING</strong> and <strong>ERROR</strong> (ERROR includes
+CRITICAL), show or hide those lines. A button is filled while its lines are shown. This only
+changes what you see: the log file keeps every line, and turning a level back on brings its
+lines back. The buttons are saved in <code>config.ini</code> (<code>[gui] log_show_info</code>,
+<code>log_show_warning</code>, <code>log_show_error</code>) and also appear in
+<em>Edit → Settings → Logging</em>. Long lines wrap to the width of the panel, so there
+is no sideways scrolling.</p>
+<p>A small <strong>warning</strong> icon appears next to LOG OUTPUT as soon as a warning
+reaches the log, and becomes an <strong>error</strong> icon once an error does, even when
+those lines are hidden. It stays until the panel is emptied, which happens when you unload
+the recipe.</p>
 
 <h3>Answering questions</h3>
 <p>A step can ask one of three things:</p>
@@ -412,9 +435,19 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       characters other than letters and digits become <code>_</code>. A run that never got a board
       ID is <code>report_&lt;YYYYmmdd_HHMMSS&gt;</code>. In the CSV, each <code>report_metadata</code>
       global is a column named <code>meta_</code> plus its name, for example
-      <code>meta_serial_number</code>. A run that stops before it ends leaves its
-      results in <code>report.csv</code>. An
-      engineering-mode retest (<kbd>Space</kbd>) gets no folder; it is in the session log.</li>
+      <code>meta_serial_number</code>. Every row also records the run's finish time and the
+      machine it ran on (<code>host_name</code>, <code>platform</code>,
+      <code>python_version</code>). The HTML report is one file you can copy or e-mail as it is.
+      At the top: the result, the board's metadata, the number of steps, how many failed,
+      the run time, and the run and environment details. Click a result chip to hide or show
+      the steps with that result, or use <em>Problems only</em>. The steps are grouped by
+      sequence, and each one is collapsed to a single line, with the error's last line shown
+      under its name. Click a step, or <em>Show all details</em>, to see its inputs, outputs and
+      full error. When printed, every step is shown expanded. A run that stops before it ends
+      leaves its results in <code>report.csv</code>. An
+      engineering-mode retest (<kbd>Space</kbd>) gets no folder; it is in the session log.
+      Data streams that the test code pushed are in the run folder's <code>streams</code>
+      subfolder, one <code>&lt;name&gt;.csv</code> per stream (header <code>x,y [unit]</code>).</li>
   <li><strong>Session log</strong>: one file in the reports folder each time PyPTS starts, and a
       new one each time you unload the recipe. It holds everything outside the runs and names
       each run's log. Its first lines give the version, the user and the machine, which makes
@@ -422,8 +455,9 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       one, and the top of the new one names the old one.</li>
   <li><strong>config.ini</strong>: created on the first start. If it's broken or from an incompatible
       version (a different major number in <code>config_version</code>), PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
-      Version 2.0.0 added the <code>[recipe_editor]</code> section: a file from before it is
-      ignored until you delete it to have it recreated (or add the section and the version by hand).
+      Version 2.0.0 added the <code>[recipe_editor]</code> section, and version 3.0.0 the
+      <code>[gui] log_show_*</code> keys (the log buttons): a file from before them is
+      ignored until you delete it to have it recreated (or add them and the version by hand).
       Fix the file, or delete it to have it recreated. Saving in <em>Edit → Settings</em> changes only
       that setting's line; your comments and anything you added by hand stay where they are.</li>
   <li><strong>bench.ini</strong>: created empty from a template on the first start, beside

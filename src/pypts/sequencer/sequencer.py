@@ -50,6 +50,7 @@ from pypts.messages.run_events import (
     RunPaused,
     RunResumed,
     RunStarted,
+    StepFinished,
     UserPathResponse,
     UserPromptResponse,
     UserTextResponse,
@@ -62,6 +63,7 @@ from pypts.step.runtime import Runtime
 # the step layer's run_sequence() is the sequence body itself.
 from pypts.step.step import StepResult, count_verdicts, describe_counts, real_step_results
 from pypts.step.step import run_sequence as run_sequence_body
+from pypts.stream_handler import StreamSession, abandon_active_session
 from pypts.utilities.error_handling import catch_and_report_errors, report_error, report_problem
 from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
 from pypts.utilities.local_storage import get_log_file_path, make_run_folder
@@ -344,13 +346,31 @@ class Sequencer:
         run_globals = dict(self.recipe.globals)
         metadata_names = self.recipe.report_metadata
         reported_metadata: dict[str, str] = {}
+        # Before RunStarted, so every line of the run - from its first - is in
+        # the run log, and the Report can write into the same folder.
+        run_dir = ""
+        run_log_path = ""
+        if write_report:
+            run_dir, run_log_path = self.start_run_folder(self.recipe.name, sequence_name)
+        # The streams of this run. No folder (a retest, or a folder that could
+        # not be made) means streams are off: registered, but nothing recorded.
+        if run_dir:
+            session = StreamSession(run_dir)
+        else:
+            session = StreamSession(None)
+        graph_by_step: dict[UUID, str] = {}
+        for row in sequence.to_summary().steps:
+            if row.graph:
+                graph_by_step[row.step_id] = row.graph
         runtime = Runtime(
             globals=run_globals,
             # The Report cannot read globals - it is a thread fed by events -
             # so the emit seam is wrapped to notice when one the recipe named
             # in report_metadata changes, and to send it on. The step layer
             # knows nothing about this: it emits what it always emitted.
-            emit=self.make_metadata_watcher(run_globals, metadata_names, reported_metadata),
+            emit=self.make_metadata_watcher(
+                run_globals, metadata_names, reported_metadata, session, graph_by_step
+            ),
             should_stop=lambda: self.stop_requested,
             ask=self.ask_operator,
             base_dir=self.recipe.base_dir,
@@ -358,12 +378,6 @@ class Sequencer:
             drop_pending_pause=self.drop_pending_pause,
             excluded_step_ids=frozenset(excluded_step_ids),
         )
-        # Before RunStarted, so every line of the run - from its first - is in
-        # the run log, and the Report can write into the same folder.
-        run_dir = ""
-        run_log_path = ""
-        if write_report:
-            run_dir, run_log_path = self.start_run_folder(self.recipe.name, sequence_name)
         self.log_engineering_run(sequence, excluded_step_ids, write_report)
         self.core.send(
             RunStarted(
@@ -387,17 +401,28 @@ class Sequencer:
         # would not close) still leaves RunFinished its outcomes.
         real_results: list[StepResult] = []
         try:
-            steps_result = self.run_body(
-                runtime, sequence, run_globals, metadata_names, reported_metadata, real_results
-            )
-            self.log_run_summary(
-                self.recipe.name,
-                sequence_name,
-                steps_result,
-                real_results,
-                time.perf_counter() - run_began,
-            )
-            result = steps_result
+            # Leaving the with closes the streams and clears the slot - before
+            # the run log ends and before RunFinished, on success and failure.
+            with session:
+                try:
+                    steps_result = self.run_body(
+                        runtime,
+                        sequence,
+                        run_globals,
+                        metadata_names,
+                        reported_metadata,
+                        real_results,
+                    )
+                    self.log_run_summary(
+                        self.recipe.name,
+                        sequence_name,
+                        steps_result,
+                        real_results,
+                        time.perf_counter() - run_began,
+                    )
+                    result = steps_result
+                except (Exception, SystemExit) as error:  # noqa: BLE001 - the run must be finished
+                    report_error(self, error, operation="Sequencer.execute_sequence")
         except (Exception, SystemExit) as error:  # noqa: BLE001 - the run must still be finished
             report_error(self, error, operation="Sequencer.execute_sequence")
         finally:
@@ -541,19 +566,37 @@ class Sequencer:
         run_globals: dict[str, Any],
         metadata_names: tuple[str, ...],
         reported: dict[str, str],
+        session: StreamSession,
+        graph_by_step: dict[UUID, str],
     ) -> Callable[[Any], None]:
         """
-        The Runtime's emit seam, plus a look at the metadata globals.
+        The Runtime's emit seam, plus a look at the metadata globals and at
+        the graphs the steps show.
 
         Every event is forwarded first and unchanged, so nothing about the
         run's reporting depends on this; the look happens afterwards, which
-        is why a run with no metadata names costs one `if` per event.
+        is why a run with no metadata names costs one `if` per event. A step
+        that shows a graph (`graph_by_step`), ran (not SKIP) and finished without having
+        registered a stream of that name is a typo in the recipe: warned once
+        per step, when it finishes. A run that records no streams cannot tell.
         """
 
         def emit(event: Any) -> None:
             if self.run_abandoned:
                 return
             self.core.send(event)
+            if (
+                isinstance(event, StepFinished)
+                and event.outcome.result is not ResultType.SKIP
+                and event.outcome.step_id in graph_by_step
+            ):
+                name = graph_by_step[event.outcome.step_id]
+                if session.records_streams and not session.has_stream(name):
+                    log.warning(
+                        "Step '%s' shows graph '%s', but no stream of that name was registered.",
+                        event.outcome.step_name,
+                        name,
+                    )
             if metadata_names:
                 self.send_changed_metadata(run_globals, metadata_names, reported)
 
@@ -784,6 +827,7 @@ class Sequencer:
         driver leaves its instrument safe. A device that could not be torn
         down is a CRITICAL of its own, naming it.
         """
+        abandon_active_session()
         self.core.send(ClosingDevices())
         unsafe = abandon_active_setup(ABANDONED_DEVICES_TIMEOUT_S)
         if not unsafe:

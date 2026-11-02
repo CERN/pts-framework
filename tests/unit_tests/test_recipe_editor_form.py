@@ -197,6 +197,19 @@ def test_a_checkbox_writes_a_bool(model, form):
     assert model.steps(0)[0]["skip"] is True
 
 
+def _container(field):
+    """The widget holding a field's row: its editor sits one level inside it."""
+    return field.editor.parentWidget().parentWidget()
+
+
+def test_graph_sits_under_more_beside_image_path(model, form):
+    form.show_step(_ref(0), 0)
+    graph = _container(_field(form, "graph"))
+    assert graph is _container(_field(form, "image_path"))
+    assert graph is _container(_field(form, "skip"))
+    assert graph is not _container(_field(form, "step_name"))
+
+
 def test_an_output_row_writes_its_type_and_fields(model, form):
     form.show_step(_ref(1), 0)
     field = _field(form, "outputs")

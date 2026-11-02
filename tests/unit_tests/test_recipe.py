@@ -1942,3 +1942,100 @@ def test_the_picture_demo_loads_with_its_one_missing_picture_named():
     assert Path(main.steps[2].sequence.image_path).is_file()
     assert len(recipe.load_notices) == 1
     assert "not_there_on_purpose.png" in recipe.load_notices[0]
+
+
+# --------------------------------------------------------------------------
+# graph on every step type: the name of a live stream, kept as written
+# --------------------------------------------------------------------------
+
+GRAPHS = f"""name: Graphs
+version: {CURRENT_VERSION}
+main_sequence: Main
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: Module
+    module: m.py
+    method_name: f
+    graph: sine
+  - steptype: UserInteraction
+    step_name: Ask
+    message: Ready?
+    options: [Yes, No]
+    graph: sine
+  - steptype: UserWrite
+    step_name: Write
+    message: Type
+    graph: sine
+  - steptype: UserLoading
+    step_name: Load
+    message: Pick
+    graph: sine
+  - steptype: Wait
+    step_name: Pause
+    wait_time: 0
+    graph: sine
+  - steptype: Sequence
+    sequence_name: Called
+    graph: sine
+  - steptype: Indexed
+    step_name: Each
+    graph: sine
+    template:
+      steptype: Wait
+      wait_time: 0
+    parameter_sets:
+      - inputs: {{a: 1}}
+  - steptype: Indexed
+    step_name: Own
+    graph: sine
+    template:
+      steptype: Wait
+      wait_time: 0
+      graph: other
+    parameter_sets:
+      - inputs: {{a: 1}}
+  - steptype: Wait
+    step_name: Plain
+    wait_time: 0
+---
+sequence_name: Called
+steps:
+  - steptype: Wait
+    step_name: Inner
+    wait_time: 0
+"""
+
+
+def _graph_recipe(tmp_path):
+    path = tmp_path / "graphs.yml"
+    path.write_text(GRAPHS, encoding="utf-8")
+    return Recipe.from_file(str(path))
+
+
+def test_graph_on_every_step_type_loads(tmp_path):
+    steps = _graph_recipe(tmp_path).sequences["Main"].steps
+    assert [step.graph for step in steps[:6]] == ["sine"] * 6
+    # The Indexed wrapper's generated step carries the wrapper's graph ...
+    assert steps[6].graph == "sine"
+    # ... unless the template names its own.
+    assert steps[7].graph == "other"
+    assert steps[8].graph is None
+
+
+def test_summary_rows_carry_graph(tmp_path):
+    rows = _graph_recipe(tmp_path).sequences["Main"].to_summary().steps
+    assert [row.graph for row in rows[:6]] == ["sine"] * 6
+    by_name = {row.step_name: row.graph for row in rows}
+    assert by_name["Plain"] is None
+    assert by_name["Inner"] is None
+
+
+def test_unquoted_numeric_graph_loads_as_text(tmp_path):
+    before = "    graph: sine\n  - steptype: UserInteraction"
+    text = GRAPHS.replace(before, before.replace("sine", "07"), 1)
+    path = tmp_path / "numeric.yml"
+    path.write_text(text, encoding="utf-8")
+    steps = Recipe.from_file(str(path)).sequences["Main"].steps
+    assert steps[0].graph == "7"

@@ -80,6 +80,7 @@ class Sequence:
                     depth=depth,
                     is_group=is_group,
                     image_path=step.image_path,
+                    graph=step.graph,
                 )
             )
             if isinstance(step, SequenceStep):

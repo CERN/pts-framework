@@ -201,6 +201,21 @@ Notes on that shape:
   traceback continuations.
 - **Paths at INFO are only the ones the operator needs**: the run log, the run folder, the
   report. Config directories, cache directories and module search paths are DEBUG.
+- **The stream container (`stream_handler/`)** logs through `logging.getLogger(__name__)`,
+  because it imports nothing of pypts. Its fixed lines:
+  `Stream '<name>' is not recorded: this run has no run folder.` at WARNING, once per run
+  (the data is not being saved);
+  `Stream '<name>' is closed; samples pushed after close are dropped.` at DEBUG, once per
+  stream, not once per push;
+  `Stream '<name>' did not close: <error>` at WARNING, when closing a stream failed (the
+  other streams are still closed);
+  `A new stream session replaces one that was never closed.` at DEBUG, when a session is
+  entered while an abandoned one is still active; and
+  `Stream '<name>' registered after the session closed; not recorded.` at DEBUG, for a
+  stream registered after its session was closed (it writes nothing).
+- **A step that shows a graph nothing feeds** is logged by the Sequencer (`log`), at WARNING,
+  when a step that ran (not SKIP) finishes: `Step '<name>' shows graph '<graph>', but no stream of that name was
+  registered.` Once per such step; not logged for a run with no run folder.
 
 ### 6.0a Each run is logged in its own folder
 

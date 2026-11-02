@@ -129,7 +129,7 @@ For a tool that checks a recipe rather than loads it — the Recipe Creator's ve
 - `to_summary()` — pickle-safe `SequenceSummary` (carrying `image_path`): one `StepSummary` per step **including the
   teardown steps**, in run order, depth-first over calls (`summary_rows(depth)`): a `Sequence`
   step's row is followed by its own rows, and every row carries `depth`, `is_group` and the
-  step's `image_path`
+  step's `image_path` and `graph`
 
 ## Sequence steps — the call tree
 
@@ -164,7 +164,7 @@ The constants below are plain data, read by the Recipe Creator's verificator and
 | `SEQUENCE_REQUIRED` / `SEQUENCE_DEFAULTS` | `sequence_name`, `steps` (at least one) / `description`, `image_path` (None), `teardown_steps` |
 | `STEP_REQUIRED` | `steptype`, `step_name` |
 | `UNNAMED_STEP_TYPES` | `("sequence",)` — exempt from `step_name`; a Sequence step is named after the sequence it calls |
-| `STEP_COMMON_DEFAULTS` | `description`, `image_path` (None), `skip`, `continue_on_error` (default `True`) — accepted by every steptype |
+| `STEP_COMMON_DEFAULTS` | `description`, `image_path` (None), `graph` (None — the name of a live data stream, kept as written, never resolved as a path), `skip`, `continue_on_error` (default `True`) — accepted by every steptype |
 | `STEP_TYPE_REQUIRED` | Per lowercase steptype: the extra required keys. **Its keys are the only steptypes a recipe may name** |
 | `STEP_TYPE_NAMES` | Per lowercase steptype: its spelling for an author (`PythonModule`, `Wait`, …), as the guide and demos write it. The Recipe Creator's Add Step menus show these |
 | `STEP_TYPE_DEFAULTS` | Per steptype: its optional keys and their defaults |

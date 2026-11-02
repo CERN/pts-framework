@@ -113,7 +113,7 @@ Sections currently in the schema:
 | `paths` | `base_dir`, `reports_dir` — **derived** paths. `reports_dir` holds the session log and one folder per run (report + that run's log) |
 | `logging` | `level` — one of `TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL`; ships `TRACE` |
 | `report` | `type` (`html`/`csv`), `theme` |
-| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too |
+| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too. `log_show_info`, `log_show_warning`, `log_show_error` (bool, shipped `true`) — which levels the LOG OUTPUT panel shows; its buttons save them on every click (`hmi/gui/gui.md` §8a) |
 | `recipe_editor` | The same four keys for the Recipe Editor v2's window (shipped: `light`, `windowed`, 1600 × 1000). Set in the editor's own Edit → Settings; pypts' Settings leaves them out (`OWN_TOOL_SECTIONS`) |
 
 `[watchdog] enabled` was removed in September 2026: a module that stops responding always
@@ -215,9 +215,11 @@ into place, so an interrupted write cannot leave a half-written config behind.
 ## Structure version — no migration, no repair, discard instead
 
 `CONFIG_VERSION` (in `configuration_schema.py`) is a `MAJOR.MINOR.PATCH` string, currently
-**`2.0.0`** — raised from `1.0.0` in October 2026 for the mandatory `[recipe_editor]` section,
-so a `1.x` file is discarded until it is deleted and recreated. Only the **major** number
-decides whether a file is trusted: `2.3.7` loads under a `2.0.0` pypts, `3.0.0` does not, and
+**`3.0.0`** — raised from `2.0.0` in November 2026 for the mandatory `[gui] log_show_*` keys
+(and from `1.0.0` to `2.0.0` in October 2026 for the mandatory `[recipe_editor]` section), so
+an older file is discarded until it is deleted and recreated, or the keys are added by hand
+with `config_version` set to `3.0.0`. Only the **major** number
+decides whether a file is trusted: `3.4.7` loads under a `3.0.0` pypts, `4.0.0` does not, and
 neither does text that is not three dot-separated numbers.
 
 **The version is not changed for every schema edit.** It changes only when a change adds
@@ -293,7 +295,7 @@ Two file-format details worth knowing:
 | `hal/local_setup.py` | `bench_config()` — the cached device sections, read on a run's first `get_device()` |
 | `helper_applications/recipe_creator/rc_logging.py` | `paths.reports_dir` for the helper tools' log files, falling back to the default reports dir when there is no configuration to read |
 | `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
-| `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` when the window opens (template defaults if there is no config); `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
+| `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` and the three `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
 | `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
 | `helper_applications/recipe_editor/editor_settings.py` | `bootstrap()` in the editor's `main()` (`open_config()`); the `recipe_editor.*` keys when the window opens; `get_whole_config()` + `bootstrap_problem` for its Settings dialog; `set_parameter()` for a saved setting (`save_setting()`) |
 
@@ -303,7 +305,9 @@ Two file-format details worth knowing:
 
 ## Adding or changing a key
 
-1. Add the `Field` to `SCHEMA` in `configuration_schema.py`.
+1. Add the `Field` to `SCHEMA` in `configuration_schema.py`. `quiet=True` makes
+   `set_parameter()` log the key's `Setting '…' changed to '…'.` line at DEBUG instead of
+   INFO — for a preference a frontend saves on every click (the `gui.log_show_*` keys).
 2. Add the same key, with its default and a comment, to `config_template.ini`. Derived keys
    ship **blank**.
 3. **Only if the change adds something new that is mandatory**, change `CONFIG_VERSION` in

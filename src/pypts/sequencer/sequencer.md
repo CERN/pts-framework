@@ -42,6 +42,20 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   otherwise the frontends would show the run as going for ever and the Report would never
   finish the CSV. A refusal before `RunStarted` (no recipe, no such sequence) sends neither, and
   an abandoned run (see *Stop*) sends no `RunFinished`: nobody is listening any more.
+- **The run's streams** — after the run folder is made, `execute_sequence()` builds a
+  `stream_handler.StreamSession(run_dir)` (`StreamSession(None)` when `run_dir == ""`: a retest,
+  or a folder that could not be made - streams then register but record nothing) and runs the
+  steps inside `with session:`. That block ends *before* `end_run_log()` and `RunFinished`, so
+  the streams are closed and the process-wide slot cleared by then, on success and on failure
+  (`close()` never raises); a thread of test code that kept a handle can no longer write into
+  the next run (`stream_handler/stream_handler.md`). The session opens in `execute_sequence()`,
+  not `run_body()`, so the `Runtime`'s emit seam can hold it. `make_metadata_watcher()` also
+  gets `graph_by_step` (step id -> `graph:` name, from the `graph` of `sequence.to_summary()`
+  rows): when a `StepFinished` arrives for such a step that ran (a SKIP outcome never ran, so it is
+  not checked) and the session records streams but
+  has no stream of that name, it logs WARNING `Step '<name>' shows graph '<graph>', but no
+  stream of that name was registered.` - a typo in the recipe. A run with no folder cannot tell
+  and does not warn (the session warns once, `no run folder`, on first registration).
 - **Engineering mode** — `RunSequence.excluded_step_ids` and `.write_report` reach
   `execute_sequence()` through `run_sequence()` (as thread arguments). The exclusions go on the
   `Runtime` (`excluded_step_ids`, `step/step.md` §3); the step layer records each SKIP.
@@ -87,7 +101,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   (`ask_operator()` answers `None` at once) and its `RunFinished` are no longer sent - CORE is
   shutting down without it, so the `RunStarted`/`RunFinished` pairing does not hold for an
   abandoned run. It reports `CRITICAL` via `report_problem()`, then
-  `tear_down_abandoned_devices()` sends `ClosingDevices` (CORE shows "Stopping: closing the
+  `tear_down_abandoned_devices()` first calls `stream_handler.abandon_active_session()` (the
+  run's streams are closed and no new one can be registered), then sends `ClosingDevices` (CORE shows "Stopping: closing the
   devices...") and calls `hal.abandon_active_setup()` with `ABANDONED_DEVICES_TIMEOUT_S`: the
   devices run their teardown ladder one after another, newest first, on that shared deadline
   (an idle device gets one `teardown()` attempt, then teardown on a fresh process; a device

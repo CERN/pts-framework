@@ -15,7 +15,7 @@ for the same rule, that is one token with a different value in each palette -
 never a second copy of the rule.
 """
 
-from pypts.hmi.gui.palette import DARK, LIGHT, Palette, get_palette
+from pypts.hmi.gui.palette import DARK, LIGHT, LOG_LEVEL_COLORS, Palette, get_palette
 
 
 def get_stylesheet(dark: bool = False) -> str:
@@ -311,6 +311,33 @@ QPushButton#settingsSwitch:checked {{
     background-color: {palette.brand_accent};
     color: {palette.text_on_brand};
     border: 1px solid {palette.brand_accent};
+}}
+QPushButton#logLevelButton {{
+    background-color: transparent;
+    color: {palette.text_muted};
+    border: 1px solid {palette.button_border};
+    border-radius: 8px;
+    padding: 1px 8px;
+    font-size: 10px;
+    font-weight: 600;
+}}
+QPushButton#logLevelButton:hover {{
+    border: 1px solid {palette.brand_accent};
+}}
+QPushButton#logLevelButton[level="INFO"]:checked {{
+    background-color: {LOG_LEVEL_COLORS["INFO"]};
+    border: 1px solid {LOG_LEVEL_COLORS["INFO"]};
+    color: {LIGHT.text};
+}}
+QPushButton#logLevelButton[level="WARNING"]:checked {{
+    background-color: {LOG_LEVEL_COLORS["WARNING"]};
+    border: 1px solid {LOG_LEVEL_COLORS["WARNING"]};
+    color: {LIGHT.text};
+}}
+QPushButton#logLevelButton[level="ERROR"]:checked {{
+    background-color: {LOG_LEVEL_COLORS["ERROR"]};
+    border: 1px solid {LOG_LEVEL_COLORS["ERROR"]};
+    color: {LIGHT.text};
 }}
 QPushButton#settingsThemeCard {{
     background-color: {palette.window};

@@ -12,9 +12,12 @@ module's whole output.
 """
 
 import csv
+import html
 import json
+import platform
 import queue
 import time
+import uuid
 from pathlib import Path
 
 import pytest
@@ -458,6 +461,10 @@ def test_the_run_level_facts_are_on_every_row(tmp_path):
         assert row["meta_serial_number"] == "SN-0042"
         assert row["run_result"] == "DONE"
         assert row["run_started_at"]
+        assert row["run_finished_at"]
+        assert row["host_name"] == platform.node()
+        assert row["platform"] == platform.platform()
+        assert row["python_version"] == platform.python_version()
 
 
 @pytest.mark.parametrize("name", ["result", "step_name", "run_result", "recipe_name"])
@@ -577,7 +584,7 @@ def test_the_html_header_shows_the_metadata(tmp_path):
 
     html_text = the_one(report.run_dir, ".html").read_text(encoding="utf-8")
     # The header names the global as the recipe does, not by its CSV column.
-    assert "<strong>serial_number:</strong> SN-0042" in html_text
+    assert "<dt>Serial number</dt><dd>SN-0042</dd>" in html_text
     assert "0.2.2" in html_text
 
 
@@ -701,3 +708,74 @@ def test_a_csv_that_cannot_be_renamed_keeps_its_name(tmp_path, monkeypatch):
     assert report.csv_path == report.run_dir / "report.csv"
     assert csv_rows(report.run_dir)[0]["run_result"] == "DONE"
     assert not [m for m in sent_to_core(report) if isinstance(m, ModuleError)]
+
+
+# --------------------------------------------------------------------------
+# The HTML page
+# --------------------------------------------------------------------------
+
+def test_the_html_page_is_self_contained(tmp_path):
+    """One file: the stylesheet, the script and the logo are all inside it."""
+    report = build_report(tmp_path)
+
+    drive(report, A_RUN, a_step_executed(), RunFinished(result=ResultType.DONE), GenerateReport())
+
+    html_text = the_one(report.run_dir, ".html").read_text(encoding="utf-8")
+    assert "<style>" in html_text
+    assert "<script>" in html_text
+    assert "data:image/png;base64," in html_text
+    assert "<link" not in html_text
+    assert "src=\"http" not in html_text
+
+
+def test_the_html_metrics_count_steps_but_not_sequence_rows(tmp_path):
+    report = build_report(tmp_path)
+    sequence_row = StepExecuted(
+        outcome=StepOutcome(step_id=uuid.uuid4(), step_name="Main", result=ResultType.FAIL),
+        step_type="SequenceStep",
+        inputs={},
+        outputs={},
+        started_at=1_760_000_000.5,
+        duration_s=1.0,
+    )
+
+    drive(
+        report,
+        A_RUN,
+        SequenceStarted(sequence_name="Main"),
+        a_step_executed(step_name="Good", result=ResultType.PASS),
+        a_step_executed(step_name="Bad", result=ResultType.FAIL),
+        sequence_row,
+        RunFinished(result=ResultType.FAIL),
+        GenerateReport(),
+    )
+
+    html_text = the_one(report.run_dir, ".html").read_text(encoding="utf-8")
+    assert '<div class="metric-value">2</div>' in html_text
+    assert 'data-filter="FAIL"><span class="chip-count">1</span>' in html_text
+    assert 'data-filter="PASS"><span class="chip-count">1</span>' in html_text
+    # One group header for the sequence, and the verdict on the masthead.
+    assert html_text.count('<tbody class="group">') == 1
+    # The sequence's own row closes its group: its result goes on the header.
+    assert "Sequence finished" not in html_text
+    assert '<header class="masthead r-FAIL">' in html_text
+
+
+def test_the_html_puts_step_values_in_a_collapsed_detail_row(tmp_path):
+    report = build_report(tmp_path)
+
+    drive(report, A_RUN, a_step_executed(), RunFinished(result=ResultType.DONE), GenerateReport())
+
+    html_text = the_one(report.run_dir, ".html").read_text(encoding="utf-8")
+    assert '<tr class="details" id="d0" hidden>' in html_text
+    assert "&quot;voltage&quot;: 3.3" in html_text
+
+
+def test_the_html_shows_the_environment(tmp_path):
+    report = build_report(tmp_path)
+
+    drive(report, A_RUN, a_step_executed(), RunFinished(result=ResultType.DONE), GenerateReport())
+
+    html_text = the_one(report.run_dir, ".html").read_text(encoding="utf-8")
+    assert html.escape(platform.node()) in html_text
+    assert html.escape(platform.python_version()) in html_text

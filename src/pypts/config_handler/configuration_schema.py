@@ -42,8 +42,9 @@ from dataclasses import dataclass
 #: cannot work without. Reset to 1.0.0 in September 2026; the integer versions
 #: 2-4 before it ([watchdog], the `[gui] theme` values, `[gui] window_mode`)
 #: belong to the refactor branch and are not continued. 2.0.0 (October 2026):
-#: the mandatory [recipe_editor] section.
-CONFIG_VERSION = "2.0.0"
+#: the mandatory [recipe_editor] section. 3.0.0 (November 2026): the mandatory
+#: `[gui] log_show_*` keys.
+CONFIG_VERSION = "3.0.0"
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
 #: that a file written by hand behaves the way an INI file is expected to.
@@ -64,12 +65,17 @@ class Field:
         derived: True if the value is computed when the config is created
             rather than shipped. Such keys are blank in the template, and the
             agreement test expects them to be.
+        quiet: True if a change to it is logged at DEBUG instead of INFO - a
+            preference a frontend saves on every click (the log panel's
+            filter), whose "Setting ... changed" line would only be noise for
+            the technician.
     """
 
     type: str
     default: str = ""
     choices: tuple[str, ...] = ()
     derived: bool = False
+    quiet: bool = False
 
 
 #: The log levels `[logging] level` accepts. Same set as the launcher's
@@ -113,6 +119,12 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "window_mode": Field("str", "windowed", choices=("windowed", "fullscreen")),
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
+        # Which levels the LOG OUTPUT panel shows - its INFO / WARNING / ERROR
+        # buttons, saved on every click. Display only: the run log keeps
+        # everything. ERROR covers CRITICAL too.
+        "log_show_info": Field("bool", "true", quiet=True),
+        "log_show_warning": Field("bool", "true", quiet=True),
+        "log_show_error": Field("bool", "true", quiet=True),
     },
     "recipe_editor": {
         # The Recipe Editor v2's own window, the same keys as [gui]: the editor

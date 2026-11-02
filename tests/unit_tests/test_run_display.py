@@ -16,7 +16,7 @@ from pypts.messages.common_messages import ResultType, StepOutcome
 from pypts.messages.run_events import RecipeLoaded, SequenceSummary, StepSummary
 
 
-def _row(name, image_path=None, depth=0, is_group=False):
+def _row(name, image_path=None, depth=0, is_group=False, graph=None):
     return StepSummary(
         step_id=uuid.uuid4(),
         step_name=name,
@@ -24,6 +24,7 @@ def _row(name, image_path=None, depth=0, is_group=False):
         depth=depth,
         is_group=is_group,
         image_path=image_path,
+        graph=graph,
     )
 
 
@@ -327,3 +328,110 @@ def test_a_group_steps_reach_every_depth_and_stop_at_its_own():
     assert [step.step.step_name for step in inner.steps] == ["b"]
     assert outer.steps[0].state == REVIEW_PENDING
     assert steps_counts_text(outer.steps) == "1 PASS", "the H call row is not counted"
+
+
+# --- the graph: one more state of the one decider (gui.md §18) -------------------
+
+
+def _graph_display(rows_in_order, called_image=None):
+    """'Main' holding `rows_in_order`, and an empty 'Called'; run started, Main running."""
+    main = SequenceSummary(sequence_name="Main", steps=tuple(rows_in_order))
+    called = SequenceSummary(sequence_name="Called", steps=(), image_path=called_image)
+    display = RunDisplay()
+    display.set_recipe(
+        RecipeLoaded(
+            recipe_name="r", recipe_version="0.2", main_sequence="Main", sequences=(main, called)
+        )
+    )
+    display.run_started(100.0)
+    display.sequence_started("Main")
+    return display
+
+
+def test_graph_is_innermost_and_pops():
+    step = _row("watch", graph="sine")
+    display = _graph_display([step])
+
+    display.step_started(step.step_id, 101.0)
+    assert display.graph == "sine"
+    assert display.image_path is None
+
+    display.step_finished(_outcome(step), 102.0)
+    assert display.graph is None
+
+
+def test_own_graph_wins_over_own_picture():
+    step = _row("both", image_path="a.png", graph="sine")
+    display = _graph_display([step])
+
+    display.step_started(step.step_id, 101.0)
+
+    assert display.graph == "sine"
+    assert display.image_path is None
+
+
+def test_group_graph_shows_under_inner_step_without_one():
+    group = _row("Called", is_group=True, graph="sine")
+    bare = _row("bare", depth=1)
+    pictured = _row("pictured", image_path="inner.png", depth=1)
+    display = _graph_display([group, bare, pictured])
+
+    display.step_started(group.step_id, 101.0)
+    display.sequence_started("Called")
+    display.step_started(bare.step_id, 102.0)
+    assert display.graph == "sine"
+    assert display.image_path is None
+
+    display.step_finished(_outcome(bare), 103.0)
+    display.step_started(pictured.step_id, 103.0)
+    assert display.graph is None
+    assert display.image_path == "inner.png"
+
+    display.step_finished(_outcome(pictured), 104.0)
+    assert display.graph == "sine"
+    assert display.image_path is None
+
+
+def test_a_called_sequence_picture_inside_a_graph_group_is_innermost():
+    group = _row("Called", is_group=True, graph="sine")
+    bare = _row("bare", depth=1)
+    display = _graph_display([group, bare], called_image="called.png")
+    display.step_started(group.step_id, 101.0)
+    display.sequence_started("Called")
+
+    display.step_started(bare.step_id, 102.0)
+
+    # Sequences carry no graph; the called sequence's picture is innermost and decides.
+    assert display.image_path == "called.png"
+    assert display.graph is None
+
+
+def test_review_records_graph():
+    watched = _row("watch", graph="sine")
+    later = _row("later", image_path="b.png", graph="other")
+    display = _graph_display([watched, later])
+
+    display.step_started(watched.step_id, 101.0)
+    display.step_finished(_outcome(watched), 102.0)
+
+    finished_review = display.review(watched.step_id)
+    assert finished_review.state == REVIEW_FINISHED
+    assert finished_review.graph == "sine"
+    assert finished_review.image_path is None
+
+    pending_review = display.review(later.step_id)
+    assert pending_review.state == REVIEW_PENDING
+    assert pending_review.graph == "other"
+    assert pending_review.image_path is None, "its own graph wins over its own picture"
+
+
+def test_review_records_an_inherited_group_graph():
+    group = _row("Called", is_group=True, graph="sine")
+    bare = _row("bare", depth=1)
+    display = _graph_display([group, bare])
+
+    display.step_started(group.step_id, 101.0)
+    display.step_started(bare.step_id, 102.0)
+    display.step_finished(_outcome(bare), 103.0)
+
+    assert display.review(bare.step_id).graph == "sine"

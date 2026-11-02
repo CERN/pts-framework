@@ -134,7 +134,10 @@ PAGES = (
     # so it is the page Edit > Settings opens on.
     ("Folders", ("paths.reports_dir", "paths.base_dir")),
     ("Appearance", (THEME_KEY, WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)),
-    ("Logging", ("logging.level",)),
+    (
+        "Logging",
+        ("logging.level", "gui.log_show_info", "gui.log_show_warning", "gui.log_show_error"),
+    ),
     ("Report", ("report.type", "report.theme")),
 )
 
@@ -157,6 +160,9 @@ LABELS = {
     "gui.window_mode": "Window mode",
     "gui.window_width": "Window width",
     "gui.window_height": "Window height",
+    "gui.log_show_info": "Log panel: show INFO",
+    "gui.log_show_warning": "Log panel: show WARNING",
+    "gui.log_show_error": "Log panel: show ERROR",
     "recipe_editor.theme": "Theme",
     "recipe_editor.window_mode": "Window mode",
     "recipe_editor.window_width": "Window width",
@@ -171,6 +177,9 @@ HINTS = {
     "report.type": "Not used yet.",
     "report.theme": "Not used yet.",
     "gui.theme": "Used by pypts and the Recipe Creator. Previewed as you pick it.",
+    "gui.log_show_info": "The INFO button over the LOG OUTPUT panel. Applies once saved.",
+    "gui.log_show_warning": "The WARNING button over the LOG OUTPUT panel. Applies once saved.",
+    "gui.log_show_error": "The ERROR button (ERROR and CRITICAL). Applies once saved.",
     "recipe_editor.theme": "Used by the Recipe Editor v2 only. Previewed as you pick it.",
 }
 

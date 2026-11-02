@@ -415,7 +415,7 @@ parameter set, and everything downstream deals with plain steps:
   step as its own `template`, a `template` carrying an `id`, an empty `parameter_sets`, a
   set with neither `inputs` nor `expect`, and an unknown key in a set.
   `skip: true` on it skips every generated step.
-- The wrapper's `description` and `image_path` go on every generated step, unless the
+- The wrapper's `description`, `image_path` and `graph` go on every generated step, unless the
   `template` states its own (`indexed_step._build_one()`).
 
 **The cost, and it is the real one:** N is fixed when the recipe loads. "Run once per
@@ -737,6 +737,17 @@ types, which put it on their request.
 - **Indexed:** the wrapper's goes on every generated step unless the template names its
   own (§2.9).
 
+### 3.9 `graph` — a live stream on every step
+
+Every step type takes `graph`, the name of a live data stream, a common argument of
+`Step.__init__` stored as `step.graph` (`SequenceStep` passes its own through). It is a
+**name**, kept exactly as the recipe wrote it: unlike `image_path` it is not resolved against
+the recipe's folder. The step layer does nothing with it; it travels to the frontend as
+`StepSummary.graph` (`recipe.Sequence.summary_rows()`), and the GUI draws the stream while
+the step runs (`hmi/gui/gui.md` §18). Indexed: the wrapper's goes on every
+generated step unless the template names its own, like `image_path`. A sequence document has
+no `graph`.
+
 ---
 
 ## 4. Adding a step type — the three edits
@@ -759,7 +770,7 @@ types, which put it on their request.
    place fails the suite.
 
 **Only what is genuinely the type's own goes in `STEP_TYPE_DEFAULTS`.** The fields every
-step accepts whatever its type — `description`, `image_path`, `skip`, `continue_on_error` — are the
+step accepts whatever its type — `description`, `image_path`, `graph`, `skip`, `continue_on_error` — are the
 common arguments of `Step.__init__` and are declared once, in `STEP_COMMON_DEFAULTS`. A new
 type gets them for free and must not repeat them; the old format's per-type
 `continue_on_error` is why putting it on the wrong one of the ten types was a load-time

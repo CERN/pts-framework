@@ -672,7 +672,7 @@ def test_an_answer_with_no_dialog_open_goes_to_the_status_line(gui_factory):
 def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monkeypatch):
     from pypts.hmi.gui.settings_dialog import SettingsDialog
 
-    a_config_file({"meta.config_version": "3.0.0"})
+    a_config_file({"meta.config_version": "4.0.0"})
     instance, _outbox, _inbox = gui_factory()
     seen = {}
 
@@ -684,7 +684,7 @@ def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monke
     monkeypatch.setattr(SettingsDialog, "exec", look_at_the_dialog)
     instance.window.settings_action.trigger()
 
-    assert "structure version 3.0.0" in seen["problem"]
+    assert "structure version 4.0.0" in seen["problem"]
     assert seen["can_save"] is False
 
 
@@ -1185,3 +1185,82 @@ def test_the_recipe_creator_opens_light_by_default(qapp):
 
     assert window._dark is False
     window.close()
+
+
+# --------------------------------------------------------------------------
+# [gui] log_show_* - the LOG OUTPUT panel's filter buttons
+# --------------------------------------------------------------------------
+
+
+def test_the_log_filter_buttons_open_as_config_ini_says(gui_factory):
+    a_config_file({"gui.log_show_info": "false", "gui.log_show_error": "true"})
+    instance, outbox, _inbox = gui_factory()
+
+    buttons = instance.center.log_filter_buttons
+    assert buttons["INFO"].isChecked() is False
+    assert buttons["WARNING"].isChecked() is True
+    assert buttons["ERROR"].isChecked() is True
+    assert instance.center.log_panel.is_group_shown("INFO") is False
+    # Setting the buttons from the file is not a change to save.
+    assert [m for m in drain(outbox) if isinstance(m, SetConfigParameter)] == []
+
+
+def test_with_no_configuration_every_level_is_shown(gui_factory):
+    instance, _outbox, _inbox = gui_factory()
+
+    for button in instance.center.log_filter_buttons.values():
+        assert button.isChecked() is True
+
+
+def test_a_filter_click_is_saved_through_core(gui_factory):
+    a_config_file()
+    instance, outbox, _inbox = gui_factory()
+
+    instance.center.log_filter_buttons["WARNING"].click()
+
+    asked = [m for m in drain(outbox) if isinstance(m, SetConfigParameter)]
+    assert asked == [SetConfigParameter(key="gui.log_show_warning", value="false")]
+    assert instance.center.log_panel.is_group_shown("WARNING") is False
+
+
+def test_a_saved_filter_click_puts_nothing_in_the_status_line(gui_factory):
+    a_config_file()
+    instance, _outbox, inbox = gui_factory()
+    before = instance.status_label.text()
+
+    instance.center.log_filter_buttons["INFO"].click()
+    inbox.send(ConfigParameterResult(key="gui.log_show_info", value="false", accepted=True))
+    instance.poll_core()
+
+    assert instance.status_label.text() == before
+    assert instance._saved_settings["gui.log_show_info"] == "false"
+
+
+def test_a_refused_filter_save_is_shown_and_the_click_stays(gui_factory):
+    instance, _outbox, inbox = gui_factory()
+
+    instance.center.log_filter_buttons["ERROR"].click()
+    inbox.send(
+        ConfigParameterResult(
+            key="gui.log_show_error",
+            value="false",
+            accepted=False,
+            reason="The file was discarded.",
+        )
+    )
+    instance.poll_core()
+
+    assert "gui.log_show_error not saved" in instance.status_label.text()
+    assert instance.center.log_filter_buttons["ERROR"].isChecked() is False
+
+
+def test_a_filter_saved_from_the_settings_dialog_applies_to_the_panel(gui_factory):
+    """Edit > Settings saves the same keys; the buttons follow what was saved."""
+    a_config_file()
+    instance, _outbox, inbox = gui_factory()
+
+    inbox.send(ConfigParameterResult(key="gui.log_show_info", value="false", accepted=True))
+    instance.poll_core()
+
+    assert instance.center.log_filter_buttons["INFO"].isChecked() is False
+    assert instance.center.log_panel.is_group_shown("INFO") is False

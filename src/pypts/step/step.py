@@ -383,12 +383,16 @@ class Step:
         skip: bool = False,
         continue_on_error: bool = True,
         image_path: str | None = None,
+        graph: str | None = None,
     ) -> None:
         self.name = step_name
         self.description = description
         #: The picture the GUI shows while this step runs, or None. As the
         #: recipe wrote it until recipe_parser.load_recipe() makes it absolute.
         self.image_path = image_path
+        #: The name of the live data stream the GUI draws while this step runs,
+        #: or None. A name, kept as the recipe wrote it.
+        self.graph = graph
         # A fresh dict per instance. The old base used mutable defaults, so
         # every step that omitted a mapping shared one dict (F12).
         self.inputs: dict[str, Any] = dict(inputs) if inputs else {}

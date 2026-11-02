@@ -1638,3 +1638,211 @@ def test_run_sequence_hands_the_run_options_to_the_sequence_thread(sequencer):
 
     assert done.wait(REACHED_TIMEOUT_S)
     assert seen == [("Main", (step_id,), False)]
+
+
+# --- the stream session: one per run ---------------------------------------------------
+
+STREAM_CODE = '''
+import threading
+
+from pypts.stream_handler import register_stream
+
+import stream_state
+
+
+def push_three():
+    stream = register_stream("sine", "V")
+    stream_state.HANDLES["sine"] = stream
+    for i in range(3):
+        stream.push(float(i), float(i) * 2)
+
+
+def push_nothing_named_sine():
+    stream = register_stream("other")
+    stream.push(0.0, 0.0)
+
+
+def push_and_keep_pushing():
+    stream = register_stream("late")
+    stream_state.HANDLES["late"] = stream
+    stream.push(0.0, 0.0)
+
+    def later():
+        stream_state.GATES["go"].wait(timeout=10)
+        try:
+            for i in range(3):
+                stream.push(float(i), 1.0)
+        finally:
+            stream_state.GATES["done"].set()
+
+    threading.Thread(target=later, daemon=True).start()
+'''
+
+
+def write_stream_recipe(tmp_path, steps_yaml):
+    """A recipe whose PythonModule steps are the stream code above."""
+    (tmp_path / "stream_code.py").write_text(STREAM_CODE, encoding="utf-8")
+    recipe_path = tmp_path / "stream.yml"
+    header = f"name: Streams\nversion: {CURRENT_VERSION}\n---\nsequence_name: Main\nsteps:\n"
+    recipe_path.write_text(header + steps_yaml, encoding="utf-8")
+    return Recipe.from_file(str(recipe_path))
+
+
+PUSH_THREE_STEP = """\
+  - steptype: PythonModule
+    step_name: Sine
+    module: stream_code.py
+    method_name: push_three
+    graph: sine
+"""
+
+
+@pytest.fixture
+def stream_state(tmp_path, monkeypatch):
+    """The module the stream test code shares with the test, importable and fresh."""
+    import importlib
+    import sys
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop("stream_state", None)
+    (tmp_path / "stream_state.py").write_text("HANDLES = {}\nGATES = {}\n", encoding="utf-8")
+    state = importlib.import_module("stream_state")
+    yield state
+    sys.modules.pop("stream_state", None)
+
+
+def run_stream_recipe(sequencer, tmp_path, steps_yaml, write_report=True):
+    instance, outbox, _ = sequencer
+    instance.recipe = write_stream_recipe(tmp_path, steps_yaml)
+    instance.execute_sequence("Main", (), write_report)
+    return drain(outbox)
+
+
+def test_run_writes_stream_into_run_folder(sequencer, tmp_path, stream_state):
+    messages = run_stream_recipe(sequencer, tmp_path, PUSH_THREE_STEP)
+
+    started = next(m for m in messages if isinstance(m, RunStarted))
+    csv_path = Path(started.run_dir) / "streams" / "sine.csv"
+    lines = csv_path.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "x,y [V]"
+    assert len(lines) == 4
+
+
+def test_streams_closed_before_run_finished(sequencer, tmp_path, stream_state, monkeypatch):
+    instance, _, _ = sequencer
+    closed_at_run_finished = []
+    real_send = instance.core.send
+
+    def recording_send(message):
+        if isinstance(message, RunFinished):
+            closed_at_run_finished.append(stream_state.HANDLES["sine"].closed)
+        real_send(message)
+
+    monkeypatch.setattr(instance.core, "send", recording_send)
+
+    run_stream_recipe(sequencer, tmp_path, PUSH_THREE_STEP)
+
+    assert closed_at_run_finished == [True]
+
+
+def test_typo_graph_logs_warning(sequencer, tmp_path, stream_state, caplog):
+    steps = """\
+  - steptype: PythonModule
+    step_name: Typo
+    module: stream_code.py
+    method_name: push_nothing_named_sine
+    graph: bg_sien
+""" + PUSH_THREE_STEP
+    with caplog.at_level(logging.WARNING):
+        run_stream_recipe(sequencer, tmp_path, steps)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [
+        "Step 'Typo' shows graph 'bg_sien', but no stream of that name was registered."
+    ]
+
+
+def test_no_folder_run_registers_without_error(sequencer, tmp_path, stream_state, caplog):
+    with caplog.at_level(logging.WARNING):
+        messages = run_stream_recipe(sequencer, tmp_path, PUSH_THREE_STEP, write_report=False)
+
+    finished = [m for m in messages if isinstance(m, StepFinished)]
+    assert [m.outcome.result for m in finished] == [ResultType.DONE]
+    assert not (tmp_path / "reports").exists()
+    assert not (tmp_path / "streams").exists()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "no run folder" in warnings[0]
+
+
+SKIPPED_TYPO_STEP = """  - steptype: PythonModule
+    step_name: Skipped typo
+    module: stream_code.py
+    method_name: push_nothing_named_sine
+    graph: nosuch
+    skip: true
+"""
+
+UNREGISTERED_GRAPH_STEP = """  - steptype: PythonModule
+    step_name: Unfed graph
+    module: stream_code.py
+    method_name: push_nothing_named_sine
+    graph: nosuch
+"""
+
+
+def test_skipped_graph_step_logs_no_typo_warning(sequencer, tmp_path, stream_state, caplog):
+    with caplog.at_level(logging.WARNING):
+        messages = run_stream_recipe(sequencer, tmp_path, SKIPPED_TYPO_STEP)
+
+    finished = [m for m in messages if isinstance(m, StepFinished)]
+    assert [m.outcome.result for m in finished] == [ResultType.SKIP]
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+
+
+def test_no_folder_run_does_not_judge_graph_names(sequencer, tmp_path, stream_state, caplog):
+    with caplog.at_level(logging.WARNING):
+        run_stream_recipe(sequencer, tmp_path, UNREGISTERED_GRAPH_STEP, write_report=False)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert not [w for w in warnings if "shows graph" in w]
+
+
+def test_background_pusher_outliving_run_writes_nothing_into_next_run(
+    sequencer, tmp_path, stream_state, monkeypatch
+):
+    stream_state.GATES["go"] = threading.Event()
+    stream_state.GATES["done"] = threading.Event()
+    hook_calls = []
+    monkeypatch.setattr(threading, "excepthook", lambda args: hook_calls.append(args))
+    late_step = """\
+  - steptype: PythonModule
+    step_name: Late
+    module: stream_code.py
+    method_name: push_and_keep_pushing
+"""
+    messages = run_stream_recipe(sequencer, tmp_path, late_step)
+    first_dir = Path(next(m for m in messages if isinstance(m, RunStarted)).run_dir)
+    first_file = first_dir / "streams" / "late.csv"
+    rows_after_run_1 = first_file.read_text(encoding="utf-8").splitlines()
+
+    messages = run_stream_recipe(sequencer, tmp_path, PUSH_THREE_STEP)
+    second_dir = Path(next(m for m in messages if isinstance(m, RunStarted)).run_dir)
+    assert second_dir != first_dir
+
+    stream_state.GATES["go"].set()
+    assert stream_state.GATES["done"].wait(REACHED_TIMEOUT_S)
+
+    assert first_file.read_text(encoding="utf-8").splitlines() == rows_after_run_1
+    assert sorted(p.name for p in (second_dir / "streams").iterdir()) == ["sine.csv"]
+    assert hook_calls == []
+
+
+def test_abandoned_run_abandons_session(sequencer):
+    from pypts.stream_handler import StreamError, StreamSession, register_stream
+
+    instance, _, _ = sequencer
+    with StreamSession(None):
+        instance.tear_down_abandoned_devices()
+        with pytest.raises(StreamError):
+            register_stream("anything")

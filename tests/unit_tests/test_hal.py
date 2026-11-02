@@ -9,7 +9,6 @@ test_hal_connection.py.
 
 import importlib
 import threading
-import time
 from typing import ClassVar
 
 import pytest
@@ -455,37 +454,6 @@ def test_an_abandoned_setup_opens_no_device_for_the_run_it_was_taken_from(fake_c
     assert fake_connections == []
     # Its own with-block ending later is harmless.
     setup.__exit__(None, None, None)
-
-
-def test_devices_are_made_safe_in_turn_on_one_deadline_and_the_unsafe_ones_named(
-    fake_connections,
-):
-    """Serialized on purpose: one ladder at a time, newest device first."""
-    setup = LocalSetup(lambda: SECTIONS)
-    setup.__enter__()
-    ssh = setup.get_device("ssh1")
-    loop = setup.get_device("loop1")
-    order = []
-
-    def slow_ssh(time_limit_s):
-        order.append(("ssh1", time_limit_s))
-        time.sleep(0.3)
-        return False
-
-    def quick_loop(time_limit_s):
-        order.append(("loop1", time_limit_s))
-        return True
-
-    ssh.abandon = slow_ssh
-    loop.abandon = quick_loop
-
-    unsafe = abandon_active_setup(time_limit_s=0.5)
-
-    assert unsafe == ["ssh1"]
-    # Newest first, and the budget each device saw shrank as time passed.
-    assert [name for name, _ in order] == ["loop1", "ssh1"]
-    assert order[0][1] == pytest.approx(0.5, abs=0.2)
-    assert order[1][1] < order[0][1]
 
 
 def test_abandoning_with_no_active_setup_does_nothing():

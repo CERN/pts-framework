@@ -525,6 +525,19 @@ def test_a_secret_set_through_set_parameter_is_not_logged(config, config_path, c
     assert "Setting 'hardware.ssh1.password' changed to '******'." in caplog.text
 
 
+def test_a_quiet_key_logs_its_change_at_debug(config, caplog):
+    """The log panel's filter is saved on every click; its line stays out of INFO."""
+    reopened = config
+
+    with caplog.at_level(logging.DEBUG):
+        reopened.set_parameter("gui.log_show_info", "false")
+        reopened.set_parameter("gui.window_width", "1500")
+
+    levels = {record.getMessage(): record.levelno for record in caplog.records}
+    assert levels["Setting 'gui.log_show_info' changed to 'false'."] == logging.DEBUG
+    assert levels["Setting 'gui.window_width' changed to '1500'."] == logging.INFO
+
+
 def test_a_user_added_device_survives_a_rewrite(config, config_path):
     config_path.write_text(
         config_path.read_text(encoding="utf-8")
@@ -550,7 +563,7 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
     is never touched, and the reason is an ERROR in the log.
     """
     mismatched = config_path.read_text(encoding="utf-8").replace(
-        f"config_version = {CONFIG_VERSION}", "config_version = 3.0.0"
+        f"config_version = {CONFIG_VERSION}", "config_version = 4.0.0"
     )
     mismatched = mismatched.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(mismatched, encoding="utf-8")
@@ -560,7 +573,7 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
 
     assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
     assert handler.bootstrap_problem is not None
-    assert "3.0.0" in handler.bootstrap_problem
+    assert "4.0.0" in handler.bootstrap_problem
     assert f"expects {CONFIG_VERSION}" in handler.bootstrap_problem
     # The defaults are in force, not the file's values.
     assert handler.get_parameter("gui.window_width") == 1280
@@ -581,7 +594,7 @@ def test_a_different_minor_or_patch_version_is_still_loaded(config, config_path)
     patch number is trusted, and its values are the ones in force.
     """
     newer = config_path.read_text(encoding="utf-8").replace(
-        f"config_version = {CONFIG_VERSION}", "config_version = 2.3.7"
+        f"config_version = {CONFIG_VERSION}", "config_version = 3.4.7"
     )
     newer = newer.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(newer, encoding="utf-8")
@@ -590,7 +603,7 @@ def test_a_different_minor_or_patch_version_is_still_loaded(config, config_path)
     handler = _bootstrap_before_logging()
 
     assert handler.bootstrap_outcome is BootstrapOutcome.LOADED
-    assert handler.config_version == "2.3.7"
+    assert handler.config_version == "3.4.7"
     assert handler.get_parameter("gui.window_width") == 999
 
 

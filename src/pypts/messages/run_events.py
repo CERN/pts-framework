@@ -62,6 +62,9 @@ class StepSummary:
     #: recipe names none. It may not exist - the parser has already warned, and
     #: a frontend shows its "no image" placeholder.
     image_path: str | None = None
+    #: The name of the live data stream to draw while the step runs, as the
+    #: recipe wrote it, or None.
+    graph: str | None = None
 
 
 @dataclass

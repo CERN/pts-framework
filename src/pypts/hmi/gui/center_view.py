@@ -24,30 +24,41 @@ longer has an opinion about, since a recipe asks it with a UserWrite step.
 RunDisplay fed the run's events. On top, for the whole run, the step card
 (RunHeader): the running step's name, description, state chip, times and
 counts, and its results once it has them. Under it the innermost step or
-sequence picture - and nothing when there is none. An open question with a
+sequence picture - or, when the deciding step has `graph:`, the live graph of
+that stream, read from <run folder>/streams/ - and nothing when there is none
+(nor for a graph in a run without a run folder). An open question with a
 picture of its own owns the picture area while it is open, and the run's view
-comes back when it is answered; a question without one leaves the run's view
-where it is. Outside a run there is no card and the area shows the logo - or,
-once a run has ended, the logo marked "TESTS PASSED" or "TESTS FAILED" until
-the next run or another recipe.
+(a graph caught up) comes back when it is answered; a question without one
+leaves the run's view where it is. Outside a run there is no card and the area
+shows the logo - or, once a run has ended, the logo marked "TESTS PASSED" or
+"TESTS FAILED" until the next run or another recipe; the run's graph is torn
+down when it ends.
 
 **Looking back at a step** (gui.md §19): a click on a step's name or Result
 during or after a run puts that step in the card, marked LOOKING BACK, with
-its verdict, duration and results, and shows the picture it had, if any. It
-ends when the next step starts, a
+its verdict, duration and results, and shows the picture it had, if any - or
+the graph it had, the whole stream file drawn once. It ends when the next step starts, a
 question arrives, the running step is clicked, or the operator clicks anywhere
 outside the step table (gui.py watches for that). While a question is open a
 click shows nothing new: the question needs the area.
+
+**The log's header row** (gui.md §8): the LOG OUTPUT title, an icon once a
+WARNING or ERROR has reached the panel (the worst one; it goes when the panel is
+cleared), and one checkable button per filter group - INFO, WARNING, ERROR. A
+click filters the panel at once and emits `log_filter_changed`, which the GUI
+saves as `[gui] log_show_<group>`; `set_log_filter()` sets the buttons from the
+configuration without emitting.
 """
 
 import time
 from collections.abc import Callable
 from uuid import UUID
 
-from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QStyle, QVBoxLayout, QWidget
 
 from pypts.hmi.gui.interaction_panel import InteractionPanel
-from pypts.hmi.gui.log_panel import LogPanel
+from pypts.hmi.gui.log_panel import LEVEL_GROUPS, LogPanel
 from pypts.hmi.gui.resources import RUN_FAILED_IMAGE, RUN_PASSED_IMAGE
 from pypts.hmi.gui.run_display import RunDisplay
 from pypts.logger.log import log
@@ -58,6 +69,7 @@ from pypts.messages.run_events import (
     UserPromptRequest,
     UserTextRequest,
 )
+from pypts.stream_handler import stream_csv_path
 
 
 def run_result_image(result: ResultType) -> str | None:
@@ -73,8 +85,21 @@ def run_result_image(result: ResultType) -> str | None:
     return None
 
 
+#: Side of the worst-level icon beside the LOG OUTPUT title, in pixels.
+LOG_ALERT_ICON_SIZE = 14
+
+#: The icon's tooltip, per worst level.
+LOG_ALERT_TOOLTIPS = {
+    "WARNING": "A warning reached the log since it was last cleared.",
+    "ERROR": "An error reached the log since it was last cleared.",
+}
+
+
 class CenterContent(QWidget):
     """Right-side column: the interaction panel + the log panel."""
+
+    #: The operator toggled a log filter button: (group, shown).
+    log_filter_changed = Signal(str, bool)
 
     def __init__(self) -> None:
         super().__init__()
@@ -84,6 +109,9 @@ class CenterContent(QWidget):
         self._pending_image_path: str | None = None
         # The step being looked back at (gui.md §19), None for none.
         self._reviewing: UUID | None = None
+        # The run's folder, from RunStarted: where its stream files are. Kept
+        # after the run for look-backs, until the next run or recipe; "" for none.
+        self._run_dir = ""
         self.run_display = RunDisplay()
 
         self.interaction = InteractionPanel(self.run_display)
@@ -93,13 +121,46 @@ class CenterContent(QWidget):
         log_label = QLabel("LOG OUTPUT")
         log_label.setObjectName("sectionLabel")
         self.log_panel = LogPanel()
+        self.log_panel.worst_level_changed.connect(self._show_log_alert)
+
+        #: Shows the worst level the panel received, hidden while there is none.
+        self.log_alert_icon = QLabel()
+        self.log_alert_icon.setObjectName("logAlertIcon")
+        self.log_alert_icon.setVisible(False)
+
+        #: Filter group -> its button, in LEVEL_GROUPS order.
+        self.log_filter_buttons: dict[str, QPushButton] = {}
+        log_header = QHBoxLayout()
+        log_header.setContentsMargins(0, 0, 0, 0)
+        log_header.setSpacing(4)
+        log_header.addWidget(log_label)
+        log_header.addWidget(self.log_alert_icon)
+        log_header.addStretch(1)
+        for group in LEVEL_GROUPS:
+            log_header.addWidget(self._log_filter_button(group))
 
         column = QVBoxLayout(self)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(4)
         column.addWidget(self.interaction, stretch=1)
-        column.addWidget(log_label)
+        column.addLayout(log_header)
         column.addWidget(self.log_panel)
+
+    def _log_filter_button(self, group: str) -> QPushButton:
+        """One checkable filter button, on (its lines shown) to start with."""
+        button = QPushButton(group)
+        button.setObjectName("logLevelButton")
+        button.setProperty("level", group)
+        button.setCheckable(True)
+        button.setChecked(True)
+        button.setToolTip(f"Show or hide {group} lines in this panel. The log file keeps them.")
+
+        def on_toggled(shown: bool) -> None:
+            self._on_log_filter_toggled(group, shown)
+
+        button.toggled.connect(on_toggled)
+        self.log_filter_buttons[group] = button
+        return button
 
     # --- Compatibility properties for tests ------------------------------------
 
@@ -110,6 +171,45 @@ class CenterContent(QWidget):
     @property
     def option_buttons(self):
         return self.interaction._buttons
+
+    # --- The log's header row -------------------------------------------------
+
+    def set_log_filter(self, shown: dict[str, bool]) -> None:
+        """
+        Set the filter buttons - and the panel - from the configuration.
+
+        Args:
+            shown: filter group -> whether its lines are shown. A group not
+                named keeps its button as it is.
+
+        Does not emit `log_filter_changed`: nothing changed that needs saving.
+        """
+        for group, is_shown in shown.items():
+            button = self.log_filter_buttons[group]
+            button.blockSignals(True)
+            button.setChecked(is_shown)
+            button.blockSignals(False)
+            self.log_panel.set_group_shown(group, is_shown)
+
+    def _on_log_filter_toggled(self, group: str, shown: bool) -> None:
+        self.log_panel.set_group_shown(group, shown)
+        self.log_filter_changed.emit(group, shown)
+
+    def _show_log_alert(self, level: str) -> None:
+        """The panel's worst level changed: show its icon, or none once cleared."""
+        if level == "ERROR":
+            standard_icon = QStyle.StandardPixmap.SP_MessageBoxCritical
+        elif level == "WARNING":
+            standard_icon = QStyle.StandardPixmap.SP_MessageBoxWarning
+        else:
+            self.log_alert_icon.clear()
+            self.log_alert_icon.setToolTip("")
+            self.log_alert_icon.setVisible(False)
+            return
+        icon = self.style().standardIcon(standard_icon)
+        self.log_alert_icon.setPixmap(icon.pixmap(LOG_ALERT_ICON_SIZE, LOG_ALERT_ICON_SIZE))
+        self.log_alert_icon.setToolTip(LOG_ALERT_TOOLTIPS[level])
+        self.log_alert_icon.setVisible(True)
 
     # --- Dark mode -------------------------------------------------------------
 
@@ -184,7 +284,10 @@ class CenterContent(QWidget):
             return
         log.debug("Looking back at step '%s' (%s).", review.step.step_name, review.state)
         self._reviewing = step_id
-        self.interaction.show_review(review)
+        graph_path = None
+        if review.graph and self._run_dir:
+            graph_path = stream_csv_path(self._run_dir, review.graph)
+        self.interaction.show_review(review, graph_path)
 
     def is_reviewing(self) -> bool:
         return self._reviewing is not None
@@ -219,11 +322,19 @@ class CenterContent(QWidget):
         """The recipe whose pictures the run will show; None when unloaded."""
         self.run_display.set_recipe(recipe)
         self._end_review()
+        # The last run's streams belonged to the recipe it ran.
+        if self.interaction.is_showing_graph():
+            self.show_idle()
+        self.interaction.stream_graph.forget_run()
+        self._run_dir = ""
         self.interaction.run_header.stop()
         # The last run's verdict belonged to the recipe it ran.
         self.interaction.set_run_result(None)
 
-    def run_started(self) -> None:
+    def run_started(self, run_dir: str) -> None:
+        """`run_dir` is RunStarted.run_dir: the run's folder, "" when it has none."""
+        self._run_dir = run_dir
+        self.interaction.stream_graph.forget_run()
         self.interaction.set_run_result(None)
         self.run_display.run_started(time.monotonic())
         self._end_review()
@@ -233,8 +344,11 @@ class CenterContent(QWidget):
     def run_finished(self, result: ResultType) -> None:
         """
         Back to the logo, marked with how the run ended, and no header: the
-        run's pictures belong to the run. Its steps can still be looked back at.
+        run's pictures and graph belong to the run. Its steps can still be
+        looked back at.
         """
+        # The graph goes, and its stream files are let go of: the run is over.
+        self.interaction.stream_graph.forget_run()
         self.run_display.run_finished()
         self._end_review()
         self.interaction.run_header.stop()
@@ -262,9 +376,10 @@ class CenterContent(QWidget):
 
     def _show_run_view(self) -> None:
         """
-        The header on the running step, and the run's picture under it - the
-        plain logo when none applies. A question with a picture keeps the
-        picture area, and a step looked back at keeps both.
+        The header on the running step, and the run's picture or graph under
+        it - no picture area when none applies, nor for a graph in a run
+        without a run folder. A question with a picture keeps the picture
+        area, and a step looked back at keeps both.
         """
         if not self.run_display.running:
             return
@@ -272,6 +387,14 @@ class CenterContent(QWidget):
             return
         self.interaction.run_header.refresh()
         if self._pending is not None and self._pending_image_path:
+            return
+        graph = self.run_display.graph
+        if graph:
+            if self._run_dir:
+                self.interaction.show_graph(graph, stream_csv_path(self._run_dir, graph))
+            else:
+                # No run folder: no stream file to wait for (gui.md §18).
+                self.interaction.show_no_picture()
             return
         image_path = self.run_display.image_path
         if image_path:

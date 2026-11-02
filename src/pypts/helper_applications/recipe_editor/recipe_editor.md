@@ -176,7 +176,7 @@ selected, and `field_kind()` picks each field's widget from its annotation:
 | anything else | a small YAML box — `test_recipe_editor_form.py` fails if a recipe model's field ever lands here |
 
 The heading is `STEP_TYPE_NAMES[...]` and the `steptype` tag's description. Required fields
-come first, marked `*`; `description`, `image_path`, `id`, `skip`, `continue_on_error` sit under
+come first, marked `*`; `description`, `image_path`, `graph`, `id`, `skip`, `continue_on_error` sit under
 **More**, open when one of them is set. Every label has an ⓘ: its tooltip, and the field's, is
 the schema description; the placeholder is the first example. A problem whose
 `ValidationIssue.document` / `.path` falls under a field outlines it (`problem` property,

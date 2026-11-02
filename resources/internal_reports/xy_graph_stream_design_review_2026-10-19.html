@@ -17,6 +17,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
     --med: #0b5cad; --med-bg: #e9f1fa;
     --minor: #5b6475; --minor-bg: #eef1f6;
     --ok: #1e7a3c; --ok-bg: #e8f5ec;
+    --fw: #4a3aa8; --fw-bg: #ece9fb;
+    --xy: #00737a; --xy-bg: #e1f4f5;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -27,6 +29,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
       --med: #6aa9ef; --med-bg: #1b2634;
       --minor: #9aa3b2; --minor-bg: #232833;
       --ok: #7fd49a; --ok-bg: #1b2e22;
+      --fw: #b3a8ff; --fw-bg: #26223d;
+      --xy: #5fd3da; --xy-bg: #15302f;
     }
   }
   body { background: var(--bg); color: var(--fg); font: 15px/1.55 system-ui, Segoe UI, sans-serif;
@@ -61,6 +65,12 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   .chip.blocker { background: var(--blocker-bg); color: var(--blocker); }
   .chip.high { background: var(--high-bg); color: var(--high); }
   .chip.med { background: var(--med-bg); color: var(--med); }
+  .chip.side { border: 1px solid currentColor; }
+  .chip.fw { background: var(--fw-bg); color: var(--fw); }
+  .chip.xy { background: var(--xy-bg); color: var(--xy); }
+  .chip.both { background: linear-gradient(90deg, var(--fw-bg), var(--xy-bg)); color: var(--fg); }
+  .side-note { font-size: 13px; color: var(--muted); }
+  .legend { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: .6rem 1rem; margin: 1rem 0; font-size: 14px; }
   .where { color: var(--muted); font-size: 13px; }
   .fix { margin-top: .4rem; }
   .fix b { color: var(--ok); }
@@ -125,9 +135,11 @@ simplification on the table: the <code>StreamOpened</code> message may be deleta
 </ul>
 
 <h2>3. Findings</h2>
+<div class="card" style="border-left-color: var(--ok)"><p><b>All findings decided 2026-11-02 and written into the design.</b> Blockers: B1 and B2 by explicit choice (streams off + WARNING in a run without a run folder; an open question's own picture wins over the graph until answered), B3 and B4 earlier. Every other finding and question takes this review's recommendation. The design is the source now; this review is history.</p></div>
+<div class="legend"><b>Which side each item lands on:</b> <span class="chip side fw">FRAMEWORK</span> PyPTS code and docs (including the new <code>pypts/stream_handler</code> container, which is ours, not part of the XY graph package) · <span class="chip side xy">XY GRAPH PKG</span> the copied <code>pyrade_xy_graph</code> package &mdash; copied now, a dependency later, so these changes should also go upstream · <span class="chip side both">BOTH</span> split as noted in the item.</div>
 
 <div class="card blocker" id="B1">
-<h3><span class="chip blocker">BLOCKER</span>B1 — Runs without a run folder are undefined, including the GUI case</h3>
+<h3><span class="chip blocker">BLOCKER</span><span class="chip side fw">FRAMEWORK</span>B1 — Runs without a run folder are undefined, including the GUI case</h3>
 <p>The design hands <code>StreamSession</code> "the run folder (<code>RunStarted.run_dir</code>)" unconditionally.
 But <code>run_dir</code> is <code>""</code> for every engineering-mode <b>retest</b> (<code>write_report=False</code>)
 and when folder creation fails (<code>sequencer.py:363-366</code>, <code>run_events.py:127-136</code>). A retest is a
@@ -138,7 +150,7 @@ GUI run — exactly where graphs are shown — yet <code>StreamSession("")</code
 </div>
 
 <div class="card blocker" id="B2">
-<h3><span class="chip blocker">BLOCKER</span>B2 — "Graph stays until the next step starts" fights the right column's one state machine</h3>
+<h3><span class="chip blocker">BLOCKER</span><span class="chip side fw">FRAMEWORK</span>B2 — "Graph stays until the next step starts" fights the right column's one state machine</h3>
 <p>The right column already has a single decider: <code>RunDisplay</code> + <code>CenterContent._show_run_view()</code>
 repaint the picture area on <b>StepFinished</b> (the stack pops), on sequence start/finish, on question answers and on
 review end — each ending in <code>set_image(...)</code> or <code>show_no_picture()</code>. A separately-managed graph
@@ -154,7 +166,7 @@ Decide whether "stays until next step" survives its cost (Q3).</p>
 </div>
 
 <div class="card blocker" id="B3">
-<h3><span class="chip blocker">BLOCKER</span>B3 — <code>graph:</code> on a Sequence step crashes recipe load</h3>
+<h3><span class="chip blocker">BLOCKER</span><span class="chip side fw">FRAMEWORK</span>B3 — <code>graph:</code> on a Sequence step crashes recipe load</h3>
 <p>§2 makes <code>graph</code> common to every step type and §5 touches only <code>Step.__init__</code>. But
 <code>build_step()</code> splats YAML keys into constructors (<code>registry.py:64</code>) and
 <code>SequenceStep.__init__</code> enumerates its parameters with no <code>**kwargs</code>
@@ -168,18 +180,22 @@ cover a <code>graph:</code> on every step type.</p>
 </div>
 
 <div class="card blocker" id="B4">
-<h3><span class="chip blocker">BLOCKER</span>B4 — The copied code has no licence at all</h3>
+<h3><span class="chip blocker">BLOCKER</span><span class="chip side both">BOTH</span>B4 — The copied code has no licence at all</h3>
 <p>The design flags this as an open item; the repo scan makes it harder than "open": <b>zero</b> LICENSE file, SPDX
 header or copyright notice anywhere in <code>pyrade_xy_graph</code>; <code>pyproject.toml</code> has no licence or
 authors field; all 7 commits are by one CERN author (ncass). A verbatim copy has no permission behind it, and
 <code>reuse.toml</code> needs an annotation for <code>src/pyrade_xy_graph/**</code>. Nothing may be committed first.</p>
 <p class="where">Design §10 · evidence: full-repo search of C:/git/pyrade_xy_graph (0 matches for licence/copyright/SPDX)</p>
+<p class="side-note"><b>Side split:</b> framework &mdash; the <code>reuse.toml</code> annotation for the copy. XY graph package &mdash; upstream has no licence file; its author should add one.</p>
 <p class="fix"><b>Fix:</b> obtain licence + copyright holder from the author/CERN; add the reuse.toml annotation in
 the same change as the copy.</p>
+<p><b>Resolved 2026-11-02 (user decision):</b> the copied code takes the same licence as the rest of PyPTS &mdash;
+<code>2025 CERN &lt;home.cern&gt;</code>, <code>LGPL-2.1-or-later</code> &mdash; as design &sect;10 already records. The
+<code>reuse.toml</code> annotation for <code>src/pyrade_xy_graph/**/*.py</code> still goes in the same change as the copy.</p>
 </div>
 
 <div class="card high" id="H1">
-<h3><span class="chip high">HIGH</span>H1 — Run-end close races the design's own background pusher</h3>
+<h3><span class="chip high">HIGH</span><span class="chip side fw">FRAMEWORK</span>H1 — Run-end close races the design's own background pusher</h3>
 <p>"At run end the container closes every stream still open" (§3) while the demo's <code>start_sine()</code> thread
 pushes for 10 s after its step returned. Any early run end (step excluded, <code>continue_on_error=False</code>, halt)
 closes <code>bg_sine.csv</code> under the pusher: the next <code>push()</code> raises
@@ -192,7 +208,7 @@ Nothing in pypts tracks or joins threads a step starts. The §3 lock guards push
 </div>
 
 <div class="card high" id="H2">
-<h3><span class="chip high">HIGH</span>H2 — The copied one-slot pattern omits LocalSetup's abandon fence → cross-run pollution</h3>
+<h3><span class="chip high">HIGH</span><span class="chip side fw">FRAMEWORK</span>H2 — The copied one-slot pattern omits LocalSetup's abandon fence → cross-run pollution</h3>
 <p><code>sequence_is_running()</code> checks only the sequence thread, so run 2 can start while run 1's background
 pusher lives. With a plain active-session slot, that thread's <code>register_stream</code> resolves run 2's session:
 run-1 data lands in run 2's <code>streams/</code> and a <code>StreamOpened</code> attaches old data to the new run.
@@ -205,7 +221,7 @@ without the fence.</p>
 </div>
 
 <div class="card high" id="H3">
-<h3><span class="chip high">HIGH</span>H3 — Stream names become Windows paths with no legality handling</h3>
+<h3><span class="chip high">HIGH</span><span class="chip side fw">FRAMEWORK</span>H3 — Stream names become Windows paths with no legality handling</h3>
 <p>§2's "no safety mechanism" decision covers duplicate names, but <code>register_stream('ch?1')</code> is an
 <code>OSError</code>, <code>'a/b'</code> a <code>FileNotFoundError</code>, <code>'V:out'</code> silently writes an NTFS
 alternate data stream, and <code>'..\report'</code> escapes <code>streams/</code> into the run folder. In the
@@ -217,7 +233,7 @@ in §3; <code>StreamOpened</code>/the GUI map then key on the sanitised name.</p
 </div>
 
 <div class="card high" id="H4">
-<h3><span class="chip high">HIGH</span>H4 — The typo WARNING lives on the wrong side: headless/CLI never see it</h3>
+<h3><span class="chip high">HIGH</span><span class="chip side fw">FRAMEWORK</span>H4 — The typo WARNING lives on the wrong side: headless/CLI never see it</h3>
 <p>§2 states the WARNING unconditionally; §2 also says CLI/headless ignore <code>graph:</code> entirely; §6 puts the
 check in the GUI. So a recipe with <code>graph: bg_sien</code> passes CI headless runs silently and fails visibly only
 on an operator's bench. The engine owns both facts (the Sequencer opens the session and sees every StepFinished).
@@ -229,7 +245,7 @@ log instead of the run log it explains.</p>
 </div>
 
 <div class="card high" id="H5">
-<h3><span class="chip high">HIGH</span>H5 — Run end: the graph vs the TESTS PASSED/FAILED verdict image</h3>
+<h3><span class="chip high">HIGH</span><span class="chip side fw">FRAMEWORK</span>H5 — Run end: the graph vs the TESTS PASSED/FAILED verdict image</h3>
 <p>"Run end returns to the existing idle behaviour" (§6) and the timeline's "idle" label misstate the invariant:
 <code>run_finished()</code> shows the logo <b>marked with the run verdict</b> via <code>set_run_result()</code>, held
 until the next run. Implemented literally, a run whose last step was graphed either drops the verdict picture or the
@@ -239,19 +255,20 @@ graph covers it — the design never reconciles the two.</p>
 </div>
 
 <div class="card high" id="H6">
-<h3><span class="chip high">HIGH</span>H6 — Unbounded memory and O(N²) re-reads</h3>
+<h3><span class="chip high">HIGH</span><span class="chip side both">BOTH</span>H6 — Unbounded memory and O(N²) re-reads</h3>
 <p>No bound anywhere on live data: the wrapped <code>DataStore</code> defaults to <code>max_len=None</code>, whose own
 comment warns a live session must set it "or RAM grows for the life of the acquisition"; the plot feeds full arrays to
 <code>setData</code> per update. And §6 re-reads <code>X.csv</code> from byte 0 on <b>every</b> StepStarted with
 <code>graph: X</code> — an Indexed wrapper stamping <code>graph</code> on all N generated steps makes step k re-parse
 k·samples rows on the GUI thread. A 100 Hz stream over a 2 h soak is ~720k points.</p>
 <p class="where">Design §6 · evidence: pyrade data_store.py:105-118, plot_widget.py:115-124</p>
+<p class="side-note"><b>Side split:</b> framework &mdash; our wrapper sets <code>max_len</code>, keeps per-name byte offsets, batches rows. XY graph package (optional, upstream) &mdash; the plot pushes the full array to <code>setData</code> on every update.</p>
 <p class="fix"><b>Fix:</b> set <code>max_len</code> (or a scope window), keep per-name byte offsets instead of
 from-start re-reads, and batch rows per tick (each <code>DataStore.append</code> emits a synchronous full repaint).</p>
 </div>
 
 <div class="card med" id="M1">
-<h3><span class="chip med">MED</span>M1 — "Same outgoing path as Runtime.emit" is ambiguous, and both readings are wrong</h3>
+<h3><span class="chip med">MED</span><span class="chip side fw">FRAMEWORK</span>M1 — "Same outgoing path as Runtime.emit" is ambiguous, and both readings are wrong</h3>
 <p>The real emit is the Sequencer's wrapper (<code>sequencer.py:553-560</code>): <code>run_abandoned</code> guard →
 <code>core.send</code> → metadata scan mutating a shared dict. Reusing the closure from background-thread
 registrations adds a data race no current caller has; a bare <code>core.send</code> loses the
@@ -261,10 +278,11 @@ the resolved inputs; the only seam test code has today is <code>from pypts.hal i
 process-global session is therefore the <i>only</i> workable mechanism — correct, but the doc should say so, and pick
 the send path: a dedicated thread-safe guard + <code>core.send</code>, no metadata scan.</p>
 <p class="where">Design §4 · evidence: sequencer.py:539-560, python_module_step.py:267-280</p>
+<p class="side-note"><b>Moot since 2026-11-02:</b> <code>StreamOpened</code> was deleted (Q1), so there is no send path to choose. The note about test code having no <code>Runtime</code> still holds.</p>
 </div>
 
 <div class="card med" id="M2">
-<h3><span class="chip med">MED</span>M2 — The session's stated anchor doesn't exist; its real home is a decision</h3>
+<h3><span class="chip med">MED</span><span class="chip side fw">FRAMEWORK</span>M2 — The session's stated anchor doesn't exist; its real home is a decision</h3>
 <p>"Next to its existing <code>with LocalSetup(...)</code> in <code>execute_sequence()</code>" — the LocalSetup block
 is in <code>run_body()</code> (<code>sequencer.py:492</code>), where <code>run_dir</code> (a local of
 <code>execute_sequence()</code>, line 366) is not in scope. The two possible homes differ materially: inside
@@ -275,7 +293,7 @@ streams just before RunFinished is sent).</p>
 </div>
 
 <div class="card med" id="M3">
-<h3><span class="chip med">MED</span>M3 — The CSV dialect is an unpinned two-process contract, and the tail reader already exists</h3>
+<h3><span class="chip med">MED</span><span class="chip side fw">FRAMEWORK</span>M3 — The CSV dialect is an unpinned two-process contract, and the tail reader already exists</h3>
 <p>Writer (§3) and reader (§6) are specified in different modules with no shared code: the obvious
 <code>csv.writer</code> on a text-mode append handle writes <code>x,y\r\r\n</code> on Windows, which a
 <code>\n</code>-splitting byte-offset reader turns into blank pseudo-lines and <code>\r</code>-suffixed floats; and
@@ -289,7 +307,7 @@ extract <code>LogTail</code> rather than writing a second tailer.</p>
 </div>
 
 <div class="card med" id="M4">
-<h3><span class="chip med">MED</span>M4 — Re-registering a name appends a restarted x; the plot pipeline assumes monotonic x</h3>
+<h3><span class="chip med">MED</span><span class="chip side fw">FRAMEWORK</span>M4 — Re-registering a name appends a restarted x; the plot pipeline assumes monotonic x</h3>
 <p>§2 decides "the GUI shows what is in it", but the copied pipeline enables <code>clipToView</code> and auto peak
 downsampling (plot_widget.py:78,124), which index by sorted x: appended data with x restarting at 0 renders garbled or
 with chunks silently missing — not a line doubling back. Nothing forbids two live handles on the same CSV either.</p>
@@ -299,7 +317,7 @@ new file per registration.</p>
 </div>
 
 <div class="card med" id="M5">
-<h3><span class="chip med">MED</span>M5 — "Verbatim copy" ships import-time global side effects and a crashing menu entry</h3>
+<h3><span class="chip med">MED</span><span class="chip side xy">XY GRAPH PKG</span>M5 — "Verbatim copy" ships import-time global side effects and a crashing menu entry</h3>
 <p>Facts from the pyrade repo the design doesn't mention:</p>
 <ul>
 <li><code>plot_widget.py:11</code> imports <code>tdms_exporter</code>, registering a TDMS entry in pyqtgraph's native
@@ -317,13 +335,14 @@ new file per registration.</p>
   runtime), <code>pymeasure</code> is a stale dependency, committed <code>.DS_Store</code>/<code>.pyc</code>.</li>
 </ul>
 <p class="where">Design §7 · evidence: pyrade plot_widget.py:11,18-20, tdms_exporter.py:42,58, trace_level.py, graph_widget.py:108,446-452</p>
+<p class="side-note"><b>Side split:</b> every bullet except the glue is a change to the <code>pyrade_xy_graph</code> package itself &mdash; drop the <code>tdms_exporter</code> import, drop or scope the global <code>setConfigOptions</code>, check <code>trace_level</code> against our TRACE, fix <code>requires-python</code>, drop <code>pymeasure</code>, remove committed junk. Best made upstream first, so our copy stays identical to upstream. The ~6-line plot &harr; data-store glue is ours (the GUI wrapper).</p>
 <p class="fix"><b>Fix:</b> §7 must name the (small) deliberate deviations from verbatim — at minimum drop the
 tdms_exporter import and the global <code>setConfigOptions</code> — and record them so the "later swap" knows what to
 re-apply. See Q5.</p>
 </div>
 
 <div class="card med" id="M6">
-<h3><span class="chip med">MED</span>M6 — The §9 compliance plan is incomplete against CLAUDE.md's rules</h3>
+<h3><span class="chip med">MED</span><span class="chip side fw">FRAMEWORK</span>M6 — The §9 compliance plan is incomplete against CLAUDE.md's rules</h3>
 <ul>
 <li><b>SPDX:</b> <code>reuse.toml</code> has no <code>resources/recipes</code> glob — §8's new recipes and the sine
   test module need inline headers (existing demos carry LGPL-2.1-or-later ones), or reuse lint fails.</li>
@@ -339,6 +358,7 @@ re-apply. See Q5.</p>
 </div>
 
 <h2>4. Minor findings</h2>
+<p class="side-note">All minor items are <span class="chip side fw">FRAMEWORK</span> except the one marked <span class="chip side xy">XY GRAPH PKG</span>.</p>
 <ul>
 <li>A second <code>StreamOpened</code> for a name whose graph is already LIVE is an unspecified GUI transition.</li>
 <li>Nested <code>with StreamSession</code> inside a run clears the one slot for the rest of the run
@@ -347,7 +367,7 @@ re-apply. See Q5.</p>
 <li>Flush-per-push at 100 Hz holds the lock through an OS flush each sample — consider flushing per batch/interval.</li>
 <li><code>StreamOpened.unit</code> never reaches the CSV, so headless runs (which keep only the files) lose it —
   an argument for putting the unit in the CSV header instead (see §5).</li>
-<li>A second top-level package in the wheel (<code>pyrade_xy_graph</code>) — namespace ownership on PyPI/registry
+<li><span class="chip side xy">XY GRAPH PKG</span>A second top-level package in the wheel (<code>pyrade_xy_graph</code>) — namespace ownership on PyPI/registry
   should be a conscious choice.</li>
 <li>"Excluded from mypy" is a no-op: <code>[tool.mypy]</code> is an opt-in <code>files</code> list — nothing to do,
   but the sentence is wrong.</li>
@@ -391,45 +411,50 @@ achievable verbatim (M5). The honest options are in Q5.</p>
 
 <h2>6. Open decisions (answers belong to you)</h2>
 
-<div class="q"><b>Q1 — Keep or delete <code>StreamOpened</code>?</b> File-only contract (run_dir + name + polling,
+<div class="q"><span class="chip side fw">FRAMEWORK</span><b>Q1 — Keep or delete <code>StreamOpened</code>?</b> File-only contract (run_dir + name + polling,
 unit in the CSV header) vs. the message as designed.
-<div class="rec">➡️ Recommended: delete it — one channel, less machinery, and the GUI already has the pattern.</div></div>
+<div class="rec">➡️ Recommended: delete it — one channel, less machinery, and the GUI already has the pattern.</div>
+<div class="rec"><b>Answered 2026-11-02:</b> deleted. Design §2, §3, §4, §6, §9 and the pictures updated: the GUI derives the path with <code>stream_csv_path(run_dir, name)</code>, polls for the file, reads the unit from the header row <code>x,y [unit]</code>. M1 is moot.</div></div>
 
-<div class="q"><b>Q2 — No-folder runs (engineering retest, folder-creation failure):</b> (a) streams disabled + one
+<div class="q"><span class="chip side fw">FRAMEWORK</span><b>Q2 — No-folder runs (engineering retest, folder-creation failure):</b> (a) streams disabled + one
 engine-side WARNING; (b) a temp per-run streams dir (path then must travel: message or a new RunStarted field);
 (c) always create a run folder when the recipe has graph keys.
 <div class="rec">➡️ Recommended: (a) — simplest honest behaviour; revisit only if retests must graph.</div></div>
 
-<div class="q"><b>Q3 — Does "graph stays until the next step starts" survive its cost?</b> It contradicts how
+<div class="q"><span class="chip side fw">FRAMEWORK</span><b>Q3 — Does "graph stays until the next step starts" survive its cost?</b> It contradicts how
 pictures behave today (they pop on StepFinished) and forces stickiness through sequence-finish and question repaints.
 The alternative: graph lives exactly while its step runs, like a picture.
 <div class="rec">➡️ Recommended: graph lives while the step runs; the §2 decision was made before these costs were
-known and deserves a re-check.</div></div>
+known and deserves a re-check.</div>
+<div class="rec"><b>Answered 2026-11-02:</b> as recommended — the graph lives exactly while its step runs and pops on
+StepFinished like a picture. Added: a look-back (gui.md §19) at a graphed step, during or after the run, draws a
+static graph of the whole CSV read at the click; no file → no picture area. Written into design §2 and §6.</div></div>
 
-<div class="q"><b>Q4 — Warning side:</b> engine (Sequencer, run log, all frontends) vs GUI as designed.
+<div class="q"><span class="chip side fw">FRAMEWORK</span><b>Q4 — Warning side:</b> engine (Sequencer, run log, all frontends) vs GUI as designed.
 <div class="rec">➡️ Recommended: engine-side (H4).</div></div>
 
-<div class="q"><b>Q5 — Copy scope:</b> (a) whole package with 2–3 documented one-line deviations (drop the
+<div class="q"><span class="chip side xy">XY GRAPH PKG</span><b>Q5 — Copy scope:</b> (a) whole package with 2–3 documented one-line deviations (drop the
 tdms_exporter import, drop/scope the global <code>setConfigOptions</code>, check <code>trace_level</code> vs pypts
 TRACE); (b) plot path only (<code>plot_widget</code>, <code>data_store</code>, <code>trace_level</code>,
 <code>math_engine</code> — ~1,400 of 3,286 LOC); (c) strictly verbatim and accept M5's breakage.
 <div class="rec">➡️ Recommended: (a) — keeps the later-swap story, removes the landmines, and the deviations are a
 short documented list to re-apply upstream.</div></div>
 
-<div class="q"><b>Q6 — Lifetime semantics in §3's interface:</b> push-after-close = silent drop + DEBUG? close under
+<div class="q"><span class="chip side fw">FRAMEWORK</span><b>Q6 — Lifetime semantics in §3's interface:</b> push-after-close = silent drop + DEBUG? close under
 the push lock? abandon fence copied from LocalSetup? re-registration = same file, x-monotonicity documented as the
 caller's duty?
 <div class="rec">➡️ Recommended: yes to all four; they are one paragraph in the design and in
 <code>stream_handler.md</code>.</div></div>
 
-<div class="q"><b>Q7 — Sequence steps:</b> support <code>graph:</code> on them like <code>image_path</code> (explicit
+<div class="q"><span class="chip side fw">FRAMEWORK</span><b>Q7 — Sequence steps:</b> support <code>graph:</code> on them like <code>image_path</code> (explicit
 parameter, shows while the whole group runs), or exclude it from <code>SequenceStepSchema</code>?
 <div class="rec">➡️ Recommended: support it — symmetry with <code>image_path</code>, and B3's fix is the same size
 either way.</div></div>
 
-<div class="q"><b>Q8 — Licence (B4):</b> the author (ncass, CERN) must name licence + copyright holder before any copy
+<div class="q"><span class="chip side both">BOTH</span><b>Q8 — Licence (B4):</b> the author (ncass, CERN) must name licence + copyright holder before any copy
 is committed. Who asks, and is LGPL-2.1-or-later the target?
-<div class="rec">➡️ Recommended: ask for LGPL-2.1-or-later to match the host project; blocked until answered.</div></div>
+<div class="rec">➡️ Recommended: ask for LGPL-2.1-or-later to match the host project; blocked until answered.</div>
+<div class="rec"><b>Answered 2026-11-02:</b> LGPL-2.1-or-later, copyright 2025 CERN, same as the other files. Not blocked.</div></div>
 
 <h2>7. Method and limits</h2>
 <p>Reviewers: a max-effort adversarial code review (10 finder angles; several candidates refuted against source and

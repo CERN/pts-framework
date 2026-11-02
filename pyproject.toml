@@ -29,13 +29,16 @@ requires-python = ">=3.11"
 
 # The core dependencies of the project.
 dependencies = [
-  "matplotlib",
   "numpy",
   # Per-user config/data directories, so config.ini and the run output land
   # where the platform expects rather than in the temp directory.
   "platformdirs",
-  "PySide6==6.9.1",
+  # 6.9.1 breaks QGraphicsItem.setParentItem for items whose itemChange returns
+  # super()'s value: pyqtgraph curves never join their ViewBox. Fixed in 6.9.2.
+  "PySide6==6.9.2",
   "pydantic>=2.6",
+  # The XY-graph plot widget (src/pyrade_xy_graph/) is built on it.
+  "pyqtgraph>=0.13",
   "PyYAML==6.0.2",
   "ruamel.yaml",
 ]
@@ -76,7 +79,7 @@ Repository = "https://gitlab.cern.ch/pts/framework/pypts"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["pypts", "pypts.*"]
+include = ["pypts", "pypts.*", "pyrade_xy_graph", "pyrade_xy_graph.*"]
 
 [tool.setuptools.package-data]
 # All package data which is tracked by git is included automatically due to
@@ -106,6 +109,8 @@ exclude = [
   "src/pypts/old_code",
   "spikes",
   "docs/source/conf.py",
+  # Copied upstream code (CERN pyrade_xy_graph), not held to this style.
+  "src/pyrade_xy_graph",
 ]
 
 [tool.ruff.lint]

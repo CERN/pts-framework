@@ -8,8 +8,8 @@ Runs as a thread of the Core process. CORE forwards the run events here
 """
 
 import csv
-import html
 import json
+import platform
 import time
 from pathlib import Path
 from typing import IO
@@ -34,6 +34,7 @@ from pypts.messages.run_events import (
     SequenceStarted,
     StepExecuted,
 )
+from pypts.report.html_report import render_report
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import REPORT, HeartbeatManager
 from pypts.utilities.local_storage import make_run_folder, report_file_stem
@@ -57,7 +58,11 @@ RUN_COLUMNS = (
     "recipe_version",
     "pypts_version",
     "run_started_at",
+    "run_finished_at",
     "run_result",
+    "host_name",
+    "platform",
+    "python_version",
 )
 
 STEP_COLUMNS = (
@@ -133,6 +138,8 @@ class Report:
         csv_path: where the run's CSV is now - report.csv until finish_run()
               renames it, or None before the first run.
         file_timestamp: the run's start, `YYYYmmdd_HHMMSS`, for the file names.
+        run_finished_at: when RunFinished arrived, `YYYY-mm-dd HH:MM:SS`, or ""
+              while the run is going.
         rows: what has been written to the CSV, kept for the HTML pass.
         run_info: the RunStarted of the current run.`
         run_result: the RunFinished verdict, or None while the run is going.
@@ -168,6 +175,7 @@ class Report:
         self.metadata: dict[str, str] = {}
         self.columns: tuple[str, ...] = CSV_COLUMNS
         self.run_started_at = ""
+        self.run_finished_at = ""
         self.file_timestamp = ""
         self.goodbye_sent = False
 
@@ -254,6 +262,7 @@ class Report:
         self.rows = []
         self.current_sequence = ""
         self.metadata = {}
+        self.run_finished_at = ""
         started = time.localtime()
         self.run_started_at = time.strftime("%Y-%m-%d %H:%M:%S", started)
         self.file_timestamp = time.strftime("%Y%m%d_%H%M%S", started)
@@ -330,7 +339,13 @@ class Report:
             "recipe_version": info.recipe_version if info is not None else "",
             "pypts_version": info.pypts_version if info is not None else "",
             "run_started_at": self.run_started_at,
+            "run_finished_at": self.run_finished_at,
             "run_result": str(self.run_result) if self.run_result is not None else "",
+            # The machine the run is on: the Report is a thread of the Core
+            # process, which runs the steps, so its platform is the run's.
+            "host_name": platform.node(),
+            "platform": platform.platform(),
+            "python_version": platform.python_version(),
         }
         for name in self.metadata_names():
             cells[metadata_column(name)] = self.metadata.get(name, "")
@@ -362,6 +377,7 @@ class Report:
             log.debug("RunFinished arrived with no run open; there is nothing to close.")
             return
         self.run_result = result
+        self.run_finished_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         self.close_csv()
         self.rewrite_csv()
         self.rename_csv()
@@ -441,13 +457,13 @@ class Report:
 
     def render_html(self) -> str:
         """
-        The whole report as one self-contained page: header, summary, table.
+        The whole report as one self-contained page - see html_report.py.
 
         The rows carry every run-level value, so the first one answers for all
         of them, and rows_from_csv() can point self.rows at a past run's CSV
         and render it again. Not quite from the CSV alone, though: the
         metadata *names* come from self.run_info, so a rebuilt report shows no
-        metadata header lines.
+        metadata.
         """
         # A run in which no step executed has no rows to read, so the live
         # path falls back to what it holds. Regenerating from a CSV that has
@@ -456,87 +472,11 @@ class Report:
             first_row = self.rows[0]
         else:
             first_row = self.run_level_cells()
-        title = html.escape(first_row.get("recipe_name", ""))
-        description = html.escape(first_row.get("recipe_description", ""))
-        verdict = html.escape(first_row.get("run_result", ""))
-        if not verdict:
-            verdict = "in progress"
-        version_line = html.escape(first_row.get("recipe_version", ""))
-        pypts_version = html.escape(first_row.get("pypts_version", ""))
-        started_at = html.escape(first_row.get("run_started_at", ""))
-        generated_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-
-        metadata_lines = []
+        metadata = []
         for name in self.metadata_names():
-            value = first_row.get(metadata_column(name), "")
-            if value:
-                metadata_lines.append(
-                    f"<strong>{html.escape(name)}:</strong> {html.escape(value)}<br>"
-                )
-        metadata_html = "".join(metadata_lines)
-
-        counts: dict[str, int] = {}
-        for row in self.rows:
-            counts[row["result"]] = counts.get(row["result"], 0) + 1
-        summary = ", ".join(f"{result}: {count}" for result, count in sorted(counts.items()))
-        if not summary:
-            summary = "no steps ran"
-
-        table_rows = []
-        for row in self.rows:
-            cells = "".join(
-                f"<td>{html.escape(row[column])}</td>"
-                for column in (
-                    "sequence_name",
-                    "step_name",
-                    "step_type",
-                    "result",
-                    "duration_s",
-                    "inputs",
-                    "outputs",
-                    "error_info",
-                )
-            )
-            table_rows.append(f'<tr class="{html.escape(row["result"])}">{cells}</tr>')
-        steps_html = "\n".join(table_rows)
-
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<title>pypts report - {title}</title>
-<style>
-body {{ font-family: sans-serif; margin: 2em; color: #222; background: #fff; }}
-table {{ border-collapse: collapse; width: 100%; }}
-th, td {{ border: 1px solid #ccc; padding: 4px 8px; text-align: left;
-          font-size: 0.9em; word-break: break-word; }}
-th {{ background: #eee; }}
-tr.PASS td, tr.DONE td {{ background: #e6f4e6; }}
-tr.FAIL td {{ background: #f9e0e0; }}
-tr.ERROR td {{ background: #fbe9d0; }}
-tr.SKIP td {{ background: #f0f0f0; color: #777; }}
-tr.STOP td {{ background: #ece0f4; }}
-</style>
-</head>
-<body>
-<h1>pypts Test Report</h1>
-<p>{metadata_html}
-<strong>Recipe:</strong> {title} {version_line}<br>
-<strong>Description:</strong> {description}<br>
-<strong>Result:</strong> {verdict}<br>
-<strong>Started:</strong> {started_at}<br>
-<strong>Generated:</strong> {generated_at} by pypts {pypts_version}</p>
-<h2>Summary</h2>
-<p>{len(self.rows)} steps ({summary})</p>
-<h2>Steps</h2>
-<table>
-<tr><th>Sequence</th><th>Step</th><th>Type</th><th>Result</th><th>Duration [s]</th>
-<th>Inputs</th><th>Outputs</th><th>Error</th></tr>
-{steps_html}
-</table>
-</body>
-</html>
-"""
+            metadata.append((name, first_row.get(metadata_column(name), "")))
+        generated_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        return render_report(self.rows, first_row, metadata, generated_at)
 
     def export_report(self) -> None:
         """

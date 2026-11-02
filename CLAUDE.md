@@ -19,11 +19,9 @@ file may be touched — **stop and ask.** Asking is always cheaper than a wrong 
 distribution `pts-framework`, Python ≥ 3.11, LGPL-2.1-or-later, REUSE compliant.
 
 `reuse.toml` is the authority on licence headers. It covers `src/pypts/**/*.py`,
-`tests/**/*.py`, `spikes/**/*.py` and `docs/**/*.rst`, so new files there need no inline SPDX
-header. Anything outside its globs does — typically `resources/**` and repo-root HTML
+`src/pyrade_xy_graph/**/*.py`, `tests/**/*.py`, `spikes/**/*.py` and `docs/**/*.rst`, so new files
+there need no inline SPDX header. Anything outside its globs does — typically `resources/**` and repo-root HTML
 (`CC-BY-SA-4.0`).
-
-Still a stub: `stream_handler/` (empty).
 
 ## Where things are documented
 
@@ -99,12 +97,13 @@ src/pypts/
   logger/        Logger process: the single run-log writer
   utilities/     error handling, heartbeats, local storage, recent recipes
   hal/           hardware layer: devices by logical name, one driver process each, SSH driver
-  stream_handler/   stub
+  stream_handler/   the stream container: named (x, y) streams the test code pushes, one CSV each
   helper_applications/  recipe_creator (incl. verificator), recipe_editor (v2)
+src/pyrade_xy_graph/  copied plot package (CERN), later a dependency; deviations: DEVIATIONS.md
 resources/recipes/   one folder of demos per step type (<type>step_recipes/, HAL_recipes/,
-                     stepimage_recipes/), showcase_recipes/ (all of them: automated, full),
-                     common/ (the test code they share), Old_recipes/ (historical, the
-                     old engine's format — they do not load)
+                     stepimage_recipes/, stepgraph_recipes/), showcase_recipes/ (all of them:
+                     automated, full), common/ (the test code they share), Old_recipes/
+                     (historical, the old engine's format — they do not load)
 ```
 
 **Processes:** CORE (with Sequencer + Report threads), the HMI frontend, and the Logger; the

@@ -11,6 +11,7 @@ SPDX-PackageDownloadLocation = "https://gitlab.cern.ch/pts/framework/pypts"
 [[annotations]]
 path = [
     "src/pypts/**/*.py",
+    "src/pyrade_xy_graph/**/*.py",
     "tests/**/*.py",
     "spikes/**/*.py",
     "run_tests.py"

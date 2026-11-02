@@ -231,6 +231,7 @@ teardown_steps:              # optional; runs after the steps, whatever happened
   step_name: Check 3V3 rail  # required; shown in the step table and the report
   description: ...           # optional
   image_path: probe_tp3.png  # optional; shown while the step runs (§5.1)
+  graph: sine                # optional; a live graph while the step runs (§5.2)
   id: my-stable-id           # optional; a fresh id if absent
   skip: false                # optional; true records SKIP without running it
   continue_on_error: true    # optional; see §9.1
@@ -251,6 +252,20 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <li>On an <code>Indexed</code> step it goes on every generated step, unless the <code>template</code> names its own.</li>
 <li><strong>A file that is not there does not stop anything.</strong> The recipe loads, the operator is told once which pictures are missing, and "No image available" is shown in their place.</li>
 <li>The CLI and headless mode ignore it.</li>
+</ul>
+<h3 id="5-2-graph">5.2 <code>graph</code> — a live graph while the step runs</h3>
+<p>Any step, of any type, may name a live data stream. While the step runs, the GUI draws that stream as an XY graph where the step's picture would go, reading the file the test code writes into the run folder (<code>&lt;run folder&gt;/streams/&lt;name&gt;.csv</code>, the name made file-safe). Until the file exists it shows "Waiting for stream &lt;name&gt;".</p>
+<ul>
+<li>A step's own <code>graph</code> wins over its own <code>image_path</code>. A <code>Sequence</code> step's graph shows under its inner steps that have neither, unless the called sequence has a picture of its own: that one is nearer and wins. An inner step's own picture or graph takes over while it runs.</li>
+<li>The graph goes when its step ends, like a picture. A question with a picture of its own shows that picture while it is open, and the graph comes back, caught up, once it is answered; a question without a picture leaves the graph showing. At the end of the run the graph goes and the TESTS PASSED / FAILED logo shows.</li>
+<li>A run without a run folder records no streams, so a graph step shows no picture area at all.</li>
+<li>A click on the step's row during or after the run (looking back) draws the whole file once; if there is no file, no picture area.</li>
+<li>If a step that ran (not skipped) ends and no stream of that name was registered in the run, the run log gets one WARNING (every frontend). The CLI and headless mode draw nothing.</li>
+<li>The value is the <strong>name</strong> of a stream, kept exactly as written. It is not a path and is not resolved against the recipe's folder.</li>
+<li>A numeric name must be quoted: <code>graph: "07"</code> (an unquoted <code>07</code> is a number to YAML).</li>
+<li>On a <code>Sequence</code> step it is taken like on any other step. A sequence document has no <code>graph</code>.</li>
+<li>On an <code>Indexed</code> step it goes on every generated step, unless the <code>template</code> names its own.</li>
+<li>Worked example: <code>resources/recipes/stepgraph_recipes/stepgraph_demo.yml</code> with its test code <code>sine_tests.py</code> (GUI to see the graph; it runs headless too and writes the CSVs). The test code registers a stream with <code>register_stream("sine", unit="V")</code> from <code>pypts.stream_handler</code> and calls <code>push(x, y)</code>.</li>
 </ul>
 <hr>
 <h2 id="6-inputs-where-arguments-come-from">6. <code>inputs</code> — where arguments come from</h2>
@@ -342,7 +357,8 @@ teardown_steps:              # optional; runs after the steps, whatever happened
 <pre><code class="language-yaml">- steptype: Wait
   step_name: settle
   description: Let the rail settle
-  wait_time: 3               # seconds (int or float)</code></pre>
+  wait_time: 3               # seconds (int or float)
+  graph: sine                # optional; any step may have one (§5.2)</code></pre>
 <p>Returns <code>DONE</code> — but a negative or non-numeric <code>wait_time</code> raises when the step runs, ending it <code>ERROR</code>: the schema accepts any value, so this is found at run time, not at load. <code>inputs</code> and <code>outputs</code> are refused at load time: <code>wait_time</code> is the step's one value, and a wait returns nothing to judge or store.</p>
 <h3 id="userinteraction-prompt-operator-with-buttons"><code>UserInteraction</code> — prompt operator with buttons</h3>
 <pre><code class="language-yaml">- steptype: UserInteraction
@@ -397,6 +413,7 @@ steps:
   - steptype: Sequence
     sequence_name: PowerCycle    # required; case-insensitive
     description: Before calibration   # optional; else PowerCycle's own description
+    graph: sine                  # optional; §5.2
     skip: false                  # optional
     continue_on_error: true      # optional
 teardown_steps:
@@ -449,7 +466,7 @@ teardown_steps:
 <li>A set carries <code>inputs</code> and/or <code>expect</code> — at least one of the two, and nothing else.</li>
 <li>Generated steps are named after their parameters — <code>Add numbers [a=2, b=3]</code> — so a failed row explains itself without opening the recipe; a set with no <code>inputs</code> falls back to a counter: <code>Add numbers 1/10</code>.</li>
 <li>The <code>template</code> needs no <code>step_name</code> of its own: the <code>Indexed</code> step's <code>step_name</code> is the base name.</li>
-<li>The wrapper's <code>description</code> and <code>image_path</code> go on every generated step unless the <code>template</code> names its own; <code>skip</code> and <code>continue_on_error</code> on the wrapper apply to every generated step.</li>
+<li>The wrapper's <code>description</code>, <code>image_path</code> and <code>graph</code> go on every generated step unless the <code>template</code> names its own; <code>skip</code> and <code>continue_on_error</code> on the wrapper apply to every generated step.</li>
 <li><strong>Refused at load time:</strong> <code>id</code>, <code>inputs</code> or <code>outputs</code> on the <code>Indexed</code> step itself (they belong on the <code>template</code>); an empty <code>parameter_sets</code>; a set with neither <code>inputs</code> nor <code>expect</code>, or with any other key; a <code>template</code> that carries an <code>id</code> or is a <code>Sequence</code> or <code>Indexed</code> step.</li>
 <li>Worked example: <code>resources/recipes/indexedstep_recipes/indexedstep_demo.yml</code> (runs headless).</li>
 </ul>

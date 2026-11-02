@@ -19,8 +19,9 @@ locks or truncates, and closing the GUI cannot affect the run.
 Two things need care:
 
 * **Torn records.** A record is one `write()` followed by a flush, but a read can
-  land between them and return half a line. Anything not ending in a newline is
-  held back until the rest arrives, so a caller never sees half a record.
+  land between them and return half a line. `LineTail` (line_tail.py) holds back
+  anything not ending in a newline until the rest arrives, so a caller never
+  sees half a record.
 * **Volume.** `config.ini` ships TRACE for the refactor, so the file carries the
   full message trace - every message twice, sent and received. The operator
   panel filters to `PANEL_LOG_LEVEL` and up.
@@ -30,7 +31,8 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TextIO
+
+from pypts.hmi.gui.line_tail import LineTail
 
 # Registers the TRACE name, so the message trace is filtered out like DEBUG
 # rather than shown as a line with a level nobody knows.
@@ -103,9 +105,7 @@ class LogTail:
     def __init__(self, path, min_level: int = PANEL_LOG_LEVEL) -> None:
         self.path = Path(path)
         self.min_level = min_level
-        self._handle: TextIO | None = None
-        #: The tail of the file that is not yet a whole line.
-        self._partial = ""
+        self._tail = LineTail(self.path)
         #: Whether the record the panel last showed is still being written to,
         #: i.e. whether a continuation line now belongs to a shown record.
         self._in_shown_record = False
@@ -114,17 +114,15 @@ class LogTail:
         """
         Open the log for reading, positioned at its start.
 
-        `errors="replace"` rather than the default: the Logger pins UTF-8 when it
-        writes, but a log truncated mid-character must still be readable. A panel
-        that goes blank on one bad byte is useless exactly when it is needed.
+        Reading is `LineTail.open()`, which decodes with `errors="replace"`: the
+        Logger pins UTF-8 when it writes, but a log truncated mid-character must
+        still be readable. This also restarts the continuation-line context.
 
         Raises:
             OSError: if the log cannot be opened. The caller decides what that
                 means - in the GUI, a panel that stays empty, not a dead window.
         """
-        self.close()
-        self._handle = self.path.open("r", encoding="utf-8", errors="replace")
-        self._partial = ""
+        self._tail.open()
         self._in_shown_record = False
 
     def new_lines(self) -> list[str]:
@@ -135,17 +133,7 @@ class LogTail:
             The lines, ready for `LogPanel.append_line()`. Empty when nothing was
             written, or when everything written was below `min_level`.
         """
-        if self._handle is None:
-            return []
-
-        text = self._partial + self._handle.read()
-        if not text:
-            return []
-
-        raw_lines = text.split("\n")
-        # The last element is whatever followed the final newline: "" when the
-        # file ends cleanly, the start of the next record when it does not.
-        self._partial = raw_lines.pop()
+        raw_lines = self._tail.whole_lines()
 
         shown = []
         for raw_line in raw_lines:
@@ -175,6 +163,4 @@ class LogTail:
 
     def close(self) -> None:
         """Release the file. Safe to call twice, and safe to call before open()."""
-        if self._handle is not None:
-            self._handle.close()
-            self._handle = None
+        self._tail.close()

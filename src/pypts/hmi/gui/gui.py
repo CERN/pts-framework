@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 
 from pypts._version import __version__
 from pypts.config_handler import BootstrapOutcome, ConfigError, ConfigHandler, file_locations
-from pypts.config_handler.configuration_schema import SCHEMA
+from pypts.config_handler.configuration_schema import SCHEMA, TRUE_VALUES
 from pypts.hmi.gui.center_view import CenterContent
 from pypts.hmi.gui.gui_theme import detect_system_dark_mode, install_system_theme_sync
 from pypts.hmi.gui.log_follower import LogFollower
@@ -166,6 +166,37 @@ def window_settings() -> tuple[str, str, int, int]:
             int(fields["window_width"].default),
             int(fields["window_height"].default),
         )
+
+
+#: The `[gui]` key that saves each LOG OUTPUT filter group (center_view.py).
+LOG_FILTER_KEYS = {
+    "INFO": "gui.log_show_info",
+    "WARNING": "gui.log_show_warning",
+    "ERROR": "gui.log_show_error",
+}
+
+
+def log_filter_settings() -> dict[str, bool]:
+    """
+    Which levels the LOG OUTPUT panel shows: filter group -> shown.
+
+    Read once, at startup, like `window_settings()`; the buttons save each
+    change through CORE. With no configuration to ask, every group is shown -
+    the template's default.
+    """
+    try:
+        config = ConfigHandler()
+        shown = {}
+        for group, key in LOG_FILTER_KEYS.items():
+            shown[group] = bool(config.get_parameter(key))
+        return shown
+    except ConfigError as error:
+        log.debug("No configuration to take the log filter from (%s).", error)
+        shown = {}
+        for group, key in LOG_FILTER_KEYS.items():
+            field = SCHEMA["gui"][key.rpartition(".")[2]]
+            shown[group] = field.default == "true"
+        return shown
 
 
 def _nothing_to_disconnect() -> None:
@@ -621,6 +652,8 @@ class GUI(HmiClient):
         self.step_table = StepTableContent()
         _summary = SummaryPanel()
         self.center = CenterContent()
+        self.center.set_log_filter(log_filter_settings())
+        self.center.log_filter_changed.connect(self._save_log_filter)
 
         theme, window_mode, width, height = window_settings()
         #: The window as it is meant to be shown: (mode, width, height). What
@@ -1182,7 +1215,7 @@ class GUI(HmiClient):
         self.step_table.reset_to_pending()
         self.window.run_progress.reset()
         self.center.show_idle()
-        self.center.run_started()
+        self.center.run_started(event.run_dir)
         # The last run's summary goes, and the operator is taken to this run.
         self.run_record = RunRecord.start(
             event,
@@ -1356,6 +1389,20 @@ class GUI(HmiClient):
         if dialog.restore_requested:
             self._restore_default_settings()
 
+    @catch_and_report_errors()
+    def _save_log_filter(self, group: str, shown: bool) -> None:
+        """
+        A LOG OUTPUT filter button was clicked: save it as `[gui] log_show_<group>`.
+
+        The panel is already filtered; this only makes the choice survive a
+        restart. CORE writes the file and answers with a ConfigParameterResult
+        (show_config_parameter_result); a refusal - a config.ini discarded at
+        startup, say - is shown in the status bar, and the button stays as
+        clicked for this session.
+        """
+        log.debug("Saving the log filter: %s shown=%s.", group, shown)
+        self.set_config_parameter(LOG_FILTER_KEYS[group], setting_text(shown))
+
     def show_config_parameter_result(self, result: ConfigParameterResult) -> None:
         log.debug(
             "ConfigParameterResult received for '%s': accepted=%s.", result.key, result.accepted
@@ -1363,7 +1410,22 @@ class GUI(HmiClient):
         if result.accepted:
             self._saved_settings[result.key] = result.value
 
+        filter_group = None
+        for group, key in LOG_FILTER_KEYS.items():
+            if key == result.key:
+                filter_group = group
+        if filter_group is not None and result.accepted:
+            # Saved from the Settings dialog or from the button itself: either
+            # way the button and the panel show what is now in the file.
+            self.center.set_log_filter({filter_group: result.value in TRUE_VALUES})
+
         if self.settings_dialog is not None and self.settings_dialog.apply_result(result):
+            return
+
+        if filter_group is not None and result.accepted:
+            # A filter button's own save. The panel changed at the click, so
+            # "applies from the next start" would be wrong, and a line in the
+            # status bar for every click is noise.
             return
 
         # Nobody is waiting for it - the dialog was closed before CORE answered.

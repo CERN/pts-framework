@@ -121,6 +121,11 @@ def _build_one(
     if not generated.get("image_path") and step_data.get("image_path"):
         generated["image_path"] = step_data["image_path"]
 
+    # The graph follows the picture: the wrapper's shows on every generated
+    # step, unless the template names its own.
+    if not generated.get("graph") and step_data.get("graph"):
+        generated["graph"] = step_data["graph"]
+
     # `skip` on the wrapper skips every generated step - the obvious meaning of
     # skipping an indexed step, and the only way to say it. `continue_on_error`
     # carries the same way: "do not continue past this indexed step" can only be

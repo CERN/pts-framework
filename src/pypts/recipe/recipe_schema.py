@@ -154,9 +154,12 @@ OUTPUT_TYPES: dict[str, tuple[str, ...]] = {
 #: `globals` form is exactly what F1 and F8 were.
 #: `image_path` is the picture the GUI shows while the step runs; an absent one
 #: means none of the step's own (the sequence's, if it has one, shows instead).
+#: `graph` is the name of a live data stream the GUI draws as a graph while the
+#: step runs; it is a name, kept as written, not a path.
 STEP_COMMON_DEFAULTS: dict[str, Any] = {
     "description": "",
     "image_path": None,
+    "graph": None,
     "skip": False,
     "continue_on_error": True,
 }
@@ -405,6 +408,14 @@ class _StepFields(_RecipeModel):
             "the recipe's own folder, or an absolute one."
         ),
         examples=["probe_tp3.png"],
+    )
+    graph: str | None = Field(
+        default=None,
+        description=(
+            "The name of a live data stream to show as a graph on the right while "
+            "this step runs, instead of its picture."
+        ),
+        examples=["sine"],
     )
     skip: bool = Field(
         default=False,

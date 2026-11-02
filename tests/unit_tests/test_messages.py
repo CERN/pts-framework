@@ -175,7 +175,10 @@ EXAMPLES = {
                 sequence_name="Main",
                 steps=(
                     StepSummary(
-                        step_id=STEP_ID, step_name="Measure voltage", description="With the DMM"
+                        step_id=STEP_ID,
+                        step_name="Measure voltage",
+                        description="With the DMM",
+                        graph="sine",
                     ),
                 ),
             ),

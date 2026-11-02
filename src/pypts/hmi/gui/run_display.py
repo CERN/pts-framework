@@ -9,6 +9,7 @@ GUI only - nothing is sent and CORE knows nothing of it (gui.md §18). It is fed
 the events the window already receives and answers two questions:
 
   image_path   the picture to show now, or None for the logo
+  graph        the stream to draw there instead, or None
   the header's numbers: the current step, its start, the run's start, the
                verdict counts and the last failure
 
@@ -20,6 +21,13 @@ neither shows the picture of the `Sequence` step that called it - which is
 still running, because its `StepFinished` comes after its children's - and so
 on outward. Nothing set anywhere: the logo.
 
+**The graph** (`graph:` on a step) is one more thing an entry can set. The
+innermost entry that sets a graph *or* a picture decides: if it has a graph,
+`graph` names it and `image_path` is None - a step's own graph wins over its
+own picture. Sequences never carry a graph. So a `Sequence` step's graph shows
+under its inner steps that set neither, an inner step's own picture or graph
+takes over while it runs, and the group's graph comes back when it ends.
+
 A pop is matched by id or name, not blind: it removes the matching entry and
 anything left above it, so a lost event cannot leave a stale picture on screen.
 
@@ -27,12 +35,12 @@ anything left above it, so a lost event cannot leave a stale picture on screen.
 `Sequence` call row (`is_group`). Every verdict counts.
 
 **Looking back at a step** (gui.md §19). Every step that starts is remembered
-with the picture that was on screen for it - the innermost one, worked out as
-above at the moment it started - its start and finish times and its outcome.
+with the picture or graph that was on screen for it - worked out as above at
+the moment it started - its start and finish times and its outcome.
 `review(step_id)` hands that back for a clicked row. It is recorded rather than
 worked out from the recipe because a Sequence step runs its own copy of the
 called sequence, and the rows do not say which sequence a group calls. A step
-that has not run yet in this run has only its own picture to show.
+that has not run yet in this run has only its own picture or graph to show.
 
 A group row (a `Sequence` step) is looked back at with every step under it, at
 any depth, in run order (`StepReview.steps`): the rows that follow it and sit
@@ -71,6 +79,8 @@ class _Running:
     step: StepSummary | None = None
     #: time.monotonic() when it started - a step's, for the header.
     started_at: float = 0.0
+    #: The stream the step draws (`graph:`); always None for a sequence.
+    graph: str | None = None
 
 
 #: Where a looked-back step is in the run.
@@ -83,9 +93,11 @@ REVIEW_FINISHED = "finished"
 class _Seen:
     """One step as this run saw it."""
 
-    #: The picture on screen while it ran; None when it was the logo.
+    #: The picture on screen while it ran; None when it was the logo or a graph.
     image_path: str | None
     started_at: float
+    #: The graph on screen while it ran - an inherited group graph included.
+    graph: str | None = None
     finished_at: float | None = None
     outcome: StepOutcome | None = None
 
@@ -105,6 +117,8 @@ class StepReview:
     duration: float | None = None
     #: For a group row, every step under it at any depth, in run order; () for a step.
     steps: tuple["StepReview", ...] = ()
+    #: The graph on screen when it started (or, pending, its own); None for none.
+    graph: str | None = None
 
 
 def counts_text(counts: dict[ResultType, int]) -> str:
@@ -196,11 +210,13 @@ class RunDisplay:
     def step_started(self, step_id: UUID, now: float) -> None:
         step = self._steps.get(step_id)
         image_path = None
+        graph = None
         if step is not None:
             image_path = step.image_path
-        self._stack.append(_Running(_STEP, step_id, image_path, step, now))
+            graph = step.graph
+        self._stack.append(_Running(_STEP, step_id, image_path, step, now, graph))
         # What is on screen for it now that it is the innermost entry.
-        self._seen[step_id] = _Seen(self.image_path, now)
+        self._seen[step_id] = _Seen(self.image_path, now, graph=self.graph)
 
     def step_finished(self, outcome: StepOutcome, now: float) -> None:
         self._pop(_STEP, outcome.step_id)
@@ -228,13 +244,31 @@ class RunDisplay:
 
     # --- what to show -----------------------------------------------------------
 
+    def _deciding_entry(self) -> _Running | None:
+        """The innermost entry that sets a graph or a picture; None when none does."""
+        for entry in reversed(self._stack):
+            if entry.graph or entry.image_path:
+                return entry
+        return None
+
     @property
     def image_path(self) -> str | None:
-        """The innermost picture set on the running stack; None: the logo."""
-        for entry in reversed(self._stack):
-            if entry.image_path:
-                return entry.image_path
-        return None
+        """
+        The innermost picture set on the running stack; None: the logo - or a
+        graph, when the deciding entry has one (see `graph`).
+        """
+        entry = self._deciding_entry()
+        if entry is None or entry.graph:
+            return None
+        return entry.image_path
+
+    @property
+    def graph(self) -> str | None:
+        """The stream to draw: the deciding entry's graph; None when it has none."""
+        entry = self._deciding_entry()
+        if entry is None or not entry.graph:
+            return None
+        return entry.graph
 
     def current_step(self) -> tuple[StepSummary | None, float]:
         """The innermost running step and when it started; (None, 0.0) between steps."""
@@ -268,11 +302,16 @@ class RunDisplay:
         """One step as this run saw it, without the steps under it."""
         seen = self._seen.get(step.step_id)
         if seen is None:
+            # Its own graph wins over its own picture, as while it runs.
+            if step.graph:
+                return StepReview(step, REVIEW_PENDING, None, graph=step.graph)
             return StepReview(step, REVIEW_PENDING, step.image_path)
         if seen.outcome is None or seen.finished_at is None:
-            return StepReview(step, REVIEW_RUNNING, seen.image_path)
+            return StepReview(step, REVIEW_RUNNING, seen.image_path, graph=seen.graph)
         duration = seen.finished_at - seen.started_at
-        return StepReview(step, REVIEW_FINISHED, seen.image_path, seen.outcome, duration)
+        return StepReview(
+            step, REVIEW_FINISHED, seen.image_path, seen.outcome, duration, graph=seen.graph
+        )
 
     def count_text(self) -> str:
         """"3 PASS · 1 FAIL", in COUNT_ORDER; "" before the first step ends."""

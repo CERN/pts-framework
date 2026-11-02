@@ -22,6 +22,7 @@ from pypts.recipe.recipe_schema import (
     PASSFAIL_REFUSED_STEP_TYPES,
     REMOVED_SEQUENCE_KEYS,
     RENAMED_STEP_TYPES,
+    STEP_COMMON_DEFAULTS,
     STEP_REQUIRED,
     STEP_SCHEMAS,
     STEP_TYPE_NAMES,
@@ -720,3 +721,9 @@ def test_every_steptype_has_a_display_name_of_the_same_spelling():
     assert set(STEP_TYPE_NAMES) == set(STEP_TYPE_REQUIRED)
     for key, name in STEP_TYPE_NAMES.items():
         assert steptype_key(name) == key
+
+
+def test_graph_is_a_common_step_key():
+    assert STEP_COMMON_DEFAULTS["graph"] is None
+    step = _one_step(_module(graph="sine"))
+    assert step.graph == "sine"

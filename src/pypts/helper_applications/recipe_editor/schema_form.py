@@ -75,7 +75,7 @@ SEQUENCE_CHOICE = "sequence_choice"
 YAML_BOX = "yaml"
 
 #: The optional fields every step shares, shown under "More".
-MORE_FIELDS = ("description", "image_path", "id", "skip", "continue_on_error")
+MORE_FIELDS = ("description", "image_path", "graph", "id", "skip", "continue_on_error")
 
 #: An input entry's two kinds, as the inputs editor names them.
 _LITERAL_KIND = "value"

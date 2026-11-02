@@ -32,7 +32,7 @@ headless mode run inside the launcher process.
 | `logger/` | the Logger process: the single writer of the run log. Every process reaches it through one shared queue. |
 | `utilities/` | error handling, heartbeats, local storage, recent recipes |
 | `hal/` | the hardware layer: devices by logical name, one driver process each; an SSH driver ships |
-| `stream_handler/` | stub — live instrument data during a run is a roadmap item |
+| `stream_handler/` | the stream container: test code registers named (x, y) streams and pushes samples; each is written to `<run folder>/streams/<name>.csv`, which the GUI draws as a live graph |
 | `helper_applications/` | the Recipe Creator (with the recipe verificator) and the Recipe Editor v2 — separate programs with their own entry points |
 
 ## Communication model

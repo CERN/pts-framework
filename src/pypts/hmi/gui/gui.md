@@ -23,10 +23,13 @@ with the master-branch GIF reference.** `gui.py` is the assembler;
 contents: `top_bar.py` (`TopBarContent(QToolBar)` — SVG icons, state setters),
 `view_tabs.py` (`ViewTabBar` — the Run | Summary tabs, §14),
 `step_table.py` (Run tab), `summary_panel.py` / `run_record.py` (Summary tab),
-`center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel`),
+`center_view.py` (`CenterContent` — the one `InteractionPanel` + `LogPanel` and the log's
+header row with its level filter and warning/error icon, §8a), `log_panel.py` (`LogPanel`),
 `run_display.py` / `run_header.py` (`RunDisplay` — which picture the right column shows
 during a run — and `RunHeader`, the step card on top of it, §18),
-`log_tail.py` / `log_follower.py` (what fills that panel — §8),
+`log_tail.py` / `log_follower.py` (what fills that panel — §8), `line_tail.py` (the
+whole-line reading `LogTail` is built on), `stream_reader.py` (Qt-free reader of a stream CSV, §8),
+`stream_graph.py` (`StreamGraph` — the XY graph widget, §20),
 `run_state.py` (`RunState` — where the run is, one owner, §13),
 `run_progress.py` (`RunProgress` — the progress bar in the recipe label row, §15).
 Styling: `palette.py` — **every colour the GUI uses, and the only file allowed a
@@ -448,7 +451,7 @@ Stop, and the sequence carries on to the next step.
 | `styles.py` colour tokens | ✓ ported (§1.20) | ✓ |
 | `resources.py` logo loader | ✓ ported (§1.20) | ✓ |
 | Browse/pause mode | replaced by a real hold, Pause / Resume (§13) | ✓ (browse only) |
-| XYGraph live plot | **missing** | ✓ (spike) |
+| XYGraph live plot | ✓ `StreamGraph` in the right column (§20), fed from the stream CSVs | ✓ |
 
 Note: master's `StepResultModel` walked live `recipe.StepResult` objects —
 those can't cross the process boundary. The port worked from `StepOutcome`
@@ -476,7 +479,19 @@ The chain, launcher first:
 | `GUI.poll_log()` | appends what `LogFollower.poll()` returns to `CenterContent.log_panel` |
 | `GUI.follow_run_log()` / `run_log_finished()` | during a run, the follower also reads the run's own log (below) |
 
-`log_tail.py` owns the reading and the presentation of a record:
+`line_tail.py` owns the reading: `LineTail(path)` keeps the file open between calls (the open
+handle is the offset, nothing is re-read from the start), and `whole_lines()` returns the lines
+completed since the last call, terminators and `\r` stripped, a trailing partial line held back.
+`open()` raises `OSError`; `close()` is idempotent; `is_open` says whether it is open. `LogTail`
+delegates its reading to one. `stream_reader.py` is a second user of it: `StreamReader(path)`
+follows a stream CSV written by CORE (`pypts.stream_handler`) with no Qt. `poll()` opens the file on
+the first call that finds it (`exists`) and returns the new complete rows as `(x, y)` float arrays,
+both empty when there are none; the header gives `unit` (`unit_from_header()`); a row that is not
+two finite numbers (text, `nan`, `inf`) is skipped with a DEBUG line - a non-finite value would
+make pyqtgraph refuse the autoscale range. `read_whole_stream(path)` reads a whole file for a
+look-back and returns `(unit, x, y)`, or None when the file does not exist.
+
+`line_tail.py` gives both readers these properties:
 
 - **Read-only, and safe while the Logger writes.** `logging.FileHandler(mode="a")`
   leaves the default Windows share mode in place, so a second reader is allowed.
@@ -484,6 +499,11 @@ The chain, launcher first:
 - **A torn record is never shown.** A read can land between the Logger's `write()`
   and its flush; anything not ending in a newline is held back until the rest
   arrives.
+- **Undecodable bytes are replaced** (`errors="replace"`), so a log truncated
+  mid-character stays readable.
+
+`log_tail.py` owns the presentation of a record, on top of a `LineTail`:
+
 - **Filtered to `PANEL_LOG_LEVEL` (INFO).** `config.ini` ships TRACE for the
   refactor, so the file carries the full message trace — every message twice,
   sent and received. Unfiltered, the operator's panel would be nothing but
@@ -521,7 +541,57 @@ exists but cannot be opened is reported through a callback the GUI passes in
 (`_report_log_open_failure()` → `report_error()`, WARNING).
 
 A `DEBUG`-level toggle for this panel is not implemented. If it is ever wanted,
-it is `LogTail.min_level` plus a checkable item in the View menu — nothing else.
+it is `LogTail.min_level` plus a fourth group in `LEVEL_GROUPS` — `LogTail` drops
+DEBUG before the panel sees it.
+
+### 8a. Filtering the panel by level, and the warning/error icon (2026-11-02)
+
+**Long lines wrap** at the panel's edge (`LineWrapMode.WidgetWidth`, breaking anywhere when a
+word — a path — is longer than the panel); the horizontal scroll bar is off.
+
+The row over the panel: `LOG OUTPUT`, an icon, and on the right three checkable buttons —
+**INFO**, **WARNING**, **ERROR** — filled with their level colour while on, outlined while
+off (`QPushButton#logLevelButton[level=...]` in `styles.py`). **Display only**: the run log
+keeps every line, and so does the panel's memory.
+
+`log_panel.py` decides per line:
+
+- **Its filter group** (`LEVEL_GROUPS`): INFO; WARNING (and WARN); ERROR (and CRITICAL). A
+  line that does not start with a level — a traceback — joins the group of the record line
+  above it. A line with no record above it (`No run log to follow.`) has no group and is
+  always shown. Known gap: a notice the follower adds *after* records (`Could not open the run
+  log: …`) joins the last record's group, so it is hidden with it.
+- **The worst level seen** (`worst_level`, signal `worst_level_changed`): `WARNING`, then
+  `ERROR`, never back down. Hidden lines count — a hidden error is what the icon is for.
+  `clear()` (an unload's new log file; `load_lines()`) resets it to `""`. The filter survives
+  a clear.
+
+`LogPanel.set_group_shown()` changes the filter and calls `redraw()`, which rebuilds the
+shown text from the remembered `(line, group)` pairs — the same backlog a theme change
+redraws (§10). `CenterContent` owns the row: `_show_log_alert()` sets the icon
+(`QStyle` `SP_MessageBoxWarning` / `SP_MessageBoxCritical`, `LOG_ALERT_ICON_SIZE` 14 px,
+tooltip from `LOG_ALERT_TOOLTIPS`) or hides it; a click calls `_on_log_filter_toggled()`,
+which filters and emits `log_filter_changed(group, shown)`; `set_log_filter()` sets buttons
+and panel without emitting.
+
+**Saved in `config.ini`** as `[gui] log_show_info`, `log_show_warning`, `log_show_error`
+(bool, shipped `true`; `LOG_FILTER_KEYS` in `gui.py`). `log_filter_settings()` reads them
+once when the window is built — every group shown when there is no configuration. A click
+goes to `GUI._save_log_filter()` → `set_config_parameter()` → CORE writes the line
+(`config_handler.md` → *Writing*). The three keys are `quiet=True` in the schema, so the
+Config Handler logs their `Setting … changed to …` line at DEBUG: it stays out of the panel.
+In `show_config_parameter_result()`:
+
+- an accepted result for one of the three keys sets that button and the panel to the saved
+  value — so a change saved from Edit → Settings (Logging page) applies at once too;
+- an accepted save with no Settings dialog open puts nothing in the status line (the
+  panel changed at the click; "applies from the next start" would be wrong);
+- a refusal (a discarded config.ini, say) is shown in the status line like any other, and
+  the button stays as clicked for this session.
+
+Tests: `test_log_panel.py` (filter, continuation lines, worst level, icon, buttons) and the
+`log_show_*` tests at the end of `test_settings.py` (opening from the file, saving through
+CORE, the status line, the dialog's save).
 
 ---
 
@@ -670,7 +740,7 @@ repaint when the theme changes — a stylesheet swap does nothing for them:
 |---|---|---|
 | `StepTableContent` | the Result column | `set_dark()` re-reads each cell's own text (`Pending` / `Running...` / the verdict name — each is a chip key) and rebuilds the item |
 | `SummaryPanel` | the verdict chip, the badges, the slowest steps and the failures | `set_dark()` restyles every label and badge from the palette and redraws the page: the chip, the slowest steps and the failures carry their colours in their text |
-| `LogPanel` | its whole backlog | lines already on screen keep the `QTextCharFormat` they were written with, so the panel remembers its lines and re-appends them |
+| `LogPanel` | its whole backlog | lines already on screen keep the `QTextCharFormat` they were written with, so the panel remembers its lines (with their filter group, §8a) and rebuilds the shown text from them |
 
 That last one was a real bug, not a precaution: a run that started in light and
 switched to dark left every log line already written in the light theme's grey,
@@ -1478,21 +1548,28 @@ name `image_path` on any step and on a sequence (`recipe_guide.html`, `step/step
 the GUI shows it while that step or sequence runs, and **nothing** when no picture applies —
 the picture area is hidden (`show_no_picture()`) and a stretch at the bottom of the panel
 keeps the card and any question at the top. (Changed 2026-10-13: a run card used to fill
-the picture area then, and for a while the plain logo did.)
+the picture area then, and for a while the plain logo did.) A step may also name `graph:`
+(`recipe_guide.html`); the picture area then shows the live XY graph of that stream (§20)
+instead of a picture — one more state of the same decider, not a widget managed beside it
+(2026-11-02).
 
 **No new message.** The pictures arrive once, in `RecipeLoaded`: absolute paths on
-`StepSummary.image_path` and `SequenceSummary.image_path`, resolved by the recipe parser.
-Everything else comes from the events the window already handles — `RunStarted`,
+`StepSummary.image_path` and `SequenceSummary.image_path`, resolved by the recipe parser;
+a step's stream name on `StepSummary.graph`, as the recipe wrote it. The stream's samples
+never travel in a message: the GUI reads the file the engine writes,
+`stream_csv_path(RunStarted.run_dir, graph)` (`pypts.stream_handler`,
+`<run folder>/streams/<safe name>.csv`). Everything else comes from the events the window
+already handles — `RunStarted`,
 `SequenceStarted`/`Finished`, `StepStarted`/`Finished`, `RunFinished` — which `gui.py`
-passes on to `CenterContent` (`run_started()`, `sequence_started()`, `step_started()`, …;
-`set_recipe()` on load and unload).
+passes on to `CenterContent` (`run_started(run_dir)`, `sequence_started()`, `step_started()`,
+…; `set_recipe()` on load and unload).
 
 | File | What |
 |---|---|
-| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`), the header's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`); what each step had, for §19 (`review()`); `counts_text()`, `steps_counts_text()` |
+| `run_display.py` | `RunDisplay` — no Qt. The running stack, the picture to show (`image_path`) or the stream to draw (`graph`), the header's numbers (`current_step()`, `run_started_at`, `count_text()`, `last_failure`); what each step had, for §19 (`review()`); `counts_text()`, `steps_counts_text()` |
 | `run_header.py` | `RunHeader` — the step card, drawn from a `RunDisplay`: `heading_label` (`NOW RUNNING`, or `LOOKING BACK` §19), `step_label`, `description_label`, `state_label` (the chip), `info_label` (the time line), `results_label`, `error_label`, and for a looked-back group `steps_heading_label` and `steps_label` in `steps_area` (§19); `show_live()` / `show_review()`, `state_text()`; a `QTimer` every `TICK_MS` (100 ms) while a run is on; `elapsed_text()` (`m:ss.t`, `h:mm:ss.t`; tenths cut down, not rounded; the GUI's own timing from event arrival, not the report's `duration_s`), `review_state_text()`, the texts `RUNNING_TEXT`, `PENDING_TEXT`, `NO_RESULTS_YET_TEXT`, `NO_VALUES_TEXT` |
-| `center_view.py` | `CenterContent` owns the `RunDisplay`; `_show_run_view()` refreshes the card and puts the picture on screen — or, with none, hides the picture area |
-| `interaction_panel.py` | `run_header` on top, hidden outside a run (`show_live_header()`, `hide_header()`, `is_showing_header()`); the picture area is `image_label`: `set_image()`, `show_no_picture()`, `is_showing_picture_area()`, `is_showing_logo()`, `is_showing_no_image()`, `set_run_result()`, `run_result_shown()` |
+| `center_view.py` | `CenterContent` owns the `RunDisplay` and keeps the run's folder (`_run_dir`, from `run_started(run_dir)`, until the next `run_started()` or `set_recipe()`); `_show_run_view()` refreshes the card and puts the graph or the picture on screen — or, with none, hides the picture area |
+| `interaction_panel.py` | `run_header` on top, hidden outside a run (`show_live_header()`, `hide_header()`, `is_showing_header()`); the picture area is `image_label`: `set_image()`, `show_no_picture()`, `is_showing_picture_area()` (true for a graph too), `is_showing_logo()`, `is_showing_no_image()`, `set_run_result()`, `run_result_shown()`. Under it, hidden unless a graph is shown, `stream_graph` (a `StreamGraph`, §20): `show_graph(name, csv_path)` (live), `show_static_graph(name, csv_path)` (False when the file is missing), `is_showing_graph()`. Showing the graph hides `image_label` and the missing-image text; every picture (`_set_image_from_path()`, so also the logo and a question's picture) and `show_no_picture()` stop and hide the graph — its per-stream state is kept, so it comes back caught up. `set_dark()` reaches it |
 | `resources.py` | `load_no_image_pixmap()`; `load_run_result_pixmap(file_name)` with `RUN_PASSED_IMAGE` / `RUN_FAILED_IMAGE` — never tinted: the green and red words are the point; transparent background |
 | `images/CERN_Logo_passed.png`, `images/CERN_Logo_failed.png` | the end-of-run pictures; `.license` sidecars like `CERN_Logo.png`'s |
 | `images/no_image_available.png` | "No image available", CERN 2026, LGPL-2.1-or-later (sidecar `.license` beside it); greys and white on a transparent background, never tinted |
@@ -1506,16 +1583,33 @@ called sequence with neither, the calling `Sequence` step's (still running — i
 Sequences are looked up by name, case-insensitively — a called sequence's
 `SequenceStarted` carries the name of its own document.
 
+**Which graph** (2026-11-02). A step's `graph:` is one more thing a stack entry can set;
+sequences never carry one. The innermost entry that sets a graph **or** a picture decides:
+if it has a graph, `RunDisplay.graph` names it and `RunDisplay.image_path` is None — so a
+step's own graph wins over its own picture. A `Sequence` step's graph shows under its inner
+steps that set neither (unless the called sequence has a picture of its own, which is
+innermost), an inner step's own picture or graph takes over while it runs, and the group's
+graph comes back when it ends. The graph lives exactly while its step runs: its
+`StepFinished` pops it like a picture. `_show_run_view()` calls
+`show_graph(graph, stream_csv_path(_run_dir, graph))` — `Waiting for stream <name>` until the
+file appears — or, in a run without a run folder (`run_dir` ""), `show_no_picture()`: there
+is no file to wait for. `run_started()` calls `stream_graph.forget_run()`; `run_finished()`
+does too — the graph goes and its stream files are let go of — before the logo with the
+verdict comes back; `set_recipe()` puts the logo back if a looked-back graph is on screen,
+then forgets the streams and the run folder.
+
 | When | The picture area shows |
 |---|---|
 | No run (no recipe, or loaded and not yet run) | the CERN logo; no step card |
 | After a run | the logo marked "TESTS PASSED" (`CERN_Logo_passed.png`: PASS, DONE) or "TESTS FAILED" (`CERN_Logo_failed.png`: FAIL, ERROR, STOP); SKIP keeps the plain logo — `center_view.run_result_image()`. It stays until the next run starts or a recipe is loaded or unloaded (`InteractionPanel.set_run_result(None)`). No step card |
-| A question with its own picture is open | that picture — the run's view comes back once it is answered (`CenterContent._answer()`); the step card stays on the step that asks |
-| A question without a picture is open | the run's view stays (its picture, or none) — `CenterContent._question_shown()` |
+| A question with its own picture is open | that picture — the run's view comes back once it is answered (`CenterContent._answer()`), a graph caught up (the stream kept recording); the step card stays on the step that asks |
+| A question without a picture is open | the run's view stays (its picture, its graph, or none) — `CenterContent._question_shown()` |
+| A run, a graph applies (rule above) | the live graph of that stream, under the step card; `Waiting for stream <name>` until its file exists |
+| A run, a graph applies, but the run has no run folder | nothing: the picture area is hidden |
 | A run, a picture applies | that picture, under the step card |
 | A run, none applies | nothing: the picture area is hidden, the step card says it all |
 | A named picture is missing or will not load | "No image available" (`_refresh_visual()`; never the logo, which would look like nothing was asked for), with `missing_image_label` under it: `interaction_panel.missing_image_text(path)` — "This picture could not be found: <path>" or "This file could not be shown as a picture: <path>", and what to check (`image_path` in the recipe; a relative one is read from the recipe's own folder). Selectable, so the path can be copied; hidden whenever anything else is on screen |
-| A step's name or Result was clicked during or after a run | that step in the step card, and its picture if it had one — §19 |
+| A step's name or Result was clicked during or after a run | that step in the step card, and its picture or graph if it had one — §19 |
 
 **The step card** — top to bottom:
 
@@ -1534,14 +1628,14 @@ preferred width and too little height, which cut long results lines off (fixed 2
 `test_run_header.py`).
 
 Between steps the name reads `-` and there is no chip and no results line. `RunStarted`
-shows the card and starts the clock; `RunFinished` stops the clock, hides it and brings
-the logo back, marked with the run's result (table above).
+shows the card and starts the clock; `RunFinished` stops the clock, hides it, tears any
+graph down and brings the logo back, marked with the run's result (table above).
 
 ## 19. Looking back at a step (2026-10-13)
 
 A click on a step row — **name, description or Result** — **during or after a run** puts that
 step in the step card — marked `LOOKING BACK`, with its state chip, `Took 0:12.5` and its results (§18) —
-and shows the picture it had, or none.
+and shows the picture or the graph it had, or none.
 The YAML panel opens on a half-second rest instead (§12; at first one click did both, then
 only the description opened it). GUI only:
 nothing is sent, CORE and the engine know nothing of it, and no message or field was added.
@@ -1549,17 +1643,26 @@ nothing is sent, CORE and the engine know nothing of it, and no message or field
 | File | What it adds |
 |---|---|
 | `step_table.py` | `step_clicked` (the row's step id, as `Signal(object)`), emitted by `_clicked_cell()` for a click on the name, the description or the Result with the YAML panel on; that click closes the panel. A group's name stays its fold control and emits nothing — a group is looked at through its description or Result |
-| `run_display.py` | Every started step is remembered (`_Seen`): the picture on screen once it was innermost, its start and finish (`step_finished(outcome, now)`), its outcome. `review(step_id)` → `StepReview(step, state, image_path, outcome, duration, steps)`, `state` one of `REVIEW_PENDING` / `REVIEW_RUNNING` / `REVIEW_FINISHED`; None before the first run since the recipe was loaded (`has_run`). For a group row `steps` holds a `StepReview` of every step under it (below); `()` for a step. `is_running_step()` |
+| `run_display.py` | Every started step is remembered (`_Seen`): the picture or graph on screen once it was innermost (an inherited group graph included), its start and finish (`step_finished(outcome, now)`), its outcome. `review(step_id)` → `StepReview(step, state, image_path, outcome, duration, steps, graph)`, `state` one of `REVIEW_PENDING` / `REVIEW_RUNNING` / `REVIEW_FINISHED`; None before the first run since the recipe was loaded (`has_run`). For a group row `steps` holds a `StepReview` of every step under it (below); `()` for a step. `is_running_step()` |
 | `run_header.py` | `show_review(review)` — the step card stands on the step until `show_live()` (`step_review_card.py`, a separate card under the header, was folded into it on 2026-10-13); a group's steps list (below) |
-| `interaction_panel.py` | `show_review(review)` — the card, and the picture or `show_no_picture()`; `is_showing_review()` |
-| `center_view.py` | `review_step(step_id)`, `close_review()`, `is_reviewing()`; `_show_run_view()` leaves the card and the picture area alone while reviewing |
+| `interaction_panel.py` | `show_review(review, graph_path=None)` — the card, and the static graph, the picture or `show_no_picture()`; `is_showing_review()` |
+| `center_view.py` | `review_step(step_id)` (passes `stream_csv_path(_run_dir, review.graph)` when both are set), `close_review()`, `is_reviewing()`; `_show_run_view()` leaves the card and the picture area alone while reviewing |
 | `gui.py` | `step_table.step_clicked` → `center.review_step`, then `OutsideClickWatcher.watch()` |
 
 **Recorded, not worked out from the recipe.** A `Sequence` step runs its own fresh copy of
 the called sequence (new step ids), and a row does not say which sequence a group calls,
 so the innermost-picture rule of §18 cannot be replayed from `RecipeLoaded`. What was on
 screen is recorded at `StepStarted` instead — exactly what the operator saw. A step not
-started yet in this run shows its own `image_path`, or the card. A `StepFinished` with no
+started yet in this run shows its own `graph` (which wins over its own `image_path`), its
+own `image_path`, or the card.
+
+**A step that had a graph** (2026-11-02) is looked back at with a static graph of the whole
+stream file, `show_static_graph(review.graph, stream_csv_path(_run_dir, review.graph))`, read
+once at the click: a snapshot, which a stream still being written does not update. No file
+(the stream was never registered, or the run had no run folder): no picture area, as for a
+step without a picture. After the run `CenterContent` still holds the run folder, until the
+next `RunStarted` or a recipe load or unload — both end a look-back anyway. Closing the
+look-back during a run brings the live graph back. A `StepFinished` with no
 start (SKIP) is remembered with no picture and a zero duration.
 
 **No Back button** (changed 2026-10-13; there was a *Back to live* / *Back* button on a
@@ -1614,6 +1717,38 @@ events carry, because the parser builds each call's copy at load time. `review()
 The colours are in the text, so `set_dark()` redraws the list of a look-back in progress.
 The list is a snapshot taken at the click, like the rest of the card: a step under a
 running group that finishes later does not change it.
+
+## 20. The XY graph widget: `StreamGraph` (2026-11-02)
+
+`stream_graph.py` holds `StreamGraph(QWidget)`, the widget that plots one stream CSV (the
+files `pypts.stream_handler` writes) with the copied `pyrade_xy_graph` plot
+(`ScopePlotWidget`, `DataStore`). `InteractionPanel.stream_graph` places it in the right
+column's picture area (§18, §19).
+
+- `show_live(name, csv_path)` shows stream `name` and starts a `QTimer` (`POLL_INTERVAL_MS`,
+  250 ms). Each tick polls the shown stream's `StreamReader` once and appends its new rows to
+  the stream's `DataStore` as **one** record (one repaint per tick), then calls
+  `plot.autoscale()` (the copied plot disables pyqtgraph's auto-range). While the file does not
+  exist `is_waiting()` is True and the widget shows `Waiting for stream <name>`.
+- `show_static(name, csv_path)` draws the whole file once through `read_whole_stream()`, no
+  polling; it returns False (and changes nothing) when the file is missing.
+- `stop()` stops the timer and shows nothing; the per-stream live reader and store are kept,
+  so `show_live()` of a stream seen before neither re-reads the file nor loses its points. A
+  static graph's store is released.
+  `forget_run()` is `stop()` plus dropping every reader and store. A dropped store (the
+  replaced static one, a live one replaced by another file, or all of them on `forget_run()`)
+  is released by `_release()`: its reader closed, the store unparented so it is freed with its
+  last reference - not `deleteLater()`, which PySide6 6.9 fails with `KeyError(0)` on a
+  store holding data (the copied `DataStore` defines `__len__` and `__getitem__`).
+- Each store is bounded: `DataStore(max_len=MAX_POINTS)` (100 000) keeps the newest points.
+  The y column is named after the stream, the x column is `x` (`x_axis` for a stream called
+  `x`). The left axis label is the stream name with the header's unit.
+- `set_dark(dark)` colours the plot from `get_palette(dark)` on this widget only (background,
+  axis pens and text, label, crosshair, and the value readout, whose stylesheet the copied
+  widget fixes to a light background with no text colour). No global `pg.setConfigOption`.
+
+PySide6 must be 6.9.2 or later: 6.9.1 loses `setParentItem` for items whose `itemChange` returns
+`super()`'s value, so pyqtgraph curves never join their ViewBox. `pyproject.toml` pins 6.9.2.
 
 ---
 

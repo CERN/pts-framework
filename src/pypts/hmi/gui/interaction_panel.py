@@ -32,6 +32,7 @@ from pypts.hmi.gui.resources import (
 )
 from pypts.hmi.gui.run_display import RunDisplay, StepReview
 from pypts.hmi.gui.run_header import RunHeader
+from pypts.hmi.gui.stream_graph import StreamGraph
 
 #: The button every prompt carries beyond the recipe's own options, so the
 #: operator is never trapped in front of a question they cannot answer. It is
@@ -137,6 +138,14 @@ class InteractionPanel(QWidget):
         self.image_label.setAlignment(Qt.AlignCenter)
         self.image_label.setMinimumHeight(220)
         self._inner.addWidget(self.image_label, stretch=1)
+
+        # The graph takes the picture area's place while a step with `graph:`
+        # runs, or when one is looked back at (gui.md §18, §19). Hidden otherwise:
+        # every way of showing a picture, or none, stops and hides it.
+        self.stream_graph = StreamGraph()
+        self.stream_graph.setMinimumHeight(220)
+        self.stream_graph.setVisible(False)
+        self._inner.addWidget(self.stream_graph, stretch=1)
 
         # Under "No image available": why, and what to do (gui.md §18). The
         # path can be selected, so it can be copied into a file browser.
@@ -244,6 +253,7 @@ class InteractionPanel(QWidget):
         # than restyled - dark tints it, light draws the file as it is.
         self._logo_pixmap = load_cern_logo_pixmap(palette.logo_tint)
         self.run_header.set_dark(dark)
+        self.stream_graph.set_dark(dark)
         frame_bg = palette.panel_background
         border = palette.border
         text_color = palette.text
@@ -429,13 +439,49 @@ class InteractionPanel(QWidget):
 
     def show_no_picture(self):
         """During a run, no picture applies: the picture area goes (gui.md §18)."""
+        self._hide_graph()
         self._current_image_path = None
         self.image_label.setVisible(False)
         self._refresh_missing_image_text()
 
     def is_showing_picture_area(self) -> bool:
+        """
+        The picture, the logo or a graph is on screen. Logical state, like
+        is_idle(): not Qt visibility of an unshown window.
+        """
+        return not self.image_label.isHidden() or self.is_showing_graph()
+
+    # --- The graph (gui.md §18, §19) ---------------------------------------------
+
+    def show_graph(self, name: str, csv_path: Path):
+        """The picture area becomes the live graph of stream `name`, following `csv_path`."""
+        self._show_graph_instead_of_picture()
+        self.stream_graph.show_live(name, csv_path)
+
+    def show_static_graph(self, name: str, csv_path: Path) -> bool:
+        """
+        The picture area becomes the whole of `csv_path`, drawn once. False,
+        with nothing changed, when the file does not exist.
+        """
+        if not self.stream_graph.show_static(name, csv_path):
+            return False
+        self._show_graph_instead_of_picture()
+        return True
+
+    def is_showing_graph(self) -> bool:
         """Logical state, like is_idle(): not Qt visibility of an unshown window."""
-        return not self.image_label.isHidden()
+        return not self.stream_graph.isHidden()
+
+    def _show_graph_instead_of_picture(self):
+        self._current_image_path = None
+        self.image_label.setVisible(False)
+        self._refresh_missing_image_text()
+        self.stream_graph.setVisible(True)
+
+    def _hide_graph(self):
+        """Stop the graph and hide it; its per-stream state is kept for its return."""
+        self.stream_graph.stop()
+        self.stream_graph.setVisible(False)
 
     # --- The header (gui.md §18, §19) --------------------------------------------
 
@@ -452,14 +498,21 @@ class InteractionPanel(QWidget):
         """Logical state, like is_idle(): not Qt visibility of an unshown window."""
         return not self.run_header.isHidden()
 
-    def show_review(self, review: StepReview):
+    def show_review(self, review: StepReview, graph_path: Path | None = None):
         """
         Look back at one step (gui.md §19): the step card stands on it, and the
         picture area shows the picture it had - or goes, when it had none.
+
+        A step that had a graph gets the whole of its stream file at
+        `graph_path`, drawn once; with no such file (or no path: a run without
+        a run folder) the picture area goes.
         """
         self.run_header.show_review(review)
         self.run_header.setVisible(True)
-        if review.image_path:
+        if review.graph:
+            if graph_path is None or not self.show_static_graph(review.graph, graph_path):
+                self.show_no_picture()
+        elif review.image_path:
             self._set_image_from_path(review.image_path)
         else:
             self.show_no_picture()
@@ -498,6 +551,7 @@ class InteractionPanel(QWidget):
         return self.image_label.pixmap()
 
     def _set_image_from_path(self, image_path: str | None):
+        self._hide_graph()
         self._current_image_path = image_path
         self.image_label.setVisible(True)
         self._refresh_visual()
