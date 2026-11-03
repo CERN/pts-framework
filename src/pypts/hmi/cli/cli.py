@@ -62,7 +62,7 @@ class CLI(HmiClient):
 
     def run(self) -> None:
         log.debug("CLI module starting.")
-        log.info("CLI module started.")
+        log.debug("CLI module started.")
         polling_thread = threading.Thread(target=self._poll_loop, name="cli-poll", daemon=True)
         polling_thread.start()
 
@@ -83,7 +83,7 @@ class CLI(HmiClient):
         # ends. Bounded, so a wedged CORE cannot hang the exit.
         self.wait_until_stopped()
         polling_thread.join(timeout=1.0)
-        log.info("CLI module stopped.")
+        log.debug("CLI module stopped.")
 
     def _command_loop(self) -> None:
         """

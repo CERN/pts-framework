@@ -14,6 +14,7 @@ INFO = "INFO     12:00:00  Recipe loaded."
 WARNING = "WARNING  12:00:01  The DMM answered late."
 ERROR = "ERROR    12:00:02  The step failed."
 CRITICAL = "CRITICAL 12:00:03  Shutting down."
+DEBUG = "DEBUG    12:00:04  CORE module started."
 TRACEBACK = "Traceback (most recent call last):"
 
 
@@ -60,6 +61,29 @@ def test_showing_a_group_again_brings_its_lines_back_in_order(panel):
     panel.set_group_shown("INFO", True)
 
     assert shown_lines(panel) == [INFO, WARNING, ERROR]
+
+
+def test_debug_is_a_group_of_its_own(panel):
+    panel.append_line(DEBUG)
+    panel.append_line(INFO)
+
+    panel.set_group_shown("DEBUG", False)
+    assert shown_lines(panel) == [INFO]
+
+    panel.set_group_shown("DEBUG", True)
+    assert shown_lines(panel) == [DEBUG, INFO]
+
+
+def test_hidden_lines_do_not_push_the_shown_backlog_out(panel):
+    """More hidden DEBUG lines than the panel shows still leave the INFO line remembered."""
+    from pypts.hmi.gui.log_panel import MAX_SHOWN_LINES
+
+    panel.set_group_shown("DEBUG", False)
+    panel.append_line(INFO)
+    for _ in range(MAX_SHOWN_LINES + 10):
+        panel.append_line(DEBUG)
+
+    assert shown_lines(panel) == [INFO]
 
 
 def test_critical_goes_with_error(panel):

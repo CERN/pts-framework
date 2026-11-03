@@ -8,8 +8,8 @@ The LOG OUTPUT panel: the run log's lines, coloured by level and filtered by it.
 `LogPanel` is the text. It is fed display lines (`log_tail.format_record()`:
 level first) and decides two things per line:
 
-* **Which filter group it belongs to.** INFO, WARNING (and WARN) or ERROR (and
-  CRITICAL) - the three buttons over the panel. A line that does not start with
+* **Which filter group it belongs to.** DEBUG, INFO, WARNING (and WARN) or
+  ERROR (and CRITICAL) - the four buttons over the panel. A line that does not start with
   a level - the traceback under an ERROR - belongs to the record above it, so it
   is shown and hidden with that record. A line with no record above it ("No run
   log to follow.") belongs to no group and is always shown.
@@ -17,8 +17,9 @@ level first) and decides two things per line:
   which `CenterContent` shows as an icon beside the panel's title. It counts
   every line, shown or hidden: a hidden error is exactly what the icon is for.
 
-Filtering is display only. Every line is remembered (up to the widget's block
-limit), so turning a level back on brings its lines back where they were.
+Filtering is display only. Every line is remembered (up to
+`MAX_REMEMBERED_LINES`, hidden ones included), so turning a level back on brings
+its lines back where they were.
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from pypts.hmi.gui.palette import LOG_LEVEL_COLORS, get_palette
 
 #: The filter groups, in the order their buttons are shown, and the levels in each.
 LEVEL_GROUPS: dict[str, tuple[str, ...]] = {
+    "DEBUG": ("DEBUG",),
     "INFO": ("INFO",),
     "WARNING": ("WARNING", "WARN"),
     "ERROR": ("ERROR", "CRITICAL"),
@@ -39,9 +41,17 @@ LEVEL_GROUPS: dict[str, tuple[str, ...]] = {
 #: The groups the worst-level icon reports, least severe first.
 ALERT_GROUPS = ("WARNING", "ERROR")
 
+#: Lines shown at most - the widget's own rolling buffer.
+MAX_SHOWN_LINES = 2000
+
+#: Lines remembered at most, shown or hidden. Larger than MAX_SHOWN_LINES
+#: because hidden DEBUG lines are remembered too: with the same limit, a run
+#: chatty at DEBUG would push the INFO backlog out while DEBUG is off.
+MAX_REMEMBERED_LINES = 10000
+
 
 def group_of_level(level: str) -> str | None:
-    """The filter group a level belongs to, or None (DEBUG, which is never filtered)."""
+    """The filter group a level belongs to, or None for a level in no group."""
     for group, levels in LEVEL_GROUPS.items():
         if level in levels:
             return group
@@ -69,7 +79,7 @@ class LogPanel(QPlainTextEdit):
         #: "WARNING" or "ERROR" once one was received, "" before.
         self._worst = ""
         self.setReadOnly(True)
-        self.setMaximumBlockCount(2000)
+        self.setMaximumBlockCount(MAX_SHOWN_LINES)
         # Long lines wrap at the panel's edge - no horizontal scroll bar. A word
         # longer than the panel (a path) breaks anywhere rather than overflowing.
         self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
@@ -144,10 +154,9 @@ class LogPanel(QPlainTextEdit):
             group = self._current_group
 
         self._lines.append((line, group))
-        # Mirror the widget's own rolling buffer, or the remembered list grows
-        # without bound over a long run.
-        if len(self._lines) > self.maximumBlockCount():
-            del self._lines[: len(self._lines) - self.maximumBlockCount()]
+        # Bounded, or the remembered list grows without limit over a long run.
+        if len(self._lines) > MAX_REMEMBERED_LINES:
+            del self._lines[: len(self._lines) - MAX_REMEMBERED_LINES]
 
         if group in self._hidden:
             return

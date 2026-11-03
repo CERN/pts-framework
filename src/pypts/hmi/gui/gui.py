@@ -170,6 +170,7 @@ def window_settings() -> tuple[str, str, int, int]:
 
 #: The `[gui]` key that saves each LOG OUTPUT filter group (center_view.py).
 LOG_FILTER_KEYS = {
+    "DEBUG": "gui.log_show_debug",
     "INFO": "gui.log_show_info",
     "WARNING": "gui.log_show_warning",
     "ERROR": "gui.log_show_error",
@@ -181,8 +182,8 @@ def log_filter_settings() -> dict[str, bool]:
     Which levels the LOG OUTPUT panel shows: filter group -> shown.
 
     Read once, at startup, like `window_settings()`; the buttons save each
-    change through CORE. With no configuration to ask, every group is shown -
-    the template's default.
+    change through CORE. With no configuration to ask, the schema's defaults:
+    every group shown except DEBUG.
     """
     try:
         config = ConfigHandler()
@@ -776,7 +777,7 @@ class GUI(HmiClient):
         self.log_timer.timeout.connect(self.poll_log)
         self.start_log_tail()
 
-        log.info("GUI module started.")
+        log.debug("GUI module started.")
         log.debug("GUI entered its main event loop.")
         self.timer = QTimer()
         self.timer.timeout.connect(self.poll_core)
@@ -1813,5 +1814,5 @@ class GUI(HmiClient):
         self.window.allow_close = True
         self.window.close()
         log.debug("GUI left its main event loop.")
-        log.info("GUI module stopped.")
+        log.debug("GUI module stopped.")
         QTimer.singleShot(0, QApplication.quit)

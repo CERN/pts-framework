@@ -270,12 +270,14 @@ clicking a name or a result does nothing.</p>
 
 <h3>The log</h3>
 <p>Under the picture, <strong>LOG OUTPUT</strong> shows the run log as it is written:
-INFO and above, coloured by level. The three buttons on the right of its title,
-<strong>INFO</strong>, <strong>WARNING</strong> and <strong>ERROR</strong> (ERROR includes
-CRITICAL), show or hide those lines. A button is filled while its lines are shown. This only
+coloured by level. The four buttons on the right of its title,
+<strong>DEBUG</strong>, <strong>INFO</strong>, <strong>WARNING</strong> and <strong>ERROR</strong>
+(ERROR includes CRITICAL), show or hide those lines. DEBUG is off at first: it is detail for
+developers, and there is some only when the log level (<em>Edit → Settings → Logging</em>) is
+DEBUG or TRACE. The TRACE message trace is never shown in the panel. A button is filled while its lines are shown. This only
 changes what you see: the log file keeps every line, and turning a level back on brings its
-lines back. The buttons are saved in <code>config.ini</code> (<code>[gui] log_show_info</code>,
-<code>log_show_warning</code>, <code>log_show_error</code>) and also appear in
+lines back. The buttons are saved in <code>config.ini</code> (<code>[gui] log_show_debug</code>,
+<code>log_show_info</code>, <code>log_show_warning</code>, <code>log_show_error</code>) and also appear in
 <em>Edit → Settings → Logging</em>. Long lines wrap to the width of the panel, so there
 is no sideways scrolling.</p>
 <p>A small <strong>warning</strong> icon appears next to LOG OUTPUT as soon as a warning
@@ -455,8 +457,9 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       one, and the top of the new one names the old one.</li>
   <li><strong>config.ini</strong>: created on the first start. If it's broken or from an incompatible
       version (a different major number in <code>config_version</code>), PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
-      Version 2.0.0 added the <code>[recipe_editor]</code> section, and version 3.0.0 the
-      <code>[gui] log_show_*</code> keys (the log buttons): a file from before them is
+      Version 2.0.0 added the <code>[recipe_editor]</code> section, version 3.0.0 the
+      <code>[gui] log_show_*</code> keys (the log buttons), and version 4.0.0 the
+      <code>[gui] log_show_debug</code> key: a file from before them is
       ignored until you delete it to have it recreated (or add them and the version by hand).
       Fix the file, or delete it to have it recreated. Saving in <em>Edit → Settings</em> changes only
       that setting's line; your comments and anything you added by hand stay where they are.</li>

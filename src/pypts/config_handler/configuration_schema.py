@@ -43,8 +43,9 @@ from dataclasses import dataclass
 #: 2-4 before it ([watchdog], the `[gui] theme` values, `[gui] window_mode`)
 #: belong to the refactor branch and are not continued. 2.0.0 (October 2026):
 #: the mandatory [recipe_editor] section. 3.0.0 (November 2026): the mandatory
-#: `[gui] log_show_*` keys.
-CONFIG_VERSION = "3.0.0"
+#: `[gui] log_show_*` keys. 4.0.0 (November 2026): the mandatory `[gui]
+#: log_show_debug` key.
+CONFIG_VERSION = "4.0.0"
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
 #: that a file written by hand behaves the way an INI file is expected to.
@@ -119,9 +120,11 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "window_mode": Field("str", "windowed", choices=("windowed", "fullscreen")),
         "window_width": Field("int", "1280"),
         "window_height": Field("int", "720"),
-        # Which levels the LOG OUTPUT panel shows - its INFO / WARNING / ERROR
-        # buttons, saved on every click. Display only: the run log keeps
-        # everything. ERROR covers CRITICAL too.
+        # Which levels the LOG OUTPUT panel shows - its DEBUG / INFO / WARNING /
+        # ERROR buttons, saved on every click. Display only: the run log keeps
+        # everything. ERROR covers CRITICAL too. DEBUG ships off: it is for the
+        # developer, and there is none in the file when [logging] level is INFO.
+        "log_show_debug": Field("bool", "false", quiet=True),
         "log_show_info": Field("bool", "true", quiet=True),
         "log_show_warning": Field("bool", "true", quiet=True),
         "log_show_error": Field("bool", "true", quiet=True),

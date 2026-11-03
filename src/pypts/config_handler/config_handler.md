@@ -113,7 +113,7 @@ Sections currently in the schema:
 | `paths` | `base_dir`, `reports_dir` — **derived** paths. `reports_dir` holds the session log and one folder per run (report + that run's log) |
 | `logging` | `level` — one of `TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL`; ships `TRACE` |
 | `report` | `type` (`html`/`csv`), `theme` |
-| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too. `log_show_info`, `log_show_warning`, `log_show_error` (bool, shipped `true`) — which levels the LOG OUTPUT panel shows; its buttons save them on every click (`hmi/gui/gui.md` §8a) |
+| `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too. `log_show_debug` (bool, shipped `false`), `log_show_info`, `log_show_warning`, `log_show_error` (bool, shipped `true`) — which levels the LOG OUTPUT panel shows; its buttons save them on every click (`hmi/gui/gui.md` §8a) |
 | `recipe_editor` | The same four keys for the Recipe Editor v2's window (shipped: `light`, `windowed`, 1600 × 1000). Set in the editor's own Edit → Settings; pypts' Settings leaves them out (`OWN_TOOL_SECTIONS`) |
 
 `[watchdog] enabled` was removed in September 2026: a module that stops responding always
@@ -215,11 +215,12 @@ into place, so an interrupted write cannot leave a half-written config behind.
 ## Structure version — no migration, no repair, discard instead
 
 `CONFIG_VERSION` (in `configuration_schema.py`) is a `MAJOR.MINOR.PATCH` string, currently
-**`3.0.0`** — raised from `2.0.0` in November 2026 for the mandatory `[gui] log_show_*` keys
-(and from `1.0.0` to `2.0.0` in October 2026 for the mandatory `[recipe_editor]` section), so
-an older file is discarded until it is deleted and recreated, or the keys are added by hand
-with `config_version` set to `3.0.0`. Only the **major** number
-decides whether a file is trusted: `3.4.7` loads under a `3.0.0` pypts, `4.0.0` does not, and
+**`4.0.0`** — raised from `3.0.0` in November 2026 for the mandatory `[gui] log_show_debug`
+key (from `2.0.0` to `3.0.0` earlier that month for the other `[gui] log_show_*` keys, and from
+`1.0.0` to `2.0.0` in October 2026 for the mandatory `[recipe_editor]` section), so an older
+file is discarded until it is deleted and recreated, or the keys are added by hand with
+`config_version` set to `4.0.0`. Only the **major** number
+decides whether a file is trusted: `4.4.7` loads under a `4.0.0` pypts, `5.0.0` does not, and
 neither does text that is not three dot-separated numbers.
 
 **The version is not changed for every schema edit.** It changes only when a change adds
@@ -295,7 +296,7 @@ Two file-format details worth knowing:
 | `hal/local_setup.py` | `bench_config()` — the cached device sections, read on a run's first `get_device()` |
 | `helper_applications/recipe_creator/rc_logging.py` | `paths.reports_dir` for the helper tools' log files, falling back to the default reports dir when there is no configuration to read |
 | `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
-| `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` and the three `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
+| `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` and the four `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
 | `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
 | `helper_applications/recipe_editor/editor_settings.py` | `bootstrap()` in the editor's `main()` (`open_config()`); the `recipe_editor.*` keys when the window opens; `get_whole_config()` + `bootstrap_problem` for its Settings dialog; `set_parameter()` for a saved setting (`save_setting()`) |
 
@@ -369,9 +370,9 @@ Roadmap §1.3 is the authority; the TODOs live there, not in code comments. In s
   TRACE run log. Masking belongs in the message layer (design conversation; roadmap §1.54).
 - **`report.type` / `report.theme` are editable but not yet used** — Phase 4. The
   Settings dialog marks both "Not used yet."
-- **`stdout_logging_enabled` is still derived from `--mode`**, not from the configuration.
-  Probably correct — it follows from having a console rather than from a preference — but it
-  is the one logging decision the config does not own.
+- **Console echo of the log is off in every mode** (`stdout_logging_enabled = False` in
+  `launcher/startup.py`, since 2026-11-03), not a configuration setting. The run log file is
+  the only log destination of the application.
 - **`logs_dir` was retired on 2026-10-09.** Logs now live in `reports_dir`. An existing
   config.ini that still has a `logs_dir =` line loads normally; the line is an unknown key,
   kept as text and warned about once, until its owner deletes it. `CONFIG_VERSION` did not

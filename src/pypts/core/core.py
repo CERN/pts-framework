@@ -335,11 +335,11 @@ class Core:
         # built, and the Sequencer and the Report announce themselves from the
         # threads it is about to start. Logging it afterwards put the children
         # above the parent in the operator's log.
-        log.info("CORE module started.")
+        log.debug("CORE module started.")
         self.start_submodules()
         self.main_loop()
         self.join_submodules()
-        log.info("CORE module stopped.")
+        log.debug("CORE module stopped.")
 
     def start_submodules(self) -> None:
         """

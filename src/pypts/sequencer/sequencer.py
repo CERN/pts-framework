@@ -169,7 +169,7 @@ class Sequencer:
         carry their own net - so this is the net for the loop itself dying.
         """
         log.debug("SEQUENCER module starting.")
-        log.info("SEQUENCER module started.")
+        log.debug("SEQUENCER module started.")
         try:
             self.main_loop()
         finally:
@@ -178,7 +178,7 @@ class Sequencer:
             # this module as one that would not stop. The ModuleError the
             # decorator sends right behind this says it went badly.
             self.send_goodbye()
-        log.info("SEQUENCER module stopped.")
+        log.debug("SEQUENCER module stopped.")
 
     def send_goodbye(self) -> None:
         """

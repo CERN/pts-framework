@@ -240,9 +240,8 @@ def start_engine(mode: str, log_level_name: str | None = None) -> Engine:
 
     Args:
         mode: "gui", "cli", "api" or "headless". It decides how a configuration
-            notice is shown (a popup only in GUI mode) and whether the Logger also
-            writes to stdout (only in GUI mode - the others have their own console
-            output), and it names the mode in the run log's first line.
+            notice is shown (a popup only in GUI mode), and it names the mode in
+            the run log's first line.
         log_level_name: overrides [logging] level in config.ini, as --log-level.
 
     If anything fails after the Logger is up, what was started is stopped again
@@ -289,7 +288,9 @@ def start_engine(mode: str, log_level_name: str | None = None) -> Engine:
     # -1 is not a level, so it survives only when the name meant nothing.
     level_was_understood = not configured_level or parse_log_level(configured_level, -1) != -1
 
-    stdout_logging_enabled = mode == "gui"
+    # The log goes to its file only, in every mode: nothing is echoed to
+    # stdout. The CLI and headless modes print their own console output.
+    stdout_logging_enabled = False
 
     # Use as a separate pocess instead of standalone import (many writers)
     logger_process = Process(

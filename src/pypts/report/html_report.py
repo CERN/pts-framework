@@ -387,14 +387,17 @@ def render_report(
     if identity_parts:
         identity_html = f'<div class="identity">{"".join(identity_parts)}</div>'
 
-    def fact(label: str, value: str) -> str:
+    def fact(label: str, value: str, css_class: str = "") -> str:
         if not value:
             value = '<span class="muted">&mdash;</span>'
+        if css_class:
+            return f'<div class="{css_class}"><dt>{label}</dt><dd>{value}</dd></div>'
         return f"<div><dt>{label}</dt><dd>{value}</dd></div>"
 
     run_facts = [fact(html.escape(humanise(name)), html.escape(value)) for name, value in metadata]
     run_facts.append(fact("Recipe version", run_value("recipe_version")))
-    run_facts.append(fact("Started", html.escape(started_at)))
+    # Started always opens a row, so Finished sits beside it whatever the metadata count.
+    run_facts.append(fact("Started", html.escape(started_at), "fact-row-start"))
     run_facts.append(fact("Finished", html.escape(finished_at)))
     run_facts_html = f'<dl>{"".join(run_facts)}</dl>'
 
@@ -529,7 +532,7 @@ body { margin: 0; color: var(--ink); background: var(--page);
   font: 14px/1.45 "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial,
   sans-serif; }
 .watermark { position: fixed; inset: 0; pointer-events: none; z-index: 0;
-  background: var(--logo) no-repeat center / min(70vmin, 640px); opacity: 0.045; }
+  background: var(--logo) no-repeat left 48px top 48px / 600px; opacity: 0.18; }
 main { position: relative; z-index: 1; max-width: 1180px; margin: 0 auto;
   padding: 24px 20px 40px; }
 h1, h2 { margin: 0; font-weight: 600; }

@@ -190,7 +190,7 @@ class Report:
         """
         log.debug("REPORT module starting.")
         log.debug("Reports will be written under %s.", self.output_dir)
-        log.info("REPORT module started.")
+        log.debug("REPORT module started.")
         try:
             self.main_loop()
         finally:
@@ -198,7 +198,7 @@ class Report:
             # CORE waits out its whole shutdown budget and then names this module
             # as one that would not stop.
             self.send_goodbye()
-        log.info("REPORT module stopped.")
+        log.debug("REPORT module stopped.")
 
     def send_goodbye(self) -> None:
         """

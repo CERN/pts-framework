@@ -504,11 +504,12 @@ look-back and returns `(unit, x, y)`, or None when the file does not exist.
 
 `log_tail.py` owns the presentation of a record, on top of a `LineTail`:
 
-- **Filtered to `PANEL_LOG_LEVEL` (INFO).** `config.ini` ships TRACE for the
+- **Filtered to `PANEL_LOG_LEVEL` (DEBUG).** `config.ini` ships TRACE for the
   refactor, so the file carries the full message trace — every message twice,
   sent and received. Unfiltered, the operator's panel would be nothing but
   `QueueWrapper` traces. Traceback lines are shown or dropped with
-  the record they hang under.
+  the record they hang under. DEBUG reaches the panel, which hides it while the
+  DEBUG button is off (§8a).
 - **Rendered `LEVEL     HH:MM:SS  message`.** Level first because that is what
   `LogPanel.append_line()` colours on. Process name and `file:func` are dropped —
   they are developer detail, read in the log file.
@@ -540,23 +541,19 @@ in it, so `test_log_follower.py` pins the ordering rules with two plain files. A
 exists but cannot be opened is reported through a callback the GUI passes in
 (`_report_log_open_failure()` → `report_error()`, WARNING).
 
-A `DEBUG`-level toggle for this panel is not implemented. If it is ever wanted,
-it is `LogTail.min_level` plus a fourth group in `LEVEL_GROUPS` — `LogTail` drops
-DEBUG before the panel sees it.
-
 ### 8a. Filtering the panel by level, and the warning/error icon (2026-11-02)
 
 **Long lines wrap** at the panel's edge (`LineWrapMode.WidgetWidth`, breaking anywhere when a
 word — a path — is longer than the panel); the horizontal scroll bar is off.
 
-The row over the panel: `LOG OUTPUT`, an icon, and on the right three checkable buttons —
-**INFO**, **WARNING**, **ERROR** — filled with their level colour while on, outlined while
+The row over the panel: `LOG OUTPUT`, an icon, and on the right four checkable buttons —
+**DEBUG**, **INFO**, **WARNING**, **ERROR** — filled with their level colour while on, outlined while
 off (`QPushButton#logLevelButton[level=...]` in `styles.py`). **Display only**: the run log
 keeps every line, and so does the panel's memory.
 
 `log_panel.py` decides per line:
 
-- **Its filter group** (`LEVEL_GROUPS`): INFO; WARNING (and WARN); ERROR (and CRITICAL). A
+- **Its filter group** (`LEVEL_GROUPS`): DEBUG; INFO; WARNING (and WARN); ERROR (and CRITICAL). A
   line that does not start with a level — a traceback — joins the group of the record line
   above it. A line with no record above it (`No run log to follow.`) has no group and is
   always shown. Known gap: a notice the follower adds *after* records (`Could not open the run
@@ -568,21 +565,24 @@ keeps every line, and so does the panel's memory.
 
 `LogPanel.set_group_shown()` changes the filter and calls `redraw()`, which rebuilds the
 shown text from the remembered `(line, group)` pairs — the same backlog a theme change
-redraws (§10). `CenterContent` owns the row: `_show_log_alert()` sets the icon
+redraws (§10). The widget shows at most `MAX_SHOWN_LINES` (2000); up to `MAX_REMEMBERED_LINES`
+(10000) are remembered, hidden ones included, so a run chatty at DEBUG does not push the INFO
+backlog out while DEBUG is off. `CenterContent` owns the row: `_show_log_alert()` sets the icon
 (`QStyle` `SP_MessageBoxWarning` / `SP_MessageBoxCritical`, `LOG_ALERT_ICON_SIZE` 14 px,
 tooltip from `LOG_ALERT_TOOLTIPS`) or hides it; a click calls `_on_log_filter_toggled()`,
 which filters and emits `log_filter_changed(group, shown)`; `set_log_filter()` sets buttons
 and panel without emitting.
 
-**Saved in `config.ini`** as `[gui] log_show_info`, `log_show_warning`, `log_show_error`
-(bool, shipped `true`; `LOG_FILTER_KEYS` in `gui.py`). `log_filter_settings()` reads them
-once when the window is built — every group shown when there is no configuration. A click
+**Saved in `config.ini`** as `[gui] log_show_debug` (bool, shipped `false`), `log_show_info`,
+`log_show_warning`, `log_show_error` (bool, shipped `true`; `LOG_FILTER_KEYS` in `gui.py`).
+`log_filter_settings()` reads them once when the window is built — the schema defaults when
+there is no configuration. DEBUG lines exist only when `[logging] level` is DEBUG or TRACE. A click
 goes to `GUI._save_log_filter()` → `set_config_parameter()` → CORE writes the line
-(`config_handler.md` → *Writing*). The three keys are `quiet=True` in the schema, so the
+(`config_handler.md` → *Writing*). The four keys are `quiet=True` in the schema, so the
 Config Handler logs their `Setting … changed to …` line at DEBUG: it stays out of the panel.
 In `show_config_parameter_result()`:
 
-- an accepted result for one of the three keys sets that button and the panel to the saved
+- an accepted result for one of the four keys sets that button and the panel to the saved
   value — so a change saved from Edit → Settings (Logging page) applies at once too;
 - an accepted save with no Settings dialog open puts nothing in the status line (the
   panel changed at the click; "applies from the next start" would be wrong);

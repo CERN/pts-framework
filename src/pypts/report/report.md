@@ -99,7 +99,10 @@ page shows the run time as "Time in steps" and the Environment card as not recor
 inline CSS (`PAGE_CSS`), a small inline script (`PAGE_SCRIPT`), and the CERN logo as a
 data URI (`logo_data_uri()`, read with `importlib.resources` from the GUI's copy,
 `pypts.hmi.gui/images/CERN_Logo.png` — one file in the package, not two; if it cannot be
-read the page simply has no watermark, logged at DEBUG). No external asset of any kind.
+read the page simply has no watermark, logged at DEBUG). The watermark is a fixed background
+600 px wide, 48 px from the top and left of the window, at 18 % opacity; it sits behind the
+cards, so only the part in the margin beside the content and in the gaps between cards
+shows; on a narrow window the cards cover most of it. No external asset of any kind.
 Light theme only.
 
 From top to bottom:
@@ -112,7 +115,8 @@ From top to bottom:
   0), *Wall time* (`run_finished_at - run_started_at`; "Time in steps", the sum of the step
   durations, when the finish time is unknown), and one **filter chip** per result present,
   worst first. Unticking a chip hides the rows with that result.
-- **Run** and **Environment** cards — metadata, recipe version, start and finish;
+- **Run** and **Environment** cards — metadata, recipe version, start and finish (Started
+  always opens a row, class `fact-row-start`, so Finished sits beside it on the right);
   `ENVIRONMENT_FIELDS`. A CSV with no environment columns shows one "Not recorded" line.
 - **Steps table** — buttons *Problems only*, *All results*, *Show all details*, *Hide all
   details*; a sticky header. Rows are grouped by consecutive `sequence_name`

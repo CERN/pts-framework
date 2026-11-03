@@ -23,8 +23,9 @@ Agreed 2026-09-02; the sweep that applied it across the code is roadmap §1.35.
 **The GUI shows the operator everything at INFO and above.**
 
 `hmi/gui/log_tail.py` tails this run's log file into the LOG OUTPUT panel with
-`PANEL_LOG_LEVEL = logging.INFO`, and it drops every column except the level, the clock and
-the message. So:
+`PANEL_LOG_LEVEL = logging.DEBUG`, and it drops every column except the level, the clock and
+the message. The panel hides DEBUG unless its DEBUG button is on (shipped off, `hmi/gui/gui.md`
+§8a), so what the operator sees by default is INFO and above. So:
 
 - **INFO, WARNING, ERROR and CRITICAL are written for the technician.** All four. They are
   read by someone who knows the device under test very well and the test software not at all.
@@ -89,7 +90,7 @@ Identity is carried in the **message text instead**, and only where the line is 
 module:
 
 ```
-INFO   CORE module started.            INFO   CORE module stopped.
+DEBUG  CORE module started.            DEBUG  CORE module stopped.
 DEBUG  CORE module starting.           DEBUG  CORE entered its main event loop.
 DEBUG  CORE module stopping.           DEBUG  CORE left its main event loop.
 ```
@@ -112,13 +113,15 @@ These six, and no variations on them:
 | Phrase | Level | When |
 |---|---|---|
 | `<NAME> module starting.` | DEBUG | first statement of `start()` |
-| `<NAME> module started.` | INFO | once the module is up, before the event loop |
+| `<NAME> module started.` | DEBUG | once the module is up, before the event loop |
 | `<NAME> entered its main event loop.` | DEBUG | first statement of the loop method |
 | `<NAME> left its main event loop.` | DEBUG | after the loop method returns |
 | `<NAME> module stopping.` | DEBUG | first statement of `stop()` |
-| `<NAME> module stopped.` | INFO | last statement of the module's life |
+| `<NAME> module stopped.` | DEBUG | last statement of the module's life |
 
-INFO gets two of them, so the operator sees the system come up and go down and nothing else.
+All six are DEBUG (since 2026-11-03; `started` and `stopped` were INFO before). The operator
+sees the application start and stop through the launcher's header and shutdown lines (§5);
+which module came up when is developer detail.
 
 Accepted deviations, verified in the code: CORE has no `stop()` and never logs
 `CORE module stopping.`; the CLI has no event loop of its own, so it logs neither loop line
@@ -140,7 +143,6 @@ still traceable at DEBUG without the operator's panel saying the same thing thre
 | recipe unloaded | `core/core.py` | `hmi_client`, `gui` |
 | the run log carrying on in a new file (an unload): `Run log continues in <file>`, the header again, `Run log continues from <file>` | `gui` | — |
 | a run logged in its own folder: `Run log of recipe '<name>', sequence '<name>'.` first in the run log; `The run's log is <path>` in the session log after it | `sequencer/sequencer.py` | — |
-| module started / stopped | each module, about itself | — |
 | recipe loaded, sequences available | `core/core.py` | `sequencer`, `hmi_client`, `gui`, `cli` |
 | sequence started / finished, each step started / finished | `step/step.py` — the execution layer the Sequencer drives | `core`, `hmi_client`, `gui`, `cli` |
 | the run summary, the unit under test, the operator's stop, pause and resume, the hold beginning / ending / lapsing | `sequencer/sequencer.py` | `core`, `hmi_client`, `gui`, `cli` |
@@ -167,8 +169,6 @@ is either a bug or a new event that belongs in this table.
 PyPTS 0.2.2 started in GUI mode.
 Started by dzbanan on PCBE12345.
 Run log: C:\Users\...\reports\pypts_20260902_141201.log
-CORE module started.
-GUI module started.
 Recipe 'thermal_cycle.yml' loaded: "Thermal cycle" v1.2, 3 sequences.
 Sequences available: 'warmup', 'soak', 'teardown'.
 Results will be written to: C:\...\reports\20260902_141233_warmup
@@ -186,7 +186,6 @@ Run summary: FAIL.
 Run summary: 10 passed, 1 failed, 1 skipped of 12 steps in 42.3 s.
 Run summary: recipe 'thermal_cycle.yml', sequence 'warmup'.
 Report generated: C:\...\20260902_141233_warmup\report.html
-CORE module stopped.
 ```
 
 Notes on that shape:

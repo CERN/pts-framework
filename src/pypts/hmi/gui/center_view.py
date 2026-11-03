@@ -44,7 +44,8 @@ click shows nothing new: the question needs the area.
 
 **The log's header row** (gui.md §8): the LOG OUTPUT title, an icon once a
 WARNING or ERROR has reached the panel (the worst one; it goes when the panel is
-cleared), and one checkable button per filter group - INFO, WARNING, ERROR. A
+cleared), and one checkable button per filter group - DEBUG, INFO, WARNING,
+ERROR. A
 click filters the panel at once and emits `log_filter_changed`, which the GUI
 saves as `[gui] log_show_<group>`; `set_log_filter()` sets the buttons from the
 configuration without emitting.

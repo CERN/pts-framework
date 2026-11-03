@@ -23,8 +23,9 @@ Two things need care:
   anything not ending in a newline until the rest arrives, so a caller never
   sees half a record.
 * **Volume.** `config.ini` ships TRACE for the refactor, so the file carries the
-  full message trace - every message twice, sent and received. The operator
-  panel filters to `PANEL_LOG_LEVEL` and up.
+  full message trace - every message twice, sent and received. The panel never
+  sees it: this filters to `PANEL_LOG_LEVEL` (DEBUG) and up. DEBUG itself does
+  reach the panel, which hides it unless its DEBUG button is on (log_panel.py).
 """
 
 from __future__ import annotations
@@ -34,12 +35,13 @@ from pathlib import Path
 
 from pypts.hmi.gui.line_tail import LineTail
 
-# Registers the TRACE name, so the message trace is filtered out like DEBUG
+# Registers the TRACE name, so the message trace is filtered out by level
 # rather than shown as a line with a level nobody knows.
 from pypts.logger.levels import TRACE  # noqa: F401 - imported for its side effect
 
-#: Lowest level the operator's panel shows, whatever the file holds.
-PANEL_LOG_LEVEL = logging.INFO
+#: Lowest level that reaches the panel, whatever the file holds. DEBUG, so the
+#: panel's DEBUG button has lines to show; TRACE never comes through.
+PANEL_LOG_LEVEL = logging.DEBUG
 
 #: `log.LOG_FORMAT` is `time;LEVEL;process;file:func;message`. Split with this
 #: maxsplit so a message containing a semicolon stays in one piece.

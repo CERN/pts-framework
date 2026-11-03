@@ -136,7 +136,13 @@ PAGES = (
     ("Appearance", (THEME_KEY, WINDOW_MODE_KEY, WIDTH_KEY, HEIGHT_KEY)),
     (
         "Logging",
-        ("logging.level", "gui.log_show_info", "gui.log_show_warning", "gui.log_show_error"),
+        (
+            "logging.level",
+            "gui.log_show_debug",
+            "gui.log_show_info",
+            "gui.log_show_warning",
+            "gui.log_show_error",
+        ),
     ),
     ("Report", ("report.type", "report.theme")),
 )
@@ -160,6 +166,7 @@ LABELS = {
     "gui.window_mode": "Window mode",
     "gui.window_width": "Window width",
     "gui.window_height": "Window height",
+    "gui.log_show_debug": "Log panel: show DEBUG",
     "gui.log_show_info": "Log panel: show INFO",
     "gui.log_show_warning": "Log panel: show WARNING",
     "gui.log_show_error": "Log panel: show ERROR",
@@ -177,6 +184,7 @@ HINTS = {
     "report.type": "Not used yet.",
     "report.theme": "Not used yet.",
     "gui.theme": "Used by pypts and the Recipe Creator. Previewed as you pick it.",
+    "gui.log_show_debug": "The DEBUG button. Developer detail; needs log level DEBUG or TRACE.",
     "gui.log_show_info": "The INFO button over the LOG OUTPUT panel. Applies once saved.",
     "gui.log_show_warning": "The WARNING button over the LOG OUTPUT panel. Applies once saved.",
     "gui.log_show_error": "The ERROR button (ERROR and CRITICAL). Applies once saved.",

@@ -672,7 +672,7 @@ def test_an_answer_with_no_dialog_open_goes_to_the_status_line(gui_factory):
 def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monkeypatch):
     from pypts.hmi.gui.settings_dialog import SettingsDialog
 
-    a_config_file({"meta.config_version": "4.0.0"})
+    a_config_file({"meta.config_version": "5.0.0"})
     instance, _outbox, _inbox = gui_factory()
     seen = {}
 
@@ -684,7 +684,7 @@ def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monke
     monkeypatch.setattr(SettingsDialog, "exec", look_at_the_dialog)
     instance.window.settings_action.trigger()
 
-    assert "structure version 4.0.0" in seen["problem"]
+    assert "structure version 5.0.0" in seen["problem"]
     assert seen["can_save"] is False
 
 
@@ -1205,11 +1205,33 @@ def test_the_log_filter_buttons_open_as_config_ini_says(gui_factory):
     assert [m for m in drain(outbox) if isinstance(m, SetConfigParameter)] == []
 
 
-def test_with_no_configuration_every_level_is_shown(gui_factory):
+def test_with_no_configuration_every_level_but_debug_is_shown(gui_factory):
     instance, _outbox, _inbox = gui_factory()
 
-    for button in instance.center.log_filter_buttons.values():
-        assert button.isChecked() is True
+    buttons = instance.center.log_filter_buttons
+    assert list(buttons) == ["DEBUG", "INFO", "WARNING", "ERROR"]
+    assert buttons["DEBUG"].isChecked() is False
+    assert instance.center.log_panel.is_group_shown("DEBUG") is False
+    for group in ("INFO", "WARNING", "ERROR"):
+        assert buttons[group].isChecked() is True
+
+
+def test_the_debug_button_opens_as_config_ini_says(gui_factory):
+    a_config_file({"gui.log_show_debug": "true"})
+    instance, _outbox, _inbox = gui_factory()
+
+    assert instance.center.log_filter_buttons["DEBUG"].isChecked() is True
+    assert instance.center.log_panel.is_group_shown("DEBUG") is True
+
+
+def test_a_debug_click_is_saved_through_core(gui_factory):
+    a_config_file()
+    instance, outbox, _inbox = gui_factory()
+
+    instance.center.log_filter_buttons["DEBUG"].click()
+
+    asked = [m for m in drain(outbox) if isinstance(m, SetConfigParameter)]
+    assert asked == [SetConfigParameter(key="gui.log_show_debug", value="true")]
 
 
 def test_a_filter_click_is_saved_through_core(gui_factory):

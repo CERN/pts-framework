@@ -994,7 +994,8 @@ def test_format_record_drops_records_below_the_panel_level():
     from pypts.hmi.gui.log_tail import format_record
 
     assert format_record(a_record("TRACE", "send hmi->core LoadRecipe(...)")) is None
-    assert format_record(a_record("DEBUG", "HMI->CORE send: LoadRecipe(...)")) is None
+    # DEBUG reaches the panel, which hides it unless its DEBUG button is on.
+    assert format_record(a_record("DEBUG", "HMI->CORE send: LoadRecipe(...)")) is not None
     assert format_record(a_record("WARNING", "unknown log level")) is not None
     assert format_record(a_record("ERROR", "it broke")) is not None
 
@@ -1074,7 +1075,7 @@ def test_log_tail_keeps_traceback_lines_with_their_record(tmp_path):
         a_record("ERROR", "it broke") + "\n"
         + "Traceback (most recent call last):" + "\n"
         + "  ValueError: nope" + "\n"
-        + a_record("DEBUG", "trace") + "\n"
+        + a_record("TRACE", "trace") + "\n"
         + "  dropped continuation" + "\n",
         encoding="utf-8",
     )
@@ -1089,7 +1090,7 @@ def test_log_tail_keeps_traceback_lines_with_their_record(tmp_path):
     assert lines[0].startswith("ERROR")
     assert lines[1] == "Traceback (most recent call last):"
     assert lines[2] == "  ValueError: nope"
-    # The DEBUG record was dropped, so what hangs under it goes with it.
+    # The TRACE record was dropped, so what hangs under it goes with it.
     assert len(lines) == 3
 
 
@@ -1112,7 +1113,10 @@ def test_the_panel_is_filled_from_the_run_log(gui, tmp_path, monkeypatch):
 
     shown = instance.center.log_panel.toPlainText()
     assert "Recipe 'demo' (v1.0) loaded." in shown
+    # Read, but hidden: the DEBUG button ships off.
     assert "HMI->CORE send" not in shown
+    instance.center.set_log_filter({"DEBUG": True})
+    assert "HMI->CORE send" in instance.center.log_panel.toPlainText()
 
     instance.stop_log_tail()
 

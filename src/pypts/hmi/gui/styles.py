@@ -324,6 +324,11 @@ QPushButton#logLevelButton {{
 QPushButton#logLevelButton:hover {{
     border: 1px solid {palette.brand_accent};
 }}
+QPushButton#logLevelButton[level="DEBUG"]:checked {{
+    background-color: {LOG_LEVEL_COLORS["DEBUG"]};
+    border: 1px solid {LOG_LEVEL_COLORS["DEBUG"]};
+    color: {LIGHT.text};
+}}
 QPushButton#logLevelButton[level="INFO"]:checked {{
     background-color: {LOG_LEVEL_COLORS["INFO"]};
     border: 1px solid {LOG_LEVEL_COLORS["INFO"]};
