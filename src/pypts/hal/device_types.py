@@ -46,50 +46,65 @@ class PSU(BaseDriver):
 
 
 class DMM(BaseDriver):
-    """A digital multimeter. Each call takes one reading."""
+    """
+    A digital multimeter. Configure it once, then take readings: a waveform
+    (read_waveform) or a single value (measure_point), both in whatever the
+    last configure_waveform_acquisition() set up.
+    """
 
     DEVICE_TYPE = "DMM"
 
     @abstractmethod
-    def measure_dc_voltage(self) -> float:
-        """One DC voltage reading, in volts."""
+    def configure_waveform_acquisition(
+        self, function: str, range: float, sample_rate_hz: float, points: int
+    ) -> None:
+        """
+        Set what is measured and how a waveform is taken. `function` is one of
+        "DC_VOLTS", "AC_VOLTS", "DC_CURRENT", "AC_CURRENT", "RESISTANCE";
+        `range` is in the unit of the function (V, A or ohm).
+        """
 
     @abstractmethod
-    def measure_ac_voltage(self) -> float:
-        """One AC (RMS) voltage reading, in volts."""
+    def read_waveform(self) -> dict[str, Any]:
+        """
+        One acquisition as configured:
+        {"x_origin": float, "x_increment": float, "samples": list[float]}.
+        """
 
     @abstractmethod
-    def measure_dc_current(self) -> float:
-        """One DC current reading, in amperes."""
+    def measure_point(self) -> float:
+        """One reading, however the meter is configured."""
 
     @abstractmethod
-    def measure_resistance(self) -> float:
-        """One resistance reading, in ohms."""
+    def get_frequency(self) -> float:
+        """The frequency of the signal at the input, in hertz."""
 
 
 class Scope(BaseDriver):
-    """An oscilloscope. Channels are numbered from 1."""
+    """
+    An oscilloscope. Channels are numbered from 1. Configure a channel once,
+    then take readings: a waveform (read_waveform) or a single value
+    (measure_point), both in whatever configure_waveform_acquisition() set up.
+    """
 
     DEVICE_TYPE = "Scope"
 
     @abstractmethod
-    def set_timebase(self, seconds_per_division: float) -> None:
-        """Set the horizontal scale."""
-
-    @abstractmethod
-    def set_vertical_scale(self, channel: int, volts_per_division: float) -> None:
-        """Set a channel's vertical scale."""
-
-    @abstractmethod
-    def arm_single(self) -> None:
-        """Arm one single-shot acquisition."""
+    def configure_waveform_acquisition(
+        self, channel: int, volts_per_division: float, seconds_per_division: float, points: int
+    ) -> None:
+        """Set a channel's vertical scale, the timebase and how many points a waveform has."""
 
     @abstractmethod
     def read_waveform(self, channel: int) -> dict[str, Any]:
         """
-        The last acquisition of a channel:
+        One acquisition of a channel, as configured:
         {"x_origin": float, "x_increment": float, "samples": list[float]}.
         """
+
+    @abstractmethod
+    def measure_point(self, channel: int) -> float:
+        """One reading of a channel, however it is configured, in volts."""
 
 
 class SSH(BaseDriver):

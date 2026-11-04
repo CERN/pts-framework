@@ -124,9 +124,6 @@ asking the launcher to start pypts again, see `launcher/launcher.md` → *Restar
 neither side may import the other), `ignore_keyboard_interrupt()`, `convert_string_to_int()`,
 and `describe_value()` / `describe_step_values()` - a step's text values as the CLI, headless
 mode and the step table's tooltip show them (`outputs: voltage = 12.1 (range 11 .. 13)`, M-3).
-Also `SECRET_KEY_WORDS`, `MASK`, `is_secret_key()` and `masked()`: which configuration keys
-are secrets, and a copy of a mapping fit for a log (the config dump, the hardware layer's call
-trace).
 
 ### `recent_recipes.py`
 

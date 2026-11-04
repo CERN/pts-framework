@@ -6,7 +6,10 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # launcher — the thin supervisor
 
-`startup.py` is the only file. Entry point: `python -m pypts`.
+`startup.py` is the only file. Entry point: `startup.main()`, reached as `python -m pypts`
+or as the `pypts` command (`[project.scripts]` in `pyproject.toml`, created by pip on install).
+Either way `restart_pypts()` replays the same command line: for the `pypts` command,
+`sys.orig_argv[1:]` begins with the script itself.
 
 ## What it owns
 
@@ -82,8 +85,8 @@ shutting down the ordinary way and exiting with `RESTART_EXIT_CODE` (75, in
 `stop_engine()` finish - CORE, the Logger, the run log all closed - and only then calls
 `restart_pypts()`: `subprocess.call([sys.executable, *sys.orig_argv[1:]])`, the same command
 line in a fresh process, so every singleton starts empty and the normal bootstrap recreates
-the file. It **waits** for the new pypts and exits with its code, because a console opened by
-`run_pypts.bat` closes when this process ends and would take the new one with it; each
+the file. It **waits** for the new pypts and exits with its code, because a console window that was
+opened just for this process closes when it ends and would take the new one with it; each
 restart therefore leaves one idle launcher underneath. The same command line means the same
 flags.
 

@@ -8,7 +8,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 Data only. No execution, no queues, no imports of the Sequencer. A `Sequence` holds `Step`
 objects, but the step classes and the steptype registry belong to `pypts.step`
-(`step/step.md`). The user-facing format reference is `recipe_guide.html` at the repo root.
+(`step/step.md`). The user-facing format reference is `docs/Usage_manuals/recipe_guide.html`.
 
 ## Files
 
@@ -273,7 +273,7 @@ The authoritative checklist is `step/step.md` §4. On the recipe side:
    description, required ones an example too - the Recipe Creator's hints are built from
    them, and `test_recipe_schema.py` fails until they are there. A steptype that replaces an
    old name gets a `RENAMED_STEP_TYPES` entry.
-4. Document it in `recipe_guide.html`.
+4. Document it in `docs/Usage_manuals/recipe_guide.html`.
 
 ## Known gaps
 

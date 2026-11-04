@@ -47,7 +47,7 @@ HEADER_SINGLE_VALUE: tuple[str, ...] = ("name", "version", "description", "main_
 #: header of report.html. Named by the recipe, so the framework carries a
 #: convention rather than a policy: the default is the one PyPTS proposes
 #: (a `get_serial_number` UserWrite step writing the `serial_number`
-#: global - see recipe_guide.html at repo root), and a recipe testing
+#: global - see docs/Usage_manuals/recipe_guide.html), and a recipe testing
 #: something without a serial number writes its own list, or `[]` for none.
 #: A name that is never set stays an empty cell; nothing complains.
 #: The first name's value also names the report files (report/report.md).

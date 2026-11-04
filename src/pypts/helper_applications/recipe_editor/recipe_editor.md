@@ -12,7 +12,7 @@ recipe the way an operator will once it is loaded. It sits beside the Recipe Cre
 pypts' Edit menu starts either one.
 
 Started by `python -m pypts.helper_applications.recipe_editor [recipe.yml]`,
-`run_recipe_editor.py` / `.bat`, or pypts' **Edit → Recipe Editor v2** (on the loaded recipe).
+`run_recipe_editor.py`, or pypts' **Edit → Recipe Editor v2** (on the loaded recipe).
 
 ## Files
 

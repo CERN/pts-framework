@@ -24,7 +24,7 @@ class BaseDriver(ABC):
 
     No IPC and no framework import: connection_driver.py wraps it. `connect()`
     receives the device's bench.ini section (`[<name>]`) keys as text, minus the
-    keys the hardware layer reads itself (`driver`, `call_timeout_s`).
+    one key the hardware layer reads itself (`driver`).
 
     Derive from a device type in device_types.py, never from BaseDriver directly - a
     driver that belongs to no device type is refused. Every public method becomes

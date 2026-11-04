@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 #: Points kept per stream; older ones drop out of the store.
 MAX_POINTS = 100_000
 #: How often the shown live stream's file is polled.
-POLL_INTERVAL_MS = 250
+POLL_INTERVAL_MS = 50
 
 
 class _StreamState:

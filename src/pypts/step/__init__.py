@@ -80,5 +80,5 @@ time rather than looped at run time; and the SSH pair leaves the step layer to
 become part of the framework. The continue_on_error policy (F8:
 three disagreeing sources of truth in the old engine) is to be resolved in
 recipe parsing, defaulting to True. Every old type's YAML is documented in
-section 10 of recipe_guide.html (repo root).
+section 10 of docs/Usage_manuals/recipe_guide.html.
 """

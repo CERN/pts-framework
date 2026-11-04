@@ -102,7 +102,7 @@ from pypts.messages.run_events import (
 from pypts.recipe.recipe import Recipe, RecipeError
 from pypts.report.report import report_main
 from pypts.sequencer.sequencer import sequencer_main
-from pypts.utilities.common import MASK, ignore_keyboard_interrupt, is_secret_key
+from pypts.utilities.common import ignore_keyboard_interrupt
 
 # The heartbeat protocol - the timeout CORE applies and the names it knows the
 # modules by - is declared with the sender's half in heartbeat_manager.py, so
@@ -763,11 +763,7 @@ class Core:
     def refuse_config_parameter(self, key: str, value: str, reason: str) -> None:
         """Log a refused SetConfigParameter and answer it, naming why."""
         log.warning("The setting '%s' was not changed: %s", key, reason)
-        if is_secret_key(key.rpartition(".")[2]):
-            shown = MASK
-        else:
-            shown = value
-        log.debug("The refused change was %s = %r.", key, shown)
+        log.debug("The refused change was %s = %r.", key, value)
         self.to_hmi.send(
             ConfigParameterResult(key=key, value=value, accepted=False, reason=reason)
         )

@@ -38,10 +38,7 @@ class LoopbackDriver(Other):
         return value
 
     def settings(self) -> dict[str, str]:
-        """
-        The keys connect() was given, unmasked: this is a test/demo driver, and
-        its return value appears in the DEBUG trace.
-        """
+        """The keys connect() was given."""
         return dict(self._settings)
 
     def is_connected(self) -> bool:

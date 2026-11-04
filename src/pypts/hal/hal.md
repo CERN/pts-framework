@@ -26,8 +26,9 @@ def read_kernel():
 | `__init__.py` | The public API: `get_device`, `LocalSetup`, `ConnectionDriver`, `BaseDriver`, `DriverError`, the six device types |
 | `base_driver.py` | `BaseDriver` (ABC: `connect`, `teardown`, `recover`), `DriverError`, `LIFECYCLE_METHODS`, `operations_of()` |
 | `device_types.py` | `PSU`, `DMM`, `Scope`, `SSH`, `Load`, `Other`; `DEVICE_TYPES`, `DEVICE_TYPE_NAMES` |
-| `connection_driver.py` | `ConnectionDriver`, one device as test code sees it, with its teardown ladder: `close()` and `abandon()` (`ABANDON_TEARDOWN_TIMEOUT_S`) escalating to the rescue (`_rescue()`, `RESCUE_TIMEOUT_S`); below it, the driver process: `driver_process_main()`, `load_driver_class()`, `answer()` |
-| `local_setup.py` | `LocalSetup`, the devices of one run, with `abandon()`; `get_device()`; `abandon_active_setup()`; `split_section()`; the section readers `bench_sections()` (the cached bench.ini, via `config_handler.bench_config`) and `ini_device_sections()`; `DEFAULT_CALL_TIMEOUT_S` (60 s) |
+| `connection_driver.py` | `ConnectionDriver`, one device as test code sees it: **every public name on it is the driver's operation** (its own members are all `_private`, so no name is reserved), with `CALL_TIMEOUT_S` (30 s, the same for every device) and its teardown ladder: `_close()` and `_abandon()` (`ABANDON_TEARDOWN_TIMEOUT_S`) escalating to the rescue (`_rescue()`, `RESCUE_TIMEOUT_S`); below it, the driver process: `driver_process_main()`, `load_driver_class()` with `load_driver_file()`, `split_driver_file()`, `driver_module_name()` and `DRIVER_FILE_MODULE_PREFIX`, `answer()` |
+| `device_control.py` | What test code does to a device beyond its operations: `recover_device()`, `device_info()` → `DeviceInfo` (name, device type, operations, is open). Functions rather than methods, so they take no name away from drivers |
+| `local_setup.py` | `LocalSetup`, the devices of one run, with `abandon()` (it calls the devices' private `_open()` / `_close()` / `_abandon()`); `get_device()`; `abandon_active_setup()`; `split_section()`; `anchor_driver_files()`; the section readers `bench_sections()` (the cached bench.ini, via `config_handler.bench_config`) and `ini_device_sections()` |
 | `drivers/loopback.py` | `LoopbackDriver` (Other): no hardware; tests, demo, smoke check |
 | `drivers/ssh.py` | `SshDriver` (SSH): the reference driver, paramiko |
 | `drivers/weather.py` | `OpenMeteoDriver` (Other): a weather station on the internet, standard library only; the showcase driver |
@@ -39,16 +40,18 @@ because a driver process imports `pypts.hal` too and has no use for the configur
 
 1. Test code calls `get_device("ssh1")`. The **active local setup** (the run's, see
    *Lifetime*) reads the device sections of `bench.ini` once (the cached `bench_config()`
-   result), builds a `ConnectionDriver` and calls `open()`.
-2. `open()` creates a `multiprocessing` Pipe and starts a **spawn** process, a daemon, named
+   result), builds a `ConnectionDriver` and calls its private `_open()`.
+2. `_open()` creates a `multiprocessing` Pipe and starts a **spawn** process, a daemon, named
    `Device ssh1`, that runs `driver_process_main()`. Spawn hands the child this process's
    `sys.path`, so a source-tree run (`run_pypts.py`) and a driver beside it import there too.
 3. The driver process sends its log records and printed lines back over the Pipe, imports and
    builds the driver, and sends `hello` (device type and operations) or `fatal` with the reason.
-   `open()` then calls `connect(settings)`. If anything in `open()` fails, including an
+   `_open()` then calls `connect(settings)`. If anything in `_open()` fails, including an
    interrupt, the process is killed and nothing is left running.
-4. `device.execute("uname -r")` goes through `__getattr__`: a name in `operations` becomes a
-   call, and any other name raises `AttributeError` without a round trip.
+4. `device.execute("uname -r")` goes through `__getattr__`: ConnectionDriver has no public
+   name of its own, so every public name lands there. A name among the driver's operations
+   becomes a call, and any other raises `AttributeError` without a round trip. A driver may
+   therefore call an operation `close`, `open` or `name` and test code reaches it.
 5. The driver process answers with `result` or `error`. `log` and `printed` messages may come
    first and are logged. Calls are one at a time (a lock), so a second thread waits for the first.
 
@@ -83,22 +86,37 @@ per device (or, outside PyPTS, any INI file in the same format given to
 ```ini
 [ssh1]
 driver = pypts.hal.drivers.ssh.SshDriver    ; required: the driver class, dotted
-call_timeout_s = 120                         ; optional: longest one call may take, default 60
 host = 192.168.0.10                          ; everything else goes to the driver's connect()
 username = tester
 key_filename = C:\Users\tester\.ssh\id_ed25519
 ```
 
-`split_section()` reads `driver` and `call_timeout_s`; every other key goes to the driver as
-text. A `python` key, the per-device interpreter of the previous design, is refused with a
-`DriverError` telling the user to remove it: every driver runs on PyPTS's own Python.
+`split_section()` reads only `driver`; every other key goes to the driver as text. A `python`
+key, the per-device interpreter of the previous design, is refused with a `DriverError` telling
+the user to remove it: every driver runs on PyPTS's own Python. The call timeout is not
+configurable: every call, `connect()` included, has `CALL_TIMEOUT_S` (30 s); a
+`call_timeout_s` key is just one more key for the driver.
 
-Keys are lower-cased (configparser). A key named like a password
-(`utilities/common.py` → `is_secret_key()`) is masked in the `connect` / `recover` DEBUG
-trace. `bench.ini` itself is plain text and appears in no configuration dump.
+Keys are lower-cased (configparser). The `connect` / `recover` DEBUG trace shows the settings
+as they are, a password included - nothing is masked. `bench.ini` itself is plain text and
+appears in no configuration dump.
 
-A custom driver's module must be importable by the driver process: installed, or on this
-process's `sys.path`.
+`driver` has two spellings, both read by `load_driver_class()`:
+
+- a **dotted import path**, `bench_drivers.acme_psu.AcmePsuDriver`: the module must be
+  importable by the driver process - installed, or on this process's `sys.path`;
+- a **driver file and its class**, `C:\bench\acme_psu.py:AcmePsuDriver` (`split_driver_file()`
+  splits at the last colon, so a drive letter stays in the file). The driver process loads the
+  file with `load_driver_file()` as module `pypts_driver_file_<stem>`
+  (`DRIVER_FILE_MODULE_PREFIX`), registered in `sys.modules` - it holds that one driver only.
+  Only the file is loaded: its folder is not put on `sys.path`, so it imports what is installed,
+  not what sits beside it. `anchor_driver_files()` expands `~` and makes a relative file
+  relative to the folder of the INI file that declares it (`bench.ini`, or the file given to
+  `from_ini()`), before the section reaches `split_section()`. A `ConnectionDriver` built
+  directly with a relative file resolves it against the current directory.
+
+`driver_module_name()` gives the module either spelling names; a forwarded log record keeps its
+level when its logger is that module or a child of it (see *Logging*).
 
 The device sections are the cached `bench.ini` read at start, so a hand edit of `bench.ini`
 applies from the next start: File → Restart in the GUI. Restore default settings (GUI)
@@ -128,17 +146,17 @@ recreates `config.ini` only; `bench.ini` and its devices are untouched.
   closes nothing PyPTS could see on Windows.
 - **PyPTS dies**: its end of the Pipe closes, and the driver process calls `teardown()` and
   exits, once the call in progress returns. A call that never returns keeps the driver process
-  alive. This net is skipped when a `teardown` call already ran (`close()` sends one), so
+  alive. This net is skipped when a `teardown` call already ran (`_close()` sends one), so
   teardown runs exactly once at a device's end - never twice.
-- **The teardown ladder** (`close()`): one serialized escalation, and the only place a device
+- **The teardown ladder** (`_close()`): one serialized escalation, and the only place a device
   is torn down. First `teardown()` on the live process; failing that - it hung, crashed or was
   stopped by a call timeout - a fresh driver process connects and tears down instead
   (`_rescue()`, within `RESCUE_TIMEOUT_S`, 10 s); failing that too, the ERROR line says the
   device `... could not be torn down and may still be energised: ...` and nothing tries again:
   the driver's stability is the driver's own job, not the framework's. A call that exceeds its
   timeout only kills the stuck process and raises - nothing rescues mid-run - so the instrument
-  keeps its state until the run ends and `close()` runs the ladder, or test code calls
-  `recover()`. `Device 'x' disconnected.` is logged only when a teardown ran; a failed ladder
+  keeps its state until the run ends and `_close()` runs the ladder, or test code calls
+  `recover_device()`. `Device 'x' disconnected.` is logged only when a teardown ran; a failed ladder
   ends on the ERROR line instead.
 - **An abandoned run** (the Sequencer's stop gave up on its thread): its `with` block never
   ends, so `Sequencer.tear_down_abandoned_devices()` calls `abandon_active_setup()`. That
@@ -147,16 +165,16 @@ recreates `config.ini` only; `bench.ini` and its devices are untouched.
   registration share one small registry lock, so a device that finishes opening beside
   `abandon()` is either in abandon's copy of the list or refused and closed by `get_device()`
   itself - never silently left running), and every device it opened runs the teardown ladder
-  (`ConnectionDriver.abandon()`) in turn, newest first, on one shared deadline
+  (`ConnectionDriver._abandon()`) in turn, newest first, on one shared deadline
   (`ABANDONED_DEVICES_TIMEOUT_S`, 16 s). No lock the stuck run may hold is waited for: an
   idle device gets one `teardown()` within `ABANDON_TEARDOWN_TIMEOUT_S` (5 s) and its process
   is killed if that hangs; a device in a call has its process killed at once (the call then
   fails as a crash in the stuck thread). A device that is not down after that is torn down on
   a fresh process (the rescue) with whatever is left of the deadline; one the deadline has
-  already passed is killed and reported. `abandon()` returns False whenever no teardown ran,
+  already passed is killed and reported. `_abandon()` returns False whenever no teardown ran,
   and the names of those devices come back, for one CRITICAL ("stopped without running
-  teardown"). Abandonment is final: `open()` and `recover()` on an abandoned device raise,
-  and `close()` returns without touching it, so test code in the abandoned run that still
+  teardown"). Abandonment is final: `_open()` and `recover_device()` on an abandoned device raise,
+  and `_close()` returns without touching it, so test code in the abandoned run that still
   holds the device cannot switch the instrument back on.
 
 ## Failure
@@ -168,22 +186,22 @@ recreates `config.ini` only; `bench.ini` and its devices are untouched.
 | Return value not picklable | `DriverError("Device 'x': 'op' failed: TypeError: 'op' returned a value that cannot be sent: ...")` |
 | Argument cannot be unpickled in the driver process | `DriverError("Device 'x': 'op' failed: <Type>: the call could not be read in the driver process: ...")` |
 | Return value cannot be unpickled in PyPTS | `DriverError("Device 'x': the answer 'op' could not be read: ...")` |
-| Call exceeds `call_timeout_s` | `DriverError("... did not answer 'op' within N s; its driver process was stopped.")`; the instrument keeps its state until `close()` runs the teardown ladder |
+| Call exceeds `CALL_TIMEOUT_S` (30 s) | `DriverError("... did not answer 'op' within N s; its driver process was stopped.")`; the instrument keeps its state until `_close()` runs the teardown ladder |
 | Driver process dies | `DriverError("Device 'x' stopped unexpectedly (exit code N).")` |
 | Cannot import / build / connect | `DriverError("Device 'x' could not be opened: ...")`, or the failed `'connect'` |
+| Driver file missing, or a file without a class | `DriverError("Device 'x' could not be opened: ValueError: Driver file '...' does not exist.")` / `... names a file but no class; write it as '...:ClassName'.` |
 | Unknown device | `DriverError("No device 'x' is configured. Add a [x] section to bench.ini. Configured devices: ...")` |
 | Bench file discarded at startup | `DriverError("bench.ini was discarded at startup, so this start has no devices: ...")` |
 | Section has no `driver` key | `DriverError("Device 'x': the [x] section has no 'driver' key naming its driver class.")` |
-| `call_timeout_s` not a positive number | `DriverError("Device 'x': call_timeout_s must be a positive number of seconds, not '...'.")` |
 | `python` key in the section | `DriverError("Device 'x': the 'python' key is not supported any more ...")` |
 | No active local setup | `DriverError("No local setup is active. ...")` |
 
 Uncaught in test code, each makes the step ERROR through the normal step path. Nothing recovers
-on its own: test code calls `device.recover()`, which escalates until the device is usable or
+on its own: test code calls `recover_device(device)`, which escalates until the device is usable or
 hopeless — the driver's own `recover()` (teardown + connect, overridable) while the process
-lives; when that fails or the process is gone, teardown (`close()`) and a fresh process with
+lives; when that fails or the process is gone, teardown (`_close()`) and a fresh process with
 `connect()`. Only when the fresh process cannot connect does a `DriverError` reach test code.
-The one exception is an abandoned device: `open()` and `recover()` refuse it
+The one exception is an abandoned device: `_open()` and `recover_device()` refuse it
 (`DriverError("Device 'x' cannot be opened/recovered: its run was abandoned and the device was
 torn down.")`) — a new driver process would belong to a run that will not end, and nothing
 would ever tear it down.
@@ -199,13 +217,14 @@ energised: ...`. Forwarded records are logged as `Device 'x': <message>`: at the
 when the logger is the driver's own module (or a child of it), and at DEBUG when another library
 logs below WARNING. Lines printed through `sys.stdout` / `sys.stderr` in the driver process are
 DEBUG (`Device 'x' printed: ...`), as are every call and its return value (cut to
-`TRACE_MAX_CHARS`) and tracebacks. The `connect` and `recover` trace shows the settings masked;
-the arguments of ordinary calls are traced as given.
+`TRACE_MAX_CHARS`) and tracebacks. The `connect` and `recover` trace shows the settings, and
+ordinary calls their arguments, as given - nothing is masked.
 
 ## Writing a driver
 
-The user-facing walkthrough of this section is `resources/how_to_write_a_driver.html` —
-a change here changes that file too.
+The user-facing walkthrough of this section is `docs/Usage_manuals/how_to_write_a_driver.html`,
+and its AI-model context is `docs/Usage_manuals/how_to_write_a_driver.md` — a change here
+changes both files too.
 
 1. Derive from the device type it belongs to (`from pypts.hal import PSU`), never from
    `BaseDriver` directly: a driver of no device type is refused.
@@ -215,12 +234,9 @@ a change here changes that file too.
    safe-state method: teardown runs at every end of a device, on a fresh connection when the
    driver was stuck (the ladder's rescue rung), so it must work right after `connect()` on an
    instrument in any state, and be harmless when nothing is open.
-3. Log with `logging.getLogger(__name__)`. Do not name a method `name`, `device_type`,
-   `operations`, `open`, `close`, `recover`, `is_open` or `abandon`
-   (`connection_driver.RESERVED_NAMES`): ConnectionDriver uses these names itself, so
-   `load_driver_class()` refuses such a driver and the device fails at open, naming the
-   offending methods. (Overriding the lifecycle `recover()` stays allowed: `operations_of()`
-   skips lifecycle methods, so the reserved-name check never fires on it.) Do not start
+3. Log with `logging.getLogger(__name__)`. Any public method name is allowed - `close`,
+   `open` and `name` included: ConnectionDriver keeps all its own members `_private`, so no
+   name is reserved. Do not start
    `multiprocessing` processes from a
    driver: the driver process is a daemon, and a daemon cannot have children.
 4. Import the vendor library at the top of the driver module, with an `ImportError` that names
@@ -228,11 +244,18 @@ a change here changes that file too.
    turns every failure of its far end into one `DriverError` is `drivers/weather.py`.
 5. Test it in-process with the vendor library mocked (`test_hal_ssh.py`), and through a real
    driver process with the loopback pattern (`test_hal_connection.py`).
+6. A driver outside the framework is one file named in `bench.ini` by its path
+   (`driver = acme_psu.py:AcmePsuDriver`, relative to `bench.ini`), or a package of the user's
+   own named by its dotted path - see *Configuration*.
 
 Device-type verbs: PSU `set_voltage`, `set_current_limit`, `output_on`, `output_off`,
-`measure_voltage`, `measure_current` (channel from 1); DMM `measure_dc_voltage`,
-`measure_ac_voltage`, `measure_dc_current`, `measure_resistance`; Scope `set_timebase`,
-`set_vertical_scale`, `arm_single`, `read_waveform`; Load `set_mode` (CC/CV/CR/CP), `set_level`,
+`measure_voltage`, `measure_current` (channel from 1); DMM
+`configure_waveform_acquisition(function, range, sample_rate_hz, points)` (function
+`DC_VOLTS` / `AC_VOLTS` / `DC_CURRENT` / `AC_CURRENT` / `RESISTANCE`), `read_waveform()`,
+`measure_point()` (one reading, however the meter is configured), `get_frequency()`; Scope
+`configure_waveform_acquisition(channel, volts_per_division, seconds_per_division, points)`,
+`read_waveform(channel)`, `measure_point(channel)`. A waveform is `{"x_origin", "x_increment",
+"samples"}`. Load `set_mode` (CC/CV/CR/CP), `set_level`,
 `input_on`, `input_off`, `measure_voltage`, `measure_current`; SSH `execute`, `put_file`,
 `get_file`; Other none.
 
@@ -266,7 +289,7 @@ because its bare `drivers` rule would otherwise hide the shipped drivers.
 
 ## Known gaps
 
-- A call blocked inside a driver is not interrupted by Stop; `call_timeout_s` bounds it.
+- A call blocked inside a driver is not interrupted by Stop; `CALL_TIMEOUT_S` (30 s) bounds it.
 - No side channel for bulk data: a waveform is pickled through the Pipe.
 - Log records and printed lines are read only while PyPTS waits for a call. Records from a
   driver's own threads between calls (paramiko's transport thread at DEBUG, say) wait in the
@@ -277,7 +300,7 @@ because its bare `drivers` rule would otherwise hide the shipped drivers.
 - A rescue reconnects with the same settings; an instrument that refuses a second connection
   while the first is half-open, or a `connect()` slower than `RESCUE_TIMEOUT_S` (an SSH host
   with a long `connect_timeout_s`), cannot be torn down this way.
-- `abandon()` arriving while the run thread is already inside `close()`'s ladder sees a busy
+- `_abandon()` arriving while the run thread is already inside `_close()`'s ladder sees a busy
   device and kills its main process; the ladder's own rescue process, if one is in flight, is
   not tracked and runs until it finishes or dies with PyPTS (a daemon). Accepted: the ladder
   is serialized per device, not across callers, and the CRITICAL is reported either way.
@@ -286,7 +309,7 @@ because its bare `drivers` rule would otherwise hide the shipped drivers.
   stuck in a call.
 - Output a C library writes straight to the process's file descriptors (not through
   `sys.stdout`) is not forwarded. It goes to PyPTS's own console, if there is one.
-- No automatic recovery policy, only `device.recover()` from test code.
+- No automatic recovery policy, only `recover_device()` from test code.
 - No PSU, DMM, Scope or Load driver ships yet; only the device-type bases.
 - Every driver runs on PyPTS's own Python: a vendor library that needs another interpreter
   (for example a 32-bit DLL) is not supported.

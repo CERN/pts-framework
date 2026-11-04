@@ -202,8 +202,8 @@ def restart_pypts() -> int:
     the template by the bootstrap that already does it, and a new run log comes
     with it.
 
-    Waiting rather than exiting straight away: the console a .bat file opened
-    closes when this process ends, and would take the new pypts with it. The
+    Waiting rather than exiting straight away: a console window opened just
+    for this process closes when it ends, and would take the new pypts with it. The
     cost is one idle launcher per restart, which ends when the new pypts does
     and hands on its exit code.
 

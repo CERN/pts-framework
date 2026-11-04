@@ -508,7 +508,7 @@ def _check_cross_references(
 # ---------------------------------------------------------------------------
 
 #: For a problem no field of the schema describes.
-_FALLBACK_HINT = "See recipe_guide.html for the recipe format."
+_FALLBACK_HINT = "See docs/Usage_manuals/recipe_guide.html for the recipe format."
 
 
 def _hint(problem: SchemaProblem, doc: dict[str, Any], model: type[BaseModel]) -> str:

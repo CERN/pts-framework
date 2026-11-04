@@ -179,7 +179,7 @@ output type's own sentence sits on its `steptype` / `type` tag field
 a problem is about. So a new step type, input or output form, or header,
 sequence or step field needs no edit here —
 `tests/unit_tests/test_recipe_schema.py` fails until every field has its
-description, and every required one an example. `recipe_guide.html` does **not**
+description, and every required one an example. `docs/Usage_manuals/recipe_guide.html` does **not**
 follow the schema automatically — a recipe-format change must still update the
 guide by hand; that is what CLAUDE.md's recipe-format rule means.
 
@@ -207,7 +207,7 @@ What stays worded here describes the file, not a field: the structural
 pre-checks in `_run`, `_QUOTE_HINT`, "each step must be a mapping" and
 "every step must name its type" (followed by the generated type list), the
 cross-reference hints, the header warnings, and `_FALLBACK_HINT`
-("See recipe_guide.html…"), which only a problem with no field reaches.
+("See docs/Usage_manuals/recipe_guide.html…"), which only a problem with no field reaches.
 
 ## Public API
 

@@ -13,6 +13,7 @@ configuration format and how to write a driver: hal.md beside this file.
 
 from pypts.hal.base_driver import BaseDriver, DriverError
 from pypts.hal.connection_driver import ConnectionDriver
+from pypts.hal.device_control import DeviceInfo, device_info, recover_device
 from pypts.hal.device_types import DMM, PSU, SSH, Load, Other, Scope
 from pypts.hal.local_setup import LocalSetup, get_device
 
@@ -22,10 +23,13 @@ __all__ = [
     "SSH",
     "BaseDriver",
     "ConnectionDriver",
+    "DeviceInfo",
     "DriverError",
     "Load",
     "LocalSetup",
     "Other",
     "Scope",
+    "device_info",
     "get_device",
+    "recover_device",
 ]

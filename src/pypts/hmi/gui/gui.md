@@ -215,7 +215,7 @@ has a typed, owned equivalent:
 | nine `*_signal = Signal(dict)` + `getattr(self, name + "_signal")` | the `match` in `HmiClient.handle_core_message()` closed with `unhandled()` → typed `show_*` / `ask_*` hooks the GUI overrides. mypy and `test_messages.py` replace "hope the dict has the key" |
 | ViewModel dicts built in the proxy | the messages *are* the view models: `StepStarted(step_id, step_name)`, `StepFinished(outcome: StepOutcome)`, `RunFinished(result, outcomes)` — plain values, already pickle-tested |
 | proxy suppressing `SequenceStep` rows | nested `Sequence` steps exist; the call row is a folding group (`StepSummary.is_group`, §12b) — shown, not suppressed |
-| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `UserTextRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_user_text()`. The hooks **default to declining** so a blocked step is never stranded. All three are live end to end — `UserInteractionStep` asks the first (roadmap §1.28), `UserWriteStep` the second, `UserLoadingStep` the third (`UserPathRequest`/`UserPathResponse`, answered by `answer_user_path()`). The old GUI's dedicated serial-number dialog has no successor **on purpose**: asking for a serial number is a recipe's `get_serial_number` step, not something the framework does — see `recipe_guide.html` (repo root) |
+| live `response_q` in `user_interact` / `get_serial_number` events | `UserPromptRequest`/`UserPromptResponse` and `UserTextRequest`/`Response` joined by `request_id`; the GUI answers via `answer_user_prompt()` / `answer_user_text()`. The hooks **default to declining** so a blocked step is never stranded. All three are live end to end — `UserInteractionStep` asks the first (roadmap §1.28), `UserWriteStep` the second, `UserLoadingStep` the third (`UserPathRequest`/`UserPathResponse`, answered by `answer_user_path()`). The old GUI's dedicated serial-number dialog has no successor **on purpose**: asking for a serial number is a recipe's `get_serial_number` step, not something the framework does — see `docs/Usage_manuals/recipe_guide.html` |
 | second value pushed on the same queue (`file`/`wrt`/`ID`) | **solved by giving each follow-up its own request/response pair.** `wrt` became `UserTextRequest` (UserWrite); `file` became `UserPathRequest`/`UserPathResponse` (UserLoading, 2026-09-15) — one request, one response carrying the path, answered by `answer_user_path()` from the path page (§7, *Three questions, one panel*). The serial-port `ID` mode was dropped |
 | `WAIT_FOR_TERMINATION` global + nested QEventLoop on abort | nothing blocks: Stop sends the command and the *events* drive the buttons — `RunFinished` (result STOP) is the "engine has stopped" confirmation the old global tried to be |
 | root-logger tap into the log box | the GUI logs normally; its records go to the Logger like everyone's. The log box is fed the other way round: `log_tail.py` reads the run log file the Logger writes, so the panel shows *every* process, not just the GUI's own records (§8) |
@@ -413,7 +413,7 @@ There was a second page here until 2026-09-02: a serial-number form with its own
 `QLineEdit`, driven by a `SerialNumberRequest` nothing ever sent. It is gone, along with
 `CenterContent`'s `QStackedWidget`, because the framework does not ask for a serial number —
 a recipe does, with a `get_serial_number` `UserWrite` step
-(`recipe_guide.html`, repo root).
+(`docs/Usage_manuals/recipe_guide.html`).
 
 Three things decline an open prompt, all through `cancel_pending()`, all answering `None`:
 
@@ -1544,12 +1544,12 @@ the defaults.
 The top of the right column (`InteractionPanel`) is no longer only the prompts'. For the
 whole run a **step card** (`RunHeader`) sits above everything else — the running step's
 name, description, state chip, times and counts, and its results. Under it, a recipe may
-name `image_path` on any step and on a sequence (`recipe_guide.html`, `step/step.md` §3.8);
+name `image_path` on any step and on a sequence (`docs/Usage_manuals/recipe_guide.html`, `step/step.md` §3.8);
 the GUI shows it while that step or sequence runs, and **nothing** when no picture applies —
 the picture area is hidden (`show_no_picture()`) and a stretch at the bottom of the panel
 keeps the card and any question at the top. (Changed 2026-10-13: a run card used to fill
 the picture area then, and for a while the plain logo did.) A step may also name `graph:`
-(`recipe_guide.html`); the picture area then shows the live XY graph of that stream (§20)
+(`docs/Usage_manuals/recipe_guide.html`); the picture area then shows the live XY graph of that stream (§20)
 instead of a picture — one more state of the same decider, not a widget managed beside it
 (2026-11-02).
 
@@ -1726,7 +1726,7 @@ files `pypts.stream_handler` writes) with the copied `pyrade_xy_graph` plot
 column's picture area (§18, §19).
 
 - `show_live(name, csv_path)` shows stream `name` and starts a `QTimer` (`POLL_INTERVAL_MS`,
-  250 ms). Each tick polls the shown stream's `StreamReader` once and appends its new rows to
+  50 ms). Each tick polls the shown stream's `StreamReader` once and appends its new rows to
   the stream's `DataStore` as **one** record (one repaint per tick), then calls
   `plot.autoscale()` (the copied plot disables pyqtgraph's auto-range). While the file does not
   exist `is_waiting()` is True and the widget shows `Waiting for stream <name>`.

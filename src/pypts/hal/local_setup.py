@@ -18,22 +18,20 @@ import os
 import threading
 import time
 from collections.abc import Callable, Mapping
+from pathlib import Path
 from types import TracebackType
 from typing import Any
 
 from pypts.hal.base_driver import DriverError
-from pypts.hal.connection_driver import ConnectionDriver
+from pypts.hal.connection_driver import ConnectionDriver, split_driver_file
 from pypts.logger.log import log
 
-#: How long one call may take when the section does not say (`call_timeout_s`).
-DEFAULT_CALL_TIMEOUT_S = 60.0
 
-
-def split_section(name: str, section: Mapping[str, Any]) -> tuple[str, float, dict[str, str]]:
+def split_section(name: str, section: Mapping[str, Any]) -> tuple[str, dict[str, str]]:
     """
-    One device section as (driver class path, call timeout, the
-    driver's own keys). `driver` and `call_timeout_s` are read here; every
-    other key goes to the driver's connect(), as text.
+    One device section as (driver class path, the driver's own keys). Only
+    `driver` is read here; every other key goes to the driver's connect(), as
+    text.
     """
     settings: dict[str, str] = {}
     for key, value in section.items():
@@ -48,20 +46,30 @@ def split_section(name: str, section: Mapping[str, Any]) -> tuple[str, float, di
         raise DriverError(
             f"Device '{name}': the [{name}] section has no 'driver' key naming its driver class."
         )
-    timeout_text = settings.pop("call_timeout_s", "").strip()
-    if timeout_text:
-        try:
-            call_timeout_s = float(timeout_text)
-        except ValueError:
-            call_timeout_s = 0.0
-        if call_timeout_s <= 0:
-            raise DriverError(
-                f"Device '{name}': call_timeout_s must be a positive number of seconds, "
-                f"not '{timeout_text}'."
-            )
-    else:
-        call_timeout_s = DEFAULT_CALL_TIMEOUT_S
-    return driver_path, call_timeout_s, settings
+    return driver_path, settings
+
+
+def anchor_driver_files(
+    sections: Mapping[str, Mapping[str, str]], ini_folder: Path
+) -> dict[str, dict[str, str]]:
+    """
+    The sections, each a copy, with every driver file
+    (`driver = drivers/acme_psu.py:AcmePsuDriver`) made absolute: `~` expanded,
+    and a relative file taken as relative to `ini_folder`, the folder of the
+    INI file that declares it. A dotted driver path is left as it is.
+    """
+    anchored: dict[str, dict[str, str]] = {}
+    for name, section in sections.items():
+        copy = dict(section)
+        driver_file = split_driver_file(copy.get("driver", "").strip())
+        if driver_file is not None:
+            file_name, class_name = driver_file
+            path = Path(file_name).expanduser()
+            if not path.is_absolute():
+                path = ini_folder / path
+            copy["driver"] = f"{path}:{class_name}"
+        anchored[name] = copy
+    return anchored
 
 
 def ini_device_sections(path: str | os.PathLike[str]) -> dict[str, dict[str, str]]:
@@ -70,16 +78,19 @@ def ini_device_sections(path: str | os.PathLike[str]) -> dict[str, dict[str, str
 
     The file has bench.ini's format: every section is one device, bare name.
     Read as utf-8-sig so a file saved by Notepad, BOM and all, still opens.
+    A relative driver file is relative to this file's folder.
     """
     parser = configparser.ConfigParser(interpolation=None)
     with open(path, encoding="utf-8-sig") as handle:
         parser.read_file(handle)
-    return {section: dict(parser[section]) for section in parser.sections()}
+    sections = {section: dict(parser[section]) for section in parser.sections()}
+    return anchor_driver_files(sections, Path(path).resolve().parent)
 
 
 def bench_sections() -> dict[str, dict[str, str]]:
     """
-    The devices of this machine's bench.ini - what the Sequencer reads.
+    The devices of this machine's bench.ini - what the Sequencer reads. A
+    relative driver file is relative to bench.ini's folder.
 
     Raises:
         DriverError: the bench file was discarded at startup; the message
@@ -93,7 +104,7 @@ def bench_sections() -> dict[str, dict[str, str]]:
         raise DriverError(
             f"bench.ini was discarded at startup, so this start has no devices: {bench.problem}"
         )
-    return bench.devices
+    return anchor_driver_files(bench.devices, bench.path.parent)
 
 
 class LocalSetup:
@@ -142,9 +153,10 @@ class LocalSetup:
                     f"No device '{name}' is configured. Add a [{name}] section to "
                     f"bench.ini. Configured devices: {known}."
                 )
-            driver_path, call_timeout_s, settings = split_section(name, section)
-            device = ConnectionDriver(name, driver_path, settings, call_timeout_s=call_timeout_s)
-            device.open()
+            driver_path, settings = split_section(name, section)
+            device = ConnectionDriver(name, driver_path, settings)
+            # The private lifecycle: every public name on a device is the driver's.
+            device._open()
             with self._registry_lock:
                 abandoned = self._abandoned
                 if not abandoned:
@@ -152,7 +164,7 @@ class LocalSetup:
             if abandoned:
                 # Abandoned while this was opening: it missed the teardown,
                 # and was registered nowhere, so it is closed here.
-                device.close()
+                device._close()
                 self._refuse_if_abandoned(name)
             return device
 
@@ -171,7 +183,7 @@ class LocalSetup:
         a device call - holding that device's lock - or inside get_device(),
         holding this setup's. So neither of those is waited for: the setup
         opens nothing more from now on, and each device runs its teardown
-        ladder (ConnectionDriver.abandon()) in turn, newest first, on one
+        ladder (ConnectionDriver._abandon()) in turn, newest first, on one
         shared deadline of `time_limit_s` in all. A device the deadline has
         already passed still gets its driver process killed, and is reported.
 
@@ -185,7 +197,7 @@ class LocalSetup:
         unsafe = []
         for name in reversed(list(devices)):
             try:
-                safe = devices[name].abandon(deadline - time.monotonic())
+                safe = devices[name]._abandon(deadline - time.monotonic())
             except Exception as exc:  # noqa: BLE001 - one device must not keep the others open
                 log.warning("Device '%s' did not close: %s", name, exc)
                 safe = False
@@ -200,7 +212,7 @@ class LocalSetup:
             names.reverse()
             for name in names:
                 try:
-                    self._devices[name].close()
+                    self._devices[name]._close()
                 except Exception as exc:  # noqa: BLE001 - one device must not keep the others open
                     log.warning("Device '%s' did not close: %s", name, exc)
             self._devices.clear()

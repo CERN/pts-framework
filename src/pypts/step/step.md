@@ -13,7 +13,7 @@ decision behind each, so the state of the port can be read off one table instead
 re-derived from the old engine's `steps.py` (removed with `old_code/` in 827ec19) every time.
 
 The roadmap stays the authority on status and phase and wins where they overlap.
-`recipe_guide.html` (repo root) §10 covers the current types; its §11 is the short status
+`docs/Usage_manuals/recipe_guide.html` §10 covers the current types; its §11 is the short status
 table of the old ones.
 
 ---
@@ -230,7 +230,7 @@ global scope. What is left of the coupling is one recipe-header field —
 `report_metadata`, defaulting to `("serial_number",)` — which names the globals the
 Report stamps on every row of `report.csv`, shows in `report.html`'s header, appends
 to the run folder's name and puts in the GUI's top bar. The convention itself lives in
-`recipe_guide.html` (repo root) §3: a step named `get_serial_number` writing the
+`docs/Usage_manuals/recipe_guide.html` §3: a step named `get_serial_number` writing the
 `serial_number` global.
 
 ### 2.5 `UserLoadingStep` → `UserLoading` — done, redesigned
@@ -305,7 +305,7 @@ not having anywhere else to put it. So: no `SSHConnect` / `SSHClose` entries in
 
 **Landed 2026-10-08 (roadmap §1.54).** SSH is the hardware layer's `SshDriver`
 (`pypts.hal.drivers.ssh`), reached from test code with `pypts.hal.get_device("<name>")`.
-Credentials live in the device's bare `[<name>]` section of `bench.ini`, masked in the
+Credentials live in the device's bare `[<name>]` section of `bench.ini`, shown as written in the
 connect/recover trace. The session belongs
 to the run's local setup, which closes it after the teardown steps on every outcome, abort included —
 what the old `teardown_steps` rule stood in for. The live client stays in the driver's own
@@ -508,7 +508,7 @@ not details:
   message - or `an assert in the test function failed` when it has none - goes through
   `build_fail_reason()` like any failing check, inputs included. No traceback, no
   `error_summary`: a bad DUT must not read as a software fault. The rule is written for
-  the recipe author in `recipe_guide.html` §6.2 ("Writing the test function").
+  the recipe author in `docs/Usage_manuals/recipe_guide.html` §6.2 ("Writing the test function").
 - **`sys.exit()` in test code is this step's `ERROR`.** The body's `except` catches
   `SystemExit` as well as `Exception` - and nothing wider - whatever the exit code, even 0:
   the step never returned, so there is nothing to judge. Let through, it would unwind the
@@ -776,7 +776,7 @@ type gets them for free and must not repeat them; the old format's per-type
 `continue_on_error` is why putting it on the wrong one of the ten types was a load-time
 `TypeError` (the historical defect F9).
 
-Then document it in `recipe_guide.html` §10 and update the table in §1 above.
+Then document it in `docs/Usage_manuals/recipe_guide.html` §10 and update the table in §1 above.
 
 ---
 

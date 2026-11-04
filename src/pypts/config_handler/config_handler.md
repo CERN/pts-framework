@@ -360,14 +360,10 @@ Roadmap §1.3 is the authority; the TODOs live there, not in code comments. In s
   exercise.
 - **Device sections (in `bench.ini`) are untyped.** A wrong key in a device section is found
   only when the driver reads it (at the first `get_device()`), not at start-up.
-- **Secrets are masked in the log, not protected on disk.** `_note_active_configuration()`,
-  `dump()` and `set_parameter()`'s INFO line ("Setting '...' changed to '******'."), and CORE's
-  refused-change DEBUG line, show a key named like a password (`utilities/common.py` →
-  `is_secret_key()`) as `******`; `config.ini` itself stays plain text. The hardware layer's
-  `connect` / `recover` trace (`ConnectionDriver`) is masked the same way.
-- **The message trace is not masked.** `QueueWrapper`'s TRACE lines log `SetConfigParameter` /
-  `ConfigParameterResult` payloads verbatim, so a secret set through the protocol appears in a
-  TRACE run log. Masking belongs in the message layer (design conversation; roadmap §1.54).
+- **Nothing is masked.** `_note_active_configuration()`, `dump()`, `set_parameter()`'s INFO line
+  ("Setting '...' changed to '...'."), CORE's refused-change DEBUG line, the message trace and
+  the hardware layer's `connect` / `recover` trace all show values as written, a password
+  included. `config.ini` and `bench.ini` are plain text.
 - **`report.type` / `report.theme` are editable but not yet used** — Phase 4. The
   Settings dialog marks both "Not used yet."
 - **Console echo of the log is off in every mode** (`stdout_logging_enabled = False` in

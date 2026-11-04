@@ -52,7 +52,6 @@ from pypts.config_handler.configuration_schema import (
     schema_for_section,
 )
 from pypts.logger.log import log
-from pypts.utilities.common import MASK, is_secret_key, masked
 
 #: Name of the template shipped inside this package.
 TEMPLATE_FILE_NAME = "config_template.ini"
@@ -279,11 +278,10 @@ class ConfigHandler:
         Every value in force, one record each, at DEBUG.
 
         One line per key rather than one block, so that the run log stays one
-        record per line and a value can be grepped for on its own. A secret (a key
-        named like a password, see utilities/common.py) is shown masked.
+        record per line and a value can be grepped for on its own.
         """
         for section, values in self._values.items():
-            for key, value in masked(values).items():
+            for key, value in values.items():
                 self._note(logging.DEBUG, f"Configuration value {section}.{key} = {value}")
 
     # --- reading --------------------------------------------------------------
@@ -359,8 +357,8 @@ class ConfigHandler:
         ordered += [section for section in self._values if section not in SCHEMA]
         for section in ordered:
             lines.append(f"[{section}]")
-            shown = masked(self._values[section])
-            lines.extend(f"    {key} = {value}" for key, value in shown.items())
+            values = self._values[section]
+            lines.extend(f"    {key} = {value}" for key, value in values.items())
         return "\n".join(lines)
 
     @property
@@ -429,14 +427,10 @@ class ConfigHandler:
 
         self._raw[section][option] = text
         self._values = self._validate(self._raw)
-        if is_secret_key(option):
-            shown = MASK
-        else:
-            shown = text
         if field is not None and field.quiet:
-            log.debug("Setting '%s' changed to '%s'.", key, shown)
+            log.debug("Setting '%s' changed to '%s'.", key, text)
         else:
-            log.info("Setting '%s' changed to '%s'.", key, shown)
+            log.info("Setting '%s' changed to '%s'.", key, text)
         log.debug("Written to %s.", self._path)
 
     def restore_default(self) -> None:
