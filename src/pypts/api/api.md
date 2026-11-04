@@ -8,7 +8,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 `pypts.api` is the embedding door (migration finding M-2): the old `run_pts` /
 `PtsApi` came back as a small, stable surface. Showcase of every case:
-`api_showcase.py` at the repository root.
+`showcase.py` in this package (`python -m pypts.api.showcase <case>`).
 
 ## Files
 
@@ -17,6 +17,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 | `__init__.py` | The public names. Callers import from `pypts.api` only. |
 | `embedding.py` | `Pts`, `open_gui()`, `ApiClient`, the result dataclasses, `PtsError` |
 | `headless.py` | `--mode headless`: `headless_main()`, exit codes (below) |
+| `showcase.py` | The worked example of every case: `python -m pypts.api.showcase <case>`. Needs the repository's `resources/recipes` |
 
 ## The two doors
 
