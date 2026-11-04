@@ -50,6 +50,10 @@ test = [
   "pytest-qt",
   # The SSH driver's tests run against a mocked client, but import paramiko.
   "paramiko",
+  # tests/quality_tests/ runs both. Pinned, so a new release cannot turn a
+  # green branch red on its own; bump them on purpose.
+  "ruff==0.16.2",
+  "mypy==2.3.0",
 ]
 doc = [
   "Sphinx",
@@ -67,11 +71,17 @@ dev = [
   # linters, etc.
   # "requirement-for-development-purposes-only",
 
-  # Include the "test" and "doc" dependencies in the dev dependencies.
-  "pts-framework[doc,test]",
-  "ruff",
-  "mypy",
+  # Include the "test" dependencies in the dev dependencies (ruff and mypy come
+  # with them). Not "doc": its acc-py-sphinx is on CERN's package index only, so
+  # it broke a dev install anywhere else.
+  "pts-framework[test]",
 ]
+
+[project.scripts]
+# The `pypts` command pip creates on install: the same entry point as
+# `python -m pypts`, so `pypts --mode cli` works wherever the install's
+# scripts folder is on PATH (an activated venv, uv tool / pipx).
+pypts = "pypts.launcher.startup:main"
 
 [project.urls]
 # Homepage = "PyPTS repository"
@@ -93,7 +103,7 @@ version_file = "src/pypts/_version.py"
 
 [tool.pytest.ini_options]
 # Default selection when pytest is invoked without arguments.
-testpaths = ["tests/unit_tests", "tests/functional_tests"]
+testpaths = ["tests/unit_tests", "tests/functional_tests", "tests/quality_tests"]
 
 [tool.ruff]
 # 100 rather than the default 88: the module docstrings in this project carry the
@@ -104,10 +114,8 @@ target-version = "py311"
 
 # Frozen or unintegrated code that is not held to the current style.
 #   old_code/  is the legacy implementation, read-only by project rule.
-#   spikes/    is unintegrated experiments, kept deliberately as they were written.
 exclude = [
   "src/pypts/old_code",
-  "spikes",
   "docs/source/conf.py",
   # Copied upstream code (CERN pyrade_xy_graph), not held to this style.
   "src/pyrade_xy_graph",
@@ -172,8 +180,8 @@ known-first-party = ["pypts"]
 #     Nothing checked that before, so sending the wrong message on the wrong
 #     link ran perfectly and arrived in the wrong place.
 #
-# Not the whole tree on purpose: old_code/ is frozen, spikes/ is experiments,
-# and the helper applications are Phase 6. Widening the scope is cheap once
+# Not the whole tree on purpose: old_code/ is frozen, and the helper
+# applications are Phase 6. Widening the scope is cheap once
 # those are dealt with.
 python_version = "3.11"
 files = [
@@ -201,22 +209,20 @@ module = "PySide6.*"
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# The CI typecheck job installs only mypy, no dependencies, and the sequencer
-# now imports the recipe layer, which imports yaml - so mypy has to be told a
-# missing PyYAML is fine. TODO: install types or the package in that job and
-# drop this.
+# PyYAML ships no type information and types-PyYAML is not installed, so mypy
+# has to be told the untyped import is fine.
 module = ["yaml", "yaml.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# Same reason as yaml above: the recipe layer validates with pydantic, and the
-# CI typecheck job does not install it.
+# Kept from when mypy ran in a CI job without the project's dependencies.
+# pydantic is installed now; dropping this lets mypy check against its real
+# types, which is a change of its own.
 module = ["pydantic", "pydantic.*", "pydantic_core", "pydantic_core.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
-# The SSH driver imports paramiko, which ships no type information, and the CI
-# typecheck job installs only mypy.
+# The SSH driver imports paramiko, which ships no type information.
 module = ["paramiko", "paramiko.*"]
 ignore_missing_imports = true
 

@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-Runs the pypts test suite: unit tests first, then functional tests.
+Runs the pypts test suite: unit tests, then functional tests, then the quality tests
+(ruff and mypy).
 
 Any extra argument is passed straight through to pytest, so this still works:
 
@@ -20,6 +21,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent
 TEST_PATHS = [
     REPO_ROOT / "tests" / "unit_tests",
     REPO_ROOT / "tests" / "functional_tests",
+    REPO_ROOT / "tests" / "quality_tests",
 ]
 
 if __name__ == "__main__":

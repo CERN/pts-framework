@@ -14,13 +14,16 @@ Hardware-oriented testing framework developed by BE-CEM-MTA.
 *   **Modular Steps:** Supports various step types including Python function calls, sub-sequence execution, user interaction prompts, wait times, and indexed steps for running tasks multiple times with varying inputs.
     **Reliable order execution:** Unlike pytest-order, the reliably follows the specified order.
 *   **Variable Scopes:** Manages global variables for the recipe and local variables within sequences.
-*   **Embeddable:** Drive pypts from your own Python code with `pypts.api` - headless runs (`Pts`) or the window with a recipe loaded and started (`open_gui`). See `api_showcase.py` in the repository root.
+*   **Embeddable:** Drive pypts from your own Python code with `pypts.api` - headless runs (`Pts`) or the window with a recipe loaded and started (`open_gui`). See `src/pypts/api/showcase.py` (`python -m pypts.api.showcase headless`).
 *   **Incremental Reporting:** Generates a detailed CSV report (`report.csv`) in real-time as steps complete.
 *   **Contextual Reports:** Includes run context (Recipe Name, File Name, Serial Number) and step context (Sequence Name) in reports.
 *   **HTML Reports:** Provides a utility to convert the CSV report into a styled HTML file (`report.html`) for easy viewing, similar to `pytest-html`.
 *   **Event System:** Uses queues for inter-thread communication and event reporting (e.g., step start/end).
 
 ## Running
+
+Setup for developers and test authors: [`quick_start.html`](docs/Usage_manuals/quick_start.html).
+Installing the package creates a `pypts` command, the same as `python -m pypts`.
 
 Plain Python — no IDE, no launch configuration, no wrapper script:
 
@@ -35,7 +38,7 @@ Headless mode runs one recipe (optionally `--sequence Name`) with no window and 
 and exits `0` passed, `1` failed, `2` error/stopped, `3` nothing ran.
 
 **How to use the app** - modes, options, answering prompts, where logs and reports go - is in
-[`usage_manual.html`](usage_manual.html). Writing recipes: [`recipe_guide.html`](recipe_guide.html).
+[`usage_manual.html`](usage_manual.html). Writing recipes: [`recipe_guide.html`](docs/Usage_manuals/recipe_guide.html).
 
 `src\pypts\launcher\startup.py` may be run directly instead of `-m pypts`; it is the same
 entry point. With the virtual environment activated, `python` replaces

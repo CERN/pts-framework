@@ -114,6 +114,9 @@ venv.bak/
 # mkdocs documentation
 /site
 
+# ruff
+.ruff_cache/
+
 # mypy
 .mypy_cache/
 .dmypy.json
@@ -200,6 +203,13 @@ _build/html/spikes/scope/SCOPE_documentation.html
 drivers
 # ...except the drivers the hardware layer ships.
 !/src/pypts/hal/drivers/
+
+# Personal AI-assistant tooling: each developer brings their own.
+# CLAUDE.md at the root stays tracked.
+.agents/
+.claude/
+.superpowers/
+skills-lock.json
 # Start of .gitignore content managed by acc-py
 
 # Project artefacts.

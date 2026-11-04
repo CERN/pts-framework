@@ -19,7 +19,7 @@ file may be touched — **stop and ask.** Asking is always cheaper than a wrong 
 distribution `pts-framework`, Python ≥ 3.11, LGPL-2.1-or-later, REUSE compliant.
 
 `reuse.toml` is the authority on licence headers. It covers `src/pypts/**/*.py`,
-`src/pyrade_xy_graph/**/*.py`, `tests/**/*.py`, `spikes/**/*.py` and `docs/**/*.rst`, so new files
+`src/pyrade_xy_graph/**/*.py`, `tests/**/*.py` and `docs/**/*.rst`, so new files
 there need no inline SPDX header. Anything outside its globs does — typically `resources/**` and repo-root HTML
 (`CC-BY-SA-4.0`).
 
@@ -27,11 +27,13 @@ there need no inline SPDX header. Anything outside its globs does — typically 
 
 | Document | Owns |
 |---|---|
-| `pypts_implementation_status.html` (root) | **Status** — single source of truth. Read before planning. |
+| `docs/Usage_manuals/pypts_implementation_status.html` | **Status** — single source of truth. Read before planning. |
+| `docs/Usage_manuals/quick_start.html` | One-page quick start: developer setup and rules / test author's recipe, test code, run, results. |
 | `usage_manual.html` (root) | Everything a user sees, types or gets back: modes, options, exit codes, GUI, files, helper tools. |
-| `recipe_guide.html` (root) | The recipe format: step types, inputs/outputs, verificator gaps. |
+| `docs/Usage_manuals/recipe_guide.html` | The recipe format: step types, inputs/outputs, verificator gaps. |
+| `docs/Usage_manuals/how_to_write_a_driver.html` / `.md` | Writing a HAL driver: the walkthrough, and its AI-model context. |
+| `docs/Usage_manuals/migration_instructions.html` | Migrating from the old engine. |
 | `src/pypts/<module>/<module>.md` | How a module works: files, rules, decisions, how to extend, known gaps. |
-| `docs/source/*.rst` | Thin Sphinx shell pointing at the above. Holds no detail of its own. |
 | `TODO.txt` (root) | The user's task inbox for Claude. Mark items `[x]` with a note; never delete. |
 
 Module context files — **read before touching the module**:
@@ -67,7 +69,7 @@ message, field, route, behaviour, log line, or implemented-vs-stub status.
   Every identifier and file a document names must exist.
 - Delete what is no longer true; no stale sentence beside a corrected one.
 - A routing change touches `core/core.md` **and** `messages/messages.md`.
-- A recipe-format change touches `recipe_guide.html` by hand (the verificator follows the
+- A recipe-format change touches `docs/Usage_manuals/recipe_guide.html` by hand (the verificator follows the
   schema automatically — sync rule in `recipe_creator.md`).
 - New work items go into the roadmap as TODOs, not into code comments.
 - Drift you were not asked to fix: say so in your report, ask before a large fix.
@@ -83,7 +85,7 @@ step and say where it is; do not open one you only edited.
 
 ```
 src/pypts/
-  launcher/      entry point (python -m pypts): pins spawn, parses args, spawns Logger + CORE + frontend
+  launcher/      entry point (python -m pypts, the pypts command): pins spawn, parses args, spawns Logger + CORE + frontend
   core/          mediator: routes every link, runs Sequencer + Report as threads, heartbeats, shutdown
   sequencer/     event loop; run_sequence() starts execute_sequence() on a worker thread
   recipe/        recipe data layer: parser, schema (Pydantic models), validation
@@ -133,8 +135,12 @@ python -m pypts                       # GUI (default)
 python -m pypts --mode cli            # CLI
 python -m pypts --mode headless --recipe x.yml [--sequence Name]   # exit codes: api/api.md
 python -m pypts --log-level TRACE     # the full message trace (TRACE is the shipped default)
-python run_pypts.py / run_recipe_creator.py / run_recipe_editor.py   # same, with src on the path (.bat wrappers too)
+python run_pypts.py / run_recipe_creator.py / run_recipe_editor.py   # same, with src on the path
 ```
+
+`pypts` (`[project.scripts]` in `pyproject.toml`) is the same entry point as `python -m pypts`.
+Dev setup: `.venv` with `pip install -e ".[dev,hardware]"`, activated. Setup for both
+developers and test authors: `docs/Usage_manuals/quick_start.html`.
 
 Config: `%LOCALAPPDATA%\pypts\config.ini` / `~/.config/pypts/config.ini`, with `bench.ini`
 beside it — the bench's devices, one bare `[name]` section each, read once per start. **Never change
@@ -143,15 +149,16 @@ unsure (rules in `config_handler/config_handler.md`).
 
 ## Quality gates
 
-A change is done only when all four pass:
+A change is done only when both pass:
 
 ```bash
-pytest tests          # unit_tests/ + functional_tests/
-ruff check src tests  # config in [tool.ruff], line length 100
-mypy                  # scope in [tool.mypy]
+pytest tests          # unit_tests/ + functional_tests/ + quality_tests/
 ```
 
-4. **Documentation check** — re-read every document your change touches against the final
+`tests/quality_tests/` runs `ruff check src tests` (config in `[tool.ruff]`, line length 100)
+and `mypy` (scope in `[tool.mypy]`) as tests; CI has no separate lint or type-check job.
+
+2. **Documentation check** — re-read every document your change touches against the final
    code, and say in your report which ones you updated, or why none needed it.
 
 A `# noqa:` must name a rule the config enables, with the reason on the same line.

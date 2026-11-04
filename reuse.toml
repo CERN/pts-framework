@@ -13,7 +13,6 @@ path = [
     "src/pypts/**/*.py",
     "src/pyrade_xy_graph/**/*.py",
     "tests/**/*.py",
-    "spikes/**/*.py",
     "run_tests.py"
 ]
 precedence = "aggregate"
@@ -67,8 +66,7 @@ SPDX-License-Identifier = "CC-BY-SA-4.0"
 [[annotations]]
 path = [
     "tests/**/*.yaml",
-    "tests/**/*.yml",
-    "spikes/**/*.seq"
+    "tests/**/*.yml"
 ]
 precedence = "aggregate"
 SPDX-FileCopyrightText = "2025 CERN <home.cern>"
