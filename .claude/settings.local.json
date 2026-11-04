@@ -1,9 +1,0 @@
-{
-  "permissions": {
-    "defaultMode": "auto",
-    "allow": [
-      "Bash(git *)",
-      "Bash(python *)"
-    ]
-  }
-}

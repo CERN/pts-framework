@@ -43,17 +43,31 @@ class FailingConnectDriver(Other):
         pass
 
 
-class ReservedNameDriver(Other):
-    """Names a method 'close', which ConnectionDriver reserves for itself."""
+class CommonNamesDriver(Other):
+    """
+    Operations named like ConnectionDriver's own lifecycle once was - close,
+    open, name - which test code must reach, since no name is reserved.
+    """
 
     def connect(self, config):
-        pass
+        self._relay = "open"
 
     def teardown(self):
         pass
 
     def close(self):
-        pass
+        self._relay = "closed"
+        return "relay closed"
+
+    def open(self):
+        self._relay = "open"
+        return "relay open"
+
+    def name(self):
+        return "ACME relay"
+
+    def relay(self):
+        return self._relay
 
 
 class UnsendableResultDriver(Other):

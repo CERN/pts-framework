@@ -537,7 +537,8 @@ def test_the_recipe_guide_s_example_recipe_loads():
     import html
     import re
 
-    guide = (Path(__file__).parents[2] / "recipe_guide.html").read_text(encoding="utf-8")
+    guide_path = Path(__file__).parents[2] / "docs" / "Usage_manuals" / "recipe_guide.html"
+    guide = guide_path.read_text(encoding="utf-8")
     found = re.search(r'<code class="language-yaml" id="guide-example">(.*?)</code>', guide, re.S)
     assert found, "recipe_guide.html has no example marked id=\"guide-example\""
     recipe = Recipe.from_yaml_text(html.unescape(found.group(1)))

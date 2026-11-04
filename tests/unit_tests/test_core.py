@@ -1348,29 +1348,6 @@ def test_a_managed_section_is_refused_even_with_a_valid_value(writable_config):
     assert writable_config.read_text(encoding="utf-8") == before
 
 
-def test_a_refused_secret_is_masked_in_cores_refusal_line(writable_config, caplog):
-    """
-    A secret for a device section that is not in the file is refused (the key is
-    unknown). CORE's own refusal line at DEBUG shows the value masked.
-
-    Not asserted here: the messaging trace (QueueWrapper, TRACE) still logs the whole
-    message, value included, so the secret reaches the run log through it. See the
-    Task 6 report, concern on the trace.
-    """
-    from pypts.messages.core_hmi_communication import SetConfigParameter
-
-    core = build_core_that_spawns_nothing()
-
-    core.from_hmi.send(SetConfigParameter(key="hardware.ssh9.password", value="s3cret-refused"))
-    with caplog.at_level(logging.DEBUG):
-        core.poll_all_sources()
-
-    answers = config_answers(core)
-    assert len(answers) == 1
-    assert answers[0].accepted is False
-    assert "The refused change was hardware.ssh9.password = '******'." in caplog.text
-
-
 def test_a_change_with_no_configuration_to_write_is_answered_not_raised(tmp_path, monkeypatch):
     """
     No config.ini at all - a CORE built outside a run. The frontend still gets

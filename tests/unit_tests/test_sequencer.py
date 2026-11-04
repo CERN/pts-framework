@@ -1449,8 +1449,8 @@ def test_a_run_reaches_its_devices_and_closes_them_at_the_end(sequencer, tmp_pat
     opened = []
 
     class RecordingConnection(ConnectionDriver):
-        def open(self):
-            super().open()
+        def _open(self):
+            super()._open()
             opened.append(self)
 
     monkeypatch.setattr(hal_local_setup, "ConnectionDriver", RecordingConnection)
@@ -1466,7 +1466,7 @@ def test_a_run_reaches_its_devices_and_closes_them_at_the_end(sequencer, tmp_pat
     assert finished["Missing device"].result is ResultType.ERROR
     assert finished["Echo through the device"].result is ResultType.PASS
     assert len(opened) == 1
-    assert not opened[0].is_open()
+    assert not opened[0]._is_open()
     with pytest.raises(DriverError, match="No local setup is active"):
         get_device("loop1")
 

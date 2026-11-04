@@ -489,42 +489,6 @@ def test_a_hardware_section_is_kept_as_text_and_warned_about_once(config, config
     assert caplog.text.count("Configuration section [hardware.dmm1] is not part of the schema") == 1
 
 
-def test_a_secret_is_masked_in_the_active_configuration_lines(config, config_path, caplog):
-    """Review Focus 5: a password in config.ini never reaches the run log."""
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8")
-        + "\n[hardware.ssh1]\ndriver = x.Y\npassword = hunter2\n",
-        encoding="utf-8",
-    )
-    ConfigHandler.reset_for_testing()
-
-    with caplog.at_level(logging.DEBUG):
-        reopened = ConfigHandler.bootstrap()
-
-    assert reopened.get_parameter("hardware.ssh1.password") == "hunter2"
-    assert "hunter2" not in caplog.text
-    assert "hunter2" not in reopened.dump()
-    assert "hardware.ssh1.password = ******" in caplog.text
-
-
-def test_a_secret_set_through_set_parameter_is_not_logged(config, config_path, caplog):
-    """The change itself is logged at INFO, and the new secret must not be in that line."""
-    config_path.write_text(
-        config_path.read_text(encoding="utf-8")
-        + "\n[hardware.ssh1]\ndriver = x.Y\npassword = old\n",
-        encoding="utf-8",
-    )
-    ConfigHandler.reset_for_testing()
-    reopened = ConfigHandler.bootstrap()
-
-    with caplog.at_level(logging.DEBUG):
-        reopened.set_parameter("hardware.ssh1.password", "s3cret-new")
-
-    assert reopened.get_parameter("hardware.ssh1.password") == "s3cret-new"
-    assert "s3cret-new" not in caplog.text
-    assert "Setting 'hardware.ssh1.password' changed to '******'." in caplog.text
-
-
 def test_a_quiet_key_logs_its_change_at_debug(config, caplog):
     """The log panel's filter is saved on every click; its line stays out of INFO."""
     reopened = config

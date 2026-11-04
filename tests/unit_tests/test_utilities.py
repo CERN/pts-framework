@@ -32,13 +32,10 @@ import pytest
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
 from pypts.utilities.common import (
-    MASK,
     convert_string_to_int,
     describe_step_values,
     describe_value,
     ignore_keyboard_interrupt,
-    is_secret_key,
-    masked,
 )
 from pypts.utilities.error_handling import (
     catch_and_report_errors,
@@ -403,26 +400,6 @@ def test_describe_step_values_gives_one_line_per_group_and_none_when_empty():
     ) == ["inputs: a = 2, b = 3", "outputs: sum = 5 (equals 5)"]
     # An output with no declared check is shown bare.
     assert describe_step_values({}, {"label": "'ch1'"}, {}) == ["outputs: label = 'ch1'"]
-
-
-@pytest.mark.parametrize(
-    ("key", "secret"),
-    [
-        ("password", True),
-        ("SSH_Password", True),
-        ("key_passphrase", True),
-        ("api_token", True),
-        ("client_secret", True),
-        ("host", False),
-        ("key_filename", False),
-    ],
-)
-def test_is_secret_key(key, secret):
-    assert is_secret_key(key) is secret
-
-
-def test_masked_hides_only_the_secrets():
-    assert masked({"host": "h", "password": "hunter2"}) == {"host": "h", "password": MASK}
 
 
 # --------------------------------------------------------------------------

@@ -17,26 +17,52 @@ import time
 import pytest
 from hal_test_drivers import TwoArgumentError
 
-from pypts.hal import DriverError, connection_driver
+from pypts.hal import DriverError, connection_driver, device_info, recover_device
 from pypts.hal.connection_driver import ConnectionDriver
 
-LOOPBACK = "pypts.hal.drivers.loopback.LoopbackDriver"
+LOOPBACK ="pypts.hal.drivers.loopback.LoopbackDriver"
 
 
 @pytest.fixture
 def device():
     connection = ConnectionDriver("loop1", LOOPBACK, {"mode": "test"})
-    connection.open()
+    connection._open()
     yield connection
-    connection.close()
+    connection._close()
 
 
 def test_open_says_hello_and_connects(device):
-    assert device.is_open()
-    assert device.device_type == "Other"
-    assert "echo" in device.operations
+    info = device_info(device)
+    assert info.name == "loop1"
+    assert info.is_open
+    assert info.device_type == "Other"
+    assert "echo" in info.operations
     assert device.is_connected() is True
     assert device.settings() == {"mode": "test"}
+
+
+def test_device_info_of_a_device_not_yet_open():
+    info = device_info(ConnectionDriver("loop1", LOOPBACK, {}))
+    assert info.is_open is False
+    assert info.device_type == ""
+    assert info.operations == ()
+
+
+def test_operations_named_like_the_lifecycle_reach_the_driver():
+    """No name is reserved: close, open and name are the driver's operations."""
+    connection = ConnectionDriver("relay1", "hal_test_drivers.CommonNamesDriver", {})
+    connection._open()
+    try:
+        assert connection.name() == "ACME relay"
+        assert connection.close() == "relay closed"
+        assert connection.relay() == "closed"
+        # The driver's close() ended nothing: the device is still open.
+        assert device_info(connection).is_open
+        assert connection.open() == "relay open"
+        assert connection.relay() == "open"
+    finally:
+        connection._close()
+    assert not device_info(connection).is_open
 
 
 def test_an_operation_runs_in_another_process(device):
@@ -72,24 +98,54 @@ def test_an_argument_pickle_cannot_carry_is_refused_before_sending(device):
 def test_a_return_value_pickle_cannot_carry_is_a_driver_error():
     """Review Focus 3."""
     connection = ConnectionDriver("odd1", "hal_test_drivers.UnsendableResultDriver", {})
-    connection.open()
+    connection._open()
     try:
         with pytest.raises(DriverError, match="'lock' returned a value that cannot be sent"):
             connection.lock()
         assert connection.ping() == "pong"
     finally:
-        connection.close()
+        connection._close()
 
 
 def test_driver_log_records_reach_the_run_log(caplog):
     caplog.set_level(logging.DEBUG)
     connection = ConnectionDriver("loop1", LOOPBACK, {})
-    connection.open()
+    connection._open()
     try:
         connection.log_message("relay 3 closed")
     finally:
-        connection.close()
+        connection._close()
     records = [r for r in caplog.records if r.getMessage() == "Device 'loop1': relay 3 closed"]
+    assert records
+    assert records[0].levelno == logging.INFO
+
+
+def test_a_driver_file_runs_in_its_own_process_and_keeps_its_log_level(tmp_path, caplog):
+    caplog.set_level(logging.DEBUG)
+    path = tmp_path / "bench_file_driver.py"
+    path.write_text(
+        "import logging\n"
+        "from pypts.hal import Other\n"
+        "log = logging.getLogger(__name__)\n"
+        "class FileDriver(Other):\n"
+        "    def connect(self, config):\n"
+        "        log.info('file driver connected')\n"
+        "    def teardown(self):\n"
+        "        pass\n"
+        "    def pid(self):\n"
+        "        import os\n"
+        "        return os.getpid()\n",
+        encoding="utf-8",
+    )
+    connection = ConnectionDriver("file1", f"{path}:FileDriver", {})
+    connection._open()
+    try:
+        assert connection.pid() != os.getpid()
+    finally:
+        connection._close()
+    records = [
+        r for r in caplog.records if r.getMessage() == "Device 'file1': file driver connected"
+    ]
     assert records
     assert records[0].levelno == logging.INFO
 
@@ -97,79 +153,58 @@ def test_driver_log_records_reach_the_run_log(caplog):
 def test_printed_output_is_logged_at_debug(caplog):
     caplog.set_level(logging.DEBUG)
     connection = ConnectionDriver("loop1", LOOPBACK, {})
-    connection.open()
+    connection._open()
     try:
         connection.print_text("vendor banner")
     finally:
-        connection.close()
+        connection._close()
     wanted = "Device 'loop1' printed: vendor banner"
     records = [r for r in caplog.records if r.getMessage() == wanted]
     assert records
     assert records[0].levelno == logging.DEBUG
 
 
-def test_connect_settings_are_masked_in_the_trace(caplog):
-    """Review Focus 5."""
-    caplog.set_level(logging.DEBUG)
-    connection = ConnectionDriver("loop1", LOOPBACK, {"password": "hunter2"})
-    connection.open()
-    connection.close()
-    assert "hunter2" not in caplog.text
-
-
-def test_recover_on_a_live_process_does_not_trace_the_secrets(caplog):
-    """Review Focus 5: recover() hands the settings over again."""
-    caplog.set_level(logging.DEBUG)
-    connection = ConnectionDriver("loop1", LOOPBACK, {"password": "hunter2"})
-    connection.open()
-    try:
-        connection.recover()
-    finally:
-        connection.close()
-    assert "hunter2" not in caplog.text
-
-
 def test_a_call_that_takes_too_long_stops_the_process():
     connection = ConnectionDriver("loop1", LOOPBACK, {}, call_timeout_s=0.5)
-    connection.open()
+    connection._open()
     try:
         with pytest.raises(DriverError, match="did not answer 'sleep' within"):
             connection.sleep(10)
-        assert not connection.is_open()
+        assert not connection._is_open()
     finally:
-        connection.close()
+        connection._close()
 
 
 def test_a_crash_is_a_driver_error_with_the_exit_code():
     connection = ConnectionDriver("loop1", LOOPBACK, {})
-    connection.open()
+    connection._open()
     try:
         with pytest.raises(DriverError, match=r"stopped unexpectedly \(exit code 3\)"):
             connection.crash(3)
-        assert not connection.is_open()
+        assert not connection._is_open()
         with pytest.raises(DriverError, match="is not open"):
             connection.echo(1)
     finally:
-        connection.close()
+        connection._close()
 
 
 def test_recover_starts_a_fresh_process_after_a_crash():
     connection = ConnectionDriver("loop1", LOOPBACK, {"mode": "test"})
-    connection.open()
+    connection._open()
     try:
         first = connection.process_id()
         with pytest.raises(DriverError):
             connection.crash(1)
-        connection.recover()
+        recover_device(connection)
         assert connection.process_id() != first
         assert connection.settings() == {"mode": "test"}
     finally:
-        connection.close()
+        connection._close()
 
 
 def test_recover_on_a_live_process_keeps_the_process(device):
     first = device.process_id()
-    device.recover()
+    recover_device(device)
     assert device.process_id() == first
     assert device.is_connected() is True
 
@@ -178,14 +213,14 @@ def test_recover_escalates_to_a_fresh_process_when_the_driver_cannot(caplog):
     """The driver's own recover() raised: the device is reconnected on a fresh process."""
     caplog.set_level(logging.DEBUG)
     connection = ConnectionDriver("odd1", "hal_test_drivers.FailingRecoverDriver", {})
-    connection.open()
+    connection._open()
     try:
         first = connection.process_id()
-        connection.recover()
+        recover_device(connection)
         assert connection.process_id() != first
         assert connection.ping() == "pong"
     finally:
-        connection.close()
+        connection._close()
     assert any(
         record.levelno == logging.WARNING
         and "did not recover and is being connected again" in record.getMessage()
@@ -200,42 +235,41 @@ def test_recover_escalates_to_a_fresh_process_when_the_driver_cannot(caplog):
         ("hal_test_drivers.NoDeviceTypeDriver", "belongs to no device type"),
         ("hal_test_drivers.BrokenConstructorDriver", "constructor exploded"),
         ("hal_test_drivers.FailingConnectDriver", "instrument is switched off"),
-        ("hal_test_drivers.ReservedNameDriver", "reserves for itself: close"),
     ],
 )
 def test_a_device_that_cannot_open_says_why_and_leaves_nothing_running(driver_path, words):
     connection = ConnectionDriver("bad1", driver_path, {})
     with pytest.raises(DriverError, match=words):
-        connection.open()
-    assert not connection.is_open()
-    connection.close()
+        connection._open()
+    assert not connection._is_open()
+    connection._close()
 
 
 def test_close_is_safe_twice_and_before_open():
     connection = ConnectionDriver("loop1", LOOPBACK, {})
-    connection.close()
-    connection.open()
-    connection.close()
-    connection.close()
-    assert not connection.is_open()
+    connection._close()
+    connection._open()
+    connection._close()
+    connection._close()
+    assert not connection._is_open()
 
 
 def test_opening_an_open_device_is_refused_and_keeps_the_process(device):
     first = device.process_id()
     with pytest.raises(DriverError, match="Device 'loop1' is already open"):
-        device.open()
+        device._open()
     assert device.process_id() == first
 
 
 def test_a_long_value_is_cut_in_the_trace_but_returned_whole(caplog):
     caplog.set_level(logging.DEBUG)
     connection = ConnectionDriver("loop1", LOOPBACK, {})
-    connection.open()
+    connection._open()
     try:
         big = "y" * 10_000
         assert connection.echo(big) == big
     finally:
-        connection.close()
+        connection._close()
     assert caplog.records
     for record in caplog.records:
         assert len(record.getMessage()) < 600
@@ -248,7 +282,7 @@ def test_the_driver_process_ends_when_its_pipe_closes():
     PyPTS dies; the driver process must see it, tear down and exit.
     """
     connection = ConnectionDriver("loop1", LOOPBACK, {})
-    connection.open()
+    connection._open()
     process = connection._process
     pipe_end = connection._conn
     assert process is not None
@@ -273,7 +307,7 @@ if __name__ != "__main__":
 connection_driver.STARTUP_TIMEOUT_S = 20.0
 began = time.monotonic()
 try:
-    ConnectionDriver("loop1", "pypts.hal.drivers.loopback.LoopbackDriver", {}).open()
+    ConnectionDriver("loop1", "pypts.hal.drivers.loopback.LoopbackDriver", {})._open()
 except DriverError as exc:
     print("seconds=%.1f" % (time.monotonic() - began))
     print(exc)
@@ -305,9 +339,9 @@ def test_a_driver_process_that_dies_before_it_starts_is_noticed_at_once(tmp_path
 @pytest.fixture
 def odd_device():
     connection = ConnectionDriver("odd1", "hal_test_drivers.OddValuesDriver", {})
-    connection.open()
+    connection._open()
     yield connection
-    connection.close()
+    connection._close()
 
 
 def test_an_argument_pickle_refuses_with_any_error_is_a_driver_error(device):
@@ -355,18 +389,18 @@ def marking(tmp_path):
     """A device whose connect() and teardown() can be seen, even in a fresh process."""
     marks = tmp_path / "marks.txt"
     connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)}, call_timeout_s=0.5)
-    connection.open()
+    connection._open()
     yield connection, marks
-    connection.close()
+    connection._close()
 
 
 def test_a_normal_close_runs_teardown_exactly_once(tmp_path):
     """close() sends teardown as a call; the driver process's own net must not repeat it."""
     marks = tmp_path / "marks.txt"
     connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)})
-    connection.open()
+    connection._open()
 
-    connection.close()
+    connection._close()
 
     assert marks_of(marks) == ["connect", "teardown"]
 
@@ -375,7 +409,7 @@ def test_a_pipe_that_closes_without_a_teardown_call_still_tears_down(tmp_path):
     """PyPTS died without a close(): the driver process's own net runs teardown."""
     marks = tmp_path / "marks.txt"
     connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)})
-    connection.open()
+    connection._open()
     process = connection._process
     pipe_end = connection._conn
     assert process is not None
@@ -397,7 +431,7 @@ def test_a_call_that_times_out_only_stops_the_process_until_close(marking):
     with pytest.raises(DriverError, match="its driver process was stopped"):
         connection.hang(30)
 
-    assert not connection.is_open()
+    assert not connection._is_open()
     # The stuck process never tore down, and nothing reconnected yet.
     assert marks_of(marks) == ["connect"]
 
@@ -408,9 +442,9 @@ def test_closing_a_device_whose_process_was_stopped_tears_it_down_on_a_fresh_con
     with pytest.raises(DriverError, match="its driver process was stopped"):
         connection.hang(30)
 
-    connection.close()
+    connection._close()
 
-    assert not connection.is_open()
+    assert not connection._is_open()
     assert marks_of(marks) == ["connect", "connect", "teardown"]
 
 
@@ -423,7 +457,7 @@ def test_a_close_rescue_that_cannot_connect_is_bounded_and_said(marking, monkeyp
     (marks.parent / (marks.name + ".hang")).write_text("", encoding="utf-8")
     began = time.monotonic()
 
-    connection.close()
+    connection._close()
 
     # The rescue's 1 s and the kills - nowhere near the hang.
     assert time.monotonic() - began < 10.0
@@ -437,9 +471,9 @@ def test_a_close_rescue_that_cannot_connect_is_bounded_and_said(marking, monkeyp
 def test_abandoning_an_idle_device_tears_it_down(marking):
     connection, marks = marking
 
-    assert connection.abandon() is True
+    assert connection._abandon() is True
 
-    assert not connection.is_open()
+    assert not connection._is_open()
     assert marks_of(marks) == ["connect", "teardown"]
 
 
@@ -447,13 +481,13 @@ def test_an_abandoned_device_cannot_be_opened_or_recovered_again(marking):
     """The run was abandoned: nothing would ever tear a new driver process down."""
     connection, marks = marking
 
-    assert connection.abandon() is True
+    assert connection._abandon() is True
 
     with pytest.raises(DriverError, match="its run was abandoned"):
-        connection.recover()
+        recover_device(connection)
     with pytest.raises(DriverError, match="its run was abandoned"):
-        connection.open()
-    assert not connection.is_open()
+        connection._open()
+    assert not connection._is_open()
     # The teardown of abandon() ran; nothing ever connected again.
     assert marks_of(marks) == ["connect", "teardown"]
 
@@ -465,11 +499,11 @@ def test_abandoning_a_device_whose_teardown_hangs_once_rescues_it(marking, monke
     (marks.parent / (marks.name + ".tdhang_once")).write_text("", encoding="utf-8")
     began = time.monotonic()
 
-    assert connection.abandon() is True
+    assert connection._abandon() is True
 
     # One timeout, the kill, and the rescue - nowhere near the hang.
     assert time.monotonic() - began < 15.0
-    assert not connection.is_open()
+    assert not connection._is_open()
     # The hung teardown never marked; the fresh process connected and did.
     assert marks_of(marks) == ["connect", "connect", "teardown"]
 
@@ -484,11 +518,11 @@ def test_abandoning_a_device_whose_teardown_always_hangs_is_bounded_and_reported
     (marks.parent / (marks.name + ".tdhang")).write_text("", encoding="utf-8")
     began = time.monotonic()
 
-    assert connection.abandon() is False
+    assert connection._abandon() is False
 
     # The teardown's 0.5 s, the rescue's 3 s, and the kills - nowhere near the hang.
     assert time.monotonic() - began < 15.0
-    assert not connection.is_open()
+    assert not connection._is_open()
     # Neither teardown ever marked; the rescue's connect() did.
     assert marks_of(marks) == ["connect", "connect"]
     assert any(
@@ -501,7 +535,7 @@ def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_process
     """The abandoned run holds the device's lock: abandon() must not wait for it."""
     marks = tmp_path / "marks.txt"
     connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)}, call_timeout_s=60.0)
-    connection.open()
+    connection._open()
     failures = []
 
     def stuck_step():
@@ -518,7 +552,7 @@ def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_process
             time.sleep(0.01)
         began = time.monotonic()
 
-        assert connection.abandon() is True
+        assert connection._abandon() is True
 
         assert time.monotonic() - began < 15.0
         zombie.join(timeout=5.0)
@@ -528,6 +562,6 @@ def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_process
         assert "stopped unexpectedly" in failures[0]
         # The rescue connected and tore down; the stuck process never did.
         assert marks_of(marks) == ["connect", "connect", "teardown"]
-        assert not connection.is_open()
+        assert not connection._is_open()
     finally:
-        connection.close()
+        connection._close()

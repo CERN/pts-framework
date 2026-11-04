@@ -8,7 +8,9 @@ test_hal_connection.py.
 """
 
 import importlib
+import sys
 import threading
+from pathlib import Path
 from typing import ClassVar
 
 import pytest
@@ -27,11 +29,18 @@ from pypts.hal import (
 )
 from pypts.hal import local_setup as local_setup_module
 from pypts.hal.base_driver import LIFECYCLE_METHODS, operations_of
-from pypts.hal.connection_driver import ERROR, RESULT, answer, load_driver_class
+from pypts.hal.connection_driver import (
+    DRIVER_FILE_MODULE_PREFIX,
+    ERROR,
+    RESULT,
+    answer,
+    driver_module_name,
+    load_driver_class,
+    split_driver_file,
+)
 from pypts.hal.device_types import DEVICE_TYPE_NAMES, DEVICE_TYPES
 from pypts.hal.drivers.loopback import LoopbackDriver
 from pypts.hal.local_setup import (
-    DEFAULT_CALL_TIMEOUT_S,
     abandon_active_setup,
     bench_sections,
     ini_device_sections,
@@ -106,16 +115,15 @@ def test_device_type_verbs_are_abstract():
         "set_voltage",
     ]
     assert operations_of(DMM) == [
-        "measure_ac_voltage",
-        "measure_dc_current",
-        "measure_dc_voltage",
-        "measure_resistance",
+        "configure_waveform_acquisition",
+        "get_frequency",
+        "measure_point",
+        "read_waveform",
     ]
     assert operations_of(Scope) == [
-        "arm_single",
+        "configure_waveform_acquisition",
+        "measure_point",
         "read_waveform",
-        "set_timebase",
-        "set_vertical_scale",
     ]
     assert operations_of(Load) == [
         "input_off",
@@ -154,12 +162,80 @@ def test_load_driver_class_finds_a_driver():
         ("pypts.hal.drivers.loopback.Nope", "has no class 'Nope'"),
         ("pypts.hal.base_driver.DriverError", "is not a driver"),
         ("pypts.hal.base_driver.BaseDriver", "belongs to no device type"),
-        ("hal_test_drivers.ReservedNameDriver", "reserves for itself: close"),
     ],
 )
 def test_load_driver_class_explains_a_bad_path(dotted, words):
     with pytest.raises(ValueError, match=words):
         load_driver_class(dotted)
+
+
+FILE_DRIVER_SOURCE = """
+import logging
+
+from pypts.hal import Other
+
+log = logging.getLogger(__name__)
+
+
+class FileDriver(Other):
+    def connect(self, config):
+        log.info("file driver connected")
+
+    def teardown(self):
+        pass
+
+    def module_name(self):
+        return __name__
+"""
+
+
+@pytest.fixture
+def driver_file(tmp_path):
+    """A driver in a file of its own, outside every package; its module is forgotten after."""
+    path = tmp_path / "bench_file_driver.py"
+    path.write_text(FILE_DRIVER_SOURCE, encoding="utf-8")
+    yield path
+    sys.modules.pop(DRIVER_FILE_MODULE_PREFIX + "bench_file_driver", None)
+
+
+def test_load_driver_class_loads_a_driver_file(driver_file):
+    found = load_driver_class(f"{driver_file}:FileDriver")
+    assert found.DEVICE_TYPE == "Other"
+    assert found().module_name() == DRIVER_FILE_MODULE_PREFIX + "bench_file_driver"
+
+
+@pytest.mark.parametrize(
+    ("spelling", "words"),
+    [
+        ("{folder}/missing.py:FileDriver", "does not exist"),
+        ("{file}:Nope", "has no class 'Nope'"),
+        ("{file}", "names a file but no class"),
+    ],
+)
+def test_load_driver_class_explains_a_bad_driver_file(driver_file, spelling, words):
+    driver_path = spelling.format(folder=driver_file.parent, file=driver_file)
+    with pytest.raises(ValueError, match=words):
+        load_driver_class(driver_path)
+
+
+@pytest.mark.parametrize(
+    ("driver_path", "expected"),
+    [
+        ("C:\\bench\\acme_psu.py:AcmePsuDriver", ("C:\\bench\\acme_psu.py", "AcmePsuDriver")),
+        ("drivers/acme_psu.py:AcmePsuDriver", ("drivers/acme_psu.py", "AcmePsuDriver")),
+        ("bench_drivers.acme_psu.AcmePsuDriver", None),
+        ("C:\\bench\\acme_psu.py", None),
+    ],
+)
+def test_split_driver_file_keeps_the_drive_letter_in_the_file(driver_path, expected):
+    assert split_driver_file(driver_path) == expected
+
+
+def test_driver_module_name_follows_the_spelling():
+    assert driver_module_name("bench_drivers.acme_psu.AcmePsuDriver") == "bench_drivers.acme_psu"
+    assert driver_module_name("C:/bench/acme_psu.py:AcmePsuDriver") == (
+        DRIVER_FILE_MODULE_PREFIX + "acme_psu"
+    )
 
 
 def test_answer_runs_an_operation():
@@ -192,21 +268,20 @@ class _FakeConnection:
 
     made: ClassVar[list["_FakeConnection"]] = []
 
-    def __init__(self, name, driver_path, settings, *, call_timeout_s):
+    def __init__(self, name, driver_path, settings):
         self.name = name
         self.driver_path = driver_path
         self.settings = settings
-        self.call_timeout_s = call_timeout_s
         self.events: list[str] = []
         _FakeConnection.made.append(self)
 
-    def open(self):
+    def _open(self):
         self.events.append("open")
 
-    def close(self):
+    def _close(self):
         self.events.append("close")
 
-    def abandon(self, time_limit_s):
+    def _abandon(self, time_limit_s):
         self.events.append("abandon")
         self.abandon_time_limits = getattr(self, "abandon_time_limits", [])
         self.abandon_time_limits.append(time_limit_s)
@@ -221,37 +296,28 @@ def fake_connections(monkeypatch):
 
 
 SECTIONS = {
-    "ssh1": {"driver": "pkg.Ssh", "host": "h", "call_timeout_s": "5"},
+    "ssh1": {"driver": "pkg.Ssh", "host": "h"},
     "loop1": {"driver": "pkg.Loop"},
 }
 
 
-def test_split_section_separates_framework_keys_from_driver_keys():
-    driver_path, call_timeout_s, settings = split_section(
+def test_split_section_separates_the_driver_key_from_driver_keys():
+    driver_path, settings = split_section(
         "ssh1", {"driver": " pkg.Ssh ", "host": "h", "port": 22}
     )
     assert driver_path == "pkg.Ssh"
-    assert call_timeout_s == DEFAULT_CALL_TIMEOUT_S
     assert settings == {"host": "h", "port": "22"}
 
 
-def test_split_section_reads_the_call_timeout():
-    _, call_timeout_s, settings = split_section("x", {"driver": "pkg.X", "call_timeout_s": "2.5"})
-    assert call_timeout_s == 2.5
-    assert settings == {}
+def test_a_call_timeout_key_is_the_drivers_like_any_other():
+    """The call timeout is fixed (CALL_TIMEOUT_S); bench.ini does not set it."""
+    _, settings = split_section("x", {"driver": "pkg.X", "call_timeout_s": "2.5"})
+    assert settings == {"call_timeout_s": "2.5"}
 
 
-@pytest.mark.parametrize(
-    ("section", "words"),
-    [
-        ({"host": "h"}, "has no 'driver' key"),
-        ({"driver": "pkg.X", "call_timeout_s": "soon"}, "positive number of seconds"),
-        ({"driver": "pkg.X", "call_timeout_s": "0"}, "positive number of seconds"),
-    ],
-)
-def test_split_section_explains_a_bad_section(section, words):
-    with pytest.raises(DriverError, match=words):
-        split_section("x", section)
+def test_split_section_explains_a_section_without_a_driver():
+    with pytest.raises(DriverError, match="has no 'driver' key"):
+        split_section("x", {"host": "h"})
 
 
 def test_the_removed_python_key_is_refused():
@@ -268,6 +334,44 @@ def test_ini_device_sections_reads_every_section_as_a_device(tmp_path):
         "loop1": {"driver": "pkg.Loop"},
         "dmm1": {"driver": "pkg.Dmm"},
     }
+
+
+def test_ini_device_sections_anchors_a_relative_driver_file_to_the_ini_folder(tmp_path):
+    path = tmp_path / "setup.ini"
+    path.write_text(
+        "[psu1]\ndriver = drivers/acme_psu.py:AcmePsuDriver\n"
+        "[psu2]\ndriver = ~/acme_psu.py:AcmePsuDriver\n"
+        "[loop1]\ndriver = pkg.Loop\n",
+        encoding="utf-8",
+    )
+    sections = ini_device_sections(path)
+    assert sections["psu1"]["driver"] == f"{tmp_path / 'drivers' / 'acme_psu.py'}:AcmePsuDriver"
+    assert sections["psu2"]["driver"] == (
+        f"{Path('~').expanduser() / 'acme_psu.py'}:AcmePsuDriver"
+    )
+    assert sections["loop1"]["driver"] == "pkg.Loop"
+
+
+def test_bench_sections_anchors_a_relative_driver_file_to_the_bench_folder(monkeypatch, tmp_path):
+    bench_module = importlib.import_module("pypts.config_handler.bench_config")
+    from pypts.config_handler import BenchConfig, BenchOutcome
+
+    devices = {"psu1": {"driver": "acme_psu.py:AcmePsuDriver", "host": "10.0.0.1"}}
+    monkeypatch.setattr(
+        bench_module,
+        "bench_config",
+        lambda: BenchConfig(
+            devices=devices,
+            outcome=BenchOutcome.LOADED,
+            problem=None,
+            path=tmp_path / "bench.ini",
+        ),
+    )
+
+    assert bench_sections() == {
+        "psu1": {"driver": f"{tmp_path / 'acme_psu.py'}:AcmePsuDriver", "host": "10.0.0.1"}
+    }
+    assert devices["psu1"]["driver"] == "acme_psu.py:AcmePsuDriver"
 
 
 def test_bench_sections_returns_the_devices_of_the_bench_file(monkeypatch):
@@ -320,7 +424,6 @@ def test_a_device_opens_once_and_is_reused(fake_connections):
     assert len(fake_connections) == 1
     assert first.events == ["open"]
     assert first.settings == {"host": "h"}
-    assert first.call_timeout_s == 5.0
 
 
 def test_the_sections_are_read_lazily_and_once(fake_connections):
@@ -358,8 +461,8 @@ def test_close_closes_every_device_newest_first(fake_connections):
     order = []
     ssh = setup.get_device("ssh1")
     loop = setup.get_device("loop1")
-    ssh.close = lambda: order.append("ssh1")
-    loop.close = lambda: order.append("loop1")
+    ssh._close = lambda: order.append("ssh1")
+    loop._close = lambda: order.append("loop1")
     setup.close()
     assert order == ["loop1", "ssh1"]
     setup.close()
@@ -434,7 +537,7 @@ def test_a_device_that_finishes_opening_beside_abandon_is_closed_not_leaked(
         self.events.append("open")
         abandon_active_setup(time_limit_s=0.5)
 
-    monkeypatch.setattr(_FakeConnection, "open", open_and_lose_the_race)
+    monkeypatch.setattr(_FakeConnection, "_open", open_and_lose_the_race)
 
     with pytest.raises(DriverError, match="abandoned"):
         setup.get_device("ssh1")
