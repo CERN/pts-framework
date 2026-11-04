@@ -1,0 +1,740 @@
+<!-- SPDX-FileCopyrightText: 2026 CERN <home.cern> -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS — How to write and integrate a new driver</title>
+<style>
+:root {
+  --bg:       #ffffff;
+  --bg2:      #f5f6f8;
+  --bg3:      #e8eaed;
+  --border:   #d0d4db;
+  --text:     #1a1d23;
+  --text2:    #4a5068;
+  --link:     #0066cc;
+  --link-vis: #5555aa;
+  --code-bg:  #f0f2f5;
+  --code-c:   #c7254e;
+  --pre-bg:   #f0f2f5;
+  --pre-c:    #1a1d23;
+  --mark-bg:  #fff3cd;
+  --th-bg:    #e8eaed;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:       #1a1d23;
+    --bg2:      #22262f;
+    --bg3:      #2c313d;
+    --border:   #3a3f4e;
+    --text:     #dde1ea;
+    --text2:    #9099b0;
+    --link:     #5baeff;
+    --link-vis: #aa88ff;
+    --code-bg:  #2c313d;
+    --code-c:   #ff7070;
+    --pre-bg:   #1e2229;
+    --pre-c:    #dde1ea;
+    --mark-bg:  #3a3000;
+    --th-bg:    #2c313d;
+  }
+}
+*, *::before, *::after { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  padding: 2rem 1rem;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  font-size: 16px;
+  line-height: 1.65;
+}
+.page { max-width: 900px; margin: 0 auto; }
+h1, h2, h3 {
+  color: var(--text);
+  margin: 1.8rem 0 0.5rem;
+  line-height: 1.25;
+  font-weight: 600;
+}
+h1 { font-size: 2rem; border-bottom: 2px solid var(--border); padding-bottom: .4rem; }
+h2 { font-size: 1.5rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+h3 { font-size: 1.2rem; }
+p { margin: .7rem 0; }
+a { color: var(--link); text-decoration: none; }
+a:visited { color: var(--link-vis); }
+a:hover { text-decoration: underline; }
+code {
+  background: var(--code-bg);
+  color: var(--code-c);
+  padding: .1em .35em;
+  border-radius: 3px;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: .9em;
+}
+pre {
+  background: var(--pre-bg);
+  color: var(--pre-c);
+  padding: .9rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+pre code { background: none; color: inherit; padding: 0; font-size: .88em; }
+details { border: 1px solid var(--border); border-radius: 6px; padding: 0 1rem; margin: .8rem 0; }
+details[open] { padding-bottom: .4rem; }
+summary { cursor: pointer; font-size: 1.2rem; font-weight: 600; padding: .6rem 0; }
+/* Python, YAML and shell highlighting, applied by the scripts at the end of the page */
+.py .kw, .yaml .kw, .sh .kw { color: #a626a4; }
+.py .st, .yaml .st, .sh .st { color: #50a14f; }
+.py .cm, .yaml .cm, .sh .cm { color: #8a8f98; font-style: italic; }
+.py .nu, .yaml .nu, .sh .nu { color: #986801; }
+.py .fn, .yaml .fn, .sh .fn { color: #4078f2; }
+.py .bi, .yaml .bi, .sh .bi { color: #b76e00; }
+@media (prefers-color-scheme: dark) {
+  .py .kw, .yaml .kw, .sh .kw { color: #c678dd; }
+  .py .st, .yaml .st, .sh .st { color: #98c379; }
+  .py .cm, .yaml .cm, .sh .cm { color: #7f848e; }
+  .py .nu, .yaml .nu, .sh .nu { color: #d19a66; }
+  .py .fn, .yaml .fn, .sh .fn { color: #61afef; }
+  .py .bi, .yaml .bi, .sh .bi { color: #e5c07b; }
+}
+table { border-collapse: collapse; width: 100%; margin: .8rem 0; }
+th, td { border: 1px solid var(--border); padding: .4rem .7rem; text-align: left; vertical-align: top; }
+th { background: var(--th-bg); }
+.note {
+  background: var(--bg2);
+  border-left: 4px solid var(--link);
+  padding: .6rem 1rem;
+  margin: .9rem 0;
+  border-radius: 0 6px 6px 0;
+}
+.warn {
+  background: var(--mark-bg);
+  border-left: 4px solid #c9a200;
+  padding: .6rem 1rem;
+  margin: .9rem 0;
+  border-radius: 0 6px 6px 0;
+}
+.sub { color: var(--text2); }
+.ai, .ai code { color: #9a7b1c; }
+@media (prefers-color-scheme: dark) { .ai, .ai code { color: #b8a04a; } }
+li { margin: .25rem 0; }
+</style>
+</head>
+<body>
+<div class="page">
+
+<h1>How to write a device driver</h1>
+<p class="sub">PyPTS hardware layer (<code>pypts.hal</code>) — implements multiple 
+instruments. If a device is missing, you still can add it to a test bench. 
+<br><br>
+<span class="ai">If you want to use an AI model to help you writing a driver, give it the context file beside this page:
+<code>how_to_write_a_driver.md</code>.</span></p>
+
+<h2>1. What a driver is</h2>
+<p>A driver is <b>one plain Python class</b> for one kind of instrument: a power supply, a
+multimeter, a remote machine. It knows how to open the connection, do the instrument's verbs,
+and leave the instrument safe. It imports nothing from the framework except its base class,
+and it contains no threading, no queues, no process code.</p>
+<p>PyPTS runs every device's driver in <b>a process of its own</b>, reached over a pipe. A
+driver that crashes, hangs or leaks takes its own process down, not PyPTS. You do not write
+any of that: you write the class below, and the framework does the rest.</p>
+
+<h2>2. Two complete examples</h2>
+<p>Each driver is one Python file of your own, anywhere outside the framework:</p>
+<pre><code>~/bench/             
+  acme_psu.py
+  acme_dmm.py
+</code></pre>
+
+<details>
+<summary>2.1 A power supply</summary>
+<p><code>~/bench/acme_psu.py</code>, reached over TCP (SCPI), standard library only:</p>
+<pre><code class="py">"""Driver for the ACME PS-3000 power supply, reached over TCP (SCPI)."""
+
+import logging
+import socket
+
+from pypts.hal import PSU, DriverError
+
+# setting up logger in this way would allow the framework to see the traces!
+log = logging.getLogger(__name__)
+
+class AcmePsuDriver(PSU):
+    """One ACME PS-3000, one TCP connection."""
+
+    def __init__(self):
+        self._sock = None                         # the socket for connection
+
+    def connect(self, config):
+        host = config["host"]                     
+        port = int(config.get("port", "5025"))
+        try:
+            self._sock = socket.create_connection((host, port), timeout=10)
+        except OSError as exc:                    # one clear error, not a bare socket error
+            raise DriverError("PS-3000 at %s:%d could not be reached: %s" % (host, port, exc))
+        log.info("PS-3000 answered: %s", self._query("*IDN?"))
+
+    def teardown(self):
+        if self._sock is None:
+            return                                # harmless when nothing is open
+        try:
+            self._command("OUTP OFF")             # the instrument is left safe first
+        finally:
+            self._sock.close()
+            self._sock = None
+
+    # --- the PSU verbs ---------------------------------------------------
+
+    def set_voltage(self, channel, volts):
+        self._command("INST OUT%d" % channel)
+        self._command("VOLT %.3f" % volts)
+
+    def set_current_limit(self, channel, amps):
+        self._command("INST OUT%d" % channel)
+        self._command("CURR %.3f" % amps)
+
+    def output_on(self, channel):
+        self._command("INST OUT%d" % channel)
+        self._command("OUTP ON")
+
+    def output_off(self, channel):
+        self._command("INST OUT%d" % channel)
+        self._command("OUTP OFF")
+
+    def measure_voltage(self, channel):
+        self._command("INST OUT%d" % channel)
+        return float(self._query("MEAS:VOLT?"))
+
+    def measure_current(self, channel):
+        self._command("INST OUT%d" % channel)
+        return float(self._query("MEAS:CURR?"))
+
+    # --- the wire, private: not an operation ------------------------------
+
+    def _command(self, text):
+        self._sock.sendall((text + "\n").encode("ascii"))
+
+    def _query(self, text):
+        self._command(text)
+        return self._sock.makefile().readline().strip()
+
+
+# --- standalone check: python acme_psu.py ------------------------------------
+# Runs the driver in this process, without PyPTS and without bench.ini. The dict
+# stands in for the [psu1] section PyPTS would pass to connect(): values as text.
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    psu = AcmePsuDriver()
+    psu.connect({"host": "192.168.0.40", "port": "5025"})
+    try:
+        psu.set_voltage(1, 3.3)
+        psu.output_on(1)
+        print("Channel 1: %.3f V" % psu.measure_voltage(1))
+    finally:
+        psu.teardown()                              # outputs off, connection closed
+</code></pre>
+<p><b>Where <code>config</code> comes from?</b> PyPTS passes the device's <code>bench.ini</code> section (step 3) to <code>connect()</code> 
+  as a dict of strings. The <code>__main__</code> block passes the same dict by hand, so you can test the driver without PyPTS.</p>
+</details>
+<details>
+<summary>2.2 A multimeter</summary>
+<p><code>~/bench/acme_dmm.py</code>, reached over TCP (SCPI), standard library only:</p>
+<pre><code class="py">"""Driver for the ACME DM-100 multimeter, reached over TCP (SCPI)."""
+
+import logging
+import socket
+
+from pypts.hal import DMM, DriverError
+
+# setting up logger in this way would allow the framework to see the traces!
+log = logging.getLogger(__name__)
+
+# The DMM type's function names, in this instrument's SCPI.
+SCPI_FUNCTIONS = {
+    "DC_VOLTS": "VOLT:DC",
+    "AC_VOLTS": "VOLT:AC",
+    "DC_CURRENT": "CURR:DC",
+    "AC_CURRENT": "CURR:AC",
+    "RESISTANCE": "RES",
+}
+
+class AcmeDmmDriver(DMM):
+    """One ACME DM-100, one TCP connection."""
+
+    def __init__(self):
+        self._sock = None                         # the socket for connection
+        self._points = 1
+        self._sample_interval_s = 0.001
+
+    def connect(self, config):
+        host = config["host"]
+        port = int(config.get("port", "5025"))
+        try:
+            self._sock = socket.create_connection((host, port), timeout=5)
+        except OSError as exc:                    # one clear error, not a bare socket error
+            raise DriverError("DM-100 at %s:%d could not be reached: %s" % (host, port, exc))
+        log.info("DM-100 answered: %s", self._query("*IDN?"))
+
+    def teardown(self):
+        if self._sock is None:
+            return                                # harmless when nothing is open
+        try:
+            self._command("*RST")                 # the instrument is left safe first
+        finally:
+            self._sock.close()
+            self._sock = None
+
+    # --- the DMM verbs ---------------------------------------------------
+
+    def configure_waveform_acquisition(self, function, range, sample_rate_hz, points):
+        scpi_function = SCPI_FUNCTIONS[function]          # KeyError names a wrong function
+        self._command("CONF:%s %g" % (scpi_function, range))
+        self._command("SAMP:TIM %g" % (1.0 / sample_rate_hz))
+        self._points = points
+        self._sample_interval_s = 1.0 / sample_rate_hz
+
+    def read_waveform(self):
+        self._command("SAMP:COUN %d" % self._points)
+        samples = [float(value) for value in self._query("READ?").split(",")]
+        return {"x_origin": 0.0, "x_increment": self._sample_interval_s, "samples": samples}
+
+    def measure_point(self):
+        self._command("SAMP:COUN 1")                       # one reading, as configured
+        return float(self._query("READ?"))
+
+    def get_frequency(self):
+        return float(self._query("MEAS:FREQ?"))
+
+    # --- the wire, private: not an operation ------------------------------
+
+    def _command(self, text):
+        self._sock.sendall((text + "\n").encode("ascii"))
+
+    def _query(self, text):
+        self._command(text)
+        return self._sock.makefile().readline().strip()
+
+
+# --- standalone check: python acme_dmm.py ------------------------------------
+# Runs the driver in this process, without PyPTS and without bench.ini. The dict
+# stands in for the [dmm1] section PyPTS would pass to connect(): values as text.
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    dmm = AcmeDmmDriver()
+    dmm.connect({"host": "192.168.0.41", "port": "5025"})
+    try:
+        dmm.configure_waveform_acquisition("DC_VOLTS", 10.0, 1000.0, 100)
+        print("DC voltage: %.4f V" % dmm.measure_point())
+        print("100 samples: %s" % dmm.read_waveform()["samples"])
+    finally:
+        dmm.teardown()                              # instrument reset, connection closed
+</code></pre>
+</details>
+
+<h2>3. Tell PyPTS about the device</h2>
+<p>One bare-named section per device in <code>bench.ini</code>, beside <code>config.ini</code>
+(created empty from a template on first start):</p>
+<table>
+<tr><th>Linux / macOS</th><th>Windows</th></tr>
+<tr><td><code>~/.config/pypts/bench.ini</code></td><td><code>%LOCALAPPDATA%\pypts\bench.ini</code></td></tr>
+</table>
+<p class="note">From the PyPTS GUI: <b>File → Open Config</b> opens <code>config.ini</code> in the
+system's text editor, and hovering the menu entry shows its full path. <code>bench.ini</code> is
+in the same folder. The menu opens only <code>config.ini</code>, not <code>bench.ini</code>.</p>
+<p><code>driver</code> names your file and, after a colon, the class in it:</p>
+<table>
+<tr><th>Linux / macOS</th><th>Windows</th></tr>
+<tr><td><pre><code>[psu1]
+driver = ~/bench/acme_psu.py:AcmePsuDriver
+host = 192.168.0.40
+port = 5025
+
+[dmm1]
+driver = ~/bench/acme_dmm.py:AcmeDmmDriver
+host = 192.168.0.41
+port = 5025</code></pre></td>
+<td><pre><code>[psu1]
+driver = C:\bench\acme_psu.py:AcmePsuDriver
+host = 192.168.0.40
+port = 5025
+
+[dmm1]
+driver = C:\bench\acme_dmm.py:AcmeDmmDriver
+host = 192.168.0.41
+port = 5025</code></pre></td></tr>
+</table>
+<ul>
+<li>The file path may be absolute, start with <code>~</code>, or be relative to the folder
+<code>bench.ini</code> is in (<code>driver = drivers/acme_psu.py:AcmePsuDriver</code>).</li>
+<li>Nothing has to be installed or exported: PyPTS loads the file itself.</li>
+<li><code>driver</code> is read by the framework; <b>every other key goes to your
+<code>connect(config)</code> as text</b> — convert numbers yourself.</li>
+<li>Edits to the config are applied to the application after restarting.</li>
+</ul>
+<p>Test code then reaches the device by its logical name. Save that as <code>dmm_tests.py</code> 
+  beside a recipe, which calls it like any Python step:</p>
+<pre><code class="py">from pypts.hal import get_device
+
+def power_up():
+    psu = get_device("psu1")        # opened on first use, closed when the run ends
+    psu.set_voltage(1, 3.3)
+    psu.output_on(1)
+    return {"vout": psu.measure_voltage(1)}
+
+
+def supply_rail():
+    dmm = get_device("dmm1")
+    dmm.configure_waveform_acquisition("DC_VOLTS", 10.0, 1000.0, 1)
+    return {"v_rail": dmm.measure_point()}
+</code></pre>
+<p>And call it in the recipe</p>
+<pre><code class="yaml">name: DMM check
+description: Reads the 3.3 V rail.
+version: 0.1
+---
+sequence_name: Main
+description: One measurement.
+steps:
+  - steptype: PythonModule
+    step_name: 3V3 rail
+    description: Within 5 %.
+    module: dmm_tests.py
+    method_name: supply_rail
+    outputs:
+      v_rail: {type: range, min: '3.135', max: '3.465'}
+</code></pre>
+
+<h2>4. Several files? Use a package</h2>
+<p>A driver split over several modules lives in a package of your own (any name except
+<code>pypts</code>), named in <code>bench.ini</code> by its dotted path,
+<code>driver = bench_drivers.acme_psu.AcmePsuDriver</code>:</p>
+<pre><code>~/bench/
+  bench_drivers/
+    __init__.py       (empty)
+    acme_psu.py
+    scpi_helpers.py
+</code></pre>
+<p>Python must then be able to import it. Set this in the terminal you start PyPTS from — each
+device's process inherits it:</p>
+<table>
+<tr><th>Linux / macOS</th><th>Windows (PowerShell)</th></tr>
+<tr><td><pre><code class="sh">export PYTHONPATH=~/bench</code></pre></td>
+<td><pre><code class="sh">$env:PYTHONPATH = "C:\bench"</code></pre></td></tr>
+</table>
+<p>To make it permanent, add the line to <code>~/.bashrc</code> on Linux or run
+<code class="sh">setx PYTHONPATH C:\bench</code> on Windows.</p>
+
+<h2>5. The rules</h2>
+
+<h3>5.1 Derive from a device type, never from BaseDriver</h3>
+<p>Import the type from <code>pypts.hal</code>: <code>PSU</code>, <code>DMM</code>,
+<code>Scope</code>, <code>Load</code>, <code>SSH</code>, or <code>Other</code> for anything
+else. A driver that derives from <code>BaseDriver</code> directly is refused at open.</p>
+<p><b>Why:</b> every power supply should be driven the same way. The type fixes the method names
+every driver of that kind must have, so <code>psu.set_voltage(1, 3.3)</code> works regardless. Swap the instrument by changing <code>driver =</code> in
+<code>bench.ini</code>; the test code and recipes stay as they are. A driver that leaves out a
+verb of its type cannot be opened.</p>
+<p>The verbs each type requires:</p>
+<table>
+<tr><th>Type</th><th>Verbs</th></tr>
+<tr><td><code>PSU</code></td><td><code>set_voltage</code>, <code>set_current_limit</code>,
+<code>output_on</code>, <code>output_off</code>, <code>measure_voltage</code>,
+<code>measure_current</code> (channel counts from 1)</td></tr>
+<tr><td><code>DMM</code></td><td><code>configure_waveform_acquisition(function, range,
+sample_rate_hz, points)</code> — function <code>DC_VOLTS</code>, <code>AC_VOLTS</code>,
+<code>DC_CURRENT</code>, <code>AC_CURRENT</code> or <code>RESISTANCE</code>;
+<code>read_waveform()</code>; <code>measure_point()</code> — one reading, however the meter is
+configured; <code>get_frequency()</code></td></tr>
+<tr><td><code>Scope</code></td><td><code>configure_waveform_acquisition(channel,
+volts_per_division, seconds_per_division, points)</code>; <code>read_waveform(channel)</code>;
+<code>measure_point(channel)</code> (channel counts from 1)</td></tr>
+<tr><td><code>Load</code></td><td><code>set_mode</code> (CC/CV/CR/CP), <code>set_level</code>,
+<code>input_on</code>, <code>input_off</code>, <code>measure_voltage</code>,
+<code>measure_current</code></td></tr>
+<tr><td><code>SSH</code></td><td><code>execute</code>, <code>put_file</code>, <code>get_file</code></td></tr>
+<tr><td><code>Other</code></td><td>none — every public method you add is the interface</td></tr>
+</table>
+<p>A type's verbs are abstract and mandatory — a driver that omits one fails at open with a
+<code>TypeError</code> naming it.</p>
+
+<h3>5.2 Implement the lifecycle</h3>
+<ul>
+<li><code>connect(config)</code> — open the connection the section describes. All values are
+text. Raise when the instrument cannot be reached: the device then fails at open with your
+message.</li>
+<li><code>teardown()</code> — <b>where the instrument is left safe</b>: outputs and loads off,
+then disconnect. There is no separate safe-state method. Teardown runs at every end of a
+device — a normal close, PyPTS dying, or on a fresh connection when your driver was stuck —
+so it must work right after <code>connect()</code> on an instrument in any state, and be
+harmless when nothing is open. The framework runs it exactly once per connection, never
+twice.</li>
+<li><code>recover(config)</code> — optional. The default is teardown + connect; override it
+when the instrument has a cheaper reset. Test code triggers it with
+<code class="py">recover_device(device)</code> (from <code>pypts.hal</code>); the framework
+never recovers on its own.</li>
+</ul>
+
+<h3>5.3 Logging and printing</h3>
+<p>Log with <code>logging.getLogger(__name__)</code>. Your driver's records keep their level
+in the PyPTS run log, prefixed <code>Device 'psu1': ...</code> — INFO and above reaches the
+technician's panel, so log at INFO what an operator should see and keep the chatter at DEBUG.
+Of course, use WARNING and ERROR levels as you see fit.</p>
+
+<h3>5.4 Vendor libraries</h3>
+<p>Import the vendor library at the top of the module, and turn a missing one into a message
+that names what to install:</p>
+<pre><code class="py">try:
+    import pyvisa
+except ImportError as exc:
+    raise ImportError(
+        "AcmeScopeDriver needs pyvisa; install it with 'pip install pyvisa'."
+    ) from exc
+</code></pre>
+<p>The shipped <code>pypts.hal.drivers.ssh.SshDriver</code> shows the pattern;
+<code>pypts.hal.drivers.weather.OpenMeteoDriver</code> is a driver that needs no vendor
+library at all and turns every failure of its far end into one clear error.</p>
+
+<h3>5.5 Do not start processes</h3>
+<p>The driver process is a daemon, and a daemon cannot have children: do not use
+<code>multiprocessing</code> inside a driver. Threads are allowed, but anything they log
+between calls is delivered with the next call, not immediately.</p>
+
+<h2>6. What the framework does for you</h2>
+<table>
+<tr><th>Situation</th><th>What happens</th></tr>
+<tr><td>Driver raises</td><td>Test code gets <code>DriverError("Device 'psu1': 'set_voltage'
+failed: ...")</code> with your message; the device stays usable; the traceback is in the log
+at DEBUG.</td></tr>
+<tr><td>A call takes longer than 30&nbsp;s</td><td>The stuck driver process is killed
+and the call raises. The instrument keeps its state until the device is closed — then a fresh
+process connects and runs <code>teardown()</code> (the rescue) — or until test code calls
+<code>recover_device(device)</code>.</td></tr>
+<tr><td>The driver process crashes</td><td><code>DriverError("Device 'psu1' stopped
+unexpectedly (exit code N).")</code>; <code>recover_device(device)</code> brings it back on a fresh
+process.</td></tr>
+<tr><td>The run ends, in any way</td><td>Every opened device is closed, newest first:
+<code>teardown()</code> on the live process, or on a fresh connection when the process was
+stuck or gone. A device that still cannot be torn down is an ERROR naming it
+(<code>... may still be energised</code>).</td></tr>
+<tr><td>PyPTS dies</td><td>The pipe closes and the driver process runs <code>teardown()</code>
+itself before exiting — unless it is stuck in a call.</td></tr>
+<tr><td>The run is abandoned (Stop gave up on its thread)</td><td>Every opened device is torn
+down on one 16&nbsp;s shared deadline, newest first, and then cannot be opened or
+recovered again.</td></tr>
+<tr><td><code>bench.ini</code> was discarded at startup</td><td>Every
+<code>get_device()</code> fails with the discarded-bench <code>DriverError</code> until the
+file is fixed and PyPTS restarted.</td></tr>
+</table>
+<div class="warn"><b>The one net you provide:</b> everything above funnels into your
+<code>teardown()</code>. If it does not reliably switch the outputs off, nothing else
+will.</div>
+
+<h2>7. Testing the driver</h2>
+<ul>
+<li><b>In-process, vendor library mocked</b> — build the class directly and call its methods;
+see <code>tests/unit_tests/test_hal_ssh.py</code>.</li>
+<li><b>Through a real driver process</b> — build
+<code>ConnectionDriver("x", "my_module.MyDriver", {...})</code>, open it with its
+<code>_open()</code> and call it; see
+<code>tests/unit_tests/test_hal_connection.py</code> and the loopback driver it uses.</li>
+<li><b>On the bench, outside PyPTS</b> — a plain script can use the same devices. The INI
+file given to <code>from_ini()</code> uses <code>bench.ini</code>'s format: one bare-named
+section per device, e.g. <code>[psu1]</code>.
+<pre><code class="py">from pypts.hal import LocalSetup, get_device
+
+if __name__ == "__main__":                 # required: spawn re-imports this file
+    with LocalSetup.from_ini("bench.ini"):
+        print(get_device("psu1").measure_voltage(1))
+</code></pre>
+Without the <code>__main__</code> guard every driver process re-runs the script and dies at
+once with <code>stopped unexpectedly (exit code 1)</code>.</li>
+</ul>
+
+<h2>8. Checklist</h2>
+<ul>
+<li>☐ Derives from <code>PSU</code> / <code>DMM</code> / <code>Scope</code> /
+<code>Load</code> / <code>SSH</code> / <code>Other</code>, not <code>BaseDriver</code>.</li>
+<li>☐ <code>connect(config)</code> treats every value as text and raises a clear error when
+the instrument is unreachable.</li>
+<li>☐ <code>teardown()</code> leaves the instrument safe, works right after
+<code>connect()</code>, and is harmless when nothing is open.</li>
+<li>☐ The wire protocol is in <code>_private</code> helpers.</li>
+<li>☐ Arguments and return values are picklable.</li>
+<li>☐ Logs through <code>logging.getLogger(__name__)</code>; operator-relevant lines at INFO.</li>
+<li>☐ Vendor import at the top of the module, with the extra to install named.</li>
+<li>☐ No <code>multiprocessing</code> inside the driver.</li>
+<li>☐ <code>driver =</code> names the file and class (<code>~/bench/acme_psu.py:AcmePsuDriver</code>), or a package importable on the bench.</li>
+<li>☐ A <code>[&lt;name&gt;]</code> section exists in <code>bench.ini</code> and the demo
+recipe or a standalone script talks to the instrument.</li>
+</ul>
+
+<p class="sub">This guide mirrors <code>src/pypts/hal/hal.md</code> (<i>Writing a driver</i>);
+when the hardware layer changes, both change.</p>
+
+</div>
+<script>
+// Colours the Python examples. No library: one regular expression, one pass.
+(function () {
+  var KEYWORDS = ["and", "as", "class", "def", "elif", "else", "except", "finally", "for",
+    "from", "if", "import", "in", "is", "not", "or", "pass", "raise", "return", "try",
+    "while", "with"];
+  var BUILTINS = ["None", "True", "False", "self", "print", "float", "int", "str", "dict",
+    "list", "bool", "super"];
+  var TOKEN = /(#[^\n]*)|("""[\s\S]*?"""|'''[\s\S]*?'''|"(?:\.|[^"\\n])*"|'(?:\.|[^'\\n])*')|\b(\d+(?:\.\d+)?)\b|\b([A-Za-z_]\w*)\b/g;
+
+  function escape(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function span(cls, text) {
+    return '<span class="' + cls + '">' + escape(text) + "</span>";
+  }
+
+  function highlight(code) {
+    var out = "";
+    var last = 0;
+    var afterDefinition = false;
+    var match;
+    TOKEN.lastIndex = 0;
+    while ((match = TOKEN.exec(code)) !== null) {
+      out += escape(code.slice(last, match.index));
+      last = TOKEN.lastIndex;
+      if (match[1]) {
+        out += span("cm", match[1]);
+      } else if (match[2]) {
+        out += span("st", match[2]);
+      } else if (match[3]) {
+        out += span("nu", match[3]);
+      } else {
+        var word = match[4];
+        if (afterDefinition) {
+          out += span("fn", word);
+        } else if (KEYWORDS.indexOf(word) >= 0) {
+          out += span("kw", word);
+        } else if (BUILTINS.indexOf(word) >= 0) {
+          out += span("bi", word);
+        } else {
+          out += escape(word);
+        }
+        afterDefinition = (word === "def" || word === "class");
+        continue;
+      }
+      afterDefinition = false;
+    }
+    return out + escape(code.slice(last));
+  }
+
+  var blocks = document.querySelectorAll("pre code.py");
+  for (var i = 0; i < blocks.length; i++) {
+    blocks[i].innerHTML = highlight(blocks[i].textContent);
+  }
+})();
+
+// Colours the YAML examples the same way: keys, values, comments, the "---"
+// document marker and list dashes. A plain value is a string unless it is,
+// whole, a number or true/false/null - as an editor colours it.
+(function () {
+  var TOKEN = /(^[ \t]*#[^\n]*|[ \t]#[^\n]*)|(^---[ \t]*$)|('[^'\n]*'|"[^"\n]*")|(^[ \t]*-(?=[ \t]))|([A-Za-z_][\w.\-]*)(?=[ \t]*:(?:[ \t]|$))|((?<=:[ \t]+)[^\s#{}\[\],'"][^\n#{}\[\],]*?)(?=[ \t]*(?:$|[,}\]]|[ \t]#))/gm;
+  var NUMBER = /^-?\d+(?:\.\d+)?$/;
+  var CONSTANT = /^(?:true|false|null)$/;
+
+  function escape(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function span(cls, text) {
+    return '<span class="' + cls + '">' + escape(text) + "</span>";
+  }
+
+  function highlight(code) {
+    var out = "";
+    var last = 0;
+    var match;
+    TOKEN.lastIndex = 0;
+    while ((match = TOKEN.exec(code)) !== null) {
+      out += escape(code.slice(last, match.index));
+      last = TOKEN.lastIndex;
+      if (match[1]) {
+        out += span("cm", match[1]);
+      } else if (match[2]) {
+        out += span("kw", match[2]);
+      } else if (match[3]) {
+        out += span("st", match[3]);
+      } else if (match[4]) {
+        out += span("kw", match[4]);
+      } else if (match[5]) {
+        out += span("fn", match[5]);
+      } else if (NUMBER.test(match[6])) {
+        out += span("nu", match[6]);
+      } else if (CONSTANT.test(match[6])) {
+        out += span("bi", match[6]);
+      } else {
+        out += span("st", match[6]);
+      }
+    }
+    return out + escape(code.slice(last));
+  }
+
+  var blocks = document.querySelectorAll("pre code.yaml");
+  for (var i = 0; i < blocks.length; i++) {
+    blocks[i].innerHTML = highlight(blocks[i].textContent);
+  }
+})();
+
+// Colours the shell commands (bash and PowerShell): the command, shell
+// keywords, variables, options and quoted strings. Inline <code class="sh">
+// too, not only blocks.
+(function () {
+  var KEYWORDS = ["export", "set", "setx", "cd", "if", "then", "fi"];
+  var TOKEN = /(#[^\n]*)|("[^"\n]*"|'[^'\n]*')|(\$env:\w+|\$\{?\w+\}?)|(\b[A-Z_][A-Z0-9_]+\b)|((?:^|\s)--?[A-Za-z][\w-]*)|(^[ \t]*[\w.\-]+)/gm;
+
+  function escape(text) {
+    return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function span(cls, text) {
+    return '<span class="' + cls + '">' + escape(text) + "</span>";
+  }
+
+  function highlight(code) {
+    var out = "";
+    var last = 0;
+    var match;
+    TOKEN.lastIndex = 0;
+    while ((match = TOKEN.exec(code)) !== null) {
+      out += escape(code.slice(last, match.index));
+      last = TOKEN.lastIndex;
+      if (match[1]) {
+        out += span("cm", match[1]);
+      } else if (match[2]) {
+        out += span("st", match[2]);
+      } else if (match[3] || match[4]) {
+        out += span("bi", match[3] || match[4]);
+      } else if (match[5]) {
+        // Keep the space before an option outside the coloured span.
+        var option = match[5];
+        var lead = option.match(/^\s*/)[0];
+        out += escape(lead) + span("nu", option.slice(lead.length));
+      } else if (KEYWORDS.indexOf(match[6].trim()) >= 0) {
+        out += span("kw", match[6]);
+      } else {
+        out += span("fn", match[6]);
+      }
+    }
+    return out + escape(code.slice(last));
+  }
+
+  var blocks = document.querySelectorAll("code.sh");
+  for (var i = 0; i < blocks.length; i++) {
+    blocks[i].innerHTML = highlight(blocks[i].textContent);
+  }
+})();
+</script>
+</body>
+</html>

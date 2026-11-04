@@ -1,0 +1,194 @@
+<!-- SPDX-FileCopyrightText: 2026 CERN <home.cern> -->
+<!-- SPDX-License-Identifier: CC-BY-SA-4.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS Quick Start</title>
+<style>
+:root {
+  --bg: #ffffff; --bg2: #f5f6f8; --border: #d0d4db; --text: #1a1d23; --text2: #4a5068;
+  --code-bg: #f0f2f5; --dev: #0b6e99; --test: #2e7d32;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181d; --bg2: #1e2128; --border: #343a46; --text: #e3e6ec; --text2: #a3aabb;
+    --code-bg: #252a33; --dev: #5cb8e0; --test: #7cc683;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+       font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+header { padding: 14px 16px 6px; max-width: 1280px; margin: 0 auto; }
+h1 { margin: 0; font-size: 1.45rem; }
+header p { margin: 2px 0 0; color: var(--text2); }
+.split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 10px 16px 24px;
+         max-width: 1280px; margin: 0 auto; }
+@media (max-width: 860px) { .split { grid-template-columns: 1fr; } }
+.half { background: var(--bg2); border: 1px solid var(--border); border-radius: 10px;
+        padding: 12px 16px; border-top: 4px solid var(--c); min-width: 0; }
+.dev { --c: var(--dev); } .test { --c: var(--test); }
+h2 { margin: 0 0 2px; font-size: 1.15rem; color: var(--c); }
+.tag { color: var(--text2); margin: 0 0 8px; }
+h3 { margin: 12px 0 4px; font-size: .95rem; }
+pre { background: var(--code-bg); padding: 7px 10px; border-radius: 6px; margin: 4px 0;
+      overflow-x: auto; font-size: 12.5px; line-height: 1.4; }
+code { font-family: ui-monospace, Consolas, monospace; font-size: .92em; }
+:not(pre) > code { background: var(--code-bg); padding: 0 4px; border-radius: 3px; }
+ul { margin: 2px 0; padding-left: 18px; } li { margin: 1px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+td { border-bottom: 1px solid var(--border); padding: 3px 6px 3px 0; vertical-align: top; }
+td:first-child { white-space: nowrap; }
+@media print {
+  body { font-size: 10.5px; } pre { font-size: 9.5px; }
+  .split { grid-template-columns: 1fr 1fr; padding-top: 4px; }
+  .half { break-inside: avoid; }
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>PyPTS Quick Start</h1>
+  <p>Left: working on the framework. Right: writing and running tests with it.</p>
+</header>
+
+<div class="split">
+
+<!-- ===================== DEVELOPER ===================== -->
+<section class="half dev">
+  <h2>I want to code the framework</h2>
+  <p class="tag">Developer: <code>src/pypts/</code></p>
+
+  <h3>Set up</h3>
+<pre><code>git clone https://github.com/CERN/pts-framework.git
+cd pts-framework
+py -3.12 -m venv .venv                    # Python &ge; 3.11
+.venv\Scripts\activate                    # every new terminal
+pip install -e ".[dev,hardware]"</code></pre>
+  <p>Editable install: edit and rerun. Linux: <code>python3 -m venv .venv</code>, <code>source .venv/bin/activate</code>.
+  Without activating, <code>python</code> and <code>pypts</code> aren't this venv's.</p>
+
+  <h3>Run it (venv active)</h3>
+<pre><code>pypts                              # GUI  (= python -m pypts)
+pypts --mode cli
+pypts --mode headless --recipe x.yml [--sequence Name]
+pypts --log-level TRACE            # every message on every link
+python run_recipe_creator.py       # / run_recipe_editor.py</code></pre>
+  <p><code>where pypts</code> / <code>which pypts</code>: the venv's copy is first while it's active. Outside it, you get the installed copy (right half).</p>
+
+  <h3>Done = this passes</h3>
+<pre><code>pytest tests            # unit_tests/ + functional_tests/ + quality_tests/ (ruff, mypy)</code></pre>
+  <ul><li>The docs describe the code as it now is, updated in the same change.</li></ul>
+
+  <h3>Read first</h3>
+  <table>
+    <tr><td><code>CLAUDE.md</code></td><td>Rules, architecture, style</td></tr>
+    <tr><td><code>pypts_implementation_status.html</code></td><td>What's done, what's next</td></tr>
+    <tr><td><code>src/pypts/&lt;module&gt;/&lt;module&gt;.md</code></td><td>The module you touch. Read it before editing</td></tr>
+  </table>
+
+  <h3>Architecture</h3>
+<pre><code>launcher -> spawns  Logger | CORE (Sequencer + Report threads) | HMI (GUI/CLI)
+HAL: one driver process per opened device</code></pre>
+  <ul>
+    <li>Modules never call each other. Everything goes through <b>CORE</b>; log records go straight to the Logger.</li>
+    <li>HMI&harr;CORE crosses processes, so its messages must be <b>pickle-safe</b>.</li>
+    <li>New message: dataclass in <code>messages/&lt;a&gt;_&lt;b&gt;_communication.py</code>, add it to the union, add a <code>case</code> in the handler.</li>
+    <li>Handlers: <code>match</code> closed with <code>unhandled()</code>. Don't remove it.</li>
+    <li>Errors: <code>@catch_and_report_errors()</code> in loops, <code>@report_and_reraise()</code> in steps.</li>
+  </ul>
+
+  <h3>Style</h3>
+  <ul>
+    <li>Plain, readable Python. <code>if</code>/<code>else</code> over clever one-liners.</li>
+    <li>Logging: <code>%</code>-style, never f-strings. INFO+ for the technician, DEBUG for developers.</li>
+    <li>Line length 100. A <code># noqa:</code> names its rule and gives the reason.</li>
+  </ul>
+
+  <h3>Common tasks</h3>
+  <table>
+    <tr><td>New driver</td><td><code>how_to_write_a_driver.html</code></td></tr>
+    <tr><td>Recipe-format change</td><td><code>recipe/recipe.md</code> + <code>recipe_guide.html</code> by hand</td></tr>
+    <tr><td>Routing change</td><td><code>core/core.md</code> + <code>messages/messages.md</code></td></tr>
+  </table>
+</section>
+
+<!-- ===================== TEST AUTHOR ===================== -->
+<section class="half test">
+  <h2>I want to make tests with it</h2>
+  <p class="tag">Technician / test author: recipes + test code</p>
+
+  <h3>Install</h3>
+<pre><code>uv tool install "&lt;path to the clone&gt;[ssh]"    # or: pipx install, same argument
+pypts                                         # any terminal. GUI: File -> Open Recipe
+uv tool install --reinstall "&lt;path&gt;[ssh]"     # update after a git pull</code></pre>
+  <p>Not on a package index yet, so install from a clone. Gives a <code>pypts</code> command on PATH, in its own isolated environment.
+  Extras: <code>[ssh]</code> <code>[ni]</code> <code>[serial]</code> <code>[hardware]</code> (all of them).</p>
+
+  <h3>1. Test code: plain Python</h3>
+<pre><code># board_tests.py
+def measure_voltage(channel):
+    return {"voltage": 12.1}       # dict: each key judged separately
+
+def greet(name):
+    return f"Hello, {name}!"       # scalar: judged as "output"</code></pre>
+
+  <h3>2. Recipe: YAML</h3>
+<pre><code>name: Board test
+version: 0.1
+globals:
+  serial_number: ''
+report_metadata: [serial_number]   # names the report
+---
+sequence_name: Main
+steps:
+  - steptype: PythonModule
+    step_name: Measure 12 V rail
+    module: board_tests.py         # relative to the recipe
+    method_name: measure_voltage
+    inputs:
+      channel: 1
+    outputs:
+      voltage: {type: range, min: '11', max: '13'}</code></pre>
+  <table>
+    <tr><td>Step types</td><td><code>PythonModule</code> <code>UserInteraction</code> <code>UserWrite</code> <code>UserLoading</code> <code>Wait</code> <code>Sequence</code> <code>Indexed</code></td></tr>
+    <tr><td>Verdicts</td><td><code>equals</code> <code>range</code> <code>passfail</code> <code>pass</code></td></tr>
+    <tr><td>Use a global</td><td><code>{type: global, global_name: target_voltage}</code></td></tr>
+    <tr><td>No YAML by hand</td><td>Recipe Creator / Recipe Editor</td></tr>
+  </table>
+
+  <h3>3. Hardware: by logical name</h3>
+<pre><code># bench.ini (beside config.ini)
+[ssh1]
+driver = pypts.hal.drivers.ssh.SshDriver
+host = 192.168.0.10
+username = tester</code></pre>
+<pre><code>from pypts.hal import get_device
+get_device("ssh1").execute("uname -r")</code></pre>
+
+  <h3>4. Run</h3>
+<pre><code>pypts                                    # GUI, operator at the bench
+pypts --mode cli
+pypts --mode headless --recipe board.yml # CI, no questions</code></pre>
+  <p>Headless exit codes: <code>0</code> pass, <code>1</code> fail, <code>2</code> error/stopped, <code>3</code> nothing ran.<br>
+  From code: <code>from pypts.api import Pts, open_gui</code> (see <code>src/pypts/api/showcase.py</code>).</p>
+
+  <h3>5. Results</h3>
+  <table>
+    <tr><td>Reports + logs</td><td><code>%LOCALAPPDATA%\pypts\reports</code> &middot; <code>~/.local/share/pypts/reports</code></td></tr>
+    <tr><td>Per run</td><td><code>&lt;board ID&gt;_&lt;time&gt;.csv</code> + <code>.html</code> + run log + <code>streams/</code></td></tr>
+    <tr><td>Settings</td><td><code>config.ini</code>, <code>bench.ini</code>: <code>%LOCALAPPDATA%\pypts\</code> &middot; <code>~/.config/pypts/</code></td></tr>
+  </table>
+
+  <h3>Learn by example</h3>
+  <ul>
+    <li><code>resources/recipes/&lt;type&gt;step_recipes/</code>: one demo per step type.</li>
+    <li><code>showcase_recipes/</code>: all of them together. <code>HAL_recipes/</code>: devices.</li>
+    <li>Full reference: <code>recipe_guide.html</code>, <code>usage_manual.html</code>.</li>
+  </ul>
+</section>
+
+</div>
+</body>
+</html>
