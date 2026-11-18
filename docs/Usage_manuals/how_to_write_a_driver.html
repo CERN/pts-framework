@@ -124,6 +124,20 @@ th { background: var(--th-bg); }
 .ai, .ai code { color: #9a7b1c; }
 @media (prefers-color-scheme: dark) { .ai, .ai code { color: #b8a04a; } }
 li { margin: .25rem 0; }
+h4 { font-size: 1.05rem; font-weight: 600; margin: 1.4rem 0 .4rem; }
+.warn > h4:first-child { margin-top: .3rem; }
+/* A milestone the reader has reached */
+.done {
+  background: #e6f4ea;
+  border: 2px solid #2e8b57;
+  border-left-width: 6px;
+  padding: .8rem 1.1rem;
+  margin: 1.4rem 0;
+  border-radius: 6px;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+@media (prefers-color-scheme: dark) { .done { background: #16301f; border-color: #4caf7d; } }
 </style>
 </head>
 <body>
@@ -409,6 +423,8 @@ steps:
     outputs:
       v_rail: {type: range, min: '3.135', max: '3.465'}
 </code></pre>
+<p class="done">✔ At this point you can use your driver. However, if you want to make it fully
+compatible with the framework, check the testing and packaging below :)</p>
 
 <h2>4. Several files? Use a package</h2>
 <p>A driver split over several modules lives in a package of your own (any name except
@@ -430,9 +446,10 @@ device's process inherits it:</p>
 <p>To make it permanent, add the line to <code>~/.bashrc</code> on Linux or run
 <code class="sh">setx PYTHONPATH C:\bench</code> on Windows.</p>
 
-<h2>5. The rules</h2>
+<h2>5. The implementation rules</h2>
 
-<h3>5.1 Derive from a device type, never from BaseDriver</h3>
+<details>
+<summary>5.1 Derive from a device type, never from BaseDriver</summary>
 <p>Import the type from <code>pypts.hal</code>: <code>PSU</code>, <code>DMM</code>,
 <code>Scope</code>, <code>Load</code>, <code>SSH</code>, or <code>Other</code> for anything
 else. A driver that derives from <code>BaseDriver</code> directly is refused at open.</p>
@@ -463,7 +480,9 @@ volts_per_division, seconds_per_division, points)</code>; <code>read_waveform(ch
 <p>A type's verbs are abstract and mandatory — a driver that omits one fails at open with a
 <code>TypeError</code> naming it.</p>
 
-<h3>5.2 Implement the lifecycle</h3>
+</details>
+<details>
+<summary>5.2 Implement the lifecycle</summary>
 <ul>
 <li><code>connect(config)</code> — open the connection the section describes. All values are
 text. Raise when the instrument cannot be reached: the device then fails at open with your
@@ -480,13 +499,17 @@ when the instrument has a cheaper reset. Test code triggers it with
 never recovers on its own.</li>
 </ul>
 
-<h3>5.3 Logging and printing</h3>
+</details>
+<details>
+<summary>5.3 Logging and printing</summary>
 <p>Log with <code>logging.getLogger(__name__)</code>. Your driver's records keep their level
 in the PyPTS run log, prefixed <code>Device 'psu1': ...</code> — INFO and above reaches the
 technician's panel, so log at INFO what an operator should see and keep the chatter at DEBUG.
 Of course, use WARNING and ERROR levels as you see fit.</p>
 
-<h3>5.4 Vendor libraries</h3>
+</details>
+<details>
+<summary>5.4 Vendor libraries</summary>
 <p>Import the vendor library at the top of the module, and turn a missing one into a message
 that names what to install:</p>
 <pre><code class="py">try:
@@ -500,12 +523,16 @@ except ImportError as exc:
 <code>pypts.hal.drivers.weather.OpenMeteoDriver</code> is a driver that needs no vendor
 library at all and turns every failure of its far end into one clear error.</p>
 
-<h3>5.5 Do not start processes</h3>
+</details>
+<details>
+<summary>5.5 Do not start processes</summary>
 <p>The driver process is a daemon, and a daemon cannot have children: do not use
-<code>multiprocessing</code> inside a driver. Threads are allowed, but anything they log
-between calls is delivered with the next call, not immediately.</p>
+<code>multiprocessing</code> inside a driver. Threads are allowed though!</p>
+</details>
 
 <h2>6. What the framework does for you</h2>
+<details>
+<summary>Situations the framework handles</summary>
 <table>
 <tr><th>Situation</th><th>What happens</th></tr>
 <tr><td>Driver raises</td><td>Test code gets <code>DriverError("Device 'psu1': 'set_voltage'
@@ -531,48 +558,126 @@ recovered again.</td></tr>
 <code>get_device()</code> fails with the discarded-bench <code>DriverError</code> until the
 file is fixed and PyPTS restarted.</td></tr>
 </table>
-<div class="warn"><b>The one net you provide:</b> everything above funnels into your
-<code>teardown()</code>. If it does not reliably switch the outputs off, nothing else
-will.</div>
+<div class="warn"><b>The safety net you provide: <code>teardown()</code>.</b> It has to switch
+the outputs off reliably.</div>
+</details>
 
 <h2>7. Testing the driver</h2>
-<ul>
-<li><b>In-process, vendor library mocked</b> — build the class directly and call its methods;
-see <code>tests/unit_tests/test_hal_ssh.py</code>.</li>
-<li><b>Through a real driver process</b> — build
-<code>ConnectionDriver("x", "my_module.MyDriver", {...})</code>, open it with its
-<code>_open()</code> and call it; see
-<code>tests/unit_tests/test_hal_connection.py</code> and the loopback driver it uses.</li>
-<li><b>On the bench, outside PyPTS</b> — a plain script can use the same devices. The INI
-file given to <code>from_ini()</code> uses <code>bench.ini</code>'s format: one bare-named
-section per device, e.g. <code>[psu1]</code>.
+<p>Two separate questions: does the class talk to the instrument (7.1), and does it work as
+the framework runs it (7.2)?</p>
+<details>
+<summary>7.1 The driver on its own</summary>
+<p>The quickest check, and enough while you write the class: the <code>__main__</code> block at
+the end of <code>acme_psu.py</code> (section 2.1). It builds the class in this process and
+calls it directly. No PyPTS, no <code>bench.ini</code>, no pytest; only the instrument is
+needed.</p>
+<pre><code class="py">if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    psu = AcmePsuDriver()
+    psu.connect({"host": "192.168.0.40", "port": "5025"})
+    try:
+        psu.set_voltage(1, 3.3)
+        psu.output_on(1)
+        print("Channel 1: %.3f V" % psu.measure_voltage(1))
+    finally:
+        psu.teardown()
+</code></pre>
+<p>Run it:</p>
+<pre><code class="sh">python acme_psu.py
+</code></pre>
+<p>The dict stands in for the device's <code>bench.ini</code> section: every value as text,
+as <code>connect()</code> will get it from PyPTS.</p>
+</details>
+
+<details>
+<summary>7.2 The driver in the framework</summary>
+<p>Run the driver the way PyPTS does: in its own process, set up from a
+<code>bench.ini</code>-format file and reached by its device name. A plain script is enough.
+The INI file given to <code>from_ini()</code> uses <code>bench.ini</code>'s format: one
+bare-named section per device (section 3), e.g. <code>[psu1]</code>:</p>
+<pre><code>[psu1]
+driver = ~/bench/acme_psu.py:AcmePsuDriver
+host = 192.168.0.40
+port = 5025</code></pre>
+<p>Save the script as <code>check_psu.py</code> and run it with
+<code>python check_psu.py</code>:</p>
 <pre><code class="py">from pypts.hal import LocalSetup, get_device
 
-if __name__ == "__main__":                 # required: spawn re-imports this file
+if __name__ == "__main__":                 
     with LocalSetup.from_ini("bench.ini"):
         print(get_device("psu1").measure_voltage(1))
 </code></pre>
-Without the <code>__main__</code> guard every driver process re-runs the script and dies at
-once with <code>stopped unexpectedly (exit code 1)</code>.</li>
-</ul>
+<p>Without the <code>__main__</code> guard every driver process re-runs the script and dies at
+once with <code>stopped unexpectedly (exit code 1)</code>.</p>
+<div class="note"><b>Recommended: add pytest tests.</b> Two kinds are worth having.
+The class in-process with its instrument connection mocked tests the protocol, the
+<code>config</code> parsing and the errors without any instrument; see
+<code>tests/unit_tests/test_hal_ssh.py</code>, which mocks paramiko. Through a real driver
+process, <code>ConnectionDriver("psu1", "/home/me/bench/acme_psu.py:AcmePsuDriver", {...})</code>
+opened with <code>_open()</code> and closed with <code>_close()</code> tests what crosses the
+process boundary and the teardown (a full path: unlike <code>bench.ini</code>, it does not
+expand <code>~</code>); see <code>tests/unit_tests/test_hal_connection.py</code>
+and the loopback driver it uses.</div>
 
-<h2>8. Checklist</h2>
-<ul>
-<li>☐ Derives from <code>PSU</code> / <code>DMM</code> / <code>Scope</code> /
-<code>Load</code> / <code>SSH</code> / <code>Other</code>, not <code>BaseDriver</code>.</li>
-<li>☐ <code>connect(config)</code> treats every value as text and raises a clear error when
-the instrument is unreachable.</li>
-<li>☐ <code>teardown()</code> leaves the instrument safe, works right after
-<code>connect()</code>, and is harmless when nothing is open.</li>
-<li>☐ The wire protocol is in <code>_private</code> helpers.</li>
-<li>☐ Arguments and return values are picklable.</li>
-<li>☐ Logs through <code>logging.getLogger(__name__)</code>; operator-relevant lines at INFO.</li>
-<li>☐ Vendor import at the top of the module, with the extra to install named.</li>
-<li>☐ No <code>multiprocessing</code> inside the driver.</li>
-<li>☐ <code>driver =</code> names the file and class (<code>~/bench/acme_psu.py:AcmePsuDriver</code>), or a package importable on the bench.</li>
-<li>☐ A <code>[&lt;name&gt;]</code> section exists in <code>bench.ini</code> and the demo
-recipe or a standalone script talks to the instrument.</li>
-</ul>
+<div class="warn">
+<h4>Adding it to the framework's drivers</h4>
+<p>A driver in <code>~/bench</code> serves one bench. To ship it with PyPTS, so that every
+installation can name it in <code>bench.ini</code>, it goes into the HAL's own driver package,
+beside <code>ssh.py</code>, <code>weather.py</code> and <code>loopback.py</code>.</p>
+<p><b>Where the HAL is:</b> it has no repository of its own. It is part of the PyPTS project,
+<a href="https://github.com/CERN/pts-framework">github.com/CERN/pts-framework</a>, in
+<code>src/pypts/hal/</code>, and its drivers are in <code>src/pypts/hal/drivers/</code>. Clone
+that project and add the driver there:</p>
+<pre><code class="sh">git clone https://github.com/CERN/pts-framework.git
+</code></pre>
+<ol>
+<li>Put the file at <code>src/pypts/hal/drivers/acme_psu.py</code>, one module per driver.
+It needs no SPDX header (<code>reuse.toml</code> covers <code>src/pypts/**/*.py</code>), and
+<code>.gitignore</code> already keeps the folder in git.</li>
+<li><code>bench.ini</code> then names it by its dotted path instead of a file:
+<code>driver = pypts.hal.drivers.acme_psu.AcmePsuDriver</code>.</li>
+<li>If it needs a vendor library, add an extra for it to
+<code>[project.optional-dependencies]</code> in <code>pyproject.toml</code> (beside
+<code>ssh</code>, <code>ni</code>, <code>serial</code>), add it to <code>hardware</code>, and
+name it in the driver's <code>ImportError</code>
+(<code>pip install pts-framework[acme]</code>), as <code>drivers/ssh.py</code> does. Do not
+import the driver from <code>drivers/__init__.py</code>: that package imports none of its
+drivers, so a missing library breaks only the driver that needs it.</li>
+<li>Its tests go in <code>tests/unit_tests/test_hal_acme_psu.py</code>, the two kinds
+above.</li>
+<li>Document it in <code>src/pypts/hal/hal.md</code>: a row in the <i>Files</i> table, a
+section with its keys and verbs (like <i>SSH</i> and <i>Weather</i>), and its extra under
+<i>Packaging</i>.</li>
+</ol>
+</div>
+</details>
+
+<h2>8. Quick summary</h2>
+<p>The rules of this guide in one table, with what goes wrong when one is missed.</p>
+<table>
+<tr><th>Rule</th><th>See</th><th>If missed</th></tr>
+<tr><td>Derive from <code>PSU</code> / <code>DMM</code> / <code>Scope</code> /
+<code>Load</code> / <code>SSH</code> / <code>Other</code>, not <code>BaseDriver</code>.</td>
+<td>5.1</td><td>The device is refused at open.</td></tr>
+<tr><td><code>connect(config)</code> treats every value as text and raises a clear error when
+the instrument is unreachable.</td><td>5.2</td><td>A number left as text breaks your own
+code; the technician gets an unclear error.</td></tr>
+<tr><td><code>teardown()</code> leaves the instrument safe, works right after
+<code>connect()</code>, and is harmless when nothing is open.</td><td>5.2, 6</td><td>Outputs
+can stay on after the run.</td></tr>
+<tr><td>Internal methods are <code>_private</code>.</td><td>2.1</td><td>Every public method is
+an operation, so test code can call your helpers.</td></tr>
+<tr><td>Arguments and return values are plain values (numbers, text, lists, dicts); do not
+return a class instance.</td><td>—</td><td>The call fails with a
+<code>DriverError</code>.</td></tr>
+<tr><td>Log through <code>logging.getLogger(__name__)</code>; operator-relevant lines at
+INFO.</td><td>5.3</td><td>Records from another logger below WARNING are logged at DEBUG, out
+of the technician's panel.</td></tr>
+<tr><td>Import the vendor library at the top of the module, naming what to install.</td>
+<td>5.4</td><td>The device fails at open with a bare <code>No module named ...</code>.</td></tr>
+<tr><td>No <code>multiprocessing</code> inside the driver; threads are allowed.</td>
+<td>5.5</td><td><code>daemonic processes are not allowed to have children</code>.</td></tr>
+</table>
 
 <p class="sub">This guide mirrors <code>src/pypts/hal/hal.md</code> (<i>Writing a driver</i>);
 when the hardware layer changes, both change.</p>
