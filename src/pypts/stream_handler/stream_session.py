@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class StreamError(RuntimeError):
-    """No stream can be registered: no session is active, or its run was abandoned."""
+    """No stream can be registered: no session is active."""
 
 
 class StreamSession:
@@ -34,7 +34,6 @@ class StreamSession:
         self._lock = threading.Lock()
         self._by_name: dict[str, Stream] = {}
         self._all: list[Stream] = []
-        self._abandoned = False
         self._closed = False
         self._warned_no_folder = False
 
@@ -51,13 +50,8 @@ class StreamSession:
         """
         Open the stream `name`. Registering a name again opens a new Stream on
         the same file, which appends.
-
-        Raises:
-            StreamError: the run was abandoned.
         """
         with self._lock:
-            if self._abandoned:
-                raise StreamError("This run was abandoned; its streams are closed.")
             if self._closed:
                 logger.debug("Stream '%s' registered after the session closed; not recorded.", name)
                 stream = Stream(name, None, unit)
@@ -82,12 +76,6 @@ class StreamSession:
                 stream.close()
             except Exception as exc:  # noqa: BLE001 - one stream must not keep the others open
                 logger.warning("Stream '%s' did not close: %s", stream.name, exc)
-
-    def abandon(self) -> None:
-        """Close the streams of a run that will not end, and refuse new ones. Never raises."""
-        with self._lock:
-            self._abandoned = True
-        self.close()
 
     def __enter__(self) -> "StreamSession":
         _activate(self)
@@ -118,7 +106,7 @@ def _activate(session: StreamSession) -> None:
     global _active_session
     with _active_lock:
         if _active_session is not None and _active_session is not session:
-            # Only an abandoned run leaves a session active behind it.
+            # A script that entered a session and never left it.
             logger.debug("A new stream session replaces one that was never closed.")
         _active_session = session
 
@@ -145,13 +133,3 @@ def register_stream(name: str, unit: str | None = None) -> Stream:
             "running, or inside 'with StreamSession(folder):' in a script of your own."
         )
     return session.register(name, unit)
-
-
-def abandon_active_session() -> None:
-    """Take the active session from a run that will not end and close its streams. Never raises."""
-    global _active_session
-    with _active_lock:
-        session = _active_session
-        _active_session = None
-    if session is not None:
-        session.abandon()

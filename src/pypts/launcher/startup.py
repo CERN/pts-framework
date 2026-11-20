@@ -54,9 +54,9 @@ from pypts.messages.to_logger_communication import LoggerControl, StopLogger
 from pypts.utilities.common import RESTART_EXIT_CODE
 from pypts.utilities.local_storage import get_log_file_path
 
-#: How long CORE gets to shut itself down cleanly before it is killed. Above
-#: Core.SHUTDOWN_TIMEOUT_S (25 s), so CORE can log which module was late
-#: before it is terminated.
+#: How long stop_core() waits for CORE to leave after asking for the crash
+#: close, before it terminates it. CORE has no deadline of its own any more;
+#: this is the last resort, reached only when CORE itself is wedged.
 CORE_SHUTDOWN_TIMEOUT_S = 30.0
 
 #: How long the Logger gets to drain whatever is still queued.
@@ -484,18 +484,22 @@ def _print_config_banner(title: str, text: str) -> None:
 
 def stop_core(core_process: Process | None, to_core: QueueWrapper[HmiToCore]) -> None:
     """
-    Bring CORE down, asking before killing.
-    Normally, application is stopped by cleanly prompting it from the UI.
-    But in case of closing the lancher, the application would be terminated too
+    Bring CORE down once the frontend has ended, asking before killing.
 
-    Like using CTRL+X on the terminal to stop.
+    Normally the frontend has already closed the application in order, and
+    CORE is gone or going. Otherwise - the GUI crashed or was killed, Ctrl+C in
+    the launcher's console - this asks for the crash close, then waits up to
+    CORE_SHUTDOWN_TIMEOUT_S and terminates a CORE that is still alive.
     """
     if core_process is None:
         return
 
-    log.debug("Asking the Core process to shut down.")
+    log.debug("Asking the Core process to close at once.")
     to_core.send(HmiStopped())
-    to_core.send(ShutdownRequested())
+    # The crash close. The frontend has ended, so whatever CORE is still doing
+    # is not waited for. After an orderly close every module has already
+    # stopped, CORE has left or is leaving, and this changes nothing.
+    to_core.send(ShutdownRequested(immediate=True))
     core_process.join(timeout=CORE_SHUTDOWN_TIMEOUT_S)
 
     if core_process.is_alive():

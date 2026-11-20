@@ -126,8 +126,9 @@ which module came up when is developer detail.
 Accepted deviations, verified in the code: CORE has no `stop()` and never logs
 `CORE module stopping.`; the CLI has no event loop of its own, so it logs neither loop line
 nor `CLI module stopping.`; the frontends' shared `HmiClient.stop()` logs
-`The frontend is stopping.` at DEBUG (the GUI logs `GUI module stopping.` beside it); and
-`LAUNCHER` logs no lifecycle lines at all.
+`The frontend is stopping.` at DEBUG (the GUI logs `GUI module stopping.` beside it); the GUI
+logs `GUI module starting.` in `GUI.__init__()`, having no `start()`; `Report.stop()` clears
+`running` one line before its `stopping` line; and `LAUNCHER` logs no lifecycle lines at all.
 
 ---
 
@@ -139,20 +140,23 @@ still traceable at DEBUG without the operator's panel saying the same thing thre
 
 | Fact | INFO owner | DEBUG hop |
 |---|---|---|
-| application start, operator and host, run log path, shutdown | `launcher/startup.py`, through `log.log_run_log_header()` | — |
+| application start, operator and host, run log path | `launcher/startup.py`, through `log.log_run_log_header()` | — |
+| shutdown: `Shutting down.`, `pypts is closing at once.` (CRITICAL with the bench warning when a run was open) | `core/core.py` | — |
+| shutdown: `Waiting for the running test to stop.` | `sequencer/sequencer.py` | — |
+| shutdown: `pypts is restarting.`, `PyPTS has finished.` | `launcher/startup.py` | — |
 | recipe unloaded | `core/core.py` | `hmi_client`, `gui` |
 | the run log carrying on in a new file (an unload): `Run log continues in <file>`, the header again, `Run log continues from <file>` | `gui` | — |
 | a run logged in its own folder: `Run log of recipe '<name>', sequence '<name>'.` first in the run log; `The run's log is <path>` in the session log after it | `sequencer/sequencer.py` | — |
-| recipe loaded, sequences available | `core/core.py` | `sequencer`, `hmi_client`, `gui`, `cli` |
-| sequence started / finished, each step started / finished | `step/step.py` — the execution layer the Sequencer drives | `core`, `hmi_client`, `gui`, `cli` |
-| the run summary, the unit under test, the operator's stop, pause and resume, the hold beginning / ending / lapsing | `sequencer/sequencer.py` | `core`, `hmi_client`, `gui`, `cli` |
+| recipe loaded, sequences available | `core/core.py` | `hmi_client`, `gui` |
+| sequence started / finished, each step started / finished | `step/step.py` — the execution layer the Sequencer drives | `core`, `hmi_client`, `gui` |
+| the run summary, the unit under test, the operator's stop, pause and resume, the hold beginning / ending / lapsing | `sequencer/sequencer.py` | `core`, `hmi_client`, `gui` |
 | an engineering run: `Engineering run: N of M steps left out.` and `Engineering run: no report and no run folder for this run.` | `sequencer/sequencer.py` | `core`, `gui` |
 | engineering mode switched on / off | `gui` | — |
 | operator prompted, operator answered | the `User*` step types | `core`, `hmi_client`, `gui` |
 | run folder, report generated | `report/report.py` | `core`, `hmi_client`, `gui`, `cli` |
 | operator housekeeping (clearing recents, a settings write, Restore default settings) | `gui`, `utilities`, `config_handler` | — |
-| status-bar text (`StatusUpdate`) | nobody — it is a UI channel | `hmi_client` only |
-| a module lost / responding again | `core/core.py` | `core` (the raw liveness detail) |
+| status-bar text (`StatusChanged`) | nobody — it is a UI channel | `hmi_client` only |
+| a module lost / responding again | `core/core.py` (Sequencer, Report, HMI); `hmi/hmi_client.py` (CORE) | `core`, `hmi_client` (the raw liveness detail) |
 
 This is safe because **the GUI panel reads the log file, not the GUI process's own records**
 (`log_tail.py` explains why). A frontend that stops logging an event at INFO does not stop the
@@ -185,7 +189,7 @@ Sequence 'warmup' finished: FAIL - 10 passed, 1 failed, 1 skipped, 42.3 s.
 Run summary: FAIL.
 Run summary: 10 passed, 1 failed, 1 skipped of 12 steps in 42.3 s.
 Run summary: recipe 'thermal_cycle.yml', sequence 'warmup'.
-Report generated: C:\...\20260902_141233_warmup\report.html
+Report generated: C:\...\20260902_141233_warmup\SN_0042_20260902_141233.html
 ```
 
 Notes on that shape:
@@ -209,7 +213,7 @@ Notes on that shape:
   `Stream '<name>' did not close: <error>` at WARNING, when closing a stream failed (the
   other streams are still closed);
   `A new stream session replaces one that was never closed.` at DEBUG, when a session is
-  entered while an abandoned one is still active; and
+  entered while another one was never left; and
   `Stream '<name>' registered after the session closed; not recorded.` at DEBUG, for a
   stream registered after its session was closed (it writes nothing).
 - **A step that shows a graph nothing feeds** is logged by the Sequencer (`log`), at WARNING,
@@ -220,7 +224,7 @@ Notes on that shape:
 
 The file the launcher starts - the *session log*, in `paths.reports_dir` - holds startup,
 loading, the time between runs and shutdown. Each run is logged in `pypts_<timestamp>.log`
-inside its own run folder, next to `report.csv` and `report.html`: from
+inside its own run folder, next to its CSV and HTML report (`report/report.md`, *File names*): from
 `Run log of recipe '…', sequence '…'.` to the three `Run summary:` lines. The session log then
 carries on, appended, with `The run's log is <path>`.
 
@@ -322,8 +326,8 @@ The single exception is a module that is actually lost, because otherwise the ap
 quiet with nothing in the panel to explain it:
 
 ```
-WARNING  The GUI has stopped responding.
-INFO     The GUI is responding again.
+WARNING  The operator interface has stopped responding.
+INFO     The operator interface is responding again.
 ```
 
 Plain language, no mechanism, no numbers. The source, the age of the last beat and the timeout
@@ -363,6 +367,6 @@ Nothing checks the wording automatically. `ruff`'s `G004` catches an f-string in
 that is the only mechanical guard there is. The rest is this file, and reading it before adding
 a log line.
 
-Tests that assert on log text (`test_config_handler.py` does, in about fifteen places) pin the
+Tests that assert on log text (`test_config_handler.py` does, in about twenty places) pin the
 wording of the lines they cover. Changing one of those lines means changing its test in the
 same commit — which is the intended friction.

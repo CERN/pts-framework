@@ -73,7 +73,6 @@ from pypts.messages.core_report_communication import (
     StopReport,
 )
 from pypts.messages.core_sequencer_communication import (
-    ClosingDevices,
     CoreToSequencer,
     ForgetRecipe,
     RunSequence,
@@ -260,7 +259,6 @@ EXAMPLES = {
     ResumeSequence: ResumeSequence(),
     StopSequencer: StopSequencer(),
     SequencerStopped: SequencerStopped(),
-    ClosingDevices: ClosingDevices(),
     # core_report_communication
     GenerateReport: GenerateReport(),
     ExportReport: ExportReport(),

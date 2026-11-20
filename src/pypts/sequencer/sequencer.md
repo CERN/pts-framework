@@ -12,7 +12,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 - **Event loop** — `sequencer_main()` builds the Sequencer and calls `start()`;
   `main_loop()` polls `from_core` (`poll_core()`), dispatches (`handle_core_message()`) and
-  sends heartbeats (`do_periodic_tasks()`). Five methods carry `@catch_and_report_errors()`
+  sends heartbeats (`do_periodic_tasks()`, which also ends a pending stop once the sequence
+  thread has finished - see *Stop*). Five methods carry `@catch_and_report_errors()`
   and no others:
   `poll_core()`, `handle_core_message()` (one bad message fails alone), `do_periodic_tasks()`
   and the two thread entry points `start()` and `execute_sequence()`. The handlers below them
@@ -40,8 +41,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   is reported with `report_error()` and the run is sent as `ERROR` with the outcomes of the
   steps that ran;
   otherwise the frontends would show the run as going for ever and the Report would never
-  finish the CSV. A refusal before `RunStarted` (no recipe, no such sequence) sends neither, and
-  an abandoned run (see *Stop*) sends no `RunFinished`: nobody is listening any more.
+  finish the CSV. A refusal before `RunStarted` (no recipe, no such sequence) sends neither.
 - **The run's streams** — after the run folder is made, `execute_sequence()` builds a
   `stream_handler.StreamSession(run_dir)` (`StreamSession(None)` when `run_dir == ""`: a retest,
   or a folder that could not be made - streams then register but record nothing) and runs the
@@ -78,7 +78,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   `RunFinished.outcomes` and the run summary lines count **real steps** at every depth
   (`real_step_results()`): the row of a called sequence is not counted, the steps inside it
   are (`step/step.md` §2.8). Also watches `report_metadata` globals and forwards `RunMetadata` updates to CORE.
-- **The run's devices** — `execute_sequence()` runs the step layer inside
+- **The run's devices** — `run_body()` (called by `execute_sequence()`) runs the step layer inside
   `with LocalSetup(self.read_hardware_sections):` (`hal/hal.md` → *Lifetime*). Test code opens a
   device on first `get_device()`; every device closes when the block ends — after the teardown
   steps, before `RunFinished`. `read_hardware_sections` defaults to
@@ -95,28 +95,18 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   `UserTextRequest` or `UserPathRequest` on the CORE link and blocks in `PendingRequests.wait()` until the
   response arrives. The event loop must keep turning; `ask_operator` runs on the sequence
   thread, not the event loop thread.
-- **Stop** — `stop_running_sequence()` sets `stop_requested` and joins the sequence thread
-  up to `SEQUENCE_JOIN_TIMEOUT_S` (2 s). If the thread is still alive after that, the run is
-  **abandoned**: `run_abandoned` is set, so the run's events (the `emit` seam), its questions
-  (`ask_operator()` answers `None` at once) and its `RunFinished` are no longer sent - CORE is
-  shutting down without it, so the `RunStarted`/`RunFinished` pairing does not hold for an
-  abandoned run. It reports `CRITICAL` via `report_problem()`, then
-  `tear_down_abandoned_devices()` first calls `stream_handler.abandon_active_session()` (the
-  run's streams are closed and no new one can be registered), then sends `ClosingDevices` (CORE shows "Stopping: closing the
-  devices...") and calls `hal.abandon_active_setup()` with `ABANDONED_DEVICES_TIMEOUT_S`: the
-  devices run their teardown ladder one after another, newest first, on that shared deadline
-  (an idle device gets one `teardown()` attempt, then teardown on a fresh process; a device
-  still in a call has its driver process killed at once and goes straight to the
-  fresh-process teardown), and any that was stopped without
-  running it is a second `CRITICAL` naming them ("were stopped without running teardown and
-  may still be energised"; `hal/hal.md`, *Lifetime*). Then the shutdown continues. `SequencerStopped`
-  is sent after the join, so it always arrives after any `RunFinished` on the same queue.
-  The send sits in a `finally` and goes through `send_goodbye()`, because it comes *after* the
-  line that can fail: an exception on its way out to the per-message boundary would otherwise
-  skip it, and CORE would keep the module marked as running, hold `StopReport` until the
-  shutdown deadline, and name the Sequencer as a module that never stopped. The failure still
-  reaches CORE as a `ModuleError`, just behind the `SequencerStopped` rather than instead of
-  it. `start()` has the same `finally` for the loop that dies instead of ending;
+- **Stop** (`StopSequencer`, the application closing) — `stop()` never waits. With no
+  sequence running it calls `finish_stopping()` at once: `running = False` and
+  `send_goodbye()`. With one running it logs INFO `Waiting for the running test to stop.`,
+  sets `stop_requested` - exactly what the Stop button sets - and `stopping`, and returns. The
+  run then ends the ordinary way, with **no deadline**: the step in progress finishes, the
+  teardown steps run, the devices close at the `LocalSetup` block end, `RunFinished` goes out.
+  The event loop keeps turning meanwhile, so the heartbeat goes on; a question to the operator
+  is not waited for once `stop_requested` is set (`ask_operator()`'s `should_abort`).
+  `do_periodic_tasks()` sees `stopping` with the sequence thread gone and calls
+  `finish_stopping()`. `SequencerStopped` is sent from the event loop after the sequence thread
+  has ended, so it always arrives after that run's `RunFinished` on the same queue. `start()`
+  has a `finally` that sends the goodbye for a loop that dies instead of ending;
   `send_goodbye()` is guarded so only one `SequencerStopped` ever goes out.
 - **Pause / Resume** (GUI only) — `PauseSequence` sets `pause_requested` (ignored with no
   sequence running); `ResumeSequence` clears it. The step layer calls the Runtime seam
@@ -144,18 +134,18 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   assignment, and a late read only moves the hold by one boundary or one poll. The hold
   blocks the **sequence thread** — the event loop keeps turning, so heartbeats continue
   and Resume/Stop are read.
-- Both flags are cleared when a run starts (`run_sequence()`), never when one ends.
+- Both flags are cleared when a run starts (`run_sequence()`); `pause_requested` is also
+  cleared by `drop_pending_pause()` after the main steps.
 
 ## Key constants
 
 | Name | Value | Meaning |
 |------|-------|---------|
-| `SEQUENCE_JOIN_TIMEOUT_S` | 2.0 s | How long `stop()` waits for the sequence thread |
-| `ABANDONED_DEVICES_TIMEOUT_S` | `ABANDON_TEARDOWN_TIMEOUT_S` + `RESCUE_TIMEOUT_S` + 1 = 16.0 s | How long `stop()` gives an abandoned run's devices, torn down in turn on one shared deadline: a teardown attempt each, then teardown on a fresh process |
 | `HOLD_POLL_S` | 0.05 s | How often a held run looks at the pause and stop flags |
 
 ## Known gaps
 
 - `WaitStep` does not honour `stop_requested` mid-sleep (step layer issue, not sequencer).
-- An abandoned run's thread is not stopped, only cut off: its test code runs on until it ends or
-  CORE's process exits. Its teardown *steps* do not run; only the devices are torn down.
+- A step that never returns holds the orderly close for good; there is no deadline on
+  purpose. The way out is the crash close (CLI Ctrl+C, or the frontend ending, after which
+  the launcher asks for it), which runs no teardown and leaves the devices as they are.

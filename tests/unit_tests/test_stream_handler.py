@@ -9,7 +9,6 @@ from pypts.stream_handler import (
     STREAMS_FOLDER,
     StreamError,
     StreamSession,
-    abandon_active_session,
     register_stream,
     stream_csv_path,
     unit_from_header,
@@ -174,19 +173,6 @@ def test_closing_another_session_does_not_clear_active(tmp_path: Path) -> None:
         stream = register_stream("x")
     assert stream.path == tmp_path / "a" / "streams" / "x.csv"
     assert not (tmp_path / "b").exists()
-
-
-def test_abandon_active_session(tmp_path: Path) -> None:
-    abandon_active_session()
-    session = StreamSession(tmp_path)
-    session.__enter__()
-    stream = register_stream("x")
-    abandon_active_session()
-    assert stream.closed is True
-    with pytest.raises(StreamError):
-        register_stream("x")
-    with pytest.raises(StreamError):
-        session.register("y")
 
 
 def test_register_after_close_writes_no_file(tmp_path: Path) -> None:

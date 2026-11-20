@@ -63,7 +63,6 @@ from pypts.messages.core_report_communication import (
     StopReport,
 )
 from pypts.messages.core_sequencer_communication import (
-    ClosingDevices,
     CoreToSequencer,
     ForgetRecipe,
     RunSequence,
@@ -136,7 +135,14 @@ MODULE_SOURCE = {
     REPORT: "pypts.report.report",
 }
 
-#: The same, for a ModuleError, which names its sender by dotted module. A
+#: What a crash close during a run tells the operator. The crash close does not
+#: wait for the run's teardown steps or for its devices to close, and the driver
+#: processes end with CORE without their teardown().
+BENCH_MAY_BE_ENERGISED = (
+    "A test was running and was not finished: the devices on the bench may still be energised."
+)
+
+#: Like FRIENDLY_MODULE_NAME, for a ModuleError, which names its sender by dotted module. A
 #: module missing here is described as "the software" rather than by its import
 #: path - an unknown sender is still a failure worth showing the operator.
 FRIENDLY_SOURCE_NAME = {
@@ -221,27 +227,6 @@ class Core:
     construct a link to anyone it has no business talking to.
     """
 
-    #: How long a submodule thread gets to leave its event loop once it has
-    #: reported itself stopped. It has already said it is done, so this only
-    #: covers the return from the loop; it is not a shutdown budget.
-    THREAD_JOIN_TIMEOUT_S = 5.0
-
-    #: How long every module together gets to answer a stop request. This one
-    #: *is* the shutdown budget: it starts when stop_all_modules() asks, and it
-    #: covers a module noticing the request, finishing what it is doing and
-    #: reporting itself stopped.
-    #:
-    #: Without it CORE waits forever for a module that will never answer, and
-    #: the only thing that ends the run is the launcher's own join timeout
-    #: terminating the process - which loses the log line saying who was to
-    #: blame. Twenty-five seconds holds the worst case with margin: the
-    #: Sequencer may need SEQUENCE_JOIN_TIMEOUT_S (2 s) for a running
-    #: sequence, then up to ABANDONED_DEVICES_TIMEOUT_S (16 s) tearing down
-    #: the devices of one that would not stop. An ordinary shutdown takes a
-    #: fraction of it. The launcher's CORE_SHUTDOWN_TIMEOUT_S must stay
-    #: above it.
-    SHUTDOWN_TIMEOUT_S = 25.0
-
     def __init__(
         self,
         to_hmi: QueueWrapper[CoreToHmi],
@@ -267,18 +252,23 @@ class Core:
         self.from_report: QueueWrapper[ReportToCore] = QueueWrapper(Queue(), link=REPORT_TO_CORE)
 
         self.running = True
+
+        #: True once a close has begun, orderly or at once.
         self.shutting_down = False
 
-        #: True between "shutdown asked" and "the Report has been told to stop".
-        #: The Report is stopped LAST so it can drain the aborted run's tail
-        #: (StepExecuted / RunFinished / GenerateReport) before it closes.
-        self.stop_report_pending = False
+        #: True once the crash close has begun: every module told to stop in
+        #: one go, nothing waited for, the submodule threads not joined.
+        self.closing_at_once = False
 
-        #: True between "shutdown asked" and "the HMI has been told to stop".
-        #: StopHmi is held back like StopReport: the Sequencer may still be
-        #: abandoning a run, and the status line and CRITICALs it sends on the
-        #: way must reach a frontend that is still open.
-        self.stop_hmi_pending = False
+        #: The modules already told to stop, so that each is told exactly once
+        #: whichever way the close goes - an orderly close overtaken by a crash
+        #: request included.
+        self.stop_sent: set[str] = set()
+
+        #: True from RunStarted to RunFinished. A crash close does not wait
+        #: for the run's teardown, so with a run open it says the bench may
+        #: still be energised.
+        self.run_open = False
 
         #: The loaded recipe, and the only copy of it: CORE owns it, and hands
         #: it to the Sequencer with each RunSequence. None until one is loaded,
@@ -292,10 +282,6 @@ class Core:
         #: the HMI alone. Taken from the Sequencer's RunStarted rather than from
         #: the StartSequence CORE relayed, because the Sequencer may refuse it.
         self.run_has_report = True
-
-        #: When CORE stops waiting for the modules it asked to stop. None until
-        #: it has asked, because there is nothing to time out before that.
-        self.shutdown_deadline: float | None = None
 
         # Set by start_submodules(). A CORE built by a test may never start
         # them, so join_submodules() has to cope with them being absent.
@@ -376,29 +362,23 @@ class Core:
         """
         Wait for both submodule threads to return, once the loop has ended.
 
-        By the time CORE leaves its loop both have reported themselves stopped,
-        so this normally returns at once. A thread still alive here is stuck
-        somewhere after its loop and is worth a line in the log: the process
-        will exit anyway, because they are daemons.
+        After an orderly close both have reported themselves stopped, so a plain
+        join returns at once: all that is left is the return from their loops.
+        After a crash close nothing is waited for: a Sequencer thread may be
+        stuck in a step, and they are daemons, so the process exits without them.
         """
+        if self.closing_at_once:
+            log.debug("Closing at once: the submodule threads are not waited for.")
+            return
         for name, thread in (
             (SEQUENCER, self.sequencer_thread),
             (REPORT, self.report_thread),
         ):
             if thread is None:
                 continue
-            log.debug("Waiting up to %.1f s for the %s thread.", self.THREAD_JOIN_TIMEOUT_S, name)
-            thread.join(timeout=self.THREAD_JOIN_TIMEOUT_S)
-            if thread.is_alive():
-                log.warning(
-                    "The %s did not shut down in time and was left running.",
-                    FRIENDLY_MODULE_NAME[name],
-                )
-                log.debug(
-                    "Thread '%s' was still alive after %.1f s.", name, self.THREAD_JOIN_TIMEOUT_S
-                )
-            else:
-                log.debug("The %s thread finished.", name)
+            log.debug("Waiting for the %s thread.", name)
+            thread.join()
+            log.debug("The %s thread finished.", name)
 
     # --- Main event loop ------------------------------------------------------
 
@@ -460,6 +440,8 @@ class Core:
 
     def handle_hmi_message(self, message: HmiToCore) -> None:
         match message:
+            case ShutdownRequested(immediate=True):
+                self.close_at_once()
             case ShutdownRequested():
                 self.stop_all_modules()
             case HmiStopped():
@@ -503,13 +485,12 @@ class Core:
         match message:
             case SequencerStopped():
                 self.modules[SEQUENCER].running = False
-                self.release_stop_report()
-                self.release_stop_hmi()
-            case ClosingDevices():
-                # The device-teardown phase of a fault shutdown. One line of
-                # free text is all a frontend needs to show it.
-                self.to_hmi.send(StatusChanged("Stopping: closing the devices..."))
+                # The orderly close's next step: the Report, now that the
+                # stopped run's tail is all in its queue.
+                if self.shutting_down:
+                    self.send_stop(REPORT)
             case RunStarted():
+                self.run_open = True
                 # Decides the routing of the whole run: an engineering-mode
                 # retest has no report, so nothing of it goes to the Report.
                 self.run_has_report = message.write_report
@@ -530,6 +511,7 @@ class Core:
                     log.debug("CORE relaying RunFinished to the HMI; no report for this run.")
                 self.to_hmi.send(message)
                 self.run_has_report = True
+                self.run_open = False
             case RunMetadata():
                 # What the run has learned about the unit on the bench. The
                 # Report stamps it on every row; the HMI shows it beside the
@@ -586,6 +568,10 @@ class Core:
         match message:
             case ReportStopped():
                 self.modules[REPORT].running = False
+                # The orderly close's last step: the HMI, which has by now
+                # shown everything the Sequencer and the Report said.
+                if self.shutting_down:
+                    self.send_stop(HMI)
             case ReportGenerated(report_path=path):
                 log.debug("CORE relaying the generated report at %s.", path)
                 self.to_hmi.send(StatusChanged(f"Report generated: {path}"))
@@ -880,13 +866,13 @@ class Core:
         # silence that the engine died under it.
         self.hmi_heartbeat.tick()
 
-        # Nothing to watch for once the shutdown is under way. Every module has
-        # been asked to stop and is expected to go quiet, check_stop_status()
-        # already has its own budget and already names whoever fails to answer,
-        # and without this the fatal branch below would re-report the same dead
-        # module - and re-send its ModuleErrorReported - a hundred times a
-        # second for the rest of the shutdown.
-        if self.shutting_down:
+        # The watch stays on through an orderly close: it has no deadline, so a
+        # module that dies during it would hold CORE for ever, and this is what
+        # turns that into a crash close. A module that has answered its stop is
+        # skipped below (state.running). Once the crash close has begun there
+        # is nothing left to watch, and without this the fatal branch would
+        # re-report the same dead module on every tick until CORE leaves.
+        if self.closing_at_once:
             return
 
         now = time.time()
@@ -940,10 +926,9 @@ class Core:
         once, not once per tick. It is DEBUG: a slow GUI start (PySide6 takes
         seconds to import) is routine and tells the technician nothing.
 
-        It does not end the run. A module that never starts at all is caught
-        where it can be caught properly: the launcher's `ui_process.join()`
-        returns at once if the frontend dies on import, and join_submodules()
-        reports a thread that failed to start.
+        It does not end the run. A frontend that never starts at all is caught
+        by the launcher: its `ui_process.join()` returns at once if the frontend
+        dies on import.
         """
         if state.start_reported:
             return
@@ -966,22 +951,14 @@ class Core:
         vanishes leaves a technician with a half-finished test and no reason for
         it, so this goes through handle_module_error() - the same path a
         reported failure takes - which logs it at the severity's level and sends
-        it on as ModuleErrorReported. Sending it first matters: stop_all_modules()
-        is what closes their window. Nothing here writes an operator-facing line
+        it on as ModuleErrorReported. Sending it first matters: the StopHmi from
+        close_at_once() is what closes their window. Nothing here writes an operator-facing line
         of its own; that would say the same thing twice.
 
-        Then the ordinary shutdown, unchanged. StopSequencer goes out; StopReport
-        is held back so the Report can drain the aborted run's tail, and StopHmi
-        is held back so the status line and CRITICALs reach an open window,
-        the SHUTDOWN_TIMEOUT_S budget applies, and CORE leaves when every module has
-        answered or the budget runs out. Nothing new is invented for this case,
-        which is the point: a watchdog that shut down differently from every
-        other exit would be a second shutdown path to keep working.
-
-        The silent module will not answer - it is why we are here - so the
-        budget is spent waiting for it. That is the honest cost of reusing the
-        one path, and SHUTDOWN_TIMEOUT_S at the end of a dead run is not worth a
-        special case.
+        Then the crash close (close_at_once()): the silent module will not
+        answer - it is why we are here - so nothing is waited for. With a run
+        open, the same CRITICAL says the bench may still be energised: the
+        crash close does not wait for the run's teardown.
         """
         # The mechanism only. The operator's sentence is written by
         # handle_module_error() below, from the ModuleError - saying it here as
@@ -996,104 +973,97 @@ class Core:
             HEARTBEAT_FATAL_S,
         )
 
+        message = f"It stopped responding for {silent_for:.0f} seconds, so pypts is closing."
+        if self.run_open:
+            message += " " + BENCH_MAY_BE_ENERGISED
         self.handle_module_error(
             ModuleError(
                 source=MODULE_SOURCE[name],
                 severity=ErrorSeverity.CRITICAL,
-                message=(
-                    f"It stopped responding for {silent_for:.0f} seconds, "
-                    f"so the run was stopped."
-                ),
+                message=message,
                 operation="heartbeat",
             )
         )
-        self.stop_all_modules()
+        # The CRITICAL above already said whatever there was to say.
+        self.close_at_once(warn=False)
 
     # --- Shutdown -------------------------------------------------------------
+    #
+    # Two ways to close, and only two. The orderly close waits for each module
+    # in turn, with no deadline: a running test finishes its step and its
+    # teardown steps first. The crash close tells every module to stop in one
+    # go and waits for nothing. A module that dies during an orderly close is
+    # caught by the watchdog, which turns it into a crash close.
 
     def stop_all_modules(self) -> None:
         """
-        Ask every module to stop. Each answers with its own *Stopped event.
+        The orderly close: StopSequencer now, StopReport on SequencerStopped,
+        StopHmi on ReportStopped. CORE leaves once all three have stopped.
 
-        Idempotent, because shutdown is legitimately requested twice: the
-        frontend asks when the operator leaves, and the launcher asks again once
-        it has joined the UI process - it cannot assume the frontend got the
-        chance. Without the guard every module is told to stop twice.
+        Idempotent: a frontend may ask more than once.
         """
         if self.shutting_down:
             return
         self.shutting_down = True
-
-        # The clock starts here rather than at the first unanswered check, so
-        # the budget covers the whole shutdown and not just the tail of it.
-        self.shutdown_deadline = time.time() + self.SHUTDOWN_TIMEOUT_S
-
         log.info("Shutting down.")
-        log.debug(
-            "Stopping every module; the shutdown budget is %.1f s.", self.SHUTDOWN_TIMEOUT_S
-        )
-        self.to_sequencer.send(StopSequencer())
-        # StopReport and StopHmi are held back: the Sequencer may still be
-        # finishing an aborted sequence whose events must reach the Report,
-        # and may still be abandoning a run whose status line and CRITICALs
-        # must reach a frontend that is still open. Both are released by
-        # SequencerStopped, or by the shutdown deadline.
-        self.stop_report_pending = True
-        self.stop_hmi_pending = True
+        log.debug("Orderly close: the Sequencer first, then the Report, then the HMI.")
+        self.send_stop(SEQUENCER)
 
-    def release_stop_report(self) -> None:
-        """Send the held StopReport, exactly once."""
-        if not self.stop_report_pending:
-            return
-        self.stop_report_pending = False
-        log.debug("Releasing the held StopReport.")
-        self.to_report.send(StopReport())
+    def close_at_once(self, warn: bool = True) -> None:
+        """
+        The crash close: every module still running is told to stop in one go,
+        and CORE leaves without waiting for any answer.
 
-    def release_stop_hmi(self) -> None:
-        """Send the held StopHmi, exactly once."""
-        if not self.stop_hmi_pending:
+        Taken on ShutdownRequested(immediate=True) - the CLI's Ctrl+C, the
+        launcher once the frontend has gone - and by the watchdog. A crash close
+        that overtakes an orderly one stops whatever is left. With nothing left
+        running (the launcher's request after an orderly close) it only lets
+        CORE leave, and says nothing to the operator.
+
+        `warn` is False for the watchdog, whose own CRITICAL has already told
+        the operator what died and whether the bench may still be energised.
+        """
+        if self.closing_at_once:
             return
-        self.stop_hmi_pending = False
-        log.debug("Releasing the held StopHmi.")
-        self.to_hmi.send(StopHmi())
+        still_running = [name for name, state in self.modules.items() if state.running]
+        self.shutting_down = True
+        self.closing_at_once = True
+        if not still_running:
+            log.debug("Asked to close at once; every module has already stopped.")
+            self.running = False
+            return
+
+        if warn:
+            if self.run_open:
+                log.critical("pypts is closing at once. %s", BENCH_MAY_BE_ENERGISED)
+            else:
+                log.info("pypts is closing at once.")
+        log.debug("Crash close: stopping %s without waiting.", ", ".join(still_running))
+        for name in still_running:
+            self.send_stop(name)
+        self.running = False
+
+    def send_stop(self, name: str) -> None:
+        """Tell one module to stop, exactly once whatever the close does next."""
+        if name in self.stop_sent:
+            return
+        self.stop_sent.add(name)
+        log.debug("Sending the stop to the %s.", name)
+        if name == SEQUENCER:
+            self.to_sequencer.send(StopSequencer())
+        elif name == REPORT:
+            self.to_report.send(StopReport())
+        else:
+            self.to_hmi.send(StopHmi())
 
     def check_stop_status(self) -> None:
         """
-        CORE exits once every module has reported itself stopped, or once it has
-        waited SHUTDOWN_TIMEOUT_S for the ones that have not.
+        CORE leaves its loop once every module has reported itself stopped.
 
-        The clean path is the first branch and is what almost always happens.
-        The second exists because a module that dies without reporting used to
-        leave CORE waiting forever, and the only thing that ended the run was the
-        launcher terminating the process - which killed the log along with it, so
-        the one fact worth keeping, *which* module never answered, was the one
-        fact lost. Naming them is most of the point of having a timeout at all.
-
-        There is no killing to do. The Sequencer and the Report are daemon
-        threads, so abandoning them is exactly what letting CORE leave means:
-        they cannot hold the process open, and join_submodules() logs any that
-        are still running when it goes. The HMI is a process the launcher owns,
-        so CORE could not kill it even if threads were killable - which is the
-        other reason this reports rather than acts.
+        There is no deadline. A module that dies without answering stops
+        beating, and the watchdog in do_periodic_tasks() turns the wait into a
+        crash close.
         """
         if not any(state.running for state in self.modules.values()):
             log.debug("Every module has reported itself stopped.")
             self.running = False
-            return
-
-        if self.shutdown_deadline is None or time.time() < self.shutdown_deadline:
-            return
-
-        # The Sequencer never answered; stop holding the Report and the HMI.
-        self.release_stop_report()
-        self.release_stop_hmi()
-
-        # Reached once: self.running is cleared below, so the loop that calls
-        # this does not come back round to log the same sentence again.
-        late = sorted(name for name, state in self.modules.items() if state.running)
-        log.error(
-            "Parts of the software did not stop in time and were left behind: %s.",
-            ", ".join(FRIENDLY_MODULE_NAME[name] for name in late),
-        )
-        log.debug("Abandoned after %.1f s: %s.", self.SHUTDOWN_TIMEOUT_S, ", ".join(late))
-        self.running = False

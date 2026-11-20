@@ -83,6 +83,34 @@ def test_stop_from_core_ends_the_cli_without_waiting_for_input(monkeypatch):
     assert HmiStopped() in [outbox.get_nowait() for _ in range(outbox.qsize())]
 
 
+def test_ctrl_c_asks_for_the_crash_close_and_leaves_without_waiting(monkeypatch):
+    """
+    Ctrl+C is the crash close: ShutdownRequested(immediate=True), then the shell
+    leaves at once - nothing waits for StopHmi, which may never come.
+    """
+    from pypts.hmi.cli.cli import CLI
+    from pypts.messages.core_hmi_communication import HmiStopped
+
+    outbox: queue.Queue = queue.Queue()
+    cli = CLI(QueueWrapper(outbox), QueueWrapper(queue.Queue()))
+
+    def interrupted():
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "_command_loop", interrupted)
+
+    started = time.monotonic()
+    cli.run()
+    elapsed = time.monotonic() - started
+
+    sent = [outbox.get_nowait() for _ in range(outbox.qsize())]
+    assert ShutdownRequested(immediate=True) in sent
+    assert HmiStopped() in sent
+    assert sent.index(ShutdownRequested(immediate=True)) < sent.index(HmiStopped())
+    assert cli.running is False
+    assert elapsed < 2.0
+
+
 def test_nothing_is_read_after_exit(monkeypatch):
     """The reader asks for a line only when the shell is ready for one."""
     from pypts.hmi.cli.cli import CLI

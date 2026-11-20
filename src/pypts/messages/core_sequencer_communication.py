@@ -90,17 +90,11 @@ class StopSequencer:
 
 @dataclass
 class SequencerStopped:
-    """The Sequencer's event loop has ended."""
-
-
-@dataclass
-class ClosingDevices:
     """
-    An abandoned run's devices are being torn down, before the goodbye.
+    The Sequencer's event loop has ended.
 
-    Sent once, when Sequencer.tear_down_abandoned_devices() begins, so the
-    operator can be told the shutdown is in its device-teardown phase. CORE
-    relays it to the HMI as a StatusChanged line; no answer.
+    On a shutdown it comes only once a running sequence has finished: its
+    current step, its teardown steps, its devices closed, RunFinished sent.
     """
 
 
@@ -121,7 +115,6 @@ CoreToSequencer = (
 
 SequencerToCore = (
     SequencerStopped
-    | ClosingDevices
     | RunStarted
     | RunFinished
     | RunPaused

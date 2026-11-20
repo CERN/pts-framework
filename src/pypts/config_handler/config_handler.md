@@ -2,11 +2,11 @@
 
 One place that answers *"how is this installation set up"*. Everything the framework needs
 to know before it can do anything — where the log goes, where reports go, at what level to
-log, which instruments are on the bench — lives in one INI file, and this package is the
-only code that touches it.
+log — lives in one INI file, `config.ini`; the instruments on the bench live in `bench.ini`
+beside it. This package is the only code that touches either.
 
 This document is the whole context of `src/pypts/config_handler/`. Read it instead of
-re-reading the four modules.
+re-reading the five modules.
 
 ---
 
@@ -46,7 +46,7 @@ defaults are used in memory, `bootstrap_outcome`/`bootstrap_problem` carry the v
 the launcher shows the operator a notice (popup in GUI mode, console banner otherwise). The
 run does not stop. From then on the file is read-only to everyone **except CORE**, which
 `core_main()` opens with `open_for_writing()` and which carries out `SetConfigParameter` —
-the operator's changes from the GUI's Edit → Configuration (see *Writing* below).
+the operator's changes from the GUI's Edit → Settings (see *Writing* below).
 **The one exception is the Recipe Editor v2**, which runs without CORE: its `main()` calls
 `bootstrap()` too, so it is the writer in its own process, and saves its own `[recipe_editor]`
 settings (`recipe_editor/editor_settings.py`). Both writers change one line in place, re-reading
@@ -296,7 +296,7 @@ Two file-format details worth knowing:
 | `hal/local_setup.py` | `bench_config()` — the cached device sections, read on a run's first `get_device()` |
 | `helper_applications/recipe_creator/rc_logging.py` | `paths.reports_dir` for the helper tools' log files, falling back to the default reports dir when there is no configuration to read |
 | `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
-| `hmi/gui/gui.py` | `gui.theme` / `gui.window_width` / `gui.window_height` and the four `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
+| `hmi/gui/gui.py` | `gui.theme` / `gui.window_mode` / `gui.window_width` / `gui.window_height` and the four `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
 | `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
 | `helper_applications/recipe_editor/editor_settings.py` | `bootstrap()` in the editor's `main()` (`open_config()`); the `recipe_editor.*` keys when the window opens; `get_whole_config()` + `bootstrap_problem` for its Settings dialog; `set_parameter()` for a saved setting (`save_setting()`) |
 
@@ -341,7 +341,7 @@ invisible.
 otherwise outlive the `tmp_path` it was pointed at. **Only tests may call it**: a process that
 dropped its configuration mid-run would be reading a different file from its own threads.
 
-`tests/unit_tests/test_config_handler.py` (58 tests) covers creation, reading, the singleton
+`tests/unit_tests/test_config_handler.py` covers creation, reading, the singleton
 and its thread safety, write permission, validation, unknown sections, the structure-version
 mismatch, the bootstrap-log narration, comment preservation, and the schema/template
 agreement.

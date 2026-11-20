@@ -89,7 +89,7 @@ python run_recipe_creator.py       # / run_recipe_editor.py</code></pre>
   </table>
 
   <h3>Architecture</h3>
-<pre><code>launcher -> spawns  Logger | CORE (Sequencer + Report threads) | HMI (GUI/CLI)
+<pre><code>launcher -> spawns  Logger | CORE (Sequencer + Report threads) | GUI   (the CLI runs in the launcher)
 HAL: one driver process per opened device</code></pre>
   <ul>
     <li>Modules never call each other. Everything goes through <b>CORE</b>; log records go straight to the Logger.</li>
@@ -153,7 +153,7 @@ steps:
       voltage: {type: range, min: '11', max: '13'}</code></pre>
   <table>
     <tr><td>Step types</td><td><code>PythonModule</code> <code>UserInteraction</code> <code>UserWrite</code> <code>UserLoading</code> <code>Wait</code> <code>Sequence</code> <code>Indexed</code></td></tr>
-    <tr><td>Verdicts</td><td><code>equals</code> <code>range</code> <code>passfail</code> <code>pass</code></td></tr>
+    <tr><td>Outputs</td><td><code>equals</code> <code>range</code> <code>passfail</code> judge; <code>pass</code> records; <code>global</code> stores</td></tr>
     <tr><td>Use a global</td><td><code>{type: global, global_name: target_voltage}</code></td></tr>
     <tr><td>No YAML by hand</td><td>Recipe Creator / Recipe Editor</td></tr>
   </table>

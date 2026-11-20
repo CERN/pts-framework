@@ -7,13 +7,11 @@ Unit tests for the shared frontend half (src/pypts/hmi/hmi_client.py).
 
 Only the exit handshake so far. `wait_until_stopped()` is what a frontend's main
 thread blocks in after asking CORE to shut down, so both of its branches decide
-whether the application exits at all: the normal one returns as soon as the
-polling thread has handled StopHmi, and the timeout one stops the frontend
-itself rather than waiting for a CORE that will never answer.
+whether the application exits at all: it returns as soon as the polling thread
+has handled StopHmi, it has no deadline of its own, and a CORE that has gone
+silent ends it through the CORE watch.
 
-The tests drive the client's real queues, and neither of them waits a real
-grace period - the branch under test is chosen by how the client is driven, not
-by how long the test is prepared to sit still.
+The tests drive the client's real queues.
 """
 
 import logging
@@ -28,8 +26,8 @@ from pypts.messages import QueueWrapper
 from pypts.messages.core_hmi_communication import HmiStopped, StartSequence
 from pypts.messages.run_events import PauseSequence, ResumeSequence, RunPaused, RunResumed
 
-#: What a frontend is expected to do in: the "returns at once" branch must not
-#: come anywhere near this, let alone near the grace period it was given.
+#: What a frontend is expected to do in: the "returns at once" case must not
+#: come anywhere near this.
 PROMPT_S = 1.0
 
 
@@ -59,8 +57,7 @@ def drain(a_queue):
 def test_wait_until_stopped_returns_as_soon_as_stop_arrives(client, caplog):
     """
     The normal exit. CORE answers, the polling thread calls stop(), and the wait
-    must end there - not sit out the rest of the grace period, which the
-    operator would see as the window refusing to close for five seconds.
+    must end there, not a polling interval or more later.
     """
     instance, _to_core = client
 
@@ -69,7 +66,7 @@ def test_wait_until_stopped_returns_as_soon_as_stop_arrives(client, caplog):
     try:
         started = time.monotonic()
         with caplog.at_level(logging.WARNING):
-            instance.wait_until_stopped(grace_s=2.0)
+            instance.wait_until_stopped()
         elapsed = time.monotonic() - started
     finally:
         acknowledge.cancel()
@@ -79,25 +76,55 @@ def test_wait_until_stopped_returns_as_soon_as_stop_arrives(client, caplog):
     assert not [r for r in caplog.records if "did not confirm the shutdown" in r.getMessage()]
 
 
-def test_wait_until_stopped_gives_up_after_the_grace_period(client, caplog):
+def test_wait_until_stopped_has_no_deadline(client, caplog):
     """
-    The wedged-CORE exit. Nothing answers, so the frontend stops itself: without
-    the bound the main thread would block for ever and the application could
-    only be killed.
+    An orderly close lets a running test finish, however long it takes, so the
+    frontend waits for StopHmi with no grace period of its own.
+    """
+    instance, _to_core = client
+
+    acknowledge = threading.Timer(0.3, instance.stop)
+    acknowledge.start()
+    try:
+        started = time.monotonic()
+        with caplog.at_level(logging.WARNING):
+            instance.wait_until_stopped()
+        elapsed = time.monotonic() - started
+    finally:
+        acknowledge.cancel()
+
+    assert elapsed >= 0.25
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_a_silent_core_ends_the_wait(client, monkeypatch):
+    """
+    The one fallback: CORE stops beating, the CORE watch on the polling thread
+    stops the frontend, and the wait returns. stop() still tells CORE.
     """
     instance, to_core = client
+    monkeypatch.setattr(instance.core_watch, "is_lost", lambda: True)
 
-    with caplog.at_level(logging.WARNING):
-        instance.wait_until_stopped(grace_s=0.1)
+    polling_thread = threading.Timer(0.05, instance.check_core_is_alive)
+    polling_thread.start()
+    try:
+        instance.wait_until_stopped()
+    finally:
+        polling_thread.cancel()
 
     assert instance.running is False
+    assert HmiStopped() in drain(to_core)
 
-    warnings = [r for r in caplog.records if "did not confirm the shutdown" in r.getMessage()]
-    assert len(warnings) == 1, f"expected one warning, got {len(warnings)}"
 
-    # stop() still runs in full, so CORE - if it is listening after all - is
-    # told the frontend has gone rather than being left waiting for it.
-    assert drain(to_core) == [HmiStopped()]
+def test_request_shutdown_asks_for_the_orderly_close_by_default(client):
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+
+    instance, to_core = client
+
+    instance.request_shutdown()
+    instance.request_shutdown(immediate=True)
+
+    assert drain(to_core) == [ShutdownRequested(), ShutdownRequested(immediate=True)]
 
 
 def test_hmi_stopped_is_sent_even_if_the_frontend_teardown_fails(client):

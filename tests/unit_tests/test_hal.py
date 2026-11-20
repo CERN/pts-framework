@@ -41,7 +41,6 @@ from pypts.hal.connection_driver import (
 from pypts.hal.device_types import DEVICE_TYPE_NAMES, DEVICE_TYPES
 from pypts.hal.drivers.loopback import LoopbackDriver
 from pypts.hal.local_setup import (
-    abandon_active_setup,
     bench_sections,
     ini_device_sections,
     split_section,
@@ -281,12 +280,6 @@ class _FakeConnection:
     def _close(self):
         self.events.append("close")
 
-    def _abandon(self, time_limit_s):
-        self.events.append("abandon")
-        self.abandon_time_limits = getattr(self, "abandon_time_limits", [])
-        self.abandon_time_limits.append(time_limit_s)
-        return True
-
 
 @pytest.fixture
 def fake_connections(monkeypatch):
@@ -494,7 +487,7 @@ def test_get_device_works_from_another_thread(fake_connections):
 
 
 def test_a_newer_local_setup_replaces_an_older_one(fake_connections):
-    """An abandoned run never leaves its with-block; the next run must still work."""
+    """A script that never leaves its with-block must not break the next setup."""
     old = LocalSetup(lambda: SECTIONS)
     new = LocalSetup(lambda: {"loop1": {"driver": "pkg.Other"}})
     old.__enter__()
@@ -504,60 +497,3 @@ def test_a_newer_local_setup_replaces_an_older_one(fake_connections):
     with pytest.raises(DriverError, match="No local setup is active"):
         get_device("loop1")
 
-
-# --------------------------------------------------------------------------
-# A run that will not end: its devices are made safe without it
-# --------------------------------------------------------------------------
-
-
-def test_abandoning_takes_the_setup_away_and_makes_every_device_safe(fake_connections):
-    setup = LocalSetup(lambda: SECTIONS)
-    setup.__enter__()
-    ssh = setup.get_device("ssh1")
-    loop = setup.get_device("loop1")
-
-    assert abandon_active_setup(time_limit_s=5.0) == []
-
-    assert ssh.events == ["open", "abandon"]
-    assert loop.events == ["open", "abandon"]
-    with pytest.raises(DriverError, match="No local setup is active"):
-        get_device("loop1")
-
-
-def test_a_device_that_finishes_opening_beside_abandon_is_closed_not_leaked(
-    fake_connections, monkeypatch
-):
-    """The abandon flag and the registration are one atomic step: a device
-    that finishes opening after abandon() copied the list is closed here,
-    never silently left running (review N4)."""
-    setup = LocalSetup(lambda: SECTIONS)
-    setup.__enter__()
-
-    def open_and_lose_the_race(self):
-        self.events.append("open")
-        abandon_active_setup(time_limit_s=0.5)
-
-    monkeypatch.setattr(_FakeConnection, "_open", open_and_lose_the_race)
-
-    with pytest.raises(DriverError, match="abandoned"):
-        setup.get_device("ssh1")
-
-    (ssh,) = fake_connections
-    assert ssh.events == ["open", "close"]
-
-
-def test_an_abandoned_setup_opens_no_device_for_the_run_it_was_taken_from(fake_connections):
-    """The stuck run's next get_device() must not quietly reopen what was just made safe."""
-    setup = LocalSetup(lambda: SECTIONS)
-    setup.__enter__()
-    abandon_active_setup(time_limit_s=5.0)
-
-    with pytest.raises(DriverError, match="abandoned"):
-        setup.get_device("ssh1")
-    assert fake_connections == []
-    # Its own with-block ending later is harmless.
-    setup.__exit__(None, None, None)
-
-
-def test_abandoning_with_no_active_setup_does_nothing():
-    assert abandon_active_setup(time_limit_s=1.0) == []

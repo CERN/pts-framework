@@ -16,7 +16,6 @@ for the configuration.
 import configparser
 import os
 import threading
-import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from types import TracebackType
@@ -121,13 +120,6 @@ class LocalSetup:
         self._sections: Mapping[str, Mapping[str, Any]] | None = None
         self._devices: dict[str, ConnectionDriver] = {}
         self._lock = threading.RLock()
-        #: Guards _abandoned and the registration of a new device, so a device
-        #: that finishes opening beside abandon() is either in abandon's copy
-        #: or refused and closed here. Never held across a driver call -
-        #: abandon() must not block on a lock the stuck run may hold.
-        self._registry_lock = threading.Lock()
-        #: Set by abandon(): this setup's run will not end, and opens nothing more.
-        self._abandoned = False
 
     @classmethod
     def from_ini(cls, path: str | os.PathLike[str]) -> "LocalSetup":
@@ -141,7 +133,6 @@ class LocalSetup:
     def get_device(self, name: str) -> ConnectionDriver:
         """The device called `name`, opened on first use. Raises DriverError."""
         with self._lock:
-            self._refuse_if_abandoned(name)
             device = self._devices.get(name)
             if device is not None:
                 return device
@@ -157,53 +148,8 @@ class LocalSetup:
             device = ConnectionDriver(name, driver_path, settings)
             # The private lifecycle: every public name on a device is the driver's.
             device._open()
-            with self._registry_lock:
-                abandoned = self._abandoned
-                if not abandoned:
-                    self._devices[name] = device
-            if abandoned:
-                # Abandoned while this was opening: it missed the teardown,
-                # and was registered nowhere, so it is closed here.
-                device._close()
-                self._refuse_if_abandoned(name)
+            self._devices[name] = device
             return device
-
-    def _refuse_if_abandoned(self, name: str) -> None:
-        if self._abandoned:
-            raise DriverError(
-                f"Device '{name}' cannot be used: this run was abandoned and its devices "
-                f"were torn down."
-            )
-
-    def abandon(self, time_limit_s: float) -> list[str]:
-        """
-        Tear every device down for a run that will not end. Never raises.
-
-        Its with-block will never reach __exit__, and it may be blocked inside
-        a device call - holding that device's lock - or inside get_device(),
-        holding this setup's. So neither of those is waited for: the setup
-        opens nothing more from now on, and each device runs its teardown
-        ladder (ConnectionDriver._abandon()) in turn, newest first, on one
-        shared deadline of `time_limit_s` in all. A device the deadline has
-        already passed still gets its driver process killed, and is reported.
-
-        Returns:
-            The names of the devices that could not be torn down in time.
-        """
-        with self._registry_lock:
-            self._abandoned = True
-            devices = dict(self._devices)
-        deadline = time.monotonic() + time_limit_s
-        unsafe = []
-        for name in reversed(list(devices)):
-            try:
-                safe = devices[name]._abandon(deadline - time.monotonic())
-            except Exception as exc:  # noqa: BLE001 - one device must not keep the others open
-                log.warning("Device '%s' did not close: %s", name, exc)
-                safe = False
-            if not safe:
-                unsafe.append(name)
-        return sorted(unsafe)
 
     def close(self) -> None:
         """Close every device this setup opened, newest first. Never raises."""
@@ -253,8 +199,7 @@ def _activate(setup: LocalSetup) -> None:
     global _active_setup
     with _active_lock:
         if _active_setup is not None and _active_setup is not setup:
-            # Only an abandoned run (stop_running_sequence gave up on its
-            # thread) leaves a local setup active behind it.
+            # A script that entered a setup and never left it.
             log.debug("A new local setup replaces one that was never closed.")
         _active_setup = setup
 
@@ -281,24 +226,3 @@ def get_device(name: str) -> ConnectionDriver:
             "inside 'with LocalSetup.from_ini(path):' in a script of your own."
         )
     return setup.get_device(name)
-
-
-def abandon_active_setup(time_limit_s: float) -> list[str]:
-    """
-    Take the active setup away from a run that will not end, and tear its devices down.
-
-    What the Sequencer calls when a run outlives its stop: the run's with-block
-    will never close its devices, and test code must not reach them again.
-    Never raises.
-
-    Returns:
-        The names of the devices that could not be torn down in time; empty
-        when every one was, or when no setup was active.
-    """
-    global _active_setup
-    with _active_lock:
-        setup = _active_setup
-        _active_setup = None
-    if setup is None:
-        return []
-    return setup.abandon(time_limit_s)

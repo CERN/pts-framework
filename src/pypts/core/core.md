@@ -48,7 +48,7 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   before the first load or after an unload — CORE refuses it itself and tells the operator.
 - **A run without a report** — `self.run_has_report` is set from each `RunStarted.write_report`
   and put back to True once that run's `RunFinished` is routed. While it is False (the GUI's
-  engineering-mode retest) `RunStarted`, `SequenceStarted`, `RunMetadata`, `StepExecuted` and
+  engineering-mode retest) `RunStarted`, `SequenceStarted`, `RunMetadata` and
   `RunFinished` go to the HMI only, no `GenerateReport` is sent, and `StepExecuted` is dropped
   (one DEBUG line at `RunStarted` says so). CORE routes on the Sequencer's `RunStarted`, not on
   the `StartSequence` it relayed, because the Sequencer may refuse the run.
@@ -71,23 +71,35 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
     start is routine); silent past
     `HEARTBEAT_TIMEOUT_S` → one WARNING per outage, cleared when it answers again (INFO
     "responding again"); silent past `HEARTBEAT_FATAL_S` → `end_run_for_silent_module()`
-    reports a CRITICAL `ModuleError` (source from `MODULE_SOURCE`) **then** runs the ordinary
-    `stop_all_modules()`. There is no setting to turn this off. The watchdog stops checking
-    once `shutting_down` is set.
+    reports a CRITICAL `ModuleError` (source from `MODULE_SOURCE`; with a run open it adds
+    `BENCH_MAY_BE_ENERGISED`) **then** takes the crash close, `close_at_once()`. There is no
+    setting to turn this off. The watchdog stays on through an orderly close, which has no
+    deadline, and stops once `closing_at_once` is set.
   - Operator lines use `FRIENDLY_MODULE_NAME`. The developer's DEBUG lines name the module
     alone, measurements on a line of their own: `Heartbeat timeout for module: <name>`,
     `Heartbeat fatal for module: <name>`, `Module is responding again: <name>`.
-- **Shutdown choreography** — `stop_all_modules()` is idempotent (the frontend and the
-  launcher both ask). It starts the `SHUTDOWN_TIMEOUT_S` deadline and sends `StopSequencer`.
-  `StopReport` is held (`stop_report_pending`) until `SequencerStopped` arrives, so an aborted
-  run's CSV tail and `report.html` are written first — see `release_stop_report()`. `StopHmi`
-  is held the same way (`stop_hmi_pending`, `release_stop_hmi()`), so the frontend is still
-  open for the status line and CRITICALs the Sequencer sends while abandoning a run. Both are
-  released by `SequencerStopped`, or at the deadline. `check_stop_status()` ends the loop when
-  every module has reported itself stopped, or at the deadline: it then releases the held
-  `StopReport` and `StopHmi`, logs an ERROR naming the modules that did not answer, and
-  leaves. Nothing is killed — the threads are daemons and the HMI process belongs to the
-  launcher.
+- **Shutdown choreography** — two closes, no deadline in either. `send_stop()` tells each
+  module to stop exactly once (`stop_sent`), whichever close sends it.
+  - *Orderly* (`ShutdownRequested()`): `stop_all_modules()`, idempotent (a frontend may ask
+    more than once), logs `Shutting down.` and sends `StopSequencer`. The Sequencer lets a
+    running test finish its step and its teardown steps (`sequencer/sequencer.md`, *Stop*),
+    however long that takes. `SequencerStopped` → `StopReport`, so the stopped run's CSV tail
+    and `report.html` are written first; `ReportStopped` → `StopHmi`, so the frontend has
+    shown everything the other two said. `check_stop_status()` ends the loop once all three
+    have stopped, and `join_submodules()` then joins both threads with no timeout.
+  - *Crash* (`ShutdownRequested(immediate=True)` — the CLI's Ctrl+C, the launcher's
+    `stop_core()` — and the watchdog): `close_at_once()` sends the stop to every module still
+    running, waits for nothing, and leaves; `join_submodules()` does not join (the threads
+    are daemons, a Sequencer thread may be stuck in a step). Overtaking an orderly close, it
+    stops whatever is left. With nothing left running (the launcher after an orderly close) it
+    only lets CORE leave, DEBUG only. Otherwise it logs `pypts is closing at once.` (INFO), or,
+    with a run open (`run_open`, RunStarted to RunFinished), a CRITICAL ending in
+    `BENCH_MAY_BE_ENERGISED`: the run's teardown never runs and the driver processes end
+    with CORE without `teardown()`. The watchdog's own CRITICAL says it instead
+    (`warn=False`).
+  - A module that dies during an orderly close stops beating, and the watchdog turns the wait
+    into a crash close. Nothing is killed — the threads are daemons and the HMI process
+    belongs to the launcher.
 - **Configuration changes** — CORE is pypts' runtime writer of `config.ini` (the Recipe
   Editor v2, a process of its own, writes its own `[recipe_editor]` lines — `config_handler.md`).
   `core_main()` calls `ConfigHandler.open_for_writing()` before `Core()` is built (its first
@@ -109,11 +121,10 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
 | `RunFinished` | Report (followed by `GenerateReport` on the same queue) and HMI; HMI only for a run without a report |
 | `SequenceFinished`, `StepStarted`, `StepFinished`, `RunPaused`, `RunResumed`, the three `User*Request` | HMI only |
 | `StepExecuted` | Report only — it must never cross the HMI boundary; dropped for a run without a report |
-| `ClosingDevices` | HMI, as `StatusChanged("Stopping: closing the devices...")` |
 | `ReportGenerated` | HMI, as `StatusChanged` **and** `ReportReady(report_path, report_dir)` |
 | `ReportExported` (not sent yet) | HMI, as `StatusChanged` |
 
-Handled by CORE itself: `ShutdownRequested`, `HmiStopped` / `SequencerStopped` /
+Handled by CORE itself: `ShutdownRequested` (orderly, or with `immediate=True` the crash close), `HmiStopped` / `SequencerStopped` /
 `ReportStopped`, `LoadRecipe`, `UnloadRecipe`, `StartSequence`, `SetConfigParameter`, `Heartbeat`,
 `ModuleError`. `RunPaused` / `RunResumed` skip the Report: a hold changes when steps run, not
 what they produce.
@@ -122,10 +133,10 @@ what they produce.
 
 | Name | Where | Value | Meaning |
 |------|-------|-------|---------|
-| `Core.SHUTDOWN_TIMEOUT_S` | `core.py` | 25.0 s | Budget from `stop_all_modules()` to leaving without the modules that did not answer. Sized for the Sequencer's worst case: the 2 s join plus 16 s tearing down an abandoned run's devices (`sequencer/sequencer.md`); an ordinary shutdown uses a fraction of it. Must stay below the launcher's `CORE_SHUTDOWN_TIMEOUT_S` |
-| `Core.THREAD_JOIN_TIMEOUT_S` | `core.py` | 5.0 s | How long `join_submodules()` waits per thread after the loop ended |
 | `HEARTBEAT_TIMEOUT_S` | `utilities/heartbeat_manager.py` | 5.0 s | Silence before a WARNING |
-| `HEARTBEAT_FATAL_S` | `utilities/heartbeat_manager.py` | 15.0 s | Silence that ends the run |
+| `HEARTBEAT_FATAL_S` | `utilities/heartbeat_manager.py` | 15.0 s | Silence that takes the crash close |
+
+No shutdown constant: neither close has a deadline. The launcher's `CORE_SHUTDOWN_TIMEOUT_S` (`launcher.md`) is the last resort for a wedged CORE.
 
 The main loop sleeps 10 ms per tick (a literal in `main_loop()`, not a constant).
 

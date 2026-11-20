@@ -195,8 +195,8 @@ class Report:
             self.main_loop()
         finally:
             # A loop that died instead of ending still owes CORE the goodbye, or
-            # CORE waits out its whole shutdown budget and then names this module
-            # as one that would not stop.
+            # CORE's orderly close waits until the watchdog finds this module
+            # silent and closes at once, naming it as the one that died.
             self.send_goodbye()
         log.debug("REPORT module stopped.")
 
@@ -498,6 +498,6 @@ class Report:
             self.close_csv()
         finally:
             # As in Sequencer.stop(): closing the CSV is file I/O and can fail,
-            # the send is after it, and a failure there must not cost CORE its
-            # shutdown budget or get this module named as the one that hung.
+            # the send is after it, and a failure there must not leave CORE
+            # waiting for a goodbye that never comes.
             self.send_goodbye()

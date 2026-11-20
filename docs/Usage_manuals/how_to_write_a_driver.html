@@ -153,8 +153,8 @@ instruments. If a device is missing, you still can add it to a test bench.
 <h2>1. What a driver is</h2>
 <p>A driver is <b>one plain Python class</b> for one kind of instrument: a power supply, a
 multimeter, a remote machine. It knows how to open the connection, do the instrument's verbs,
-and leave the instrument safe. It imports nothing from the framework except its base class,
-and it contains no threading, no queues, no process code.</p>
+and leave the instrument safe. It imports nothing from the framework except its device type
+and <code>DriverError</code>, and needs no threading, queues or process code of its own.</p>
 <p>PyPTS runs every device's driver in <b>a process of its own</b>, reached over a pipe. A
 driver that crashes, hangs or leaks takes its own process down, not PyPTS. You do not write
 any of that: you write the class below, and the framework does the rest.</p>
@@ -192,6 +192,7 @@ class AcmePsuDriver(PSU):
             self._sock = socket.create_connection((host, port), timeout=10)
         except OSError as exc:                    # one clear error, not a bare socket error
             raise DriverError("PS-3000 at %s:%d could not be reached: %s" % (host, port, exc))
+        self._reader = self._sock.makefile("r", encoding="ascii")   # one reader, kept
         log.info("PS-3000 answered: %s", self._query("*IDN?"))
 
     def teardown(self):
@@ -236,7 +237,7 @@ class AcmePsuDriver(PSU):
 
     def _query(self, text):
         self._command(text)
-        return self._sock.makefile().readline().strip()
+        return self._reader.readline().strip()
 
 
 # --- standalone check: python acme_psu.py ------------------------------------
@@ -293,6 +294,7 @@ class AcmeDmmDriver(DMM):
             self._sock = socket.create_connection((host, port), timeout=5)
         except OSError as exc:                    # one clear error, not a bare socket error
             raise DriverError("DM-100 at %s:%d could not be reached: %s" % (host, port, exc))
+        self._reader = self._sock.makefile("r", encoding="ascii")   # one reader, kept
         log.info("DM-100 answered: %s", self._query("*IDN?"))
 
     def teardown(self):
@@ -332,7 +334,7 @@ class AcmeDmmDriver(DMM):
 
     def _query(self, text):
         self._command(text)
-        return self._sock.makefile().readline().strip()
+        return self._reader.readline().strip()
 
 
 # --- standalone check: python acme_dmm.py ------------------------------------
@@ -488,11 +490,11 @@ volts_per_division, seconds_per_division, points)</code>; <code>read_waveform(ch
 text. Raise when the instrument cannot be reached: the device then fails at open with your
 message.</li>
 <li><code>teardown()</code> — <b>where the instrument is left safe</b>: outputs and loads off,
-then disconnect. There is no separate safe-state method. Teardown runs at every end of a
-device — a normal close, PyPTS dying, or on a fresh connection when your driver was stuck —
-so it must work right after <code>connect()</code> on an instrument in any state, and be
-harmless when nothing is open. The framework runs it exactly once per connection, never
-twice.</li>
+then disconnect. There is no separate safe-state method. Teardown runs at every orderly end of a
+device, on a fresh connection when your driver was stuck, and when PyPTS is killed outright
+(unless your driver is stuck in a call). So it must work right after <code>connect()</code> on
+an instrument in any state, and be harmless when nothing is open. It never runs twice. A crash
+close (Ctrl+C in the CLI) or a crash of PyPTS skips it.</li>
 <li><code>recover(config)</code> — optional. The default is teardown + connect; override it
 when the instrument has a cheaper reset. Test code triggers it with
 <code class="py">recover_device(device)</code> (from <code>pypts.hal</code>); the framework
@@ -545,15 +547,15 @@ process connects and runs <code>teardown()</code> (the rescue) — or until test
 <tr><td>The driver process crashes</td><td><code>DriverError("Device 'psu1' stopped
 unexpectedly (exit code N).")</code>; <code>recover_device(device)</code> brings it back on a fresh
 process.</td></tr>
-<tr><td>The run ends, in any way</td><td>Every opened device is closed, newest first:
+<tr><td>The run ends: finished, stopped, or PyPTS closed in order</td><td>Every opened device is closed, newest first:
 <code>teardown()</code> on the live process, or on a fresh connection when the process was
 stuck or gone. A device that still cannot be torn down is an ERROR naming it
 (<code>... may still be energised</code>).</td></tr>
-<tr><td>PyPTS dies</td><td>The pipe closes and the driver process runs <code>teardown()</code>
+<tr><td>PyPTS is killed outright</td><td>The pipe closes and the driver process runs <code>teardown()</code>
 itself before exiting — unless it is stuck in a call.</td></tr>
-<tr><td>The run is abandoned (Stop gave up on its thread)</td><td>Every opened device is torn
-down on one 16&nbsp;s shared deadline, newest first, and then cannot be opened or
-recovered again.</td></tr>
+<tr><td>PyPTS closes at once (Ctrl+C in the CLI) or crashes during a run</td><td>No
+teardown: the driver processes end with PyPTS and the instrument stays as it is. The log has a
+CRITICAL saying the devices may still be energised.</td></tr>
 <tr><td><code>bench.ini</code> was discarded at startup</td><td>Every
 <code>get_device()</code> fails with the discarded-bench <code>DriverError</code> until the
 file is fixed and PyPTS restarted.</td></tr>

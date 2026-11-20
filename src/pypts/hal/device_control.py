@@ -38,8 +38,8 @@ def recover_device(device: ConnectionDriver) -> None:
     Bring a device back after a failure, escalating: the driver's own
     recover() while its process is alive; when that fails or the process is
     gone, teardown and a fresh process with connect(). Raises DriverError only
-    when even the fresh process cannot connect, or when the device's run was
-    abandoned. Nothing recovers on its own: test code decides.
+    when even the fresh process cannot connect. Nothing recovers on its own:
+    test code decides.
     """
     device._recover()
 

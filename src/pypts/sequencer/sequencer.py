@@ -22,18 +22,12 @@ from uuid import UUID
 
 from pypts._version import __version__
 from pypts.config_handler import ConfigHandler
-from pypts.hal.connection_driver import ABANDON_TEARDOWN_TIMEOUT_S, RESCUE_TIMEOUT_S
-from pypts.hal.local_setup import (
-    LocalSetup,
-    abandon_active_setup,
-    bench_sections,
-)
+from pypts.hal.local_setup import LocalSetup, bench_sections
 from pypts.logger.log import end_run_log, log, start_run_log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
 from pypts.messages.common_messages import ErrorSeverity, ResultType
 from pypts.messages.core_sequencer_communication import (
-    ClosingDevices,
     CoreToSequencer,
     ForgetRecipe,
     PauseSequence,
@@ -63,7 +57,7 @@ from pypts.step.runtime import Runtime
 # the step layer's run_sequence() is the sequence body itself.
 from pypts.step.step import StepResult, count_verdicts, describe_counts, real_step_results
 from pypts.step.step import run_sequence as run_sequence_body
-from pypts.stream_handler import StreamSession, abandon_active_session
+from pypts.stream_handler import StreamSession
 from pypts.utilities.error_handling import catch_and_report_errors, report_error, report_problem
 from pypts.utilities.heartbeat_manager import SEQUENCER, HeartbeatManager
 from pypts.utilities.local_storage import get_log_file_path, make_run_folder
@@ -73,17 +67,6 @@ def reports_dir_from_config() -> str:
     """Where run folders go - `paths.reports_dir` of this process's config.ini."""
     return str(ConfigHandler().get_parameter("paths.reports_dir"))
 
-
-#: How long stop() waits for a sequence that is still running.
-SEQUENCE_JOIN_TIMEOUT_S = 2.0
-
-#: How long stop() gives an abandoned run's devices, torn down one after
-#: another on one shared deadline: each runs the teardown ladder (a clean
-#: close, then teardown on a fresh process). Sized for one full ladder plus
-#: a second for the kills to land; a device the deadline passes is killed
-#: and reported. Inside CORE's shutdown budget together with the join above
-#: (core.md).
-ABANDONED_DEVICES_TIMEOUT_S = ABANDON_TEARDOWN_TIMEOUT_S + RESCUE_TIMEOUT_S + 1.0
 
 #: How often a held run looks at the pause and stop flags. Short enough that
 #: Resume and Stop feel immediate; the hold is on the sequence thread, so this
@@ -118,9 +101,9 @@ class Sequencer:
               moves the hold by one step boundary or one HOLD_POLL_S.
         sequence_thread: the thread a sequence is running on, or None if none
               has been started yet.
-        run_abandoned: set when stop() gives up on the sequence thread. From
-              then on that run's events, questions and RunFinished are not
-              sent: CORE is shutting down without it.
+        stopping: set by StopSequencer while a sequence is still running. The
+              event loop keeps turning until that sequence has finished, then
+              ends and says goodbye - see stop().
         recipe: the validated Recipe that came with the last RunSequence, or
               None until one has, and again after ForgetRecipe. A live object,
               not a copy - the two threads share one process. CORE holds the
@@ -140,7 +123,7 @@ class Sequencer:
         self.running = True
         self.stop_requested = False
         self.pause_requested = False
-        self.run_abandoned = False
+        self.stopping = False
         self.pending = PendingRequests()
         self.heartbeat_manager = HeartbeatManager(self.core, SEQUENCER)
         self.sequence_thread: threading.Thread | None = None
@@ -174,8 +157,8 @@ class Sequencer:
             self.main_loop()
         finally:
             # A loop that died instead of ending still owes CORE the goodbye:
-            # without it CORE waits out its whole shutdown budget and then names
-            # this module as one that would not stop. The ModuleError the
+            # without it CORE's orderly close waits until the watchdog finds this
+            # module silent and closes at once, naming it as the one that died. The ModuleError the
             # decorator sends right behind this says it went badly.
             self.send_goodbye()
         log.debug("SEQUENCER module stopped.")
@@ -260,7 +243,6 @@ class Sequencer:
         # Cleared here rather than at the end of a run
         self.stop_requested = False
         self.pause_requested = False
-        self.run_abandoned = False
 
         log.debug("Starting the sequence thread for '%s'.", sequence_name)
         self.sequence_thread = threading.Thread(
@@ -431,12 +413,9 @@ class Sequencer:
             if run_log_path:
                 end_run_log()
                 log.info("The run's log is %s", run_log_path)
-            if not self.run_abandoned:
-                self.core.send(
-                    RunFinished(
-                        result=result, outcomes=tuple(r.to_outcome() for r in real_results)
-                    )
-                )
+            self.core.send(
+                RunFinished(result=result, outcomes=tuple(r.to_outcome() for r in real_results))
+            )
 
     def log_engineering_run(
         self, sequence: Sequence, excluded_step_ids: tuple[UUID, ...], write_report: bool
@@ -582,8 +561,6 @@ class Sequencer:
         """
 
         def emit(event: Any) -> None:
-            if self.run_abandoned:
-                return
             self.core.send(event)
             if (
                 isinstance(event, StepFinished)
@@ -737,8 +714,6 @@ class Sequencer:
         declined, or the run was stopped. The three are deliberately not told
         apart here: what to do about it belongs to the step that asked.
         """
-        if self.run_abandoned:
-            return None
         request_id = request.request_id
         self.pending.start(request_id)
         self.core.send(request)
@@ -771,72 +746,34 @@ class Sequencer:
     @catch_and_report_errors()
     def do_periodic_tasks(self) -> None:
         self.heartbeat_manager.tick()
+        if self.stopping and not self.sequence_is_running():
+            log.debug("The running test has finished; the Sequencer can stop.")
+            self.finish_stopping()
 
     def stop(self) -> None:
         """
-        Shut the module down, bringing a running sequence with it.
+        Shut the module down - once a running sequence has finished.
+
+        With no sequence running the module stops at once. Otherwise the stop
+        flag is set, exactly as the Stop button sets it: the step in progress
+        finishes, the teardown steps run, the devices close and RunFinished goes
+        out, however long that takes - there is no deadline. A question to the
+        operator is not waited for once the stop flag is set (ask_operator()).
+        Meanwhile the event loop keeps turning, so the heartbeat goes on, and
+        do_periodic_tasks() notices when the sequence thread has ended and says
+        goodbye.
         """
-        self.running = False
         log.debug("SEQUENCER module stopping.")
-        try:
-            self.stop_running_sequence()
-        finally:
-            # The goodbye is not optional, and the send is *after* the line that
-            # can fail: without the finally an exception on its way out to the
-            # per-message boundary would skip it, costing CORE its whole shutdown
-            # budget and having it name this module as the one that never
-            # answered - which it did not.
-            self.send_goodbye()
-
-    def stop_running_sequence(self) -> None:
-        """
-        Ask a running sequence to stop, and wait for its thread to end.
-        """
-        thread = self.sequence_thread
-        if thread is None or not thread.is_alive():
+        if not self.sequence_is_running():
+            self.finish_stopping()
             return
-
         log.info("Waiting for the running test to stop.")
-        log.debug("Joining the sequence thread, up to %.1f s.", SEQUENCE_JOIN_TIMEOUT_S)
+        log.debug("The stop flag is set; the Sequencer stops once the sequence thread ends.")
         self.stop_requested = True
-        thread.join(timeout=SEQUENCE_JOIN_TIMEOUT_S)
+        self.stopping = True
 
-        if thread.is_alive():
-            # From here the run's events go nowhere: CORE is shutting down
-            # without it, and must not keep receiving a run it has let go.
-            self.run_abandoned = True
-            # The bench may be mid-step with teardown never run: the operator
-            # must hear this, not just the log. What CORE *does* about it is
-            # the open error-policy TODO; this only makes the abandonment loud.
-            report_problem(
-                self,
-                f"The running sequence did not stop within "
-                f"{SEQUENCE_JOIN_TIMEOUT_S:.0f}s and is being abandoned; "
-                f"teardown steps have not run and the bench state is unknown.",
-                severity=ErrorSeverity.CRITICAL,
-                operation="Sequencer.stop_running_sequence",
-            )
-            self.tear_down_abandoned_devices()
-
-    def tear_down_abandoned_devices(self) -> None:
-        """
-        Tear down the devices of a run that was abandoned, before saying goodbye.
-
-        Its LocalSetup will never reach __exit__, and its driver processes are
-        daemons, which end with PyPTS without teardown() - which is where a
-        driver leaves its instrument safe. A device that could not be torn
-        down is a CRITICAL of its own, naming it.
-        """
-        abandon_active_session()
-        self.core.send(ClosingDevices())
-        unsafe = abandon_active_setup(ABANDONED_DEVICES_TIMEOUT_S)
-        if not unsafe:
-            log.debug("The abandoned run has no device left open.")
-            return
-        report_problem(
-            self,
-            f"Device(s) {', '.join(unsafe)} were stopped without running teardown and may "
-            f"still be energised. Check the bench before touching it.",
-            severity=ErrorSeverity.CRITICAL,
-            operation="Sequencer.tear_down_abandoned_devices",
-        )
+    def finish_stopping(self) -> None:
+        """End the event loop and tell CORE this module has stopped."""
+        self.stopping = False
+        self.running = False
+        self.send_goodbye()

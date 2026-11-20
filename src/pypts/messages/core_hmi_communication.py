@@ -94,7 +94,17 @@ class SetConfigParameter:
 
 @dataclass
 class ShutdownRequested:
-    """Shut the whole application down. The launcher sends this too."""
+    """
+    Shut the whole application down. The launcher sends this too.
+
+    `immediate` picks the close. False, the orderly close: CORE stops the
+    Sequencer, then the Report, then the HMI, each after the one before has
+    stopped, and a running test finishes first. True, the crash close: every
+    module is told to stop at once and nothing is waited for - the CLI's Ctrl+C,
+    and the launcher once the frontend has ended.
+    """
+
+    immediate: bool = False
 
 
 # --- HMI -> CORE: events ------------------------------------------------------

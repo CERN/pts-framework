@@ -62,7 +62,8 @@ Two rules that follow from it:
   looks like it protects, and the module then stops turning while CORE still believes it is
   alive. The decorator goes on `start()` instead.
 - **A thread entry point sends its module's goodbye from a `finally`**, so a loop that died
-  rather than ended does not cost CORE its whole shutdown budget. `send_goodbye()` is guarded
+  rather than ended does not leave CORE's orderly close (no deadline) waiting until the
+  watchdog finds the module silent and closes at once. `send_goodbye()` is guarded
   so the ordinary path, where `stop()` already sent it, does not send a second.
 
 ### `heartbeat_manager.py`

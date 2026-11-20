@@ -28,12 +28,15 @@ Owns:
 - **Sending** — each command method (`load_recipe()`, `start_sequence()`,
   `stop_sequence()`, …) sends its message through `self.core.send(...)`; there is no
   shared `send()` wrapper.
-- **Handshake** — `wait_until_stopped(grace_s)` spins until `self.running` is `False`
-  (set by `stop()` when `StopHmi` is handled) or the grace period expires. `stop()` sends
-  `HmiStopped` from a `finally`, because it swallows what `on_stop()` raises — the GUI closes
-  its window in there — and a CORE that never hears the goodbye waits out its whole shutdown
-  budget and then names the frontend as a part that would not stop. Same rule as
-  `Sequencer.stop()` and `Report.stop()`; roadmap §1.48.
+- **Handshake** — `request_shutdown(immediate=False)` sends `ShutdownRequested`; `True`
+  asks CORE for the crash close (`core/core.md`, *Shutdown choreography*).
+  `wait_until_stopped()` spins until `self.running` is `False` (set by `stop()` when `StopHmi`
+  is handled), with no deadline: an orderly close lets a running test finish. The one
+  fallback is the CORE watch: a CORE that has gone silent makes `check_core_is_alive()`, on
+  the polling thread, call `stop()`. `stop()` sends `HmiStopped` from a `finally`, because it
+  swallows what `on_stop()` raises — the GUI closes its window in there — and a CORE that
+  never hears the goodbye never leaves its loop. Same rule as
+  `Report.stop()` and the `finally` in `Sequencer.start()`; roadmap §1.48.
 - **Pause / Resume** — `pause_sequence()` / `resume_sequence()` send `PauseSequence` /
   `ResumeSequence`; the confirmations arrive at `show_run_paused(event)` (passed whole) and
   `show_run_resumed()`. Only the GUI uses them (`gui/gui.md` §13); the CLI and the API
@@ -55,7 +58,9 @@ thread owns `input()` and hands each line over through a queue. The main thread 
 waits `INPUT_POLL_S` (0.1 s) for a line before checking `running`, so a `StopHmi` from
 CORE ends the shell at once, without waiting for the operator's next Enter (2026-09-15).
 The reader asks for a line only when the shell is ready for one, so nothing is read after
-`exit`.
+`exit`. `exit`, `quit` and Ctrl+D (end of input) ask for the orderly close and wait for
+`StopHmi`; **Ctrl+C** asks for the crash close (`request_shutdown(immediate=True)`), prints
+`Exiting pypts at once...`, calls `stop()` and leaves without waiting.
 
 ## GUI (`hmi/gui/`)
 

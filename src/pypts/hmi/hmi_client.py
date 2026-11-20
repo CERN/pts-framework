@@ -63,14 +63,6 @@ from pypts.messages.run_events import (
 from pypts.utilities.error_handling import catch_and_report_errors
 from pypts.utilities.heartbeat_manager import HMI, HeartbeatManager, HeartbeatWatch
 
-#: How long stop_and_wait() gives CORE to answer a shutdown request before the
-#: frontend stops on its own. Without a bound, a wedged CORE would hang the exit.
-#: Sized for the held StopHmi: it now waits for the Sequencer to stop, which can
-#: take the join (2 s) plus the abandoned devices' teardown (16 s), about 18 s in
-#: the worst case. Keep it above that, and below CORE's SHUTDOWN_TIMEOUT_S (25 s)
-#: and the launcher's CORE_SHUTDOWN_TIMEOUT_S (30 s).
-SHUTDOWN_GRACE_S = 22.0
-
 
 class HmiClient:
     """
@@ -278,16 +270,21 @@ class HmiClient:
         """
         self.core.send(SetConfigParameter(key=key, value=value))
 
-    def request_shutdown(self) -> None:
+    def request_shutdown(self, immediate: bool = False) -> None:
         """
         Ask CORE to shut the whole application down.
 
-        This is the only way a frontend leaves. CORE stops every module, sends
-        StopHmi back, and this frontend answers HmiStopped from stop() - so CORE
-        learns that all three modules are down and can exit on its own.
+        This is the only way a frontend leaves. In the orderly close (the
+        default) CORE stops the Sequencer and the Report, sends StopHmi last,
+        and this frontend answers HmiStopped from stop() - so CORE learns that
+        all three modules are down and can exit on its own. `immediate` asks
+        for the crash close instead: every module stopped at once, nothing
+        waited for (the CLI's Ctrl+C).
         """
-        log.debug("The frontend is asking CORE to shut the application down.")
-        self.core.send(ShutdownRequested())
+        log.debug(
+            "The frontend is asking CORE to shut the application down (at once: %s).", immediate
+        )
+        self.core.send(ShutdownRequested(immediate=immediate))
 
     def answer_user_prompt(self, request: UserPromptRequest, choice: str | None) -> None:
         """Answer a UserPromptRequest. `choice` is None if the operator cancelled."""
@@ -323,28 +320,24 @@ class HmiClient:
         try:
             self.on_stop()
         finally:
-            # From a `finally` for the same reason as `Sequencer.stop()`: this
+            # From a `finally` for the same reason as `Report.stop()`: this
             # method swallows, `on_stop()` is the frontend's own teardown (the
             # GUI closes a window in it), and a CORE that never hears the
-            # goodbye waits out its whole shutdown budget and then names the
-            # frontend as a part that would not stop.
+            # goodbye never leaves its loop.
             self.core.send(HmiStopped())
 
-    def wait_until_stopped(self, grace_s: float = SHUTDOWN_GRACE_S) -> None:
+    def wait_until_stopped(self) -> None:
         """
-        Block until CORE's StopHmi has been handled, or the grace period expires.
+        Block until CORE's StopHmi has been handled.
 
         Only useful to a frontend whose main thread would otherwise return
-        straight after request_shutdown(). If CORE never answers, this stops the
-        frontend anyway rather than waiting forever.
+        straight after request_shutdown(). There is no deadline: an orderly
+        close lets a running test finish, however long it takes. A CORE that
+        has died stops beating, and check_core_is_alive(), on the frontend's
+        polling thread, then stops this frontend - that is the one fallback.
         """
-        deadline = time.time() + grace_s
-        while self.running and time.time() < deadline:
+        while self.running:
             time.sleep(0.05)
-        if self.running:
-            log.warning("The engine did not confirm the shutdown; closing anyway.")
-            log.debug("No StopHmi arrived within %.1f s of the request.", grace_s)
-            self.stop()
 
     # --- Presentation hooks ---------------------------------------------------
     #

@@ -58,7 +58,7 @@ makes one itself when `RunStarted` names none.
   run-level row and the metadata and hands them to `html_report.render_report()` (see *The
   HTML page* below). With no run recorded it is a WARNING and nothing is sent.
 - **Regenerable from the CSV — rows only** — every run-level value is on every row, and
-  `rows_from_csv(path)` reads a past run's CSV back into `self.rows`. But `render_html()`
+  `rows_from_csv(path)` returns a past run's rows from its CSV, which can be put in `self.rows`. But `render_html()`
   takes no rows argument — it reads `self.rows` — and it takes the metadata *names* from
   `self.run_info`, so a rebuild from any CSV shows no metadata (no identity line, no metadata in the Run card). A run in which
   no step executed has no rows to regenerate from.
@@ -157,15 +157,18 @@ run's folder.
 
 ## Error boundary and shutdown
 
-CORE holds `StopReport` until `SequencerStopped` arrives (`core/core.md` → *Shutdown*). This
-guarantees the aborted run's `StepExecuted` tail, `RunFinished` and `GenerateReport` reach the
-Report before it stops.
+In the orderly close CORE sends `StopReport` only once `SequencerStopped` has arrived
+(`core/core.md` → *Shutdown choreography*), so the stopped run's `StepExecuted` tail,
+`RunFinished` and `GenerateReport` are already in the Report's queue. The crash close stops
+it at once and makes no such promise.
 
 `stop()` sends `ReportStopped` from a `finally`, through `send_goodbye()`, so closing the CSV
-— file I/O, and the likeliest thing here to raise — cannot cost CORE its whole shutdown budget
-and get the Report named as the module that hung. `start()` carries the same `finally` for a
+— file I/O, and the likeliest thing here to raise — cannot leave CORE's orderly close waiting
+until the watchdog finds the Report silent (15 s) and closes at once, naming it as the module
+that died. `start()` carries the same `finally` for a
 loop that dies rather than ends, and `send_goodbye()` is guarded so only one `ReportStopped`
-goes out. Same guarantee, and same reasons, as `Sequencer.stop()` / `Sequencer.start()`.
+goes out. Same guarantee, and same reasons, as the `finally` in `Sequencer.start()` and its guarded
+`send_goodbye()`.
 
 Decorated with `@catch_and_report_errors()`: `start()`, `poll_core()`,
 `handle_core_message()`, `do_periodic_tasks()` (the heartbeat). `stop()` and the per-message

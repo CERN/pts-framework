@@ -509,13 +509,13 @@ def test_core_keeps_waiting_while_a_module_is_still_running():
     assert core.running is True
 
 
-def test_a_module_that_never_answers_does_not_hold_core_forever(caplog):
+def test_an_orderly_close_waits_for_a_module_however_long_it_takes():
     """
-    The whole point of the deadline. Before it, a module that died without
-    reporting left CORE in its loop until the launcher terminated the process -
-    which took the log with it, losing the one fact worth keeping.
+    No shutdown deadline: an orderly close waits for each module in turn. A
+    Sequencer still letting a test finish is not late, however long it takes.
+    Only a module that goes silent ends the wait, and that is the watchdog's job.
     """
-    from pypts.core.core import FRIENDLY_MODULE_NAME, REPORT, SEQUENCER
+    from pypts.core.core import SEQUENCER, Core
 
     core = build_core_that_spawns_nothing()
 
@@ -523,75 +523,33 @@ def test_a_module_that_never_answers_does_not_hold_core_forever(caplog):
     for state in core.modules.values():
         state.running = False
     core.modules[SEQUENCER].running = True
-    core.modules[REPORT].running = True
 
-    # Pretend the budget has already run out, rather than sleeping through it.
-    core.shutdown_deadline = time.time() - 1
+    core.check_stop_status()
 
-    with caplog.at_level(logging.DEBUG):
-        core.check_stop_status()
-
-    assert core.running is False
-
-    abandoned = [r for r in caplog.records if "were left behind" in r.message]
-    assert len(abandoned) == 1, f"expected one error, got {len(abandoned)}"
-    # Naming them is most of the value: "something hung" is not actionable.
-    # The operator is told which part of the software it was, in the words
-    # they know it by; the DEBUG line beside it names the modules.
-    assert FRIENDLY_MODULE_NAME[SEQUENCER] in abandoned[0].getMessage()
-    assert FRIENDLY_MODULE_NAME[REPORT] in abandoned[0].getMessage()
-
-    traced = [r for r in caplog.records if "Abandoned after" in r.message]
-    assert len(traced) == 1
-    assert SEQUENCER in traced[0].getMessage()
-    assert REPORT in traced[0].getMessage()
+    assert core.running is True
+    assert not hasattr(Core, "SHUTDOWN_TIMEOUT_S")
+    assert not hasattr(core, "shutdown_deadline")
 
 
-def test_the_shutdown_budget_starts_when_the_stop_is_requested():
-    """
-    Not at the first unanswered check, or the budget would cover only the tail
-    of a shutdown rather than the whole of it.
-    """
-    from pypts.core.core import Core
-
-    core = build_core_that_spawns_nothing()
-
-    assert core.shutdown_deadline is None
-
-    before = time.time()
-    core.stop_all_modules()
-
-    assert core.shutdown_deadline is not None
-    assert before + Core.SHUTDOWN_TIMEOUT_S <= core.shutdown_deadline
-    assert core.shutdown_deadline <= time.time() + Core.SHUTDOWN_TIMEOUT_S
-
-
-def test_a_module_still_running_before_any_stop_request_is_not_abandoned():
-    """
-    No stop asked for means no deadline. A CORE sitting idle in a long run must
-    never decide on its own that the modules are late to a shutdown nobody
-    requested.
-    """
+def test_a_module_still_running_before_any_stop_request_keeps_core_running():
+    """A CORE sitting idle in a long run never decides on its own to leave."""
     core = build_core_that_spawns_nothing()
 
     core.check_stop_status()
 
     assert core.running is True
-    assert core.shutdown_deadline is None
 
 
-def test_shutdown_holds_stop_report_and_stop_hmi_until_the_sequencer_has_stopped():
+def test_an_orderly_close_stops_the_sequencer_then_the_report_then_the_hmi():
     """
-    The Report is stopped LAST. Stopping it first threw away every step of a run
-    aborted by shutdown: the Report closed within one 10 ms tick while the
-    Sequencer was still unwinding, so the tail it emitted was never drained.
+    One module at a time, each after the one before has said it stopped.
 
-    StopHmi is held with it: the Sequencer may still be abandoning a run, and
-    the status line and CRITICALs it sends on the way must reach a frontend
-    that is still open, not one already told to close.
+    The Report goes after the Sequencer so it can drain the stopped run's tail;
+    the HMI goes last so it shows everything the other two said on the way,
+    the report's path included.
     """
     from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
-    from pypts.messages.core_report_communication import StopReport
+    from pypts.messages.core_report_communication import ReportStopped, StopReport
     from pypts.messages.core_sequencer_communication import SequencerStopped, StopSequencer
 
     core = build_core_that_spawns_nothing()
@@ -600,20 +558,27 @@ def test_shutdown_holds_stop_report_and_stop_hmi_until_the_sequencer_has_stopped
     core.poll_all_sources()
 
     assert list(core.to_sequencer.receive()) == [StopSequencer()]
-    assert list(core.to_hmi.receive()) == []
     assert list(core.to_report.receive()) == []
+    assert list(core.to_hmi.receive()) == []
 
     core.from_sequencer.send(SequencerStopped())
     core.poll_all_sources()
 
-    assert list(core.to_hmi.receive()) == [StopHmi()]
     assert list(core.to_report.receive()) == [StopReport()]
+    assert list(core.to_hmi.receive()) == []
+
+    core.from_report.send(ReportStopped())
+    core.poll_all_sources()
+
+    assert list(core.to_hmi.receive()) == [StopHmi()]
+    assert list(core.to_sequencer.receive()) == []
+    assert list(core.to_report.receive()) == []
 
 
-def test_the_aborted_runs_tail_reaches_the_report_before_stop():
+def test_the_stopped_runs_tail_reaches_the_report_before_stop():
     """
-    One queue, so the order is the guarantee: the aborted run's RunFinished and
-    the GenerateReport behind it are both in front of the held StopReport.
+    One queue, so the order is the guarantee: the stopped run's RunFinished and
+    the GenerateReport behind it are both in front of StopReport.
     """
     from pypts.messages.common_messages import ResultType
     from pypts.messages.core_hmi_communication import ShutdownRequested
@@ -634,63 +599,38 @@ def test_the_aborted_runs_tail_reaches_the_report_before_stop():
     assert list(core.to_report.receive()) == [finished, GenerateReport(), StopReport()]
 
 
-def test_shutdown_deadline_releases_the_held_stop_report(caplog):
-    """
-    A Sequencer that never answers must not leave the Report held open for ever.
-    The deadline releases the stop it was holding, then abandons what is late.
-    """
-    from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
-    from pypts.messages.core_report_communication import StopReport
+def test_an_orderly_close_ends_once_every_module_has_stopped(caplog):
+    """The whole handshake, end to end: three answers, and CORE leaves."""
+    from pypts.messages.core_hmi_communication import HmiStopped, ShutdownRequested
+    from pypts.messages.core_report_communication import ReportStopped
+    from pypts.messages.core_sequencer_communication import SequencerStopped
 
     core = build_core_that_spawns_nothing()
 
-    core.from_hmi.send(ShutdownRequested())
-    core.poll_all_sources()
-
-    # Pretend the budget has already run out, rather than sleeping through it.
-    core.shutdown_deadline = time.time() - 1
-
-    with caplog.at_level(logging.ERROR):
+    with caplog.at_level(logging.DEBUG):
+        core.from_hmi.send(ShutdownRequested())
+        core.poll_all_sources()
+        core.from_sequencer.send(SequencerStopped())
+        core.poll_all_sources()
+        core.from_report.send(ReportStopped())
+        core.poll_all_sources()
+        core.check_stop_status()
+        assert core.running is True
+        core.from_hmi.send(HmiStopped())
+        core.poll_all_sources()
         core.check_stop_status()
 
-    assert list(core.to_report.receive()) == [StopReport()]
-    assert list(core.to_hmi.receive()) == [StopHmi()]
-    assert [r for r in caplog.records if "were left behind" in r.message]
-
-
-def test_core_routes_hmi_exit_to_every_submodule():
-    """
-    The shutdown fan-out: each of the three gets exactly its own stop message
-    and nothing else, across the two phases the handshake takes.
-
-    Sibling of test_shutdown_holds_stop_report_and_stop_hmi_until_the_sequencer_has_stopped,
-    which pins *when* the Report is told; this one pins *that all three are
-    told*, which is the claim a send dropped from stop_all_modules() or from
-    release_stop_report() would break.
-    """
-    from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
-    from pypts.messages.core_report_communication import StopReport
-    from pypts.messages.core_sequencer_communication import SequencerStopped, StopSequencer
-
-    core = build_core_that_spawns_nothing()
-
-    core.from_hmi.send(ShutdownRequested())
-    core.poll_all_sources()
-
-    core.from_sequencer.send(SequencerStopped())
-    core.poll_all_sources()
-
-    assert list(core.to_sequencer.receive()) == [StopSequencer()]
-    assert list(core.to_hmi.receive()) == [StopHmi()]
-    assert list(core.to_report.receive()) == [StopReport()]
+    assert core.running is False
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
 def test_a_second_shutdown_request_sends_nothing_new():
     """
     Shutdown is legitimately asked for twice - by the frontend and again by the
-    launcher - and the guard must still hold now that the sends have moved.
+    launcher - and every module is still told to stop exactly once.
     """
     from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
+    from pypts.messages.core_report_communication import ReportStopped, StopReport
     from pypts.messages.core_sequencer_communication import SequencerStopped, StopSequencer
 
     core = build_core_that_spawns_nothing()
@@ -698,29 +638,175 @@ def test_a_second_shutdown_request_sends_nothing_new():
     core.from_hmi.send(ShutdownRequested())
     core.from_hmi.send(ShutdownRequested())
     core.poll_all_sources()
-
-    assert list(core.to_sequencer.receive()) == [StopSequencer()]
-
     core.from_sequencer.send(SequencerStopped())
     core.poll_all_sources()
+    core.from_report.send(ReportStopped())
+    core.poll_all_sources()
 
+    assert list(core.to_sequencer.receive()) == [StopSequencer()]
+    assert list(core.to_report.receive()) == [StopReport()]
     assert list(core.to_hmi.receive()) == [StopHmi()]
 
 
-def test_closing_devices_is_relayed_to_the_operator_as_status_text():
-    """
-    The Sequencer says it is tearing an abandoned run's devices down; the
-    operator hears it as one status line, on the frontend that is still open.
-    """
-    from pypts.messages.core_hmi_communication import StatusChanged
-    from pypts.messages.core_sequencer_communication import ClosingDevices
+# --------------------------------------------------------------------------
+# The crash close: stop everything, wait for nothing
+# --------------------------------------------------------------------------
+
+
+def test_a_crash_close_stops_every_module_at_once_and_waits_for_nothing():
+    """ShutdownRequested(immediate=True): all three Stops in one go, and CORE leaves."""
+    from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
+    from pypts.messages.core_report_communication import StopReport
+    from pypts.messages.core_sequencer_communication import StopSequencer
 
     core = build_core_that_spawns_nothing()
 
-    core.from_sequencer.send(ClosingDevices())
+    core.from_hmi.send(ShutdownRequested(immediate=True))
     core.poll_all_sources()
 
-    assert list(core.to_hmi.receive()) == [StatusChanged("Stopping: closing the devices...")]
+    assert list(core.to_sequencer.receive()) == [StopSequencer()]
+    assert list(core.to_report.receive()) == [StopReport()]
+    assert StopHmi() in list(core.to_hmi.receive())
+    assert core.running is False
+    assert core.closing_at_once is True
+
+
+def test_a_crash_request_during_an_orderly_close_stops_what_is_left():
+    """
+    The orderly close is under way and the Sequencer has stopped; a crash
+    request then stops the Report and the HMI at once, and nobody is told twice.
+    """
+    from pypts.messages.core_hmi_communication import ShutdownRequested, StopHmi
+    from pypts.messages.core_report_communication import StopReport
+    from pypts.messages.core_sequencer_communication import SequencerStopped, StopSequencer
+
+    core = build_core_that_spawns_nothing()
+
+    core.from_hmi.send(ShutdownRequested())
+    core.poll_all_sources()
+    core.from_sequencer.send(SequencerStopped())
+    core.poll_all_sources()
+    assert list(core.to_sequencer.receive()) == [StopSequencer()]
+    assert list(core.to_report.receive()) == [StopReport()]
+
+    core.from_hmi.send(ShutdownRequested(immediate=True))
+    core.poll_all_sources()
+
+    assert list(core.to_sequencer.receive()) == []
+    assert list(core.to_report.receive()) == []
+    assert StopHmi() in list(core.to_hmi.receive())
+    assert core.running is False
+
+
+def test_a_crash_request_after_every_module_has_stopped_is_quiet(caplog):
+    """
+    The launcher always sends ShutdownRequested(immediate=True) once the
+    frontend has ended. After an orderly close that finds nothing left to stop,
+    and must not tell the operator anything went wrong.
+    """
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+
+    core = build_core_that_spawns_nothing()
+    for state in core.modules.values():
+        state.running = False
+
+    with caplog.at_level(logging.DEBUG):
+        core.from_hmi.send(ShutdownRequested(immediate=True))
+        core.poll_all_sources()
+
+    assert core.running is False
+    assert list(core.to_sequencer.receive()) == []
+    assert list(core.to_report.receive()) == []
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_a_crash_close_without_a_run_names_no_danger(caplog):
+    """No test running, nothing on the bench in use: one plain line, no CRITICAL."""
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+
+    core = build_core_that_spawns_nothing()
+
+    with caplog.at_level(logging.DEBUG):
+        core.from_hmi.send(ShutdownRequested(immediate=True))
+        core.poll_all_sources()
+
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert not [r for r in caplog.records if "energised" in r.getMessage()]
+
+
+def test_a_crash_close_during_a_run_says_the_bench_may_still_be_energised(caplog):
+    """
+    The crash close does not wait for the run's teardown, so the devices are
+    left as they are. The operator is told so, once, at CRITICAL.
+    """
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+    from pypts.messages.run_events import RunStarted
+
+    core = build_core_that_spawns_nothing()
+    core.from_sequencer.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    core.poll_all_sources()
+
+    with caplog.at_level(logging.DEBUG):
+        core.from_hmi.send(ShutdownRequested(immediate=True))
+        core.poll_all_sources()
+
+    critical = [r for r in caplog.records if r.levelno == logging.CRITICAL]
+    assert len(critical) == 1
+    assert "energised" in critical[0].getMessage()
+
+
+def test_a_finished_run_is_not_open_any_more(caplog):
+    """RunFinished closes the run: a crash close after it names no danger."""
+    from pypts.messages.common_messages import ResultType
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+    from pypts.messages.run_events import RunFinished, RunStarted
+
+    core = build_core_that_spawns_nothing()
+    core.from_sequencer.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    core.from_sequencer.send(RunFinished(result=ResultType.PASS, outcomes=()))
+    core.poll_all_sources()
+
+    with caplog.at_level(logging.DEBUG):
+        core.from_hmi.send(ShutdownRequested(immediate=True))
+        core.poll_all_sources()
+
+    assert not [r for r in caplog.records if "energised" in r.getMessage()]
+
+
+def test_a_crash_close_does_not_wait_for_the_submodule_threads():
+    """
+    A Sequencer thread stuck in a step would hold a plain join for ever. The
+    crash close leaves without joining; the threads are daemons.
+    """
+    import threading
+
+    core = build_core_that_spawns_nothing()
+    release = threading.Event()
+    stuck = threading.Thread(target=release.wait, daemon=True)
+    stuck.start()
+    core.sequencer_thread = stuck
+    core.closing_at_once = True
+
+    before = time.time()
+    core.join_submodules()
+
+    assert time.time() - before < 1.0
+    release.set()
+    stuck.join()
+
+
+def test_an_orderly_close_joins_the_submodule_threads():
+    """They have already said they stopped, so a plain join returns at once."""
+    import threading
+
+    core = build_core_that_spawns_nothing()
+    done = threading.Thread(target=lambda: None)
+    done.start()
+    core.sequencer_thread = done
+
+    core.join_submodules()
+
+    assert not done.is_alive()
 
 
 # --------------------------------------------------------------------------
@@ -900,13 +986,14 @@ def test_a_warned_module_does_not_end_the_run_on_its_own(caplog):
     assert core.running
 
 
-def test_prolonged_silence_stops_every_module():
+def test_prolonged_silence_closes_at_once():
     """
-    Past the fatal threshold the module is not coming back, and a run whose
-    engine has gone is not a run. It goes through the ordinary shutdown -
-    nothing new is invented for this case.
+    Past the fatal threshold the module is not coming back, so CORE takes the
+    crash close: every module is told to stop in one go, and nothing is waited for.
     """
     from pypts.core.core import HEARTBEAT_FATAL_S, SEQUENCER
+    from pypts.messages.core_hmi_communication import StopHmi
+    from pypts.messages.core_report_communication import StopReport
     from pypts.messages.core_sequencer_communication import StopSequencer
 
     core = build_core_that_spawns_nothing()
@@ -914,9 +1001,49 @@ def test_prolonged_silence_stops_every_module():
 
     core.do_periodic_tasks()
 
-    assert core.shutting_down
-    sent = list(core.to_sequencer.receive())
-    assert any(isinstance(message, StopSequencer) for message in sent)
+    assert core.closing_at_once
+    assert core.running is False
+    assert StopSequencer() in list(core.to_sequencer.receive())
+    assert StopReport() in list(core.to_report.receive())
+    assert StopHmi() in list(core.to_hmi.receive())
+
+
+def test_the_watchdog_still_acts_during_an_orderly_close():
+    """
+    An orderly close has no deadline, so a module that dies during it would hold
+    CORE for ever. The watchdog stays on and turns that into a crash close.
+    """
+    from pypts.core.core import HEARTBEAT_FATAL_S, SEQUENCER
+    from pypts.messages.core_report_communication import StopReport
+
+    core = build_core_that_spawns_nothing()
+    core.stop_all_modules()
+    silence(core, SEQUENCER, HEARTBEAT_FATAL_S + 1)
+
+    core.do_periodic_tasks()
+
+    assert core.closing_at_once
+    assert core.running is False
+    assert StopReport() in list(core.to_report.receive())
+
+
+def test_silence_during_a_run_says_the_bench_may_still_be_energised():
+    """The one CRITICAL names what died and, with a run open, the danger."""
+    from pypts.core.core import HEARTBEAT_FATAL_S, REPORT
+    from pypts.messages.core_hmi_communication import ModuleErrorReported
+    from pypts.messages.run_events import RunStarted
+
+    core = build_core_that_spawns_nothing()
+    core.from_sequencer.send(RunStarted(recipe_name="Wait demo", recipe_description=""))
+    core.poll_all_sources()
+    list(core.to_hmi.receive())
+    silence(core, REPORT, HEARTBEAT_FATAL_S + 1)
+
+    core.do_periodic_tasks()
+
+    reported = [m for m in core.to_hmi.receive() if isinstance(m, ModuleErrorReported)]
+    assert len(reported) == 1
+    assert "energised" in reported[0].error.message
 
 
 def test_the_operator_is_told_before_the_window_closes():
@@ -927,25 +1054,15 @@ def test_the_operator_is_told_before_the_window_closes():
     """
     from pypts.core.core import HEARTBEAT_FATAL_S, HMI
     from pypts.messages.core_hmi_communication import ModuleErrorReported, StopHmi
-    from pypts.messages.core_sequencer_communication import SequencerStopped
 
     core = build_core_that_spawns_nothing()
     silence(core, HMI, HEARTBEAT_FATAL_S + 1)
 
     core.do_periodic_tasks()
 
-    # StopHmi is held until the Sequencer has stopped, so the window stays
-    # open for the error and for the status line that follows it.
     sent = list(core.to_hmi.receive())
     kinds = [type(message) for message in sent]
     assert ModuleErrorReported in kinds
-    assert StopHmi not in kinds
-
-    core.from_sequencer.send(SequencerStopped())
-    core.poll_all_sources()
-
-    sent += list(core.to_hmi.receive())
-    kinds = [type(message) for message in sent]
     assert StopHmi in kinds
     assert kinds.index(ModuleErrorReported) < kinds.index(StopHmi)
 
@@ -957,8 +1074,8 @@ def test_the_operator_is_told_before_the_window_closes():
 def test_the_watchdog_does_not_re_report_a_module_it_has_already_acted_on(caplog):
     """
     The loop turns every 10 ms and the dead module stays dead. Without the
-    shutting_down guard this logged the same ERROR - and re-sent the same
-    ModuleErrorReported - a hundred times a second for the rest of the shutdown.
+    closing_at_once guard this logged the same CRITICAL - and re-sent the same
+    ModuleErrorReported - a hundred times a second until CORE left.
     """
     from pypts.core.core import HEARTBEAT_FATAL_S, SEQUENCER
 
@@ -969,7 +1086,7 @@ def test_the_watchdog_does_not_re_report_a_module_it_has_already_acted_on(caplog
         for _ in range(20):
             core.do_periodic_tasks()
 
-    stopping = [r for r in caplog.records if "so the run was stopped" in r.getMessage()]
+    stopping = [r for r in caplog.records if "so pypts is closing" in r.getMessage()]
     assert len(stopping) == 1, f"expected one report, got {len(stopping)}"
 
 
@@ -1025,7 +1142,7 @@ def test_core_keeps_beating_while_it_shuts_down():
     """
     The HMI is being stopped during a shutdown and must not conclude from the
     silence that the engine died under it. The tick happens before the
-    shutting_down guard for exactly this reason.
+    watchdog for exactly this reason.
     """
     from pypts.messages.common_messages import Heartbeat
 
@@ -1211,8 +1328,7 @@ def test_a_broken_shutdown_check_still_lets_core_leave(monkeypatch):
     """
     The one failure the shutdown choreography cannot absorb is a failure of the
     choreography itself: check_stop_status() is what clears `running`, so
-    waiting on the deadline it manages would spin forever. Leaving is all
-    that is left.
+    waiting on it would spin forever. Leaving is all that is left.
     """
     core = build_core_that_spawns_nothing()
 

@@ -472,7 +472,7 @@ not details:
   is the only thing that makes a FAIL matter to control flow.
 - **The operator's step lines are written here**, in `run_steps()` and `log_step_outcome()`,
   because this is the only place that knows a step's position in its list, its verdict and
-  how long it took: `Step 4/12 'read_voltage' FAIL (1.1 s).` The `phase` argument is only the
+  how long it took: `Step 4/12 'read_voltage' PASS (1.1 s).` The `phase` argument is only the
   word those lines start with, so a teardown step reads `Teardown step 1/2 'power_off'`
   rather than as a second step 1; it changes nothing about how a step is run. A `FAIL` logs
   at INFO - a failing DUT is a test result, not a software fault - and only a step that could
@@ -555,13 +555,13 @@ not details:
   for one concept, rather than two booleans always set together.
 
 **A halt is not a Stop.** It deliberately never touches the Sequencer's `stop_requested`,
-so `execute_sequence()`'s `if self.stop_requested: result = ResultType.STOP` does not fire
+so `Sequencer.run_body()`'s `if self.stop_requested: result = ResultType.STOP` does not fire
 and `RunFinished` carries the real aggregate — `ERROR` or `FAIL`. Borrowing that flag would
 leave the operator unable to tell "I pressed Stop" from "a critical step failed".
 `test_a_step_that_halts_the_run_reports_error_not_stop` pins it.
 
 On an `Indexed` step the flag goes on the **wrapper**, where it carries to every generated
-row exactly as `skip` does (`indexed_step._generated_step`).
+row exactly as `skip` does (`indexed_step._build_one()`).
 
 ### 3.2 `critical` — dropped
 
@@ -635,7 +635,7 @@ check.
 
 Two consequences worth knowing:
 
-- **`Indexed` generates the short form.** `_generated_step()` writes `inputs: {a: 1}`
+- **`Indexed` generates the short form.** `_build_one()` writes `inputs: {a: 1}`
   rather than a configuration mapping, so a generated step's YAML fragment in the hover
   panel reads exactly like a hand-written one.
 - **A mapping is always a configuration**, so an argument whose value is genuinely a dict

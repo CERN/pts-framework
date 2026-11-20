@@ -27,7 +27,8 @@ Everything you need is in this file; the human-readable version is
 first `get_device("<name>")` in a test run, PyPTS starts a **separate process** for that
 device, loads the file, builds the class with **no arguments**, and calls `connect(config)`.
 Test code then calls the driver's public methods by name; every call and its answer travel
-over a pipe, pickled. When the run ends — in any way — PyPTS calls `teardown()`.
+over a pipe, pickled. When the run ends (finished, stopped, or PyPTS closed in order), PyPTS calls `teardown()`. A
+crash close (Ctrl+C in the CLI) or a crash of PyPTS skips it.
 
 ## Device types — derive from exactly one
 
@@ -208,8 +209,8 @@ class AcmeDmmDriver(DMM):
 
 
 # Standalone check: python acme_dmm.py - no PyPTS, no bench.ini. The dict stands in
-# for the bench.ini section PyPTS passes to connect(). PyPTS imports the module by
-# its package name, so this block never runs there.
+# for the bench.ini section PyPTS passes to connect(). PyPTS imports the file under
+# another module name, so this block never runs there.
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     dmm = AcmeDmmDriver()

@@ -23,17 +23,17 @@ def read_kernel():
 
 | File | Holds |
 |---|---|
-| `__init__.py` | The public API: `get_device`, `LocalSetup`, `ConnectionDriver`, `BaseDriver`, `DriverError`, the six device types |
+| `__init__.py` | The public API: `get_device`, `LocalSetup`, `ConnectionDriver`, `BaseDriver`, `DriverError`, `recover_device`, `device_info`, `DeviceInfo`, the six device types |
 | `base_driver.py` | `BaseDriver` (ABC: `connect`, `teardown`, `recover`), `DriverError`, `LIFECYCLE_METHODS`, `operations_of()` |
 | `device_types.py` | `PSU`, `DMM`, `Scope`, `SSH`, `Load`, `Other`; `DEVICE_TYPES`, `DEVICE_TYPE_NAMES` |
-| `connection_driver.py` | `ConnectionDriver`, one device as test code sees it: **every public name on it is the driver's operation** (its own members are all `_private`, so no name is reserved), with `CALL_TIMEOUT_S` (30 s, the same for every device) and its teardown ladder: `_close()` and `_abandon()` (`ABANDON_TEARDOWN_TIMEOUT_S`) escalating to the rescue (`_rescue()`, `RESCUE_TIMEOUT_S`); below it, the driver process: `driver_process_main()`, `load_driver_class()` with `load_driver_file()`, `split_driver_file()`, `driver_module_name()` and `DRIVER_FILE_MODULE_PREFIX`, `answer()` |
+| `connection_driver.py` | `ConnectionDriver`, one device as test code sees it: **every public name on it is the driver's operation** (its own members are all `_private`, so no name is reserved), with `CALL_TIMEOUT_S` (30 s, the same for every device) and its teardown ladder: `_close()` escalating to the rescue (`_rescue()`, `RESCUE_TIMEOUT_S`); below it, the driver process: `driver_process_main()`, `load_driver_class()` with `load_driver_file()`, `split_driver_file()`, `driver_module_name()` and `DRIVER_FILE_MODULE_PREFIX`, `answer()` |
 | `device_control.py` | What test code does to a device beyond its operations: `recover_device()`, `device_info()` → `DeviceInfo` (name, device type, operations, is open). Functions rather than methods, so they take no name away from drivers |
-| `local_setup.py` | `LocalSetup`, the devices of one run, with `abandon()` (it calls the devices' private `_open()` / `_close()` / `_abandon()`); `get_device()`; `abandon_active_setup()`; `split_section()`; `anchor_driver_files()`; the section readers `bench_sections()` (the cached bench.ini, via `config_handler.bench_config`) and `ini_device_sections()` |
+| `local_setup.py` | `LocalSetup`, the devices of one run (it calls the devices' private `_open()` / `_close()`); `get_device()`; `split_section()`; `anchor_driver_files()`; the section readers `bench_sections()` (the cached bench.ini, via `config_handler.bench_config`) and `ini_device_sections()` |
 | `drivers/loopback.py` | `LoopbackDriver` (Other): no hardware; tests, demo, smoke check |
 | `drivers/ssh.py` | `SshDriver` (SSH): the reference driver, paramiko |
 | `drivers/weather.py` | `OpenMeteoDriver` (Other): a weather station on the internet, standard library only; the showcase driver |
 
-`local_setup.py` imports `pypts.config_handler` lazily, inside the functions that need it,
+`local_setup.py` imports `pypts.config_handler` lazily, inside `bench_sections()`, the one function that needs it,
 because a driver process imports `pypts.hal` too and has no use for the configuration.
 
 ## How a call travels
@@ -125,7 +125,7 @@ recreates `config.ini` only; `bench.ini` and its devices are untouched.
 ## Lifetime
 
 - **Per run.** A run is one Start press: one top-level sequence and every sequence it calls.
-  `Sequencer.execute_sequence()` wraps the step layer in
+  `Sequencer.run_body()` (called by `execute_sequence()`) wraps the step layer in
   `with LocalSetup(self.read_hardware_sections):`. A device opens on the first `get_device()`.
   All devices close, newest first, after the teardown steps and before `RunFinished`, whatever
   the result. A run that asks for no device never reads the device sections — the launcher
@@ -134,7 +134,7 @@ recreates `config.ini` only; `bench.ini` and its devices are untouched.
   the same local setup.
 - **The active local setup** is one slot per process, not thread-local, because threads that
   test code starts belong to the run. A newer setup replaces an older one that was never closed
-  (an abandoned run). Closing a setup clears the slot only if it is still the active one.
+  (a script that never left its `with`). Closing a setup clears the slot only if it is still the active one.
 - **Standalone**: `with LocalSetup.from_ini("bench.ini"):` activates a setup in a plain script,
   so the same test functions run outside PyPTS. The script must keep that code under
   `if __name__ == "__main__":`. Spawn re-imports the script's main module in every driver
@@ -158,24 +158,22 @@ recreates `config.ini` only; `bench.ini` and its devices are untouched.
   keeps its state until the run ends and `_close()` runs the ladder, or test code calls
   `recover_device()`. `Device 'x' disconnected.` is logged only when a teardown ran; a failed ladder
   ends on the ERROR line instead.
-- **An abandoned run** (the Sequencer's stop gave up on its thread): its `with` block never
-  ends, so `Sequencer.tear_down_abandoned_devices()` calls `abandon_active_setup()`. That
-  empties the active slot and calls `LocalSetup.abandon()`: the setup opens nothing more
-  (`get_device()` on it raises "this run was abandoned"; the abandoned flag and the device
-  registration share one small registry lock, so a device that finishes opening beside
-  `abandon()` is either in abandon's copy of the list or refused and closed by `get_device()`
-  itself - never silently left running), and every device it opened runs the teardown ladder
-  (`ConnectionDriver._abandon()`) in turn, newest first, on one shared deadline
-  (`ABANDONED_DEVICES_TIMEOUT_S`, 16 s). No lock the stuck run may hold is waited for: an
-  idle device gets one `teardown()` within `ABANDON_TEARDOWN_TIMEOUT_S` (5 s) and its process
-  is killed if that hangs; a device in a call has its process killed at once (the call then
-  fails as a crash in the stuck thread). A device that is not down after that is torn down on
-  a fresh process (the rescue) with whatever is left of the deadline; one the deadline has
-  already passed is killed and reported. `_abandon()` returns False whenever no teardown ran,
-  and the names of those devices come back, for one CRITICAL ("stopped without running
-  teardown"). Abandonment is final: `_open()` and `recover_device()` on an abandoned device raise,
-  and `_close()` returns without touching it, so test code in the abandoned run that still
-  holds the device cannot switch the instrument back on.
+- **The orderly close during a run** (GUI close, CLI `exit`, `Pts.close()`) waits for the run
+  (`sequencer/sequencer.md`, *Stop*): the step in progress finishes, the teardown steps run,
+  and the `with` block closes the devices as at any run end. There is no separate shutdown
+  path for devices.
+- **The crash close during a run** (CLI Ctrl+C, the launcher's `stop_core()` once the
+  frontend has ended, CORE's watchdog; `core/core.md`) waits for nothing: CORE exits, and the
+  devices go as under *A crash*. CORE logs a CRITICAL that the bench may still be energised.
+- **Ctrl+C** is ignored by driver processes (`driver_process_main()` calls
+  `ignore_keyboard_interrupt()` first), as by CORE and the Logger: only the frontend or the
+  launcher decides what it means.
+- **A crash** (CORE exits through Python while the run's `with` block has not finished, which
+  is what every crash close is):
+  driver processes are daemons, which Python's exit ends without `teardown()`, so the devices
+  stay as they are. (A CORE killed outright runs no exit code at all; then the Pipe net under
+  *PyPTS dies* applies.) Accepted
+  until the HAL server's `close_all` exists (`docs/superpowers/specs/2026-11-18-hal-server-review-handoff.md`).
 
 ## Failure
 
@@ -201,10 +199,6 @@ on its own: test code calls `recover_device(device)`, which escalates until the 
 hopeless — the driver's own `recover()` (teardown + connect, overridable) while the process
 lives; when that fails or the process is gone, teardown (`_close()`) and a fresh process with
 `connect()`. Only when the fresh process cannot connect does a `DriverError` reach test code.
-The one exception is an abandoned device: `_open()` and `recover_device()` refuse it
-(`DriverError("Device 'x' cannot be opened/recovered: its run was abandoned and the device was
-torn down.")`) — a new driver process would belong to a run that will not end, and nothing
-would ever tear it down.
 
 ## Logging
 
@@ -231,9 +225,10 @@ changes both files too.
 2. Implement `connect(config)` (all values are text), `teardown()` and the device type's verbs.
    Every other public method becomes an operation too. **`teardown()` is where the instrument
    is left safe** - outputs and loads off - and then disconnected. There is no separate
-   safe-state method: teardown runs at every end of a device, on a fresh connection when the
-   driver was stuck (the ladder's rescue rung), so it must work right after `connect()` on an
-   instrument in any state, and be harmless when nothing is open.
+   safe-state method: teardown runs at every orderly end of a device, on a fresh connection
+   when the driver was stuck (the ladder's rescue rung), so it must work right after
+   `connect()` on an instrument in any state, and be harmless when nothing is open. A crash
+   close, or CORE crashing, skips it (*Lifetime*).
 3. Log with `logging.getLogger(__name__)`. Any public method name is allowed - `close`,
    `open` and `name` included: ConnectionDriver keeps all its own members `_private`, so no
    name is reserved. Do not start
@@ -300,13 +295,10 @@ because its bare `drivers` rule would otherwise hide the shipped drivers.
 - A rescue reconnects with the same settings; an instrument that refuses a second connection
   while the first is half-open, or a `connect()` slower than `RESCUE_TIMEOUT_S` (an SSH host
   with a long `connect_timeout_s`), cannot be torn down this way.
-- `_abandon()` arriving while the run thread is already inside `_close()`'s ladder sees a busy
-  device and kills its main process; the ladder's own rescue process, if one is in flight, is
-  not tracked and runs until it finishes or dies with PyPTS (a daemon). Accepted: the ladder
-  is serialized per device, not across callers, and the CRITICAL is reported either way.
-- PyPTS killed outright (the launcher's terminate, a crash) runs none of this: the driver
-  process's own `teardown()` at the end of the Pipe is the only net, and only when it is not
-  stuck in a call.
+- PyPTS killed outright (the launcher's terminate) runs none of this: the driver process's
+  own `teardown()` at the end of the Pipe is the only net, and only when it is not stuck in a
+  call. A crash close, or CORE exiting through Python mid-run, tears nothing down: the driver
+  processes are daemons and end with CORE (*Lifetime*), until the HAL server's `close_all`.
 - Output a C library writes straight to the process's file descriptors (not through
   `sys.stdout`) is not forwarded. It goes to PyPTS's own console, if there is one.
 - No automatic recovery policy, only `recover_device()` from test code.

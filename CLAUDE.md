@@ -18,10 +18,10 @@ file may be touched — **stop and ask.** Asking is always cheaper than a wrong 
 (sequences of steps) against hardware and produces CSV + HTML reports. Import name `pypts`,
 distribution `pts-framework`, Python ≥ 3.11, LGPL-2.1-or-later, REUSE compliant.
 
-`reuse.toml` is the authority on licence headers. It covers `src/pypts/**/*.py`,
-`src/pyrade_xy_graph/**/*.py`, `tests/**/*.py` and `docs/**/*.rst`, so new files
-there need no inline SPDX header. Anything outside its globs does — typically `resources/**` and repo-root HTML
-(`CC-BY-SA-4.0`).
+`reuse.toml` is the authority on licence headers. Among others it covers `src/pypts/**/*.py`,
+`src/pyrade_xy_graph/**/*.py`, `tests/**/*.py`, `docs/**/*.rst` and `docs/**/*.md`, so new files
+there need no inline SPDX header. Anything outside its globs does — typically `resources/**` and
+`docs/**/*.html` (`CC-BY-SA-4.0`).
 
 ## Where things are documented
 
@@ -29,7 +29,7 @@ there need no inline SPDX header. Anything outside its globs does — typically 
 |---|---|
 | `docs/Usage_manuals/pypts_implementation_status.html` | **Status** — single source of truth. Read before planning. |
 | `docs/Usage_manuals/quick_start.html` | One-page quick start: developer setup and rules / test author's recipe, test code, run, results. |
-| `usage_manual.html` (root) | Everything a user sees, types or gets back: modes, options, exit codes, GUI, files, helper tools. |
+| `docs/Usage_manuals/usage_manual.html` | Everything a user sees, types or gets back: modes, options, exit codes, GUI, files, helper tools. |
 | `docs/Usage_manuals/recipe_guide.html` | The recipe format: step types, inputs/outputs, verificator gaps. |
 | `docs/Usage_manuals/how_to_write_a_driver.html` / `.md` | Writing a HAL driver: the walkthrough, and its AI-model context. |
 | `docs/Usage_manuals/migration_instructions.html` | Migrating from the old engine. |
@@ -85,7 +85,7 @@ step and say where it is; do not open one you only edited.
 
 ```
 src/pypts/
-  launcher/      entry point (python -m pypts, the pypts command): pins spawn, parses args, spawns Logger + CORE + frontend
+  launcher/      entry point (python -m pypts, the pypts command): pins spawn, parses args, spawns Logger + CORE + GUI (the CLI runs in the launcher's process)
   core/          mediator: routes every link, runs Sequencer + Report as threads, heartbeats, shutdown
   sequencer/     event loop; run_sequence() starts execute_sequence() on a worker thread
   recipe/        recipe data layer: parser, schema (Pydantic models), validation
@@ -150,6 +150,8 @@ unsure (rules in `config_handler/config_handler.md`).
 ## Quality gates
 
 A change is done only when both pass:
+
+1. **Tests** —
 
 ```bash
 pytest tests          # unit_tests/ + functional_tests/ + quality_tests/

@@ -63,7 +63,7 @@ kbd { border: 1px solid var(--border); border-radius: 3px; padding: 0 .3em; font
 
 <h1>PyPTS Usage Manual</h1>
 <p class="lead">How to start and use PyPTS. Short on purpose. For how to <em>write</em> a recipe,
-see <a href="docs/Usage_manuals/recipe_guide.html">docs/Usage_manuals/recipe_guide.html</a>.</p>
+see <a href="recipe_guide.html">docs/Usage_manuals/recipe_guide.html</a>.</p>
 
 <nav><ol>
   <li><a href="#what">What PyPTS does</a></li>
@@ -84,8 +84,8 @@ see <a href="docs/Usage_manuals/recipe_guide.html">docs/Usage_manuals/recipe_gui
 <p>PyPTS runs a <strong>recipe</strong> against hardware. A recipe is a YAML file that lists
 <strong>sequences</strong>, and each sequence lists <strong>steps</strong>, for example calling a
 Python function, waiting, or asking the operator a question. Every step ends with a verdict
-(<code>PASS</code>, <code>FAIL</code>, <code>DONE</code>, <code>SKIP</code>, <code>ERROR</code>
-or <code>STOP</code>). Every run leaves a <strong>report</strong> and a <strong>run log</strong>.</p>
+(<code>PASS</code>, <code>FAIL</code>, <code>DONE</code>, <code>SKIP</code> or <code>ERROR</code>);
+a run the operator stopped ends <code>STOP</code>. Every run leaves a <strong>report</strong> and a <strong>run log</strong>.</p>
 <p>The usual workflow is: <strong>open a recipe → start → answer questions →
 read the result</strong>.</p>
 
@@ -209,7 +209,9 @@ sequence. (A program that opens the GUI through the API can still name another o
       before. If that step is a question, answer it first. Pause greys out; press
       <strong>Start</strong> to carry on (or to cancel a pause that hasn't begun). Stop still
       works. Teardown steps are never held.</td></tr>
-  <tr><td>Stop</td><td>Aborts the run. Steps that didn't run end as <code>STOP</code>.</td></tr>
+  <tr><td>Stop</td><td>Aborts the run once the current step has finished. Steps that didn't run
+      are recorded <code>SKIP</code> ("Not run: the run was stopped by the operator."), the teardown
+      steps still run, and the run ends <code>STOP</code>.</td></tr>
   <tr><td>Report (next to Stop)</td><td>Opens this run's report folder, or the reports folder if
       there hasn't been a run yet.</td></tr>
 </table></div>
@@ -221,9 +223,9 @@ state: Idle, Running, Pausing, Paused, Finished or Stopped.</p>
 Hover over a step's result to see why it failed (if it did) and the values it measured.
 Rest the mouse on a step's name or description for half a second, between runs or during
 one, to see the whole sequence that step
-belongs to, exactly as it is written in the recipe file, with the clicked step
+belongs to, exactly as it is written in the recipe file, with the step
 highlighted and scrolled into view. For a step inside a called sequence, that is the
-called sequence. Clicking a group's description shows the sequence it calls, whole (clicking its name
+called sequence. Resting on a group's description shows the sequence it calls, whole (clicking its name
 folds or unfolds it). The row goes pale blue while the panel is up. Move the mouse onto the
 panel to scroll it with the wheel; moving the mouse anywhere else closes it.
 While a run is on, the table turns grey: nothing in it can be changed until the run ends.
@@ -324,7 +326,8 @@ everything is saved, and only stays open to tell you about a setting that could 
 <p><em>Edit → Engineering Mode</em> lets you run part of a recipe. While it is on, the status
 bar says <strong>ENGINEERING MODE</strong> and the window title ends in
 <strong>[ENGINEERING MODE]</strong> (so the taskbar shows it too), a click in the step table picks rows instead of
-showing the step's YAML, and a group folds and unfolds by double-click. It lasts until you
+showing the step on the right, resting on a step no longer opens its YAML, and a group folds and
+unfolds by double-click. It lasts until you
 switch it off or close pypts; loading or unloading a recipe starts your picks
 afresh.</p>
 <ul>
@@ -355,8 +358,10 @@ afresh.</p>
       run.</td></tr>
   <tr><td><code>status</code></td><td>Shows the current status.</td></tr>
   <tr><td><code>help</code></td><td>Lists the commands.</td></tr>
-  <tr><td><code>exit</code> (or <code>quit</code>)</td><td>Leaves PyPTS.
-      <kbd>Ctrl+C</kbd> does the same.</td></tr>
+  <tr><td><code>exit</code> (or <code>quit</code>)</td><td>Leaves PyPTS. A running test
+      finishes its step and its teardown steps first, however long that takes.
+      <kbd>Ctrl+C</kbd> leaves at once instead: nothing waits for the test, and if one was
+      running the log says the devices on the bench may still be energised.</td></tr>
 </table></div>
 <pre><code>pypts&gt; load_recipe resources/recipes/waitstep_recipes/wait_recipe.yml
 Recipe loaded: Wait demo (version 0.2)
@@ -379,7 +384,9 @@ your file.</p>
 
 def answer(request):
     # Called for every question. Return an option / text / path, or None to decline.
-    return request.options[0]
+    if hasattr(request, "options"):   # a button question
+        return request.options[0]
+    return None                       # a text or path question: declined
 
 if __name__ == "__main__":
     # No window:
@@ -409,7 +416,7 @@ with a code you can check:</p>
       skipped everything, or was interrupted with <kbd>Ctrl+C</kbd>. Also any run, even a failed one,
       whose record isn't whole: no report was produced, or the report reported an error</td></tr>
   <tr><td><code>3</code></td><td>Nothing ran: bad arguments, the recipe is missing or refused, the
-      sequence doesn't exist, or the engine failed</td></tr>
+      sequence doesn't exist, or the engine could not start or stopped during the run</td></tr>
 </table></div>
 <div class="warn"><strong>Questions are declined.</strong> Any step that asks the operator something
 ends as <code>ERROR</code>, so the exit code is <code>2</code>. Recipes meant for CI shouldn't ask
@@ -449,8 +456,8 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       the steps with that result, or use <em>Problems only</em>. The steps are grouped by
       sequence, and each one is collapsed to a single line, with the error's last line shown
       under its name. Click a step, or <em>Show all details</em>, to see its inputs, outputs and
-      full error. When printed, every step is shown expanded. A run that stops before it ends
-      leaves its results in <code>report.csv</code>. An
+      full error. When printed, every step is shown expanded. A run cut off before it finishes (a
+      crash, or <kbd>Ctrl+C</kbd> in the CLI) leaves its results in <code>report.csv</code>. An
       engineering-mode retest (<kbd>Space</kbd>) gets no folder; it is in the session log.
       Data streams that the test code pushed are in the run folder's <code>streams</code>
       subfolder, one <code>&lt;name&gt;.csv</code> per stream (header <code>x,y [unit]</code>).</li>
@@ -488,18 +495,19 @@ def read_kernel():
     result = get_device("ssh1").execute("uname -r")
     return {"kernel": result["stdout"].strip()}</code></pre>
 <ul>
-  <li><strong>Install the driver's library</strong>: <code>pip install pts-framework[ssh]</code>
+  <li><strong>Install the driver's library</strong>: <code>pip install "&lt;path to the clone&gt;[ssh]"</code>
       (also <code>[ni]</code>, <code>[serial]</code>, or <code>[hardware]</code> for all).</li>
   <li><strong>Call timeout</strong>: one call to a device may take at most 30 seconds, the
       same for every device (not set in <code>bench.ini</code>). A call that takes longer is stopped and the step fails; the device is torn
       down (switched off) when the run closes it: a teardown attempt first, then - if the
       driver hung, crashed or was stopped - PyPTS connects to the device again and tears it
       down on a fresh connection. The log says whether that worked (<em>may still be
-      energised</em> if not). Closing PyPTS during a run that won't stop shows
-      <em>Stopping: closing the devices...</em> and runs the same escalation for every device
-      of that run, one after another, within a shared 16-second budget; a device that was
-      still not torn down is named in a CRITICAL line telling you to check the bench before
-      touching it. Closing can take up to about 25 seconds. Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
+      energised</em> if not). Closing PyPTS during a run lets the step in progress finish,
+      then runs the teardown steps and closes the devices the same way, with no time limit:
+      a step that never returns keeps the window open, still showing the run, until PyPTS is
+      killed. If PyPTS
+      crashes, or you press <kbd>Ctrl+C</kbd> in the CLI, it closes at once and the devices
+      stay as they are. Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
   <li><strong>Edits and defaults</strong>: <code>bench.ini</code> is read once, at start, so a hand edit applies from the next start (<em>File → Restart</em> in the GUI). <strong>Restore default settings</strong> recreates <code>config.ini</code> only; <code>bench.ini</code> and your device sections are not touched.</li>
   <li><strong>SSH</strong>: an unknown host key is refused; add the host to your
       <code>known_hosts</code>, name a file with <code>known_hosts =</code>, or set

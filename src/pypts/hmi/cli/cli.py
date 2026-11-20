@@ -69,18 +69,23 @@ class CLI(HmiClient):
         try:
             self._command_loop()
         except KeyboardInterrupt:
-            print("\nExiting pypts...")
-            self.request_shutdown()
+            # The crash close: the operator wants out now, so CORE stops every
+            # module at once and this shell leaves without waiting for any of
+            # them. stop() still sends HmiStopped on the way out.
+            print("\nExiting pypts at once...")
+            self.request_shutdown(immediate=True)
+            self.stop()
         except EOFError:
             # stdin closed - a pipe, a redirect, or Ctrl+D. Treat it as a
             # request to leave rather than letting it escape the shell.
             print("\nInput stream closed, exiting pypts...")
             self.request_shutdown()
 
-        # request_shutdown() only *asks*. CORE stops every module and answers
-        # StopHmi, which the polling thread turns into stop(); this waits for
-        # that handshake so CORE learns the frontend is gone before the process
-        # ends. Bounded, so a wedged CORE cannot hang the exit.
+        # request_shutdown() only *asks*. In the orderly close CORE stops the
+        # Sequencer and the Report and answers StopHmi last, which the polling
+        # thread turns into stop(); this waits for that handshake, with no
+        # deadline, so a running test can finish. After Ctrl+C stop() has
+        # already run and this returns at once.
         self.wait_until_stopped()
         polling_thread.join(timeout=1.0)
         log.debug("CLI module stopped.")

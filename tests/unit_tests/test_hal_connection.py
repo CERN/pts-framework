@@ -11,7 +11,6 @@ import logging
 import os
 import subprocess
 import sys
-import threading
 import time
 
 import pytest
@@ -372,7 +371,7 @@ def test_a_return_value_pypts_cannot_read_is_a_driver_error(odd_device):
 
 
 # --------------------------------------------------------------------------
-# Making a device safe when its driver is stuck or its run is abandoned
+# Making a device safe when its driver is stuck
 # --------------------------------------------------------------------------
 
 MARKING = "hal_test_drivers.MarkingDriver"
@@ -468,100 +467,31 @@ def test_a_close_rescue_that_cannot_connect_is_bounded_and_said(marking, monkeyp
     )
 
 
-def test_abandoning_an_idle_device_tears_it_down(marking):
-    connection, marks = marking
+def test_the_driver_process_ignores_ctrl_c(monkeypatch):
+    """
+    Ctrl+C reaches every process in the console's group. A driver process that
+    died to it tore its device down from inside, mid-run; it ignores it instead,
+    as CORE and the Logger do, before it does anything else.
+    """
+    import multiprocessing
 
-    assert connection._abandon() is True
+    calls = []
+    monkeypatch.setattr(connection_driver, "ignore_keyboard_interrupt", lambda: calls.append(1))
+    # driver_process_main() takes over the streams and the root logger, as a
+    # driver process does; monkeypatch puts them back afterwards.
+    monkeypatch.setattr(sys, "stdout", sys.stdout)
+    monkeypatch.setattr(sys, "stderr", sys.stderr)
+    root = logging.getLogger()
+    handlers = list(root.handlers)
+    level = root.level
 
-    assert not connection._is_open()
-    assert marks_of(marks) == ["connect", "teardown"]
-
-
-def test_an_abandoned_device_cannot_be_opened_or_recovered_again(marking):
-    """The run was abandoned: nothing would ever tear a new driver process down."""
-    connection, marks = marking
-
-    assert connection._abandon() is True
-
-    with pytest.raises(DriverError, match="its run was abandoned"):
-        recover_device(connection)
-    with pytest.raises(DriverError, match="its run was abandoned"):
-        connection._open()
-    assert not connection._is_open()
-    # The teardown of abandon() ran; nothing ever connected again.
-    assert marks_of(marks) == ["connect", "teardown"]
-
-
-def test_abandoning_a_device_whose_teardown_hangs_once_rescues_it(marking, monkeypatch):
-    """The ladder's second rung: the hung teardown is killed, a fresh process tears down."""
-    connection, marks = marking
-    monkeypatch.setattr(connection_driver, "ABANDON_TEARDOWN_TIMEOUT_S", 0.5)
-    (marks.parent / (marks.name + ".tdhang_once")).write_text("", encoding="utf-8")
-    began = time.monotonic()
-
-    assert connection._abandon() is True
-
-    # One timeout, the kill, and the rescue - nowhere near the hang.
-    assert time.monotonic() - began < 15.0
-    assert not connection._is_open()
-    # The hung teardown never marked; the fresh process connected and did.
-    assert marks_of(marks) == ["connect", "connect", "teardown"]
-
-
-def test_abandoning_a_device_whose_teardown_always_hangs_is_bounded_and_reported(
-    marking, monkeypatch, caplog
-):
-    """The driver's stability is not PyPTS's job: the ladder ends, the device is named."""
-    connection, marks = marking
-    monkeypatch.setattr(connection_driver, "ABANDON_TEARDOWN_TIMEOUT_S", 0.5)
-    monkeypatch.setattr(connection_driver, "RESCUE_TIMEOUT_S", 3.0)
-    (marks.parent / (marks.name + ".tdhang")).write_text("", encoding="utf-8")
-    began = time.monotonic()
-
-    assert connection._abandon() is False
-
-    # The teardown's 0.5 s, the rescue's 3 s, and the kills - nowhere near the hang.
-    assert time.monotonic() - began < 15.0
-    assert not connection._is_open()
-    # Neither teardown ever marked; the rescue's connect() did.
-    assert marks_of(marks) == ["connect", "connect"]
-    assert any(
-        record.levelno == logging.ERROR and "may still be energised" in record.getMessage()
-        for record in caplog.records
-    )
-
-
-def test_abandoning_a_device_mid_call_kills_it_and_tears_down_on_a_fresh_process(tmp_path):
-    """The abandoned run holds the device's lock: abandon() must not wait for it."""
-    marks = tmp_path / "marks.txt"
-    connection = ConnectionDriver("psu1", MARKING, {"marks": str(marks)}, call_timeout_s=60.0)
-    connection._open()
-    failures = []
-
-    def stuck_step():
-        try:
-            connection.hang(60)
-        except DriverError as exc:
-            failures.append(str(exc))
-
-    zombie = threading.Thread(target=stuck_step)
-    zombie.start()
+    ours, theirs = multiprocessing.Pipe()
     try:
-        deadline = time.monotonic() + 5.0
-        while not connection._lock.locked() and time.monotonic() < deadline:
-            time.sleep(0.01)
-        began = time.monotonic()
-
-        assert connection._abandon() is True
-
-        assert time.monotonic() - began < 15.0
-        zombie.join(timeout=5.0)
-        assert not zombie.is_alive()
-        # The killed call ends the step as a crash in the stuck thread.
-        assert len(failures) == 1
-        assert "stopped unexpectedly" in failures[0]
-        # The rescue connected and tore down; the stuck process never did.
-        assert marks_of(marks) == ["connect", "connect", "teardown"]
-        assert not connection._is_open()
+        # A driver that cannot be loaded: the process says why and returns.
+        connection_driver.driver_process_main(theirs, "no_such_module.NoDriver", logging.INFO)
     finally:
-        connection._close()
+        root.handlers[:] = handlers
+        root.setLevel(level)
+        ours.close()
+
+    assert calls == [1]

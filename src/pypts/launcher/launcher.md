@@ -18,7 +18,7 @@ Either way `restart_pypts()` replays the same command line: for the `pypts` comm
 - **Queue construction** — builds the HMI↔CORE link (the only cross-process pair) and
   the Logger queue. Passes them into child processes as constructor arguments.
 - **Config bootstrap** — runs `ConfigHandler.bootstrap()` before spawning anything.
-  Shows a notice if the config was discarded: a popup in GUI mode — falling back to a
+  Shows a notice when the config was created (information) or discarded (warning): a popup in GUI mode — falling back to a
   console banner when the message box cannot open — and a console banner in every other
   mode (cli, api, headless).
 - **Bench notice** — after logging is up, `start_engine()` calls `show_bench_notice(mode)`:
@@ -28,8 +28,11 @@ Either way `restart_pypts()` replays the same command line: for the `pypts` comm
   statement of `start_engine()`, before the first `Queue()` — every path, headless included
   (via `Pts`), goes through it. This makes Linux behave like Windows and avoids the Qt fork
   hazard (plan 005).
-- **Shutdown** — `stop_core()` sends `HmiStopped` + `ShutdownRequested` to CORE, joins
-  up to `CORE_SHUTDOWN_TIMEOUT_S` (30.0 s), and terminates if CORE does not stop in time.
+- **Shutdown** — once the frontend has ended, `stop_core()` sends `HmiStopped` +
+  `ShutdownRequested(immediate=True)` to CORE: the crash close, since whatever CORE is still
+  doing has lost its frontend (GUI crashed or killed, Ctrl+C in the launcher's console). After
+  an orderly close every module has already stopped and the request changes nothing. Then it
+  joins up to `CORE_SHUTDOWN_TIMEOUT_S` (30.0 s) and terminates a CORE still alive.
 
 ## The engine half, shared with `pypts.api`
 
@@ -58,13 +61,13 @@ launcher (main process)
 
 | Name | Value | Meaning |
 |------|-------|---------|
-| `CORE_SHUTDOWN_TIMEOUT_S` | 30.0 s | Join timeout before CORE is terminated; above `Core.SHUTDOWN_TIMEOUT_S` (25 s), so CORE can log who was late first |
+| `CORE_SHUTDOWN_TIMEOUT_S` | 30.0 s | Join timeout after the crash-close request before CORE is terminated; the last resort for a wedged CORE, which has no deadline of its own |
 | `LOGGER_SHUTDOWN_TIMEOUT_S` | 5.0 s | Logger drain budget |
 
 ## Rules
 
 - Must stay **the simplest component**. If something can be done in a child, do it there.
-- `stop_core()` is a pure function of its two arguments — no global state.
+- `stop_core()` works only on its two arguments — no global state.
 
 ## Arguments
 
@@ -77,7 +80,7 @@ headless mode uses 2 for a run that ended in ERROR/STOP.
 
 The GUI can ask for pypts to be started again: from File → Restart, so a hand-edited
 `config.ini` takes effect, and after Settings → Advanced → Restore default settings deleted
-`config.ini`, so the file is recreated from the template (`hmi/gui/gui.md` §10). It asks by
+`config.ini`, so the file is recreated from the template (`hmi/gui/gui.md` §10a). It asks by
 shutting down the ordinary way and exiting with `RESTART_EXIT_CODE` (75, in
 `utilities/common.py` - the launcher must not import Qt, the GUI must not import the launcher).
 
@@ -99,5 +102,5 @@ branch because `pypts.api` imports this module. Context: `api/api.md`.
 ## CLI mode
 
 The CLI (`hmi/cli/cli.py`) runs in the launcher process, not as a subprocess. It calls
-`wait_until_stopped()` after the user types `exit`, which polls until CORE confirms
-shutdown or the grace period expires.
+`wait_until_stopped()` after the user types `exit`, which polls until CORE's `StopHmi`
+arrives, with no deadline. Ctrl+C is the crash close and does not wait (`hmi/hmi.md`, *CLI*).

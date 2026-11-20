@@ -38,7 +38,6 @@ from pypts.hal.connection_driver import ConnectionDriver
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType
 from pypts.messages.core_sequencer_communication import (
-    ClosingDevices,
     PauseSequence,
     ResumeSequence,
     RunSequence,
@@ -437,43 +436,58 @@ def test_forget_recipe_is_refused_while_a_sequence_runs(sequencer):
 
 def test_stop_reports_stopped_only_after_the_sequence_thread_has_ended(sequencer):
     """
-    CORE exits as soon as all three modules have reported themselves stopped, so
-    SequencerStopped while a sequence was still touching hardware would be a lie
-    CORE acts on.
+    CORE stops the Report and the HMI once the Sequencer says it has stopped,
+    so SequencerStopped while a sequence was still touching hardware would be a
+    lie CORE acts on. StopSequencer only sets the stop flag; the goodbye waits
+    for the sequence thread, however long it takes.
     """
     instance, outbox, inbox = sequencer
-
-    reached = threading.Event()
-
-    def waits_for_the_flag(sequence_name: str, *run_options) -> None:
-        reached.set()
-        deadline = time.time() + REACHED_TIMEOUT_S
-        while not instance.stop_requested and time.time() < deadline:
-            time.sleep(0.01)
-
-    instance.execute_sequence = waits_for_the_flag
-    inbox.put(RunSequence(wait_recipe(), "power_on"))
-    instance.poll_core()
-    assert reached.wait(timeout=REACHED_TIMEOUT_S)
+    release = start_a_blocking_sequence(instance, inbox)
 
     inbox.put(StopSequencer())
     instance.poll_core()
+    instance.do_periodic_tasks()
 
-    assert not instance.sequence_is_running()
+    assert instance.stop_requested
+    assert instance.running, "the event loop must keep turning while the run finishes"
+    assert not any(isinstance(message, SequencerStopped) for message in drain(outbox))
+
+    release.set()
+    instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
+    instance.do_periodic_tasks()
+
     assert not instance.running
     assert any(isinstance(message, SequencerStopped) for message in drain(outbox))
 
 
 def test_stopping_with_no_sequence_running_is_immediate(sequencer):
-    """The ordinary case: nothing to wait for, and no join budget spent."""
+    """The ordinary case: nothing to wait for."""
     instance, outbox, inbox = sequencer
 
     inbox.put(StopSequencer())
-    started = time.time()
     instance.poll_core()
 
-    assert time.time() - started < 1.0
+    assert not instance.running
     assert any(isinstance(message, SequencerStopped) for message in drain(outbox))
+
+
+def test_the_heartbeat_goes_on_while_a_stopping_run_finishes(sequencer):
+    """
+    The run may take as long as its current step and its teardown steps need,
+    and the event loop is not blocked meanwhile, so the module keeps saying it
+    is alive.
+    """
+    instance, outbox, inbox = sequencer
+    release = start_a_blocking_sequence(instance, inbox)
+    inbox.put(StopSequencer())
+    instance.poll_core()
+    drain(outbox)
+
+    instance.heartbeat_manager.last_sent = 0.0
+    instance.do_periodic_tasks()
+
+    assert any(isinstance(message, Heartbeat) for message in drain(outbox))
+    release.set()
 
 
 def test_a_stop_from_a_finished_sequence_does_not_abort_the_next_one(sequencer):
@@ -493,41 +507,12 @@ def test_a_stop_from_a_finished_sequence_does_not_abort_the_next_one(sequencer):
     release.set()
 
 
-def test_sequencer_stopped_is_sent_even_if_stopping_the_sequence_fails(sequencer, monkeypatch):
-    """
-    stop() carries @catch_and_report_errors(), which swallows. Without the
-    try/finally the goodbye was skipped on that path, so CORE kept the module
-    marked as running, held StopReport until the shutdown deadline, and then
-    logged the Sequencer as one of the parts that "did not stop in time" - the
-    one module whose loop had in fact ended.
-    """
-    instance, outbox, inbox = sequencer
-
-    def fails(*_args, **_kwargs):
-        raise RuntimeError("the join went wrong")
-
-    monkeypatch.setattr(instance, "stop_running_sequence", fails)
-
-    # Through the inbox, not by calling stop() directly: stop() is not itself an
-    # error boundary any more, so the real path is what has to be exercised.
-    inbox.put(StopSequencer())
-    instance.poll_core()
-
-    assert not instance.running
-    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
-    # The goodbye leaves first, from the finally; the failure is reported by the
-    # per-message boundary as the exception passes through it.
-    assert [type(m) for m in messages] == [SequencerStopped, ModuleError]
-    assert messages[1].operation == "Sequencer.handle_core_message"
-    assert "the join went wrong" in messages[1].message
-
-
 def test_a_loop_that_dies_still_reports_the_module_stopped(sequencer, monkeypatch):
     """
     The last-ditch boundary. `start()` carries the decorator, not `main_loop()`,
     because the `while` is inside main_loop - catching there would end the loop
     it looks like it protects. A loop that dies must still send its goodbye, or
-    CORE waits out its whole shutdown budget for a thread that has gone.
+    CORE never learns the module has gone.
     """
     instance, outbox, _inbox = sequencer
 
@@ -548,8 +533,9 @@ def test_a_loop_that_dies_still_reports_the_module_stopped(sequencer, monkeypatc
 
 def test_the_goodbye_is_sent_once_on_an_ordinary_shutdown(sequencer):
     """
-    Both stop() and start()'s finally send it, so the guard in send_goodbye() is
-    what keeps an ordinary run from putting two of them on the link.
+    Both finish_stopping() and start()'s finally send it, so the guard in
+    send_goodbye() is what keeps an ordinary run from putting two of them on
+    the link.
     """
     instance, outbox, inbox = sequencer
 
@@ -561,84 +547,11 @@ def test_the_goodbye_is_sent_once_on_an_ordinary_shutdown(sequencer):
     assert len(goodbyes) == 1
 
 
-def test_an_abandoned_sequence_is_reported_critical_before_sequencer_stopped(
-    sequencer, monkeypatch
-):
-    """
-    A sequence thread that outlives the join is left running, possibly mid-step
-    with no teardown behind it. That is a fact about the bench, so the operator
-    hears it as a CRITICAL ModuleError - and hears it *before* CORE is told the
-    module stopped, or the report would read as a clean exit.
-    """
-    from pypts.messages.common_messages import ErrorSeverity
-
-    instance, outbox, inbox = sequencer
-
-    # The real 2 s budget is not worth a test's time; the code reads the module
-    # global, so shortening it here exercises exactly the same branch.
-    monkeypatch.setattr("pypts.sequencer.sequencer.SEQUENCE_JOIN_TIMEOUT_S", 0.05)
-
-    # Deliberately not released: the fake body ignores stop_requested, so the
-    # join times out and the thread is abandoned.
-    release = start_a_blocking_sequence(instance, inbox)
-
-    instance.stop()
-
-    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
-    assert [type(m) for m in messages] == [ModuleError, ClosingDevices, SequencerStopped]
-    reported = messages[0]
-    assert reported.severity is ErrorSeverity.CRITICAL
-    assert reported.operation == "Sequencer.stop_running_sequence"
-    assert "bench state is unknown" in reported.message
-
-    # Let the abandoned thread go, so the fixture's teardown join returns.
-    release.set()
-
-
-def test_an_abandoned_run_has_its_devices_made_safe_and_the_unsafe_ones_named(
-    sequencer, monkeypatch
-):
-    """
-    Its LocalSetup will never reach __exit__, so the Sequencer takes the
-    devices away from it before saying goodbye; one that could not be torn
-    down is a CRITICAL of its own, naming it.
-    """
-    from pypts.messages.common_messages import ErrorSeverity
-
-    instance, outbox, inbox = sequencer
-    monkeypatch.setattr("pypts.sequencer.sequencer.SEQUENCE_JOIN_TIMEOUT_S", 0.05)
-    abandoned = []
-
-    def abandon(time_limit_s):
-        abandoned.append(time_limit_s)
-        return ["psu1"]
-
-    monkeypatch.setattr(sequencer_module, "abandon_active_setup", abandon)
-    release = start_a_blocking_sequence(instance, inbox)
-
-    instance.stop()
-
-    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
-    assert [type(m) for m in messages] == [
-        ModuleError,
-        ClosingDevices,
-        ModuleError,
-        SequencerStopped,
-    ]
-    unsafe = messages[2]
-    assert unsafe.severity is ErrorSeverity.CRITICAL
-    assert "psu1" in unsafe.message
-    assert "without running teardown" in unsafe.message
-    assert "may still be energised" in unsafe.message
-    assert len(abandoned) == 1
-    release.set()
-
-
-#: A step that ignores Stop for longer than the Sequencer waits for it.
+#: A slow first step, then one Stop skips, then a teardown step.
 SLOW_STEP_RECIPE = f"""\
 name: Slow
 version: {CURRENT_VERSION}
-description: A step that outlives the join.
+description: A step that takes a while, stopped by a shutdown.
 main_sequence: Main
 ---
 sequence_name: Main
@@ -650,15 +563,26 @@ steps:
   - steptype: Wait
     step_name: After
     wait_time: '0'
+teardown_steps:
+  - steptype: Wait
+    step_name: Cleans up
+    wait_time: '0'
 """
 
 
-def test_an_abandoned_run_sends_nothing_more(sequencer, monkeypatch, tmp_path):
-    """Once abandoned, the run's events go nowhere: CORE is shutting down without it."""
+def test_a_shutdown_waits_for_the_running_step_and_runs_the_teardown(
+    sequencer, monkeypatch, tmp_path
+):
+    """
+    Use case 1 of the teardown plan: closing the application during a run lets
+    the step in progress finish, runs the teardown steps, and only then says
+    the Sequencer has stopped - RunFinished first, so the Report gets the run's
+    tail. The step here outlasts the 2 s the old shutdown gave a run before
+    abandoning it.
+    """
     instance, outbox, inbox = sequencer
-    monkeypatch.setattr("pypts.sequencer.sequencer.SEQUENCE_JOIN_TIMEOUT_S", 0.05)
     (tmp_path / "slow_code.py").write_text(
-        "import time\n\ndef take_a_while():\n    time.sleep(1.0)\n", encoding="utf-8"
+        "import time\n\ndef take_a_while():\n    time.sleep(2.5)\n", encoding="utf-8"
     )
     recipe = Recipe.from_yaml_text(SLOW_STEP_RECIPE)
     recipe.base_dir = str(tmp_path)
@@ -669,13 +593,25 @@ def test_an_abandoned_run_sends_nothing_more(sequencer, monkeypatch, tmp_path):
         assert time.monotonic() < deadline, "the step never started"
         time.sleep(0.01)
 
-    instance.stop()
-    stopped_at = len(drain(outbox))
-    instance.sequence_thread.join(timeout=REACHED_TIMEOUT_S)
+    inbox.put(StopSequencer())
+    instance.poll_core()
+    deadline = time.monotonic() + 3 * REACHED_TIMEOUT_S
+    while instance.running:
+        assert time.monotonic() < deadline, "the Sequencer never stopped"
+        instance.do_periodic_tasks()
+        time.sleep(0.01)
 
-    assert stopped_at > 0
-    late = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
-    assert late == []
+    messages = [m for m in drain(outbox) if not isinstance(m, Heartbeat)]
+    kinds = [type(m) for m in messages]
+    assert kinds.index(RunFinished) < kinds.index(SequencerStopped)
+    finished = [m.outcome for m in messages if isinstance(m, StepFinished)]
+    names = [o.step_name for o in finished]
+    assert "Slow" in names
+    assert "Cleans up" in names
+    slow = finished[names.index("Slow")]
+    assert slow.result is ResultType.DONE
+    run_finished = messages[kinds.index(RunFinished)]
+    assert run_finished.result is ResultType.STOP
 
 
 # --------------------------------------------------------------------------
@@ -1836,13 +1772,3 @@ def test_background_pusher_outliving_run_writes_nothing_into_next_run(
     assert first_file.read_text(encoding="utf-8").splitlines() == rows_after_run_1
     assert sorted(p.name for p in (second_dir / "streams").iterdir()) == ["sine.csv"]
     assert hook_calls == []
-
-
-def test_abandoned_run_abandons_session(sequencer):
-    from pypts.stream_handler import StreamError, StreamSession, register_stream
-
-    instance, _, _ = sequencer
-    with StreamSession(None):
-        instance.tear_down_abandoned_devices()
-        with pytest.raises(StreamError):
-            register_stream("anything")

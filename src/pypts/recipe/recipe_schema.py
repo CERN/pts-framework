@@ -826,6 +826,6 @@ RENAMED_STEP_TYPES: dict[str, str] = {
     "userloadingstep": "userloading",
     "sequencestep": "sequence",
     "indexedstep": "indexed",
-    "sshconnectstep": "(SSH steps are not yet available in this version)",
-    "sshclosestep": "(SSH steps are not yet available in this version)",
+    "sshconnectstep": "(SSH is a device now: a pythonmodule step calls pypts.hal.get_device())",
+    "sshclosestep": "(SSH is a device now: a pythonmodule step calls pypts.hal.get_device())",
 }

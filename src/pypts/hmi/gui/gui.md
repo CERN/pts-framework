@@ -717,7 +717,7 @@ What lives there, and why it is split three ways:
 
 | | What | Theme-dependent? |
 |---|---|---|
-| `Palette` (`LIGHT`, `DARK`) | ~50 named tokens: surfaces, text, lines, grid, interaction, scrollbars, brand, toolbar icons, the seven `yaml_*` syntax colours (§12), `logo_tint` | **yes** — `get_palette(dark)` picks one |
+| `Palette` (`LIGHT`, `DARK`) | ~60 named tokens: surfaces, text, lines, grid, interaction, scrollbars, brand, toolbar icons, the seven `yaml_*` syntax colours (§12), `logo_tint` | **yes** — `get_palette(dark)` picks one |
 | `Palette.verdicts` (`LIGHT_VERDICTS` / `DARK_VERDICTS`) | the PASS/FAIL/DONE/SKIP/ERROR/STOP chips, plus PENDING and RUNNING | **yes**, but see below |
 | `LOG_LEVEL_COLORS`, `PLACEHOLDER_*` | log level prefixes, the image placeholder | **no** |
 
@@ -891,7 +891,7 @@ Edit > Settings -> GUI._open_settings()
                      |                                  <- ConfigParameterResult
                      | GUI.show_config_parameter_result() -> dialog.apply_result()
                      v
-                   all accepted -> the dialog closes; status line "Settings saved"
+                   all accepted -> the dialog closes; status line "Settings saved; they apply from the next start"
                    a refusal or no answer -> page 2: ✓ saved / ✗ not saved, and why
                      | done() (Close, Cancel, Esc, X): theme not saved -> preview the old one
 ```
@@ -1261,9 +1261,10 @@ gets folded away, the panel closes.
 - **Toggle:** a click on a group's **name** (arrow included) toggles it; a **double-click**
   anywhere on the row toggles it once. A double-click arrives as `cellClicked` then
   `cellDoubleClicked` (checked): on the name the click already toggled, so
-  `_double_clicked_cell()` ignores column 0; on the description the click opened the YAML
-  panel, so the double-click closes it and toggles. A click on a group's **description** opens
-  the YAML panel with the called sequence (§12).
+  `_double_clicked_cell()` ignores column 0; on the description or the Result the click showed
+  the step on the right (§19), so the double-click toggles. A click on a group's description or
+  Result looks back at the group (§19); the YAML panel with the called sequence opens on a rest
+  (§12).
 - **Right-click** on the table: *Expand all* / *Collapse all* (`expand_all()` /
   `collapse_all()`), below the two open entries (next item).
 
@@ -1387,9 +1388,8 @@ stylesheet paints it. An unselected tab has no background of its own, so the fil
 through and the label is the stylesheet's own (`tab_text`, not the selected text colour)
 — only the background pulses. It stops (`stop_pulse()`) when that tab is opened, by a
 click or `show_tab()`, and at `RunStarted`. A tab already open does not pulse. The fill
-copies the tab's box from
-`styles.py` (`_TAB_RADIUS`, `_TAB_MARGIN_RIGHT`) — change those with the `QTabBar::tab`
-rules, and give an unselected tab a background there and the pulse is hidden under it.
+copies the tab's box that `styles.py` draws, held in `view_tabs.py` (`_TAB_RADIUS`,
+`_TAB_MARGIN_RIGHT`) — change those with the `QTabBar::tab` rules, and give an unselected tab a background there and the pulse is hidden under it.
 Colours come from `palette.py`, and `set_dark()` follows the theme.
 
 ## 15. The run progress bar (2026-09-17)

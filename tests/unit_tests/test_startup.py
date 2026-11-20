@@ -290,7 +290,8 @@ def test_main_does_not_restart_after_an_ordinary_exit(monkeypatch):
 def test_stop_core_asks_before_terminating():
     """
     The order is the whole point: HmiStopped so CORE stops waiting for a
-    frontend that has already gone, then ShutdownRequested, and only then a
+    frontend that has already gone, then ShutdownRequested(immediate=True) - the
+    crash close, since the frontend has ended - and only then a
     join. A CORE that leaves on its own is never terminated, which is what lets
     it finish writing the report and close the log.
     """
@@ -299,7 +300,7 @@ def test_stop_core_asks_before_terminating():
 
     startup.stop_core(core_process, to_core)
 
-    assert drain(sent) == [HmiStopped(), ShutdownRequested()]
+    assert drain(sent) == [HmiStopped(), ShutdownRequested(immediate=True)]
     assert core_process.terminated is False
     assert len(core_process.joined) == 1
 

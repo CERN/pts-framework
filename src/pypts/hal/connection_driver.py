@@ -20,9 +20,7 @@ the device ends. _close() is one serialized ladder: teardown() on the live
 process; failing that - the process hung, crashed or was stopped - a fresh
 process connects and tears down instead (the rescue); failing that too, the
 ERROR line says the device may still be energised, and that is where the
-framework stops: the driver's stability is the driver's own job. _abandon()
-runs the same ladder for a run that will not end, without waiting for the
-device's lock, and is final: _open() and _recover() refuse an abandoned device.
+framework stops: the driver's stability is the driver's own job.
 _recover() is for test code that wants to retry (through recover_device()): it
 escalates from the driver's own recover() to a fresh process, and only raises
 when even that fresh process cannot connect.
@@ -54,6 +52,7 @@ from typing import Any, TextIO, cast
 from pypts.hal.base_driver import LIFECYCLE_METHODS, BaseDriver, DriverError, operations_of
 from pypts.hal.device_types import DEVICE_TYPE_NAMES
 from pypts.logger.log import log
+from pypts.utilities.common import ignore_keyboard_interrupt
 
 # The type of one end of a Pipe differs by platform; mypy follows the check.
 if sys.platform == "win32":
@@ -74,11 +73,6 @@ EXIT_TIMEOUT_S = 5.0
 
 #: The longest a rescue - a fresh driver process, connect(), teardown() - may take.
 RESCUE_TIMEOUT_S = 10.0
-
-#: How long _abandon() gives an idle device's teardown() before the driver
-#: process is killed and the ladder moves on to the rescue. Short on purpose:
-#: shutdown is waiting.
-ABANDON_TEARDOWN_TIMEOUT_S = 5.0
 
 #: How often a wait for the driver process looks whether it is still alive.
 LIVENESS_POLL_S = 0.2
@@ -144,9 +138,6 @@ class ConnectionDriver:
         self._process: BaseProcess | None = None
         self._conn: PipeEnd | None = None
         self._lock = threading.Lock()
-        #: Set by _abandon(), never cleared: _close(), _open() and _recover()
-        #: refuse - the device stays down.
-        self._abandoned = False
         #: Set once connect() has returned: before that there is nothing to tear down.
         self._connected = False
 
@@ -182,15 +173,9 @@ class ConnectionDriver:
         Bring the device back, escalating: the driver's own recover() while its
         process is alive; when that fails or the process is gone, teardown and
         a fresh process with connect(). Only when the fresh process cannot
-        connect does the DriverError reach the caller. An abandoned device is
-        refused: it stays down. The hardware layer never calls this by itself -
-        test code decides.
+        connect does the DriverError reach the caller. The hardware layer never
+        calls this by itself - test code decides.
         """
-        if self._abandoned:
-            raise DriverError(
-                f"Device '{self._name}' cannot be recovered: its run was abandoned "
-                f"and the device was torn down."
-            )
         log.info("Recovering device '%s'.", self._name)
         alive = self._process is not None and self._process.is_alive()
         if self._conn is not None and alive:
@@ -214,14 +199,8 @@ class ConnectionDriver:
     def _open(self) -> None:
         """
         Start the driver process and connect the device. Leaves nothing running
-        on failure. An abandoned device is refused: its run will not end, so
-        nothing would ever tear a new process down.
+        on failure.
         """
-        if self._abandoned:
-            raise DriverError(
-                f"Device '{self._name}' cannot be opened: its run was abandoned "
-                f"and the device was torn down."
-            )
         self._start(STARTUP_TIMEOUT_S, self._call_timeout_s)
         log.info("Device '%s' connected.", self._name)
 
@@ -232,11 +211,8 @@ class ConnectionDriver:
         teardown() on the live process; failing that - it hung, crashed or was
         already stopped - teardown on a fresh process (the rescue); failing
         that too, the rescue's ERROR line has said the device may still be
-        energised, and the ladder stops there. An abandoned device is refused:
-        _abandon() already ran the ladder, and the device stays down.
+        energised, and the ladder stops there.
         """
-        if self._abandoned:
-            return
         if self._conn is None and self._process is None and not self._connected:
             return
         torn_down = False
@@ -252,55 +228,6 @@ class ConnectionDriver:
         self._connected = False
         if torn_down:
             log.info("Device '%s' disconnected.", self._name)
-
-    def _abandon(self, time_limit_s: float | None = None) -> bool:
-        """
-        Tear the device down for a run that will not end. Never raises.
-
-        The same ladder as _close(), on one shared time budget, except that the
-        lock is never waited for - the stuck run may hold it. An idle device
-        gets one teardown() within ABANDON_TEARDOWN_TIMEOUT_S; a busy device's
-        driver process is killed at once (the call then fails as a crash in
-        the stuck thread). A device that is not down after that is torn down
-        on a fresh process (_rescue) with whatever budget is left. Nothing
-        reconnects afterwards: abandonment is final - _open() and _recover()
-        refuse - and a device that could not be torn down is the caller's
-        CRITICAL to report, not this layer's problem to fix.
-
-        Returns:
-            True if teardown ran, or nothing was open to tear down.
-        """
-        self._abandoned = True
-        if time_limit_s is None:
-            # The full ladder: one teardown attempt, then the rescue.
-            time_limit_s = ABANDON_TEARDOWN_TIMEOUT_S + RESCUE_TIMEOUT_S
-        deadline = time.monotonic() + max(time_limit_s, 0.0)
-        if not self._lock.acquire(blocking=False):
-            log.debug("Device '%s' is in a call; killing its driver process.", self._name)
-            process = self._process
-            if process is not None and process.is_alive():
-                process.kill()
-        else:
-            try:
-                if self._conn is not None:
-                    try:
-                        budget = min(ABANDON_TEARDOWN_TIMEOUT_S, _left_until(deadline))
-                        self._exchange("teardown", [], {}, budget, trace=True)
-                        return True
-                    except DriverError as exc:
-                        # A teardown that timed out was killed by
-                        # _read_message(), one that crashed is gone, and one
-                        # the driver refused did not run: in every case
-                        # teardown did not happen, so the ladder goes on.
-                        log.warning(
-                            "Device '%s' did not disconnect cleanly: %s", self._name, exc
-                        )
-            finally:
-                self._discard()
-                self._lock.release()
-        if not self._connected:
-            return True
-        return self._rescue(min(RESCUE_TIMEOUT_S, _left_until(deadline)))
 
     # --- the process ------------------------------------------------------------
 
@@ -340,7 +267,7 @@ class ConnectionDriver:
             raise
         self._connected = True
 
-    def _rescue(self, time_limit_s: float | None = None) -> bool:
+    def _rescue(self) -> bool:
         """
         Tear the device down on a fresh connection, its own process being gone.
 
@@ -353,11 +280,9 @@ class ConnectionDriver:
             True if teardown ran.
         """
         log.warning("Device '%s' is being connected again, to tear it down.", self._name)
-        if time_limit_s is None:
-            time_limit_s = RESCUE_TIMEOUT_S
-        deadline = time.monotonic() + time_limit_s
+        deadline = time.monotonic() + RESCUE_TIMEOUT_S
         rescuer = ConnectionDriver(
-            self._name, self._driver_path, self._settings, call_timeout_s=time_limit_s
+            self._name, self._driver_path, self._settings, call_timeout_s=RESCUE_TIMEOUT_S
         )
         try:
             rescuer._start(_left_until(deadline), _left_until(deadline))
@@ -503,7 +428,7 @@ class ConnectionDriver:
                     self._kill()
                     # The stuck process could not tear down. Nothing rescues
                     # here: the device is torn down on a fresh process when it
-                    # is closed - _close() and _abandon() own that ladder.
+                    # is closed - _close() owns that ladder.
                     raise DriverError(
                         f"Device '{self._name}' did not answer {waiting_for} within "
                         f"{timeout_s:.1f} s; its driver process was stopped."
@@ -721,7 +646,13 @@ def driver_process_main(conn: PipeEnd, driver_path: str, log_level: int) -> None
     driver's teardown() has run by then, exactly once: _close() sends it as a
     call, and the net in the finally covers every other end of the Pipe - a
     teardown run twice sends its "output off" commands twice.
+
+    Ctrl+C is ignored, as in CORE and the Logger: it reaches every process in
+    the console's group, and a driver process dying to it would tear its device
+    down from inside, in the middle of a run. Only the frontend or the launcher
+    decides what Ctrl+C means.
     """
+    ignore_keyboard_interrupt()
     channel = _Channel(conn)
     root = logging.getLogger()
     root.setLevel(log_level)
