@@ -17,7 +17,7 @@ Nothing here gets built until they pick it up again.
 |---|---|---|
 | What is to be done, for review | Claude Doc "HAL server — what is to be done", https://claude.ai/artifact/7HRP7hqmvsdCciJkS1DWe9 | **The one source of truth for decisions and open questions** (the user's rule, 2026-11-19). Decided there: Q1 (the Sequencer closes a run's devices), 8 (idle HAL on an empty bench), 10 (client watchdog), 12 (keep `close`, add `close_device()`), Q2 (stop a HAL PyPTS started, D38 kept). Open: 2, 6, 7, 9, 11, Q3. Read it before this file's *Open questions*, which it overrides |
 | How the HAL is built **today** | `src/pypts/hal/hal.md` | The authority on the current code. Not copied here, so it cannot drift |
-| The design | `docs/superpowers/specs/2026-11-04-hal-server-design.md` | **Revision 4, draft.** Not ready to plan from (review below) |
+| The design | `docs/superpowers/specs/2026-11-04-hal-server-design.md` | **Revision 5, 2026-11-23**: every decision taken in, reviewed, findings fixed. Waits for the user's read, then the plan. Rev 4 is in git (`db8edc6`) |
 | Review of rev 4: 4 blockers, fixes, 12 decisions, 4-phase plan | Claude Doc "HAL server spec rev 4 — review and decisions", https://claude.ai/artifact/UFV3CsG4Zj1vW25y6BnUAW | The 12 decisions are **unanswered**. The section below overrides decisions 3, 4 and 5 |
 | How PyPTS closes today | Claude Doc "Teardown and closing", https://claude.ai/artifact/M12WpvrtULC7vNWi7Tx5uK | Current state only; the authority is `core/core.md` → *Shutdown choreography* |
 | Older design reports (history) | `resources/internal_reports/hal_architecture_2026-11-02.html`, `hal_server_design_2026-11-04.html`, `hal_server_onepager_2026-11-05.html` | Superseded by rev 4 and this file |

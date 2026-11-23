@@ -5,105 +5,21 @@ A LocalSetup reads its devices from bench.ini's sections - one per device,
 bare name - opens a device the first time it is asked for it, and closes every
 device it opened when it is closed. Entering it (`with setup:`) also makes it
 the *active* setup, which is what get_device() asks - the Sequencer enters one
-per run, and a script outside PyPTS does the same with
-`with LocalSetup.from_ini("bench.ini"):`.
-
-pypts.config_handler is imported inside the one function that needs it: a
-driver process imports this module too (through pypts.hal), and has no use
-for the configuration.
+per run. A script outside PyPTS uses the HAL server instead
+(`with pyhal.connect(path):`, `pyhal.client`).
 """
 
-import configparser
-import os
+import logging
 import threading
 from collections.abc import Callable, Mapping
-from pathlib import Path
 from types import TracebackType
 from typing import Any
 
-from pypts.hal.base_driver import DriverError
-from pypts.hal.connection_driver import ConnectionDriver, split_driver_file
-from pypts.logger.log import log
+from pyhal.base_driver import DriverError
+from pyhal.bench import split_section
+from pyhal.connection_driver import ConnectionDriver
 
-
-def split_section(name: str, section: Mapping[str, Any]) -> tuple[str, dict[str, str]]:
-    """
-    One device section as (driver class path, the driver's own keys). Only
-    `driver` is read here; every other key goes to the driver's connect(), as
-    text.
-    """
-    settings: dict[str, str] = {}
-    for key, value in section.items():
-        settings[key] = str(value)
-    if "python" in settings:
-        raise DriverError(
-            f"Device '{name}': the 'python' key is not supported any more - every driver runs "
-            f"on PyPTS's own Python. Remove it from the [{name}] section."
-        )
-    driver_path = settings.pop("driver", "").strip()
-    if not driver_path:
-        raise DriverError(
-            f"Device '{name}': the [{name}] section has no 'driver' key naming its driver class."
-        )
-    return driver_path, settings
-
-
-def anchor_driver_files(
-    sections: Mapping[str, Mapping[str, str]], ini_folder: Path
-) -> dict[str, dict[str, str]]:
-    """
-    The sections, each a copy, with every driver file
-    (`driver = drivers/acme_psu.py:AcmePsuDriver`) made absolute: `~` expanded,
-    and a relative file taken as relative to `ini_folder`, the folder of the
-    INI file that declares it. A dotted driver path is left as it is.
-    """
-    anchored: dict[str, dict[str, str]] = {}
-    for name, section in sections.items():
-        copy = dict(section)
-        driver_file = split_driver_file(copy.get("driver", "").strip())
-        if driver_file is not None:
-            file_name, class_name = driver_file
-            path = Path(file_name).expanduser()
-            if not path.is_absolute():
-                path = ini_folder / path
-            copy["driver"] = f"{path}:{class_name}"
-        anchored[name] = copy
-    return anchored
-
-
-def ini_device_sections(path: str | os.PathLike[str]) -> dict[str, dict[str, str]]:
-    """
-    The devices of an INI file of one's own - a setup outside PyPTS.
-
-    The file has bench.ini's format: every section is one device, bare name.
-    Read as utf-8-sig so a file saved by Notepad, BOM and all, still opens.
-    A relative driver file is relative to this file's folder.
-    """
-    parser = configparser.ConfigParser(interpolation=None)
-    with open(path, encoding="utf-8-sig") as handle:
-        parser.read_file(handle)
-    sections = {section: dict(parser[section]) for section in parser.sections()}
-    return anchor_driver_files(sections, Path(path).resolve().parent)
-
-
-def bench_sections() -> dict[str, dict[str, str]]:
-    """
-    The devices of this machine's bench.ini - what the Sequencer reads. A
-    relative driver file is relative to bench.ini's folder.
-
-    Raises:
-        DriverError: the bench file was discarded at startup; the message
-            carries the real reason, so the step's error names the file to
-            fix rather than a section to add.
-    """
-    from pypts.config_handler.bench_config import BenchOutcome, bench_config
-
-    bench = bench_config()
-    if bench.outcome is BenchOutcome.DISCARDED:
-        raise DriverError(
-            f"bench.ini was discarded at startup, so this start has no devices: {bench.problem}"
-        )
-    return anchor_driver_files(bench.devices, bench.path.parent)
+log = logging.getLogger(__name__)
 
 
 class LocalSetup:
@@ -120,11 +36,6 @@ class LocalSetup:
         self._sections: Mapping[str, Mapping[str, Any]] | None = None
         self._devices: dict[str, ConnectionDriver] = {}
         self._lock = threading.RLock()
-
-    @classmethod
-    def from_ini(cls, path: str | os.PathLike[str]) -> "LocalSetup":
-        """A local setup described by an INI file in bench.ini's format: one section per device."""
-        return cls(lambda: ini_device_sections(path))
 
     def device_names(self) -> list[str]:
         with self._lock:
@@ -211,6 +122,12 @@ def _deactivate(setup: LocalSetup) -> None:
             _active_setup = None
 
 
+def _setup_is_active() -> bool:
+    """Whether a local setup is active (what `pyhal.dispatch` asks first)."""
+    with _active_lock:
+        return _active_setup is not None
+
+
 def get_device(name: str) -> ConnectionDriver:
     """
     The device called `name` on the active local setup - what test code calls.
@@ -223,6 +140,6 @@ def get_device(name: str) -> ConnectionDriver:
     if setup is None:
         raise DriverError(
             "No local setup is active. get_device() works in test code PyPTS is running, or "
-            "inside 'with LocalSetup.from_ini(path):' in a script of your own."
+            "inside 'with pyhal.connect(path):' in a script of your own."
         )
     return setup.get_device(name)

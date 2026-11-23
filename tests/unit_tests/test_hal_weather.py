@@ -1,5 +1,5 @@
 """
-Unit tests for the Open-Meteo driver (src/pypts/hal/drivers/weather.py),
+Unit tests for the Open-Meteo driver (src/pyhal/drivers/weather.py),
 in-process, with urllib's urlopen replaced - no network is needed.
 """
 
@@ -10,10 +10,10 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from pypts.hal import DriverError
-from pypts.hal.base_driver import operations_of
-from pypts.hal.drivers import weather as weather_module
-from pypts.hal.drivers.weather import OpenMeteoDriver
+from pyhal import DriverError
+from pyhal.base_driver import operations_of
+from pyhal.drivers import weather as weather_module
+from pyhal.drivers.weather import OpenMeteoDriver
 
 CURRENT = {
     "current": {

@@ -485,11 +485,11 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
 Each device runs its driver in a process of its own, opened the first time a run
 asks for it and closed when the run ends.</p>
 <pre><code>[ssh1]
-driver = pypts.hal.drivers.ssh.SshDriver
+driver = pyhal.drivers.ssh.SshDriver
 host = 192.168.0.10
 username = tester
 key_filename = C:\Users\tester\.ssh\id_ed25519</code></pre>
-<pre><code>from pypts.hal import get_device
+<pre><code>from pyhal import get_device
 
 def read_kernel():
     result = get_device("ssh1").execute("uname -r")
@@ -513,9 +513,9 @@ def read_kernel():
       <code>known_hosts</code>, name a file with <code>known_hosts =</code>, or set
       <code>accept_unknown_host = true</code>. A <code>password</code> key works, but the file is
       plain text, and the log shows it as written: prefer <code>key_filename</code>.</li>
-  <li><strong>No hardware?</strong> <code>driver = pypts.hal.drivers.loopback.LoopbackDriver</code>
+  <li><strong>No hardware?</strong> <code>driver = pyhal.drivers.loopback.LoopbackDriver</code>
       answers with whatever it is sent; <code>resources/recipes/HAL_recipes/hal_demo.yml</code>
-      uses it. For live readings with no instrument, <code>driver = pypts.hal.drivers.weather.OpenMeteoDriver</code>
+      uses it. For live readings with no instrument, <code>driver = pyhal.drivers.weather.OpenMeteoDriver</code>
       is a weather station on the internet (keys <code>latitude</code>, <code>longitude</code>, <code>place</code>,
       <code>http_timeout_s</code>; needs internet access); <code>resources/recipes/HAL_recipes/meteo_demo.yml</code>
       uses one.</li>
@@ -525,9 +525,33 @@ def read_kernel():
       <code>~/bench/...</code>, or relative to <code>bench.ini</code>'s folder) - nothing to
       install. A driver of several files is a package named by its dotted path instead. The walkthrough, with a complete
       example, is <code>docs/Usage_manuals/how_to_write_a_driver.html</code>; to let an AI model write the driver, give it <code>docs/Usage_manuals/how_to_write_a_driver.md</code>.</li>
-  <li><strong>Outside PyPTS</strong>: <code>with LocalSetup.from_ini("bench.ini"):</code> (from
-      <code>pypts.hal</code>) makes <code>get_device()</code> work in a script of your own. Put that code under
-      <code>if __name__ == "__main__":</code>: each device's process starts by re-reading your script.</li>
+  <li><strong>Outside PyPTS</strong>: <code>with pyhal.connect("bench.ini"):</code> makes
+      <code>get_device()</code> work in a script of your own. It connects to the <strong>HAL
+      server</strong> on port 50555, and starts one in the background when none is running;
+      the HAL, not your script, runs the driver processes, so the script needs no
+      <code>if __name__ == "__main__":</code> guard. Leaving the <code>with</code> closes every
+      device the HAL has open, also those another client (PyPTS, another script) opened (the
+      close sends <code>close_all</code>). A HAL the script started is stopped then, a HAL it
+      found running is left running. Pass <code>connect(..., scope=False)</code> to manage scopes yourself with
+      <code>with pyhal.run_scope():</code> (scopes do not nest). A script that never leaves the
+      <code>with</code> gets the same close when it exits.</li>
+  <li><strong>The HAL server by hand</strong>: <code>python -m pyhal --bench FILE</code> runs one
+      in a console (Ctrl+C stops it, after tearing every open device down). Options:
+      <code>--port N</code> (default 50555), <code>--log-dir DIR</code> (default
+      <code>%LOCALAPPDATA%\pyhal\logs</code>, else <code>~/.local/state/pyhal/logs</code>),
+      <code>--log-level LEVEL</code> (a name or a number, <code>TRACE</code> included; default
+      INFO). <code>python -m pyhal --close-all</code> tells the HAL on the port to close every
+      device; <code>python -m pyhal --stop</code> does that and then stops it; neither starts a
+      HAL, both wait for the answer and print <code>Every device was torn down.</code> or
+      <code>Not torn down: &lt;names&gt;</code>. The HAL's own log is one file per start,
+      <code>hal_&lt;date&gt;_&lt;time&gt;_&lt;pid&gt;.log</code>, in the log folder; what a
+      started HAL printed to the console goes to <code>hal_startup.log</code> there. Exit codes:
+      <code>0</code> done (with <code>--close-all</code> / <code>--stop</code>: every device was
+      torn down); <code>1</code> serving: the bench file cannot be read, or the client modes: a
+      device was not torn down; <code>2</code> the client modes: no HAL answered (or it is
+      already shutting down), and a usage error; <code>3</code> serving: the port is in use.
+      <strong>PyPTS does not use the HAL server yet</strong>: until then it runs its devices
+      in its own process as described above.</li>
   <li>Headless and API runs get the same devices.</li>
 </ul>
 

@@ -144,7 +144,7 @@ h4 { font-size: 1.05rem; font-weight: 600; margin: 1.4rem 0 .4rem; }
 <div class="page">
 
 <h1>How to write a device driver</h1>
-<p class="sub">PyPTS hardware layer (<code>pypts.hal</code>) — implements multiple 
+<p class="sub">PyPTS hardware layer (<code>pyhal</code>) — implements multiple 
 instruments. If a device is missing, you still can add it to a test bench. 
 <br><br>
 <span class="ai">If you want to use an AI model to help you writing a driver, give it the context file beside this page:
@@ -174,7 +174,7 @@ any of that: you write the class below, and the framework does the rest.</p>
 import logging
 import socket
 
-from pypts.hal import PSU, DriverError
+from pyhal import PSU, DriverError
 
 # setting up logger in this way would allow the framework to see the traces!
 log = logging.getLogger(__name__)
@@ -265,7 +265,7 @@ if __name__ == "__main__":
 import logging
 import socket
 
-from pypts.hal import DMM, DriverError
+from pyhal import DMM, DriverError
 
 # setting up logger in this way would allow the framework to see the traces!
 log = logging.getLogger(__name__)
@@ -395,7 +395,7 @@ port = 5025</code></pre></td></tr>
 </ul>
 <p>Test code then reaches the device by its logical name. Save that as <code>dmm_tests.py</code> 
   beside a recipe, which calls it like any Python step:</p>
-<pre><code class="py">from pypts.hal import get_device
+<pre><code class="py">from pyhal import get_device
 
 def power_up():
     psu = get_device("psu1")        # opened on first use, closed when the run ends
@@ -452,7 +452,7 @@ device's process inherits it:</p>
 
 <details>
 <summary>5.1 Derive from a device type, never from BaseDriver</summary>
-<p>Import the type from <code>pypts.hal</code>: <code>PSU</code>, <code>DMM</code>,
+<p>Import the type from <code>pyhal</code>: <code>PSU</code>, <code>DMM</code>,
 <code>Scope</code>, <code>Load</code>, <code>SSH</code>, or <code>Other</code> for anything
 else. A driver that derives from <code>BaseDriver</code> directly is refused at open.</p>
 <p><b>Why:</b> every power supply should be driven the same way. The type fixes the method names
@@ -497,7 +497,7 @@ an instrument in any state, and be harmless when nothing is open. It never runs 
 close (Ctrl+C in the CLI) or a crash of PyPTS skips it.</li>
 <li><code>recover(config)</code> — optional. The default is teardown + connect; override it
 when the instrument has a cheaper reset. Test code triggers it with
-<code class="py">recover_device(device)</code> (from <code>pypts.hal</code>); the framework
+<code class="py">recover_device(device)</code> (from <code>pyhal</code>); the framework
 never recovers on its own.</li>
 </ul>
 
@@ -521,8 +521,8 @@ except ImportError as exc:
         "AcmeScopeDriver needs pyvisa; install it with 'pip install pyvisa'."
     ) from exc
 </code></pre>
-<p>The shipped <code>pypts.hal.drivers.ssh.SshDriver</code> shows the pattern;
-<code>pypts.hal.drivers.weather.OpenMeteoDriver</code> is a driver that needs no vendor
+<p>The shipped <code>pyhal.drivers.ssh.SshDriver</code> shows the pattern;
+<code>pyhal.drivers.weather.OpenMeteoDriver</code> is a driver that needs no vendor
 library at all and turns every failure of its far end into one clear error.</p>
 
 </details>
@@ -593,24 +593,27 @@ as <code>connect()</code> will get it from PyPTS.</p>
 
 <details>
 <summary>7.2 The driver in the framework</summary>
-<p>Run the driver the way PyPTS does: in its own process, set up from a
-<code>bench.ini</code>-format file and reached by its device name. A plain script is enough.
-The INI file given to <code>from_ini()</code> uses <code>bench.ini</code>'s format: one
-bare-named section per device (section 3), e.g. <code>[psu1]</code>:</p>
+<p>Run the driver the way the framework does: in its own process, set up from a
+<code>bench.ini</code>-format file and reached by its device name. A plain script is enough:
+<code>pyhal.connect()</code> connects to the HAL server, and starts one in the background when
+none is running. The INI file given to <code>connect()</code> uses <code>bench.ini</code>'s
+format: one bare-named section per device (section 3), e.g. <code>[psu1]</code>:</p>
 <pre><code>[psu1]
 driver = ~/bench/acme_psu.py:AcmePsuDriver
 host = 192.168.0.40
 port = 5025</code></pre>
 <p>Save the script as <code>check_psu.py</code> and run it with
 <code>python check_psu.py</code>:</p>
-<pre><code class="py">from pypts.hal import LocalSetup, get_device
+<pre><code class="py">import pyhal
 
-if __name__ == "__main__":                 
-    with LocalSetup.from_ini("bench.ini"):
-        print(get_device("psu1").measure_voltage(1))
+with pyhal.connect("bench.ini"):
+    print(pyhal.get_device("psu1").measure_voltage(1))
 </code></pre>
-<p>Without the <code>__main__</code> guard every driver process re-runs the script and dies at
-once with <code>stopped unexpectedly (exit code 1)</code>.</p>
+<p>The HAL runs the driver, not your script, so no <code>__main__</code> guard is needed.
+Leaving the <code>with</code> tears the device down, and stops a HAL the script started (a
+HAL that was already running is left running). A HAL reads its bench file once, when it starts: after
+editing the bench file, stop a HAL that was left running (<code>python -m pyhal --stop</code>)
+before the next run.</p>
 <div class="note"><b>Recommended: add pytest tests.</b> Two kinds are worth having.
 The class in-process with its instrument connection mocked tests the protocol, the
 <code>config</code> parsing and the errors without any instrument; see
@@ -628,16 +631,16 @@ installation can name it in <code>bench.ini</code>, it goes into the HAL's own d
 beside <code>ssh.py</code>, <code>weather.py</code> and <code>loopback.py</code>.</p>
 <p><b>Where the HAL is:</b> it has no repository of its own. It is part of the PyPTS project,
 <a href="https://github.com/CERN/pts-framework">github.com/CERN/pts-framework</a>, in
-<code>src/pypts/hal/</code>, and its drivers are in <code>src/pypts/hal/drivers/</code>. Clone
+<code>src/pyhal/</code>, and its drivers are in <code>src/pyhal/drivers/</code>. Clone
 that project and add the driver there:</p>
 <pre><code class="sh">git clone https://github.com/CERN/pts-framework.git
 </code></pre>
 <ol>
-<li>Put the file at <code>src/pypts/hal/drivers/acme_psu.py</code>, one module per driver.
-It needs no SPDX header (<code>reuse.toml</code> covers <code>src/pypts/**/*.py</code>), and
+<li>Put the file at <code>src/pyhal/drivers/acme_psu.py</code>, one module per driver.
+It needs no SPDX header (<code>reuse.toml</code> covers <code>src/pyhal/**/*.py</code>), and
 <code>.gitignore</code> already keeps the folder in git.</li>
 <li><code>bench.ini</code> then names it by its dotted path instead of a file:
-<code>driver = pypts.hal.drivers.acme_psu.AcmePsuDriver</code>.</li>
+<code>driver = pyhal.drivers.acme_psu.AcmePsuDriver</code>.</li>
 <li>If it needs a vendor library, add an extra for it to
 <code>[project.optional-dependencies]</code> in <code>pyproject.toml</code> (beside
 <code>ssh</code>, <code>ni</code>, <code>serial</code>), add it to <code>hardware</code>, and
@@ -647,7 +650,7 @@ import the driver from <code>drivers/__init__.py</code>: that package imports no
 drivers, so a missing library breaks only the driver that needs it.</li>
 <li>Its tests go in <code>tests/unit_tests/test_hal_acme_psu.py</code>, the two kinds
 above.</li>
-<li>Document it in <code>src/pypts/hal/hal.md</code>: a row in the <i>Files</i> table, a
+<li>Document it in <code>src/pyhal/pyhal.md</code>: a row in the <i>Files</i> table, a
 section with its keys and verbs (like <i>SSH</i> and <i>Weather</i>), and its extra under
 <i>Packaging</i>.</li>
 </ol>
@@ -681,7 +684,7 @@ of the technician's panel.</td></tr>
 <td>5.5</td><td><code>daemonic processes are not allowed to have children</code>.</td></tr>
 </table>
 
-<p class="sub">This guide mirrors <code>src/pypts/hal/hal.md</code> (<i>Writing a driver</i>);
+<p class="sub">This guide mirrors <code>src/pyhal/pyhal.md</code> (<i>Writing a driver</i>);
 when the hardware layer changes, both change.</p>
 
 </div>

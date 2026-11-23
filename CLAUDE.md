@@ -19,9 +19,9 @@ file may be touched — **stop and ask.** Asking is always cheaper than a wrong 
 distribution `pts-framework`, Python ≥ 3.11, LGPL-2.1-or-later, REUSE compliant.
 
 `reuse.toml` is the authority on licence headers. Among others it covers `src/pypts/**/*.py`,
-`src/pyrade_xy_graph/**/*.py`, `tests/**/*.py`, `docs/**/*.rst` and `docs/**/*.md`, so new files
-there need no inline SPDX header. Anything outside its globs does — typically `resources/**` and
-`docs/**/*.html` (`CC-BY-SA-4.0`).
+`src/pyhal/**/*.py`, `src/pyrade_xy_graph/**/*.py`, `tests/**/*.py`, `docs/**/*.rst` and
+`docs/**/*.md`, so new files there need no inline SPDX header. Anything outside its globs does —
+typically `resources/**` and `docs/**/*.html` (`CC-BY-SA-4.0`).
 
 ## Where things are documented
 
@@ -43,7 +43,7 @@ Module context files — **read before touching the module**:
 | `api/` | `api/api.md` |
 | `config_handler/` | `config_handler/config_handler.md` |
 | `core/` | `core/core.md` |
-| `hal/` | `hal/hal.md` |
+| `src/pyhal/` (outside `src/pypts/`) | `src/pyhal/pyhal.md` |
 | `hmi/` (shared client, CLI) | `hmi/hmi.md` |
 | `hmi/gui/` | `hmi/gui/gui.md` |
 | `launcher/` | `launcher/launcher.md` |
@@ -98,9 +98,10 @@ src/pypts/
   config_handler/ per-user config.ini and bench.ini (the bench's devices)
   logger/        Logger process: the single run-log writer
   utilities/     error handling, heartbeats, local storage, recent recipes
-  hal/           hardware layer: devices by logical name, one driver process each, SSH driver
   stream_handler/   the stream container: named (x, y) streams the test code pushes, one CSV each
   helper_applications/  recipe_creator (incl. verificator), recipe_editor (v2)
+src/pyhal/           hardware layer, a package of its own (never imports pypts): devices by logical
+                     name, one driver process each, SSH driver; context file pyhal.md
 src/pyrade_xy_graph/  copied plot package (CERN), later a dependency; deviations: DEVIATIONS.md
 resources/recipes/   one folder of demos per step type (<type>step_recipes/, HAL_recipes/,
                      stepimage_recipes/, stepgraph_recipes/), showcase_recipes/ (all of them:
@@ -159,6 +160,7 @@ pytest tests          # unit_tests/ + functional_tests/ + quality_tests/
 
 `tests/quality_tests/` runs `ruff check src tests` (config in `[tool.ruff]`, line length 100)
 and `mypy` (scope in `[tool.mypy]`) as tests; CI has no separate lint or type-check job.
+`test_pyhal_independence.py` there fails on any `pypts` import inside `src/pyhal/`.
 
 2. **Documentation check** — re-read every document your change touches against the final
    code, and say in your report which ones you updated, or why none needed it.

@@ -8,7 +8,7 @@ logical name. The names are declared in bench.ini (beside config.ini), one
 [<name>] section each - see the comment at the top of hal_demo.yml.
 """
 
-from pypts.hal import get_device
+from pyhal import get_device
 
 
 def loopback_echo(text):

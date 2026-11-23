@@ -1,7 +1,7 @@
 """
 The streams of one run, and the one session that is active in this process.
 
-A StreamSession is to streams what hal.local_setup.LocalSetup is to devices:
+A StreamSession is to streams what pyhal.local_setup.LocalSetup is to devices:
 the Sequencer enters one per run, test code asks the active one through
 register_stream(), and a script outside PyPTS does the same with
 `with StreamSession(folder):`.
@@ -96,7 +96,7 @@ class StreamSession:
 # --- the active stream session ----------------------------------------------------
 #
 # One per process, not thread-local: test code may push from threads of its own.
-# The same shape as the active local setup in hal/local_setup.py.
+# The same shape as the active local setup in pyhal/local_setup.py.
 
 _active_session: StreamSession | None = None
 _active_lock = threading.Lock()

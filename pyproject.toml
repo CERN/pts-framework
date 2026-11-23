@@ -89,7 +89,7 @@ Repository = "https://gitlab.cern.ch/pts/framework/pypts"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["pypts", "pypts.*", "pyrade_xy_graph", "pyrade_xy_graph.*"]
+include = ["pypts", "pypts.*", "pyhal", "pyhal.*", "pyrade_xy_graph", "pyrade_xy_graph.*"]
 
 [tool.setuptools.package-data]
 # All package data which is tracked by git is included automatically due to
@@ -167,7 +167,7 @@ logger-objects = ["pypts.logger.log.log"]
 "src/pypts/helper_applications/recipe_creator/*" = ["ALL"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["pypts"]
+known-first-party = ["pypts", "pyhal"]
 
 [tool.mypy]
 # Scoped to the message layer and the modules that handle messages, which is
@@ -193,7 +193,7 @@ files = [
   "src/pypts/utilities",
   "src/pypts/hmi/hmi_client.py",
   "src/pypts/api",
-  "src/pypts/hal",
+  "src/pyhal",
 ]
 
 # Deliberately not `strict`. The value here is in the message contract being

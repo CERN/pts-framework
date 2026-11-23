@@ -14,3 +14,6 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 Both settings live in `pyproject.toml`. A test fails when the tool reports a problem, with the
 tool's output as the message, or when the tool is not installed (`pip install -e ".[test]"`).
 CI has no separate lint or type-check job: its `pytest` run is the check.
+
+`test_pyhal_independence.py` guards the package boundary: it parses every `src/pyhal/**/*.py` with
+`ast` and fails on any import of `pypts`, and it checks that `src/pyhal/__init__.py` exists.

@@ -38,6 +38,7 @@ import io
 import logging
 import multiprocessing
 import pickle
+import signal
 import sys
 import threading
 import time
@@ -49,10 +50,10 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, TextIO, cast
 
-from pypts.hal.base_driver import LIFECYCLE_METHODS, BaseDriver, DriverError, operations_of
-from pypts.hal.device_types import DEVICE_TYPE_NAMES
-from pypts.logger.log import log
-from pypts.utilities.common import ignore_keyboard_interrupt
+from pyhal.base_driver import LIFECYCLE_METHODS, BaseDriver, DriverError, operations_of
+from pyhal.device_types import DEVICE_TYPE_NAMES
+
+log = logging.getLogger(__name__)
 
 # The type of one end of a Pipe differs by platform; mypy follows the check.
 if sys.platform == "win32":
@@ -83,7 +84,7 @@ TRACE_MAX_CHARS = 300
 #: What a driver file (`driver = C:/bench/acme_psu.py:AcmePsuDriver`) is called
 #: as a module in its driver process, before the file's stem - and so what the
 #: driver's `logging.getLogger(__name__)` is named.
-DRIVER_FILE_MODULE_PREFIX = "pypts_driver_file_"
+DRIVER_FILE_MODULE_PREFIX = "pyhal_driver_file_"
 
 # What the driver process sends back. The first item of every message is its kind.
 #: ("hello", device_type, operations) - once, first: the driver is built.
@@ -204,7 +205,7 @@ class ConnectionDriver:
         self._start(STARTUP_TIMEOUT_S, self._call_timeout_s)
         log.info("Device '%s' connected.", self._name)
 
-    def _close(self) -> None:
+    def _close(self) -> bool:
         """
         The teardown ladder, in one serialized escalation. Never raises.
 
@@ -212,9 +213,14 @@ class ConnectionDriver:
         already stopped - teardown on a fresh process (the rescue); failing
         that too, the rescue's ERROR line has said the device may still be
         energised, and the ladder stops there.
+
+        Returns:
+            True when teardown ran - on the live process or by rescue - or
+            there was nothing to tear down; False when the ladder ended on
+            the ERROR line.
         """
         if self._conn is None and self._process is None and not self._connected:
-            return
+            return True
         torn_down = False
         if self._conn is not None:
             try:
@@ -225,9 +231,14 @@ class ConnectionDriver:
         self._discard()
         if not torn_down and self._connected:
             torn_down = self._rescue()
+        elif not torn_down:
+            # connect() never returned: nothing was energised, nothing to tear down.
+            self._connected = False
+            return True
         self._connected = False
         if torn_down:
             log.info("Device '%s' disconnected.", self._name)
+        return torn_down
 
     # --- the process ------------------------------------------------------------
 
@@ -588,6 +599,22 @@ def load_driver_file(file_name: str) -> ModuleType:
     return module
 
 
+def _ignore_keyboard_interrupt() -> None:
+    """
+    Take this driver process out of Ctrl+C's and, on Windows, Ctrl+Break's reach.
+
+    Ctrl+C raises SIGINT, and Ctrl+Break SIGBREAK, in every process of the
+    console's group; a driver process leaves them to its parent, which ends it
+    in order (a HAL server tears it down first). pyhal cannot import pypts, so
+    this is its own copy of what the framework does.
+    """
+    with contextlib.suppress(ValueError):
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
+    if sys.platform == "win32":
+        with contextlib.suppress(ValueError):
+            signal.signal(signal.SIGBREAK, signal.SIG_IGN)
+
+
 def load_driver_class(driver_path: str) -> type[BaseDriver]:
     """
     The class `driver_path` names, checked to be a driver of a known device type.
@@ -597,6 +624,13 @@ def load_driver_class(driver_path: str) -> type[BaseDriver]:
     relative file is relative to the current directory here; LocalSetup makes
     it relative to the INI file that declares it before it gets this far.
     """
+    old_prefix = "pypts.hal."
+    if driver_path.startswith(old_prefix):
+        new_path = "pyhal." + driver_path[len(old_prefix) :]
+        raise ValueError(
+            f"'{driver_path}' names the old package: the hardware layer is 'pyhal' now. "
+            f"Write '{new_path}' in bench.ini."
+        )
     driver_file = split_driver_file(driver_path)
     if driver_file is not None:
         module_name, class_name = driver_file
@@ -652,7 +686,7 @@ def driver_process_main(conn: PipeEnd, driver_path: str, log_level: int) -> None
     down from inside, in the middle of a run. Only the frontend or the launcher
     decides what Ctrl+C means.
     """
-    ignore_keyboard_interrupt()
+    _ignore_keyboard_interrupt()
     channel = _Channel(conn)
     root = logging.getLogger()
     root.setLevel(log_level)

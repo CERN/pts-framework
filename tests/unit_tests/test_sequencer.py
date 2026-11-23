@@ -31,10 +31,11 @@ from uuid import uuid4
 
 import pytest
 
+from pyhal import DriverError, get_device
+from pyhal import local_setup as hal_local_setup
+from pyhal.connection_driver import ConnectionDriver
 from pypts._version import __version__
-from pypts.hal import DriverError, get_device
-from pypts.hal import local_setup as hal_local_setup
-from pypts.hal.connection_driver import ConnectionDriver
+from pypts.config_handler import BenchConfig, BenchOutcome
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType
 from pypts.messages.core_sequencer_communication import (
@@ -63,7 +64,7 @@ from pypts.messages.run_events import (
 from pypts.recipe.recipe import Recipe
 from pypts.recipe.recipe_parser import current_recipe_version
 from pypts.sequencer import sequencer as sequencer_module
-from pypts.sequencer.sequencer import Sequencer
+from pypts.sequencer.sequencer import Sequencer, bench_sections
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
 
@@ -1337,10 +1338,10 @@ def test_pause_and_resume_with_nothing_running_are_harmless(sequencer):
 
 # --- the hardware layer: one local setup per run -------------------------------------
 
-LOOPBACK_SECTIONS = {"loop1": {"driver": "pypts.hal.drivers.loopback.LoopbackDriver"}}
+LOOPBACK_SECTIONS = {"loop1": {"driver": "pyhal.drivers.loopback.LoopbackDriver"}}
 
 BENCH_CODE = '''
-from pypts.hal import get_device
+from pyhal import get_device
 
 
 def echo_twice(text):
@@ -1424,7 +1425,7 @@ def test_a_run_that_uses_no_device_never_reads_the_hardware_sections(sequencer):
 
 def test_the_default_reads_bench_ini(sequencer):
     instance, _, _ = sequencer
-    assert instance.read_hardware_sections is hal_local_setup.bench_sections
+    assert instance.read_hardware_sections is sequencer_module.bench_sections
 
 
 # --------------------------------------------------------------------------
@@ -1772,3 +1773,53 @@ def test_background_pusher_outliving_run_writes_nothing_into_next_run(
     assert first_file.read_text(encoding="utf-8").splitlines() == rows_after_run_1
     assert sorted(p.name for p in (second_dir / "streams").iterdir()) == ["sine.csv"]
     assert hook_calls == []
+
+
+def test_bench_sections_anchors_a_relative_driver_file_to_the_bench_folder(monkeypatch, tmp_path):
+    devices = {"psu1": {"driver": "acme_psu.py:AcmePsuDriver", "host": "10.0.0.1"}}
+    monkeypatch.setattr(
+        sequencer_module,
+        "bench_config",
+        lambda: BenchConfig(
+            devices=devices,
+            outcome=BenchOutcome.LOADED,
+            problem=None,
+            path=tmp_path / "bench.ini",
+        ),
+    )
+
+    assert bench_sections() == {
+        "psu1": {"driver": f"{tmp_path / 'acme_psu.py'}:AcmePsuDriver", "host": "10.0.0.1"}
+    }
+    assert devices["psu1"]["driver"] == "acme_psu.py:AcmePsuDriver"
+
+
+def test_bench_sections_returns_the_devices_of_the_bench_file(monkeypatch):
+    monkeypatch.setattr(
+        sequencer_module,
+        "bench_config",
+        lambda: BenchConfig(
+            devices={"loop1": {"driver": "pkg.Loop"}},
+            outcome=BenchOutcome.LOADED,
+            problem=None,
+            path=Path("bench.ini"),
+        ),
+    )
+
+    assert bench_sections() == {"loop1": {"driver": "pkg.Loop"}}
+
+
+def test_bench_sections_raises_when_the_bench_file_was_discarded(monkeypatch):
+    monkeypatch.setattr(
+        sequencer_module,
+        "bench_config",
+        lambda: BenchConfig(
+            devices={},
+            outcome=BenchOutcome.DISCARDED,
+            problem="it is broken",
+            path=Path("bench.ini"),
+        ),
+    )
+
+    with pytest.raises(DriverError, match=r"discarded.*it is broken"):
+        bench_sections()

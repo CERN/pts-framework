@@ -6,15 +6,15 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # Writing a PyPTS device driver — context for an AI model
 
-You are helping a user write a **device driver** for PyPTS's hardware layer (`pypts.hal`).
+You are helping a user write a **device driver** for PyPTS's hardware layer (`pyhal`).
 Everything you need is in this file; the human-readable version is
 `how_to_write_a_driver.html` beside it.
 
 ## Your task, and its limits
 
 - Write **one Python class** for the user's instrument, in **one file of the user's own**
-  (for example `~/bench/<instrument>.py`, `C:\bench\<instrument>.py` on Windows). **Never edit, add or patch anything inside `pypts`** — it is not needed.
-- Import from the framework only what `pypts.hal` exports: the device type to derive from and
+  (for example `~/bench/<instrument>.py`, `C:\bench\<instrument>.py` on Windows). **Never edit, add or patch anything inside `pypts` or `pyhal`** — it is not needed.
+- Import from the framework only what `pyhal` exports: the device type to derive from and
   `DriverError`.
 - If you do not know the instrument's protocol (SCPI commands, vendor library calls, port,
   units), **ask the user or ask for the manual** — never invent commands.
@@ -33,7 +33,7 @@ crash close (Ctrl+C in the CLI) or a crash of PyPTS skips it.
 ## Device types — derive from exactly one
 
 ```python
-from pypts.hal import PSU, DMM, Scope, Load, SSH, Other, DriverError
+from pyhal import PSU, DMM, Scope, Load, SSH, Other, DriverError
 ```
 
 Never derive from `BaseDriver` directly (refused at open). The verbs below are
@@ -114,7 +114,7 @@ def recover(self, config: dict[str, str]) -> None      # optional; default: tear
    file objects or vendor objects.
 3. **No name is reserved:** any public method name — `close`, `open`, `name` included — is an
    operation test code reaches (`ConnectionDriver` keeps all its own members `_private`). Test
-   code controls the device itself with functions from `pypts.hal`: `recover_device(device)`
+   code controls the device itself with functions from `pyhal`: `recover_device(device)`
    and `device_info(device)`.
 4. **Logging:** `log = logging.getLogger(__name__)`, `%`-style arguments
    (`log.info("answered: %s", idn)`), never f-strings. INFO for what an operator should see,
@@ -141,7 +141,7 @@ def recover(self, config: dict[str, str]) -> None      # optional; default: tear
 import logging
 import socket
 
-from pypts.hal import DMM, DriverError
+from pyhal import DMM, DriverError
 
 # Plain logging: PyPTS forwards these records to its run log as "Device 'dmm1': ...".
 log = logging.getLogger(__name__)
@@ -251,24 +251,26 @@ For a PSU, `teardown()` switches every output off (`OUTP OFF`) before closing.
 
 ## Testing it
 
-Standalone, without PyPTS — the `__main__` guard is **required** (the driver process
-re-imports the script; without the guard it dies with `stopped unexpectedly (exit code 1)`):
+Standalone, without PyPTS — `pyhal.connect()` connects to the HAL server on port 50555 and
+starts one in the background when none runs; the HAL runs the driver process, so the script
+needs no `__main__` guard. Leaving the `with` tears the device down and stops a HAL the script
+started (a HAL that was already running is left running; it reads its bench file once, so after
+editing the bench file run `python -m pyhal --stop` first):
 
 ```python
-from pypts.hal import LocalSetup, get_device
+import pyhal
 
-if __name__ == "__main__":
-    with LocalSetup.from_ini("bench.ini"):      # any INI file in bench.ini's format
-        dmm = get_device("dmm1")
-        dmm.configure_waveform_acquisition("DC_VOLTS", 10.0, 1000.0, 1)
-        print(dmm.measure_point())
+with pyhal.connect("bench.ini"):                # any INI file in bench.ini's format
+    dmm = pyhal.get_device("dmm1")
+    dmm.configure_waveform_acquisition("DC_VOLTS", 10.0, 1000.0, 1)
+    print(dmm.measure_point())
 ```
 
 From a recipe — test code never imports the driver, it asks for the device by name:
 
 ```python
 # dmm_tests.py, beside the recipe
-from pypts.hal import get_device
+from pyhal import get_device
 
 
 def supply_rail():
@@ -326,4 +328,4 @@ Run: `python -m pypts --mode headless --recipe dmm_check.yml`. The log shows
 - [ ] Only picklable plain data crosses in and out.
 - [ ] `logging.getLogger(__name__)` with `%`-style arguments; no `multiprocessing`.
 - [ ] One file, importing nothing that sits beside it.
-- [ ] Nothing inside `pypts` was modified; the `bench.ini` section (`driver = <file>:<Class>`) and the `__main__` check are supplied.
+- [ ] Nothing inside `pypts` or `pyhal` was modified; the `bench.ini` section (`driver = <file>:<Class>`) and the `__main__` check are supplied.

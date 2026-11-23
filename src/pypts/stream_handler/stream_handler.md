@@ -35,7 +35,7 @@ step's `graph:` from these files, at `stream_csv_path(RunStarted.run_dir, graph)
 ## Lifetime rules
 
 - One active session per process, in a module slot (not thread-local: test code may push from
-  threads of its own). It has the shape of `hal/local_setup.py`'s active setup, including the
+  threads of its own). It has the shape of `pyhal/local_setup.py`'s active setup, including the
   identity-checked deactivate: leaving a session that is no longer the active one leaves the slot alone.
 - Leaving the `with` block closes every stream of the session. A handle that outlives its
   session drops pushes (one DEBUG line per stream) and never writes into the next run.
@@ -58,7 +58,7 @@ then one `x,y` row per sample. The GUI reads the unit back with `unit_from_heade
 
 The container is stdlib only, so test code and scripts can use it with no PyPTS around, and
 nothing it imports can create an import cycle with the Sequencer or the GUI. Its log lines go
-through `logging.getLogger(__name__)` (precedent: `hal/drivers/loopback.py`); wording in
+through `logging.getLogger(__name__)` (precedent: `pyhal/drivers/loopback.py`); wording in
 `logger/logging_rules.md` §6.
 
 ## Known gaps

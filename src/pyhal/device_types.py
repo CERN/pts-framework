@@ -12,7 +12,7 @@ Standard library only, for the same reason as base_driver.py.
 from abc import abstractmethod
 from typing import Any
 
-from pypts.hal.base_driver import BaseDriver
+from pyhal.base_driver import BaseDriver
 
 
 class PSU(BaseDriver):

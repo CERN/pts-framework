@@ -1,5 +1,5 @@
 """
-Unit tests for the hardware layer (src/pypts/hal/): the driver base and the
+Unit tests for the hardware layer (src/pyhal/): the driver base and the
 device types, the driver-process half of connection_driver.py run in-process, and
 the local setup.
 
@@ -10,12 +10,11 @@ test_hal_connection.py.
 import importlib
 import sys
 import threading
-from pathlib import Path
 from typing import ClassVar
 
 import pytest
 
-from pypts.hal import (
+from pyhal import (
     DMM,
     PSU,
     SSH,
@@ -27,9 +26,9 @@ from pypts.hal import (
     Scope,
     get_device,
 )
-from pypts.hal import local_setup as local_setup_module
-from pypts.hal.base_driver import LIFECYCLE_METHODS, operations_of
-from pypts.hal.connection_driver import (
+from pyhal import local_setup as local_setup_module
+from pyhal.base_driver import LIFECYCLE_METHODS, operations_of
+from pyhal.connection_driver import (
     DRIVER_FILE_MODULE_PREFIX,
     ERROR,
     RESULT,
@@ -38,19 +37,15 @@ from pypts.hal.connection_driver import (
     load_driver_class,
     split_driver_file,
 )
-from pypts.hal.device_types import DEVICE_TYPE_NAMES, DEVICE_TYPES
-from pypts.hal.drivers.loopback import LoopbackDriver
-from pypts.hal.local_setup import (
-    bench_sections,
-    ini_device_sections,
-    split_section,
-)
+from pyhal.device_types import DEVICE_TYPE_NAMES, DEVICE_TYPES
+from pyhal.drivers.loopback import LoopbackDriver
 
 
 @pytest.mark.parametrize(
     "gone",
     [
         "pypts.hardware_layer",
+        "pypts.hal",
         "pypts.hal.driver",
         "pypts.hal.bench",
         "pypts.hal.proxy",
@@ -59,7 +54,7 @@ from pypts.hal.local_setup import (
     ],
 )
 def test_the_old_modules_are_gone(gone):
-    importlib.import_module("pypts.hal")
+    importlib.import_module("pyhal")
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module(gone)
 
@@ -142,7 +137,7 @@ def test_driver_error_is_an_exception():
     assert issubclass(DriverError, Exception)
 
 
-LOOPBACK = "pypts.hal.drivers.loopback.LoopbackDriver"
+LOOPBACK = "pyhal.drivers.loopback.LoopbackDriver"
 
 
 def test_the_loopback_driver_is_an_other():
@@ -158,9 +153,9 @@ def test_load_driver_class_finds_a_driver():
     ("dotted", "words"),
     [
         ("LoopbackDriver", "not a dotted path"),
-        ("pypts.hal.drivers.loopback.Nope", "has no class 'Nope'"),
-        ("pypts.hal.base_driver.DriverError", "is not a driver"),
-        ("pypts.hal.base_driver.BaseDriver", "belongs to no device type"),
+        ("pyhal.drivers.loopback.Nope", "has no class 'Nope'"),
+        ("pyhal.base_driver.DriverError", "is not a driver"),
+        ("pyhal.base_driver.BaseDriver", "belongs to no device type"),
     ],
 )
 def test_load_driver_class_explains_a_bad_path(dotted, words):
@@ -171,7 +166,7 @@ def test_load_driver_class_explains_a_bad_path(dotted, words):
 FILE_DRIVER_SOURCE = """
 import logging
 
-from pypts.hal import Other
+from pyhal import Other
 
 log = logging.getLogger(__name__)
 
@@ -294,122 +289,6 @@ SECTIONS = {
 }
 
 
-def test_split_section_separates_the_driver_key_from_driver_keys():
-    driver_path, settings = split_section(
-        "ssh1", {"driver": " pkg.Ssh ", "host": "h", "port": 22}
-    )
-    assert driver_path == "pkg.Ssh"
-    assert settings == {"host": "h", "port": "22"}
-
-
-def test_a_call_timeout_key_is_the_drivers_like_any_other():
-    """The call timeout is fixed (CALL_TIMEOUT_S); bench.ini does not set it."""
-    _, settings = split_section("x", {"driver": "pkg.X", "call_timeout_s": "2.5"})
-    assert settings == {"call_timeout_s": "2.5"}
-
-
-def test_split_section_explains_a_section_without_a_driver():
-    with pytest.raises(DriverError, match="has no 'driver' key"):
-        split_section("x", {"host": "h"})
-
-
-def test_the_removed_python_key_is_refused():
-    """Review Focus 4: a bench.ini written for the previous version."""
-    words = r"Device 'x'.*'python' key.*Remove it from the \[x\] section"
-    with pytest.raises(DriverError, match=words):
-        split_section("x", {"driver": "pkg.X", "python": "C:/py32/python.exe"})
-
-
-def test_ini_device_sections_reads_every_section_as_a_device(tmp_path):
-    path = tmp_path / "setup.ini"
-    path.write_text("[loop1]\ndriver = pkg.Loop\n[dmm1]\ndriver = pkg.Dmm\n", encoding="utf-8")
-    assert ini_device_sections(path) == {
-        "loop1": {"driver": "pkg.Loop"},
-        "dmm1": {"driver": "pkg.Dmm"},
-    }
-
-
-def test_ini_device_sections_anchors_a_relative_driver_file_to_the_ini_folder(tmp_path):
-    path = tmp_path / "setup.ini"
-    path.write_text(
-        "[psu1]\ndriver = drivers/acme_psu.py:AcmePsuDriver\n"
-        "[psu2]\ndriver = ~/acme_psu.py:AcmePsuDriver\n"
-        "[loop1]\ndriver = pkg.Loop\n",
-        encoding="utf-8",
-    )
-    sections = ini_device_sections(path)
-    assert sections["psu1"]["driver"] == f"{tmp_path / 'drivers' / 'acme_psu.py'}:AcmePsuDriver"
-    assert sections["psu2"]["driver"] == (
-        f"{Path('~').expanduser() / 'acme_psu.py'}:AcmePsuDriver"
-    )
-    assert sections["loop1"]["driver"] == "pkg.Loop"
-
-
-def test_bench_sections_anchors_a_relative_driver_file_to_the_bench_folder(monkeypatch, tmp_path):
-    bench_module = importlib.import_module("pypts.config_handler.bench_config")
-    from pypts.config_handler import BenchConfig, BenchOutcome
-
-    devices = {"psu1": {"driver": "acme_psu.py:AcmePsuDriver", "host": "10.0.0.1"}}
-    monkeypatch.setattr(
-        bench_module,
-        "bench_config",
-        lambda: BenchConfig(
-            devices=devices,
-            outcome=BenchOutcome.LOADED,
-            problem=None,
-            path=tmp_path / "bench.ini",
-        ),
-    )
-
-    assert bench_sections() == {
-        "psu1": {"driver": f"{tmp_path / 'acme_psu.py'}:AcmePsuDriver", "host": "10.0.0.1"}
-    }
-    assert devices["psu1"]["driver"] == "acme_psu.py:AcmePsuDriver"
-
-
-def test_bench_sections_returns_the_devices_of_the_bench_file(monkeypatch):
-    import importlib
-    from pathlib import Path
-
-    bench_module = importlib.import_module("pypts.config_handler.bench_config")
-    from pypts.config_handler import BenchConfig, BenchOutcome
-
-    monkeypatch.setattr(
-        bench_module,
-        "bench_config",
-        lambda: BenchConfig(
-            devices={"loop1": {"driver": "pkg.Loop"}},
-            outcome=BenchOutcome.LOADED,
-            problem=None,
-            path=Path("bench.ini"),
-        ),
-    )
-
-    assert bench_sections() == {"loop1": {"driver": "pkg.Loop"}}
-
-
-def test_bench_sections_raises_when_the_bench_file_was_discarded(monkeypatch):
-    import importlib
-    from pathlib import Path
-
-    bench_module = importlib.import_module("pypts.config_handler.bench_config")
-    from pypts.config_handler import BenchConfig, BenchOutcome
-
-    monkeypatch.setattr(
-        bench_module,
-        "bench_config",
-        lambda: BenchConfig(
-            devices={},
-            outcome=BenchOutcome.DISCARDED,
-            problem="it is broken",
-            path=Path("bench.ini"),
-        ),
-    )
-
-    with pytest.raises(DriverError, match=r"discarded.*it is broken"):
-        bench_sections()
-
-
 def test_a_device_opens_once_and_is_reused(fake_connections):
     setup = LocalSetup(lambda: SECTIONS)
     first = setup.get_device("ssh1")
@@ -497,3 +376,7 @@ def test_a_newer_local_setup_replaces_an_older_one(fake_connections):
     with pytest.raises(DriverError, match="No local setup is active"):
         get_device("loop1")
 
+
+def test_an_old_pypts_hal_path_says_to_use_pyhal():
+    with pytest.raises(ValueError, match=r"pyhal\.drivers\.loopback\.LoopbackDriver"):
+        load_driver_class("pypts.hal.drivers.loopback.LoopbackDriver")

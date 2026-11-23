@@ -6,7 +6,7 @@ quickest way to see the layer work on a machine with no instrument - one
 section in bench.ini:
 
     [loop1]
-    driver = pypts.hal.drivers.loopback.LoopbackDriver
+    driver = pyhal.drivers.loopback.LoopbackDriver
 """
 
 import logging
@@ -14,7 +14,7 @@ import os
 import time
 from typing import Any
 
-from pypts.hal.device_types import Other
+from pyhal.device_types import Other
 
 logger = logging.getLogger(__name__)
 

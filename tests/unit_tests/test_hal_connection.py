@@ -1,5 +1,5 @@
 """
-Unit tests for ConnectionDriver (src/pypts/hal/connection_driver.py) against
+Unit tests for ConnectionDriver (src/pyhal/connection_driver.py) against
 real driver processes - the loopback driver, and the broken ones in
 hal_test_drivers.py.
 
@@ -16,10 +16,10 @@ import time
 import pytest
 from hal_test_drivers import TwoArgumentError
 
-from pypts.hal import DriverError, connection_driver, device_info, recover_device
-from pypts.hal.connection_driver import ConnectionDriver
+from pyhal import DriverError, connection_driver, device_info, recover_device
+from pyhal.connection_driver import ConnectionDriver
 
-LOOPBACK ="pypts.hal.drivers.loopback.LoopbackDriver"
+LOOPBACK ="pyhal.drivers.loopback.LoopbackDriver"
 
 
 @pytest.fixture
@@ -124,7 +124,7 @@ def test_a_driver_file_runs_in_its_own_process_and_keeps_its_log_level(tmp_path,
     path = tmp_path / "bench_file_driver.py"
     path.write_text(
         "import logging\n"
-        "from pypts.hal import Other\n"
+        "from pyhal import Other\n"
         "log = logging.getLogger(__name__)\n"
         "class FileDriver(Other):\n"
         "    def connect(self, config):\n"
@@ -230,7 +230,7 @@ def test_recover_escalates_to_a_fresh_process_when_the_driver_cannot(caplog):
 @pytest.mark.parametrize(
     ("driver_path", "words"),
     [
-        ("pypts.hal.drivers.nothing.Here", "No module named"),
+        ("pyhal.drivers.nothing.Here", "No module named"),
         ("hal_test_drivers.NoDeviceTypeDriver", "belongs to no device type"),
         ("hal_test_drivers.BrokenConstructorDriver", "constructor exploded"),
         ("hal_test_drivers.FailingConnectDriver", "instrument is switched off"),
@@ -295,8 +295,8 @@ def test_the_driver_process_ends_when_its_pipe_closes():
 
 DIES_AT_START = '''
 import time
-from pypts.hal import DriverError, connection_driver
-from pypts.hal.connection_driver import ConnectionDriver
+from pyhal import DriverError, connection_driver
+from pyhal.connection_driver import ConnectionDriver
 
 from hal_test_drivers import TwoArgumentError
 
@@ -306,7 +306,7 @@ if __name__ != "__main__":
 connection_driver.STARTUP_TIMEOUT_S = 20.0
 began = time.monotonic()
 try:
-    ConnectionDriver("loop1", "pypts.hal.drivers.loopback.LoopbackDriver", {})._open()
+    ConnectionDriver("loop1", "pyhal.drivers.loopback.LoopbackDriver", {})._open()
 except DriverError as exc:
     print("seconds=%.1f" % (time.monotonic() - began))
     print(exc)
@@ -476,7 +476,7 @@ def test_the_driver_process_ignores_ctrl_c(monkeypatch):
     import multiprocessing
 
     calls = []
-    monkeypatch.setattr(connection_driver, "ignore_keyboard_interrupt", lambda: calls.append(1))
+    monkeypatch.setattr(connection_driver, "_ignore_keyboard_interrupt", lambda: calls.append(1))
     # driver_process_main() takes over the streams and the root logger, as a
     # driver process does; monkeypatch puts them back afterwards.
     monkeypatch.setattr(sys, "stdout", sys.stdout)
@@ -495,3 +495,20 @@ def test_the_driver_process_ignores_ctrl_c(monkeypatch):
         ours.close()
 
     assert calls == [1]
+
+
+def test_a_driver_process_ignores_ctrl_c_and_ctrl_break():
+    code = (
+        "import signal\n"
+        "from pyhal.connection_driver import _ignore_keyboard_interrupt\n"
+        "_ignore_keyboard_interrupt()\n"
+        "print(signal.getsignal(signal.SIGINT) is signal.SIG_IGN)\n"
+        "if hasattr(signal, 'SIGBREAK'):\n"
+        "    print(signal.getsignal(signal.SIGBREAK) is signal.SIG_IGN)\n"
+        "else:\n"
+        "    print(True)\n"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60, check=True
+    )
+    assert completed.stdout.split() == ["True", "True"]

@@ -31,7 +31,7 @@ headless mode run inside the launcher process.
 | `config_handler/` | the per-user `config.ini`, and `bench.ini` beside it — the bench's devices, one bare-named section each (`bench_config.py`) |
 | `logger/` | the Logger process: the single writer of the run log. Every process reaches it through one shared queue. |
 | `utilities/` | error handling, heartbeats, local storage, recent recipes |
-| `hal/` | the hardware layer: devices by logical name, one driver process each; an SSH driver ships |
+| `pyhal` (`src/pyhal/`, a package of its own) | the hardware layer: devices by logical name, one driver process each; an SSH driver ships. It never imports `pypts`; the Sequencer reads `bench.ini` and hands it the devices (`src/pyhal/pyhal.md`). |
 | `stream_handler/` | the stream container: test code registers named (x, y) streams and pushes samples; each is written to `<run folder>/streams/<name>.csv`, which the GUI draws as a live graph |
 | `helper_applications/` | the Recipe Creator (with the recipe verificator) and the Recipe Editor v2 — separate programs with their own entry points |
 

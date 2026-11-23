@@ -132,7 +132,7 @@ settings: the Settings dialog does not offer them and CORE refuses a
   ordinary values the user may edit, and nothing recomputes them.
 
 **Devices are not in this file.** The bench's devices are declared in `bench.ini` — one
-bare-named section per device, read by `bench_config.py` (`hal/hal.md` → *Configuration*).
+bare-named section per device, read by `bench_config.py` (`src/pyhal/pyhal.md` → *Configuration*).
 A leftover `[hardware.<logical name>]` section in `config.ini` is an unknown section like
 any other: kept verbatim, returned as text, reported once at WARNING, consumed by nothing —
 the nudge to move the device to `bench.ini`.
@@ -292,8 +292,7 @@ Two file-format details worth knowing:
 |---|---|
 | `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.reports_dir` (the session log), `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()`; `bench_config()` in `show_bench_notice()` — the discarded-bench notice |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
-| `sequencer/sequencer.py` | `paths.reports_dir` (via `reports_dir_from_config()`), once per run, for the run folder |
-| `hal/local_setup.py` | `bench_config()` — the cached device sections, read on a run's first `get_device()` |
+| `sequencer/sequencer.py` | `paths.reports_dir` (via `reports_dir_from_config()`), once per run, for the run folder; `bench_config()` in `bench_sections()` — the cached device sections, read on a run's first `get_device()` |
 | `helper_applications/recipe_creator/rc_logging.py` | `paths.reports_dir` for the helper tools' log files, falling back to the default reports dir when there is no configuration to read |
 | `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
 | `hmi/gui/gui.py` | `gui.theme` / `gui.window_mode` / `gui.window_width` / `gui.window_height` and the four `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |

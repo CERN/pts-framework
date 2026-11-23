@@ -12,8 +12,8 @@ import os
 import threading
 import time
 
-from pypts.hal.base_driver import BaseDriver
-from pypts.hal.device_types import Other
+from pyhal.base_driver import BaseDriver
+from pyhal.device_types import Other
 
 
 class NoDeviceTypeDriver(BaseDriver):
@@ -138,13 +138,21 @@ class MarkingDriver(Other):
     connect() hangs while a file named like that one plus `.hang` exists, and
     its teardown() hangs while one named plus `.tdhang` exists - or once,
     deleting the file first, when one named plus `.tdhang_once` exists.
+
+    A `tag` key tells devices that share one marks file apart: every mark is
+    followed by it (`teardown m2`), and the teardown hangs on `.tdhang.<tag>`.
+    A `slow_teardown_s` key makes every teardown take that many seconds first.
     """
 
     def __init__(self):
         self._marks = ""
+        self._tag = ""
+        self._slow_teardown_s = 0.0
 
     def connect(self, config):
         self._marks = config["marks"]
+        self._tag = config.get("tag", "")
+        self._slow_teardown_s = float(config.get("slow_teardown_s", "0"))
         if os.path.exists(self._marks + ".hang"):
             time.sleep(60)
         self._mark("connect")
@@ -155,13 +163,69 @@ class MarkingDriver(Other):
             if os.path.exists(once):
                 os.remove(once)
                 time.sleep(60)
+            if self._tag:
+                tagged = self._marks + ".tdhang." + self._tag
+                if os.path.exists(tagged):
+                    time.sleep(60)
             if os.path.exists(self._marks + ".tdhang"):
                 time.sleep(60)
+            if self._slow_teardown_s > 0:
+                time.sleep(self._slow_teardown_s)
             self._mark("teardown")
 
     def hang(self, seconds):
         time.sleep(seconds)
 
+    def hang_marked(self, seconds):
+        """Like hang(), then a mark `hang done`: the file shows it ended before a teardown."""
+        time.sleep(seconds)
+        self._mark("hang done")
+
     def _mark(self, word):
         with open(self._marks, "a", encoding="utf-8") as handle:
+            if self._tag:
+                word = word + " " + self._tag
             handle.write(word + "\n")
+
+
+class CrashingMarkingDriver(MarkingDriver):
+    """A MarkingDriver whose crash() ends its process on the spot."""
+
+    def crash(self, exit_code):
+        os._exit(exit_code)
+
+
+class FlakyConnectDriver(Other):
+    """
+    connect() fails while the file its `fail_connect_file` key names exists;
+    recover() always fails; crash() ends the process.
+    """
+
+    def connect(self, config):
+        if os.path.exists(config["fail_connect_file"]):
+            raise ConnectionError("instrument is switched off")
+
+    def teardown(self):
+        pass
+
+    def recover(self, config):
+        raise RuntimeError("reset line is stuck")
+
+    def crash(self, exit_code):
+        os._exit(exit_code)
+
+    def ping(self):
+        return "pong"
+
+
+class BigResultDriver(Other):
+    """Returns a string as large as asked, to pass the protocol's message limit."""
+
+    def connect(self, config):
+        pass
+
+    def teardown(self):
+        pass
+
+    def big(self, megabytes):
+        return "x" * (megabytes * 1024 * 1024)

@@ -7,7 +7,7 @@ The bench file: which devices are on this bench.
 
 `bench.ini` lives beside `config.ini` and holds one section per device, bare
 name: `[ssh1]`. Nothing in it is typed or mandatory - every value is kept as
-text for the hardware layer (`hal/hal.md` -> Configuration) - so it needs none
+text for the hardware layer (`pyhal/pyhal.md` -> Configuration) - so it needs none
 of ConfigHandler's machinery: no schema, no structure version, no roles and no
 writer. Nothing in pypts ever writes a device section; the file is the user's.
 

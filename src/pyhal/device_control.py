@@ -7,7 +7,7 @@ public name on it goes to the driver, so a driver may call an operation
 itself therefore lives here, as functions, rather than as methods that would
 take those names away from drivers:
 
-    from pypts.hal import device_info, get_device, recover_device
+    from pyhal import device_info, get_device, recover_device
 
     psu = get_device("psu1")
     recover_device(psu)                  # bring it back after a failure
@@ -16,7 +16,7 @@ take those names away from drivers:
 
 from dataclasses import dataclass
 
-from pypts.hal.connection_driver import ConnectionDriver
+from pyhal.connection_driver import ConnectionDriver
 
 
 @dataclass(frozen=True)

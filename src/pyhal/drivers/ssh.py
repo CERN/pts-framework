@@ -23,8 +23,8 @@ try:
 except ImportError as exc:
     raise ImportError("The SSH driver needs paramiko: pip install pts-framework[ssh]") from exc
 
-from pypts.hal.base_driver import DriverError
-from pypts.hal.device_types import SSH
+from pyhal.base_driver import DriverError
+from pyhal.device_types import SSH
 
 #: How a yes is written in bench.ini - the configuration's own vocabulary.
 TRUE_TEXT = ("1", "yes", "true", "on")

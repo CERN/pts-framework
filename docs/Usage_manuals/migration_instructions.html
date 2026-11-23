@@ -160,7 +160,9 @@ python -m pypts --mode cli</code></pre>
 <h2 id="reports">Reports</h2>
 <p>Reports are now written to a per-run subfolder under <code>reports_dir</code> (configured in <code>config.ini</code>). The path is shown in the GUI after the run, and sent to the log. There is no longer a single overwritten <code>report.csv</code>.</p>
 <h2 id="globals-used-as-magic-keys">Globals used as magic keys</h2>
-<p>The old engine read certain globals by convention (e.g. <code>cancel_key</code>, <code>ssh_client</code>, <code>ID_key</code>, <code>wrt_key</code>). The new engine does not. You can remove those from your recipe. A recipe that used <code>ssh_client</code> now declares the host as a <code>bench.ini</code> device (<code>driver = pypts.hal.drivers.ssh.SshDriver</code>) and the test code calls <code>pypts.hal.get_device("&lt;name&gt;")</code>.</p>
+<p>The old engine read certain globals by convention (e.g. <code>cancel_key</code>, <code>ssh_client</code>, <code>ID_key</code>, <code>wrt_key</code>). The new engine does not. You can remove those from your recipe. A recipe that used <code>ssh_client</code> now declares the host as a <code>bench.ini</code> device (<code>driver = pyhal.drivers.ssh.SshDriver</code>) and the test code calls <code>pyhal.get_device("&lt;name&gt;")</code>.</p>
+<h2 id="hardware-layer">Hardware layer is <code>pyhal</code> now</h2>
+<p>The hardware layer moved from <code>pypts.hal</code> to the top-level package <code>pyhal</code>. Edit your own files: every <code>driver = pypts.hal.…</code> line in your <code>bench.ini</code> becomes <code>driver = pyhal.…</code> (the shipped drivers, for example <code>pyhal.drivers.ssh.SshDriver</code>), and every <code>from pypts.hal import …</code> in your own test code and drivers becomes <code>from pyhal import …</code>. A <code>bench.ini</code> that still says <code>pypts.hal.…</code> fails with a message that names the new path.</p>
 <h2 id="config-file">Config file</h2>
 <p>The new framework writes a config on first run:</p>
 <ul>

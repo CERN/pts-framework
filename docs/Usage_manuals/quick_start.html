@@ -161,10 +161,10 @@ steps:
   <h3>3. Hardware: by logical name</h3>
 <pre><code># bench.ini (beside config.ini)
 [ssh1]
-driver = pypts.hal.drivers.ssh.SshDriver
+driver = pyhal.drivers.ssh.SshDriver
 host = 192.168.0.10
 username = tester</code></pre>
-<pre><code>from pypts.hal import get_device
+<pre><code>from pyhal import get_device
 get_device("ssh1").execute("uname -r")</code></pre>
 
   <h3>4. Run</h3>

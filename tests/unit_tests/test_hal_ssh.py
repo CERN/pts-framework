@@ -1,5 +1,5 @@
 """
-Unit tests for the SSH driver (src/pypts/hal/drivers/ssh.py), in-process, with
+Unit tests for the SSH driver (src/pyhal/drivers/ssh.py), in-process, with
 paramiko's SSHClient replaced by a mock - no host is needed. Skipped where
 paramiko is not installed (pip install pts-framework[ssh]).
 """
@@ -10,10 +10,10 @@ import pytest
 
 paramiko = pytest.importorskip("paramiko")
 
-from pypts.hal import DriverError  # noqa: E402 - after the importorskip on purpose
-from pypts.hal.base_driver import operations_of  # noqa: E402 - after the importorskip on purpose
-from pypts.hal.drivers import ssh as ssh_module  # noqa: E402 - after the importorskip on purpose
-from pypts.hal.drivers.ssh import SshDriver  # noqa: E402 - after the importorskip on purpose
+from pyhal import DriverError  # noqa: E402 - after the importorskip on purpose
+from pyhal.base_driver import operations_of  # noqa: E402 - after the importorskip on purpose
+from pyhal.drivers import ssh as ssh_module  # noqa: E402 - after the importorskip on purpose
+from pyhal.drivers.ssh import SshDriver  # noqa: E402 - after the importorskip on purpose
 
 
 @pytest.fixture

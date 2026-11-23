@@ -24,8 +24,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-from pypts.hal.base_driver import DriverError
-from pypts.hal.device_types import Other
+from pyhal.base_driver import DriverError
+from pyhal.device_types import Other
 
 logger = logging.getLogger(__name__)
 

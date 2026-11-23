@@ -20,9 +20,12 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
+from pyhal import DriverError
+from pyhal.bench import anchor_driver_files
+from pyhal.local_setup import LocalSetup
 from pypts._version import __version__
 from pypts.config_handler import ConfigHandler
-from pypts.hal.local_setup import LocalSetup, bench_sections
+from pypts.config_handler.bench_config import BenchOutcome, bench_config
 from pypts.logger.log import end_run_log, log, start_run_log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
@@ -66,6 +69,24 @@ from pypts.utilities.local_storage import get_log_file_path, make_run_folder
 def reports_dir_from_config() -> str:
     """Where run folders go - `paths.reports_dir` of this process's config.ini."""
     return str(ConfigHandler().get_parameter("paths.reports_dir"))
+
+
+def bench_sections() -> dict[str, dict[str, str]]:
+    """
+    The devices of this machine's bench.ini - what the Sequencer reads. A
+    relative driver file is relative to bench.ini's folder.
+
+    Raises:
+        DriverError: the bench file was discarded at startup; the message
+            carries the real reason, so the step's error names the file to
+            fix rather than a section to add.
+    """
+    bench = bench_config()
+    if bench.outcome is BenchOutcome.DISCARDED:
+        raise DriverError(
+            f"bench.ini was discarded at startup, so this start has no devices: {bench.problem}"
+        )
+    return anchor_driver_files(bench.devices, bench.path.parent)
 
 
 #: How often a held run looks at the pause and stop flags. Short enough that

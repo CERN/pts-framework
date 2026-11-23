@@ -8,13 +8,13 @@ reached exactly like a bench instrument: by logical name, through get_device().
 
 Nothing here knows the station is a web API, which URL it calls or how its
 answer is laid out - that is the driver's business
-(src/pypts/hal/drivers/weather.py). Swap the [meteo1] section of bench.ini for a
+(src/pyhal/drivers/weather.py). Swap the [meteo1] section of bench.ini for a
 real sensor whose driver offers the same verbs and these functions do not change.
 
 Each function returns a dict; the recipe's `outputs` judge its keys.
 """
 
-from pypts.hal import get_device
+from pyhal import get_device
 
 
 def cern_temperature():

@@ -7,10 +7,10 @@
 # declared in bench.ini (beside config.ini), not in the recipe:
 #
 #   [loop1]
-#   driver = pypts.hal.drivers.loopback.LoopbackDriver
+#   driver = pyhal.drivers.loopback.LoopbackDriver
 #
 #   [ssh1]
-#   driver = pypts.hal.drivers.ssh.SshDriver
+#   driver = pyhal.drivers.ssh.SshDriver
 #   host = <a machine you can reach>
 #   username = <you>
 #   key_filename = <your private key>

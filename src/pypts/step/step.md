@@ -304,12 +304,12 @@ not having anywhere else to put it. So: no `SSHConnect` / `SSHClose` entries in
 `STEP_TYPES`.
 
 **Landed 2026-10-08 (roadmap §1.54).** SSH is the hardware layer's `SshDriver`
-(`pypts.hal.drivers.ssh`), reached from test code with `pypts.hal.get_device("<name>")`.
+(`pyhal.drivers.ssh`), reached from test code with `pyhal.get_device("<name>")`.
 Credentials live in the device's bare `[<name>]` section of `bench.ini`, shown as written in the
 connect/recover trace. The session belongs
 to the run's local setup, which closes it after the teardown steps on every outcome, abort included —
 what the old `teardown_steps` rule stood in for. The live client stays in the driver's own
-process; only picklable values cross. Details: `hal/hal.md`.
+process; only picklable values cross. Details: `src/pyhal/pyhal.md`.
 
 ### 2.8 `SequenceStep` → `Sequence` — reversed 2026-09-16, engine done (stage 1)
 
