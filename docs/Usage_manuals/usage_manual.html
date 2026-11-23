@@ -474,7 +474,7 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
       ignored until you delete it to have it recreated (or add them and the version by hand).
       Fix the file, or delete it to have it recreated. Saving in <em>Edit → Settings</em> changes only
       that setting's line; your comments and anything you added by hand stay where they are.</li>
-  <li><strong>bench.ini</strong>: created empty from a template on the first start, beside
+  <li><strong>bench.ini</strong>: created from a template on the first start (with one demo device, the weather station <code>[meteo_Meyrin]</code>), beside
       <code>config.ini</code>. One bare-named section per device (<code>[ssh1]</code>) — see
       <a href="#hardware">§10</a>.</li>
 </ul>
@@ -527,7 +527,7 @@ def read_kernel():
       example, is <code>docs/Usage_manuals/how_to_write_a_driver.html</code>; to let an AI model write the driver, give it <code>docs/Usage_manuals/how_to_write_a_driver.md</code>.</li>
   <li><strong>Outside PyPTS</strong>: <code>with pyhal.connect("bench.ini"):</code> makes
       <code>get_device()</code> work in a script of your own. It connects to the <strong>HAL
-      server</strong> on port 50555, and starts one in the background when none is running;
+      server</strong> on port 29555, and starts one in the background when none is running;
       the HAL, not your script, runs the driver processes, so the script needs no
       <code>if __name__ == "__main__":</code> guard. Leaving the <code>with</code> closes every
       device the HAL has open, also those another client (PyPTS, another script) opened (the
@@ -536,8 +536,8 @@ def read_kernel():
       <code>with pyhal.run_scope():</code> (scopes do not nest). A script that never leaves the
       <code>with</code> gets the same close when it exits.</li>
   <li><strong>The HAL server by hand</strong>: <code>python -m pyhal --bench FILE</code> runs one
-      in a console (Ctrl+C stops it, after tearing every open device down). Options:
-      <code>--port N</code> (default 50555), <code>--log-dir DIR</code> (default
+      in a console, without a window (Ctrl+C stops it, after tearing every open device down). Options:
+      <code>--port N</code> (default 29555), <code>--log-dir DIR</code> (default
       <code>%LOCALAPPDATA%\pyhal\logs</code>, else <code>~/.local/state/pyhal/logs</code>),
       <code>--log-level LEVEL</code> (a name or a number, <code>TRACE</code> included; default
       INFO). <code>python -m pyhal --close-all</code> tells the HAL on the port to close every
@@ -549,9 +549,31 @@ def read_kernel():
       <code>0</code> done (with <code>--close-all</code> / <code>--stop</code>: every device was
       torn down); <code>1</code> serving: the bench file cannot be read, or the client modes: a
       device was not torn down; <code>2</code> the client modes: no HAL answered (or it is
-      already shutting down), and a usage error; <code>3</code> serving: the port is in use.
+      already shutting down), and a usage error; <code>3</code> serving: the port cannot be used (taken, or reserved by the system).
       <strong>PyPTS does not use the HAL server yet</strong>: until then it runs its devices
       in its own process as described above.</li>
+  <li><strong>The HAL monitor</strong>: <code>python -m pyhal.monitor</code> opens a small, light window for the HAL on the port
+      (<code>--port N</code>, default 29555). It shows whether the HAL is running (green), busy
+      (amber, with what it runs and since when) or not reachable (grey), its pid, version, bench
+      file and log file, how many other clients are connected, the queued requests, and a table
+      of the devices (name, type, state, last error). It refreshes every second. Below is the
+      HAL's log, the latest 500 records, with a level filter (DEBUG, INFO, WARNING; INFO at
+      first); the times shown are when the monitor received each record, and a HAL that has
+      just been started shows its log from the point the monitor found it. The buttons
+      <em>Close all devices</em> and <em>Stop HAL</em> ask first (they act on every open device,
+      also those of other clients); <em>Start HAL</em> is enabled only when no HAL answers and a
+      bench file is known: <code>--bench FILE</code> names it, and
+      <code>python -m pyhal.monitor</code> without <code>--bench</code> has no Start
+      (<code>--log-dir DIR</code> is the log folder of a HAL it starts). The monitor sends
+      nothing on its own: closing its window leaves the HAL and its devices as they are. If the
+      window is closed while <em>Close all</em> or <em>Stop</em> is still running, the monitor
+      waits for it to finish before it exits.</li>
+  <li><strong>The HAL with its window, from a checkout</strong>: <code>python run_hal.py</code>
+      (no arguments) opens the monitor on PyPTS's own <code>bench.ini</code> (created from the
+      template when it is missing) in <em>serve</em> mode (<code>python -m pyhal.monitor --bench
+      FILE --serve</code>): the window starts the HAL when none is running, or attaches to the
+      one that is, and <strong>closing the window stops the HAL</strong>, tearing every open
+      device down; when other clients (PyPTS, a script) are connected it asks first.</li>
   <li>Headless and API runs get the same devices.</li>
 </ul>
 

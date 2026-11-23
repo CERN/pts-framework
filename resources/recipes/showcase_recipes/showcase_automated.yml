@@ -33,7 +33,7 @@
 #   [loop1]
 #   driver = pyhal.drivers.loopback.LoopbackDriver
 #
-#   [meteo1]
+#   [meteo_Meyrin]
 #   driver = pyhal.drivers.weather.OpenMeteoDriver
 #   place = CERN Meyrin
 #   latitude = 46.23
@@ -334,7 +334,7 @@ steps:
       echoed: {type: equals, value: hello}
 ---
 sequence_name: Meteo
-description: A weather station on the internet - needs [meteo1] in bench.ini.
+description: A weather station on the internet - needs [meteo_Meyrin] in bench.ini.
 steps:
   - steptype: PythonModule
     step_name: Temperature at CERN

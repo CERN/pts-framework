@@ -459,7 +459,7 @@ def test_import_pyhal_stays_light():
 
 
 def test_the_lazy_names_resolve():
-    assert pyhal.DEFAULT_PORT == client.DEFAULT_PORT == 50555
+    assert pyhal.DEFAULT_PORT == client.DEFAULT_PORT == 29555
     assert pyhal.HalClient is client.HalClient
     assert pyhal.run_scope is client.run_scope
     assert pyhal.close_device is client.close_device
@@ -890,3 +890,34 @@ def test_the_scope_drains_the_teardown_lines(tmp_path):
         _reset_client_module()
         _stop(hal)
         hal_log.stop_log_file(log_path)
+
+
+class _FakeProcess:
+    """What _launch() returns as the started process: one that keeps running."""
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+
+    def poll(self):
+        return None
+
+
+def test_started_hal_follows_the_nonce_not_the_pid(start_hal, monkeypatch, tmp_path):
+    # The HAL that answers has the pid of the process "started" (the HAL runs in this
+    # process's threads) but not this start's nonce: another HAL, never to be shut down.
+    hal = start_hal()
+    hal._nonce = "foreign"
+
+    def fake_launch(bench_path, port, log_level, log_dir):
+        return client._Launched(_FakeProcess(os.getpid()), "mine", tmp_path / "startup.log", 0)
+
+    monkeypatch.setattr(client, "_launch", fake_launch)
+    hal_client = client._start_hal(str(tmp_path / "bench.ini"), hal.port, None, None)
+    try:
+        assert hal_client.hello.pid == os.getpid()
+        assert hal_client.hello.nonce == "foreign"
+        assert hal_client.started_hal is False
+    finally:
+        hal_client._close_long_connection()
+    with pytest.raises(client._AnotherHal):
+        client.start_hal(tmp_path / "bench.ini", hal.port)

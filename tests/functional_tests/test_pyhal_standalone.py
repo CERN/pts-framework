@@ -209,6 +209,28 @@ def test_connect_starts_a_hal_and_close_stops_it(hal_port, tmp_path):
     assert (tmp_path / "logs" / "hal_startup.log").exists()
 
 
+def test_start_hal_starts_a_detached_hal_and_returns_its_pid(hal_port, tmp_path):
+    bench = _marking_bench(tmp_path)
+    pid = client.start_hal(bench, hal_port, log_dir=str(tmp_path / "logs"))
+    hello = _hello(hal_port)
+    assert hello is not None
+    assert hello.pid == pid
+    assert pid != os.getpid()
+    assert hello.nonce is not None
+    assert os.path.normcase(hello.bench) == os.path.normcase(str(bench.resolve()))
+    # Nothing of this process holds it: start_hal()'s connection is gone, once the HAL has
+    # seen it close (it learns that asynchronously).
+    _wait_until(
+        lambda: _hello(hal_port) is not None and _hello(hal_port).clients == 0,
+        10,
+        "start_hal()'s connection to be gone",
+    )
+    assert (tmp_path / "logs" / "hal_startup.log").exists()
+    stopped = _pyhal("--stop", "--port", str(hal_port))
+    assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+    _wait_until(lambda: not _listens(hal_port), 30, "the HAL to exit")
+
+
 def test_connect_uses_a_running_hal_and_close_leaves_it_running(hal_port, tmp_path):
     bench = _marking_bench(tmp_path)
     process = _start_by_hand(bench, hal_port, tmp_path / "logs")
@@ -415,7 +437,8 @@ def test_port_in_use_exits_with_code_3(hal_port, tmp_path):
         squatter.close()
     assert completed.returncode == 3
     assert completed.stderr.strip() == (
-        f"Port {hal_port} is in use; is another HAL server running?"
+        f"Port {hal_port} cannot be used: another HAL server or program has it, "
+        "or the system reserves it. Choose another with --port."
     )
 
 

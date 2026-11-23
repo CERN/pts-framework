@@ -34,27 +34,36 @@ def bench_path(tmp_path, monkeypatch):
 # --- creation ---------------------------------------------------------------
 
 
-def test_a_missing_file_is_created_from_the_template_with_no_devices(bench_path):
+def test_a_missing_file_is_created_from_the_template_with_its_demo_device(bench_path):
     assert not bench_path.exists()
 
     result = bench_config()
 
     assert result.outcome is BenchOutcome.CREATED
-    assert result.devices == {}
+    # The template's one device, read back from the file just written.
+    assert result.devices == {
+        "meteo_Meyrin": {
+            "driver": "pyhal.drivers.weather.OpenMeteoDriver",
+            "place": "CERN Meyrin",
+            "latitude": "46.23",
+            "longitude": "6.05",
+        }
+    }
     assert result.problem is None
     assert result.path == bench_path
     assert bench_path.exists()
-    # The created file documents the format but declares nothing.
-    assert "driver" in bench_path.read_text(encoding="utf-8")
+    # The created file also documents the format with a commented example.
+    assert "# [ssh1]" in bench_path.read_text(encoding="utf-8")
 
 
-def test_the_shipped_template_declares_no_device():
+def test_the_shipped_template_declares_only_the_demo_weather_station():
     text = (Path(bench_module.__file__).parent / bench_module.BENCH_TEMPLATE_FILE_NAME).read_text(
         encoding="utf-8"
     )
     parser = configparser.ConfigParser(interpolation=None)
     parser.read_string(text)
-    assert parser.sections() == []
+    assert parser.sections() == ["meteo_Meyrin"]
+    assert parser["meteo_Meyrin"]["driver"] == "pyhal.drivers.weather.OpenMeteoDriver"
 
 
 def test_a_file_that_cannot_be_created_is_discarded_with_the_reason(bench_path, monkeypatch):

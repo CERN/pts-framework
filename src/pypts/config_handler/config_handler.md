@@ -20,7 +20,7 @@ re-reading the five modules.
 | `template_writer.py` | Writing the file without throwing the comments away: `render()` a new file from the template, `replace_value()` one value in an existing file. |
 | `config_handler.py` | The singleton: load, create, validate, get/set, dump. |
 | `bench_config.py` | Reads — or creates from the template — `bench.ini`, the bench's device file: `BenchConfig`, `BenchOutcome`, `bench_config()` (computed once per process, never raises). |
-| `bench_template.ini` | The comments a new `bench.ini` starts with, ending in a commented example section. It declares no device. |
+| `bench_template.ini` | What a new `bench.ini` starts with: its comments, one demo device — `[meteo_Meyrin]`, the Open-Meteo weather station (`pyhal.drivers.weather.OpenMeteoDriver`), needing internet only when opened — and a commented `[ssh1]` example. `bench_config()` reads the written file back, so a created bench has that device at once. |
 
 `__init__.py` re-exports `ConfigHandler`, `Role`, `BootstrapOutcome`, the five exception
 types, and the bench file's `BenchConfig`, `BenchOutcome` and `bench_config()`. Nothing else

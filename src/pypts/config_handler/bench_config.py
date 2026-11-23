@@ -32,15 +32,15 @@ from pypts.config_handler import file_locations, template_writer
 #: that module imports the message layer, which this package must not depend on.
 log = logging.getLogger()
 
-#: Name of the template shipped inside this package: the comments a new
-#: bench.ini starts with. It declares no device.
+#: Name of the template shipped inside this package: what a new bench.ini starts
+#: with - its comments and one demo device, the weather station `meteo_Meyrin`.
 BENCH_TEMPLATE_FILE_NAME = "bench_template.ini"
 
 
 class BenchOutcome(Enum):
     """What bench_config() found."""
 
-    #: No file existed; one was written from the template, declaring no device.
+    #: No file existed; one was written from the template, and its devices read back.
     CREATED = "created"
     #: The file was read; its sections are the devices, verbatim.
     LOADED = "loaded"
@@ -117,8 +117,15 @@ def _create(path: Path) -> BenchConfig:
         template_writer.write(path, template_path.read_text(encoding="utf-8"))
     except OSError as error:
         return _discarded(path, f"No bench file at {path}, and one could not be created: {error}.")
-    log.info("No bench file was found; an empty one was created at %s.", path)
-    return BenchConfig(devices={}, outcome=BenchOutcome.CREATED, problem=None, path=path)
+    log.info("No bench file was found; one was created from the template at %s.", path)
+    # Read back what was written, so the devices the template declares are this
+    # start's devices too - the same reader as for a file that already existed.
+    written = _read_or_create()
+    if written.outcome is BenchOutcome.DISCARDED:
+        return written
+    return BenchConfig(
+        devices=written.devices, outcome=BenchOutcome.CREATED, problem=None, path=path
+    )
 
 
 def _discarded(path: Path, problem: str) -> BenchConfig:

@@ -251,7 +251,7 @@ For a PSU, `teardown()` switches every output off (`OUTP OFF`) before closing.
 
 ## Testing it
 
-Standalone, without PyPTS — `pyhal.connect()` connects to the HAL server on port 50555 and
+Standalone, without PyPTS — `pyhal.connect()` connects to the HAL server on port 29555 and
 starts one in the background when none runs; the HAL runs the driver process, so the script
 needs no `__main__` guard. Leaving the `with` tears the device down and stops a HAL the script
 started (a HAL that was already running is left running; it reads its bench file once, so after

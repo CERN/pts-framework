@@ -13,7 +13,9 @@ HAL_SHUTDOWN_WAIT_S. Nothing listens → it starts `python -m pyhal` detached, w
 start nonce, and retries until HAL_START_TIMEOUT_S; `started_hal` is whether the `hello` that
 answered echoes that nonce, which also settles two starters at once (the second HAL cannot
 bind and exits; both connect to the first). The HAL's stdout and stderr go to STARTUP_FILE in
-the log folder; a start that times out quotes the tail of what it wrote there.
+the log folder; a start that times out quotes the tail of what it wrote there. start_hal() is
+the same start without a client (the HAL monitor's Start button): it waits for a `hello` with
+its own nonce, closes that connection without a parting request and returns the HAL's pid.
 
 **The close** (§6.4, HalClient.close(); also `with` and the `atexit` connect() registers):
 end the scope and raise the scope counter, close the long connection, then send one request
@@ -67,8 +69,10 @@ from pyhal.protocol import codec, messages
 
 log = logging.getLogger(__name__)
 
-#: The port every client and the HAL use unless told otherwise (D56).
-DEFAULT_PORT = 50555
+#: The port every client and the HAL use unless told otherwise (D56). Below 32768, so it is
+#: outside the ranges Linux (32768-60999) and Windows (49152-65535) hand out as temporary
+#: ports and Windows reserves in blocks for Hyper-V/WSL; above 1024, so no admin rights.
+DEFAULT_PORT = 29555
 
 #: How often the beat thread sends `beat` on the long connection (D53).
 CLIENT_BEAT_S = 1.0
@@ -972,12 +976,105 @@ def _connect_or_start(
 _started_processes: list[subprocess.Popen[bytes]] = []
 
 
+class _AnotherHal(DriverError):
+    """start_hal(): a HAL that another starter started answered on the port first."""
+
+
+class _Launched:
+    """A HAL process _launch() started, and what waiting for it needs."""
+
+    def __init__(
+        self, process: subprocess.Popen[bytes], nonce: str, startup_path: Path, start_offset: int
+    ) -> None:
+        self.process = process
+        #: The start nonce handed to the HAL as --nonce; its `hello` echoes it.
+        self.nonce = nonce
+        self.startup_path = startup_path
+        #: Where this start's output begins in the startup file.
+        self.start_offset = start_offset
+
+
 def _start_hal(bench_path: str, port: int, log_level: int | None, log_dir: str | None) -> HalClient:
     """
-    Start `python -m pyhal` detached on the port and connect to it, within
-    HAL_START_TIMEOUT_S. `started_hal` is whether its `hello` echoes this start's nonce: a
-    HAL another starter started first answers with its own. Raises DriverError.
+    Start a HAL and connect to it. `started_hal` is whether the connection's `hello` echoes
+    this start's nonce: a HAL another starter started first answers with its own (D38).
+    Raises DriverError.
     """
+    hal_client, nonce = _start_and_connect(bench_path, port, log_level, log_dir)
+    hal_client.started_hal = hal_client.hello.nonce == nonce
+    if not hal_client.started_hal:
+        log.debug("Another starter's HAL server took port %d first; using it.", port)
+    return hal_client
+
+
+def start_hal(
+    bench: str | os.PathLike[str],
+    port: int = DEFAULT_PORT,
+    *,
+    log_level: int | None = None,
+    log_dir: str | None = None,
+) -> int:
+    """
+    Start `python -m pyhal` detached on the port for the bench file `bench`, and return as
+    soon as the HAL answers `hello` with this start's nonce, within HAL_START_TIMEOUT_S. It
+    makes no client: its connection is closed again, without a parting request, so nothing of
+    this process stays connected to the HAL.
+
+    Args:
+        bench: the bench INI file the HAL serves.
+        port: the HAL's port.
+        log_level: the HAL's log level; None: the HAL's default.
+        log_dir: the HAL's log folder, and where its startup file goes; None: pyhal's default.
+
+    Returns:
+        The pid the HAL's `hello` names, its own. (On Windows, in a venv, the process Popen
+        starts is the venv's launcher, whose pid is another.)
+
+    Raises:
+        DriverError: the HAL could not be started (with the tail of what it wrote to its
+            startup file), or what answers on the port is not a HAL. `_AnotherHal`, a
+            DriverError, when a HAL another starter started answered first: the one started
+            here cannot bind the port and exits.
+    """
+    bench_path = os.path.realpath(os.fspath(bench))
+    hal_client, nonce = _start_and_connect(bench_path, port, log_level, log_dir)
+    hello = hal_client.hello
+    hal_client._close_long_connection()
+    if hello.nonce != nonce:
+        raise _AnotherHal(
+            f"Another HAL server (pid {hello.pid}) answered on port {port} first; "
+            "the one started here exits."
+        )
+    return hello.pid
+
+
+def _start_and_connect(
+    bench_path: str, port: int, log_level: int | None, log_dir: str | None
+) -> tuple[HalClient, str]:
+    """
+    Start a HAL (_launch()) and connect to the port within HAL_START_TIMEOUT_S; the connected
+    HalClient (not installed as the process's client, `started_hal` not set) and this start's
+    nonce. The HAL that answers may be another starter's. Raises DriverError.
+    """
+    launched = _launch(bench_path, port, log_level, log_dir)
+    deadline = time.monotonic() + HAL_START_TIMEOUT_S
+    while True:
+        try:
+            return _open_client(port, SHORT_CONNECT_TIMEOUT_S), launched.nonce
+        except (_NothingListens, _Refused):
+            pass
+        # A HAL that has exited will not answer - unless it lost the port to another
+        # starter's, which is the one to wait for.
+        exit_code = launched.process.poll()
+        exited_for_good = exit_code is not None and exit_code != EXIT_PORT_IN_USE
+        if exited_for_good or time.monotonic() >= deadline:
+            tail = _startup_tail(launched.startup_path, launched.start_offset)
+            raise DriverError(f"The HAL server could not be started: {tail}")
+        time.sleep(CONNECT_RETRY_S)
+
+
+def _launch(bench_path: str, port: int, log_level: int | None, log_dir: str | None) -> _Launched:
+    """Start `python -m pyhal` detached on the port, with a new start nonce. Raises DriverError."""
     nonce = secrets.token_hex(16)
     if log_dir is None:
         folder = default_log_dir()
@@ -1046,25 +1143,7 @@ def _start_hal(bench_path: str, port: int, log_level: int | None, log_dir: str |
         bench_path,
         startup_path,
     )
-    deadline = time.monotonic() + HAL_START_TIMEOUT_S
-    while True:
-        try:
-            hal_client = _open_client(port, SHORT_CONNECT_TIMEOUT_S)
-            break
-        except (_NothingListens, _Refused):
-            pass
-        # A HAL that has exited will not answer - unless it lost the port to another
-        # starter's, which is the one to wait for.
-        exit_code = process.poll()
-        exited_for_good = exit_code is not None and exit_code != EXIT_PORT_IN_USE
-        if exited_for_good or time.monotonic() >= deadline:
-            tail = _startup_tail(startup_path, start_offset)
-            raise DriverError(f"The HAL server could not be started: {tail}")
-        time.sleep(CONNECT_RETRY_S)
-    hal_client.started_hal = hal_client.hello.nonce == nonce
-    if not hal_client.started_hal:
-        log.debug("Another starter's HAL server took port %d first; using it.", port)
-    return hal_client
+    return _Launched(process, nonce, startup_path, start_offset)
 
 
 def _startup_tail(path: Path, offset: int) -> str:

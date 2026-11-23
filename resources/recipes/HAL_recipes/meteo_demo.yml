@@ -10,14 +10,14 @@
 # The device is declared in bench.ini (beside config.ini), not in the
 # recipe:
 #
-#   [meteo1]
+#   [meteo_Meyrin]
 #   driver = pyhal.drivers.weather.OpenMeteoDriver
 #   place = CERN Meyrin
 #   latitude = 46.23
 #   longitude = 6.05
 #
 # Needs internet access. Without it every step ends ERROR with
-# "Device 'meteo1' could not be opened: ... could not be reached" - which is
+# "Device 'meteo_Meyrin' could not be opened: ... could not be reached" - which is
 # what an instrument that is switched off looks like too.
 #
 # The driver, src/pyhal/drivers/weather.py, is the template for a new one:

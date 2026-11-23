@@ -39,10 +39,14 @@ def read_kernel():
 | `bench.py` | `read_bench()` (the bench file's device sections, driver files anchored, and the SHA-256 of its bytes), `split_section()`, `anchor_driver_files()` |
 | `devices.py` | `Devices`: the HAL's open devices by name (`open`, `call`, `recover`, `info`, `close`, `close_all`, `open_names`, `snapshot`); owned by the server's one request thread, no lock; the D44 rescue |
 | `server.py` | `HalServer`: the TCP server, its four kinds of thread, the queue, the watchdog and the exit (*The HAL server*) |
-| `client.py` | `connect()`, `connect_only()`, `HalClient`, `run_scope()`, `get_device()`, `recover_device()`, `device_info()`, `close_device()`, `Device` (the handle), `LogTail` (*The client*) |
+| `client.py` | `connect()`, `connect_only()`, `start_hal()`, `HalClient`, `run_scope()`, `get_device()`, `recover_device()`, `device_info()`, `close_device()`, `Device` (the handle), `LogTail` (*The client*) |
 | `protocol/values.py`, `protocol/messages.py`, `protocol/codec.py` | The three layers of the wire protocol (*The protocol*) |
 | `hal_log.py` | The HAL's own log file: `start_log_file()`, `stop_log_file()`, `default_log_dir()`, `LOG_FORMAT`, `RECORD_START`, `TRACE` (*Logs*) |
 | `__main__.py` | `python -m pyhal`: serve, `--close-all`, `--stop`; the exit handlers (`ExitHandlers`) |
+| `monitor/__init__.py` | Docstring only: the HAL monitor package. **The only place PySide6 is imported**; `pyhal` never imports `pyhal.monitor`, so `import pyhal` (every driver process runs it) stays light (*The monitor*) |
+| `monitor/link.py` | `MonitorLink`: the monitor's connections to the HAL, no Qt: `status()`, `close_all()`, `stop()`, `start()`, `close()`, `log_tail()`; `POLL_TIMEOUT_S` |
+| `monitor/window.py` | `MonitorWindow` (PySide6): the window, its poll timer, workers and log view; `REFRESH_S`, `LOG_VIEW_MAX_LINES` |
+| `monitor/__main__.py` | `python -m pyhal.monitor [--port N] [--bench FILE] [--log-dir DIR] [--serve]`; sets the light colour scheme |
 | `base_driver.py` | `BaseDriver` (ABC: `connect`, `teardown`, `recover`), `DriverError`, `LIFECYCLE_METHODS`, `operations_of()` |
 | `device_types.py` | `PSU`, `DMM`, `Scope`, `SSH`, `Load`, `Other`; `DEVICE_TYPES`, `DEVICE_TYPE_NAMES` |
 | `connection_driver.py` | `ConnectionDriver`, one device as test code sees it: **every public name on it is the driver's operation** (its own members are all `_private`, so no name is reserved), with `CALL_TIMEOUT_S` (30 s, the same for every device) and its teardown ladder: `_close()` escalating to the rescue (`_rescue()`, `RESCUE_TIMEOUT_S`); below it, the driver process: `driver_process_main()`, `load_driver_class()` with `load_driver_file()`, `split_driver_file()`, `driver_module_name()` and `DRIVER_FILE_MODULE_PREFIX`, `answer()` |
@@ -227,7 +231,9 @@ HAL    -> {"kind":"closed_all","not_torn_down":[]}
 
 `client.py`. One client per process, the process's client. `connect(bench, port=DEFAULT_PORT,
 scope=True, log_sink=None, log_level=None, log_dir=None)` makes it, starting a HAL when none
-answers; `connect_only(port, scope=True)` never starts one. `DEFAULT_PORT` is 50555 (D56). Both
+answers; `connect_only(port, scope=True)` never starts one. `DEFAULT_PORT` is 29555 (D56):
+below 32768, so outside the temporary-port ranges of Linux (32768-60999) and Windows
+(49152-65535), where Windows also reserves blocks for Hyper-V/WSL that cannot be bound. Both
 return a `HalClient` (a context manager; `send("call", device=..., ...)` for a raw request,
 `close()`). A new connect first closes an earlier client of the process that was never closed,
 which sends that client's parting request (below) before the new one connects: after, its
@@ -258,8 +264,18 @@ with `The HAL server could not be started: <the tail of what this start wrote to
 hal_startup.log, at most 20 lines>`; exit code 3 (the port is taken) means another starter won
 the race, and the client waits for that one's HAL.
 
+`start_hal(bench, port=DEFAULT_PORT, log_level=None, log_dir=None)` is that start on its own,
+without a client (the HAL monitor's Start): both go through `_start_and_connect()` (launch with
+`_launch()`, then connect in the retry loop above). `start_hal()` closes that connection again
+without a parting request and returns the pid its `hello` names - the HAL's own; on Windows in
+a venv the process `Popen` starts is the venv's launcher, whose pid is another. A HAL that
+fails to start raises `DriverError` with the startup-file tail, as above; a `hello` with
+another nonce (another starter's HAL answered first) raises `_AnotherHal`, a `DriverError`.
+`connect()` keeps its connection as the long one.
+
 **The nonce** is `secrets.token_hex(16)` per start, handed to the HAL as `--nonce` and echoed
-by its `hello`. `HalClient.started_hal` is true when the `hello` that answered carries it, so
+by its `hello`. `HalClient.started_hal` is true when the `hello` of its long connection carries
+it (never decided by the pid), so
 two starters at the same moment both connect to the first HAL, and only its starter owns it
 (D38).
 
@@ -304,7 +320,7 @@ down by it. Nothing answering is a DEBUG line. Something that accepts the short 
 but whose `hello` fails (it closes, or sends a line that is not a message) or whose send fails
 is a WARNING: `The HAL server did not take the close_all; devices may still be open. Run
 'python -m pyhal --close-all' to close them.` (`--stop` for a `shutdown`, and `--port N` when
-the port is not 50555). A HAL that answers `error` (it is shutting down) and a listener that is
+the port is not 29555). A HAL that answers `error` (it is shutting down) and a listener that is
 not a HAL stay DEBUG.
 
 **The log tail.** `connect(log_sink=f)` starts a `LogTail` on the file `hello.log` names:
@@ -321,8 +337,11 @@ python -m pyhal --close-all [--port N]
 python -m pyhal --stop [--port N]
 ```
 
+`python -m pyhal` is the HAL without a window. `run_hal.py` in the repository root is the HAL
+with one: the monitor in serve mode (*The monitor*), not this command.
+
 Serving needs `--bench`; without it, and without `--close-all` or `--stop`, the command is a
-usage error (argparse's exit code 2). `--port` defaults to 50555, `--log-level` to INFO (a
+usage error (argparse's exit code 2). `--port` defaults to 29555, `--log-level` to INFO (a
 number or a name, `TRACE` included), `--log-dir` to the folder under *Logs*. `--nonce` is for a
 starting client. The two client modes only connect, never start a HAL. `--close-all` sends
 `close_all`; `--stop` sends `close_all` and then `shutdown`, so it can report what was not torn
@@ -334,7 +353,7 @@ down (`bye` carries no list). Both wait for their answers (no deadline, D57) and
 | 0 | the server exited after its teardown | every device was torn down |
 | 1 | the bench file could not be read (a message on stderr) | a device was not torn down |
 | 2 | (argparse: a usage error) | no HAL answered, or what answered is not a HAL, or the HAL is already shutting down |
-| 3 | the port is in use | - |
+| 3 | the port cannot be used: taken, or reserved by the system | - |
 
 **The exit handlers** (`ExitHandlers`): SIGINT (Ctrl+C), SIGBREAK, SIGTERM and SIGHUP where
 they exist, and on Windows the console's close, logoff and shutdown events, all call
@@ -342,6 +361,75 @@ they exist, and on Windows the console's close, logoff and shutdown events, all 
 teardown short. The main thread leaves `serve()` only after the server has exited: the driver
 processes are daemons, which multiprocessing terminates, without `teardown()`, when the
 interpreter exits.
+
+## The monitor
+
+A small standalone window for a running HAL, started with `python -m pyhal.monitor [--port N]
+[--bench FILE] [--log-dir DIR] [--serve]`, or `python run_hal.py` from a checkout (repository
+root, serve mode, below). It is always light: `__main__` sets `Qt.ColorScheme.Light`, whatever
+the system's scheme (user decision 2026-11-23). It is a client of the HAL like any other, over connections of its own; it does not need
+PyPTS. User decision 2026-11-23: standalone first; a later *View -> HAL* in PyPTS may open this
+window.
+
+**What it shows.** State (*running* green, *busy* amber, *not reachable* grey), pid, version,
+bench file, log file, the other clients connected (the status's `clients` minus the monitor's
+own connection), what the HAL is running and since when (`busy`), the queued requests and the
+time of the last refresh. A table of the devices: name, type, state, last error. A log view with
+the latest 500 records (`LOG_VIEW_MAX_LINES`) and a level filter DEBUG / INFO / WARNING, INFO by
+default.
+
+**Buttons.** *Close all devices* and *Stop HAL* each ask first, and say that every open device
+is torn down, also those of other clients; they are enabled while a HAL answers. *Start HAL*
+is enabled only when no HAL answers and a bench file is known; with no bench file its tooltip
+says so. Start calls `start_hal()` and asks nothing. One action runs at a time, and the status
+bar shows its result; devices that were not torn down also open a warning.
+
+**Refresh.** Every `REFRESH_S` (1 s, `window.py`) the window polls `status`. A poll that does
+not answer within `POLL_TIMEOUT_S` (2 s, `link.py`) shows *not reachable*; the next poll tries
+again, so a HAL that comes back is picked up on its own. All network work runs on worker
+threads, never on the GUI thread; the HAL answers `status` from its connection thread, so the
+window never waits behind a device call.
+
+**Serve mode** (`--serve`, which needs `--bench`; `MonitorWindow(serve=True)`): the window owns
+the HAL. When its first poll finds no HAL it runs Start on its own; a HAL that answers is
+attached to; only that first poll decides, so a Stop pressed later is not undone. Closing the
+window stops the HAL - also one it attached to: with other clients connected (the last poll's
+count) closeEvent asks first, and No keeps the window open; then `wait_before_exit()`, after
+any running action and the closing worker, calls `link.stop()` on the main thread and waits for
+its end (`Stopping the HAL at 127.0.0.1:<port> before the monitor exits.`; no HAL answering is
+logged and ignored). Without `--serve` the rest of this section holds unchanged.
+
+**It sends nothing on its own** (outside serve mode). The monitor never sends `close_all` or `shutdown` except from
+its two buttons, after the user confirmed. Its connections never send a parting request, so
+closing the window, a failed poll or an exit leave the bench alone (D36). Closing the window
+during *Close all* or *Stop* hides it, but the process waits for that action to finish (it logs
+`Waiting for ... to finish before the monitor exits.`), so a Stop that was pressed always
+completes.
+
+**The log view** tails the HAL's log file (`LogTail`, *The client*). The time in each line is
+when the monitor received the record, not the time in the HAL's log. A tail starts at the
+file's end, so the first lines of a HAL that has just been started are not shown. When another
+HAL comes up (another pid or log file), the view follows its new log file.
+
+**Start HAL's bench file.** `--bench FILE` names it; `python -m pyhal.monitor` without
+`--bench` has no Start. `--log-dir` is the log folder of a HAL that Start starts.
+
+**`run_hal.py`** (repository root) takes no arguments (any: a message, exit 2). It puts `src`
+on the path, finds PyPTS's own `bench.ini` - created from the template when missing, by
+`pypts.config_handler.bench_config`, as a PyPTS start does - prints its path and devices, and
+runs `pyhal.monitor.__main__.main(["--bench", <it>, "--serve"])` on the default port. An
+unusable bench file stops it with the reason (exit 1, `EXIT_BAD_BENCH`). The launcher imports
+`pypts`; the package does not. A PyPTS setting choosing the window or none for the HAL PyPTS
+starts is phase 3 work.
+
+**Import lightness.** PySide6 is imported only inside `pyhal.monitor`; `import pyhal` stays
+light (`test_import_pyhal_stays_light`).
+
+**`start_hal()`** is public so the link can start a HAL without making a client. It returns the
+pid the HAL's `hello` names, decides by the nonce, and sends no parting request (*The client*).
+
+**Extending.** A new field or button goes in `window.py`; anything that talks to the HAL goes
+in `link.py`, which has no Qt and is tested without a display.
 
 ## Logs
 

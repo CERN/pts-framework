@@ -137,6 +137,7 @@ python -m pypts --mode cli            # CLI
 python -m pypts --mode headless --recipe x.yml [--sequence Name]   # exit codes: api/api.md
 python -m pypts --log-level TRACE     # the full message trace (TRACE is the shipped default)
 python run_pypts.py / run_recipe_creator.py / run_recipe_editor.py   # same, with src on the path
+python run_hal.py                     # the HAL with its monitor window on PyPTS's bench.ini (created if missing); closing it stops the HAL
 ```
 
 `pypts` (`[project.scripts]` in `pyproject.toml`) is the same entry point as `python -m pypts`.

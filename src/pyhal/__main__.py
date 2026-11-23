@@ -238,8 +238,12 @@ def serve(bench: Path, port: int, log_dir: Path, level: int, nonce: str | None) 
         try:
             hal.start()
         except OSError as exc:
-            log.error("Port %d is in use; is another HAL server running? (%s)", port, exc)
-            print(f"Port {port} is in use; is another HAL server running?", file=sys.stderr)
+            text = (
+                f"Port {port} cannot be used: another HAL server or program has it, "
+                "or the system reserves it. Choose another with --port."
+            )
+            log.error("%s (%s)", text, exc)
+            print(text, file=sys.stderr)
             return EXIT_PORT_IN_USE
         log.info("The HAL server is running on 127.0.0.1:%d, bench '%s'.", hal.port, bench)
         print(f"The HAL server is running on 127.0.0.1:{hal.port}; its log is {log_path}.")

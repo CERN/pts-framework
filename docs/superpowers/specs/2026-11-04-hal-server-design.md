@@ -520,6 +520,11 @@ A request waiting in the queue is bounded only by the requests ahead of it (D52,
   the bench — name, device type (once known), state (*configured* / *open* / *failed* with its
   last error).
 - A **Refresh** button; no polling.
+- **A standalone monitor exists** (user decision 2026-11-23): `python -m pyhal.monitor`
+  (`src/pyhal/monitor/`, a PySide6 window with its own connections to the HAL, built outside
+  PyPTS; `pyhal.md`, *The monitor*). It polls `status` every second and has Close all, Stop,
+  Start and a log view. In phase 4 *View -> HAL* may open that window instead of building the
+  panel described here.
 - **Two buttons (D49):** *Close all devices* (`close_all`) and *Stop HAL* (`close_all`, then
   `shutdown`, which runs `close_all` itself). Both disabled while a run is open; CORE refuses
   them then too, and holds a `StartSequence` while a button request is still being sent, so the
