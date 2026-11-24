@@ -14,7 +14,10 @@ Either way `restart_pypts()` replays the same command line: for the `pypts` comm
 ## What it owns
 
 - **Process tree** — starts the Logger, CORE, and (in GUI mode) the GUI as separate
-  processes. In CLI mode the CLI runs in the launcher's own process.
+  processes. In CLI mode the CLI runs in the launcher's own process. The HAL server is not
+  the launcher's: CORE connects to it or starts it, detached (`core/core.md` → *The HAL
+  link*). A CORE the launcher has to terminate sends the HAL nothing, so a HAL it started
+  keeps running, its devices as they are (`python -m pyhal --stop` stops it).
 - **Queue construction** — builds the HMI↔CORE link (the only cross-process pair) and
   the Logger queue. Passes them into child processes as constructor arguments.
 - **Config bootstrap** — runs `ConfigHandler.bootstrap()` before spawning anything.
@@ -88,7 +91,8 @@ shutting down the ordinary way and exiting with `RESTART_EXIT_CODE` (75, in
 `stop_engine()` finish - CORE, the Logger, the run log all closed - and only then calls
 `restart_pypts()`: `subprocess.call([sys.executable, *sys.orig_argv[1:]])`, the same command
 line in a fresh process, so every singleton starts empty and the normal bootstrap recreates
-the file. It **waits** for the new pypts and exits with its code, because a console window that was
+the file. A HAL the old CORE started was sent `shutdown` by its close, so the new CORE starts a
+fresh one, which reads `bench.ini` again; a HAL that was already running is kept. It **waits** for the new pypts and exits with its code, because a console window that was
 opened just for this process closes when it ends and would take the new one with it; each
 restart therefore leaves one idle launcher underneath. The same command line means the same
 flags.

@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
 
@@ -24,7 +25,6 @@ import pyhal
 from pyhal import DriverError, client, server
 from pyhal.connection_driver import ConnectionDriver
 from pyhal.device_control import DeviceInfo
-from pyhal.local_setup import LocalSetup
 from pyhal.protocol import codec, messages
 from pyhal.server import HalServer
 
@@ -99,6 +99,7 @@ def _reset_client_module() -> None:
         client._scope_active = False
         client._scope_devices = []
         client._connect_problem = None
+    client._connect_settled.set()
 
 
 @pytest.fixture
@@ -189,6 +190,61 @@ def test_get_device_outside_a_scope_is_refused(start_hal):
         "No HAL scope is active. get_device() works in test code PyPTS is running, or "
         "inside 'with pyhal.connect(...)' in a script of your own."
     )
+
+
+def test_run_scope_waits_for_a_pending_connect(start_hal):
+    hal = start_hal()
+    client.connect_pending()
+    connected = threading.Event()
+
+    def late_connect():
+        time.sleep(0.5)
+        client.connect_only(hal.port, scope=False)
+        connected.set()
+
+    thread = threading.Thread(target=late_connect)
+    thread.start()
+    try:
+        with client.run_scope():
+            assert connected.is_set()
+            device = client.get_device("loop1")
+            assert device.echo("x") == "x"
+    finally:
+        thread.join()
+
+
+def test_a_failed_pending_connect_ends_the_wait(start_hal):
+    start_hal()
+    client.connect_pending()
+    with pytest.raises(DriverError):
+        client.connect_only(_free_port(), scope=False)
+    started = time.monotonic()
+    with client.run_scope():
+        pass
+    assert time.monotonic() - started < 5.0
+
+
+def test_note_unavailable_is_what_get_device_raises(start_hal):
+    client.connect_pending()
+    client.note_unavailable("bench.ini was discarded at startup, so this start has no devices: bad")
+    with client.run_scope(), pytest.raises(DriverError, match=r"bench\.ini was discarded"):
+        client.get_device("loop1")
+
+
+def test_run_scope_without_a_pending_connect_does_not_wait(start_hal):
+    started = time.monotonic()
+    with client.run_scope():
+        pass
+    assert time.monotonic() - started < 5.0
+
+
+def test_run_scope_gives_up_waiting_after_connect_wait(start_hal, monkeypatch):
+    monkeypatch.setattr(client, "CONNECT_WAIT_S", 0.2)
+    client.connect_pending()
+    started = time.monotonic()
+    with client.run_scope(), pytest.raises(DriverError, match="Not connected"):
+        client.get_device("loop1")
+    assert 0.15 < time.monotonic() - started < 2.0
 
 
 def test_get_device_without_a_client_reports_why(start_hal):
@@ -350,7 +406,8 @@ def test_a_long_call_does_not_get_the_client_dropped(start_hal, monkeypatch):
         spare = RawClient(hal.port)
         deadline = time.monotonic() + 1.5
         while time.monotonic() < deadline:
-            assert spare.request("status").clients == 2
+            # The client; spare asks only `status`, so it is not counted.
+            assert spare.request("status").clients == 1
             time.sleep(0.05)
         spare.close()
         assert device.echo("still here") == "still here"
@@ -464,18 +521,12 @@ def test_the_lazy_names_resolve():
     assert pyhal.run_scope is client.run_scope
     assert pyhal.close_device is client.close_device
     assert pyhal.ConnectionDriver is ConnectionDriver
-    assert pyhal.LocalSetup is LocalSetup
     assert pyhal.DeviceInfo is DeviceInfo
     with pytest.raises(AttributeError):
         pyhal.no_such_name  # noqa: B018 - the attribute access is the test
 
 
-def test_top_level_get_device_uses_the_client_scope_or_the_local_setup(start_hal):
-    with LocalSetup(lambda: {"loop1": {"driver": LOOPBACK}}):
-        local = pyhal.get_device("loop1")
-        assert isinstance(local, ConnectionDriver)
-        assert pyhal.device_info(local).is_open is True
-        pyhal.recover_device(local)
+def test_the_top_level_functions_are_the_clients(start_hal):
     hal = start_hal()
     client.connect_only(hal.port, scope=False)
     with client.run_scope():
@@ -484,19 +535,8 @@ def test_top_level_get_device_uses_the_client_scope_or_the_local_setup(start_hal
         assert remote.echo(os.getpid()) == os.getpid()
         assert pyhal.device_info(remote).is_open is True
         pyhal.recover_device(remote)
-    with pytest.raises(DriverError, match="No local setup is active"):
+    with pytest.raises(DriverError, match="No HAL scope is active"):
         pyhal.get_device("loop1")
-
-
-def test_an_active_local_setup_wins_over_a_client_scope(start_hal):
-    # During a PyPTS run test code gets the run's in-process devices, even when a client
-    # scope is active in the same process (until phase 3).
-    hal = start_hal()
-    client.connect_only(hal.port, scope=False)
-    with client.run_scope():
-        with LocalSetup(lambda: {"loop1": {"driver": LOOPBACK}}):
-            assert isinstance(pyhal.get_device("loop1"), ConnectionDriver)
-        assert isinstance(pyhal.get_device("loop1"), client.Device)
 
 
 # --- review fixes ------------------------------------------------------------------
@@ -551,7 +591,8 @@ def test_close_while_a_call_waits_says_the_client_closed(start_hal):
         assert len(errors) == 1
         assert str(errors[0]) == "The connection to the HAL server is closed."
         # The server finishes the call and discards its answer; nothing is left running.
-        _wait_for_status(spare, lambda report: report.busy is None and report.clients == 1)
+        # spare asks only `status`: once the closed client is gone, no client is counted.
+        _wait_for_status(spare, lambda report: report.busy is None and report.clients == 0)
         spare.close()
 
 
@@ -606,7 +647,7 @@ def test_close_ends_a_script_scope_and_is_idempotent(start_hal, tmp_path):
     hal_client.close()
     # The scope ended with the client: the dispatch no longer routes to it.
     assert client._scope_is_active() is False
-    with pytest.raises(DriverError, match="No local setup is active"):
+    with pytest.raises(DriverError, match="No HAL scope is active"):
         pyhal.get_device("m1")
     with pytest.raises(DriverError, match="belongs to a run that has ended"):
         device.hang(0)
@@ -908,7 +949,7 @@ def test_started_hal_follows_the_nonce_not_the_pid(start_hal, monkeypatch, tmp_p
     hal = start_hal()
     hal._nonce = "foreign"
 
-    def fake_launch(bench_path, port, log_level, log_dir):
+    def fake_launch(bench_path, port, log_level, log_dir, **options):
         return client._Launched(_FakeProcess(os.getpid()), "mine", tmp_path / "startup.log", 0)
 
     monkeypatch.setattr(client, "_launch", fake_launch)
@@ -921,3 +962,166 @@ def test_started_hal_follows_the_nonce_not_the_pid(start_hal, monkeypatch, tmp_p
         hal_client._close_long_connection()
     with pytest.raises(client._AnotherHal):
         client.start_hal(tmp_path / "bench.ini", hal.port)
+
+
+class _RecordingPopen:
+    """Stands in for subprocess.Popen in _launch(): records the command, starts nothing."""
+
+    commands: ClassVar[list[list[str]]] = []
+
+    def __init__(self, command, **options) -> None:
+        _RecordingPopen.commands.append(list(command))
+        self.pid = 4242
+        self.args = command
+
+    def poll(self):
+        return None
+
+
+@pytest.mark.parametrize("show_window", [False, True])
+def test_launch_runs_the_hal_or_its_window(monkeypatch, tmp_path, show_window):
+    _RecordingPopen.commands = []
+    monkeypatch.setattr(client.subprocess, "Popen", _RecordingPopen)
+    monkeypatch.setattr(client, "_started_processes", [])
+    if show_window:
+        module = "pyhal.monitor"
+    else:
+        module = "pyhal"
+    launched = client._launch(
+        "C:/bench.ini", 29600, 5, str(tmp_path), module=module, nonce="given"
+    )
+    assert launched.nonce == "given"
+    command = _RecordingPopen.commands[0]
+    assert command[1:4] == ["-P", "-m", module]
+    expected = ["--bench", "C:/bench.ini", "--port", "29600"]
+    if show_window:
+        expected = [*expected, "--serve", "--exit-with-hal"]
+    expected = [*expected, "--nonce", "given", "--log-level", "5"]
+    expected = [*expected, "--log-dir", str(tmp_path.resolve())]
+    assert command[4:] == expected
+    # The monitor writes to a startup file of its own: the HAL it starts writes to the other.
+    if show_window:
+        assert launched.startup_path == tmp_path.resolve() / "hal_monitor_startup.log"
+    else:
+        assert launched.startup_path == tmp_path.resolve() / "hal_startup.log"
+
+
+def test_launch_without_a_nonce_makes_a_fresh_one(monkeypatch, tmp_path):
+    _RecordingPopen.commands = []
+    monkeypatch.setattr(client.subprocess, "Popen", _RecordingPopen)
+    monkeypatch.setattr(client, "_started_processes", [])
+    first = client._launch("C:/bench.ini", 29600, None, str(tmp_path))
+    second = client._launch("C:/bench.ini", 29600, None, str(tmp_path))
+    assert first.nonce != second.nonce
+    assert len(first.nonce) == 32
+    assert _RecordingPopen.commands[0][1:4] == ["-P", "-m", "pyhal"]
+
+
+def _wait_for_connections(hal: HalServer, count: int, seconds: float = 10.0) -> None:
+    """Wait until the HAL has `count` connections: it has seen the others go."""
+    deadline = time.monotonic() + seconds
+    while True:
+        with hal._lock:
+            connections = len(hal._connections)
+        if connections == count:
+            return
+        assert time.monotonic() < deadline, f"the HAL still has {connections} connection(s)"
+        time.sleep(0.02)
+
+
+def test_open_devices_with_only_a_status_poller_are_still_a_warning(start_hal, tmp_path, caplog):
+    # PyPTS killed mid-test, restarted, with the HAL's monitor window polling `status`: the
+    # window's connection must not pass for a client using the devices (D40).
+    bench_text, _marks = _marking_bench(tmp_path)
+    hal = start_hal(bench_text)
+    opener = RawClient(hal.port)
+    assert isinstance(opener.request("open", device="m1"), messages.Opened)
+    opener.close()
+    poller = RawClient(hal.port)
+    assert isinstance(poller.request("status"), messages.StatusReport)
+    _wait_for_connections(hal, 1)
+    try:
+        with caplog.at_level(logging.WARNING, logger="pyhal.client"):
+            hal_client = client.connect(tmp_path / "bench.ini", hal.port, scope=False)
+        hal_client.close()
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any("has devices open that no client is using: m1" in text for text in warnings)
+    finally:
+        poller.close()
+
+
+class _ExitedProcess:
+    """A started monitor that has exited already: it could not open its window."""
+
+    def __init__(self) -> None:
+        self.pid = 4243
+
+    def poll(self):
+        return 1
+
+
+def test_a_monitor_that_cannot_start_falls_back_to_the_plain_hal(
+    start_hal, tmp_path, caplog, monkeypatch
+):
+    bench = tmp_path / "bench.ini"
+    bench.write_text(f"[loop1]\ndriver = {LOOPBACK}\n", encoding="utf-8")
+    port = _free_port()
+    launches: list[tuple[str, str]] = []
+    servers: list[HalServer] = []
+    monitor_file = tmp_path / "hal_monitor_startup.log"
+    monitor_file.write_text("qt.qpa.xcb: could not connect to display\n", encoding="utf-8")
+
+    def fake_launch(bench_path, start_port, log_level, log_dir, *, module, nonce=None):
+        launches.append((module, nonce))
+        if module == client.MONITOR_MODULE:
+            return client._Launched(_ExitedProcess(), "the-nonce", monitor_file, 0)
+        hal = HalServer(bench, start_port, nonce=nonce)
+        hal.start()
+        servers.append(hal)
+        return client._Launched(_FakeProcess(os.getpid()), nonce, tmp_path / "hal_startup.log", 0)
+
+    monkeypatch.setattr(client, "_launch", fake_launch)
+    try:
+        with caplog.at_level(logging.DEBUG, logger="pyhal.client"):
+            hal_client = client._start_hal(str(bench), port, None, None, show_window=True)
+        try:
+            assert launches == [
+                (client.MONITOR_MODULE, None),
+                (client.HAL_MODULE, "the-nonce"),
+            ]
+            assert hal_client.hello.nonce == "the-nonce"
+            assert hal_client.started_hal is True
+        finally:
+            hal_client._close_long_connection()
+    finally:
+        for hal in servers:
+            _stop(hal)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == [
+        "The HAL monitor window could not be started; starting the HAL without it."
+    ]
+    debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
+    assert any("could not connect to display" in text for text in debug)
+
+
+def test_connect_closes_its_client_when_it_fails_after_connecting(
+    start_hal, tmp_path, monkeypatch
+):
+    bench_text, marks = _marking_bench(tmp_path)
+    hal = start_hal(bench_text)
+    opener = RawClient(hal.port)
+    assert isinstance(opener.request("open", device="m1"), messages.Opened)
+
+    def broken_compare(hello, bench_path, port):
+        raise RuntimeError("compare broke")
+
+    monkeypatch.setattr(client, "_compare_hello", broken_compare)
+    with pytest.raises(RuntimeError, match="compare broke"):
+        client.connect(tmp_path / "bench.ini", hal.port, scope=False)
+    # The client was closed: its parting request (close_all, it did not start this HAL)
+    # closed the open device, and it is not the process's client.
+    _wait_for_status(opener, lambda report: report.devices[1]["state"] == "configured")
+    assert "teardown m1" in marks.read_text(encoding="utf-8").splitlines()
+    with client._state_lock:
+        assert client._client is None
+    opener.close()

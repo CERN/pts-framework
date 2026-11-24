@@ -8,19 +8,17 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 Devices on the bench, reached by **logical name** from test code. Every device runs its
 driver in **a process of its own**: a driver that crashes, hangs or leaks takes its own
-process down, not PyPTS. Decided 2026-10-08 (roadmap §1.54); the process is started with
+process down, not the HAL server or PyPTS. Decided 2026-10-08 (roadmap §1.54); the process is started with
 `multiprocessing` and reached over a Pipe since 2026-10-09 (roadmap §1.57).
 
-The package is becoming a standalone HAL server (`docs/superpowers/specs/2026-11-04-hal-server-design.md`,
-rev 5; phase 2 of 4 is built). The server, its protocol, its client and `python -m pyhal` exist
-and are tested (*The HAL server* to *Logs* below). **PyPTS does not use them yet: it still runs
-its devices in-process, through `LocalSetup`, until phase 3.** Until then the top-level
-`pyhal.get_device()` (`dispatch.py`) goes to the active `LocalSetup` when there is one (during a
-PyPTS run test code always gets the run's in-process devices), else to the client's scope when
-one is active; `recover_device()` and `device_info()` go by the handle's type. Phase 3 removes
-the in-process branch.
-The sections *How a call travels* to *Failure* describe the in-process way unless they say
-otherwise.
+The package is a standalone HAL server (`docs/superpowers/specs/2026-11-04-hal-server-design.md`,
+rev 5; phase 3 of 4 is done). The server, its protocol, its client and `python -m pyhal` are
+described in *The HAL server* to *Logs* below. **PyPTS reaches its devices through the
+server:** CORE connects to it at startup (`core/hal_link.py`, `core/core.md` → *The HAL link*)
+and the Sequencer runs each run inside `pyhal.run_scope()` (`sequencer/sequencer.md`). There is
+no in-process way any more: the top-level `pyhal.get_device()`, `recover_device()` and
+`device_info()` (`dispatch.py`) forward to the client (`client.py`). The sections *How a call
+travels* to *Failure* describe the driver layer, which now runs inside the HAL server.
 
 ```python
 from pyhal import get_device
@@ -34,37 +32,37 @@ def read_kernel():
 
 | File | Holds |
 |---|---|
-| `__init__.py` | The public API, import-light on purpose (a driver's `from pyhal import PSU` runs in every driver process): `BaseDriver`, `DriverError`, the six device types, `get_device`, `recover_device`, `device_info` are imported at once; `connect`, `run_scope`, `close_device`, `HalClient`, `DEFAULT_PORT`, `ConnectionDriver`, `DeviceInfo`, `LocalSetup` are imported on first use (module `__getattr__`), so importing `pyhal` does not import `socket` |
-| `dispatch.py` | `get_device()`, `recover_device()`, `device_info()` as `pyhal` exports them: `get_device()` takes the active `LocalSetup` first, else the client's scope when one is active; the other two go by the handle's type (a transition until phase 3) |
+| `__init__.py` | The public API, import-light on purpose (a driver's `from pyhal import PSU` runs in every driver process): `BaseDriver`, `DriverError`, the six device types, `get_device`, `recover_device`, `device_info` are imported at once; `connect`, `run_scope`, `close_device`, `HalClient`, `DEFAULT_PORT`, `ConnectionDriver`, `DeviceInfo` are imported on first use (module `__getattr__`), so importing `pyhal` does not import `socket` |
+| `dispatch.py` | `get_device()`, `recover_device()`, `device_info()` as `pyhal` exports them: each forwards to the function of the same name in `client.py`, imported at call time (so `import pyhal` stays light) |
 | `bench.py` | `read_bench()` (the bench file's device sections, driver files anchored, and the SHA-256 of its bytes), `split_section()`, `anchor_driver_files()` |
 | `devices.py` | `Devices`: the HAL's open devices by name (`open`, `call`, `recover`, `info`, `close`, `close_all`, `open_names`, `snapshot`); owned by the server's one request thread, no lock; the D44 rescue |
 | `server.py` | `HalServer`: the TCP server, its four kinds of thread, the queue, the watchdog and the exit (*The HAL server*) |
-| `client.py` | `connect()`, `connect_only()`, `start_hal()`, `HalClient`, `run_scope()`, `get_device()`, `recover_device()`, `device_info()`, `close_device()`, `Device` (the handle), `LogTail` (*The client*) |
+| `client.py` | `connect()`, `connect_only()`, `connect_pending()`, `note_unavailable()`, `start_hal()`, `HalClient`, `run_scope()`, `get_device()`, `recover_device()`, `device_info()`, `close_device()`, `Device` (the handle), `LogTail` (*The client*) |
 | `protocol/values.py`, `protocol/messages.py`, `protocol/codec.py` | The three layers of the wire protocol (*The protocol*) |
 | `hal_log.py` | The HAL's own log file: `start_log_file()`, `stop_log_file()`, `default_log_dir()`, `LOG_FORMAT`, `RECORD_START`, `TRACE` (*Logs*) |
 | `__main__.py` | `python -m pyhal`: serve, `--close-all`, `--stop`; the exit handlers (`ExitHandlers`) |
 | `monitor/__init__.py` | Docstring only: the HAL monitor package. **The only place PySide6 is imported**; `pyhal` never imports `pyhal.monitor`, so `import pyhal` (every driver process runs it) stays light (*The monitor*) |
-| `monitor/link.py` | `MonitorLink`: the monitor's connections to the HAL, no Qt: `status()`, `close_all()`, `stop()`, `start()`, `close()`, `log_tail()`; `POLL_TIMEOUT_S` |
-| `monitor/window.py` | `MonitorWindow` (PySide6): the window, its poll timer, workers and log view; `REFRESH_S`, `LOG_VIEW_MAX_LINES` |
-| `monitor/__main__.py` | `python -m pyhal.monitor [--port N] [--bench FILE] [--log-dir DIR] [--serve]`; sets the light colour scheme |
+| `monitor/link.py` | `MonitorLink`: the monitor's connections to the HAL, no Qt: `status()`, `close_all()`, `stop()`, `start()` (log folder, log level, nonce), `close()`, `log_tail()`; `POLL_TIMEOUT_S` |
+| `monitor/window.py` | `MonitorWindow` (PySide6): the window, its poll timer, workers and log view, serve mode and `exit_with_hal`; `REFRESH_S`, `LOG_VIEW_MAX_LINES` |
+| `monitor/__main__.py` | `python -m pyhal.monitor [--port N] [--bench FILE] [--log-dir DIR] [--log-level LEVEL] [--serve [--nonce TEXT] [--exit-with-hal]]`; sets the light colour scheme |
 | `base_driver.py` | `BaseDriver` (ABC: `connect`, `teardown`, `recover`), `DriverError`, `LIFECYCLE_METHODS`, `operations_of()` |
 | `device_types.py` | `PSU`, `DMM`, `Scope`, `SSH`, `Load`, `Other`; `DEVICE_TYPES`, `DEVICE_TYPE_NAMES` |
 | `connection_driver.py` | `ConnectionDriver`, one device as test code sees it: **every public name on it is the driver's operation** (its own members are all `_private`, so no name is reserved), with `CALL_TIMEOUT_S` (30 s, the same for every device) and its teardown ladder: `_close()` escalating to the rescue (`_rescue()`, `RESCUE_TIMEOUT_S`); below it, the driver process: `driver_process_main()`, `load_driver_class()` with `load_driver_file()`, `split_driver_file()`, `driver_module_name()` and `DRIVER_FILE_MODULE_PREFIX`, `answer()` |
-| `device_control.py` | What test code does to a device beyond its operations: `recover_device()`, `device_info()` → `DeviceInfo` (name, device type, operations, is open). Functions rather than methods, so they take no name away from drivers |
-| `local_setup.py` | `LocalSetup`, the devices of one run (it calls the devices' private `_open()` / `_close()`); `get_device()`; `_setup_is_active()` (what `dispatch.py` asks). What PyPTS runs today, until phase 3. Reading `bench.ini` is the Sequencer's job (`bench_sections()` in `sequencer/sequencer.py`, `sequencer/sequencer.md`) |
+| `device_control.py` | `DeviceInfo` (name, device type, operations, is open), what `device_info()` returns. `recover_device()` and `device_info()` are functions, not methods, so they take no name away from drivers; they live in `client.py` |
 | `drivers/loopback.py` | `LoopbackDriver` (Other): no hardware; tests, demo, smoke check |
 | `drivers/ssh.py` | `SshDriver` (SSH): the reference driver, paramiko |
 | `drivers/weather.py` | `OpenMeteoDriver` (Other): a weather station on the internet, standard library only; the showcase driver |
 
 `pyhal` never imports `pypts` (quality test `tests/quality_tests/test_pyhal_independence.py`). It logs
-through `logging.getLogger(__name__)`, which reaches PyPTS's run log through the root logger.
+through `logging.getLogger(__name__)`: in the HAL server its records go to the HAL's own log
+file (*Logs*), which PyPTS re-logs as `HAL: ...` (`core/hal_link.py`); in a client's process
+(PyPTS's CORE, a script) the client's records go to that process's own logging.
 
 ## How a call travels
 
-1. Test code calls `get_device("ssh1")`. The **active local setup** (the run's, see
-   *Lifetime*) reads the device sections once, by calling the `read_sections` callable it
-   was given (under PyPTS the Sequencer's `bench_sections()`, which reads the cached
-   `bench_config()`), builds a `ConnectionDriver` and calls its private `_open()`.
+1. Test code calls `get_device("ssh1")`, which opens the device on the HAL server (*The
+   client*). In the HAL, `Devices` builds a `ConnectionDriver` from the bench file's section and
+   calls its private `_open()`.
 2. `_open()` creates a `multiprocessing` Pipe and starts a **spawn** process, a daemon, named
    `Device ssh1`, that runs `driver_process_main()`. Spawn hands the child this process's
    `sys.path`, so a source-tree run (`run_pypts.py`) and a driver beside it import there too.
@@ -86,13 +84,13 @@ Each message is a pickled tuple whose first item is its kind (constants in
 
 | Message | Direction |
 |---|---|
-| `(method, args, kwargs)` | PyPTS → driver process: one call |
-| `("hello", device_type, operations)` | driver process → PyPTS, once, first |
-| `("fatal", reason)` | driver process → PyPTS, instead of hello |
-| `("log", level, logger_name, message)` | driver process → PyPTS, any time |
-| `("printed", line)` | driver process → PyPTS, any time |
-| `("result", value)` | driver process → PyPTS |
-| `("error", type_name, message, traceback)` | driver process → PyPTS |
+| `(method, args, kwargs)` | HAL server → driver process: one call |
+| `("hello", device_type, operations)` | driver process → HAL server, once, first |
+| `("fatal", reason)` | driver process → HAL server, instead of hello |
+| `("log", level, logger_name, message)` | driver process → HAL server, any time |
+| `("printed", line)` | driver process → HAL server, any time |
+| `("result", value)` | driver process → HAL server |
+| `("error", type_name, message, traceback)` | driver process → HAL server |
 
 Arguments and return values must be picklable. An argument that is not is refused before
 anything is sent; a return value that is not comes back as an `error`. A call or an answer that
@@ -124,6 +122,13 @@ device) itself. Every other request - `open`, `call`, `recover`, `info`, `close`
 `shutdown` - goes on one queue with its connection, and `HAL requests` runs them first in,
 first out, one at a time, on `Devices`, which no other thread touches (D52). A device is never
 locked between calls; two clients share it.
+
+**Who counts as a client** (`hello.clients`, the other clients; `status.clients`): a connection
+that has sent a `beat` or any request but `status` (`_Connection.counted`,
+`_clients_counted()`). A `HalClient` beats every second, so it counts from its first beat; a
+connection that only asks `status` - the HAL monitor's poll - never counts, so a HAL PyPTS
+started with its window still tells the next client that it has devices open that no client
+is using (D40). The wire is unchanged: only what the HAL counts.
 
 **Who is answered.** The connection the request came from, and only while that client is still
 connected. A client that is gone (end of stream, reset, a failed write, dropped by the
@@ -198,7 +203,7 @@ client is not; every request has exactly one answer, except `beat`, which has no
 
 | HAL → client | Fields |
 |---|---|
-| `hello` | `pid`, `nonce` (or null), `version`, `bench`, `bench_sha256`, `log`, `open`, `clients` (the other clients connected) |
+| `hello` | `pid`, `nonce` (or null), `version`, `bench`, `bench_sha256`, `log`, `open`, `clients` (the other clients connected; below) |
 | `opened` | `device`, `device_type`, `operations` |
 | `result` | `value` |
 | `recovered` | `device` |
@@ -230,8 +235,8 @@ HAL    -> {"kind":"closed_all","not_torn_down":[]}
 ## The client
 
 `client.py`. One client per process, the process's client. `connect(bench, port=DEFAULT_PORT,
-scope=True, log_sink=None, log_level=None, log_dir=None)` makes it, starting a HAL when none
-answers; `connect_only(port, scope=True)` never starts one. `DEFAULT_PORT` is 29555 (D56):
+scope=True, log_sink=None, log_level=None, log_dir=None, show_window=False)` makes it, starting
+a HAL when none answers; `connect_only(port, scope=True)` never starts one. `DEFAULT_PORT` is 29555 (D56):
 below 32768, so outside the temporary-port ranges of Linux (32768-60999) and Windows
 (49152-65535), where Windows also reserves blocks for Hyper-V/WSL that cannot be bound. Both
 return a `HalClient` (a context manager; `send("call", device=..., ...)` for a raw request,
@@ -246,10 +251,25 @@ not read the `shutdown` yet.
 **Connect or start** (spec §6.2). `connect()` tries the port. A `hello` answers: the client
 compares the version and the bench (path and SHA-256) with its own and logs a WARNING on a
 difference, and uses the HAL anyway (D48); devices left open with no other client connected
-are a WARNING too. An `error` instead (a HAL that is shutting down) is retried every
+are a WARNING too (`The HAL server on port N has devices open that no client is using: ...`;
+the monitor window's poll is not a client, below, so it does not hide them). Anything that
+raises after the client has connected (the log tail's start, the comparison) closes that
+client - with its parting request - before the error goes on, so a HAL it started is not left
+running. An `error` instead (a HAL that is shutting down) is retried every
 `CONNECT_RETRY_S` until nothing listens, for at most `HAL_SHUTDOWN_WAIT_S` (120 s). Nothing
-listens: it starts the HAL and retries until `HAL_START_TIMEOUT_S` (15 s). The reason of a
+listens: it starts the HAL and retries until `HAL_START_TIMEOUT_S` (15 s;
+`HAL_WINDOW_START_TIMEOUT_S`, 30 s, with its window, below). The reason of a
 failed connect is also what `get_device()` reports from then on (D21).
+
+**A pending connect** (spec §6.2 step 8). A caller that connects on another thread (PyPTS's
+CORE) first calls `connect_pending()`, which clears the module's `_connect_settled` event (set
+at import). `connect()` and `connect_only()` set it in a `finally`, so it is set when they
+return or raise. `run_scope()` waits on it before opening the scope, for at most
+`CONNECT_WAIT_S` (`HAL_SHUTDOWN_WAIT_S + HAL_WINDOW_START_TIMEOUT_S`); on a timeout it logs a DEBUG
+line and goes on, and `get_device()` raises what it has. `note_unavailable(reason)` is for a
+start that will make no connect: it sets the reason `get_device()` raises (as a failed connect
+does) and sets the event; an existing client is not touched. Without `connect_pending()`
+`run_scope()` does not wait.
 
 **Starting the HAL.** `python -P -m pyhal --bench <path> --port <port> --nonce <n>`
 (`--log-level`, `--log-dir` when given), with the interpreter that runs the client. `-P` keeps
@@ -264,16 +284,46 @@ with `The HAL server could not be started: <the tail of what this start wrote to
 hal_startup.log, at most 20 lines>`; exit code 3 (the port is taken) means another starter won
 the race, and the client waits for that one's HAL.
 
-`start_hal(bench, port=DEFAULT_PORT, log_level=None, log_dir=None)` is that start on its own,
+**Starting it with its window** (`connect(show_window=True)`). When nothing answers, the
+client launches the HAL monitor instead of the HAL: `python -P -m pyhal.monitor --bench <path>
+--port <port> --serve --exit-with-hal --nonce <n>` (`--log-level`, `--log-dir` when given),
+with the same interpreter, `PYTHONPATH`, working directory, startup file and detach flags
+(`_launch(module=MONITOR_MODULE)`; `HAL_MODULE` is `pyhal`). `CREATE_NO_WINDOW` stays: it hides
+only a console, and the monitor's Qt window shows. The monitor, in serve mode, finds no HAL
+and starts one with `start_hal(nonce=<n>)`, so the client then waits for a `hello` as above,
+but for `HAL_WINDOW_START_TIMEOUT_S` (`2 * HAL_START_TIMEOUT_S`, 30 s), since two processes
+start one after the other - the monitor, importing PySide6, then the HAL - and `started_hal`
+is `hello.nonce == <n>`: the client owns that HAL, and its close sends the `shutdown`. The
+monitor's `--exit-with-hal` then closes the window, stopping nothing (*The monitor*).
+
+The monitor's stdout and stderr go to a startup file of its own, `hal_monitor_startup.log`
+(`MONITOR_STARTUP_FILE`) in the same log folder; the HAL it starts writes to `hal_startup.log`
+as any started HAL does, so the two never write into one file through two handles.
+
+A monitor that exits before any HAL answered - it could not open its window: no display (Linux
+over SSH, CI) - is a WARNING, `The HAL monitor window could not be started; starting the HAL
+without it.` (what it wrote goes to a DEBUG line), and the client launches the plain HAL in its
+place, `python -m pyhal` with the **same nonce**, and waits for it `HAL_START_TIMEOUT_S` from
+then, as for a start without a window; `started_hal` follows the nonce as above. A start that
+fails inside the monitor (a bench file that cannot be read) leaves the monitor running, its
+status bar saying why, and the monitor logs `The HAL monitor's Start failed: <reason>` at
+WARNING to its stdout; the client fails after `HAL_WINDOW_START_TIMEOUT_S` with the tail of
+`hal_monitor_startup.log`, which holds that line and so the HAL's own error. A HAL found running is only connected to;
+no window is opened. Two `show_window` starters at the same moment get two windows: both
+monitors try to start a HAL, one HAL wins the port, and both windows attach to it (only the
+winner's starter owns it, by the nonce).
+
+`start_hal(bench, port=DEFAULT_PORT, log_level=None, log_dir=None, nonce=None)` is that start on its own,
 without a client (the HAL monitor's Start): both go through `_start_and_connect()` (launch with
 `_launch()`, then connect in the retry loop above). `start_hal()` closes that connection again
 without a parting request and returns the pid its `hello` names - the HAL's own; on Windows in
 a venv the process `Popen` starts is the venv's launcher, whose pid is another. A HAL that
 fails to start raises `DriverError` with the startup-file tail, as above; a `hello` with
 another nonce (another starter's HAL answered first) raises `_AnotherHal`, a `DriverError`.
-`connect()` keeps its connection as the long one.
+`nonce` given: the HAL is started with it instead of a fresh one (the monitor passes the one
+`connect(show_window=True)` chose). `connect()` keeps its connection as the long one.
 
-**The nonce** is `secrets.token_hex(16)` per start, handed to the HAL as `--nonce` and echoed
+**The nonce** is `secrets.token_hex(16)` per start (unless `start_hal()` is given one), handed to the HAL as `--nonce` and echoed
 by its `hello`. `HalClient.started_hal` is true when the `hello` of its long connection carries
 it (never decided by the pid), so
 two starters at the same moment both connect to the first HAL, and only its starter owns it
@@ -365,15 +415,16 @@ interpreter exits.
 ## The monitor
 
 A small standalone window for a running HAL, started with `python -m pyhal.monitor [--port N]
-[--bench FILE] [--log-dir DIR] [--serve]`, or `python run_hal.py` from a checkout (repository
-root, serve mode, below). It is always light: `__main__` sets `Qt.ColorScheme.Light`, whatever
+[--bench FILE] [--log-dir DIR] [--log-level LEVEL] [--serve [--nonce TEXT] [--exit-with-hal]]`,
+by `connect(show_window=True)` (*The client*), or `python run_hal.py` from a checkout
+(repository root, serve mode, below). It is always light: `__main__` sets `Qt.ColorScheme.Light`, whatever
 the system's scheme (user decision 2026-11-23). It is a client of the HAL like any other, over connections of its own; it does not need
 PyPTS. User decision 2026-11-23: standalone first; a later *View -> HAL* in PyPTS may open this
 window.
 
 **What it shows.** State (*running* green, *busy* amber, *not reachable* grey), pid, version,
-bench file, log file, the other clients connected (the status's `clients` minus the monitor's
-own connection), what the HAL is running and since when (`busy`), the queued requests and the
+bench file, log file, the other clients connected (the status's `clients`: the window's poll
+asks only `status`, so the HAL does not count it, *The HAL server*), what the HAL is running and since when (`busy`), the queued requests and the
 time of the last refresh. A table of the devices: name, type, state, last error. A log view with
 the latest 500 records (`LOG_VIEW_MAX_LINES`) and a level filter DEBUG / INFO / WARNING, INFO by
 default.
@@ -397,7 +448,27 @@ window stops the HAL - also one it attached to: with other clients connected (th
 count) closeEvent asks first, and No keeps the window open; then `wait_before_exit()`, after
 any running action and the closing worker, calls `link.stop()` on the main thread and waits for
 its end (`Stopping the HAL at 127.0.0.1:<port> before the monitor exits.`; no HAL answering is
-logged and ignored). Without `--serve` the rest of this section holds unchanged.
+logged and ignored). Without `--serve` the rest of this section holds unchanged. `--nonce`
+(`MonitorWindow(nonce=)`) and `--log-level` (`log_level=`) go to that Start, and so to the HAL;
+`--log-level` is parsed as `python -m pyhal` parses it (`pyhal.__main__._log_level_argument`:
+a number or a name, `TRACE` included). `--nonce` and `--exit-with-hal` without `--serve` are a
+usage error (exit code 2), as `--serve` without `--bench` is.
+
+**Exit with the HAL** (`--exit-with-hal`, `MonitorWindow(exit_with_hal=True)`, serve mode; what
+`connect(show_window=True)` starts). Once a poll has seen a HAL answer (`_seen_hal`),
+`EXIT_AFTER_MISSED_POLLS` (2) polls in a row that find none close the window - one slow poll
+(over `POLL_TIMEOUT_S`) does not, while the HAL still runs - (INFO `The HAL at 127.0.0.1:<port> has gone; the monitor
+closes with it.`), with no question and no Stop - there is nothing left to stop - and the
+process exits. The window follows the first HAL it saw, by its pid (`_hal_pid`,
+`_is_our_hal()`): a poll that finds a HAL with another pid - another starter's, started on the
+port after this one had gone - counts as a poll that found none and never resets the count, so
+the window does not latch onto that HAL (it still shows it until it closes). Before any HAL has
+answered (the start failed) the window stays. Closed by hand, it behaves as in serve mode: it
+stops the HAL, asking first when other clients are connected; that question adds
+`STARTER_WARNING`: the program that started the window (PyPTS) is using this HAL, stopping it
+tears its devices down, and PyPTS cannot reach them again until it is restarted (File ->
+Restart). A failed Start is logged at WARNING (`The HAL monitor's Start failed: <reason>`) to
+the monitor's output, which for a monitor a client started is `hal_monitor_startup.log`.
 
 **It sends nothing on its own** (outside serve mode). The monitor never sends `close_all` or `shutdown` except from
 its two buttons, after the user confirmed. Its connections never send a parting request, so
@@ -412,15 +483,16 @@ file's end, so the first lines of a HAL that has just been started are not shown
 HAL comes up (another pid or log file), the view follows its new log file.
 
 **Start HAL's bench file.** `--bench FILE` names it; `python -m pyhal.monitor` without
-`--bench` has no Start. `--log-dir` is the log folder of a HAL that Start starts.
+`--bench` has no Start. `--log-dir` and `--log-level` are the log folder and the log level of a
+HAL that Start starts.
 
 **`run_hal.py`** (repository root) takes no arguments (any: a message, exit 2). It puts `src`
 on the path, finds PyPTS's own `bench.ini` - created from the template when missing, by
 `pypts.config_handler.bench_config`, as a PyPTS start does - prints its path and devices, and
 runs `pyhal.monitor.__main__.main(["--bench", <it>, "--serve"])` on the default port. An
 unusable bench file stops it with the reason (exit 1, `EXIT_BAD_BENCH`). The launcher imports
-`pypts`; the package does not. A PyPTS setting choosing the window or none for the HAL PyPTS
-starts is phase 3 work.
+`pypts`; the package does not. PyPTS's `hal.show_window` setting chooses the window or none
+for a HAL that PyPTS starts (`core/hal_link.py`).
 
 **Import lightness.** PySide6 is imported only inside `pyhal.monitor`; `import pyhal` stays
 light (`test_import_pyhal_stays_light`).
@@ -441,7 +513,8 @@ level.
   `_2`, `_3` ... before `.log` (the name is claimed by creating the file).
 - **Folder:** `--log-dir`, else `default_log_dir()`: `%LOCALAPPDATA%\pyhal\logs` on Windows,
   `$XDG_STATE_HOME/pyhal/logs` or `~/.local/state/pyhal/logs` elsewhere. `hal_startup.log`
-  (what a started HAL printed before and besides its log) is in the same folder.
+  (what a started HAL printed before and besides its log) is in the same folder, and so is
+  `hal_monitor_startup.log` (what a monitor started by `connect(show_window=True)` printed).
 - **Format:** one record per line, `;`-separated: `2026-11-23 10:15:00.123;INFO;pyhal.server;message`
   (`LOG_FORMAT`). A record with several lines (a traceback) continues on lines that do not match
   `RECORD_START` (a line starting `YYYY-MM-DD HH:MM:SS.mmm;`), which is how a reader tells the next
@@ -467,7 +540,8 @@ key_filename = C:\Users\tester\.ssh\id_ed25519
 
 `split_section()` reads only `driver`; every other key goes to the driver as text. A `python`
 key, the per-device interpreter of the previous design, is refused with a `DriverError` telling
-the user to remove it: every driver runs on PyPTS's own Python. The call timeout is not
+the user to remove it: every driver runs on the HAL server's Python (the interpreter of the
+process that started it). The call timeout is not
 configurable: every call, `connect()` included, has `CALL_TIMEOUT_S` (30 s); a
 `call_timeout_s` key is just one more key for the driver.
 
@@ -492,30 +566,27 @@ appears in no configuration dump.
 `driver_module_name()` gives the module either spelling names; a forwarded log record keeps its
 level when its logger is that module or a child of it (see *Logging*).
 
-The device sections are the cached `bench.ini` read at start, so a hand edit of `bench.ini`
-applies from the next start: File → Restart in the GUI. Restore default settings (GUI)
+The HAL server reads the bench file once, when it starts (D25), so a hand edit of `bench.ini`
+applies from the next HAL start: File → Restart in the GUI when PyPTS started the HAL (its close
+stops it); a HAL PyPTS found running keeps its bench until it is stopped (`python -m pyhal
+--stop`). Restore default settings (GUI)
 recreates `config.ini` only; `bench.ini` and its devices are untouched.
 
 ## Lifetime
 
 - **Per run.** A run is one Start press: one top-level sequence and every sequence it calls.
   `Sequencer.run_body()` (called by `execute_sequence()`) wraps the step layer in
-  `with LocalSetup(self.read_hardware_sections):`. A device opens on the first `get_device()`.
-  All devices close, newest first, after the teardown steps and before `RunFinished`, whatever
-  the result. A run that asks for no device never reads the device sections — the launcher
-  still reads `bench.ini` once at every start, for the discarded-bench notice. Headless
-  (`--mode headless`) and API (`pypts.api.Pts`) runs go through the same Sequencer, so they get
-  the same local setup.
-- **The active local setup** is one slot per process, not thread-local, because threads that
-  test code starts belong to the run. A newer setup replaces an older one that was never closed
-  (a script that never left its `with`). Closing a setup clears the slot only if it is still the active one.
+  `with pyhal.run_scope():` (*The client*). A device opens on the HAL server on the first
+  `get_device()`. Every device the run asked for closes, newest first, after the teardown steps
+  and before `RunFinished`, whatever the result. Headless (`--mode headless`) and API
+  (`pypts.api.Pts`) runs go through the same Sequencer, so they get the same scope.
 - **Standalone**: `with pyhal.connect("bench.ini"):` in a plain script connects to the HAL
   server (starting one when none runs) and opens a scope, so the same test functions run
-  outside PyPTS (*The client*). `LocalSetup` no longer reads an INI file of its own.
+  outside PyPTS (*The client*).
   A driver process that dies at once is noticed immediately: `_read_message()` waits in
   `LIVENESS_POLL_S` slices and checks that the process is alive, since a process that dies
   before it has taken over its end of the Pipe closes nothing that could be seen on Windows.
-- **PyPTS dies**: its end of the Pipe closes, and the driver process calls `teardown()` and
+- **The HAL server dies**: its end of the Pipe closes, and the driver process calls `teardown()` and
   exits, once the call in progress returns. A call that never returns keeps the driver process
   alive. This net is skipped when a `teardown` call already ran (`_close()` sends one), so
   teardown runs exactly once at a device's end - never twice.
@@ -525,35 +596,30 @@ recreates `config.ini` only; `bench.ini` and its devices are untouched.
   (`_rescue()`, within `RESCUE_TIMEOUT_S`, 10 s); failing that too, the ERROR line says the
   device `... could not be torn down and may still be energised: ...` and nothing tries again:
   the driver's stability is the driver's own job, not the framework's. A call that exceeds its
-  timeout only kills the stuck process and raises - nothing rescues mid-run - so the instrument
-  keeps its state until the run ends and `_close()` runs the ladder, or test code calls
-  `recover_device()`. `Device 'x' disconnected.` is logged only when a teardown ran; a failed ladder
+  timeout kills the stuck process and raises; the HAL server then runs the ladder at once
+  (D44, *Under the HAL server* below). `Device 'x' disconnected.` is logged only when a teardown ran; a failed ladder
   ends on the ERROR line instead.
 - **The orderly close during a run** (GUI close, CLI `exit`, `Pts.close()`) waits for the run
   (`sequencer/sequencer.md`, *Stop*): the step in progress finishes, the teardown steps run,
-  and the `with` block closes the devices as at any run end. There is no separate shutdown
-  path for devices.
+  and the run's `run_scope()` closes its devices as at any run end. On `SequencerStopped` CORE
+  then closes its HAL link (`core/core.md`): `close_all`, or `shutdown` to a HAL it started.
 - **The crash close during a run** (CLI Ctrl+C, the launcher's `stop_core()` once the
-  frontend has ended, CORE's watchdog; `core/core.md`) waits for nothing: CORE exits, and the
-  devices go as under *A crash*. CORE logs a CRITICAL that the bench may still be energised.
+  frontend has ended, CORE's watchdog; `core/core.md`) waits for nothing: CORE closes its HAL
+  link first (the long connection, then `close_all` or `shutdown`, its answer not waited for),
+  sends the Stops and exits; the HAL tears the devices down. With a run open CORE logs a
+  CRITICAL that the bench may still be energised.
 - **Ctrl+C** (and, on Windows, Ctrl+Break) is ignored by driver processes
   (`driver_process_main()` calls `_ignore_keyboard_interrupt()` first), as by CORE and the
   Logger: only the frontend, the launcher or the HAL server decides what it means.
-- **Under the HAL server** (built, not yet used by PyPTS): a device opens on the first `open`
+- **Under the HAL server** (what PyPTS uses): a device opens on the first `open`
   or `call` that names it and stays open until `close`, `close_all`, `shutdown` or the
   exit's teardown closes it. **A client that is gone changes nothing on the bench** (D36): its
   devices stay open, exactly as they were. **D44:** a call that finds the driver process dead
   or killed (a call past `CALL_TIMEOUT_S`, a crash) gets its `DriverError`, and the HAL tears
   the device down at once on a fresh process (`Devices._rescue()`, WARNING `Device 'x' lost its
   driver process: ...`); the device is then closed, and the next request for it opens it again.
-  A driver method that raises leaves the device open, as in-process. The HAL never exits
+  A driver method that raises leaves the device open. The HAL never exits
   without running every open device's teardown ladder (*The HAL server*).
-- **A crash** (CORE exits through Python while the run's `with` block has not finished, which
-  is what every crash close is):
-  driver processes are daemons, which Python's exit ends without `teardown()`, so the devices
-  stay as they are. (A CORE killed outright runs no exit code at all; then the Pipe net under
-  *PyPTS dies* applies.) Accepted
-  until PyPTS uses the HAL server (phase 3; `docs/superpowers/specs/2026-11-18-hal-server-review-handoff.md`).
 
 ## Failure
 
@@ -563,16 +629,15 @@ recreates `config.ini` only; `bench.ini` and its devices are untouched.
 | Argument not picklable | `DriverError("Device 'x': the arguments of 'op' cannot be sent: ...")`; nothing was sent |
 | Return value not picklable | `DriverError("Device 'x': 'op' failed: TypeError: 'op' returned a value that cannot be sent: ...")` |
 | Argument cannot be unpickled in the driver process | `DriverError("Device 'x': 'op' failed: <Type>: the call could not be read in the driver process: ...")` |
-| Return value cannot be unpickled in PyPTS | `DriverError("Device 'x': the answer 'op' could not be read: ...")` |
-| Call exceeds `CALL_TIMEOUT_S` (30 s) | `DriverError("... did not answer 'op' within N s; its driver process was stopped.")`; the instrument keeps its state until `_close()` runs the teardown ladder |
+| Return value cannot be unpickled in the HAL server | `DriverError("Device 'x': the answer 'op' could not be read: ...")` |
+| Call exceeds `CALL_TIMEOUT_S` (30 s) | `DriverError("... did not answer 'op' within N s; its driver process was stopped.")`; the HAL server then tears the device down at once (D44) and the next request opens it again |
 | Driver process dies | `DriverError("Device 'x' stopped unexpectedly (exit code N).")` |
 | Cannot import / build / connect | `DriverError("Device 'x' could not be opened: ...")`, or the failed `'connect'` |
 | Driver file missing, or a file without a class | `DriverError("Device 'x' could not be opened: ValueError: Driver file '...' does not exist.")` / `... names a file but no class; write it as '...:ClassName'.` |
 | Unknown device | `DriverError("No device 'x' is configured. Add a [x] section to bench.ini. Configured devices: ...")` |
-| Bench file discarded at startup (PyPTS: raised by the Sequencer's `bench_sections()`) | `DriverError("bench.ini was discarded at startup, so this start has no devices: ...")` |
+| Bench file discarded at startup (PyPTS: CORE's HAL link makes no connect and gives this reason through `note_unavailable()`, `core/hal_link.py`; `get_device()` raises it) | `DriverError("bench.ini was discarded at startup, so this start has no devices: ...")` |
 | Section has no `driver` key | `DriverError("Device 'x': the [x] section has no 'driver' key naming its driver class.")` |
 | `python` key in the section | `DriverError("Device 'x': the 'python' key is not supported any more ...")` |
-| No active local setup (in-process) | `DriverError("No local setup is active. ...")` |
 | `driver` starts with `pypts.hal.` | `ValueError` (inside "could not be opened"): the hardware layer is `pyhal` now; write `pyhal.…` in bench.ini. A hint, not a compatibility shim |
 
 **Through the HAL server**, the same errors arrive as `DriverError` with the HAL's text (the
@@ -601,8 +666,8 @@ lives; when that fails or the process is gone, teardown (`_close()`) and a fresh
 
 ## Logging
 
-The device lines below are written by the driver layer, wherever it runs: into PyPTS's run log
-in-process, into the HAL's log file (*Logs*) under the HAL server.
+The device lines below are written by the driver layer, which runs in the HAL server: they go
+into the HAL's log file (*Logs*).
 
 INFO (technician): `Device 'x' connected.`, `Device 'x' disconnected.`,
 `Recovering device 'x'.`, `Device 'x' recovered.`, `Device 'x' was torn down on a fresh
@@ -688,26 +753,23 @@ because its bare `drivers` rule would otherwise hide the shipped drivers.
 
 - A call blocked inside a driver is not interrupted by Stop; `CALL_TIMEOUT_S` (30 s) bounds it.
 - No side channel for bulk data: a waveform is pickled through the Pipe.
-- Log records and printed lines are read only while PyPTS waits for a call. Records from a
+- Log records and printed lines are read only while the HAL server waits for a call. Records from a
   driver's own threads between calls (paramiko's transport thread at DEBUG, say) wait in the
-  Pipe. They are logged late, stamped with the time PyPTS read them, and once the Pipe's buffer
+  Pipe. They are logged late, stamped with the time the HAL server read them, and once the Pipe's buffer
   is full every thread of the driver process that logs or prints blocks until the next call.
 - `sys.stdout` / `sys.stderr` in the driver process are a line forwarder, not a real stream:
   `encoding` is `None`, and there is no `buffer` and no `fileno()`.
 - A rescue reconnects with the same settings; an instrument that refuses a second connection
   while the first is half-open, or a `connect()` slower than `RESCUE_TIMEOUT_S` (an SSH host
   with a long `connect_timeout_s`), cannot be torn down this way.
-- PyPTS killed outright (the launcher's terminate) runs none of this: the driver process's
-  own `teardown()` at the end of the Pipe is the only net, and only when it is not stuck in a
-  call. A crash close, or CORE exiting through Python mid-run, tears nothing down: the driver
-  processes are daemons and end with CORE (*Lifetime*), until PyPTS uses the HAL server
-  (phase 3).
 - Output a C library writes straight to the process's file descriptors (not through
-  `sys.stdout`) is not forwarded. It goes to PyPTS's own console, if there is one.
+  `sys.stdout`) is not forwarded. It goes to the HAL server's own output: its console, or `hal_startup.log` for a HAL a
+  client started.
 - No automatic recovery policy, only `recover_device()` from test code.
 - **HAL server, known gaps** (phase 2):
   - Windows does not honour append mode on the startup file's inherited handle: in a rare
-    double start (two starters at once) the tail of `hal_startup.log` can be garbled.
+    double start (two starters at once) the tail of `hal_startup.log` can be garbled. (A start
+    with the window no longer shares the file: the monitor writes to `hal_monitor_startup.log`.)
   - Closing the console window of a HAL started by hand ends the HAL's driver processes with it
     (they ignore Ctrl+C and Ctrl+Break, not a console close), and Windows kills the HAL about
     5 s after the close event, which is less than one close ladder. A HAL started by a client
@@ -731,7 +793,6 @@ because its bare `drivers` rule would otherwise hide the shipped drivers.
     `close()` (or the end of a `with`), a `connect()` right away can still be welcomed by that
     HAL before it has read the `shutdown`; the HAL then exits and the new client's calls fail
     (D28). Nothing stays open: the HAL's exit tears every device down.
-  - **PyPTS does not use the HAL server yet** (phase 3): its devices are in-process.
 - No PSU, DMM, Scope or Load driver ships yet; only the device-type bases.
-- Every driver runs on PyPTS's own Python: a vendor library that needs another interpreter
+- Every driver runs on the HAL server's Python: a vendor library that needs another interpreter
   (for example a 32-bit DLL) is not supported.

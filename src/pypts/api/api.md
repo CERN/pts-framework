@@ -41,7 +41,7 @@ if __name__ == "__main__":
 | `load_recipe(path)` | `RecipeLoaded`, or CORE's refusal | `PtsError` with CORE's reason; timeout 30 s |
 | `run(sequence=None, answer=None, on_step=None)` | `RunFinished`, then `ReportReady` (15 s budget) | `PtsError` if no recipe is loaded ("No recipe is loaded. Call load_recipe() first."), the start is refused or the engine stops |
 | `stop()` | — (sends `StopSequence`; thread-safe) | — |
-| `close()` / `with` | the shutdown handshake, CORE, then the Logger | — |
+| `close()` / `with` | the shutdown handshake (CORE closes its HAL link), CORE, then the Logger | — |
 | `open_gui(..., log_level=None)` | the window is closed | `ValueError` on bad arguments; `PtsError` for a missing file or no PySide6, before any process starts |
 
 `open_gui()`'s `log_level=None` overrides `[logging] level`, like `Pts(log_level=...)`.
@@ -118,6 +118,11 @@ console: load, run, print each step, exit.
 - **Logging.** `start_engine()` calls `init_logging()` in the caller's process, which replaces
   the root logger's handlers. `close()` and `open_gui()` put back the handlers and level they
   found.
+- **The HAL.** `Pts` starts the same CORE, so it connects to the HAL server at startup, or
+  starts one - with its monitor window when `[hal] show_window` is on, also in headless mode -
+  and its close sends `shutdown` to a HAL it started, else `close_all` (`core/core.md` → *The
+  HAL link*). With `PYPTS_HAL=off` in the environment there is no connect and `get_device()`
+  raises; `tests/conftest.py` sets it for the whole suite, the process tests included.
 - **Importing `pypts.api` must not import Qt** - `open_gui()` imports the GUI only when called.
   Pinned by `test_importing_the_api_does_not_import_qt`.
 - **Tests.** `tests/unit_tests/test_api.py` drives `ApiClient` against a fake CORE thread.

@@ -16,7 +16,7 @@ import time
 import pytest
 from hal_test_drivers import TwoArgumentError
 
-from pyhal import DriverError, connection_driver, device_info, recover_device
+from pyhal import DriverError, connection_driver
 from pyhal.connection_driver import ConnectionDriver
 
 LOOPBACK ="pyhal.drivers.loopback.LoopbackDriver"
@@ -31,20 +31,19 @@ def device():
 
 
 def test_open_says_hello_and_connects(device):
-    info = device_info(device)
-    assert info.name == "loop1"
-    assert info.is_open
-    assert info.device_type == "Other"
-    assert "echo" in info.operations
+    assert device._name == "loop1"
+    assert device._is_open()
+    assert device._device_type == "Other"
+    assert "echo" in device._operations
     assert device.is_connected() is True
     assert device.settings() == {"mode": "test"}
 
 
-def test_device_info_of_a_device_not_yet_open():
-    info = device_info(ConnectionDriver("loop1", LOOPBACK, {}))
-    assert info.is_open is False
-    assert info.device_type == ""
-    assert info.operations == ()
+def test_a_device_not_yet_open_has_no_type_or_operations():
+    connection = ConnectionDriver("loop1", LOOPBACK, {})
+    assert connection._is_open() is False
+    assert connection._device_type == ""
+    assert connection._operations == ()
 
 
 def test_operations_named_like_the_lifecycle_reach_the_driver():
@@ -56,12 +55,12 @@ def test_operations_named_like_the_lifecycle_reach_the_driver():
         assert connection.close() == "relay closed"
         assert connection.relay() == "closed"
         # The driver's close() ended nothing: the device is still open.
-        assert device_info(connection).is_open
+        assert connection._is_open()
         assert connection.open() == "relay open"
         assert connection.relay() == "open"
     finally:
         connection._close()
-    assert not device_info(connection).is_open
+    assert not connection._is_open()
 
 
 def test_an_operation_runs_in_another_process(device):
@@ -194,7 +193,7 @@ def test_recover_starts_a_fresh_process_after_a_crash():
         first = connection.process_id()
         with pytest.raises(DriverError):
             connection.crash(1)
-        recover_device(connection)
+        connection._recover()
         assert connection.process_id() != first
         assert connection.settings() == {"mode": "test"}
     finally:
@@ -203,7 +202,7 @@ def test_recover_starts_a_fresh_process_after_a_crash():
 
 def test_recover_on_a_live_process_keeps_the_process(device):
     first = device.process_id()
-    recover_device(device)
+    device._recover()
     assert device.process_id() == first
     assert device.is_connected() is True
 
@@ -215,7 +214,7 @@ def test_recover_escalates_to_a_fresh_process_when_the_driver_cannot(caplog):
     connection._open()
     try:
         first = connection.process_id()
-        recover_device(connection)
+        connection._recover()
         assert connection.process_id() != first
         assert connection.ping() == "pong"
     finally:

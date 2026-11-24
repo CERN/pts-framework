@@ -22,8 +22,11 @@ threading half already proves it runs on its own thread, and one test there
 pins the real protocol: RunSequence is what delivers the recipe.
 """
 
+import contextlib
 import logging
+import multiprocessing
 import queue
+import socket
 import threading
 import time
 from pathlib import Path
@@ -31,11 +34,10 @@ from uuid import uuid4
 
 import pytest
 
-from pyhal import DriverError, get_device
-from pyhal import local_setup as hal_local_setup
-from pyhal.connection_driver import ConnectionDriver
+from pyhal import DriverError, client
+from pyhal.protocol import codec, messages
+from pyhal.server import HalServer
 from pypts._version import __version__
-from pypts.config_handler import BenchConfig, BenchOutcome
 from pypts.messages import QueueWrapper
 from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType
 from pypts.messages.core_sequencer_communication import (
@@ -64,7 +66,7 @@ from pypts.messages.run_events import (
 from pypts.recipe.recipe import Recipe
 from pypts.recipe.recipe_parser import current_recipe_version
 from pypts.sequencer import sequencer as sequencer_module
-from pypts.sequencer.sequencer import Sequencer, bench_sections
+from pypts.sequencer.sequencer import Sequencer
 
 WAIT_RECIPE = Path(__file__).parent / "data" / "wait_recipe.yml"
 
@@ -788,24 +790,19 @@ def test_a_failure_after_the_steps_still_finishes_the_run_as_error(sequencer, mo
 @pytest.mark.parametrize("raised", [RuntimeError("devices broke"), SystemExit(0)])
 def test_a_failure_outside_the_steps_still_sends_run_finished(sequencer, monkeypatch, raised):
     """
-    Not only step failures: the run's devices failing to close, or a
+    Not only step failures: the run's scope raising on its exit, or a
     sys.exit() outside any step, must not leave the run without its end -
     and the steps all ran, so RunFinished still carries their outcomes.
     """
     instance, outbox, inbox = sequencer
     load_wait_recipe(instance, inbox)
 
-    class BreakingLocalSetup:
-        def __init__(self, read_sections):
-            pass
+    @contextlib.contextmanager
+    def breaking_run_scope():
+        yield
+        raise raised
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, traceback):
-            raise raised
-
-    monkeypatch.setattr(sequencer_module, "LocalSetup", BreakingLocalSetup)
+    monkeypatch.setattr(sequencer_module.pyhal, "run_scope", breaking_run_scope)
 
     instance.execute_sequence("Main")
 
@@ -1336,9 +1333,75 @@ def test_pause_and_resume_with_nothing_running_are_harmless(sequencer):
     assert [m for m in drain(outbox) if not isinstance(m, Heartbeat)] == []
 
 
-# --- the hardware layer: one local setup per run -------------------------------------
+# --- the hardware layer: one HAL scope per run ----------------------------------------
+#
+# A HalServer runs in threads of the test process, on a free port, with real driver
+# processes (as in test_pyhal_client.py and test_hal_link.py); the test connects the
+# process's client to it with connect_only(port, scope=False), as CORE's HAL link would.
 
-LOOPBACK_SECTIONS = {"loop1": {"driver": "pyhal.drivers.loopback.LoopbackDriver"}}
+LOOPBACK_BENCH = "[loop1]\ndriver = pyhal.drivers.loopback.LoopbackDriver\n"
+
+
+class RawClient:
+    """A spare connection to the HAL, for `status` and for stopping the server."""
+
+    def __init__(self, port: int) -> None:
+        self.sock = socket.create_connection(("127.0.0.1", port), timeout=20)
+        self.stream = self.sock.makefile("rb")
+        self.hello = self.receive()
+
+    def receive(self):
+        line = codec.read_line(self.stream)
+        if line is None:
+            return None
+        return codec.decode(line, messages.HAL_KINDS)
+
+    def request(self, kind: str, **fields):
+        message = messages.build(messages.CLIENT_KINDS, kind, **fields)
+        self.sock.sendall(codec.encode(message))
+        return self.receive()
+
+    def close(self) -> None:
+        self.stream.close()
+        self.sock.close()
+
+
+def reset_the_hal_client() -> None:
+    """Close and forget the process's HAL client, its scope and its connect state."""
+    with client._state_lock:
+        left = client._client
+    if left is not None:
+        left.close()
+    with client._state_lock:
+        client._client = None
+        client._scope_active = False
+        client._scope_devices = []
+        client._connect_problem = None
+    client._connect_settled.set()
+
+
+@pytest.fixture
+def loopback_hal(tmp_path):
+    """A HalServer serving a bench with `loop1`; stopped, and the client reset, afterwards."""
+    reset_the_hal_client()
+    bench = tmp_path / "hal_bench.ini"
+    bench.write_text(LOOPBACK_BENCH, encoding="utf-8")
+    hal = HalServer(bench, 0, log_path="")
+    hal.start()
+    yield hal
+    reset_the_hal_client()
+    if not hal._exited.is_set():
+        with contextlib.suppress(OSError):
+            raw = RawClient(hal.port)
+            if isinstance(raw.hello, messages.Hello):
+                raw.request("shutdown")
+            raw.close()
+    waiter = threading.Thread(target=hal.serve_until_stopped)
+    waiter.start()
+    waiter.join(timeout=120)
+    assert not waiter.is_alive(), "the HAL server did not exit"
+    assert multiprocessing.active_children() == []
+
 
 BENCH_CODE = '''
 from pyhal import get_device
@@ -1381,51 +1444,56 @@ def write_bench_recipe(tmp_path):
     return Recipe.from_file(str(recipe_path))
 
 
-def test_a_run_reaches_its_devices_and_closes_them_at_the_end(sequencer, tmp_path, monkeypatch):
+def device_step_results(outbox):
+    finished = {}
+    for message in drain(outbox):
+        if isinstance(message, StepFinished):
+            finished[message.outcome.step_name] = message.outcome.result
+    return finished
+
+
+def test_a_run_reaches_its_devices_and_closes_them_at_the_end(sequencer, tmp_path, loopback_hal):
     instance, outbox, _ = sequencer
-    opened = []
-
-    class RecordingConnection(ConnectionDriver):
-        def _open(self):
-            super()._open()
-            opened.append(self)
-
-    monkeypatch.setattr(hal_local_setup, "ConnectionDriver", RecordingConnection)
-    instance.read_hardware_sections = lambda: LOOPBACK_SECTIONS
+    client.connect_only(loopback_hal.port, scope=False)
     instance.recipe = write_bench_recipe(tmp_path)
 
     instance.execute_sequence("Main")
 
-    finished = {}
-    for message in drain(outbox):
-        if isinstance(message, StepFinished):
-            finished[message.outcome.step_name] = message.outcome
-    assert finished["Missing device"].result is ResultType.ERROR
-    assert finished["Echo through the device"].result is ResultType.PASS
-    assert len(opened) == 1
-    assert not opened[0]._is_open()
-    with pytest.raises(DriverError, match="No local setup is active"):
-        get_device("loop1")
+    assert device_step_results(outbox) == {
+        "Missing device": ResultType.ERROR,
+        "Echo through the device": ResultType.PASS,
+    }
+    spare = RawClient(loopback_hal.port)
+    try:
+        report = spare.request("status")
+    finally:
+        spare.close()
+    assert isinstance(report, messages.StatusReport)
+    states = {row["name"]: row["state"] for row in report.devices}
+    assert states["loop1"] == "configured"
+    with pytest.raises(DriverError, match="No HAL scope is active"):
+        client.get_device("loop1")
 
 
-def test_a_run_that_uses_no_device_never_reads_the_hardware_sections(sequencer):
-    instance, outbox, inbox = sequencer
+def test_a_run_waits_for_the_startup_connect(sequencer, tmp_path, loopback_hal):
+    """CORE's connect may still be running when the first run starts: run_scope() waits."""
+    instance, outbox, _ = sequencer
+    instance.recipe = write_bench_recipe(tmp_path)
+    client.connect_pending()
 
-    def must_not_be_called():
-        raise AssertionError("the hardware sections were read")
+    def connect_later():
+        time.sleep(0.5)
+        client.connect_only(loopback_hal.port, scope=False)
 
-    instance.read_hardware_sections = must_not_be_called
-    load_wait_recipe(instance, inbox)
+    connecting = threading.Thread(target=connect_later)
+    connecting.start()
+    try:
+        instance.execute_sequence("Main")
+    finally:
+        connecting.join(timeout=REACHED_TIMEOUT_S)
 
-    instance.execute_sequence("Main")
+    assert device_step_results(outbox)["Echo through the device"] is ResultType.PASS
 
-    finished = [m.outcome for m in drain(outbox) if isinstance(m, StepFinished)]
-    assert all(o.result is ResultType.DONE for o in finished)
-
-
-def test_the_default_reads_bench_ini(sequencer):
-    instance, _, _ = sequencer
-    assert instance.read_hardware_sections is sequencer_module.bench_sections
 
 
 # --------------------------------------------------------------------------
@@ -1773,53 +1841,3 @@ def test_background_pusher_outliving_run_writes_nothing_into_next_run(
     assert first_file.read_text(encoding="utf-8").splitlines() == rows_after_run_1
     assert sorted(p.name for p in (second_dir / "streams").iterdir()) == ["sine.csv"]
     assert hook_calls == []
-
-
-def test_bench_sections_anchors_a_relative_driver_file_to_the_bench_folder(monkeypatch, tmp_path):
-    devices = {"psu1": {"driver": "acme_psu.py:AcmePsuDriver", "host": "10.0.0.1"}}
-    monkeypatch.setattr(
-        sequencer_module,
-        "bench_config",
-        lambda: BenchConfig(
-            devices=devices,
-            outcome=BenchOutcome.LOADED,
-            problem=None,
-            path=tmp_path / "bench.ini",
-        ),
-    )
-
-    assert bench_sections() == {
-        "psu1": {"driver": f"{tmp_path / 'acme_psu.py'}:AcmePsuDriver", "host": "10.0.0.1"}
-    }
-    assert devices["psu1"]["driver"] == "acme_psu.py:AcmePsuDriver"
-
-
-def test_bench_sections_returns_the_devices_of_the_bench_file(monkeypatch):
-    monkeypatch.setattr(
-        sequencer_module,
-        "bench_config",
-        lambda: BenchConfig(
-            devices={"loop1": {"driver": "pkg.Loop"}},
-            outcome=BenchOutcome.LOADED,
-            problem=None,
-            path=Path("bench.ini"),
-        ),
-    )
-
-    assert bench_sections() == {"loop1": {"driver": "pkg.Loop"}}
-
-
-def test_bench_sections_raises_when_the_bench_file_was_discarded(monkeypatch):
-    monkeypatch.setattr(
-        sequencer_module,
-        "bench_config",
-        lambda: BenchConfig(
-            devices={},
-            outcome=BenchOutcome.DISCARDED,
-            problem="it is broken",
-            path=Path("bench.ini"),
-        ),
-    )
-
-    with pytest.raises(DriverError, match=r"discarded.*it is broken"):
-        bench_sections()

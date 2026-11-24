@@ -144,6 +144,7 @@ PAGES = (
             "gui.log_show_error",
         ),
     ),
+    ("Hardware", ("hal.show_window",)),
     ("Report", ("report.type", "report.theme")),
 )
 
@@ -153,6 +154,7 @@ SECTION_TITLES = {
     "logging": "Logging",
     "report": "Report",
     "gui": "Window",
+    "hal": "Hardware",
 }
 
 #: Card title for each key. A key missing here shows its own name.
@@ -170,6 +172,7 @@ LABELS = {
     "gui.log_show_info": "Log panel: show INFO",
     "gui.log_show_warning": "Log panel: show WARNING",
     "gui.log_show_error": "Log panel: show ERROR",
+    "hal.show_window": "HAL: show its window",
     "recipe_editor.theme": "Theme",
     "recipe_editor.window_mode": "Window mode",
     "recipe_editor.window_width": "Window width",
@@ -188,6 +191,10 @@ HINTS = {
     "gui.log_show_info": "The INFO button over the LOG OUTPUT panel. Applies once saved.",
     "gui.log_show_warning": "The WARNING button over the LOG OUTPUT panel. Applies once saved.",
     "gui.log_show_error": "The ERROR button (ERROR and CRITICAL). Applies once saved.",
+    "hal.show_window": (
+        "Applies when PyPTS starts the HAL (a HAL already running is used as it is), "
+        "from the next start."
+    ),
     "recipe_editor.theme": "Used by the Recipe Editor v2 only. Previewed as you pick it.",
 }
 

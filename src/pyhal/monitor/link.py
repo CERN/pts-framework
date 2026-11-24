@@ -14,8 +14,9 @@ been closed (`window.py`, *Serve mode*).
 None. A failure on a connection kept from an earlier poll is tried once more on a fresh one in
 the same call: the HAL it belonged to may have gone and another taken the port, or the HAL may
 have dropped it after CLIENT_SILENCE_S without a poll. A connection that polls every second
-needs no beat. The link is a client of the HAL while it is connected, so a status's `clients`
-counts it.
+needs no beat. A connection that asks only `status` is not counted as a client by the HAL, so
+a status's `clients` never includes the link's poll (and devices left open with no client using
+them are still reported as such to the next client that connects, D40).
 
 **The actions** each use a short connection of their own, so they never wait behind a poll and
 a poll never waits behind them: close_all() sends `close_all` and waits for `closed_all` with no
@@ -124,15 +125,25 @@ class MonitorLink:
         finally:
             _close_quietly(sock, stream)
 
-    def start(self, bench: str, log_dir: str | None = None) -> int:
+    def start(
+        self,
+        bench: str,
+        log_dir: str | None = None,
+        *,
+        log_level: int | None = None,
+        nonce: str | None = None,
+    ) -> int:
         """
-        Start a HAL for the bench file on the port (client.start_hal()); its pid. Raises
+        Start a HAL for the bench file on the port (client.start_hal(), with the log folder,
+        the log level and the start nonce given; None: its defaults); its pid. Raises
         DriverError when a HAL already answers on the port, or when the start fails.
         """
         try:
             sock, stream, _hello = _connect(self.port)
         except _NothingAnswers:
-            return client.start_hal(bench, self.port, log_dir=log_dir)
+            return client.start_hal(
+                bench, self.port, log_dir=log_dir, log_level=log_level, nonce=nonce
+            )
         _close_quietly(sock, stream)
         raise DriverError(f"A HAL server already answers on port {self.port}.")
 

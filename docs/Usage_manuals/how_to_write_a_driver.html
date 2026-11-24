@@ -155,9 +155,11 @@ instruments. If a device is missing, you still can add it to a test bench.
 multimeter, a remote machine. It knows how to open the connection, do the instrument's verbs,
 and leave the instrument safe. It imports nothing from the framework except its device type
 and <code>DriverError</code>, and needs no threading, queues or process code of its own.</p>
-<p>PyPTS runs every device's driver in <b>a process of its own</b>, reached over a pipe. A
-driver that crashes, hangs or leaks takes its own process down, not PyPTS. You do not write
-any of that: you write the class below, and the framework does the rest.</p>
+<p>The devices live in the <b>HAL server</b>, a process of its own that PyPTS connects to when
+it starts (and starts, when none runs). The HAL runs every device's driver in <b>a process of
+its own</b>, reached over a pipe. A driver that crashes, hangs or leaks takes its own process
+down, not the HAL or PyPTS. You do not write any of that: you write the class below, and the
+framework does the rest.</p>
 
 <h2>2. Two complete examples</h2>
 <p>Each driver is one Python file of your own, anywhere outside the framework:</p>
@@ -391,7 +393,9 @@ port = 5025</code></pre></td></tr>
 <li>Nothing has to be installed or exported: PyPTS loads the file itself.</li>
 <li><code>driver</code> is read by the framework; <b>every other key goes to your
 <code>connect(config)</code> as text</b> — convert numbers yourself.</li>
-<li>Edits to the config are applied to the application after restarting.</li>
+<li>The HAL reads <code>bench.ini</code> once, when it starts: after an edit, restart PyPTS,
+and if the HAL was already running before PyPTS started (another PyPTS, a script,
+<code>run_hal.py</code>), stop it first with <code>python -m pyhal --stop</code>.</li>
 </ul>
 <p>Test code then reaches the device by its logical name. Save that as <code>dmm_tests.py</code> 
   beside a recipe, which calls it like any Python step:</p>
@@ -491,10 +495,12 @@ text. Raise when the instrument cannot be reached: the device then fails at open
 message.</li>
 <li><code>teardown()</code> — <b>where the instrument is left safe</b>: outputs and loads off,
 then disconnect. There is no separate safe-state method. Teardown runs at every orderly end of a
-device, on a fresh connection when your driver was stuck, and when PyPTS is killed outright
-(unless your driver is stuck in a call). So it must work right after <code>connect()</code> on
-an instrument in any state, and be harmless when nothing is open. It never runs twice. A crash
-close (Ctrl+C in the CLI) or a crash of PyPTS skips it.</li>
+device, also when PyPTS closes at once (Ctrl+C in the CLI), on a fresh connection when your
+driver was stuck or its process died, and when the HAL server itself is killed outright (unless
+your driver is stuck in a call). So it must work right after <code>connect()</code> on an
+instrument in any state, and be harmless when nothing is open. It never runs twice. A PyPTS
+that is killed outright does not run it: the devices stay open in the HAL until someone closes
+them.</li>
 <li><code>recover(config)</code> — optional. The default is teardown + connect; override it
 when the instrument has a cheaper reset. Test code triggers it with
 <code class="py">recover_device(device)</code> (from <code>pyhal</code>); the framework
@@ -505,8 +511,8 @@ never recovers on its own.</li>
 <details>
 <summary>5.3 Logging and printing</summary>
 <p>Log with <code>logging.getLogger(__name__)</code>. Your driver's records keep their level
-in the PyPTS run log, prefixed <code>Device 'psu1': ...</code> — INFO and above reaches the
-technician's panel, so log at INFO what an operator should see and keep the chatter at DEBUG.
+in the HAL's log, prefixed <code>Device 'psu1': ...</code>, and PyPTS repeats them in its run
+log as <code>HAL: Device 'psu1': ...</code> — INFO and above reaches the technician's panel, so log at INFO what an operator should see and keep the chatter at DEBUG.
 Of course, use WARNING and ERROR levels as you see fit.</p>
 
 </details>
@@ -541,21 +547,26 @@ library at all and turns every failure of its far end into one clear error.</p>
 failed: ...")</code> with your message; the device stays usable; the traceback is in the log
 at DEBUG.</td></tr>
 <tr><td>A call takes longer than 30&nbsp;s</td><td>The stuck driver process is killed
-and the call raises. The instrument keeps its state until the device is closed — then a fresh
-process connects and runs <code>teardown()</code> (the rescue) — or until test code calls
-<code>recover_device(device)</code>.</td></tr>
+and the call raises. The HAL then tears the device down at once: a fresh process connects and
+runs <code>teardown()</code> (the rescue). The next <code>get_device()</code> or call opens it
+again.</td></tr>
 <tr><td>The driver process crashes</td><td><code>DriverError("Device 'psu1' stopped
-unexpectedly (exit code N).")</code>; <code>recover_device(device)</code> brings it back on a fresh
-process.</td></tr>
+unexpectedly (exit code N).")</code>; the HAL tears the device down at once on a fresh process,
+as for a timeout, and the next call opens it again.</td></tr>
 <tr><td>The run ends: finished, stopped, or PyPTS closed in order</td><td>Every opened device is closed, newest first:
 <code>teardown()</code> on the live process, or on a fresh connection when the process was
 stuck or gone. A device that still cannot be torn down is an ERROR naming it
 (<code>... may still be energised</code>).</td></tr>
-<tr><td>PyPTS is killed outright</td><td>The pipe closes and the driver process runs <code>teardown()</code>
-itself before exiting — unless it is stuck in a call.</td></tr>
-<tr><td>PyPTS closes at once (Ctrl+C in the CLI) or crashes during a run</td><td>No
-teardown: the driver processes end with PyPTS and the instrument stays as it is. The log has a
-CRITICAL saying the devices may still be energised.</td></tr>
+<tr><td>PyPTS is killed outright</td><td>Nothing: the HAL leaves every device open, exactly
+as it is, until someone closes it — <code>python -m pyhal --close-all</code> (or
+<code>--stop</code>), or the next run's end.</td></tr>
+<tr><td>PyPTS closes at once (Ctrl+C in the CLI) or its watchdog ends it during a run</td><td>The
+run's teardown steps do not run, and the log has a CRITICAL saying the devices may still be
+energised; PyPTS then sends the HAL <code>close_all</code> (or <code>shutdown</code>, to a HAL
+it started), and the HAL runs every open device's <code>teardown()</code>.</td></tr>
+<tr><td>The HAL server is killed outright</td><td>Each driver process's pipe closes and it runs
+<code>teardown()</code> itself before exiting — unless it is stuck in a call. Test code's next
+call raises a <code>DriverError</code>.</td></tr>
 <tr><td><code>bench.ini</code> was discarded at startup</td><td>Every
 <code>get_device()</code> fails with the discarded-bench <code>DriverError</code> until the
 file is fixed and PyPTS restarted.</td></tr>
@@ -672,9 +683,10 @@ code; the technician gets an unclear error.</td></tr>
 can stay on after the run.</td></tr>
 <tr><td>Internal methods are <code>_private</code>.</td><td>2.1</td><td>Every public method is
 an operation, so test code can call your helpers.</td></tr>
-<tr><td>Arguments and return values are plain values (numbers, text, lists, dicts); do not
-return a class instance.</td><td>—</td><td>The call fails with a
-<code>DriverError</code>.</td></tr>
+<tr><td>Arguments and return values are plain values (<code>None</code>, bools, numbers,
+text, bytes, lists, dicts with text keys); do not return a class instance or a numpy value. A
+tuple comes back as a list.</td><td>—</td><td>The call fails with a
+<code>DriverError</code> (<code>... cannot be sent</code>).</td></tr>
 <tr><td>Log through <code>logging.getLogger(__name__)</code>; operator-relevant lines at
 INFO.</td><td>5.3</td><td>Records from another logger below WARNING are logged at DEBUG, out
 of the technician's panel.</td></tr>

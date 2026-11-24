@@ -306,10 +306,13 @@ not having anywhere else to put it. So: no `SSHConnect` / `SSHClose` entries in
 **Landed 2026-10-08 (roadmap §1.54).** SSH is the hardware layer's `SshDriver`
 (`pyhal.drivers.ssh`), reached from test code with `pyhal.get_device("<name>")`.
 Credentials live in the device's bare `[<name>]` section of `bench.ini`, shown as written in the
-connect/recover trace. The session belongs
-to the run's local setup, which closes it after the teardown steps on every outcome, abort included —
-what the old `teardown_steps` rule stood in for. The live client stays in the driver's own
-process; only picklable values cross. Details: `src/pyhal/pyhal.md`.
+connect/recover trace. The device lives in the HAL server (`core/core.md` → *The HAL link*);
+the run's `pyhal.run_scope()` (`sequencer/sequencer.md`) closes it after the teardown steps on
+every outcome, abort included — what the old `teardown_steps` rule stood in for. The live
+client stays in the driver's own process. **What crosses is plain data only** (the HAL
+protocol's value domain): `None`, `bool`, `int`, `float`, `str`, `bytes`, `list` and `dict`
+with `str` keys; a tuple a driver returns reaches test code as a list, and a numpy value is
+refused with a `DriverError`. Details: `src/pyhal/pyhal.md` → *The protocol*.
 
 ### 2.8 `SequenceStep` → `Sequence` — reversed 2026-09-16, engine done (stage 1)
 

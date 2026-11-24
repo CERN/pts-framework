@@ -90,7 +90,7 @@ python run_recipe_creator.py       # / run_recipe_editor.py</code></pre>
 
   <h3>Architecture</h3>
 <pre><code>launcher -> spawns  Logger | CORE (Sequencer + Report threads) | GUI   (the CLI runs in the launcher)
-HAL: one driver process per opened device</code></pre>
+HAL server (python -m pyhal): CORE connects to it at start, or starts it; one driver process per opened device</code></pre>
   <ul>
     <li>Modules never call each other. Everything goes through <b>CORE</b>; log records go straight to the Logger.</li>
     <li>HMI&harr;CORE crosses processes, so its messages must be <b>pickle-safe</b>.</li>
@@ -166,6 +166,9 @@ host = 192.168.0.10
 username = tester</code></pre>
 <pre><code>from pyhal import get_device
 get_device("ssh1").execute("uname -r")</code></pre>
+  <p>The devices run in the HAL server, which PyPTS connects to at start or starts, with its
+  monitor window (<em>Settings → Hardware</em> turns the window off). Values to and from a device
+  are plain data: a tuple comes back as a list. Stop a HAL left running: <code>python -m pyhal --stop</code>.</p>
 
   <h3>4. Run</h3>
 <pre><code>pypts                                    # GUI, operator at the bench

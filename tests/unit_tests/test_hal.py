@@ -1,7 +1,6 @@
 """
 Unit tests for the hardware layer (src/pyhal/): the driver base and the
-device types, the driver-process half of connection_driver.py run in-process, and
-the local setup.
+device types, and the driver-process half of connection_driver.py run in-process.
 
 No test here starts a process; ConnectionDriver's process tests live in
 test_hal_connection.py.
@@ -9,8 +8,6 @@ test_hal_connection.py.
 
 import importlib
 import sys
-import threading
-from typing import ClassVar
 
 import pytest
 
@@ -21,12 +18,9 @@ from pyhal import (
     BaseDriver,
     DriverError,
     Load,
-    LocalSetup,
     Other,
     Scope,
-    get_device,
 )
-from pyhal import local_setup as local_setup_module
 from pyhal.base_driver import LIFECYCLE_METHODS, operations_of
 from pyhal.connection_driver import (
     DRIVER_FILE_MODULE_PREFIX,
@@ -51,6 +45,7 @@ from pyhal.drivers.loopback import LoopbackDriver
         "pypts.hal.proxy",
         "pypts.hal.runner",
         "pypts.hal.protocol",
+        "pyhal.local_setup",
     ],
 )
 def test_the_old_modules_are_gone(gone):
@@ -255,126 +250,6 @@ def test_answer_reports_an_exception_with_its_traceback():
     assert reply[1] == "RuntimeError"
     assert reply[2] == "instrument said no"
     assert "Traceback" in reply[3]
-
-
-class _FakeConnection:
-    """Stands in for ConnectionDriver: records what the LocalSetup does with it."""
-
-    made: ClassVar[list["_FakeConnection"]] = []
-
-    def __init__(self, name, driver_path, settings):
-        self.name = name
-        self.driver_path = driver_path
-        self.settings = settings
-        self.events: list[str] = []
-        _FakeConnection.made.append(self)
-
-    def _open(self):
-        self.events.append("open")
-
-    def _close(self):
-        self.events.append("close")
-
-
-@pytest.fixture
-def fake_connections(monkeypatch):
-    _FakeConnection.made = []
-    monkeypatch.setattr(local_setup_module, "ConnectionDriver", _FakeConnection)
-    return _FakeConnection.made
-
-
-SECTIONS = {
-    "ssh1": {"driver": "pkg.Ssh", "host": "h"},
-    "loop1": {"driver": "pkg.Loop"},
-}
-
-
-def test_a_device_opens_once_and_is_reused(fake_connections):
-    setup = LocalSetup(lambda: SECTIONS)
-    first = setup.get_device("ssh1")
-    assert setup.get_device("ssh1") is first
-    assert len(fake_connections) == 1
-    assert first.events == ["open"]
-    assert first.settings == {"host": "h"}
-
-
-def test_the_sections_are_read_lazily_and_once(fake_connections):
-    reads = []
-
-    def read():
-        reads.append(1)
-        return SECTIONS
-
-    setup = LocalSetup(read)
-    with setup:
-        pass
-    assert reads == []
-    setup.get_device("ssh1")
-    setup.get_device("loop1")
-    assert reads == [1]
-
-
-def test_an_unknown_device_names_the_configured_ones(fake_connections):
-    setup = LocalSetup(lambda: SECTIONS)
-    with pytest.raises(DriverError, match=r"No device 'dmm1'.*Configured devices: loop1, ssh1"):
-        setup.get_device("dmm1")
-    assert setup.device_names() == ["loop1", "ssh1"]
-
-
-def test_one_bad_section_does_not_stop_the_others(fake_connections):
-    setup = LocalSetup(lambda: {"bad": {"host": "h"}, "loop1": {"driver": "pkg.Loop"}})
-    with pytest.raises(DriverError):
-        setup.get_device("bad")
-    assert setup.get_device("loop1").events == ["open"]
-
-
-def test_close_closes_every_device_newest_first(fake_connections):
-    setup = LocalSetup(lambda: SECTIONS)
-    order = []
-    ssh = setup.get_device("ssh1")
-    loop = setup.get_device("loop1")
-    ssh._close = lambda: order.append("ssh1")
-    loop._close = lambda: order.append("loop1")
-    setup.close()
-    assert order == ["loop1", "ssh1"]
-    setup.close()
-    assert order == ["loop1", "ssh1"]
-
-
-def test_get_device_needs_an_active_local_setup():
-    with pytest.raises(DriverError, match="No local setup is active"):
-        get_device("ssh1")
-
-
-def test_get_device_asks_the_active_local_setup_until_it_closes(fake_connections):
-    with LocalSetup(lambda: SECTIONS) as setup:
-        device = get_device("ssh1")
-        assert device is setup.get_device("ssh1")
-    assert device.events == ["open", "close"]
-    with pytest.raises(DriverError, match="No local setup is active"):
-        get_device("ssh1")
-
-
-def test_get_device_works_from_another_thread(fake_connections):
-    """Test code may start threads of its own."""
-    found = []
-    with LocalSetup(lambda: SECTIONS):
-        worker = threading.Thread(target=lambda: found.append(get_device("loop1")))
-        worker.start()
-        worker.join(timeout=5.0)
-    assert found and found[0].name == "loop1"
-
-
-def test_a_newer_local_setup_replaces_an_older_one(fake_connections):
-    """A script that never leaves its with-block must not break the next setup."""
-    old = LocalSetup(lambda: SECTIONS)
-    new = LocalSetup(lambda: {"loop1": {"driver": "pkg.Other"}})
-    old.__enter__()
-    with new:
-        assert get_device("loop1").driver_path == "pkg.Other"
-    old.__exit__(None, None, None)
-    with pytest.raises(DriverError, match="No local setup is active"):
-        get_device("loop1")
 
 
 def test_an_old_pypts_hal_path_says_to_use_pyhal():

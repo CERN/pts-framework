@@ -163,6 +163,27 @@ python -m pypts --mode cli</code></pre>
 <p>The old engine read certain globals by convention (e.g. <code>cancel_key</code>, <code>ssh_client</code>, <code>ID_key</code>, <code>wrt_key</code>). The new engine does not. You can remove those from your recipe. A recipe that used <code>ssh_client</code> now declares the host as a <code>bench.ini</code> device (<code>driver = pyhal.drivers.ssh.SshDriver</code>) and the test code calls <code>pyhal.get_device("&lt;name&gt;")</code>.</p>
 <h2 id="hardware-layer">Hardware layer is <code>pyhal</code> now</h2>
 <p>The hardware layer moved from <code>pypts.hal</code> to the top-level package <code>pyhal</code>. Edit your own files: every <code>driver = pypts.hal.…</code> line in your <code>bench.ini</code> becomes <code>driver = pyhal.…</code> (the shipped drivers, for example <code>pyhal.drivers.ssh.SshDriver</code>), and every <code>from pypts.hal import …</code> in your own test code and drivers becomes <code>from pyhal import …</code>. A <code>bench.ini</code> that still says <code>pypts.hal.…</code> fails with a message that names the new path.</p>
+<h2 id="hal-server">Devices are on the HAL server now</h2>
+<p>PyPTS no longer runs the devices in its own process: it connects to the HAL server
+(<code>python -m pyhal</code>) at start, or starts one, with its monitor window unless
+<code>[hal] show_window</code> is off. Test code is unchanged (<code>get_device("&lt;name&gt;")</code>).
+What to check in your own code and habits:</p>
+<ul>
+<li><strong>Values.</strong> Only plain values cross to and from a device (<code>None</code>,
+bools, numbers, text, bytes, lists, dicts with text keys). A tuple a driver returns arrives as a
+list; a numpy value is refused - convert it in the driver (<code>float(x)</code>,
+<code>x.tolist()</code>).</li>
+<li><strong>Scripts.</strong> <code>LocalSetup</code> and <code>LocalSetup.from_ini()</code> are
+gone: a script uses <code>with pyhal.connect("bench.ini"):</code> (usage manual, <em>Hardware
+devices</em>).</li>
+<li><strong>Closing.</strong> PyPTS killed outright leaves the devices open in the HAL (close
+them with <code>python -m pyhal --close-all</code>); a close at once (<kbd>Ctrl+C</kbd> in the
+CLI) now tears them down; a call that times out or a driver that crashes is torn down at once.
+Another program connected to the same HAL may use the same device.</li>
+<li><strong>config.ini.</strong> Version 5.0.0 added <code>[hal] show_window</code>: an older
+<code>config.ini</code> is ignored (defaults are used) until you delete it to have it recreated,
+or add the key and the version by hand.</li>
+</ul>
 <h2 id="config-file">Config file</h2>
 <p>The new framework writes a config on first run:</p>
 <ul>

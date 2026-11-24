@@ -13,14 +13,15 @@ hardware on a bench and produces CSV + HTML reports. Three modes: GUI (the defau
 headless (`python -m pypts --mode headless --recipe x.yml`); a fourth way in is the Python
 API (`pypts.api.Pts`), which drives the same engine from code. The engine and the GUI are
 separate processes; the Sequencer and the Report are threads inside the engine; the CLI and
-headless mode run inside the launcher process.
+headless mode run inside the launcher process. The devices are on the HAL server, a standalone
+process of `pyhal` that the engine connects to at startup, or starts.
 
 ## Architecture
 
 | Module | Role |
 |---|---|
 | `launcher/` | entry point (`python -m pypts`): pins spawn, parses the arguments, builds the HMI ↔ CORE links and the log queue, and starts the Logger, CORE and — in GUI mode — the frontend process. The CLI runs in the launcher process itself. |
-| `core/` | the mediator and the engine process: routes every message between modules, runs the Sequencer and the Report as its threads, watches heartbeats, orchestrates shutdown. The only module that talks to more than one other. |
+| `core/` | the mediator and the engine process: routes every message between modules, runs the Sequencer and the Report as its threads, watches heartbeats, orchestrates shutdown. The only module that talks to more than one other. `hal_link.py` connects to the HAL server at startup (starting one when none runs) and closes it on both closes. |
 | `sequencer/` | the event loop that executes a loaded recipe; `execute_sequence()` runs each sequence on a worker thread of its own |
 | `recipe/` | the recipe data layer: parser, schema (Pydantic models), validation |
 | `step/` | the six registered step types — PythonModule, UserInteraction, UserWrite, UserLoading, Wait, Sequence — plus Indexed, expanded into generated steps at load time; the Runtime seams; `run_sequence()`, the body the Sequencer runs |
@@ -31,7 +32,7 @@ headless mode run inside the launcher process.
 | `config_handler/` | the per-user `config.ini`, and `bench.ini` beside it — the bench's devices, one bare-named section each (`bench_config.py`) |
 | `logger/` | the Logger process: the single writer of the run log. Every process reaches it through one shared queue. |
 | `utilities/` | error handling, heartbeats, local storage, recent recipes |
-| `pyhal` (`src/pyhal/`, a package of its own) | the hardware layer: devices by logical name, one driver process each; an SSH driver ships. It never imports `pypts`; the Sequencer reads `bench.ini` and hands it the devices (`src/pyhal/pyhal.md`). |
+| `pyhal` (`src/pyhal/`, a package of its own) | the hardware layer: a standalone HAL server (`python -m pyhal`, TCP on localhost) that holds the devices by logical name, one driver process each, its client and its monitor window; an SSH driver ships. It never imports `pypts`. CORE hands it the path of `bench.ini` when it starts one; the Sequencer runs each run inside `pyhal.run_scope()` (`src/pyhal/pyhal.md`). |
 | `stream_handler/` | the stream container: test code registers named (x, y) streams and pushes samples; each is written to `<run folder>/streams/<name>.csv`, which the GUI draws as a live graph |
 | `helper_applications/` | the Recipe Creator (with the recipe verificator) and the Recipe Editor v2 — separate programs with their own entry points |
 
@@ -125,8 +126,9 @@ the exception — `to_logger_communication.py` — because nothing is ever sent 
 
 - All inter-module traffic is typed and explicitly modelled; a missing handler is an error
   rather than silence.
-- One process boundary, chosen deliberately: the operator's UI survives an engine crash.
-  Everything else runs in the engine process, so nothing else pays to pickle.
+- One process boundary in the message layer, chosen deliberately: the operator's UI survives
+  an engine crash. Everything else runs in the engine process, so nothing else pays to pickle.
+  The HAL server is outside the message layer: test code reaches it through the `pyhal` client.
 - Flexible frontend: CLI or GUI, sharing one implementation of the protocol — and no frontend
   at all in headless mode.
 - The transport is swappable without touching a single module — the same `QueueWrapper`

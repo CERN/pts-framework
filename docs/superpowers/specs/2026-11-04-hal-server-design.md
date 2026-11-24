@@ -201,7 +201,9 @@ the "what is to be done" doc (its row id in brackets); D56-D58 were answered on 
      call*): a difference is a WARNING naming both, and the client uses the HAL anyway;
    - the open devices: a WARNING listing them **only when no other client is connected**
      (`hello` carries the count), since with other clients they are theirs, not leftovers
-     (D40, *Claude's call*); otherwise DEBUG.
+     (D40, *Claude's call*); otherwise DEBUG. The count is of connections that have sent a
+     `beat` or a request other than `status`: one that only polls `status` (the HAL monitor
+     window) is not a client using the devices (phase 3 final review, 2026-11-23).
 3. **Nothing answers** → the client starts `python -m pyhal --bench <file> --port <port>`
    detached, passing its own `sys.path` so dotted driver paths resolve as today, then retries
    the connection until `HAL_START_TIMEOUT_S` (15 s).
@@ -716,6 +718,20 @@ with pyhal.connect(bench="my_bench.ini") as hal:   # connect, or start a HAL
 - Layout refinements inside `src/pyhal/`.
 - The test seam of D50 (own HAL on its own port, or none); test strategy within the quality
   gates.
+
+Calls taken in phase 3 (2026-11-23), one line each:
+
+- **D50's seam:** none - the environment variable `PYPTS_HAL=off` makes CORE's `HalLink.start()`
+  connect to nothing (`get_device()` raises `HAL_OFF`); `tests/conftest.py` sets it for the suite.
+- **`CLOSE_WAIT_S` = 5 s** (`core/hal_link.py`): the longest `HalLink.close()` waits for a startup
+  connect still running, under the frontend's 15 s limit for a silent CORE.
+- **The window start:** with `show_window`, `connect()` starts `python -m pyhal.monitor --serve
+  --exit-with-hal` with the start nonce, so the monitor's Start makes PyPTS the owner; the wait is
+  `HAL_WINDOW_START_TIMEOUT_S` (2 x `HAL_START_TIMEOUT_S`); the window closes itself after two
+  empty polls in a row (`EXIT_AFTER_MISSED_POLLS`) once it has seen its HAL.
+- **§6.2 step 8:** CORE's connect runs on a thread; `connect_pending()` announces it, so
+  `run_scope()` waits for it (at most `CONNECT_WAIT_S`), and `note_unavailable(reason)` settles it
+  for a start that makes no connect.
 
 ## 14. Known gaps that stay
 

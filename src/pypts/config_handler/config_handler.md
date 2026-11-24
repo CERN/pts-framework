@@ -114,6 +114,7 @@ Sections currently in the schema:
 | `logging` | `level` — one of `TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL`; ships `TRACE` |
 | `report` | `type` (`html`/`csv`), `theme` |
 | `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too. `log_show_debug` (bool, shipped `false`), `log_show_info`, `log_show_warning`, `log_show_error` (bool, shipped `true`) — which levels the LOG OUTPUT panel shows; its buttons save them on every click (`hmi/gui/gui.md` §8a) |
+| `hal` | `show_window` (bool, shipped `true`) — whether a HAL that PyPTS starts opens its monitor window; a HAL already running is used as it is. Read at start; Settings → Hardware |
 | `recipe_editor` | The same four keys for the Recipe Editor v2's window (shipped: `light`, `windowed`, 1600 × 1000). Set in the editor's own Edit → Settings; pypts' Settings leaves them out (`OWN_TOOL_SECTIONS`) |
 
 `[watchdog] enabled` was removed in September 2026: a module that stops responding always
@@ -215,12 +216,12 @@ into place, so an interrupted write cannot leave a half-written config behind.
 ## Structure version — no migration, no repair, discard instead
 
 `CONFIG_VERSION` (in `configuration_schema.py`) is a `MAJOR.MINOR.PATCH` string, currently
-**`4.0.0`** — raised from `3.0.0` in November 2026 for the mandatory `[gui] log_show_debug`
-key (from `2.0.0` to `3.0.0` earlier that month for the other `[gui] log_show_*` keys, and from
+**`5.0.0`** — raised from `4.0.0` in November 2026 for the mandatory `[hal] show_window`
+key (from `3.0.0` to `4.0.0` the same month for the mandatory `[gui] log_show_debug` key, from `2.0.0` to `3.0.0` earlier that month for the other `[gui] log_show_*` keys, and from
 `1.0.0` to `2.0.0` in October 2026 for the mandatory `[recipe_editor]` section), so an older
 file is discarded until it is deleted and recreated, or the keys are added by hand with
-`config_version` set to `4.0.0`. Only the **major** number
-decides whether a file is trusted: `4.4.7` loads under a `4.0.0` pypts, `5.0.0` does not, and
+`config_version` set to `5.0.0`. Only the **major** number
+decides whether a file is trusted: `5.4.7` loads under a `5.0.0` pypts, `6.0.0` does not, and
 neither does text that is not three dot-separated numbers.
 
 **The version is not changed for every schema edit.** It changes only when a change adds
@@ -292,9 +293,10 @@ Two file-format details worth knowing:
 |---|---|
 | `launcher/startup.py` | `bootstrap()`, `bootstrap_outcome`/`bootstrap_problem` → `show_config_popup()` (popup/banner), `paths.reports_dir` (the session log), `logging.level` (overridden by `--log-level`), the `operating_system.*` line in the run log, `replay_bootstrap_log()`; `bench_config()` in `show_bench_notice()` — the discarded-bench notice |
 | `report/report.py` | `ConfigHandler().get_parameter("paths.reports_dir")` unless a tmp path is injected |
-| `sequencer/sequencer.py` | `paths.reports_dir` (via `reports_dir_from_config()`), once per run, for the run folder; `bench_config()` in `bench_sections()` — the cached device sections, read on a run's first `get_device()` |
+| `sequencer/sequencer.py` | `paths.reports_dir` (via `reports_dir_from_config()`), once per run, for the run folder |
 | `helper_applications/recipe_creator/rc_logging.py` | `paths.reports_dir` for the helper tools' log files, falling back to the default reports dir when there is no configuration to read |
-| `core/core.py` | `open_for_writing()` in `core_main()`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
+| `core/hal_link.py` | `bench_config()` in `HalLink.start()`: the bench's `path` is what the HAL connect is given; a DISCARDED `outcome` means no connect, and its `problem` is what `get_device()` raises |
+| `core/core.py` | `open_for_writing()` in `core_main()`; `hal.show_window` in `Core.__init__` (`hal_show_window_from_config()`, `True` with no configuration to read), handed to the `HalLink`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
 | `hmi/gui/gui.py` | `gui.theme` / `gui.window_mode` / `gui.window_width` / `gui.window_height` and the four `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
 | `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
 | `helper_applications/recipe_editor/editor_settings.py` | `bootstrap()` in the editor's `main()` (`open_config()`); the `recipe_editor.*` keys when the window opens; `get_whole_config()` + `bootstrap_problem` for its Settings dialog; `set_parameter()` for a saved setting (`save_setting()`) |

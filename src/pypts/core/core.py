@@ -34,6 +34,7 @@ from uuid import UUID
 
 from pypts.config_handler import ConfigError, ConfigHandler
 from pypts.config_handler.configuration_schema import READ_ONLY_SECTIONS
+from pypts.core.hal_link import HalLink
 from pypts.logger.log import DEFAULT_LOG_LEVEL, init_logging, log
 from pypts.messages import QueueWrapper, UnhandledMessage, unhandled
 from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
@@ -136,8 +137,8 @@ MODULE_SOURCE = {
 }
 
 #: What a crash close during a run tells the operator. The crash close does not
-#: wait for the run's teardown steps or for its devices to close, and the driver
-#: processes end with CORE without their teardown().
+#: wait for the run's teardown steps or for its devices to close: the devices are
+#: on the HAL server, which is sent `close_all` (or `shutdown`) but not waited for.
 BENCH_MAY_BE_ENERGISED = (
     "A test was running and was not finished: the devices on the bench may still be energised."
 )
@@ -156,6 +157,20 @@ FRIENDLY_SOURCE_NAME = {
     "pypts.hmi.cli.cli": "the operator interface",
     "pypts.config_handler.config_handler": "the settings file reader",
 }
+
+
+def hal_show_window_from_config() -> bool:
+    """
+    `hal.show_window`: whether a HAL server CORE starts opens its monitor window.
+
+    A CORE with no configuration to ask (one built by a test) gets the shipped
+    default, a window.
+    """
+    try:
+        return bool(ConfigHandler().get_parameter("hal.show_window"))
+    except ConfigError as error:
+        log.debug("hal.show_window could not be read (%s); showing the window.", error)
+        return True
 
 
 def describe_source(source: str) -> str:
@@ -214,7 +229,7 @@ def core_main(
     # Core's own first read would otherwise make this process a reader - and a
     # reader can never be promoted to writer.
     ConfigHandler.open_for_writing()
-    Core(to_hmi, from_hmi).start()
+    Core(to_hmi, from_hmi, log_level=log_level).start()
 
 
 class Core:
@@ -231,7 +246,14 @@ class Core:
         self,
         to_hmi: QueueWrapper[CoreToHmi],
         from_hmi: QueueWrapper[HmiToCore],
+        *,
+        log_level: int = DEFAULT_LOG_LEVEL,
     ) -> None:
+        """
+        Args:
+            log_level: the level of the run, which a HAL server this CORE starts is
+                given too (one found running keeps its own).
+        """
         self.to_hmi = to_hmi
         self.from_hmi = from_hmi
 
@@ -313,6 +335,11 @@ class Core:
         #: that cannot happen - and would double the trace traffic doing it.
         self.hmi_heartbeat = HeartbeatManager(self.to_hmi, CORE)
 
+        #: The connection to the HAL server, where the run's devices are. Started
+        #: by start(), closed by both closes (spec §6.4). With PYPTS_HAL=off (the
+        #: test suite) it makes no connect.
+        self.hal_link = HalLink(log_level, show_window=hal_show_window_from_config())
+
     # --- Startup --------------------------------------------------------------
 
     def start(self) -> None:
@@ -322,9 +349,15 @@ class Core:
         # threads it is about to start. Logging it afterwards put the children
         # above the parent in the operator's log.
         log.debug("CORE module started.")
+        # Before the submodules: the connect runs on a thread of its own while
+        # they come up, and a run's run_scope() waits for it.
+        self.hal_link.start()
         self.start_submodules()
         self.main_loop()
         self.join_submodules()
+        # The loop is over: a startup connect still running gets its chance to close what
+        # it connected to before the process (and its daemon thread) ends.
+        self.hal_link.finish()
         log.debug("CORE module stopped.")
 
     def start_submodules(self) -> None:
@@ -485,9 +518,11 @@ class Core:
         match message:
             case SequencerStopped():
                 self.modules[SEQUENCER].running = False
-                # The orderly close's next step: the Report, now that the
+                # The orderly close's next steps: the run is over, so the HAL
+                # gets the close (spec §6.4); then the Report, now that the
                 # stopped run's tail is all in its queue.
                 if self.shutting_down:
+                    self.hal_link.close()
                     self.send_stop(REPORT)
             case RunStarted():
                 self.run_open = True
@@ -1011,8 +1046,14 @@ class Core:
 
     def close_at_once(self, warn: bool = True) -> None:
         """
-        The crash close: every module still running is told to stop in one go,
-        and CORE leaves without waiting for any answer.
+        The crash close: the HAL link is closed, then every module still running
+        is told to stop in one go, and CORE leaves without waiting for any answer.
+
+        The HAL before the Stops (spec §6.4), on this thread: closing the long
+        connection keeps a teardown step still running from reopening a device
+        behind the `close_all`, and a close handed to a daemon thread could die
+        unsent. It is idempotent, so it runs on the early return too - after an
+        orderly close it does nothing.
 
         Taken on ShutdownRequested(immediate=True) - the CLI's Ctrl+C, the
         launcher once the frontend has gone - and by the watchdog. A crash close
@@ -1030,6 +1071,7 @@ class Core:
         self.closing_at_once = True
         if not still_running:
             log.debug("Asked to close at once; every module has already stopped.")
+            self.hal_link.close()
             self.running = False
             return
 
@@ -1038,6 +1080,9 @@ class Core:
                 log.critical("pypts is closing at once. %s", BENCH_MAY_BE_ENERGISED)
             else:
                 log.info("pypts is closing at once.")
+        # The operator's line first, then the HAL's close, which may wait for a
+        # startup connect, then the Stops.
+        self.hal_link.close()
         log.debug("Crash close: stopping %s without waiting.", ", ".join(still_running))
         for name in still_running:
             self.send_stop(name)

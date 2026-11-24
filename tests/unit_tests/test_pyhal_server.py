@@ -201,10 +201,33 @@ def test_hello_names_the_hal(start_hal, tmp_path):
     assert hello.log == "C:/logs/hal.log"
     assert hello.open == []
     assert hello.clients == 0
+    # A beat makes the first connection a client; the status after it is answered once the
+    # beat has been taken.
+    client.send("beat")
+    client.request("status")
     second = Client(hal.port)
     assert second.hello.clients == 1
     client.close()
     second.close()
+
+
+def test_a_status_only_connection_is_not_a_client(start_hal):
+    # The HAL monitor's poll asks only `status`: it must not hide devices left open with no
+    # client using them (D40).
+    hal = start_hal()
+    poller = Client(hal.port)
+    assert poller.request("status").clients == 0
+    other = Client(hal.port)
+    assert other.hello.clients == 0
+    assert poller.request("status").clients == 0
+    other.send("beat")
+    _wait_for_status(poller, lambda report: report.clients == 1)
+    opener = Client(hal.port)
+    assert opener.hello.clients == 1
+    assert isinstance(opener.request("open", device="loop1"), messages.Opened)
+    assert poller.request("status").clients == 2
+    for connection in (poller, other, opener):
+        connection.close()
 
 
 def test_a_call_round_trip(start_hal):
@@ -278,7 +301,8 @@ def test_status_is_answered_while_a_call_runs(start_hal):
     assert status.busy is not None
     assert status.busy["device"] == "loop1"
     assert status.busy["operation"] == "sleep"
-    assert status.clients == 3
+    # Only a: b and spare have asked nothing but `status`.
+    assert status.clients == 1
     assert status.queued == 0
     assert status.devices[0]["name"] == "loop1"
     assert status.devices[0]["state"] == "open"
@@ -521,7 +545,7 @@ def test_an_answer_that_cannot_be_written_is_discarded(start_hal):
     _wait_for_status(spare, _running("sleep"))
     # The server's end can no longer send, so the answer's write fails.
     _server_connection(hal, 0).sock.shutdown(socket.SHUT_WR)
-    _wait_for_status(spare, lambda report: report.busy is None and report.clients == 1)
+    _wait_for_status(spare, lambda report: report.busy is None and report.clients == 0)
     assert spare.call("loop1", "echo", "on") == messages.Result("on")
     gone.close()
     spare.close()

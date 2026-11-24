@@ -23,12 +23,17 @@ Everything you need is in this file; the human-readable version is
 
 ## How PyPTS uses the driver
 
-`bench.ini` names the driver file and its class (`~/bench/acme_dmm.py:AcmeDmmDriver`). On the
-first `get_device("<name>")` in a test run, PyPTS starts a **separate process** for that
-device, loads the file, builds the class with **no arguments**, and calls `connect(config)`.
-Test code then calls the driver's public methods by name; every call and its answer travel
-over a pipe, pickled. When the run ends (finished, stopped, or PyPTS closed in order), PyPTS calls `teardown()`. A
-crash close (Ctrl+C in the CLI) or a crash of PyPTS skips it.
+`bench.ini` names the driver file and its class (`~/bench/acme_dmm.py:AcmeDmmDriver`). The
+devices live in the **HAL server**, a process of its own that PyPTS connects to at startup (or
+starts, when none runs). On the first `get_device("<name>")` in a test run, the HAL starts a
+**separate process** for that device, loads the file, builds the class with **no arguments**,
+and calls `connect(config)`. Test code then calls the driver's public methods by name; every
+call and its answer travel to the HAL as JSON (plain values only, rule 2) and on to the driver
+process over a pipe. When the run ends (finished, stopped, or PyPTS closed in order) the HAL
+calls `teardown()`; a crash close of PyPTS (Ctrl+C in the CLI) has the HAL tear every device
+down too. A PyPTS that is killed outright leaves the devices open, exactly as they are, until
+someone closes them (`python -m pyhal --close-all` or `--stop`). A call that times out or a
+driver process that dies is torn down at once on a fresh process.
 
 ## Device types — derive from exactly one
 
@@ -109,9 +114,11 @@ def recover(self, config: dict[str, str]) -> None      # optional; default: tear
 
 1. **Every public method is an operation** test code can call. Put wire/protocol helpers in
    `_private` methods.
-2. **Arguments and return values must be picklable plain data**: `int`, `float`, `str`,
-   `bytes`, `bool`, `None`, `list`, `dict`, `tuple`. Never return sockets, handles, locks,
-   file objects or vendor objects.
+2. **Arguments and return values must be plain data**: `None`, `bool`, `int`, `float`,
+   `str`, `bytes`, `list`, and `dict` with `str` keys (not starting with `$`). A `tuple` is
+   sent as a list and **comes back as a list**. numpy values (arrays and scalars) and any
+   other type are refused - convert with `float(x)` / `x.tolist()`. Never return sockets,
+   handles, locks, file objects or vendor objects.
 3. **No name is reserved:** any public method name — `close`, `open`, `name` included — is an
    operation test code reaches (`ConnectionDriver` keeps all its own members `_private`). Test
    code controls the device itself with functions from `pyhal`: `recover_device(device)`
@@ -128,10 +135,12 @@ def recover(self, config: dict[str, str]) -> None      # optional; default: tear
    except ImportError as exc:
        raise ImportError("AcmeDmmDriver needs pyvisa; install it with 'pip install pyvisa'.") from exc
    ```
-7. The driver runs on the **same Python interpreter as PyPTS** (≥ 3.11). A library that needs
+7. The driver runs on the **HAL server's Python interpreter** - PyPTS's own, when PyPTS
+   starts the HAL (≥ 3.11). A library that needs
    another interpreter (e.g. a 32-bit DLL) cannot be used.
 8. Calls are one at a time; a call longer than 30 s (`CALL_TIMEOUT_S`, the same for every
-   device and not configurable) kills the driver process. Set I/O timeouts in the driver shorter than that.
+   device and not configurable) kills the driver process, and the HAL tears the device down at
+   once on a fresh one. Set I/O timeouts in the driver shorter than that.
 
 ## Template
 
@@ -143,7 +152,8 @@ import socket
 
 from pyhal import DMM, DriverError
 
-# Plain logging: PyPTS forwards these records to its run log as "Device 'dmm1': ...".
+# Plain logging: the HAL's log has these records as "Device 'dmm1': ...", and PyPTS's run
+# log repeats them as "HAL: Device 'dmm1': ...".
 log = logging.getLogger(__name__)
 
 # The DMM type's function names, in this instrument's SCPI.
@@ -240,13 +250,15 @@ For a PSU, `teardown()` switches every output off (`OUTP OFF`) before closing.
    port = 5025
    ```
    The path may be absolute, start with `~`, or be relative to the folder `bench.ini` is in.
-   Do not add a `python` key (refused). Restart PyPTS after editing `bench.ini`.
+   Do not add a `python` key (refused). The HAL reads `bench.ini` once, when it starts:
+   after editing it, restart PyPTS - and if the HAL was already running before PyPTS started
+   (another PyPTS, a script, `run_hal.py`), stop it first with `python -m pyhal --stop`.
 3. **Only that one file is loaded**: its folder is not on `sys.path`, so the driver may import
    the standard library and installed packages, but **not a helper module beside it**. Keep a
    driver in one file. If it must span several modules, make it a package
    (`~/bench/bench_drivers/__init__.py`, `.../acme_dmm.py`, ...), name it by dotted path
    (`driver = bench_drivers.acme_dmm.AcmeDmmDriver`), and make it importable in the terminal
-   PyPTS is started from: Linux/macOS `export PYTHONPATH=~/bench`, Windows PowerShell
+   PyPTS (and so the HAL it starts) is started from: Linux/macOS `export PYTHONPATH=~/bench`, Windows PowerShell
    `$env:PYTHONPATH = "C:\bench"`, or `pip install -e ~/bench` with a `pyproject.toml`.
 
 ## Testing it
@@ -297,7 +309,7 @@ steps:
 ```
 
 Run: `python -m pypts --mode headless --recipe dmm_check.yml`. The log shows
-`Device 'dmm1' connected.` and, at the end, `Device 'dmm1' disconnected.`
+`HAL: Device 'dmm1' connected.` and, at the end, `HAL: Device 'dmm1' disconnected.`
 
 ## Errors the user may report
 
@@ -306,16 +318,15 @@ Run: `python -m pypts --mode headless --recipe dmm_check.yml`. The log shows
 | `could not be opened: ValueError: Driver file '...' does not exist.` | Wrong path in `driver =` (step 2) |
 | `names a file but no class; write it as '...:ClassName'` | `driver =` lacks `:ClassName` |
 | `No module named '...'` raised inside the driver file | It imports a helper beside it (step 3) or a vendor library that is not installed |
-| `could not be opened: ... No module named 'bench_drivers'` | A package driver not importable by PyPTS's Python (step 3) |
+| `could not be opened: ... No module named 'bench_drivers'` | A package driver not importable by the HAL's Python (step 3) |
 | `Module '...' has no class '...'` / `is not a dotted path to a class` | Typo in `driver =` |
 | `is not a driver: it does not derive from BaseDriver` / `belongs to no device type` | Wrong base class |
 | `TypeError: Can't instantiate abstract class` | A verb of the device type is missing |
-| `No device 'x' is configured` | Section missing, misspelled, or `bench.ini` edited without restart |
+| `No device 'x' is configured` | Section missing, misspelled, or `bench.ini` edited without restarting the HAL |
 | `the [x] section has no 'driver' key` | Add `driver =` |
 | `'op' failed: <Type>: <message>` | The driver raised during a call; the device stays usable |
-| `did not answer 'op' within N s` | Call took longer than 30 s; the process was killed |
-| `cannot be sent` / `returned a value that cannot be sent` | Non-picklable argument or return value (rule 2) |
-| `stopped unexpectedly (exit code 1)` in a standalone script | Missing `__main__` guard |
+| `did not answer 'op' within N s` | Call took longer than 30 s; the process was killed and the device torn down |
+| `cannot be sent` / `ran, but its result cannot be sent` | An argument or return value that is not plain data, e.g. a numpy value (rule 2) |
 
 ## Checklist — verify your output against it
 
@@ -325,7 +336,7 @@ Run: `python -m pypts --mode headless --recipe dmm_check.yml`. The log shows
 - [ ] `connect` converts its string values, defaults optional keys, raises a clear error when unreachable.
 - [ ] `teardown` makes the instrument safe, uses `try/finally`, is a no-op when nothing is open.
 - [ ] Helpers are `_private`.
-- [ ] Only picklable plain data crosses in and out.
+- [ ] Only plain data crosses in and out (no numpy, no objects); tuples come back as lists.
 - [ ] `logging.getLogger(__name__)` with `%`-style arguments; no `multiprocessing`.
 - [ ] One file, importing nothing that sits beside it.
 - [ ] Nothing inside `pypts` or `pyhal` was modified; the `bench.ini` section (`driver = <file>:<Class>`) and the `__main__` check are supplied.

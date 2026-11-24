@@ -527,7 +527,7 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
     is never touched, and the reason is an ERROR in the log.
     """
     mismatched = config_path.read_text(encoding="utf-8").replace(
-        f"config_version = {CONFIG_VERSION}", "config_version = 5.0.0"
+        f"config_version = {CONFIG_VERSION}", "config_version = 4.0.0"
     )
     mismatched = mismatched.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(mismatched, encoding="utf-8")
@@ -537,6 +537,7 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
 
     assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
     assert handler.bootstrap_problem is not None
+    assert "4.0.0" in handler.bootstrap_problem
     assert "5.0.0" in handler.bootstrap_problem
     assert f"expects {CONFIG_VERSION}" in handler.bootstrap_problem
     # The defaults are in force, not the file's values.
@@ -552,13 +553,34 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
     assert str(config_path) in caplog.text
 
 
+def test_hal_show_window_defaults_to_true(config):
+    assert config.get_parameter("hal.show_window") is True
+
+
+def test_a_version_4_file_is_discarded_with_a_problem_naming_5_0_0(config, config_path):
+    """4.0.0 files lack the mandatory `[hal]` section, so they are not trusted."""
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            f"config_version = {CONFIG_VERSION}", "config_version = 4.0.0"
+        ),
+        encoding="utf-8",
+    )
+    ConfigHandler.reset_for_testing()
+
+    handler = _bootstrap_before_logging()
+
+    assert CONFIG_VERSION == "5.0.0"
+    assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert "5.0.0" in handler.bootstrap_problem
+
+
 def test_a_different_minor_or_patch_version_is_still_loaded(config, config_path):
     """
     Only the major number decides. A file from a pypts with a different minor or
     patch number is trusted, and its values are the ones in force.
     """
     newer = config_path.read_text(encoding="utf-8").replace(
-        f"config_version = {CONFIG_VERSION}", "config_version = 4.4.7"
+        f"config_version = {CONFIG_VERSION}", "config_version = 5.4.7"
     )
     newer = newer.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(newer, encoding="utf-8")
@@ -567,7 +589,7 @@ def test_a_different_minor_or_patch_version_is_still_loaded(config, config_path)
     handler = _bootstrap_before_logging()
 
     assert handler.bootstrap_outcome is BootstrapOutcome.LOADED
-    assert handler.config_version == "4.4.7"
+    assert handler.config_version == "5.4.7"
     assert handler.get_parameter("gui.window_width") == 999
 
 
@@ -577,7 +599,7 @@ def test_a_version_that_is_not_major_minor_patch_discards_the_file(config, confi
     read as major 4, or as anything: the reason names the text found.
     """
     old_style = config_path.read_text(encoding="utf-8").replace(
-        f"config_version = {CONFIG_VERSION}", "config_version = 4"
+        f"config_version = {CONFIG_VERSION}", "config_version = 5"
     )
     config_path.write_text(old_style, encoding="utf-8")
     ConfigHandler.reset_for_testing()
@@ -586,7 +608,7 @@ def test_a_version_that_is_not_major_minor_patch_discards_the_file(config, confi
 
     assert handler.bootstrap_outcome is BootstrapOutcome.DISCARDED
     assert handler.bootstrap_problem is not None
-    assert "'4'" in handler.bootstrap_problem
+    assert "'5'" in handler.bootstrap_problem
     assert "MAJOR.MINOR.PATCH" in handler.bootstrap_problem
 
 

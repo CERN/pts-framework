@@ -9,9 +9,11 @@ session fixture checks at the end that nothing listens on any port a test used.
 Waits are synchronised on the wire or on the marks file, in bounded polling loops.
 """
 
+import contextlib
 import json
 import logging
 import os
+import signal
 import socket
 import subprocess
 import sys
@@ -218,14 +220,26 @@ def test_start_hal_starts_a_detached_hal_and_returns_its_pid(hal_port, tmp_path)
     assert pid != os.getpid()
     assert hello.nonce is not None
     assert os.path.normcase(hello.bench) == os.path.normcase(str(bench.resolve()))
-    # Nothing of this process holds it: start_hal()'s connection is gone, once the HAL has
-    # seen it close (it learns that asynchronously).
+    # start_hal()'s connection is not a client (a hello-only connection never counts), and
+    # nothing else of this process is connected.
     _wait_until(
         lambda: _hello(hal_port) is not None and _hello(hal_port).clients == 0,
         10,
         "start_hal()'s connection to be gone",
     )
     assert (tmp_path / "logs" / "hal_startup.log").exists()
+    stopped = _pyhal("--stop", "--port", str(hal_port))
+    assert stopped.returncode == 0, stopped.stdout + stopped.stderr
+    _wait_until(lambda: not _listens(hal_port), 30, "the HAL to exit")
+
+
+def test_start_hal_uses_a_given_nonce(hal_port, tmp_path):
+    bench = _marking_bench(tmp_path)
+    pid = client.start_hal(bench, hal_port, log_dir=str(tmp_path / "logs"), nonce="abc")
+    hello = _hello(hal_port)
+    assert hello is not None
+    assert hello.pid == pid
+    assert hello.nonce == "abc"
     stopped = _pyhal("--stop", "--port", str(hal_port))
     assert stopped.returncode == 0, stopped.stdout + stopped.stderr
     _wait_until(lambda: not _listens(hal_port), 30, "the HAL to exit")
@@ -511,3 +525,75 @@ def test_a_started_hal_does_not_hold_the_starters_folder(hal_port, tmp_path, mon
     starter_folder.rmdir()
     hal_client.close()
     _wait_until(lambda: not _listens(hal_port), 30, "the HAL to exit")
+
+
+# --- connect(show_window=True): the monitor starts the HAL ---------------------------------
+
+
+def _monitor_pids(port: int) -> list[int]:
+    """The pids of every `pyhal.monitor` process whose command line names this port."""
+    marker = f"--port {port} "
+    if sys.platform == "win32":
+        script = (
+            "Get-CimInstance Win32_Process -Filter \"CommandLine like '%pyhal.monitor%'\" | "
+            "ForEach-Object { \"$($_.ProcessId) $($_.CommandLine)\" }"
+        )
+        command = ["powershell", "-NoProfile", "-Command", script]
+    else:
+        command = ["ps", "-eo", "pid=,args="]
+    listing = subprocess.run(command, capture_output=True, text=True, timeout=60).stdout
+    pids: list[int] = []
+    for line in listing.splitlines():
+        pid_text, _, command_line = line.strip().partition(" ")
+        if "pyhal.monitor" in command_line and marker in command_line + " ":
+            pids.append(int(pid_text))
+    return pids
+
+
+def _kill(pids: list[int]) -> None:
+    for pid in pids:
+        # Gone already (the venv launcher's child, or it exited): nothing to kill.
+        with contextlib.suppress(OSError):
+            os.kill(pid, signal.SIGTERM)
+
+
+def test_connect_with_window_starts_the_monitor_and_owns_the_hal(
+    hal_port, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    bench = _marking_bench(tmp_path)
+    try:
+        hal_client = client.connect(
+            bench, hal_port, scope=False, log_dir=str(tmp_path / "logs"), show_window=True
+        )
+        assert hal_client.started_hal is True
+        assert "pyhal.monitor" in client._started_processes[-1].args
+        assert _monitor_pids(hal_port) != []
+        # Two processes, two startup files: never one file through two handles.
+        assert (tmp_path / "logs" / "hal_monitor_startup.log").exists()
+        assert (tmp_path / "logs" / "hal_startup.log").exists()
+        hal_client.close()
+        _wait_until(lambda: not _listens(hal_port), 30, "the HAL to exit")
+        _wait_until(lambda: _monitor_pids(hal_port) == [], 30, "the monitor to exit")
+    finally:
+        _kill(_monitor_pids(hal_port))
+
+
+def test_connect_with_window_reports_a_failed_start(hal_port, tmp_path, monkeypatch):
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    bench = tmp_path / "bench.ini"
+    bench.write_text("this is not an INI file\n", encoding="utf-8")
+    began = time.monotonic()
+    try:
+        with pytest.raises(DriverError) as caught:
+            client.connect(
+                bench, hal_port, scope=False, log_dir=str(tmp_path / "logs"), show_window=True
+            )
+        assert time.monotonic() - began < client.HAL_WINDOW_START_TIMEOUT_S + 5
+        assert str(caught.value).startswith("The HAL server could not be started:")
+        # The tail is the monitor's own startup file: its WARNING carries the HAL's reason.
+        assert "The HAL monitor's Start failed:" in str(caught.value)
+        assert (tmp_path / "logs" / "hal_monitor_startup.log").exists()
+    finally:
+        _kill(_monitor_pids(hal_port))
+    _wait_until(lambda: _monitor_pids(hal_port) == [], 30, "the monitor to be gone")

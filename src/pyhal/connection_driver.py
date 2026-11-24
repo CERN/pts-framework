@@ -5,9 +5,9 @@ methods run in the driver's own process.
 **Every public name belongs to the driver.** ConnectionDriver's own members
 are all `_private`, so any public name - `close`, `open`, `name`, ... - reaches
 the driver's operation of that name through __getattr__, and no name is
-reserved. LocalSetup, in this package, calls the private lifecycle below; test
-code controls a device through device_control.py (recover_device(),
-device_info()).
+reserved. The HAL server's devices.py calls the private lifecycle below; test
+code reaches a device through the client (pyhal.client), where recover_device()
+and device_info() are functions of its own.
 
 _open() starts the driver process (multiprocessing, spawn) with a Pipe between
 the two, waits for the driver to say hello, and calls its connect(). After that
@@ -21,9 +21,9 @@ process; failing that - the process hung, crashed or was stopped - a fresh
 process connects and tears down instead (the rescue); failing that too, the
 ERROR line says the device may still be energised, and that is where the
 framework stops: the driver's stability is the driver's own job.
-_recover() is for test code that wants to retry (through recover_device()): it
-escalates from the driver's own recover() to a fresh process, and only raises
-when even that fresh process cannot connect.
+_recover() is for test code that wants to retry (the client's recover_device()
+asks the HAL, which calls it): it escalates from the driver's own recover() to a
+fresh process, and only raises when even that fresh process cannot connect.
 
 What crosses the Pipe is pickled: arguments and return values must be
 picklable. Calls are one at a time: a lock makes a second thread wait.
@@ -164,7 +164,7 @@ class ConnectionDriver:
         operation.__name__ = name
         return operation
 
-    # --- what device_control.py calls for test code -------------------------------
+    # --- what the HAL's devices.py calls -------------------------------
 
     def _is_open(self) -> bool:
         return self._conn is not None
@@ -195,7 +195,7 @@ class ConnectionDriver:
         self._open()
         log.info("Device '%s' recovered.", self._name)
 
-    # --- what LocalSetup calls ---------------------------------------------------
+    # --- the lifecycle the HAL's devices.py calls ---------------------------------
 
     def _open(self) -> None:
         """
@@ -621,8 +621,8 @@ def load_driver_class(driver_path: str) -> type[BaseDriver]:
 
     Two spellings: a dotted import path (`bench_drivers.acme_psu.AcmePsuDriver`),
     or a driver file and its class (`C:/bench/acme_psu.py:AcmePsuDriver`). A
-    relative file is relative to the current directory here; LocalSetup makes
-    it relative to the INI file that declares it before it gets this far.
+    relative file is relative to the current directory here; the HAL makes
+    it relative to the bench file that declares it before it gets this far.
     """
     old_prefix = "pypts.hal."
     if driver_path.startswith(old_prefix):

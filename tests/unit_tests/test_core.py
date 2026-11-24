@@ -18,6 +18,25 @@ import pytest
 from pypts.messages.common_messages import ErrorSeverity
 
 
+@pytest.fixture(autouse=True)
+def _no_real_config_ini(tmp_path, monkeypatch):
+    """
+    Keep every Core built here off the developer's real config.ini: Core() reads
+    `hal.show_window` from it (hal_show_window_from_config()). The file is
+    pointed at a folder of tmp_path that does not exist, and the singleton is
+    cold before and after; a test with a config.ini of its own points the path
+    elsewhere after this.
+    """
+    from pypts.config_handler import ConfigHandler, file_locations
+
+    monkeypatch.setattr(
+        file_locations, "config_file_path", lambda: tmp_path / "no_config" / "config.ini"
+    )
+    ConfigHandler.reset_for_testing()
+    yield
+    ConfigHandler.reset_for_testing()
+
+
 def build_core_that_spawns_nothing():
     """
     A Core with every link wired up and nothing spawned.
@@ -773,6 +792,160 @@ def test_a_finished_run_is_not_open_any_more(caplog):
     assert not [r for r in caplog.records if "energised" in r.getMessage()]
 
 
+class RecordingHalLink:
+    """Stands in for core.hal_link: notes its calls in a list shared with the sends."""
+
+    def __init__(self, events):
+        self.events = events
+
+    def start(self):
+        self.events.append("hal start")
+
+    def close(self):
+        self.events.append("hal close")
+
+    def finish(self):
+        self.events.append("hal finish")
+
+
+def record_the_stops(core, events):
+    """Note each Stop CORE sends, in the same list as the HAL link's calls."""
+    for link in (core.to_sequencer, core.to_report, core.to_hmi):
+        real_send = link.send
+
+        def recording_send(message, real_send=real_send):
+            events.append(type(message).__name__)
+            real_send(message)
+
+        link.send = recording_send
+
+
+def test_the_orderly_close_closes_the_hal_link_on_sequencer_stopped():
+    """
+    The run is over once the Sequencer has stopped, so its devices can go: the close goes out
+    on SequencerStopped, before StopReport, and only once.
+    """
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+    from pypts.messages.core_report_communication import ReportStopped
+    from pypts.messages.core_sequencer_communication import SequencerStopped
+
+    core = build_core_that_spawns_nothing()
+    events = []
+    core.hal_link = RecordingHalLink(events)
+    record_the_stops(core, events)
+
+    core.from_hmi.send(ShutdownRequested())
+    core.poll_all_sources()
+    assert events == ["StopSequencer"]
+
+    core.from_sequencer.send(SequencerStopped())
+    core.poll_all_sources()
+    core.from_report.send(ReportStopped())
+    core.poll_all_sources()
+
+    assert events == ["StopSequencer", "hal close", "StopReport", "StopHmi"]
+
+
+def test_a_sequencer_that_stops_on_its_own_does_not_close_the_hal_link():
+    """SequencerStopped outside a close (a loop that died) is not the end of pypts."""
+    from pypts.messages.core_sequencer_communication import SequencerStopped
+
+    core = build_core_that_spawns_nothing()
+    events = []
+    core.hal_link = RecordingHalLink(events)
+
+    core.from_sequencer.send(SequencerStopped())
+    core.poll_all_sources()
+
+    assert events == []
+
+
+def test_the_crash_close_closes_the_hal_link_before_the_stops():
+    """Spec §6.4: the close first, on CORE's own thread, then the Stops, then CORE leaves."""
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+
+    core = build_core_that_spawns_nothing()
+    events = []
+    core.hal_link = RecordingHalLink(events)
+    record_the_stops(core, events)
+
+    core.from_hmi.send(ShutdownRequested(immediate=True))
+    core.poll_all_sources()
+
+    assert events[0] == "hal close"
+    assert sorted(events[1:]) == ["StopHmi", "StopReport", "StopSequencer"]
+    assert core.running is False
+
+
+def test_the_crash_close_with_nothing_left_running_still_closes_the_hal_link():
+    """The launcher's request after an orderly close: the close again, which is idempotent."""
+    from pypts.messages.core_hmi_communication import ShutdownRequested
+
+    core = build_core_that_spawns_nothing()
+    for state in core.modules.values():
+        state.running = False
+    events = []
+    core.hal_link = RecordingHalLink(events)
+    record_the_stops(core, events)
+
+    core.from_hmi.send(ShutdownRequested(immediate=True))
+    core.poll_all_sources()
+
+    assert events == ["hal close"]
+    assert core.running is False
+
+
+def test_start_starts_the_hal_link_before_the_submodules():
+    """
+    The startup connect runs while the Sequencer and the Report come up; once
+    the loop is over and the submodules joined, finish() lets a connect still
+    running close what it connected to before the process exits.
+    """
+    core = build_core_that_spawns_nothing()
+    events = []
+    core.hal_link = RecordingHalLink(events)
+    core.start_submodules = lambda: events.append("submodules")
+    core.main_loop = lambda: events.append("main loop")
+    core.join_submodules = lambda: events.append("join")
+
+    core.start()
+
+    assert events == ["hal start", "submodules", "main loop", "join", "hal finish"]
+
+
+def test_core_hands_the_hal_link_its_log_level_and_the_window_setting(config_file):
+    """`hal.show_window` from config.ini, the level from core_main()."""
+    from pypts.config_handler import ConfigHandler
+    from pypts.core.core import Core
+    from pypts.messages import QueueWrapper
+
+    text = config_file.read_text(encoding="utf-8")
+    assert "show_window = true" in text
+    config_file.write_text(text.replace("show_window = true", "show_window = false"), "utf-8")
+    ConfigHandler.reset_for_testing()
+
+    core = Core(QueueWrapper(queue.Queue()), QueueWrapper(queue.Queue()), log_level=5)
+
+    assert core.hal_link._log_level == 5
+    assert core.hal_link._show_window is False
+
+
+def test_without_a_configuration_the_hal_window_is_shown(tmp_path, monkeypatch):
+    """A CORE built with no config.ini to read: the shipped default, a window."""
+    from pypts.config_handler import ConfigHandler, file_locations
+    from pypts.logger.log import DEFAULT_LOG_LEVEL
+
+    monkeypatch.setattr(file_locations, "config_file_path", lambda: tmp_path / "config.ini")
+    ConfigHandler.reset_for_testing()
+    try:
+        core = build_core_that_spawns_nothing()
+    finally:
+        ConfigHandler.reset_for_testing()
+
+    assert core.hal_link._show_window is True
+    assert core.hal_link._log_level == DEFAULT_LOG_LEVEL
+
+
 def test_a_crash_close_does_not_wait_for_the_submodule_threads():
     """
     A Sequencer thread stuck in a step would hold a plain join for ever. The
@@ -1395,7 +1568,7 @@ def test_core_main_holds_the_configuration_for_writing(config_file, monkeypatch)
     roles_seen_by_core = []
 
     class CoreThatRecordsTheRole:
-        def __init__(self, to_hmi, from_hmi):
+        def __init__(self, to_hmi, from_hmi, *, log_level):
             roles_seen_by_core.append(ConfigHandler().role)
 
         def start(self):
@@ -1484,3 +1657,14 @@ def test_a_change_with_no_configuration_to_write_is_answered_not_raised(tmp_path
     assert len(answers) == 1
     assert answers[0].accepted is False
     assert not (tmp_path / "config.ini").exists()
+
+
+
+def test_a_core_built_here_never_reads_the_real_config_ini(tmp_path):
+    """The autouse fixture above: Core() reads config.ini, and here that is in tmp_path."""
+    from pypts.config_handler import file_locations
+
+    assert tmp_path in file_locations.config_file_path().parents
+    core = build_core_that_spawns_nothing()
+    # No config.ini there: the shipped default, a window.
+    assert core.hal_link._show_window is True

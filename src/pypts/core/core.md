@@ -6,10 +6,17 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # core — the mediator
 
-`core.py` is the only file. `core_main()` is the Core process's entry point: it ignores
+| File | Holds |
+|---|---|
+| `core.py` | `Core`, the mediator, and `core_main()`, the Core process's entry point |
+| `hal_link.py` | `HalLink`, the connection to the HAL server: the startup connect, the HAL's log lines, the close (*The HAL link* below) |
+
+`core_main()` is the Core process's entry point: it ignores
 Ctrl+C (`ignore_keyboard_interrupt()` — the launcher decides when pypts stops), routes log
 records to the Logger (`init_logging()`, the only call in this process — the threads inherit
-it), opens the configuration for writing and runs `Core().start()`.
+it), opens the configuration for writing and runs `Core(to_hmi, from_hmi,
+log_level=log_level).start()`. `Core.start()` starts the HAL link (*The HAL link*) before
+`start_submodules()`.
 
 The Sequencer and the Report run as **daemon threads of this process**, started by
 `start_submodules()` and joined by `join_submodules()`; only the HMI is across a process
@@ -83,20 +90,28 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   - *Orderly* (`ShutdownRequested()`): `stop_all_modules()`, idempotent (a frontend may ask
     more than once), logs `Shutting down.` and sends `StopSequencer`. The Sequencer lets a
     running test finish its step and its teardown steps (`sequencer/sequencer.md`, *Stop*),
-    however long that takes. `SequencerStopped` → `StopReport`, so the stopped run's CSV tail
+    however long that takes. `SequencerStopped` → `hal_link.close()` (the run, its devices
+    closed by its `run_scope()`, is over), then `StopReport`, so the stopped run's CSV tail
     and `report.html` are written first; `ReportStopped` → `StopHmi`, so the frontend has
     shown everything the other two said. `check_stop_status()` ends the loop once all three
     have stopped, and `join_submodules()` then joins both threads with no timeout.
+  - *After either close*, once the loop has ended and `join_submodules()` returned,
+    `Core.start()` calls `hal_link.finish()`: a startup connect still running (a slow window
+    start) is joined for at most `FINISH_WAIT_S`, so it closes what it connected to before the
+    process - and with it that daemon thread - ends.
   - *Crash* (`ShutdownRequested(immediate=True)` — the CLI's Ctrl+C, the launcher's
-    `stop_core()` — and the watchdog): `close_at_once()` sends the stop to every module still
-    running, waits for nothing, and leaves; `join_submodules()` does not join (the threads
-    are daemons, a Sequencer thread may be stuck in a step). Overtaking an orderly close, it
-    stops whatever is left. With nothing left running (the launcher after an orderly close) it
-    only lets CORE leave, DEBUG only. Otherwise it logs `pypts is closing at once.` (INFO), or,
-    with a run open (`run_open`, RunStarted to RunFinished), a CRITICAL ending in
-    `BENCH_MAY_BE_ENERGISED`: the run's teardown never runs and the driver processes end
-    with CORE without `teardown()`. The watchdog's own CRITICAL says it instead
-    (`warn=False`).
+    `stop_core()` — and the watchdog): `close_at_once()` closes the HAL link, then sends the
+    stop to every module still running, waits for nothing, and leaves; `join_submodules()` does
+    not join (the threads are daemons, a Sequencer thread may be stuck in a step). The HAL
+    link's close runs on CORE's own thread, before the Stops (spec §6.4: a send handed to a
+    daemon thread could die unsent). Overtaking an orderly close, it stops whatever is left.
+    With nothing left running (the launcher after an orderly close) it only closes the HAL
+    link — idempotent, so after an orderly close it does nothing — and lets CORE leave, DEBUG
+    only. Otherwise it logs `pypts is closing at once.` (INFO), or, with a run open
+    (`run_open`, RunStarted to RunFinished), a CRITICAL ending in `BENCH_MAY_BE_ENERGISED`,
+    before the HAL link's close: the run's teardown never runs, and the HAL is sent
+    `close_all` (or `shutdown`) but not waited for. The watchdog's own CRITICAL says it
+    instead (`warn=False`).
   - A module that dies during an orderly close stops beating, and the watchdog turns the wait
     into a crash close. Nothing is killed — the threads are daemons and the HMI process
     belongs to the launcher.
@@ -110,6 +125,55 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   WARNING and answered (`refuse_config_parameter()`), never only logged. In force from the
   next start; nothing is propagated to running modules. See `config_handler/config_handler.md`
   → *Writing*.
+
+## The HAL link
+
+`hal_link.py`'s `HalLink(log_level, *, show_window, port=DEFAULT_PORT)` is the connection to
+the HAL server (spec `docs/superpowers/specs/2026-11-04-hal-server-design.md` §6.1, §6.2,
+§6.4, §9). It reads no configuration itself: the level and `show_window` are given to it.
+
+CORE makes it in `Core.__init__` as `self.hal_link`, with `log_level` (from `core_main()`,
+default `DEFAULT_LOG_LEVEL`) and `hal.show_window` (`hal_show_window_from_config()`; with no
+configuration to read — a CORE built by a test — `True`, a DEBUG line saying so). It starts it
+at startup (`Core.start()`, before the submodules) and closes it on both closes (*Shutdown
+choreography*). The Sequencer's run is the scope: `pyhal.run_scope()` waits for the startup
+connect (`sequencer/sequencer.md`).
+
+- **`start()`**, on the calling thread, never waits for the HAL:
+  1. *The switch*: `PYPTS_HAL` (`HAL_SWITCH_ENV`) set to `off` (any case, read from
+     `os.environ` here, not at import) → no connect; `note_unavailable(HAL_OFF)`, so
+     `get_device()` raises `The HAL is turned off for this process (PYPTS_HAL=off).`
+     `tests/conftest.py` sets it for the whole test suite, spawned processes included.
+  2. *The bench*: `bench_config()` DISCARDED → no connect; `get_device()` raises
+     `bench.ini was discarded at startup, so this start has no devices: <problem>`.
+  3. Otherwise `connect_pending()` (a run's `run_scope()` waits for the connect) and the
+     daemon thread `HAL connect`, which calls `pyhal.client.connect(bench.path, port,
+     scope=False, log_sink=_sink, log_level=log_level, show_window=show_window)`: a HAL found
+     running is connected to; none → one is started, with `show_window` through the HAL
+     monitor window.
+  Every path settles the pending connect: the thread calls `note_unavailable()` with the
+  reason whatever its connect raises, and a thread that cannot be started does the same, so
+  `run_scope()` never waits out `CONNECT_WAIT_S` for nothing. A second `start()`, or one after
+  `close()`, does nothing.
+- **Log lines**: INFO `Started the HAL server.` (`started_hal`) or `Connected to the HAL
+  server.`; WARNING `The HAL server could not be reached: <reason>` (`DriverError` text as it
+  is; any other exception as `<type>: <text>`, its traceback at DEBUG). Port, bench path, pid,
+  the HAL's log file and the window at DEBUG. The thread never raises.
+- **`_sink(level, message)`** is the `log_sink`: each record of the HAL's log is logged on
+  `pypts.core.hal_link` at its own level as `HAL: <message>` (`logger/logging_rules.md` §6).
+- **`close()`** — the close of spec §6.4, on the calling thread, idempotent, never raises: it
+  joins a connect still running at most `CLOSE_WAIT_S` (5 s, under the frontend's 15 s limit
+  for a silent CORE); connected → `HalClient.close()`, which ends the scope, closes the long
+  connection and, on a short connection, sends `shutdown` to a HAL this link started or else
+  `close_all`, without waiting for the answer. A connect still running after the wait finds
+  `_closed` set when it returns and closes that client at once itself.
+- **`finish()`** — after the loop (`Core.start()`, after `join_submodules()`), idempotent,
+  never raises, nothing to do without a running connect thread: it joins that thread for at
+  most `FINISH_WAIT_S` (20 s, under the launcher's `CORE_SHUTDOWN_TIMEOUT_S`, 30 s), DEBUG
+  lines before and if it is still running after. Without it CORE's process would exit
+  straight after `close()` and kill a connect that returns late - with the window up to
+  `HAL_WINDOW_START_TIMEOUT_S` (30 s) - before its `_closed` path closes the client, leaving a
+  HAL it started running.
 
 ## Routing table
 
@@ -135,8 +199,10 @@ what they produce.
 |------|-------|-------|---------|
 | `HEARTBEAT_TIMEOUT_S` | `utilities/heartbeat_manager.py` | 5.0 s | Silence before a WARNING |
 | `HEARTBEAT_FATAL_S` | `utilities/heartbeat_manager.py` | 15.0 s | Silence that takes the crash close |
+| `CLOSE_WAIT_S` | `core/hal_link.py` | 5.0 s | The longest `HalLink.close()` waits for a startup connect still running |
+| `FINISH_WAIT_S` | `core/hal_link.py` | 20.0 s | The longest `HalLink.finish()`, after the loop, waits for a connect still running after `close()` |
 
-No shutdown constant: neither close has a deadline. The launcher's `CORE_SHUTDOWN_TIMEOUT_S` (`launcher.md`) is the last resort for a wedged CORE.
+No shutdown deadline: neither close has one. The launcher's `CORE_SHUTDOWN_TIMEOUT_S` (`launcher.md`) is the last resort for a wedged CORE.
 
 The main loop sleeps 10 ms per tick (a literal in `main_loop()`, not a constant).
 

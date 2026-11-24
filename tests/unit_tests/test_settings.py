@@ -158,12 +158,28 @@ def test_the_settings_are_grouped_into_pages(qapp, tmp_path):
     dialog = a_settings_dialog(tmp_path)
 
     titles = [dialog.nav.item(row).text() for row in range(dialog.nav.count())]
-    assert titles == ["Folders", "Appearance", "Logging", "Report"]
+    assert titles == ["Folders", "Appearance", "Logging", "Hardware", "Report"]
     assert dialog.nav.currentItem().text() == "Folders"
 
     dialog.nav.setCurrentRow(1)
 
     assert dialog.pages.currentIndex() == 1
+    dialog.close()
+
+
+def test_the_hal_window_setting_is_on_the_hardware_page_with_its_hint(qapp, tmp_path):
+    from pypts.hmi.gui.settings_dialog import HINTS, LABELS, PAGES
+
+    dialog = a_settings_dialog(tmp_path)
+
+    assert "hal.show_window" in dialog.editors
+    assert ("Hardware", ("hal.show_window",)) in PAGES
+    assert LABELS["hal.show_window"] == "HAL: show its window"
+    hint = HINTS["hal.show_window"]
+    assert "starts the HAL" in hint
+    assert "already running" in hint
+    assert "next start" in hint
+    assert "HAL: show its window" in all_text(dialog)
     dialog.close()
 
 
@@ -672,7 +688,7 @@ def test_an_answer_with_no_dialog_open_goes_to_the_status_line(gui_factory):
 def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monkeypatch):
     from pypts.hmi.gui.settings_dialog import SettingsDialog
 
-    a_config_file({"meta.config_version": "5.0.0"})
+    a_config_file({"meta.config_version": "4.0.0"})
     instance, _outbox, _inbox = gui_factory()
     seen = {}
 
@@ -684,7 +700,7 @@ def test_a_discarded_settings_file_is_explained_in_the_dialog(gui_factory, monke
     monkeypatch.setattr(SettingsDialog, "exec", look_at_the_dialog)
     instance.window.settings_action.trigger()
 
-    assert "structure version 5.0.0" in seen["problem"]
+    assert "structure version 4.0.0" in seen["problem"]
     assert seen["can_save"] is False
 
 

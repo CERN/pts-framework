@@ -93,13 +93,13 @@ def test_catch_and_report_errors_lets_an_explicit_module_name_win():
         def __init__(self):
             self.core = QueueWrapper(outbox)
 
-        @catch_and_report_errors(module_name="pyhal.local_setup")
+        @catch_and_report_errors(module_name="pyhal.client")
         def explode(self):
             raise RuntimeError("driver lost")
 
     Named().explode()
 
-    assert outbox.get_nowait().source == "pyhal.local_setup"
+    assert outbox.get_nowait().source == "pyhal.client"
 
 
 def test_catch_and_report_errors_swallows_so_an_event_loop_survives():

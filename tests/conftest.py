@@ -1,5 +1,6 @@
 """
-Settings shared by every test: Qt offscreen, and a temporary bench.ini (below).
+Settings shared by every test: Qt offscreen, the HAL turned off, and a temporary bench.ini
+(below).
 
 Qt runs offscreen unless QT_QPA_PLATFORM already names a platform. Without
 this, every GUI test opens a real window on the developer's screen - well over
@@ -18,6 +19,15 @@ import pytest
 from pypts.config_handler import file_locations
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+# No CORE a test starts connects to the HAL server or starts one (core/hal_link.py): the
+# real port and the real bench stay untouched. Set at import time, so the engine processes
+# a test spawns inherit it. A test that wants a connect removes it with
+# monkeypatch.delenv("PYPTS_HAL", raising=False). A non-empty value already in the shell wins
+# (PYPTS_HAL=on runs the suite against a real HAL); an empty one (`PYPTS_HAL=`) does not, since
+# hal_link would take it for "on".
+if not os.environ.get("PYPTS_HAL", "").strip():
+    os.environ["PYPTS_HAL"] = "off"
 
 
 @pytest.fixture(autouse=True)

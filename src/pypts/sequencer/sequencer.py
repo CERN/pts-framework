@@ -16,16 +16,13 @@ A sequence runs on a thread of its own, not on the event loop.
 
 import threading
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from pyhal import DriverError
-from pyhal.bench import anchor_driver_files
-from pyhal.local_setup import LocalSetup
+import pyhal
 from pypts._version import __version__
 from pypts.config_handler import ConfigHandler
-from pypts.config_handler.bench_config import BenchOutcome, bench_config
 from pypts.logger.log import end_run_log, log, start_run_log
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.blocking_messages import PendingRequests
@@ -71,24 +68,6 @@ def reports_dir_from_config() -> str:
     return str(ConfigHandler().get_parameter("paths.reports_dir"))
 
 
-def bench_sections() -> dict[str, dict[str, str]]:
-    """
-    The devices of this machine's bench.ini - what the Sequencer reads. A
-    relative driver file is relative to bench.ini's folder.
-
-    Raises:
-        DriverError: the bench file was discarded at startup; the message
-            carries the real reason, so the step's error names the file to
-            fix rather than a section to add.
-    """
-    bench = bench_config()
-    if bench.outcome is BenchOutcome.DISCARDED:
-        raise DriverError(
-            f"bench.ini was discarded at startup, so this start has no devices: {bench.problem}"
-        )
-    return anchor_driver_files(bench.devices, bench.path.parent)
-
-
 #: How often a held run looks at the pause and stop flags. Short enough that
 #: Resume and Stop feel immediate; the hold is on the sequence thread, so this
 #: costs the event loop nothing.
@@ -129,8 +108,6 @@ class Sequencer:
               None until one has, and again after ForgetRecipe. A live object,
               not a copy - the two threads share one process. CORE holds the
               loaded recipe; this is only what the current run was given.
-        read_hardware_sections: returns the device sections of bench.ini by
-              logical name; handed to the LocalSetup each run builds.
         reports_dir: returns the folder each run's folder is made in.
     """
 
@@ -150,12 +127,6 @@ class Sequencer:
         self.sequence_thread: threading.Thread | None = None
         self.recipe: Recipe | None = None
         self.goodbye_sent = False
-        #: Where a run's devices are declared - the sections of bench.ini.
-        #: Read only when test code first asks for a device, so a run that
-        #: uses none never reads them. Tests replace it.
-        self.read_hardware_sections: Callable[[], Mapping[str, Mapping[str, Any]]] = (
-            bench_sections
-        )
         #: Where each run's folder is made - `paths.reports_dir`. Read once per
         #: run. Tests replace it, so a test run does not write into the reports
         #: folder of whoever runs the tests.
@@ -400,8 +371,8 @@ class Sequencer:
         # ended cleanly, and RunFinished is sent from the finally below.
         result = ResultType.ERROR
         # run_body() fills this in place once the steps are over, before it
-        # closes the devices - so a failure after the steps (devices that
-        # would not close) still leaves RunFinished its outcomes.
+        # closes the devices - so a failure after the steps (a run scope
+        # whose exit raised) still leaves RunFinished its outcomes.
         real_results: list[StepResult] = []
         try:
             # Leaving the with closes the streams and clears the slot - before
@@ -504,17 +475,18 @@ class Sequencer:
         Args:
             real_results: the caller's holder for the run's outcomes, filled in
                 place as soon as the steps are over - *before* the devices
-                close, so even a close that fails leaves the caller the
-                outcomes of the steps that ran.
+                close, so even a scope exit that raises leaves the caller
+                the outcomes of the steps that ran.
         """
         # A metadata global may be set in the recipe's own header rather than
         # by a step, so the first look happens before anything runs.
         self.send_changed_metadata(run_globals, metadata_names, reported_metadata)
         step_results: list[StepResult] = []
-        # The run's devices: opened by test code on first use, all closed when
-        # this block ends - after the teardown steps, which may use them too,
-        # and before RunFinished, so a run that has ended holds no device open.
-        with LocalSetup(self.read_hardware_sections):
+        # The run's devices, on the HAL server: opened by test code on first
+        # use, all closed when this block ends - after the teardown steps, which
+        # may use them too, and before RunFinished, so a run that has ended
+        # holds no device open. It waits first for CORE's startup connect.
+        with pyhal.run_scope():
             try:
                 result, step_results = run_sequence_body(runtime, sequence)
             except Exception as error:  # noqa: BLE001 - step failures must not crash the sequencer

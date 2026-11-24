@@ -86,7 +86,8 @@ step and say where it is; do not open one you only edited.
 ```
 src/pypts/
   launcher/      entry point (python -m pypts, the pypts command): pins spawn, parses args, spawns Logger + CORE + GUI (the CLI runs in the launcher's process)
-  core/          mediator: routes every link, runs Sequencer + Report as threads, heartbeats, shutdown
+  core/          mediator: routes every link, runs Sequencer + Report as threads, heartbeats, shutdown;
+                 hal_link.py connects to (or starts) the HAL server at startup and closes it
   sequencer/     event loop; run_sequence() starts execute_sequence() on a worker thread
   recipe/        recipe data layer: parser, schema (Pydantic models), validation
   step/          step types (PythonModule, UserInteraction, UserWrite, UserLoading, Wait, Sequence,
@@ -100,8 +101,9 @@ src/pypts/
   utilities/     error handling, heartbeats, local storage, recent recipes
   stream_handler/   the stream container: named (x, y) streams the test code pushes, one CSV each
   helper_applications/  recipe_creator (incl. verificator), recipe_editor (v2)
-src/pyhal/           hardware layer, a package of its own (never imports pypts): devices by logical
-                     name, one driver process each, SSH driver; context file pyhal.md
+src/pyhal/           hardware layer, a package of its own (never imports pypts): the standalone HAL
+                     server (python -m pyhal, TCP on localhost), its client, the monitor window;
+                     devices by logical name, one driver process each, SSH driver; context file pyhal.md
 src/pyrade_xy_graph/  copied plot package (CERN), later a dependency; deviations: DEVIATIONS.md
 resources/recipes/   one folder of demos per step type (<type>step_recipes/, HAL_recipes/,
                      stepimage_recipes/, stepgraph_recipes/), showcase_recipes/ (all of them:
@@ -109,9 +111,12 @@ resources/recipes/   one folder of demos per step type (<type>step_recipes/, HAL
                      (historical, the old engine's format — they do not load)
 ```
 
-**Processes:** CORE (with Sequencer + Report threads), the HMI frontend, and the Logger; the
-HAL adds one driver process per opened device (Pipe-connected, outside the message layer). Of
-the message links, only HMI↔CORE crosses a process boundary, so everything on it must stay
+**Processes:** CORE (with Sequencer + Report threads), the HMI frontend, and the Logger. The
+HAL server is a standalone process CORE connects to at startup, or starts (with its monitor
+window when `[hal] show_window` is on) and then stops at close; it outlives a PyPTS that is
+killed, and it holds one driver process per opened device (Pipe-connected). Its TCP link is
+outside the message layer: test code calls `pyhal` directly; tests turn it off with
+`PYPTS_HAL=off` (`tests/conftest.py`). Of the message links, only HMI↔CORE crosses a process boundary, so everything on it must stay
 **pickle-safe** — no queues, Qt objects or device handles. A thread entry point never calls
 `init_logging()`.
 
@@ -138,6 +143,7 @@ python -m pypts --mode headless --recipe x.yml [--sequence Name]   # exit codes:
 python -m pypts --log-level TRACE     # the full message trace (TRACE is the shipped default)
 python run_pypts.py / run_recipe_creator.py / run_recipe_editor.py   # same, with src on the path
 python run_hal.py                     # the HAL with its monitor window on PyPTS's bench.ini (created if missing); closing it stops the HAL
+python -m pyhal --stop                # stop a running HAL (--close-all: close its devices, leave it running)
 ```
 
 `pypts` (`[project.scripts]` in `pyproject.toml`) is the same entry point as `python -m pypts`.

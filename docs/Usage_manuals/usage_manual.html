@@ -316,7 +316,7 @@ the sequence continues with the next step.</p>
       <strong>Recipe Editor v2</strong> (opens the loaded recipe in the new editor — see
       <a href="#tools">Helper tools</a>) ·
       <strong>Engineering Mode</strong> (see <em>Engineering mode</em> below; greyed out during a run) ·
-      <strong>Settings</strong>: theme, window, folders, log level…; changes apply at the <em>next</em> start, except the theme and the window mode and size, which you try straight away — keep a window within 15 seconds or it goes back; Keep saves it. Save closes Settings once
+      <strong>Settings</strong>: theme, window, folders, log level, and on the <strong>Hardware</strong> page <em>HAL: show its window</em> (whether a HAL that PyPTS starts opens its monitor window; a HAL already running is used as it is)…; changes apply at the <em>next</em> start, except the theme and the window mode and size, which you try straight away — keep a window within 15 seconds or it goes back; Keep saves it. Save closes Settings once
 everything is saved, and only stays open to tell you about a setting that could not be saved. The <strong>Storage</strong> page shows the base folder and opens it in the file manager with <strong>Open</strong>; pypts never deletes reports or run logs, so remove what you no longer need there. <strong>Advanced → Clear recent recipes</strong> empties the Open Recent list straight away. <strong>Advanced → Restore default settings</strong> puts every setting back and restarts pypts; it does not work during a run.</td></tr>
   <tr><td>View</td><td><strong>Appearance</strong> (opens Settings on its Appearance page) · <strong>Full Screen</strong> (<kbd>F11</kbd>) for this session only — the window fills the screen but keeps its title bar</td></tr>
   <tr><td>About</td><td>Links to GitHub and the wiki</td></tr>
@@ -360,8 +360,10 @@ afresh.</p>
   <tr><td><code>help</code></td><td>Lists the commands.</td></tr>
   <tr><td><code>exit</code> (or <code>quit</code>)</td><td>Leaves PyPTS. A running test
       finishes its step and its teardown steps first, however long that takes.
-      <kbd>Ctrl+C</kbd> leaves at once instead: nothing waits for the test, and if one was
-      running the log says the devices on the bench may still be energised.</td></tr>
+      <kbd>Ctrl+C</kbd> leaves at once instead: nothing waits for the test (its teardown
+      steps do not run), and if one was running the log says the devices on the bench may still
+      be energised; PyPTS then asks the HAL server to tear every open device down, without
+      waiting for it.</td></tr>
 </table></div>
 <pre><code>pypts&gt; load_recipe resources/recipes/waitstep_recipes/wait_recipe.yml
 Recipe loaded: Wait demo (version 0.2)
@@ -469,8 +471,9 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
   <li><strong>config.ini</strong>: created on the first start. If it's broken or from an incompatible
       version (a different major number in <code>config_version</code>), PyPTS tells you, uses the defaults for that run, and leaves the file untouched.
       Version 2.0.0 added the <code>[recipe_editor]</code> section, version 3.0.0 the
-      <code>[gui] log_show_*</code> keys (the log buttons), and version 4.0.0 the
-      <code>[gui] log_show_debug</code> key: a file from before them is
+      <code>[gui] log_show_*</code> keys (the log buttons), version 4.0.0 the
+      <code>[gui] log_show_debug</code> key, and version 5.0.0 the <code>[hal] show_window</code> key
+      (whether a HAL that PyPTS starts opens its monitor window): a file from before them is
       ignored until you delete it to have it recreated (or add them and the version by hand).
       Fix the file, or delete it to have it recreated. Saving in <em>Edit → Settings</em> changes only
       that setting's line; your comments and anything you added by hand stay where they are.</li>
@@ -482,8 +485,9 @@ if [ $? -ne 0 ]; then echo "board test did not pass"; exit 1; fi</code></pre>
 <h2 id="hardware">10. Hardware devices</h2>
 <p>Test code reaches a device by a <strong>logical name</strong>; <code>bench.ini</code> (beside
 <code>config.ini</code>) says what that name is — one section per device, named after the device.
-Each device runs its driver in a process of its own, opened the first time a run
-asks for it and closed when the run ends.</p>
+The devices live in the <strong>HAL server</strong>, a program of its own (<code>pyhal</code>)
+that PyPTS connects to when it starts. The HAL runs each device's driver in a process of its
+own, opened the first time a run asks for it and closed when the run ends.</p>
 <pre><code>[ssh1]
 driver = pyhal.drivers.ssh.SshDriver
 host = 192.168.0.10
@@ -497,18 +501,64 @@ def read_kernel():
 <ul>
   <li><strong>Install the driver's library</strong>: <code>pip install "&lt;path to the clone&gt;[ssh]"</code>
       (also <code>[ni]</code>, <code>[serial]</code>, or <code>[hardware]</code> for all).</li>
+  <li><strong>PyPTS and the HAL server</strong>: at start, PyPTS connects to the HAL server
+      on port 29555, or starts one on its <code>bench.ini</code> when none is running. A HAL it
+      starts opens its <strong>monitor window</strong> (below) unless <em>Settings → Hardware →
+      HAL: show its window</em> (<code>[hal] show_window</code>) is off; that window closes
+      itself when the HAL stops. The run log says <code>Started the HAL server.</code> or
+      <code>Connected to the HAL server.</code>, and repeats the HAL's own log lines as
+      <code>HAL: ...</code> (for example <code>HAL: Device 'ssh1' connected.</code>). If the
+      HAL can be neither reached nor started, PyPTS starts anyway with a WARNING (<code>The
+      HAL server could not be reached: ...</code>), and every <code>get_device()</code> fails
+      with that reason; so it does when <code>bench.ini</code> was discarded. When PyPTS closes
+      it stops a HAL it started, after tearing every open device down; a HAL it found running
+      is left running, but PyPTS asks it to close <strong>every</strong> device it has open
+      (<code>close_all</code>), also those a script or another client opened. Closing PyPTS's
+      HAL window by hand stops the HAL: it asks first, since PyPTS is connected, and says what
+      that costs - the devices are torn down, and <strong>every device call fails until PyPTS
+      is restarted</strong> (<em>File → Restart</em>). On a machine with no display (Linux
+      over SSH, CI) the window cannot open: PyPTS logs a WARNING (<code>The HAL monitor window
+      could not be started; starting the HAL without it.</code>) and starts the HAL without
+      it. What a started window printed is in <code>hal_monitor_startup.log</code>, beside
+      the HAL's <code>hal_startup.log</code>, in pyhal's log folder.</li>
+  <li><strong>What changed with the HAL server</strong> (November 2026):
+    <ul>
+      <li><strong>PyPTS killed outright</strong> (Task Manager, <code>kill -9</code>) no longer
+          tears the devices down: the HAL leaves them open, exactly as they are, and a HAL that
+          PyPTS started keeps running. Close them with <code>python -m pyhal --close-all</code>
+          (or stop the HAL with <code>python -m pyhal --stop</code>).</li>
+      <li><strong>Closing at once</strong> (<kbd>Ctrl+C</kbd> in the CLI, a module that stops
+          responding) now does tear the devices down: PyPTS asks the HAL to close them all.
+          The run's teardown steps still do not run.</li>
+      <li><strong>A call that times out, or a driver that crashes</strong>, is torn down at
+          once, not at the end of the run; the next call opens the device again.</li>
+      <li><strong>Only plain values</strong> go to and come back from a device:
+          <code>None</code>, true/false, numbers, text, bytes, lists, and dicts with text keys.
+          A tuple comes back as a <strong>list</strong>; a numpy value is refused with an
+          error (convert it with <code>float(x)</code> or <code>x.tolist()</code>).</li>
+      <li><strong>Other programs may use the same device</strong>: there is one HAL per
+          machine, and a script or the HAL monitor connected to it reaches the same devices.
+          Their requests run one at a time, in arrival order; nothing reserves a device for
+          one client between calls.</li>
+    </ul></li>
   <li><strong>Call timeout</strong>: one call to a device may take at most 30 seconds, the
-      same for every device (not set in <code>bench.ini</code>). A call that takes longer is stopped and the step fails; the device is torn
-      down (switched off) when the run closes it: a teardown attempt first, then - if the
-      driver hung, crashed or was stopped - PyPTS connects to the device again and tears it
-      down on a fresh connection. The log says whether that worked (<em>may still be
-      energised</em> if not). Closing PyPTS during a run lets the step in progress finish,
-      then runs the teardown steps and closes the devices the same way, with no time limit:
-      a step that never returns keeps the window open, still showing the run, until PyPTS is
-      killed. If PyPTS
-      crashes, or you press <kbd>Ctrl+C</kbd> in the CLI, it closes at once and the devices
-      stay as they are. Every driver runs on PyPTS's own Python; a <code>python</code> key from an older version is refused when the device opens, so remove it.</li>
-  <li><strong>Edits and defaults</strong>: <code>bench.ini</code> is read once, at start, so a hand edit applies from the next start (<em>File → Restart</em> in the GUI). <strong>Restore default settings</strong> recreates <code>config.ini</code> only; <code>bench.ini</code> and your device sections are not touched.</li>
+      same for every device (not set in <code>bench.ini</code>). A call that takes longer is
+      stopped and the step fails, and the HAL tears the device down at once. A device is torn
+      down (switched off) with a teardown attempt first, then - if the driver hung, crashed or
+      was stopped - the HAL connects to the device again and tears it down on a fresh
+      connection. The log says whether that worked (<em>may still be energised</em> if not).
+      Closing PyPTS during a run lets the step in progress finish, then runs the teardown
+      steps and closes the devices the same way, with no time limit: a step that never
+      returns keeps the window open, still showing the run, until PyPTS is killed. Every
+      driver runs on the HAL's Python (PyPTS's own, when PyPTS starts the HAL); a
+      <code>python</code> key from an older version is refused when the device opens, so
+      remove it.</li>
+  <li><strong>Edits and defaults</strong>: the HAL reads <code>bench.ini</code> once, when it
+      starts, so a hand edit applies from the next HAL start: <em>File → Restart</em> in the GUI
+      when PyPTS started the HAL; a HAL that was already running keeps its devices until you
+      stop it (<code>python -m pyhal --stop</code>). <strong>Restore default settings</strong>
+      recreates <code>config.ini</code> only; <code>bench.ini</code> and your device sections
+      are not touched.</li>
   <li><strong>SSH</strong>: an unknown host key is refused; add the host to your
       <code>known_hosts</code>, name a file with <code>known_hosts =</code>, or set
       <code>accept_unknown_host = true</code>. A <code>password</code> key works, but the file is
@@ -549,9 +599,7 @@ def read_kernel():
       <code>0</code> done (with <code>--close-all</code> / <code>--stop</code>: every device was
       torn down); <code>1</code> serving: the bench file cannot be read, or the client modes: a
       device was not torn down; <code>2</code> the client modes: no HAL answered (or it is
-      already shutting down), and a usage error; <code>3</code> serving: the port cannot be used (taken, or reserved by the system).
-      <strong>PyPTS does not use the HAL server yet</strong>: until then it runs its devices
-      in its own process as described above.</li>
+      already shutting down), and a usage error; <code>3</code> serving: the port cannot be used (taken, or reserved by the system).</li>
   <li><strong>The HAL monitor</strong>: <code>python -m pyhal.monitor</code> opens a small, light window for the HAL on the port
       (<code>--port N</code>, default 29555). It shows whether the HAL is running (green), busy
       (amber, with what it runs and since when) or not reachable (grey), its pid, version, bench

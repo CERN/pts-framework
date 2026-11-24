@@ -65,6 +65,18 @@ def _stop(hal: HalServer) -> None:
     assert not waiter.is_alive(), "the HAL server did not exit"
 
 
+def _wait_for_connections(hal: HalServer, count: int, seconds: float = 10.0) -> None:
+    """Wait until the HAL has `count` connections: it has seen the others go."""
+    deadline = time.monotonic() + seconds
+    while True:
+        with hal._lock:
+            connections = len(hal._connections)
+        if connections == count:
+            return
+        assert time.monotonic() < deadline, f"the HAL still has {connections} connection(s)"
+        time.sleep(0.02)
+
+
 def _free_port() -> int:
     probe = socket.socket()
     probe.bind(("127.0.0.1", 0))
@@ -147,7 +159,8 @@ def test_status_reports_the_hal_and_its_devices(start_hal, make_link, tmp_path):
     assert report.version == messages.hal_version()
     assert report.bench == str((tmp_path / "bench.ini").resolve())
     assert report.log == "C:/logs/hal.log"
-    assert report.clients == 2
+    # Only `other`: the link's poll asks nothing but `status`, so the HAL does not count it.
+    assert report.clients == 1
     assert report.busy is None
     assert report.queued == 0
     states = {row["name"]: row["state"] for row in report.devices}
@@ -155,8 +168,8 @@ def test_status_reports_the_hal_and_its_devices(start_hal, make_link, tmp_path):
     assert link.hello is not None
     assert link.hello.nonce == "n-1"
     assert link.hello.open == ["m1"]
-    # The next poll uses the same connection: still two clients.
-    assert link.status().clients == 2
+    # The next poll uses the same connection: still one client.
+    assert link.status().clients == 1
     other.close()
 
 
@@ -226,11 +239,12 @@ def test_closing_the_link_sends_nothing(start_hal, make_link, tmp_path):
     spare = Client(hal.port)
     assert isinstance(spare.request("open", device="m1"), messages.Opened)
     link = make_link(hal.port)
-    assert link.status().clients == 2
+    assert link.status().clients == 1
+    _wait_for_connections(hal, 2)
     link.close()
     # Once the HAL has seen the link go, every line it sent has been taken: a close_all it
     # sent would be queued before the `info` below.
-    _wait_for_status(spare, lambda report: report.clients == 1)
+    _wait_for_connections(hal, 1)
     info = spare.request("info", device="m1")
     assert info.is_open is True
     assert marks.read_text(encoding="utf-8").splitlines() == ["connect m1"]

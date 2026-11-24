@@ -18,6 +18,11 @@ Threads:
   that has nothing queued or running, and a client whose answer has been on its way for
   WRITE_STALL_S (it does not read, so the write would block the request thread for ever).
 
+What counts as a client (`hello.clients`, `status.clients`): a connection that has sent a
+`beat` or any request but `status`. A HalClient beats every second, so it counts from its first
+beat; a connection that only asks `status` (the HAL monitor's poll) never counts, so it does
+not hide devices left open with no client using them (D40).
+
 Locks: `_lock` guards the queue, the client list, the status snapshot and the exit state
 (`_clients_changed` is a condition on it). Each connection has a write lock, held for one
 line; a write holds it and then `_lock` briefly, never the other way round. request_exit()
@@ -123,6 +128,8 @@ class _Connection:
     sock: socket.socket
     last_heard: float
     connected: bool = True
+    #: It has sent a `beat` or a request other than `status`: it counts as a client.
+    counted: bool = False
     #: When the write in progress started (time.monotonic()); None when nothing is written.
     writing_since: float | None = None
     write_lock: threading.Lock = field(default_factory=threading.Lock)
@@ -308,10 +315,12 @@ class HalServer:
             number = self._next_number
             self._next_number = number + 1
             connection = _Connection(number, sock, time.monotonic())
-            others = len(self._connections)
+            others = self._clients_counted()
             self._connections.append(connection)
             self._clients_changed.notify_all()
-        log.debug("Client %d connected from %s; %d other client(s).", number, address, others)
+        log.debug(
+            "Client %d connected from %s; %d other client(s) counted.", number, address, others
+        )
 
         def serve() -> None:
             self._connection_main(connection, others)
@@ -377,6 +386,8 @@ class HalServer:
         """One request read from the connection: any line resets the client's silence clock."""
         with self._lock:
             connection.last_heard = time.monotonic()
+            if not isinstance(request, messages.Status):
+                connection.counted = True
         match request:
             case messages.Beat():
                 pass
@@ -427,11 +438,19 @@ class HalServer:
                 version=self._version,
                 bench=str(self._bench_path),
                 log=self._log_path,
-                clients=len(self._connections),
+                clients=self._clients_counted(),
                 busy=busy,
                 queued=len(self._queue),
                 devices=devices,
             )
+
+    def _clients_counted(self) -> int:
+        """How many connections count as clients (module docstring). The caller holds the lock."""
+        counted = 0
+        for connection in self._connections:
+            if connection.counted:
+                counted = counted + 1
+        return counted
 
     def _send(self, connection: _Connection, data: bytes) -> bool:
         """Write one line to the connection; a failure makes the client gone."""

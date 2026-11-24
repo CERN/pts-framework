@@ -103,7 +103,8 @@ the file's only writer and does not log through itself. Its own diagnostics go t
 prefixed `[logger]`, which is the one place in the framework where a message bypasses all of
 this. The launcher records the Logger's lifecycle from the outside, at DEBUG.
 
-**Ordinary event lines carry no prefix.** `Recipe 'x.yml' loaded.` already says what happened;
+**Ordinary event lines carry no prefix** (one exception: the HAL server's own lines, re-logged
+as `HAL: <message>`, §6). `Recipe 'x.yml' loaded.` already says what happened;
 a `SEQUENCER:` in front of it is noise to the person the line was written for.
 
 ### 4.1 The lifecycle phrases are fixed
@@ -156,6 +157,7 @@ still traceable at DEBUG without the operator's panel saying the same thing thre
 | run folder, report generated | `report/report.py` | `core`, `hmi_client`, `gui`, `cli` |
 | operator housekeeping (clearing recents, a settings write, Restore default settings) | `gui`, `utilities`, `config_handler` | — |
 | status-bar text (`StatusChanged`) | nobody — it is a UI channel | `hmi_client` only |
+| the HAL server: `Started the HAL server.` / `Connected to the HAL server.` (INFO), `The HAL server could not be reached: <reason>` (WARNING); pid, port, bench path, window at DEBUG | `core/hal_link.py` | — |
 | a module lost / responding again | `core/core.py` (Sequencer, Report, HMI); `hmi/hmi_client.py` (CORE) | `core`, `hmi_client` (the raw liveness detail) |
 
 This is safe because **the GUI panel reads the log file, not the GUI process's own records**
@@ -219,6 +221,11 @@ Notes on that shape:
 - **A step that shows a graph nothing feeds** is logged by the Sequencer (`log`), at WARNING,
   when a step that ran (not SKIP) finishes: `Step '<name>' shows graph '<graph>', but no stream of that name was
   registered.` Once per such step; not logged for a run with no run folder.
+- **The HAL server's own log lines** (`pyhal`, a process of its own with its own log file)
+  reach this log through `core/hal_link.py`'s log sink: each record is logged on
+  `pypts.core.hal_link` **at the level the HAL wrote it at**, as `HAL: <message>` - the one
+  prefix this convention allows on an event line, because the line was written by another
+  program, and its wording is `pyhal`'s (`src/pyhal/pyhal.md`), not this file's.
 
 ### 6.0a Each run is logged in its own folder
 

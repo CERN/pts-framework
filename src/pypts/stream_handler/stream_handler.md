@@ -35,7 +35,7 @@ step's `graph:` from these files, at `stream_csv_path(RunStarted.run_dir, graph)
 ## Lifetime rules
 
 - One active session per process, in a module slot (not thread-local: test code may push from
-  threads of its own). It has the shape of `pyhal/local_setup.py`'s active setup, including the
+  threads of its own). It is the stream counterpart of `pyhal.run_scope()`'s active scope, with an
   identity-checked deactivate: leaving a session that is no longer the active one leaves the slot alone.
 - Leaving the `with` block closes every stream of the session. A handle that outlives its
   session drops pushes (one DEBUG line per stream) and never writes into the next run.

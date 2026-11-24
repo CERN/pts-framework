@@ -836,7 +836,9 @@ Edit > Settings (or View > Appearance) -> GUI._open_settings()
 **File → Restart** (`restart_action`, right after Open Config) calls `GUI.restart()` with
 `"pypts is restarting at the operator's request."`, so a hand edit of `config.ini` (the
 `[logging]` level, say) or of `bench.ini` (a device section) takes effect without leaving
-pypts by hand — both files are read once per start. No question; greyed out
+pypts by hand — both files are read once per start. A `bench.ini` edit needs a fresh HAL
+server too, which the restart gives only when this pypts started the HAL (its close stops it);
+a HAL that was already running keeps its devices (`src/pyhal/pyhal.md` → *Configuration*). No question; greyed out
 from `show_run_started()` to `show_run_finished()`. The new window opens with no recipe.
 `restart(reason)` logs `reason` at INFO; Restore default settings passes
 `"pypts is restarting, so the configuration is recreated from the template."`.
@@ -861,8 +863,8 @@ from `show_run_started()` to `show_run_finished()`. The new window opens with no
 `Edit → Settings` shows every setting in `config.ini` an operator may change and saves the
 ones they changed. `settings_dialog.py` is the dialog; `gui.py` wires it.
 
-**What it looks like.** A page list on the left — Folders, Appearance, Logging, Report
-(`PAGES`), then Advanced and Storage — and the page's settings on the right, one card each.
+**What it looks like.** A page list on the left — Folders, Appearance, Logging, Hardware
+(`hal.show_window`), Report (`PAGES`), then Advanced and Storage — and the page's settings on the right, one card each.
 Advanced holds no setting, only the Clear recent recipes and Restore default settings
 actions, so the dialog adds it only when one of them is offered. Ending the run when a module
 stops responding is not a setting: it is fixed behaviour (`core/core.md`).

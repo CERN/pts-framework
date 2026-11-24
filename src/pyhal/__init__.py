@@ -27,7 +27,6 @@ if TYPE_CHECKING:
     from pyhal.client import DEFAULT_PORT, HalClient, close_device, connect, run_scope
     from pyhal.connection_driver import ConnectionDriver
     from pyhal.device_control import DeviceInfo
-    from pyhal.local_setup import LocalSetup
 
 #: The names imported on first use, and the module each comes from.
 _LAZY_NAMES = {
@@ -38,7 +37,6 @@ _LAZY_NAMES = {
     "run_scope": "pyhal.client",
     "ConnectionDriver": "pyhal.connection_driver",
     "DeviceInfo": "pyhal.device_control",
-    "LocalSetup": "pyhal.local_setup",
 }
 
 
@@ -63,7 +61,6 @@ __all__ = [
     "DriverError",
     "HalClient",
     "Load",
-    "LocalSetup",
     "Other",
     "Scope",
     "close_device",

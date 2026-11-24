@@ -44,8 +44,9 @@ from dataclasses import dataclass
 #: belong to the refactor branch and are not continued. 2.0.0 (October 2026):
 #: the mandatory [recipe_editor] section. 3.0.0 (November 2026): the mandatory
 #: `[gui] log_show_*` keys. 4.0.0 (November 2026): the mandatory `[gui]
-#: log_show_debug` key.
-CONFIG_VERSION = "4.0.0"
+#: log_show_debug` key. 5.0.0 (November 2026): the mandatory `[hal]
+#: show_window` key.
+CONFIG_VERSION = "5.0.0"
 
 #: Values a boolean key accepts, borrowed from configparser's own vocabulary so
 #: that a file written by hand behaves the way an INI file is expected to.
@@ -128,6 +129,11 @@ SCHEMA: dict[str, dict[str, Field]] = {
         "log_show_info": Field("bool", "true", quiet=True),
         "log_show_warning": Field("bool", "true", quiet=True),
         "log_show_error": Field("bool", "true", quiet=True),
+    },
+    "hal": {
+        # Whether a HAL that PyPTS starts opens its monitor window. A HAL
+        # already running is used as it is. Read at start.
+        "show_window": Field("bool", "true"),
     },
     "recipe_editor": {
         # The Recipe Editor v2's own window, the same keys as [gui]: the editor

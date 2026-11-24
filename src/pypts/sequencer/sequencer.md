@@ -37,7 +37,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   the end - run log closed, then `RunFinished` - is in a `finally`, and the run is `ERROR`
   until `run_body()` and the summary have both returned. `run_body()` fills the caller's
   outcome list in place as soon as the steps are over - *before* the devices close - so an
-  `Exception` or `SystemExit` escaping either (devices that would not close, a broken summary)
+  `Exception` or `SystemExit` escaping either (a run scope whose exit raised, a broken summary)
   is reported with `report_error()` and the run is sent as `ERROR` with the outcomes of the
   steps that ran;
   otherwise the frontends would show the run as going for ever and the Report would never
@@ -79,11 +79,17 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   (`real_step_results()`): the row of a called sequence is not counted, the steps inside it
   are (`step/step.md` §2.8). Also watches `report_metadata` globals and forwards `RunMetadata` updates to CORE.
 - **The run's devices** — `run_body()` (called by `execute_sequence()`) runs the step layer inside
-  `with LocalSetup(self.read_hardware_sections):` (`src/pyhal/pyhal.md` → *Lifetime*). Test code opens a
-  device on first `get_device()`; every device closes when the block ends — after the teardown
-  steps, before `RunFinished`. `read_hardware_sections` defaults to
-  `bench_sections()` of `sequencer.py` (the devices of bench.ini, relative driver files anchored to bench.ini's folder) and is only called on the first `get_device()`, so a
-  run that uses no device never reads the device sections; tests replace it.
+  `with pyhal.run_scope():` (`src/pyhal/pyhal.md` → *The client*, *Lifetime*): the devices are
+  on the HAL server, which CORE connected to at startup (`core/core.md` → *The HAL link*). On
+  entry every run - also one that uses no device - waits for CORE's startup connect if that is
+  still running: normally seconds (a start with the window, about 6 s), at most
+  `CONNECT_WAIT_S`; a Stop is not acted on during that wait, only once the run's steps begin.
+  Test code opens a device on the HAL with its first `get_device()`; every
+  device the run asked for is closed when the block ends — after the teardown steps, before
+  `RunFinished`; a close that fails is a WARNING, never raised. With no HAL (the connect
+  failed, bench.ini was discarded, `PYPTS_HAL=off`) `get_device()` raises the reason; a run
+  that uses no device is not affected by that (only by the wait above). The Sequencer reads neither bench.ini nor the
+  device sections.
 - **Forgetting the recipe** — `self.recipe` is written only by `RunSequence` and keeps the
   last run's recipe afterwards. `ForgetRecipe` (CORE sends it when the operator unloads the
   recipe) runs `forget_recipe()`: `self.recipe = None`, and `forget_loaded_modules()` from
@@ -100,7 +106,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
   `send_goodbye()`. With one running it logs INFO `Waiting for the running test to stop.`,
   sets `stop_requested` - exactly what the Stop button sets - and `stopping`, and returns. The
   run then ends the ordinary way, with **no deadline**: the step in progress finishes, the
-  teardown steps run, the devices close at the `LocalSetup` block end, `RunFinished` goes out.
+  teardown steps run, the devices close at the `run_scope()` block end, `RunFinished` goes out.
   The event loop keeps turning meanwhile, so the heartbeat goes on; a question to the operator
   is not waited for once `stop_requested` is set (`ask_operator()`'s `should_abort`).
   `do_periodic_tasks()` sees `stopping` with the sequence thread gone and calls
