@@ -70,9 +70,7 @@ def isolated_files(tmp_path, monkeypatch):
     monkeypatch.setattr(
         file_locations, "editor_recent_recipes_path", lambda: tmp_path / "state" / "editor.json"
     )
-    ConfigHandler.reset_for_testing()
     yield
-    ConfigHandler.reset_for_testing()
 
 
 def a_config_file(settings=None):
@@ -86,7 +84,6 @@ def a_config_file(settings=None):
         rest = re.sub(rf"^{key} = .*$", f"{key} = {value}", rest, count=1, flags=re.MULTILINE)
         text = head + header + rest
     path.write_text(text, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
     ConfigHandler.bootstrap()
     return path
 

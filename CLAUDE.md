@@ -96,7 +96,8 @@ src/pypts/
   hmi/           hmi_client.py (protocol half every frontend shares), cli/, gui/ (PySide6)
   api/           Pts (headless engine driven from code), open_gui(), headless mode
   messages/      typed message dataclasses, one module per link, QueueWrapper
-  config_handler/ per-user config.ini and bench.ini (the bench's devices)
+  config_handler/ per-user config.ini and bench.ini (the bench's devices); stateless: every
+                 ConfigHandler() reads the file afresh; only CORE writes at runtime (a rule)
   logger/        Logger process: the single run-log writer
   utilities/     error handling, heartbeats, local storage, recent recipes
   stream_handler/   the stream container: named (x, y) streams the test code pushes, one CSV each
@@ -116,8 +117,8 @@ HAL server is a standalone process CORE connects to at startup, or starts (with 
 window when `[hal] show_window` is on) and then stops at close; it outlives a PyPTS that is
 killed, and it holds one driver process per opened device (Pipe-connected). Its TCP link is
 outside the message layer: test code calls `pyhal` directly; tests turn it off with
-`PYPTS_HAL=off` (`tests/conftest.py`). Of the message links, only HMI↔CORE crosses a process boundary, so everything on it must stay
-**pickle-safe** — no queues, Qt objects or device handles. A thread entry point never calls
+`PYPTS_HAL=off` (`tests/conftest.py`). Of the message links, HMI↔CORE and the Logger's heartbeat to CORE (`LoggerToCore`) cross a
+process boundary, so everything on them must stay **pickle-safe** — no queues, Qt objects or device handles. A thread entry point never calls
 `init_logging()`.
 
 **Messaging:** modules never call each other or touch queues — everything goes through CORE,
@@ -142,7 +143,7 @@ python -m pypts --mode cli            # CLI
 python -m pypts --mode headless --recipe x.yml [--sequence Name]   # exit codes: api/api.md
 python -m pypts --log-level TRACE     # the full message trace (TRACE is the shipped default)
 python run_pypts.py / run_recipe_creator.py / run_recipe_editor.py   # same, with src on the path
-python run_hal.py                     # the HAL with its monitor window on PyPTS's bench.ini (created if missing); closing it stops the HAL
+python run_hal.py                     # start a HAL with its monitor window on PyPTS's bench.ini (created if missing), or open the monitor on a running one; closing the window leaves the HAL running
 python -m pyhal --stop                # stop a running HAL (--close-all: close its devices, leave it running)
 ```
 

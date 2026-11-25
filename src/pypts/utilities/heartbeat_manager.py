@@ -43,14 +43,18 @@ HEARTBEAT_TIMEOUT_S = 5.0
 HEARTBEAT_FATAL_S = 15.0
 
 #: The names CORE knows the modules by. Each module puts its own name on every
-#: Heartbeat as `source`, which is what lets one CORE handler serve all three
-#: links instead of three that differ only in which dict key they write.
+#: Heartbeat as `source`, which is what lets one CORE handler serve every
+#: link instead of one per link that differ only in which dict key they write.
 HMI = "hmi"
 SEQUENCER = "sequencer"
 REPORT = "report"
 
-#: CORE's own name, for the one heartbeat that travels the other way. Not in the
-#: three above: those are the modules CORE *watches*, and it does not watch
+#: The Logger's name. CORE watches it like the three above, but does not stop it:
+#: the launcher does, after CORE has left (Core.watched, not Core.modules).
+LOGGER = "logger"
+
+#: CORE's own name, for the one heartbeat that travels the other way. Not with
+#: the four above: those are the modules CORE *watches*, and it does not watch
 #: itself. See HeartbeatWatch for why only the HMI is sent one.
 CORE = "core"
 

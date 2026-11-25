@@ -18,8 +18,10 @@ Either way `restart_pypts()` replays the same command line: for the `pypts` comm
   the launcher's: CORE connects to it or starts it, detached (`core/core.md` → *The HAL
   link*). A CORE the launcher has to terminate sends the HAL nothing, so a HAL it started
   keeps running, its devices as they are (`python -m pyhal --stop` stops it).
-- **Queue construction** — builds the HMI↔CORE link (the only cross-process pair) and
-  the Logger queue. Passes them into child processes as constructor arguments.
+- **Queue construction** — builds the HMI↔CORE link, the Logger queue, and the Logger's
+  heartbeat link to CORE (`from_logger`, `LoggerToCore`, kept on the `Engine`) — the three
+  that cross a process boundary. Passes them into child processes as constructor arguments:
+  `logger_main(..., from_logger)` sends on it, `core_main(..., from_logger)` watches it.
 - **Config bootstrap** — runs `ConfigHandler.bootstrap()` before spawning anything.
   Shows a notice when the config was created (information) or discarded (warning): a popup in GUI mode — falling back to a
   console banner when the message box cannot open — and a console banner in every other
@@ -82,16 +84,16 @@ headless mode uses 2 for a run that ended in ERROR/STOP.
 ## Restart
 
 The GUI can ask for pypts to be started again: from File → Restart, so a hand-edited
-`config.ini` takes effect, and after Settings → Advanced → Restore default settings deleted
-`config.ini`, so the file is recreated from the template (`hmi/gui/gui.md` §10a). It asks by
+`config.ini` takes effect, and after Settings → Advanced → Restore default settings had CORE
+rewrite `config.ini` with the template defaults, so they take effect (`hmi/gui/gui.md` §10a). It asks by
 shutting down the ordinary way and exiting with `RESTART_EXIT_CODE` (75, in
 `utilities/common.py` - the launcher must not import Qt, the GUI must not import the launcher).
 
 `run_gui()` returns True for that exit code. `main()` logs "pypts is restarting.", lets
 `stop_engine()` finish - CORE, the Logger, the run log all closed - and only then calls
 `restart_pypts()`: `subprocess.call([sys.executable, *sys.orig_argv[1:]])`, the same command
-line in a fresh process, so every singleton starts empty and the normal bootstrap recreates
-the file. A HAL the old CORE started was sent `shutdown` by its close, so the new CORE starts a
+line in a fresh process, so everything read once at start (the log level, the window, the
+logging set-up) is read again from the file. A HAL the old CORE started was sent `shutdown` by its close, so the new CORE starts a
 fresh one, which reads `bench.ini` again; a HAL that was already running is kept. It **waits** for the new pypts and exits with its code, because a console window that was
 opened just for this process closes when it ends and would take the new one with it; each
 restart therefore leaves one idle launcher underneath. The same command line means the same

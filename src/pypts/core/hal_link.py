@@ -8,10 +8,10 @@ get_device() raises HAL_OFF. Then the bench: a bench.ini that was discarded at s
 connect either, and get_device() raises the reason. Otherwise it announces the connect to the
 client (connect_pending(), so a run's run_scope() waits for it) and starts the daemon thread
 `HAL connect`, which calls pyhal.client.connect() on bench.ini's path: it connects to a HAL
-that is running, or starts one - with `show_window`, the HAL monitor window that starts it. A
-connect that fails is a WARNING; get_device() raises its reason. Every path of start() and of
-the thread settles the pending connect, so run_scope() never waits out CONNECT_WAIT_S for
-nothing.
+that is running, or starts one - with `show_window`, one that opens its monitor window
+(`python -m pyhal --window`; the HAL owns it). A connect that fails is a WARNING;
+get_device() raises its reason. Every path of start() and of the thread settles the pending
+connect, so run_scope() never waits out CONNECT_WAIT_S for nothing.
 
 The HAL's log lines come back through _sink(), logged here at their own level as `HAL: <text>`.
 
@@ -21,8 +21,8 @@ sends `shutdown` to a HAL this link started, else `close_all`. A connect still r
 the wait closes its client itself, at once, when it returns. Idempotent; never raises.
 
 finish() is for after CORE's loop, just before its process exits: the connect thread is a
-daemon, so the exit would kill a connect that returns late (a slow window start, up to
-HAL_WINDOW_START_TIMEOUT_S) before it closes its client, and a HAL it started would never be
+daemon, so the exit would kill a connect that returns late (a slow HAL start, up to
+HAL_START_TIMEOUT_S) before it closes its client, and a HAL it started would never be
 shut down. finish() joins that thread for at most FINISH_WAIT_S, so its own close path sends
 the parting request. Idempotent; never raises; nothing to do without a thread.
 """
@@ -61,7 +61,7 @@ class HalLink:
         """
         Args:
             log_level: the log level of a HAL this link starts (one found running keeps its own).
-            show_window: when no HAL is running, start the HAL monitor window, which starts it.
+            show_window: a HAL this link starts opens its monitor window.
             port: the HAL's port.
         """
         self._log_level = log_level

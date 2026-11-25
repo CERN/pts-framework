@@ -513,14 +513,13 @@ def read_kernel():
       with that reason; so it does when <code>bench.ini</code> was discarded. When PyPTS closes
       it stops a HAL it started, after tearing every open device down; a HAL it found running
       is left running, but PyPTS asks it to close <strong>every</strong> device it has open
-      (<code>close_all</code>), also those a script or another client opened. Closing PyPTS's
-      HAL window by hand stops the HAL: it asks first, since PyPTS is connected, and says what
-      that costs - the devices are torn down, and <strong>every device call fails until PyPTS
-      is restarted</strong> (<em>File → Restart</em>). On a machine with no display (Linux
-      over SSH, CI) the window cannot open: PyPTS logs a WARNING (<code>The HAL monitor window
-      could not be started; starting the HAL without it.</code>) and starts the HAL without
-      it. What a started window printed is in <code>hal_monitor_startup.log</code>, beside
-      the HAL's <code>hal_startup.log</code>, in pyhal's log folder.</li>
+      (<code>close_all</code>), also those a script or another client opened. The window
+      belongs to the HAL: PyPTS starts <code>python -m pyhal --window</code>, and the HAL opens
+      the window and closes it when it stops. <strong>Closing the window by hand only closes
+      the window</strong>: the HAL and its devices carry on, and PyPTS is not affected. The
+      window never starts a HAL. On a machine with no display (Linux over SSH, CI) the window
+      cannot open and the HAL runs without it; why is in <code>hal_monitor_startup.log</code>,
+      beside the HAL's <code>hal_startup.log</code>, in pyhal's log folder.</li>
   <li><strong>What changed with the HAL server</strong> (November 2026):
     <ul>
       <li><strong>PyPTS killed outright</strong> (Task Manager, <code>kill -9</code>) no longer
@@ -557,7 +556,7 @@ def read_kernel():
       starts, so a hand edit applies from the next HAL start: <em>File → Restart</em> in the GUI
       when PyPTS started the HAL; a HAL that was already running keeps its devices until you
       stop it (<code>python -m pyhal --stop</code>). <strong>Restore default settings</strong>
-      recreates <code>config.ini</code> only; <code>bench.ini</code> and your device sections
+      rewrites <code>config.ini</code> only; <code>bench.ini</code> and your device sections
       are not touched.</li>
   <li><strong>SSH</strong>: an unknown host key is refused; add the host to your
       <code>known_hosts</code>, name a file with <code>known_hosts =</code>, or set
@@ -609,19 +608,19 @@ def read_kernel():
       first); the times shown are when the monitor received each record, and a HAL that has
       just been started shows its log from the point the monitor found it. The buttons
       <em>Close all devices</em> and <em>Stop HAL</em> ask first (they act on every open device,
-      also those of other clients); <em>Start HAL</em> is enabled only when no HAL answers and a
-      bench file is known: <code>--bench FILE</code> names it, and
-      <code>python -m pyhal.monitor</code> without <code>--bench</code> has no Start
-      (<code>--log-dir DIR</code> is the log folder of a HAL it starts). The monitor sends
+      also those of other clients). The monitor <strong>never starts a HAL</strong>: with none
+      running it shows <em>not reachable</em> and picks one up as soon as it starts. It sends
       nothing on its own: closing its window leaves the HAL and its devices as they are. If the
       window is closed while <em>Close all</em> or <em>Stop</em> is still running, the monitor
-      waits for it to finish before it exits.</li>
+      waits for it to finish before it exits. <code>python -m pyhal --bench FILE
+      --window</code> starts a HAL that opens this window itself and closes it when the HAL
+      stops.</li>
   <li><strong>The HAL with its window, from a checkout</strong>: <code>python run_hal.py</code>
-      (no arguments) opens the monitor on PyPTS's own <code>bench.ini</code> (created from the
-      template when it is missing) in <em>serve</em> mode (<code>python -m pyhal.monitor --bench
-      FILE --serve</code>): the window starts the HAL when none is running, or attaches to the
-      one that is, and <strong>closing the window stops the HAL</strong>, tearing every open
-      device down; when other clients (PyPTS, a script) are connected it asks first.</li>
+      (no arguments), on PyPTS's own <code>bench.ini</code> (created from the template when it
+      is missing). With no HAL running it starts one in the background with its window
+      (<code>python -m pyhal --window</code>) and returns; <strong>closing the window leaves
+      the HAL running</strong> - stop it with the window's <em>Stop HAL</em> or <code>python -m
+      pyhal --stop</code>. With a HAL already running it only opens the monitor on it.</li>
   <li>Headless and API runs get the same devices.</li>
 </ul>
 

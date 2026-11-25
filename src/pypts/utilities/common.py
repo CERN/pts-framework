@@ -11,8 +11,8 @@ import signal
 from collections.abc import Mapping
 
 #: The exit code the GUI process ends with when it wants pypts started again -
-#: after Settings > Advanced > Restore default settings deleted config.ini, so
-#: that a fresh start recreates it from the template. The launcher reads it
+#: after File > Restart, or after Settings > Advanced > Restore default settings
+#: had CORE rewrite config.ini, so that a fresh start reads it. The launcher reads it
 #: once the GUI process has ended
 #: (`startup.run_gui()`). Here rather than in either of them because the launcher
 #: must not import Qt and the GUI has no business importing the launcher. 75 is

@@ -81,6 +81,7 @@ from pypts.messages.common_messages import (
 from pypts.messages.core_hmi_communication import (
     ConfigParameterResult,
     CoreToHmi,
+    DefaultConfigRestored,
     HmiToCore,
     ReportReady,
 )
@@ -143,8 +144,8 @@ def window_settings() -> tuple[str, str, int, int]:
     """
     The [gui] settings the window opens with: theme, window mode, width, height.
 
-    Read once, at startup, like every other setting - a change made in Edit ->
-    Settings applies from the next start (the theme and the window are previewed
+    Read once, when the window opens - a change made in Edit -> Settings
+    applies from the next start (the theme and the window are previewed
     straight away). A GUI with no configuration to ask (one built by a test, or
     a frontend started by hand) opens with the template's defaults, which is
     what a fresh installation would have written.
@@ -679,10 +680,6 @@ class GUI(HmiClient):
         #: The Settings dialog while it is open, so CORE's answers can be handed
         #: to it. None the rest of the time.
         self.settings_dialog: SettingsDialog | None = None
-        #: Settings CORE confirmed saving this session, dotted key -> text. This
-        #: process read its configuration once and never re-reads it, so without
-        #: these the dialog would reopen showing the old values.
-        self._saved_settings: dict[str, str] = {}
 
         # Status bar
         self.status_label = QLabel("Status: Idle")
@@ -1328,8 +1325,8 @@ class GUI(HmiClient):
         the settings, save the changed ones via CORE, and offer the Storage page,
         Clear recent recipes and Restore default settings.
 
-        The values shown are the ones this process read at startup, with the
-        changes CORE confirmed this session laid over them. The dialog previews
+        The values shown are read from config.ini as the dialog opens, so a
+        change CORE saved a moment ago is already there. The dialog previews
         a theme through `_use_theme()` and a window through `_use_window()`, and
         clears the recents through `_clear_recent_recipes()`. After it closes, a
         confirmed Restore default settings restores them. Decorated to report
@@ -1350,10 +1347,9 @@ class GUI(HmiClient):
         for section, options in config.get_whole_config().items():
             for key, value in options.items():
                 values[f"{section}.{key}"] = setting_text(value)
-        values.update(self._saved_settings)
 
-        # Every process applies the same discard rule to the same file, so this
-        # process's verdict is CORE's too - and CORE would refuse every change.
+        # Every read applies the same discard rule to the same file, so this
+        # read's verdict is CORE's too - and CORE would refuse every change.
         problem = None
         if config.bootstrap_outcome is BootstrapOutcome.DISCARDED:
             problem = config.bootstrap_problem or "The settings file could not be read."
@@ -1384,7 +1380,7 @@ class GUI(HmiClient):
 
         if dialog.saved:
             # The dialog closes on a clean save rather than showing a result page.
-            self.show_status("Settings saved; they apply from the next start")
+            self.show_status("Settings saved; most apply from the next start")
         if dialog.recents_cleared:
             self.show_status("Recent recipes list cleared")
         if dialog.restore_requested:
@@ -1408,9 +1404,6 @@ class GUI(HmiClient):
         log.debug(
             "ConfigParameterResult received for '%s': accepted=%s.", result.key, result.accepted
         )
-        if result.accepted:
-            self._saved_settings[result.key] = result.value
-
         filter_group = None
         for group, key in LOG_FILTER_KEYS.items():
             if key == result.key:
@@ -1433,7 +1426,7 @@ class GUI(HmiClient):
         # CORE has already logged the outcome; the status line is the one place
         # left to show it.
         if result.accepted:
-            self.show_status(f"Setting {result.key} saved; it applies from the next start")
+            self.show_status(f"Setting {result.key} saved")
         else:
             self.show_status(f"Setting {result.key} not saved: {result.reason}")
 
@@ -1490,11 +1483,10 @@ class GUI(HmiClient):
         """
         Close pypts and have the launcher start it again, with the same command line.
 
-        Used by File -> Restart, and by Restore default settings once config.ini
-        is deleted. Every process read its configuration once, at startup, so a
-        fresh start is what puts a hand-edited config.ini in force, or recreates
-        the file from the template - through the one code path that already does
-        both. The shutdown is the ordinary one
+        Used by File -> Restart, and by Restore default settings once CORE has
+        rewritten config.ini. Every process read its configuration once, at
+        startup, so a fresh start is what puts a hand-edited or restored
+        config.ini in force. The shutdown is the ordinary one
         (ShutdownRequested -> CORE stops every module -> StopHmi -> on_stop());
         only the GUI process's exit code differs, and the launcher acts on it.
         Under pypts.api.open_gui() nothing restarts: the window just closes.
@@ -1509,26 +1501,27 @@ class GUI(HmiClient):
 
     def _restore_default_settings(self) -> None:
         """
-        Settings > Advanced > Restore default settings, once confirmed: delete
-        config.ini and restart, so the launcher's bootstrap recreates it from the
-        template. Deleting rather than rewriting: the restart is needed anyway
-        for the values to be in force, and bootstrap is the one path that
-        already writes a fresh file with this machine's paths filled in.
+        Settings > Advanced > Restore default settings, once confirmed: ask CORE
+        to rewrite config.ini with the template defaults. CORE is the single
+        runtime writer, so the GUI never touches the file; the restart follows
+        CORE's answer, at show_default_config_restored().
         """
-        config_file = file_locations.config_file_path()
-        try:
-            config_file.unlink(missing_ok=True)
-        except OSError as error:
-            report_problem(
-                self,
-                f"The default settings could not be restored: {config_file} could not be "
-                f"deleted ({error}).",
-                severity=ErrorSeverity.ERROR,
-                operation="restore_default_settings",
-            )
-            return
-        log.info("The operator restored the default settings.")
-        self.restart("pypts is restarting, so the configuration is recreated from the template.")
+        log.debug("Asking CORE to restore the default settings.")
+        self.show_status("Restoring the default settings")
+        self.restore_default_config()
+
+    def show_default_config_restored(self, result: DefaultConfigRestored) -> None:
+        """
+        CORE's answer to Restore default settings. Accepted: restart, because
+        every process read its configuration once, at startup, and the defaults
+        are in force only from a fresh start. Refused: CORE has already logged
+        why; the status line shows it, and nothing restarts.
+        """
+        log.debug("DefaultConfigRestored received: accepted=%s.", result.accepted)
+        if result.accepted:
+            self.restart("pypts is restarting, so the default settings apply.")
+        else:
+            self.show_status(f"Default settings not restored: {result.reason}")
 
     # --- Opening a recipe, and the recipes opened before ------------------------
 

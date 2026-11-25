@@ -1,9 +1,10 @@
 """
-The HAL monitor's window: a running HAL server's state, its devices, Close all / Stop / Start,
-and the HAL log's latest records. Plain and developer-facing.
+The HAL monitor's window: a running HAL server's state, its devices, Close all / Stop, and the
+HAL log's latest records. Plain and developer-facing. It only connects to a HAL: it never
+starts one, and it stops one only when its user presses Stop HAL (user decision 2026-11-24).
 
 **Threads.** Nothing here touches a socket, or anything that can block, on the GUI thread:
-every MonitorLink call (status, close_all, stop, start, close, log_tail) and every LogTail
+every MonitorLink call (status, close_all, stop, close, log_tail) and every LogTail
 stop runs on a worker `threading.Thread`, and the worker reports back through a signal of
 `_Signals`, which lives on the GUI thread, so the slot runs there (a queued connection).
 
@@ -12,10 +13,9 @@ stop runs on a worker `threading.Thread`, and the worker reports back through a 
   result has been shown). The poll worker also owns the log tail: when the status names
   another (pid, log) than the tail follows, it stops the old tail and starts a new one on the
   link's last `hello.log`. Only one poll runs at a time, so the tail is never touched by two.
-- **An action** (`HAL monitor action`): Close all, Stop or Start, after the user confirmed
-  (Start asks nothing). One at a time; while it runs the three buttons are disabled and the
-  status bar says what runs. Its result goes to the status bar, and a list of devices not torn
-  down also to a warning dialog.
+- **An action** (`HAL monitor action`): Close all or Stop, after the user confirmed. One at a
+  time; while it runs both buttons are disabled and the status bar says what runs. Its result
+  goes to the status bar, and a list of devices not torn down also to a warning dialog.
 - **The log tail** calls its sink on its own thread: the sink only stamps the record with the
   time it arrived and emits it; it never blocks, logs, or calls drain()/stop().
 - **Closing** (`HAL monitor close`): closeEvent stops the timer and starts a worker that waits
@@ -23,21 +23,14 @@ stop runs on a worker `threading.Thread`, and the worker reports back through a 
   window is gone before that worker ends. An action still running goes on to its end, its
   result unshown, and the process waits for it (wait_before_exit(), which `__main__` calls
   after the event loop): a Stop the user pressed is carried out even if the window is closed.
-- **Serve mode** (`serve=True`, `run_hal.py`): the window owns the HAL. When the first poll
-  finds none, it runs Start on its own; a HAL that answers is attached to. Closing the window
-  stops the HAL: when other clients are connected (a connection that only polls `status`, as
-  this window's does, is not one), closeEvent asks first (No keeps the window open); then
-  wait_before_exit(), after any running action, sends the Stop itself - on the main thread,
-  after the event loop - and waits for its end. `log_level` and `nonce` go to that
-  Start (`connect(show_window=True)` passes its nonce, so the client owns the HAL).
-- **Exit with the HAL** (`exit_with_hal=True`, serve mode; what `connect(show_window=True)`
-  starts): once a poll has seen a HAL answer, EXIT_AFTER_MISSED_POLLS polls in a row that find
-  none close the window (one slow poll does not), with no question and no Stop, since there is
-  nothing left to stop. The window follows the first HAL it saw, by its pid: a poll that finds
-  a HAL of another pid (another starter's, started after this one had gone) counts as one that
-  found none, so the window never latches onto it. Closed by hand, the window behaves as in
-  serve mode, and its question also says what stopping the HAL costs the program that started
-  it (STARTER_WARNING).
+  Closing the window never stops the HAL.
+- **Exit with the HAL** (`exit_with_hal=True`; what `python -m pyhal --window` opens): once a
+  poll has seen a HAL answer, EXIT_AFTER_MISSED_POLLS polls in a row that find none close the
+  window (one slow poll does not). The window follows the first HAL it saw, by its pid: a poll
+  that finds a HAL of another pid (another starter's, started after this one had gone) counts
+  as one that found none, so the window never latches onto it. Before any HAL has answered the
+  window stays. The HAL ends its window at its own exit; this is the net for a HAL that was
+  killed without one.
 - **A poll that raises** (the link returns None for every failure it knows) still ends with
   `polled(None)`; the first such failure is logged at WARNING, the next ones at DEBUG.
 
@@ -73,7 +66,6 @@ from PySide6.QtWidgets import (
 )
 
 from pyhal import client
-from pyhal.base_driver import DriverError
 from pyhal.client import DEFAULT_PORT
 from pyhal.hal_log import TRACE
 from pyhal.monitor.link import MonitorLink
@@ -97,14 +89,7 @@ RED = "#e03030"
 LEVEL_FILTERS = {"DEBUG": 0, "INFO": logging.INFO, "WARNING": logging.WARNING}
 DEFAULT_LEVEL_FILTER = "INFO"
 
-NO_BENCH_TOOLTIP = "No bench file: start the monitor with --bench FILE"
 TEARDOWN_WARNING = "Every open device is torn down, also those of other clients."
-#: exit_with_hal: what stopping the HAL costs the program that started the window (PyPTS).
-STARTER_WARNING = (
-    "The program that started this window (PyPTS) is using this HAL: stopping it tears its "
-    "devices down, and PyPTS cannot reach them again until it is restarted "
-    "(File \N{RIGHTWARDS ARROW} Restart)."
-)
 
 #: exit_with_hal: how many polls in a row must find no HAL, after one was seen, before the
 #: window closes; more than one, so a single poll slower than POLL_TIMEOUT_S does not.
@@ -149,32 +134,16 @@ class MonitorWindow(QMainWindow):
         self,
         port: int = DEFAULT_PORT,
         *,
-        bench: str | None = None,
-        log_dir: str | None = None,
-        serve: bool = False,
-        log_level: int | None = None,
-        nonce: str | None = None,
         exit_with_hal: bool = False,
     ) -> None:
         """
         Args:
             port: the HAL's port.
-            bench: the bench file Start serves; None: Start stays disabled.
-            log_dir: the log folder a HAL that Start starts writes into; None: pyhal's default.
-            serve: the window owns the HAL: it starts one (needs `bench`) when none answers,
-                and closing the window stops it (*Serve mode* above).
-            log_level: the log level of a HAL that Start starts; None: the HAL's default.
-            nonce: the start nonce of a HAL that Start starts; None: a fresh one.
-            exit_with_hal: with `serve`, the window closes itself once the HAL it has seen
-                is gone (*Exit with the HAL* above).
+            exit_with_hal: the window closes itself once the HAL it has seen is gone
+                (*Exit with the HAL* above).
         """
         super().__init__()
         self.port = port
-        self.bench = bench
-        self.log_dir = log_dir
-        self.serve = serve
-        self.log_level = log_level
-        self.nonce = nonce
         self.exit_with_hal = exit_with_hal
         self.link = MonitorLink(port)
         #: The log file the tail follows; "" while none. Set by the poll worker.
@@ -192,10 +161,6 @@ class MonitorWindow(QMainWindow):
         self._workers: list[threading.Thread] = []
         self._poll_thread: threading.Thread | None = None
         self._poll_failed_before = False
-        #: Serve mode: the first poll's result has been acted on (Start, or attach).
-        self._served = False
-        #: Serve mode: the window was closed, so wait_before_exit() stops the HAL.
-        self._stop_on_exit = False
         #: A poll has seen a HAL answer (exit_with_hal: only then does a HAL that has gone
         #: close the window).
         self._seen_hal = False
@@ -204,8 +169,6 @@ class MonitorWindow(QMainWindow):
         #: exit_with_hal: the pid of the first HAL a poll saw; a report of another pid counts
         #: as a poll that found none.
         self._hal_pid: int | None = None
-        #: exit_with_hal: the window is closing itself because the HAL has gone.
-        self._hal_gone = False
         #: The other clients the last poll counted; 0 while no HAL answers.
         self._other_clients = 0
         #: The running action's worker and title; None when none runs.
@@ -272,17 +235,8 @@ class MonitorWindow(QMainWindow):
         self.close_all_button.clicked.connect(self._close_all_pressed)
         self.stop_button = QPushButton("Stop HAL")
         self.stop_button.clicked.connect(self._stop_pressed)
-        self.start_button = QPushButton("Start HAL")
-        self.start_button.clicked.connect(self._start_pressed)
-        if self.bench:
-            self.start_button.setToolTip(
-                f"Start a HAL on port {self.port} for the bench file {self.bench}"
-            )
-        else:
-            self.start_button.setToolTip(NO_BENCH_TOOLTIP)
         buttons.addWidget(self.close_all_button)
         buttons.addWidget(self.stop_button)
-        buttons.addWidget(self.start_button)
         buttons.addStretch(1)
         buttons.addWidget(QLabel("Log level:"))
         self.level_filter = QComboBox()
@@ -409,20 +363,14 @@ class MonitorWindow(QMainWindow):
             self.queued_label.setText(str(report.queued))
             self._show_devices(report.devices)
         self._update_buttons()
-        if self.serve and not self._served:
-            # Only the first poll decides, so a Stop pressed later is not undone by a Start.
-            self._served = True
-            if report is None:
-                self._start_pressed()
         if self._is_our_hal(report):
             self._seen_hal = True
             self._missed_polls = 0
         elif self._seen_hal:
             self._missed_polls = self._missed_polls + 1
         gone = self._missed_polls >= EXIT_AFTER_MISSED_POLLS
-        if self.serve and self.exit_with_hal and gone:
+        if self.exit_with_hal and gone:
             log.info("The HAL at 127.0.0.1:%d has gone; the monitor closes with it.", self.port)
-            self._hal_gone = True
             self.close()
 
     def _is_our_hal(self, report: messages.StatusReport | None) -> bool:
@@ -479,19 +427,6 @@ class MonitorWindow(QMainWindow):
         if confirm(self, "Stop HAL", text):
             self._run_action("stop", self.link.stop, "Stopping the HAL...", "Stop HAL")
 
-    def _start_pressed(self) -> None:
-        bench = self.bench
-        if not bench:
-            return
-        log_dir = self.log_dir
-        log_level = self.log_level
-        nonce = self.nonce
-
-        def start() -> int:
-            return self.link.start(bench, log_dir, log_level=log_level, nonce=nonce)
-
-        self._run_action("start", start, f"Starting a HAL for {bench}...", "Start HAL")
-
     def _run_action(
         self, name: str, function: Callable[[], Any], running_text: str, button_title: str
     ) -> None:
@@ -511,10 +446,6 @@ class MonitorWindow(QMainWindow):
                 # Whatever went wrong, the worker reports back, or the buttons stay disabled.
                 log.debug("The HAL monitor's '%s' failed.", name, exc_info=True)
                 error = str(exc) or type(exc).__name__
-                if name == "start":
-                    # To the monitor's log (stderr): started by connect(show_window=True), that is
-                    # the monitor's startup file, whose tail a failed connect quotes.
-                    log.warning("The HAL monitor's Start failed: %s", error)
             signals.acted.emit(name, result, error)
 
         self._action_title = button_title
@@ -525,12 +456,10 @@ class MonitorWindow(QMainWindow):
         self._action = None
         if self._closed:
             return
-        titles = {"close_all": "Close all", "stop": "Stop", "start": "Start"}
+        titles = {"close_all": "Close all", "stop": "Stop"}
         title = titles.get(name, name)
         if error:
             self.statusBar().showMessage(f"{title} failed: {error}")
-        elif name == "start":
-            self.statusBar().showMessage(f"Started a HAL, pid {result}.")
         else:
             names: list[str] = []
             if isinstance(result, list):
@@ -548,7 +477,6 @@ class MonitorWindow(QMainWindow):
         idle = self._action is None
         self.close_all_button.setEnabled(idle and self._reachable)
         self.stop_button.setEnabled(idle and self._reachable)
-        self.start_button.setEnabled(idle and not self._reachable and bool(self.bench))
 
     # --- the log view --------------------------------------------------------------
 
@@ -581,23 +509,10 @@ class MonitorWindow(QMainWindow):
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt's name
         """
-        Stop the timer; the tail and the link close on a worker. Sends nothing to the HAL; in
-        serve mode wait_before_exit() stops it afterwards, and when other clients are connected
-        the user is asked first (No keeps the window open). A window closing itself because
-        its HAL has gone (exit_with_hal) asks nothing and stops nothing.
+        Stop the timer; the tail and the link close on a worker. Sends nothing to the HAL and
+        asks nothing: closing the window leaves the HAL and its devices as they are.
         """
         if not self._closed:
-            if self.serve and not self._hal_gone and self._other_clients > 0:
-                text = (
-                    f"Close the window and stop the HAL at 127.0.0.1:{self.port}?\n\n"
-                    f"Other clients connected: {self._other_clients}. {TEARDOWN_WARNING}"
-                )
-                if self.exit_with_hal:
-                    text = f"{text}\n\n{STARTER_WARNING}"
-                if not confirm(self, "Stop HAL", text):
-                    event.ignore()
-                    return
-            self._stop_on_exit = self.serve and not self._hal_gone
             self._closed = True
             self._timer.stop()
             poll_thread = self._poll_thread
@@ -629,19 +544,6 @@ class MonitorWindow(QMainWindow):
             log.info("Waiting for %s to finish before the monitor exits.", self._action_title)
             action_thread.join()
         self.wait_for_closing(EXIT_WAIT_S)
-        if self._stop_on_exit:
-            self._stop_hal_on_exit()
-
-    def _stop_hal_on_exit(self) -> None:
-        """Serve mode, the window closed: stop the HAL, waiting as long as its teardown takes."""
-        log.info("Stopping the HAL at 127.0.0.1:%d before the monitor exits.", self.port)
-        try:
-            names = self.link.stop()
-        except DriverError as exc:
-            # No HAL answers (it never started, or was stopped already): nothing to stop.
-            log.info("No HAL to stop: %s", exc)
-            return
-        log.info("The HAL stopped. %s", _torn_down_text(names))
 
     def wait_for_closing(self, timeout: float) -> bool:
         """Wait for the closing worker only (not for an action); True when it ended."""

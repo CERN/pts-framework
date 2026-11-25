@@ -36,10 +36,10 @@ the next start.
 **Some cards are actions, not settings.** Advanced ends with Clear recent
 recipes, which empties the File > Open Recent list at once, and Restore default
 settings, which - once confirmed - closes the dialog with `restore_requested`;
-the GUI deletes config.ini and restarts pypts, so the file is recreated from the
-template. Storage, the last page, only shows the base folder and opens it in the
-file manager: pypts deletes no reports or run logs itself - the operator decides
-what goes, in the file manager.
+the GUI asks CORE to rewrite config.ini with the template defaults and, once CORE
+confirms, restarts pypts so they apply. Storage, the last page, only shows the
+base folder and opens it in the file manager: pypts deletes no reports or run
+logs itself - the operator decides what goes, in the file manager.
 
 **No setting is left out.** PAGES places the keys it knows; any other key of the
 schema (outside `READ_ONLY_SECTIONS`) gets a page named after its section and a
@@ -182,7 +182,9 @@ LABELS = {
 #: The line under a card's title, where a key needs explaining.
 HINTS = {
     "paths.base_dir": "The folder pypts keeps its own data in.",
-    "paths.reports_dir": "Every run gets a folder here, with its report and its log.",
+    "paths.reports_dir": (
+        "Every run gets a folder here, with its report and its log. Applies from the next run."
+    ),
     "logging.level": "How much goes into the run log. TRACE adds the full message trace.",
     "report.type": "Not used yet.",
     "report.theme": "Not used yet.",
@@ -222,7 +224,9 @@ WINDOW_PRESETS = (
 MODIFIED_MARK = "  •"
 
 #: pypts' "next start" line; a profile words its own (`SettingsProfile.next_start_note`).
-NEXT_START_NOTE = "Changes take effect the next time pypts starts."
+NEXT_START_NOTE = (
+    "Most changes take effect the next time pypts starts; the reports folder, from the next run."
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +251,9 @@ class SettingsProfile:
 
     @property
     def next_start_note(self) -> str:
+        if self.program == "pypts":
+            # The reports folder is read again at each run start, not only at start.
+            return NEXT_START_NOTE
         return f"Changes take effect the next time {self.program} starts."
 
     @property

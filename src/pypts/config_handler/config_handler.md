@@ -18,11 +18,11 @@ re-reading the five modules.
 | `configuration_schema.py` | *What* the file contains: section → key → type, default, allowed values; `CONFIG_VERSION`. |
 | `config_template.ini` | The shipped defaults **and** the comments the user reads. |
 | `template_writer.py` | Writing the file without throwing the comments away: `render()` a new file from the template, `replace_value()` one value in an existing file. |
-| `config_handler.py` | The singleton: load, create, validate, get/set, dump. |
-| `bench_config.py` | Reads — or creates from the template — `bench.ini`, the bench's device file: `BenchConfig`, `BenchOutcome`, `bench_config()` (computed once per process, never raises). |
+| `config_handler.py` | `ConfigHandler`, **stateless**: one read of the file per instance — load, create, validate, get/set, dump. |
+| `bench_config.py` | Reads — or creates from the template — `bench.ini`, the bench's device file: `BenchConfig`, `BenchOutcome`, `bench_config()` (reads the file on every call, keeps nothing, never raises). |
 | `bench_template.ini` | What a new `bench.ini` starts with: its comments, one demo device — `[meteo_Meyrin]`, the Open-Meteo weather station (`pyhal.drivers.weather.OpenMeteoDriver`), needing internet only when opened — and a commented `[ssh1]` example. `bench_config()` reads the written file back, so a created bench has that device at once. |
 
-`__init__.py` re-exports `ConfigHandler`, `Role`, `BootstrapOutcome`, the five exception
+`__init__.py` re-exports `ConfigHandler`, `BootstrapOutcome`, the five exception
 types, and the bench file's `BenchConfig`, `BenchOutcome` and `bench_config()`. Nothing else
 is public.
 
@@ -30,35 +30,40 @@ is public.
 
 ## The three rules
 
-**One instance per _process_, not per application.** `ConfigHandler()` returns the same
-object however often it is called, so any module reaches the configuration without it being
-threaded through constructors. A spawned child shares no memory with its parent, so it
-builds its own instance and reads the same file — nothing is passed through
-`Process(args=...)`. That is why **reading is pure**: it parses, it never writes. (The old
-implementation called `create_config_from_template()` on every read, so five processes
-rewrote one file per run.)
+**Stateless: nothing is kept.** Every `ConfigHandler()` reads and validates `config.ini`
+afresh, is used, and is thrown away — no singleton, no lock, no role (decided 2026-11-24, for
+simplicity). The file is the only shared thing: any module, in any process, reaches the
+configuration by reading it, with nothing passed through `Process(args=...)`. **Reading is
+pure**: it parses, it never writes. A value saved a moment ago is seen by the next read;
+whoever reads a value once at its own start (the log level, the GUI window, `hal.show_window`)
+keeps it until the next start. `bench_config()` is stateless the same way.
 
-**One writer.** The launcher calls `ConfigHandler.bootstrap()` before anything else exists:
-it creates the file if the machine has none, and validates it. An existing file is **never
-modified** — there is no migration and no repair; keeping the file correct is the user's job.
-A file that is broken or version-mismatched is **discarded for the run**: the template
-defaults are used in memory, `bootstrap_outcome`/`bootstrap_problem` carry the verdict, and
-the launcher shows the operator a notice (popup in GUI mode, console banner otherwise). The
-run does not stop. From then on the file is read-only to everyone **except CORE**, which
-`core_main()` opens with `open_for_writing()` and which carries out `SetConfigParameter` —
-the operator's changes from the GUI's Edit → Settings (see *Writing* below).
+**One writer, by rule — not by check.** The launcher calls `ConfigHandler.bootstrap()` before
+anything else exists: it creates the file if the machine has none, and validates it. An
+existing file is **never modified** by a read — there is no migration and no repair; keeping
+the file correct is the user's job. A file that is broken or version-mismatched is
+**discarded**: the template defaults are used in memory, `bootstrap_outcome`/`bootstrap_problem`
+carry the verdict, and the launcher shows the operator a notice (popup in GUI mode, console
+banner otherwise). The run does not stop, and every later read discards the file the same way
+until it is corrected. At runtime **only CORE writes**: it carries out `SetConfigParameter`
+and `RestoreDefaultConfig` — the operator's changes and Restore default settings from the
+GUI's Edit → Settings (see *Writing* below). No frontend writes or deletes the file itself.
 **The one exception is the Recipe Editor v2**, which runs without CORE: its `main()` calls
-`bootstrap()` too, so it is the writer in its own process, and saves its own `[recipe_editor]`
-settings (`recipe_editor/editor_settings.py`). Both writers change one line in place, re-reading
-the file first, so pypts and the editor each change only their own lines.
-`set_parameter()` on a reader raises `ConfigWriteError` rather than racing. A reader can
-never be promoted to writer — `open_for_writing()` in a process that already holds a reader
-raises, which is why `core_main()` opens it *before* `Core()` makes its first read.
+`bootstrap()` too, and it saves its own `[recipe_editor]` settings
+(`recipe_editor/editor_settings.py`). Both change one line in place, re-reading the file
+first, so pypts and the editor each change only their own lines. Nothing in the code stops
+another process from calling `set_parameter()`: the rule is kept by the frontends having only
+the messages. There is no file lock — two near-simultaneous writes by two writers could lose
+one; accepted for simplicity. A write is atomic, so a reader never sees half a file.
 
 **It has to work before logging does.** `bootstrap()` runs before the Logger process exists
 — it is what decides where the log file goes — so it cannot log. It buffers its messages in
 `_bootstrap_log` and the launcher calls `replay_bootstrap_log()` once `init_logging()` has
 run. `_note()` checks for root handlers, so once logging is up nothing is buffered any more.
+**Only `bootstrap()` narrates** (where it looked, what it found, every value in force, unknown
+sections at WARNING, a discard at ERROR); an ordinary read logs one DEBUG line —
+*Configuration read from …* or *… discarded, the defaults are in force. …* — because reads
+happen on every use and the full story on each would bury the log.
 
 ---
 
@@ -78,8 +83,8 @@ launcher/startup.py
   show_bench_notice(mode)            # calls bench_config() and shows the popup/banner when
                                      # bench.ini was DISCARDED; CREATED/LOADED show nothing
 
-any other process / module
-  ConfigHandler().get_parameter(...) # read-only; raises ConfigFileMissing if bootstrap never ran
+any other process / module, whenever it needs a value
+  ConfigHandler().get_parameter(...) # a fresh read; raises ConfigFileMissing if bootstrap never ran
 ```
 
 A broken file cannot stop the run — it is discarded (see below), so `bootstrap()` raising is
@@ -114,7 +119,7 @@ Sections currently in the schema:
 | `logging` | `level` — one of `TRACE/DEBUG/INFO/WARNING/ERROR/CRITICAL`; ships `TRACE` |
 | `report` | `type` (`html`/`csv`), `theme` |
 | `gui` | `theme` (`light` — shipped / `dark` / `system` follows the OS), `window_mode` (`windowed` — shipped / `fullscreen`), `window_width`, `window_height` — the GUI window opens with them; the Recipe Creator reads `theme` too. `log_show_debug` (bool, shipped `false`), `log_show_info`, `log_show_warning`, `log_show_error` (bool, shipped `true`) — which levels the LOG OUTPUT panel shows; its buttons save them on every click (`hmi/gui/gui.md` §8a) |
-| `hal` | `show_window` (bool, shipped `true`) — whether a HAL that PyPTS starts opens its monitor window; a HAL already running is used as it is. Read at start; Settings → Hardware |
+| `hal` | `show_window` (bool, shipped `true`) — whether a HAL that PyPTS starts opens its monitor window; a HAL already running is used as it is. Read when CORE is built; Settings → Hardware |
 | `recipe_editor` | The same four keys for the Recipe Editor v2's window (shipped: `light`, `windowed`, 1600 × 1000). Set in the editor's own Edit → Settings; pypts' Settings leaves them out (`OWN_TOOL_SECTIONS`) |
 
 `[watchdog] enabled` was removed in September 2026: a module that stops responding always
@@ -156,8 +161,8 @@ warned about once. A missing key raises `ConfigKeyError` naming what the section
 holds — unless a `default` was passed (`_UNSET` sentinel distinguishes "no default" from
 "the default is `None`").
 
-Also available: `get_whole_config()` (a `MappingProxyType`, read-only so nobody can mutate
-the process's configuration without going through `set_parameter()`), `dump()` (full text
+Also available: `get_whole_config()` (a `MappingProxyType`, read-only so nobody mistakes
+changing it for changing the file), `dump()` (full text
 for a log or console, naming the file it came from), and the `config_path` / `config_version`
 properties.
 
@@ -165,10 +170,11 @@ properties.
 
 ## Writing
 
-`set_parameter(key, value)` and `restore_default()` require `Role.WRITER`; a reader gets
-`ConfigWriteError` pointing at the `SetConfigParameter` message instead. A value is parsed
-against the schema *before* it reaches the file, so a bad value is refused here rather than
-at the next start when the file is all there is.
+`ConfigHandler().set_parameter(key, value)` re-reads the file, changes one line and writes it.
+A value is parsed against the schema *before* it reaches the file, so a bad value is refused
+here rather than at the next read, when the file is all there is. `ConfigHandler.restore_default()`
+is a class method: it needs no read of the old file, so it rewrites a broken or missing one
+too. Who may call them is a rule, not a check (see *The three rules*).
 
 **At runtime the writer is CORE.** The chain is:
 
@@ -180,14 +186,25 @@ CORE   Core.set_config_parameter()
          ConfigHandler().set_parameter()  -> ConfigError?  -> refuse, with str(error)
        -> ConfigParameterResult(key, value, accepted, reason)
 GUI    show_config_parameter_result()  ->  the open dialog, or the status line
+
+GUI  Settings > Advanced > Restore default settings  (confirmed)
+       -> HmiClient.restore_default_config()  ->  RestoreDefaultConfig
+CORE   Core.restore_default_config()
+         ConfigHandler.restore_default()  -> ConfigError / OSError?  -> refuse, with str(error)
+       -> DefaultConfigRestored(accepted, reason)
+GUI    show_default_config_restored()  ->  accepted: restart;  refused: the status line
 ```
 
-A change is **written at once and in force from the next start.** No running process
-re-reads its configuration, CORE included, and nothing is propagated; the dialog says so on
-both of its pages. The one exception is presentation, not configuration: the GUI previews a
-picked theme and a picked window mode or size in its own window — the window only after a
-15-second "keep it?" countdown — and puts the old ones back if the new ones are not saved. The GUI remembers what CORE confirmed this session so that reopening the
-dialog shows the saved value rather than the one read at startup.
+A change is **written at once and seen by the next read.** What that means for each setting
+depends on when its reader reads: `paths.reports_dir` is read at each run start by the
+Sequencer, so it applies from the next run (the session log stays where the launcher put it);
+the log level, the GUI window and theme, the log filter buttons and `hal.show_window` are read
+once at start, so they apply from the next start. Nothing is propagated to a running module;
+the dialog says *"Most changes take effect the next time pypts starts; the reports folder,
+from the next run."* The GUI previews a picked theme and a picked window mode or size in its
+own window — the window only after a 15-second "keep it?" countdown — and puts the old ones
+back if the new ones are not saved. Reopening the dialog reads the file again, so it shows
+what CORE saved.
 
 Writing goes through `template_writer.py`, never `configparser.write()`, because the parsed
 structure has no comments in it and one write would turn a documented file into a bare list
@@ -252,14 +269,16 @@ path to `ConfigParser.read()`, which swallows the `OSError` per-file and returns
 parser; that empty result used to read as `config_version = 0` and the operator was told to
 fix a version key that was fine.
 
-The same rule runs in every process (readers included), so a run agrees with itself about the
-values in force — the defaults are recomputed identically on the same machine. Deliberate
-consequence: a file whose only fault is a stale version number loses *all* its settings for
-the run; the version must match for the file to be trusted at all.
+The same rule runs on every read, in every process, so a discarded file stays discarded
+everywhere until it is corrected — the defaults are recomputed identically on the same
+machine. Deliberate consequence: a file whose only fault is a stale version number loses
+*all* its settings; the version must match for the file to be trusted at all. A file broken
+by hand *during* a run is discarded from the next read on, so a later read in that run gets
+the defaults (with a DEBUG line saying so).
 
 While discarded, `set_parameter()` refuses with `ConfigWriteError` — writing one value would
 replace the user's file with the defaults. `restore_default()` stays allowed (rewriting the
-file deliberately is its job) and ends the discarded state.
+file deliberately is its job), and the next read loads the rewritten file.
 
 An existing file is therefore byte-identical after any number of starts; the only writes ever
 made are creation from the template, `set_parameter()` (one line, in place) and
@@ -296,8 +315,8 @@ Two file-format details worth knowing:
 | `sequencer/sequencer.py` | `paths.reports_dir` (via `reports_dir_from_config()`), once per run, for the run folder |
 | `helper_applications/recipe_creator/rc_logging.py` | `paths.reports_dir` for the helper tools' log files, falling back to the default reports dir when there is no configuration to read |
 | `core/hal_link.py` | `bench_config()` in `HalLink.start()`: the bench's `path` is what the HAL connect is given; a DISCARDED `outcome` means no connect, and its `problem` is what `get_device()` raises |
-| `core/core.py` | `open_for_writing()` in `core_main()`; `hal.show_window` in `Core.__init__` (`hal_show_window_from_config()`, `True` with no configuration to read), handed to the `HalLink`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult` |
-| `hmi/gui/gui.py` | `gui.theme` / `gui.window_mode` / `gui.window_width` / `gui.window_height` and the four `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog; `paths.reports_dir` for the report button |
+| `core/core.py` | `hal.show_window` in `Core.__init__` (`hal_show_window_from_config()`, `True` with no configuration to read), handed to the `HalLink`; carries out `SetConfigParameter` through `set_parameter()` and answers `ConfigParameterResult`; carries out `RestoreDefaultConfig` through `ConfigHandler.restore_default()` and answers `DefaultConfigRestored` |
+| `hmi/gui/gui.py` | `gui.theme` / `gui.window_mode` / `gui.window_width` / `gui.window_height` and the four `gui.log_show_*` when the window opens (template defaults if there is no config); `SetConfigParameter` for a `gui.log_show_*` on every log filter click; `RestoreDefaultConfig` for Restore default settings; `get_whole_config()` + `bootstrap_outcome` to fill the Settings dialog, read as it opens; `paths.reports_dir` for the report button |
 | `hmi/gui/gui_theme.py` | `configured_theme()` — `gui.theme`, or the template's `light` with no config; used by the Recipe Creator |
 | `helper_applications/recipe_editor/editor_settings.py` | `bootstrap()` in the editor's `main()` (`open_config()`); the `recipe_editor.*` keys when the window opens; `get_whole_config()` + `bootstrap_problem` for its Settings dialog; `set_parameter()` for a saved setting (`save_setting()`) |
 
@@ -338,12 +357,11 @@ also why `config_handler.py` calls `file_locations.config_file_path()` rather th
 the name — a `from … import` would bind the original function and make the monkeypatch
 invisible.
 
-`ConfigHandler.reset_for_testing()` forgets the singleton, which tests need because it would
-otherwise outlive the `tmp_path` it was pointed at. **Only tests may call it**: a process that
-dropped its configuration mid-run would be reading a different file from its own threads.
+There is nothing to reset between tests: nothing is kept, so each test's first read is a read
+of its own `tmp_path` file.
 
-`tests/unit_tests/test_config_handler.py` covers creation, reading, the singleton
-and its thread safety, write permission, validation, unknown sections, the structure-version
+`tests/unit_tests/test_config_handler.py` covers creation, reading, that every call reads
+afresh, the one-DEBUG-line read log, validation, unknown sections, the structure-version
 mismatch, the bootstrap-log narration, comment preservation, and the schema/template
 agreement.
 
@@ -353,12 +371,14 @@ agreement.
 
 Roadmap §1.3 is the authority; the TODOs live there, not in code comments. In short:
 
-- **A change applies from the next start, and that is by decision, not by omission.**
-  `SetConfigParameter` is carried out and answered (`ConfigParameterResult`), but no running
-  process learns that a value changed. Live propagation would need every reader to be told
-  and to act on it — not planned.
-- **`restore_default()` and `dump()` have no framework caller** — API surface only the tests
-  exercise.
+- **A value read once at start applies from the next start, by decision.** The next read
+  sees a change, but nothing tells a running module that read a value earlier — live
+  propagation would need every reader to be told and to act on it — not planned.
+- **The single writer is a convention.** No role, no check, no file lock (2026-11-24, for
+  simplicity): CORE writes at runtime, the launcher creates a missing file, the Recipe Editor
+  v2 writes its own section. Two writers saving at nearly the same moment could lose one change.
+- **`dump()` has no framework caller** — API surface only the tests exercise.
+  `restore_default()` is called by CORE for `RestoreDefaultConfig`.
 - **Device sections (in `bench.ini`) are untyped.** A wrong key in a device section is found
   only when the driver reads it (at the first `get_device()`), not at start-up.
 - **Nothing is masked.** `_note_active_configuration()`, `dump()`, `set_parameter()`'s INFO line

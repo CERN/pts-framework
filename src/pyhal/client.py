@@ -12,21 +12,17 @@ shutting down) → it retries every CONNECT_RETRY_S until nothing listens, for a
 HAL_SHUTDOWN_WAIT_S. Nothing listens → it starts `python -m pyhal` detached, with a one-time
 start nonce, and retries until HAL_START_TIMEOUT_S; `started_hal` is whether the `hello` that
 answered echoes that nonce, which also settles two starters at once (the second HAL cannot
-bind and exits; both connect to the first). With `show_window` it starts the HAL monitor
-instead, `python -m pyhal.monitor --serve --exit-with-hal` with the same nonce: the window
-starts the HAL, and closes itself once that HAL has gone; the wait is then
-HAL_WINDOW_START_TIMEOUT_S. A monitor that exits before any HAL answered (no display: Linux
-over SSH, CI) is a WARNING, and the plain HAL is started instead, with the same nonce, and
-waited for HAL_START_TIMEOUT_S. A started HAL's stdout and stderr go to STARTUP_FILE in the log
-folder, a started monitor's to MONITOR_STARTUP_FILE there (the HAL it starts writes to
-STARTUP_FILE, through a handle of its own); a start that fails or times out quotes the tail of
-what the process it started wrote to its file. A connect on
+bind and exits; both connect to the first). With `show_window` the HAL is started with
+`--window`: the HAL opens its monitor window itself and owns it (`pyhal/__main__.py`); the
+monitor never starts a HAL (user decision 2026-11-24). A started HAL's stdout and stderr go to
+STARTUP_FILE in the log folder; a start that fails or times out quotes the tail of what the HAL
+wrote to its file. A connect on
 another thread (PyPTS's CORE, spec §6.2 step 8) is announced with connect_pending(): run_scope()
 waits for it, at most CONNECT_WAIT_S, until connect()/connect_only() returns or raises.
 note_unavailable(reason) is for a start that will make no connect: the reason is what
 get_device() raises, and a pending connect is over. start_hal() is
-the same start without a client (the HAL monitor's Start button): it waits for a `hello` with
-its own nonce, closes that connection without a parting request and returns the HAL's pid.
+the same start without a client (`run_hal.py`): it waits for a `hello` with its own nonce,
+closes that connection without a parting request and returns the HAL's pid.
 
 **The close** (§6.4, HalClient.close(); also `with` and the `atexit` connect() registers):
 end the scope and raise the scope counter, close the long connection, then send one request
@@ -91,10 +87,6 @@ CLIENT_BEAT_S = 1.0
 #: The longest wait for the long connection's `hello` (and, with connect(), for a HAL to start).
 HAL_START_TIMEOUT_S = 15.0
 
-#: connect(show_window=True)'s wait for a HAL to start: two processes start one after the
-#: other, the monitor (importing PySide6) and then the HAL it starts.
-HAL_WINDOW_START_TIMEOUT_S = 2 * HAL_START_TIMEOUT_S
-
 #: A short connection's connect, and its `hello`; also each connect while connect() retries.
 SHORT_CONNECT_TIMEOUT_S = 1.0
 
@@ -106,24 +98,18 @@ HAL_SHUTDOWN_WAIT_S = 120.0
 CONNECT_RETRY_S = 0.2
 
 #: The longest run_scope() waits for a pending connect (connect_pending()): a connect that
-#: waits out a shutting-down HAL and then starts one, with its window at the longest. A window
-#: start that falls back to a plain HAL adds HAL_START_TIMEOUT_S only in theory: a monitor
-#: without a display dies within seconds.
-CONNECT_WAIT_S = HAL_SHUTDOWN_WAIT_S + HAL_WINDOW_START_TIMEOUT_S
+#: waits out a shutting-down HAL and then starts one. The HAL answers before it opens its
+#: monitor window, so the window adds nothing to it.
+CONNECT_WAIT_S = HAL_SHUTDOWN_WAIT_S + HAL_START_TIMEOUT_S
 
 #: The file in the log folder that takes a started HAL's stdout and stderr, appended to.
 STARTUP_FILE = "hal_startup.log"
 
-#: The file in the log folder that takes a started HAL monitor's stdout and stderr, appended
-#: to: among them the WARNING of a Start that failed, with the HAL's reason.
-MONITOR_STARTUP_FILE = "hal_monitor_startup.log"
-
 #: How many of the startup file's last lines the error of a failed start quotes.
 STARTUP_TAIL_LINES = 20
 
-#: What _launch() runs with `python -m`: the HAL itself, or the HAL monitor in serve mode.
+#: What _launch() runs with `python -m`.
 HAL_MODULE = "pyhal"
-MONITOR_MODULE = "pyhal.monitor"
 
 #: `python -m pyhal`'s exit code when the port is taken: a starter that lost the race.
 EXIT_PORT_IN_USE = 3
@@ -882,9 +868,8 @@ def connect(
             own); None: the HAL's default.
         log_dir: the log folder of a HAL this call starts, and where its startup file goes;
             None: pyhal's default folder.
-        show_window: when no HAL answers, start the HAL monitor in serve mode
-            (`python -m pyhal.monitor --serve --exit-with-hal`), which starts the HAL, instead
-            of `python -m pyhal`. A HAL found running is only connected to: no window.
+        show_window: a HAL this call starts opens its monitor window (`python -m pyhal
+            --window`), which it owns. A HAL found running is only connected to: no window.
 
     Raises:
         DriverError: no HAL could be reached or started; the reason is also what
@@ -1049,8 +1034,7 @@ class _AnotherHal(DriverError):
 
 
 class _Launched:
-    """A process _launch() started (a HAL, or the monitor that starts one), and what waiting
-    for it needs."""
+    """A HAL process _launch() started, and what waiting for it needs."""
 
     def __init__(
         self, process: subprocess.Popen[bytes], nonce: str, startup_path: Path, start_offset: int
@@ -1071,15 +1055,13 @@ def _start_hal(
     show_window: bool = False,
 ) -> HalClient:
     """
-    Start a HAL - with `show_window`, the monitor that starts it - and connect to it.
-    `started_hal` is whether the connection's `hello` echoes this start's nonce: a HAL another
-    starter started first answers with its own (D38). Raises DriverError.
+    Start a HAL - with `show_window`, one that opens its monitor window (`--window`) - and
+    connect to it. `started_hal` is whether the connection's `hello` echoes this start's nonce:
+    a HAL another starter started first answers with its own (D38). Raises DriverError.
     """
-    if show_window:
-        module = MONITOR_MODULE
-    else:
-        module = HAL_MODULE
-    hal_client, nonce = _start_and_connect(bench_path, port, log_level, log_dir, module=module)
+    hal_client, nonce = _start_and_connect(
+        bench_path, port, log_level, log_dir, window=show_window
+    )
     hal_client.started_hal = hal_client.hello.nonce == nonce
     if not hal_client.started_hal:
         log.debug("Another starter's HAL server took port %d first; using it.", port)
@@ -1092,7 +1074,7 @@ def start_hal(
     *,
     log_level: int | None = None,
     log_dir: str | None = None,
-    nonce: str | None = None,
+    show_window: bool = False,
 ) -> int:
     """
     Start `python -m pyhal` detached on the port for the bench file `bench`, and return as
@@ -1105,8 +1087,7 @@ def start_hal(
         port: the HAL's port.
         log_level: the HAL's log level; None: the HAL's default.
         log_dir: the HAL's log folder, and where its startup file goes; None: pyhal's default.
-        nonce: the start nonce the HAL is given; None: a fresh one. The monitor in serve
-            mode passes the one the client that started it chose, so that client owns the HAL.
+        show_window: the HAL opens its monitor window (`python -m pyhal --window`).
 
     Returns:
         The pid the HAL's `hello` names, its own. (On Windows, in a venv, the process Popen
@@ -1119,7 +1100,9 @@ def start_hal(
             here cannot bind the port and exits.
     """
     bench_path = os.path.realpath(os.fspath(bench))
-    hal_client, nonce = _start_and_connect(bench_path, port, log_level, log_dir, nonce=nonce)
+    hal_client, nonce = _start_and_connect(
+        bench_path, port, log_level, log_dir, window=show_window
+    )
     hello = hal_client.hello
     hal_client._close_long_connection()
     if hello.nonce != nonce:
@@ -1136,26 +1119,17 @@ def _start_and_connect(
     log_level: int | None,
     log_dir: str | None,
     *,
-    module: str = HAL_MODULE,
-    nonce: str | None = None,
+    window: bool = False,
 ) -> tuple[HalClient, str]:
     """
-    Start a HAL (_launch(), `module` and `nonce` as there) and connect to the port within
-    HAL_START_TIMEOUT_S (HAL_WINDOW_START_TIMEOUT_S for the monitor), which starts the HAL in
-    turn; the connected HalClient (not installed as the process's client, `started_hal` not
-    set) and this start's nonce. The HAL that answers may be another starter's. A monitor
-    that exits before any HAL answered (it could not open its window) is a WARNING, and the
-    plain HAL is started in its place with the same nonce, waited for HAL_START_TIMEOUT_S from
-    then. A started HAL that exits with any code but EXIT_PORT_IN_USE is a failed start.
+    Start a HAL (_launch(), `window` as there) and connect to the port within
+    HAL_START_TIMEOUT_S; the connected HalClient (not installed as the process's client,
+    `started_hal` not set) and this start's nonce. The HAL that answers may be another
+    starter's. A started HAL that exits with any code but EXIT_PORT_IN_USE is a failed start.
     Raises DriverError.
     """
-    launched = _launch(bench_path, port, log_level, log_dir, module=module, nonce=nonce)
-    window = module == MONITOR_MODULE
-    if window:
-        timeout_s = HAL_WINDOW_START_TIMEOUT_S
-    else:
-        timeout_s = HAL_START_TIMEOUT_S
-    deadline = time.monotonic() + timeout_s
+    launched = _launch(bench_path, port, log_level, log_dir, window=window)
+    deadline = time.monotonic() + HAL_START_TIMEOUT_S
     while True:
         try:
             return _open_client(port, SHORT_CONNECT_TIMEOUT_S), launched.nonce
@@ -1164,18 +1138,6 @@ def _start_and_connect(
         # A HAL that has exited will not answer - unless it lost the port to another
         # starter's, which is the one to wait for.
         exit_code = launched.process.poll()
-        if window and exit_code is not None:
-            tail = _startup_tail(launched.startup_path, launched.start_offset)
-            log.warning(
-                "The HAL monitor window could not be started; starting the HAL without it."
-            )
-            log.debug("The HAL monitor exited with code %s; it wrote: %s", exit_code, tail)
-            launched = _launch(
-                bench_path, port, log_level, log_dir, module=HAL_MODULE, nonce=launched.nonce
-            )
-            window = False
-            deadline = time.monotonic() + HAL_START_TIMEOUT_S
-            continue
         exited_for_good = exit_code is not None and exit_code != EXIT_PORT_IN_USE
         if exited_for_good or time.monotonic() >= deadline:
             tail = _startup_tail(launched.startup_path, launched.start_offset)
@@ -1184,46 +1146,35 @@ def _start_and_connect(
 
 
 def _launch(
-    bench_path: str,
-    port: int,
-    log_level: int | None,
-    log_dir: str | None,
-    *,
-    module: str = HAL_MODULE,
-    nonce: str | None = None,
+    bench_path: str, port: int, log_level: int | None, log_dir: str | None, *, window: bool = False
 ) -> _Launched:
     """
-    Start `python -m <module>` detached on the port: HAL_MODULE, the HAL, or MONITOR_MODULE,
-    the monitor in serve mode (`--serve --exit-with-hal`), which starts the HAL with the same
-    nonce, log level and log folder. `nonce` None: a new start nonce. Its output goes to
-    STARTUP_FILE (the HAL) or MONITOR_STARTUP_FILE (the monitor). Raises DriverError.
+    Start `python -m pyhal` (HAL_MODULE) detached on the port, with a new start nonce, the
+    log level and the log folder; with `window`, `--window`, so the HAL opens its monitor
+    window itself. Its output goes to STARTUP_FILE. Raises DriverError.
     """
-    if nonce is None:
-        nonce = secrets.token_hex(16)
+    nonce = secrets.token_hex(16)
     if log_dir is None:
         folder = default_log_dir()
     else:
         folder = Path(log_dir).resolve()
     # -P: the starter's working directory is not put on the HAL's sys.path; the entries that
     # matter come through PYTHONPATH, absolute.
-    command = [sys.executable, "-P", "-m", module, "--bench", bench_path, "--port", str(port)]
-    if module == MONITOR_MODULE:
-        command.extend(["--serve", "--exit-with-hal"])
+    command = [sys.executable, "-P", "-m", HAL_MODULE, "--bench", bench_path, "--port", str(port)]
     command.extend(["--nonce", nonce])
     if log_level is not None:
         command.extend(["--log-level", str(log_level)])
     if log_dir is not None:
         command.extend(["--log-dir", str(folder)])
+    if window:
+        command.append("--window")
     # The driver classes resolve in the HAL as they do here: on this process's sys.path.
     # Every path the HAL gets is absolute, so its working directory - the log folder, which
     # keeps it from holding the starter's folder open - changes nothing.
     entries = [os.path.abspath(entry) for entry in sys.path if entry and os.path.exists(entry)]
     environment = dict(os.environ)
     environment["PYTHONPATH"] = os.pathsep.join(entries)
-    if module == MONITOR_MODULE:
-        startup_path = folder / MONITOR_STARTUP_FILE
-    else:
-        startup_path = folder / STARTUP_FILE
+    startup_path = folder / STARTUP_FILE
     try:
         folder.mkdir(parents=True, exist_ok=True)
         with open(startup_path, "ab") as startup:
@@ -1257,8 +1208,7 @@ def _launch(
         raise DriverError(f"The HAL server could not be started: {exc}") from None
     _started_processes.append(process)
     log.debug(
-        "Started '%s' for 127.0.0.1:%d (pid %d), bench '%s'; its output goes to '%s'.",
-        module,
+        "Started the HAL server for 127.0.0.1:%d (pid %d), bench '%s'; its output goes to '%s'.",
         port,
         process.pid,
         bench_path,

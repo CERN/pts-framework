@@ -530,12 +530,84 @@ def test_a_switch_to_a_file_that_cannot_be_opened_keeps_the_old_one(tmp_path):
     old_file = tmp_path / "pypts_old.log"
     logger = Logger(queue_module.Queue(), str(old_file), stdout_enabled=False)
 
-    logger.handle_item(SwitchLogFile(log_file_path=str(tmp_path / "missing" / "new.log")))
+    missing = str(tmp_path / "missing" / "new.log")
+    logger.handle_item(SwitchLogFile(log_file_path=missing))
     logger.handle_item(_record("still here"))
     logger.close()
 
-    assert [entry["message"] for entry in parse_log(old_file)] == ["still here"]
+    entries = parse_log(old_file)
+    assert [entry["message"] for entry in entries[1:]] == ["still here"]
     assert logger.log_file_path == str(old_file)
+
+    # The failure itself is in the file it stayed in, for the operator.
+    assert entries[0]["level"] == "ERROR"
+    assert entries[0]["location"] == "log.py:switch_file"
+    assert entries[0]["message"].startswith(
+        f"The log could not be continued in '{missing}'; it carries on in '{old_file}': "
+    )
+
+
+def test_the_logger_beats_to_core_while_nothing_is_logged(tmp_path):
+    """A quiet run is not a dead Logger: the wait on the queue is bounded, so
+    the beat goes out with nothing to write. A timed-out get() and the loop
+    turns again - which is what CORE's watchdog is told."""
+    from pypts.messages.common_messages import Heartbeat
+    from pypts.utilities.heartbeat_manager import LOGGER
+
+    to_core = QueueWrapper(queue_module.Queue())
+    logger = Logger(
+        queue_module.Queue(), str(tmp_path / "run.log"), stdout_enabled=False, to_core=to_core
+    )
+    calls = []
+    real_get = logger.log_queue.get
+
+    def get_then_stop(timeout=None):
+        # The first get() times out on the empty queue; the second asks the
+        # loop to end, so the test does not wait out further intervals. Every
+        # later one - drain()'s - finds the queue empty.
+        calls.append(timeout)
+        if len(calls) == 2:
+            return StopLogger()
+        return real_get(timeout=0.01)
+
+    logger.log_queue.get = get_then_stop
+    try:
+        logger.main_loop()
+    finally:
+        logger.close()
+
+    beats = list(to_core.receive())
+    assert beats and all(isinstance(beat, Heartbeat) for beat in beats)
+    assert beats[0].source == LOGGER
+    # Bounded by the heartbeat interval, never a blocking get().
+    assert calls[0] is not None
+
+
+def test_an_entry_that_cannot_be_handled_is_reported_in_the_log(tmp_path, capsys):
+    """The Logger's own failure reaches the file (and so the operator's panel),
+    and stderr keeps its copy for the developer."""
+    from pypts.messages.to_logger_communication import SwitchLogFile
+
+    log_file = tmp_path / "run.log"
+    log_queue = queue_module.Queue()
+    logger = Logger(log_queue, str(log_file), stdout_enabled=False)
+
+    # Not a path at all: FileHandler raises TypeError, which switch_file()
+    # does not catch - so it reaches main_loop()'s safety net.
+    log_queue.put(SwitchLogFile(log_file_path=None))  # type: ignore[arg-type]
+    log_queue.put(_record("after the failure"))
+    log_queue.put(StopLogger())
+    logger.main_loop()
+    logger.close()
+
+    entries = parse_log(log_file)
+    assert entries[0]["level"] == "ERROR"
+    assert entries[0]["location"] == "log.py:main_loop"
+    assert entries[0]["message"].startswith(
+        "An entry could not be written to the log and was skipped: TypeError: "
+    )
+    assert entries[1]["message"] == "after the failure"
+    assert "[logger] Failed to handle queue item" in capsys.readouterr().err
 
 
 def test_switch_log_file_queues_the_switch_and_names_the_new_path(

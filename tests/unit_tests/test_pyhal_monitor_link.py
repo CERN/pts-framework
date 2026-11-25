@@ -251,12 +251,11 @@ def test_closing_the_link_sends_nothing(start_hal, make_link, tmp_path):
     spare.close()
 
 
-def test_start_refuses_when_a_hal_answers(start_hal, make_link, tmp_path):
-    hal = start_hal()
-    link = make_link(hal.port)
-    with pytest.raises(DriverError) as caught:
-        link.start(str(tmp_path / "bench.ini"))
-    assert str(caught.value) == f"A HAL server already answers on port {hal.port}."
+def test_the_link_cannot_start_a_hal(make_link):
+    # User decision 2026-11-24: the monitor only connects; a HAL is started by PyPTS or by hand.
+    link = make_link(_free_port())
+    assert not hasattr(link, "start")
+    assert link.status() is None
 
 
 def test_the_log_tail_follows_the_last_hellos_log(start_hal, make_link, tmp_path):

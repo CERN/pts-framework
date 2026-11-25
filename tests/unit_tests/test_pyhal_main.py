@@ -163,3 +163,127 @@ def test_serve_leaves_only_after_the_teardown_even_when_its_wait_fails(tmp_path,
     assert started[0]._exit_reason == "the main thread is ending"
     assert marks.read_text(encoding="utf-8").splitlines() == ["connect", "teardown"]
     assert signal.getsignal(signal.SIGINT) is before
+
+
+# --- --window: the HAL opens its monitor window and owns it (user decision 2026-11-24) -------
+
+
+class _FakeWindowProcess:
+    """Stands in for the monitor's Popen: records what is done to it."""
+
+    def __init__(self, command, **options) -> None:
+        self.command = list(command)
+        self.options = options
+        self.pid = 4244
+        self.exit_code: int | None = None
+        self.terminated = False
+
+    def poll(self):
+        return self.exit_code
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.exit_code = 1
+
+    def wait(self, timeout=None):
+        return self.exit_code
+
+    def kill(self) -> None:
+        self.exit_code = 1
+
+
+def test_the_window_option_is_parsed():
+    parser = pyhal_main._build_parser()
+    assert parser.parse_args(["--bench", "b.ini", "--window"]).window is True
+    assert parser.parse_args(["--bench", "b.ini"]).window is False
+
+
+def test_open_window_runs_the_monitor_on_the_port_as_a_child(tmp_path, monkeypatch):
+    made: list[_FakeWindowProcess] = []
+
+    def fake_popen(command, **options):
+        process = _FakeWindowProcess(command, **options)
+        made.append(process)
+        return process
+
+    monkeypatch.setattr(pyhal_main.subprocess, "Popen", fake_popen)
+    process = pyhal_main.open_window(29600, tmp_path)
+    assert process is made[0]
+    assert made[0].command[1:] == [
+        "-P",
+        "-m",
+        "pyhal.monitor",
+        "--port",
+        "29600",
+        "--exit-with-hal",
+    ]
+    assert made[0].options["cwd"] == tmp_path.resolve()
+    assert (tmp_path / pyhal_main.MONITOR_STARTUP_FILE).exists()
+    # Not detached: no process group or session of its own.
+    assert "start_new_session" not in made[0].options
+    if sys.platform == "win32":
+        assert made[0].options["creationflags"] == pyhal_main.subprocess.CREATE_NO_WINDOW
+
+
+def test_a_window_that_cannot_start_is_a_warning(tmp_path, monkeypatch, caplog):
+    def failing_popen(command, **options):
+        raise OSError("no such interpreter")
+
+    monkeypatch.setattr(pyhal_main.subprocess, "Popen", failing_popen)
+    with caplog.at_level(logging.WARNING, logger="pyhal"):
+        assert pyhal_main.open_window(29600, tmp_path) is None
+    assert "The HAL monitor window could not be started: no such interpreter" in caplog.text
+
+
+def test_close_window_ends_only_a_window_still_open():
+    pyhal_main.close_window(None)
+    gone = _FakeWindowProcess([])
+    gone.exit_code = 0
+    pyhal_main.close_window(gone)  # type: ignore[arg-type]
+    assert gone.terminated is False
+    still_open = _FakeWindowProcess([])
+    pyhal_main.close_window(still_open)  # type: ignore[arg-type]
+    assert still_open.terminated is True
+
+
+def test_serve_with_window_opens_it_and_ends_it_after_the_teardown(tmp_path, monkeypatch):
+    bench = tmp_path / "bench.ini"
+    bench.write_text("[loop1]\ndriver = pyhal.drivers.loopback.LoopbackDriver\n", "utf-8")
+    events: list[str] = []
+    window = _FakeWindowProcess([])
+    servers: list[HalServer] = []
+    log_files: list[Path] = []
+    original_wait = HalServer.serve_until_stopped
+    original_start_log_file = pyhal_main.start_log_file
+
+    def open_window(port: int, log_dir: Path):
+        events.append(f"open {port} {log_dir}")
+        return window
+
+    def close_window(monitor) -> None:
+        exited = servers[0].wait_until_exited(0)
+        events.append(f"close, the HAL exited: {exited}")
+        assert monitor is window
+
+    def wait(self: HalServer) -> None:
+        servers.append(self)
+        self.request_exit("the test is done")
+        original_wait(self)
+
+    def start_log_file(log_dir: Path, level: int) -> Path:
+        path = original_start_log_file(log_dir, level)
+        log_files.append(path)
+        return path
+
+    monkeypatch.setattr(pyhal_main, "open_window", open_window)
+    monkeypatch.setattr(pyhal_main, "close_window", close_window)
+    monkeypatch.setattr(HalServer, "serve_until_stopped", wait)
+    monkeypatch.setattr(pyhal_main, "start_log_file", start_log_file)
+    try:
+        code = pyhal_main.serve(bench, 0, tmp_path / "logs", logging.INFO, None, window=True)
+    finally:
+        for path in log_files:
+            stop_log_file(path)
+    assert code == pyhal_main.EXIT_OK
+    logs = tmp_path / "logs"
+    assert events == [f"open {servers[0].port} {logs}", "close, the HAL exited: True"]

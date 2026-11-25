@@ -29,7 +29,6 @@ from pypts.config_handler.config_handler import (
     ConfigKeyError,
     ConfigSchemaError,
     ConfigWriteError,
-    Role,
 )
 
 __all__ = [
@@ -42,6 +41,5 @@ __all__ = [
     "ConfigKeyError",
     "ConfigSchemaError",
     "ConfigWriteError",
-    "Role",
     "bench_config",
 ]

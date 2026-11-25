@@ -11,7 +11,6 @@ test starts. To watch a test on screen, set QT_QPA_PLATFORM=windows (or xcb)
 before running pytest.
 """
 
-import importlib
 import os
 
 import pytest
@@ -37,13 +36,8 @@ def _bench_file_in_tmp(tmp_path_factory, monkeypatch):
 
     `bench_config()` creates the file on first use, and the launcher, the Pts
     API and the engine tests all reach it. Each test gets its own file under a
-    temporary directory and a cold cache. The package re-exports the function
-    `bench_config`, which shadows the submodule's name, so the module is
-    imported by its full path.
+    temporary directory.
     """
-    bench_module = importlib.import_module("pypts.config_handler.bench_config")
     path = tmp_path_factory.mktemp("bench") / "bench.ini"
     monkeypatch.setattr(file_locations, "bench_file_path", lambda: path)
-    bench_module.reset_for_testing()
     yield
-    bench_module.reset_for_testing()

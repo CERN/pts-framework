@@ -5,6 +5,16 @@
 Serving (`--bench FILE`): start the log file, read the bench, install the exit handlers, bind
 and serve until the server has exited. The port taken is exit code EXIT_PORT_IN_USE.
 
+**The window** (`--window`, what `pyhal.connect(show_window=True)` and `run_hal.py` pass): once
+the server is bound, the HAL opens its monitor window as a child process of its own,
+`python -m pyhal.monitor --port N --exit-with-hal` (open_window()), and owns it: at the HAL's
+exit, after the teardown, a window still open is ended (close_window()). The monitor never
+starts or stops a HAL on its own (user decision 2026-11-24); closing the window leaves the HAL
+running. The HAL never imports PySide6 and never waits for the window: a window that cannot be
+started is a WARNING, and one that cannot open (no display) exits and says why in
+MONITOR_STARTUP_FILE. `--exit-with-hal` is the net for a HAL killed without its exit (Windows
+does not end a killed process's children): the window closes itself once the HAL has gone.
+
 The client modes (`--close-all`, `--stop`) connect only, never start a HAL: `--close-all`
 sends `close_all`, `--stop` sends `close_all` and then `shutdown` (`bye` carries no list, so
 the `close_all` before it is what reports the devices not torn down). Each waits for its
@@ -30,7 +40,9 @@ what does.
 
 import argparse
 import logging
+import os
 import signal
+import subprocess
 import sys
 from collections.abc import Sequence
 from pathlib import Path
@@ -52,6 +64,16 @@ EXIT_NOT_TORN_DOWN = 1
 EXIT_BAD_BENCH = 1
 #: A client mode found no HAL to answer it.
 EXIT_NO_HAL = 2
+
+#: What open_window() runs with `python -m`.
+MONITOR_MODULE = "pyhal.monitor"
+
+#: The file in the log folder that takes the monitor window's stdout and stderr, appended to:
+#: among them why a window could not open (no display).
+MONITOR_STARTUP_FILE = "hal_monitor_startup.log"
+
+#: How long close_window() waits for the window to end once it has been told to.
+WINDOW_CLOSE_WAIT_S = 5.0
 
 #: The signals that end the server, those of them this platform has.
 EXIT_SIGNALS = ("SIGINT", "SIGBREAK", "SIGTERM", "SIGHUP")
@@ -188,7 +210,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--nonce", metavar="TEXT", help="the start nonce hello echoes (set by a starting client)"
     )
-    modes = parser.add_mutually_exclusive_group()
+    parser.add_argument(
+        "--window",
+        action="store_true",
+        help="open the HAL monitor window on this HAL; the HAL ends it at its exit",
+    )
+    modes =parser.add_mutually_exclusive_group()
     modes.add_argument(
         "--close-all",
         action="store_true",
@@ -216,12 +243,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         log_dir = Path(arguments.log_dir)
     return serve(
-        Path(arguments.bench), arguments.port, log_dir, arguments.log_level, arguments.nonce
+        Path(arguments.bench),
+        arguments.port,
+        log_dir,
+        arguments.log_level,
+        arguments.nonce,
+        window=arguments.window,
     )
 
 
-def serve(bench: Path, port: int, log_dir: Path, level: int, nonce: str | None) -> int:
-    """Run a HAL server until it has exited; the process's exit code."""
+def serve(
+    bench: Path,
+    port: int,
+    log_dir: Path,
+    level: int,
+    nonce: str | None,
+    *,
+    window: bool = False,
+) -> int:
+    """Run a HAL server until it has exited, with its monitor window when `window`; the
+    process's exit code."""
     log_path = start_log_file(log_dir, level)
     try:
         hal = HalServer(bench, port, nonce=nonce, log_path=str(log_path))
@@ -248,6 +289,9 @@ def serve(bench: Path, port: int, log_dir: Path, level: int, nonce: str | None) 
         log.info("The HAL server is running on 127.0.0.1:%d, bench '%s'.", hal.port, bench)
         print(f"The HAL server is running on 127.0.0.1:{hal.port}; its log is {log_path}.")
         print("Ctrl+C stops it, after tearing every open device down.", flush=True)
+        monitor: subprocess.Popen[bytes] | None = None
+        if window:
+            monitor = open_window(hal.port, log_dir)
         try:
             hal.serve_until_stopped()
         finally:
@@ -255,11 +299,82 @@ def serve(bench: Path, port: int, log_dir: Path, level: int, nonce: str | None) 
             if not hal.wait_until_exited(0):
                 hal.request_exit("the main thread is ending")
                 hal.serve_until_stopped()
+            close_window(monitor)
         log.info("The HAL server on 127.0.0.1:%d has stopped.", hal.port)
         return EXIT_OK
     finally:
         # The teardown is done: a signal or a console event now may end the process at once.
         handlers.restore()
+
+
+def open_window(port: int, log_dir: Path) -> subprocess.Popen[bytes] | None:
+    """
+    Start the HAL monitor window on the port as this HAL's child: `python -m pyhal.monitor
+    --port N --exit-with-hal`, with this process's sys.path, its output appended to
+    MONITOR_STARTUP_FILE in the log folder. Never waits for it. None, and a WARNING, when it
+    cannot be started: the HAL runs on without a window.
+    """
+    folder = log_dir.resolve()
+    startup_path = folder / MONITOR_STARTUP_FILE
+    # -P and PYTHONPATH as the client starts the HAL: the window imports pyhal from where this
+    # process does, whatever its working directory.
+    command = [sys.executable, "-P", "-m", MONITOR_MODULE, "--port", str(port), "--exit-with-hal"]
+    entries = [os.path.abspath(entry) for entry in sys.path if entry and os.path.exists(entry)]
+    environment = dict(os.environ)
+    environment["PYTHONPATH"] = os.pathsep.join(entries)
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(startup_path, "ab") as startup:
+            if sys.platform == "win32":
+                # A HAL a client started has no console, and a console program it starts
+                # would get a console window of its own; the Qt window still shows.
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=startup,
+                    stderr=subprocess.STDOUT,
+                    env=environment,
+                    cwd=folder,
+                    close_fds=True,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+            else:
+                process = subprocess.Popen(
+                    command,
+                    stdin=subprocess.DEVNULL,
+                    stdout=startup,
+                    stderr=subprocess.STDOUT,
+                    env=environment,
+                    cwd=folder,
+                    close_fds=True,
+                )
+    except OSError as exc:
+        log.warning("The HAL monitor window could not be started: %s", exc)
+        return None
+    log.debug(
+        "Opened the HAL monitor window (pid %d); its output goes to '%s'.",
+        process.pid,
+        startup_path,
+    )
+    return process
+
+
+def close_window(monitor: subprocess.Popen[bytes] | None) -> None:
+    """
+    End the HAL's monitor window, if it is still open: the HAL has exited, so there is nothing
+    left for it to show. It is ended, not asked: the monitor sends nothing on its own, so
+    there is nothing it could leave half done. Never raises.
+    """
+    if monitor is None or monitor.poll() is not None:
+        return
+    log.debug("Closing the HAL monitor window (pid %d).", monitor.pid)
+    try:
+        monitor.terminate()
+        monitor.wait(WINDOW_CLOSE_WAIT_S)
+    except subprocess.TimeoutExpired:
+        monitor.kill()
+    except OSError as exc:
+        log.debug("The HAL monitor window could not be closed: %s", exc)
 
 
 def ask(port: int, *, stop: bool) -> int:

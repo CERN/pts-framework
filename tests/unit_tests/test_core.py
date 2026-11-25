@@ -27,14 +27,12 @@ def _no_real_config_ini(tmp_path, monkeypatch):
     cold before and after; a test with a config.ini of its own points the path
     elsewhere after this.
     """
-    from pypts.config_handler import ConfigHandler, file_locations
+    from pypts.config_handler import file_locations
 
     monkeypatch.setattr(
         file_locations, "config_file_path", lambda: tmp_path / "no_config" / "config.ini"
     )
-    ConfigHandler.reset_for_testing()
     yield
-    ConfigHandler.reset_for_testing()
 
 
 def build_core_that_spawns_nothing():
@@ -915,14 +913,12 @@ def test_start_starts_the_hal_link_before_the_submodules():
 
 def test_core_hands_the_hal_link_its_log_level_and_the_window_setting(config_file):
     """`hal.show_window` from config.ini, the level from core_main()."""
-    from pypts.config_handler import ConfigHandler
     from pypts.core.core import Core
     from pypts.messages import QueueWrapper
 
     text = config_file.read_text(encoding="utf-8")
     assert "show_window = true" in text
     config_file.write_text(text.replace("show_window = true", "show_window = false"), "utf-8")
-    ConfigHandler.reset_for_testing()
 
     core = Core(QueueWrapper(queue.Queue()), QueueWrapper(queue.Queue()), log_level=5)
 
@@ -932,15 +928,11 @@ def test_core_hands_the_hal_link_its_log_level_and_the_window_setting(config_fil
 
 def test_without_a_configuration_the_hal_window_is_shown(tmp_path, monkeypatch):
     """A CORE built with no config.ini to read: the shipped default, a window."""
-    from pypts.config_handler import ConfigHandler, file_locations
+    from pypts.config_handler import file_locations
     from pypts.logger.log import DEFAULT_LOG_LEVEL
 
     monkeypatch.setattr(file_locations, "config_file_path", lambda: tmp_path / "config.ini")
-    ConfigHandler.reset_for_testing()
-    try:
-        core = build_core_that_spawns_nothing()
-    finally:
-        ConfigHandler.reset_for_testing()
+    core = build_core_that_spawns_nothing()
 
     assert core.hal_link._show_window is True
     assert core.hal_link._log_level == DEFAULT_LOG_LEVEL
@@ -1244,6 +1236,82 @@ def test_the_operator_is_told_before_the_window_closes():
     assert reported.error.source == "pypts.hmi.hmi_client"
 
 
+# --------------------------------------------------------------------------
+# The Logger is watched, but never stopped, by CORE
+# --------------------------------------------------------------------------
+
+
+def build_core_watching_the_logger():
+    """A Core that spawns nothing, given the Logger's heartbeat link."""
+    from pypts.core.core import Core
+    from pypts.messages import QueueWrapper
+
+    return Core(
+        to_hmi=QueueWrapper(queue.Queue()),
+        from_hmi=QueueWrapper(queue.Queue()),
+        from_logger=QueueWrapper(queue.Queue()),
+    )
+
+
+def test_the_loggers_beat_reaches_the_watchdog_through_its_own_link():
+    from pypts.messages.common_messages import Heartbeat
+    from pypts.utilities.heartbeat_manager import LOGGER
+
+    core = build_core_watching_the_logger()
+    assert core.from_logger is not None
+    core.from_logger.send(Heartbeat(source=LOGGER, timestamp=1_700_000_004.0))
+
+    core.poll_all_sources()
+
+    assert core.watched[LOGGER].last_heartbeat == 1_700_000_004.0
+
+
+def test_the_logger_is_watched_only_when_core_has_its_link():
+    """A CORE built without the link (a test, or no Logger process) watches
+    the three modules alone, and never stops the Logger in either case."""
+    from pypts.utilities.heartbeat_manager import LOGGER
+
+    assert LOGGER not in build_core_that_spawns_nothing().watched
+    core = build_core_watching_the_logger()
+    assert LOGGER in core.watched
+    assert LOGGER not in core.modules
+
+
+def test_a_silent_logger_ends_the_run_like_any_other_module():
+    from pypts.core.core import HEARTBEAT_FATAL_S
+    from pypts.messages.core_hmi_communication import ModuleErrorReported, StopHmi
+    from pypts.utilities.heartbeat_manager import LOGGER
+
+    core = build_core_watching_the_logger()
+    core.watched[LOGGER].last_heartbeat = time.time() - (HEARTBEAT_FATAL_S + 1)
+
+    core.do_periodic_tasks()
+
+    assert core.closing_at_once
+    assert core.running is False
+    sent = list(core.to_hmi.receive())
+    assert StopHmi() in sent
+    reported = next(m for m in sent if isinstance(m, ModuleErrorReported))
+    assert reported.error.severity is ErrorSeverity.CRITICAL
+    assert reported.error.source == "pypts.logger.log"
+
+
+def test_an_orderly_close_does_not_wait_for_the_logger():
+    """The launcher stops the Logger after CORE has left, so CORE must leave
+    once the three modules it stops have answered - the Logger still running."""
+    from pypts.utilities.heartbeat_manager import HMI, LOGGER, REPORT, SEQUENCER
+
+    core = build_core_watching_the_logger()
+    core.watched[LOGGER].last_heartbeat = time.time()
+    for name in (HMI, SEQUENCER, REPORT):
+        core.modules[name].running = False
+
+    core.check_stop_status()
+
+    assert core.running is False
+    assert core.watched[LOGGER].running is True
+
+
 def test_the_watchdog_does_not_re_report_a_module_it_has_already_acted_on(caplog):
     """
     The loop turns every 10 ms and the dead module stays dead. Without the
@@ -1523,28 +1591,14 @@ def test_a_broken_shutdown_check_still_lets_core_leave(monkeypatch):
 @pytest.fixture
 def config_file(tmp_path, monkeypatch):
     """
-    A config.ini in tmp_path, created the way the launcher creates it, and a
-    cold singleton afterwards - so the test decides how this process opens it,
-    the way CORE's own process decides in core_main().
+    A config.ini in tmp_path, created the way the launcher creates it.
     """
     from pypts.config_handler import ConfigHandler, file_locations
 
     path = tmp_path / "config.ini"
     monkeypatch.setattr(file_locations, "config_file_path", lambda: path)
-    ConfigHandler.reset_for_testing()
     ConfigHandler.bootstrap()
-    ConfigHandler.reset_for_testing()
     yield path
-    ConfigHandler.reset_for_testing()
-
-
-@pytest.fixture
-def writable_config(config_file):
-    """The same file, held for writing the way core_main() holds it."""
-    from pypts.config_handler import ConfigHandler
-
-    ConfigHandler.open_for_writing()
-    return config_file
 
 
 def config_answers(core):
@@ -1556,34 +1610,7 @@ def config_answers(core):
     ]
 
 
-def test_core_main_holds_the_configuration_for_writing(config_file, monkeypatch):
-    """
-    CORE must be a writer before Core() reads its first value: that first read
-    would otherwise make the process a reader, and a reader can never be
-    promoted - every SetConfigParameter of the run would then be refused.
-    """
-    from pypts.config_handler import ConfigHandler, Role
-    from pypts.core import core as core_module
-
-    roles_seen_by_core = []
-
-    class CoreThatRecordsTheRole:
-        def __init__(self, to_hmi, from_hmi, *, log_level):
-            roles_seen_by_core.append(ConfigHandler().role)
-
-        def start(self):
-            pass
-
-    monkeypatch.setattr(core_module, "ignore_keyboard_interrupt", lambda: None)
-    monkeypatch.setattr(core_module, "init_logging", lambda *args: None)
-    monkeypatch.setattr(core_module, "Core", CoreThatRecordsTheRole)
-
-    core_module.core_main(to_hmi=None, from_hmi=None, log_queue=None)
-
-    assert roles_seen_by_core == [Role.WRITER]
-
-
-def test_a_config_change_is_written_and_confirmed(writable_config):
+def test_a_config_change_is_written_and_confirmed(config_file):
     """SetConfigParameter -> the value is in config.ini -> the frontend is told so."""
     from pypts.messages.core_hmi_communication import ConfigParameterResult, SetConfigParameter
 
@@ -1595,15 +1622,15 @@ def test_a_config_change_is_written_and_confirmed(writable_config):
     assert config_answers(core) == [
         ConfigParameterResult(key="gui.window_width", value="1600", accepted=True)
     ]
-    assert "window_width = 1600" in writable_config.read_text(encoding="utf-8")
+    assert "window_width = 1600" in config_file.read_text(encoding="utf-8")
 
 
-def test_a_value_of_the_wrong_type_is_refused_and_the_key_is_named(writable_config, caplog):
+def test_a_value_of_the_wrong_type_is_refused_and_the_key_is_named(config_file, caplog):
     """The Config Handler parses before it writes; CORE answers with its reason."""
     from pypts.messages.core_hmi_communication import SetConfigParameter
 
     core = build_core_that_spawns_nothing()
-    before = writable_config.read_text(encoding="utf-8")
+    before = config_file.read_text(encoding="utf-8")
 
     core.from_hmi.send(SetConfigParameter(key="gui.window_width", value="wide"))
     with caplog.at_level(logging.WARNING):
@@ -1613,11 +1640,11 @@ def test_a_value_of_the_wrong_type_is_refused_and_the_key_is_named(writable_conf
     assert len(answers) == 1
     assert answers[0].accepted is False
     assert "gui.window_width" in answers[0].reason
-    assert writable_config.read_text(encoding="utf-8") == before
+    assert config_file.read_text(encoding="utf-8") == before
     assert any("was not changed" in record.getMessage() for record in caplog.records)
 
 
-def test_a_managed_section_is_refused_even_with_a_valid_value(writable_config):
+def test_a_managed_section_is_refused_even_with_a_valid_value(config_file):
     """
     `meta.config_version = 4.0.0` parses perfectly well. It is refused anyway: a
     hand-picked structure version is how a file gets discarded at the next start.
@@ -1625,7 +1652,7 @@ def test_a_managed_section_is_refused_even_with_a_valid_value(writable_config):
     from pypts.messages.core_hmi_communication import SetConfigParameter
 
     core = build_core_that_spawns_nothing()
-    before = writable_config.read_text(encoding="utf-8")
+    before = config_file.read_text(encoding="utf-8")
 
     core.from_hmi.send(SetConfigParameter(key="meta.config_version", value="4.0.0"))
     core.poll_all_sources()
@@ -1634,7 +1661,7 @@ def test_a_managed_section_is_refused_even_with_a_valid_value(writable_config):
     assert len(answers) == 1
     assert answers[0].accepted is False
     assert "managed by pypts" in answers[0].reason
-    assert writable_config.read_text(encoding="utf-8") == before
+    assert config_file.read_text(encoding="utf-8") == before
 
 
 def test_a_change_with_no_configuration_to_write_is_answered_not_raised(tmp_path, monkeypatch):
@@ -1642,22 +1669,87 @@ def test_a_change_with_no_configuration_to_write_is_answered_not_raised(tmp_path
     No config.ini at all - a CORE built outside a run. The frontend still gets
     an answer, so a dialog waiting on it is never left spinning.
     """
-    from pypts.config_handler import ConfigHandler, file_locations
+    from pypts.config_handler import file_locations
     from pypts.messages.core_hmi_communication import SetConfigParameter
 
     monkeypatch.setattr(file_locations, "config_file_path", lambda: tmp_path / "config.ini")
-    ConfigHandler.reset_for_testing()
     core = build_core_that_spawns_nothing()
 
     core.from_hmi.send(SetConfigParameter(key="gui.theme", value="dark"))
     core.poll_all_sources()
-    ConfigHandler.reset_for_testing()
 
     answers = config_answers(core)
     assert len(answers) == 1
     assert answers[0].accepted is False
     assert not (tmp_path / "config.ini").exists()
 
+
+
+def restore_answers(core):
+    """Every DefaultConfigRestored CORE has sent the HMI so far."""
+    from pypts.messages.core_hmi_communication import DefaultConfigRestored
+
+    return [
+        message for message in core.to_hmi.receive() if isinstance(message, DefaultConfigRestored)
+    ]
+
+
+def test_restoring_the_defaults_rewrites_config_ini_and_is_confirmed(config_file):
+    """RestoreDefaultConfig -> CORE rewrites the file from the template -> the frontend is told."""
+    from pypts.messages.core_hmi_communication import (
+        DefaultConfigRestored,
+        RestoreDefaultConfig,
+        SetConfigParameter,
+    )
+
+    core = build_core_that_spawns_nothing()
+    core.from_hmi.send(SetConfigParameter(key="gui.window_width", value="1555"))
+    core.poll_all_sources()
+    assert "window_width = 1555" in config_file.read_text(encoding="utf-8")
+
+    core.from_hmi.send(RestoreDefaultConfig())
+    core.poll_all_sources()
+
+    assert restore_answers(core) == [DefaultConfigRestored(accepted=True)]
+    assert config_file.exists()
+    assert "window_width = 1555" not in config_file.read_text(encoding="utf-8")
+
+
+def test_restoring_the_defaults_mends_a_broken_file(config_file):
+    """restore_default() needs no read of the old file, so a broken one is rewritten too."""
+    from pypts.config_handler import BootstrapOutcome, ConfigHandler
+    from pypts.messages.core_hmi_communication import DefaultConfigRestored, RestoreDefaultConfig
+
+    core = build_core_that_spawns_nothing()
+    config_file.write_text("this is not an ini file", encoding="utf-8")
+
+    core.from_hmi.send(RestoreDefaultConfig())
+    core.poll_all_sources()
+
+    assert restore_answers(core) == [DefaultConfigRestored(accepted=True)]
+    assert ConfigHandler().bootstrap_outcome is BootstrapOutcome.LOADED
+
+
+def test_a_restore_that_cannot_write_is_answered_not_raised(config_file, monkeypatch):
+    """The frontend still gets an answer, naming why; the file is untouched."""
+    from pypts.config_handler import template_writer
+    from pypts.messages.core_hmi_communication import RestoreDefaultConfig
+
+    core = build_core_that_spawns_nothing()
+    before = config_file.read_text(encoding="utf-8")
+
+    def refuse(path, text):
+        raise PermissionError("read-only disk")
+
+    monkeypatch.setattr(template_writer, "write", refuse)
+    core.from_hmi.send(RestoreDefaultConfig())
+    core.poll_all_sources()
+
+    answers = restore_answers(core)
+    assert len(answers) == 1
+    assert answers[0].accepted is False
+    assert "read-only disk" in answers[0].reason
+    assert config_file.read_text(encoding="utf-8") == before
 
 
 def test_a_core_built_here_never_reads_the_real_config_ini(tmp_path):

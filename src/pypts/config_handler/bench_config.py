@@ -11,17 +11,16 @@ text for the hardware layer (`pyhal/pyhal.md` -> Configuration) - so it needs no
 of ConfigHandler's machinery: no schema, no structure version, no roles and no
 writer. Nothing in pypts ever writes a device section; the file is the user's.
 
-One entry point: `bench_config()`, computed once per process. The launcher
-calls it first, after logging is up - so unlike `ConfigHandler.bootstrap()` it
-never buffers its log lines - and shows the operator a notice if the file was
-discarded. The hardware layer reads the devices from the same cached result on
-the first `get_device()` of a run, so a hand edit applies from the next start,
-the same rule as config.ini.
+One entry point: `bench_config()`, which reads the file on every call and keeps
+nothing. The launcher calls it first, after logging is up - so unlike
+`ConfigHandler.bootstrap()` it never buffers its log lines - and shows the
+operator a notice if the file was discarded. CORE's `HalLink.start()` calls it
+again for the path it hands the HAL server, which reads the devices itself, once,
+when it starts (`pyhal/pyhal.md` -> Configuration).
 """
 
 import configparser
 import logging
-import threading
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -61,29 +60,15 @@ class BenchConfig:
     path: Path
 
 
-_lock = threading.Lock()
-_cached: BenchConfig | None = None
-
-
 def bench_config() -> BenchConfig:
     """
-    The bench file, read - or created from the template - once per process.
+    The bench file, read - or created from the template - now. Stateless, like
+    ConfigHandler: nothing is kept between calls.
 
     Never raises: a file that cannot be used is DISCARDED, with the reason in
     `problem`, and the start simply has no devices.
     """
-    global _cached
-    with _lock:
-        if _cached is None:
-            _cached = _read_or_create()
-        return _cached
-
-
-def reset_for_testing() -> None:
-    """Forget the cached result. Only tests may call this."""
-    global _cached
-    with _lock:
-        _cached = None
+    return _read_or_create()
 
 
 def _read_or_create() -> BenchConfig:

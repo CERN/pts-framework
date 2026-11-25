@@ -13,6 +13,7 @@ CORE_TO_SEQUENCER = "core->sequencer"
 SEQUENCER_TO_CORE = "sequencer->core"
 CORE_TO_REPORT = "core->report"
 REPORT_TO_CORE = "report->core"
+LOGGER_TO_CORE = "logger->core"
 
 #: Not a link between two modules, but named here so no QueueWrapper is anonymous.
 ANY_TO_LOGGER = "any->logger"

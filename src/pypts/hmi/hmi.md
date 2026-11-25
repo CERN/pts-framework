@@ -81,7 +81,8 @@ engineering mode passes the last two),
 `StopSequence`, `PauseSequence` / `ResumeSequence` (GUI only),
 `ShutdownRequested`, `UserPromptResponse`, `UserTextResponse`,
 `UserPathResponse` (sent by `answer_user_path()`), `HmiStopped`, `SetConfigParameter` (sent by `set_config_parameter()`; only the GUI's
-Settings dialog calls it — the CLI has no command for it).
+Settings dialog calls it — the CLI has no command for it), `RestoreDefaultConfig` (sent by
+`restore_default_config()`; only the GUI's Restore default settings calls it).
 
 ## Key messages (CORE → HMI)
 
@@ -94,7 +95,8 @@ it names a run log; the defaults log at DEBUG), `RunPaused` / `RunResumed` (hook
 nothing), `ReportReady`, `UserPromptRequest`, `UserTextRequest`,
 `UserPathRequest` (hook `ask_user_path()`; the default declines with a WARNING, like
 `ask_user_text()`), `ModuleErrorReported`, `StatusChanged`, `StopHmi`, `ConfigParameterResult` (hook
-`show_config_parameter_result()`; the default logs at DEBUG), `RunMetadata` (hook
+`show_config_parameter_result()`; the default logs at DEBUG), `DefaultConfigRestored` (hook
+`show_default_config_restored()`; the default logs at DEBUG; the GUI restarts on an accepted one), `RunMetadata` (hook
 `show_run_metadata(values)`, passed the `(name, value)` tuples; the default logs at DEBUG).
 
 Full catalogue: `messages/messages.md`.

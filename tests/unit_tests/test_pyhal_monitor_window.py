@@ -152,11 +152,11 @@ def start_hal(tmp_path):
 
 @pytest.fixture
 def make_window(qtbot):
-    """make_window(port, bench=None) -> a shown MonitorWindow; closed and waited for after."""
+    """make_window(port) -> a shown MonitorWindow; closed and waited for after."""
     windows: list[MonitorWindow] = []
 
-    def make(port: int, bench: str | None = None) -> MonitorWindow:
-        window = MonitorWindow(port, bench=bench)
+    def make(port: int) -> MonitorWindow:
+        window = MonitorWindow(port)
         qtbot.addWidget(window)
         window.show()
         windows.append(window)
@@ -200,44 +200,16 @@ def test_the_window_shows_the_hal_and_its_devices(start_hal, make_window, qtbot,
     assert table.columnWidth(3) > table.columnWidth(0)
     assert window.close_all_button.isEnabled()
     assert window.stop_button.isEnabled()
-    assert not window.start_button.isEnabled()
     other.close()
 
 
-def test_the_window_shows_not_reachable_and_offers_start(
-    start_hal, make_window, qtbot, tmp_path, monkeypatch
-):
+def test_a_hal_that_starts_later_is_picked_up(start_hal, make_window, qtbot):
     port = _free_port()
-    bench = tmp_path / "bench.ini"
-    bench.write_text(f"[loop1]\ndriver = {LOOPBACK}\n", encoding="utf-8")
-    started: list[tuple[str, int]] = []
-
-    def start_in_threads(bench_path, start_port, **options):
-        started.append((str(bench_path), start_port))
-        start_hal(port=start_port)
-        return 4242
-
-    monkeypatch.setattr(window_module.client, "start_hal", start_in_threads)
-    window = make_window(port, bench=str(bench))
+    window = make_window(port)
     qtbot.waitUntil(lambda: window.state_label.text() == "not reachable", timeout=WAIT_MS)
-    assert not window.close_all_button.isEnabled()
-    assert not window.stop_button.isEnabled()
-    assert window.start_button.isEnabled()
-    assert str(bench) in window.start_button.toolTip()
-    assert _table(window) == {}
-    qtbot.mouseClick(window.start_button, Qt.MouseButton.LeftButton)
+    start_hal(port=port)
     qtbot.waitUntil(lambda: window.state_label.text() == "running", timeout=WAIT_MS)
-    assert started == [(str(bench), port)]
-    assert "4242" in window.statusBar().currentMessage()
     assert _table(window) == {"loop1": ["", "configured", ""]}
-    assert not window.start_button.isEnabled()
-
-
-def test_start_is_disabled_without_a_bench(make_window, qtbot):
-    window = make_window(_free_port())
-    qtbot.waitUntil(lambda: window.state_label.text() == "not reachable", timeout=WAIT_MS)
-    assert not window.start_button.isEnabled()
-    assert window.start_button.toolTip() == "No bench file: start the monitor with --bench FILE"
 
 
 def test_closing_the_window_leaves_the_bench_alone(start_hal, qtbot, tmp_path):
@@ -443,7 +415,7 @@ def test_stop_asks_first_and_the_window_shows_not_reachable(
 
     monkeypatch.setattr(window_module, "confirm", confirm)
     monkeypatch.setattr(window_module, "warn", lambda parent, title, text: None)
-    window = make_window(hal.port, bench=str(tmp_path / "bench.ini"))
+    window = make_window(hal.port)
     qtbot.waitUntil(lambda: window.state_label.text() == "running", timeout=WAIT_MS)
     qtbot.mouseClick(window.stop_button, Qt.MouseButton.LeftButton)
     assert "Every open device is torn down, also those of other clients." in questions[0]
@@ -455,7 +427,6 @@ def test_stop_asks_first_and_the_window_shows_not_reachable(
     )
     assert hal.wait_until_exited(30)
     qtbot.waitUntil(lambda: window.state_label.text() == "not reachable", timeout=WAIT_MS)
-    assert window.start_button.isEnabled()
     assert not window.stop_button.isEnabled()
 
 
@@ -508,129 +479,69 @@ def test_the_log_view_follows_a_new_hal(start_hal, make_window, qtbot, tmp_path)
     )
 
 
-# --- serve mode (run_hal.py) ---------------------------------------------------------------
+# --- the window never starts or stops a HAL on its own (user decision 2026-11-24) -----------
 
 
-def _serve_window(qtbot, port: int, bench: Path, **options) -> MonitorWindow:
-    window = MonitorWindow(port, bench=str(bench), serve=True, **options)
+def _exit_window(qtbot, port: int) -> MonitorWindow:
+    """A window as `python -m pyhal --window` opens it: exit_with_hal."""
+    window = MonitorWindow(port, exit_with_hal=True)
     qtbot.addWidget(window)
     window.show()
     return window
 
 
-def test_serve_starts_a_hal_and_closing_stops_it(start_hal, qtbot, tmp_path, monkeypatch):
-    port = _free_port()
-    bench = tmp_path / "bench.ini"
-    bench.write_text(f"[loop1]\ndriver = {LOOPBACK}\n", encoding="utf-8")
-    started: list[HalServer] = []
-
-    def start_in_threads(bench_path, start_port, **options):
-        started.append(start_hal(port=start_port))
-        return 4242
-
-    monkeypatch.setattr(window_module.client, "start_hal", start_in_threads)
-    window = _serve_window(qtbot, port, bench)
-    # No button pressed: the window starts the HAL on its own.
-    qtbot.waitUntil(lambda: window.state_label.text() == "running", timeout=WAIT_MS)
-    assert len(started) == 1
-    window.close()
-    assert not window.isVisible()
-    # What main() does once the event loop has ended.
-    window.wait_before_exit()
-    assert started[0].wait_until_exited(30)
-    assert window.wait_for_workers(30)
+def _no_start(*args, **kwargs):
+    raise AssertionError("the monitor must never start a HAL")
 
 
-def test_serve_attaches_to_a_running_hal_and_closing_stops_it(
-    start_hal, qtbot, tmp_path, monkeypatch
+def test_the_window_shows_not_reachable_and_starts_nothing(make_window, qtbot, monkeypatch):
+    monkeypatch.setattr(window_module.client, "start_hal", _no_start)
+    window = make_window(_free_port())
+    qtbot.waitUntil(lambda: window.state_label.text() == "not reachable", timeout=WAIT_MS)
+    assert not window.close_all_button.isEnabled()
+    assert not window.stop_button.isEnabled()
+    assert not hasattr(window, "start_button")
+    assert _table(window) == {}
+    # Several polls later it still only polls.
+    qtbot.wait(int(window_module.REFRESH_S * 2500))
+    assert window.state_label.text() == "not reachable"
+
+
+def test_closing_the_window_asks_nothing_and_leaves_the_hal_running(
+    start_hal, qtbot, monkeypatch
 ):
-    hal = start_hal()
-    questions: list[str] = []
-    monkeypatch.setattr(
-        window_module, "confirm", lambda parent, title, text: questions.append(text) or True
-    )
-
-    def no_start(*args, **kwargs):
-        raise AssertionError("a HAL answers: serve mode must not start another")
-
-    monkeypatch.setattr(window_module.client, "start_hal", no_start)
-    window = _serve_window(qtbot, hal.port, tmp_path / "bench.ini")
-    qtbot.waitUntil(lambda: window.state_label.text() == "running", timeout=WAIT_MS)
-    window.close()
-    # No other client: closing asks nothing.
-    assert questions == []
-    window.wait_before_exit()
-    assert hal.wait_until_exited(30)
-    assert window.wait_for_workers(30)
-
-
-def test_serve_asks_before_stopping_under_other_clients(start_hal, qtbot, tmp_path, monkeypatch):
     hal = start_hal()
     other = Client(hal.port)
     other.beat()
-    answers = [False, True]
-    questions: list[str] = []
 
-    def confirm(parent, title, text):
-        questions.append(text)
-        return answers.pop(0)
+    def no_question(parent, title, text):
+        raise AssertionError("closing the window must ask nothing")
 
-    monkeypatch.setattr(window_module, "confirm", confirm)
-    window = _serve_window(qtbot, hal.port, tmp_path / "bench.ini")
+    monkeypatch.setattr(window_module, "confirm", no_question)
+    window = _exit_window(qtbot, hal.port)
     qtbot.waitUntil(lambda: window.clients_label.text() == "1", timeout=WAIT_MS)
-    window.close()
-    # No: the window stays open and the HAL runs on.
-    assert window.isVisible()
-    assert "Other clients connected: 1." in questions[0]
-    # Not started by a program (no exit_with_hal): nothing about PyPTS.
-    assert "PyPTS" not in questions[0]
-    assert not hal._exited.is_set()
     window.close()
     assert not window.isVisible()
     window.wait_before_exit()
-    assert hal.wait_until_exited(30)
     assert window.wait_for_workers(30)
+    assert not hal._exited.is_set()
+    assert isinstance(other.request("status"), messages.StatusReport)
     other.close()
 
 
-def test_serve_start_passes_the_nonce_and_the_log_level(start_hal, qtbot, tmp_path, monkeypatch):
-    port = _free_port()
-    bench = tmp_path / "bench.ini"
-    bench.write_text(f"[loop1]\ndriver = {LOOPBACK}\n", encoding="utf-8")
-    calls: list[dict] = []
-
-    def start_in_threads(bench_path, start_port, **options):
-        calls.append(options)
-        start_hal(port=start_port)
-        return 4242
-
-    monkeypatch.setattr(window_module.client, "start_hal", start_in_threads)
-    window = _serve_window(qtbot, port, bench, nonce="abc", log_level=5)
-    qtbot.waitUntil(lambda: window.state_label.text() == "running", timeout=WAIT_MS)
-    assert calls == [{"log_dir": None, "log_level": 5, "nonce": "abc"}]
-    window.close()
-    window.wait_before_exit()
-    assert window.wait_for_workers(30)
-
-
-def test_exit_with_hal_closes_the_window_when_the_hal_goes(
-    start_hal, qtbot, tmp_path, monkeypatch, caplog
-):
-    # Only the no-Stop half: with the HAL gone there are no other clients, so closeEvent would
-    # ask nothing anyway.
+def test_exit_with_hal_closes_the_window_when_the_hal_goes(start_hal, qtbot, caplog):
     hal = start_hal()
     caplog.set_level(logging.INFO, logger="pyhal.monitor.window")
-    window = _serve_window(qtbot, hal.port, tmp_path / "bench.ini", exit_with_hal=True)
+    window = _exit_window(qtbot, hal.port)
     qtbot.waitUntil(lambda: window.state_label.text() == "running", timeout=WAIT_MS)
     _stop(hal)
     qtbot.waitUntil(lambda: not window.isVisible(), timeout=WAIT_MS)
     window.wait_before_exit()
     assert "has gone; the monitor closes with it." in caplog.text
-    assert "Stopping the HAL" not in caplog.text
     assert window.wait_for_workers(30)
 
 
-def test_exit_with_hal_survives_one_failed_poll(start_hal, qtbot, tmp_path, monkeypatch):
+def test_exit_with_hal_survives_one_failed_poll(start_hal, qtbot, monkeypatch):
     # One poll without an answer (as a poll slower than POLL_TIMEOUT_S gives) while the HAL
     # runs: the window stays.
     hal = start_hal()
@@ -649,27 +560,21 @@ def test_exit_with_hal_survives_one_failed_poll(start_hal, qtbot, tmp_path, monk
         return report
 
     monkeypatch.setattr(window_module.MonitorLink, "status", status_missing_once)
-    monkeypatch.setattr(window_module, "confirm", lambda parent, title, text: True)
-    window = _serve_window(qtbot, hal.port, tmp_path / "bench.ini", exit_with_hal=True)
+    window = _exit_window(qtbot, hal.port)
     qtbot.waitUntil(lambda: polls["after"] >= 2, timeout=WAIT_MS)
     assert window.isVisible()
     assert window.state_label.text() == "running"
     window.close()
     window.wait_before_exit()
-    assert hal.wait_until_exited(30)
     assert window.wait_for_workers(30)
+    assert not hal._exited.is_set()
 
 
-def test_exit_with_hal_waits_for_a_hal_it_has_seen(start_hal, qtbot, tmp_path, monkeypatch):
-    # No HAL yet and Start failing: the window stays, showing why.
-    def failing_start(bench_path, start_port, **options):
-        raise window_module.DriverError("The HAL server could not be started: bad bench")
-
-    monkeypatch.setattr(window_module.client, "start_hal", failing_start)
-    window = _serve_window(qtbot, _free_port(), tmp_path / "bench.ini", exit_with_hal=True)
-    qtbot.waitUntil(
-        lambda: "Start failed" in window.statusBar().currentMessage(), timeout=WAIT_MS
-    )
+def test_exit_with_hal_waits_for_a_hal_it_has_seen(qtbot, monkeypatch):
+    # No HAL has answered yet: the window stays, and starts none.
+    monkeypatch.setattr(window_module.client, "start_hal", _no_start)
+    window = _exit_window(qtbot, _free_port())
+    qtbot.waitUntil(lambda: window.state_label.text() == "not reachable", timeout=WAIT_MS)
     qtbot.wait(int(window_module.REFRESH_S * 2500))
     assert window.isVisible()
     window.close()
@@ -677,23 +582,22 @@ def test_exit_with_hal_waits_for_a_hal_it_has_seen(start_hal, qtbot, tmp_path, m
     assert window.wait_for_workers(30)
 
 
-@pytest.mark.parametrize("option", [["--nonce", "x"], ["--exit-with-hal"]])
-def test_the_monitor_options_need_serve(option, capsys):
+@pytest.mark.parametrize(
+    "option", [["--serve"], ["--bench", "bench.ini"], ["--nonce", "x"], ["--log-level", "INFO"]]
+)
+def test_the_monitor_has_no_start_options(option, capsys):
     with pytest.raises(SystemExit) as caught:
-        monitor_main.main(["--bench", "bench.ini", *option])
+        monitor_main.main(option)
     assert caught.value.code == 2
-    assert f"{option[0]} needs --serve" in capsys.readouterr().err
+    assert "unrecognized arguments" in capsys.readouterr().err
 
 
-def test_the_monitor_log_level_is_parsed_as_pyhal_parses_it():
+def test_the_monitor_takes_a_port_and_exit_with_hal():
     parser = monitor_main._build_parser()
-    assert parser.parse_args(["--log-level", "TRACE"]).log_level == 5
-    assert parser.parse_args(["--log-level", "warning"]).log_level == 30
-    assert parser.parse_args(["--log-level", "12"]).log_level == 12
-    assert parser.parse_args([]).log_level is None
-    with pytest.raises(SystemExit) as caught:
-        parser.parse_args(["--log-level", "LOUD"])
-    assert caught.value.code == 2
+    arguments = parser.parse_args(["--port", "29600", "--exit-with-hal"])
+    assert arguments.port == 29600
+    assert arguments.exit_with_hal is True
+    assert parser.parse_args([]).exit_with_hal is False
 
 
 def test_the_window_does_not_count_itself_among_the_clients(start_hal, make_window, qtbot):
@@ -707,40 +611,13 @@ def test_the_window_does_not_count_itself_among_the_clients(start_hal, make_wind
     other.close()
 
 
-def test_exit_with_hal_says_what_closing_costs_the_starter(start_hal, qtbot, tmp_path, monkeypatch):
-    hal = start_hal()
-    other = Client(hal.port)
-    other.beat()
-    questions: list[str] = []
-
-    def confirm(parent, title, text):
-        questions.append(text)
-        return False
-
-    monkeypatch.setattr(window_module, "confirm", confirm)
-    window = _serve_window(qtbot, hal.port, tmp_path / "bench.ini", exit_with_hal=True)
-    qtbot.waitUntil(lambda: window.clients_label.text() == "1", timeout=WAIT_MS)
-    window.close()
-    assert window.isVisible()
-    assert "Other clients connected: 1." in questions[0]
-    assert window_module.STARTER_WARNING in questions[0]
-    assert "PyPTS cannot reach them again until it is restarted" in questions[0]
-    assert "Restart" in questions[0]
-    # Let the window close without stopping the HAL: the fixture stops it.
-    window._hal_gone = True
-    window.close()
-    window.wait_before_exit()
-    assert window.wait_for_workers(30)
-    other.close()
-
-
 def _report(pid: int) -> messages.StatusReport:
     return messages.StatusReport(
         pid=pid, version="v", bench="b", log="", clients=0, busy=None, queued=0, devices=[]
     )
 
 
-def test_exit_with_hal_does_not_latch_onto_another_hal(qtbot, tmp_path, monkeypatch, caplog):
+def test_exit_with_hal_does_not_latch_onto_another_hal(qtbot, monkeypatch, caplog):
     # The HAL seen first (pid 1) goes and another starter's (pid 2) takes the port at once:
     # no poll finds none, yet the window closes, since pid 2 is not its HAL.
     reports = [_report(1), _report(1), _report(2)]
@@ -750,18 +627,14 @@ def test_exit_with_hal_does_not_latch_onto_another_hal(qtbot, tmp_path, monkeypa
             return reports.pop(0)
         return reports[0]
 
-    def no_start(*args, **kwargs):
-        raise AssertionError("a HAL answers: serve mode must not start another")
-
     monkeypatch.setattr(window_module.MonitorLink, "status", status)
-    monkeypatch.setattr(window_module.client, "start_hal", no_start)
+    monkeypatch.setattr(window_module.client, "start_hal", _no_start)
     caplog.set_level(logging.INFO, logger="pyhal.monitor.window")
-    window = _serve_window(qtbot, _free_port(), tmp_path / "bench.ini", exit_with_hal=True)
+    window = _exit_window(qtbot, _free_port())
     qtbot.waitUntil(lambda: not window.isVisible(), timeout=WAIT_MS)
     assert window.pid_label.text() == "2"
     window.wait_before_exit()
     assert "has gone; the monitor closes with it." in caplog.text
-    assert "Stopping the HAL" not in caplog.text
     assert window.wait_for_workers(30)
 
 

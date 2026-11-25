@@ -41,12 +41,14 @@ from pypts.messages.common_messages import ErrorSeverity, Heartbeat, ModuleError
 from pypts.messages.core_hmi_communication import (
     ConfigParameterResult,
     CoreToHmi,
+    DefaultConfigRestored,
     HmiStopped,
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
     RecipeUnloaded,
     ReportReady,
+    RestoreDefaultConfig,
     SetConfigParameter,
     ShutdownRequested,
     StartSequence,
@@ -77,6 +79,7 @@ from pypts.messages.links import (
     REPORT_TO_CORE,
     SEQUENCER_TO_CORE,
 )
+from pypts.messages.logger_core_communication import LoggerToCore
 from pypts.messages.run_events import (
     PauseSequence,
     RecipeLoaded,
@@ -113,6 +116,7 @@ from pypts.utilities.heartbeat_manager import (
     HEARTBEAT_FATAL_S,
     HEARTBEAT_TIMEOUT_S,
     HMI,
+    LOGGER,
     REPORT,
     SEQUENCER,
     HeartbeatManager,
@@ -125,6 +129,7 @@ FRIENDLY_MODULE_NAME = {
     HMI: "operator interface",
     SEQUENCER: "test engine",
     REPORT: "report writer",
+    LOGGER: "log writer",
 }
 
 #: The protocol's name for a module written as its ModuleError would spell it.
@@ -134,6 +139,7 @@ MODULE_SOURCE = {
     HMI: "pypts.hmi.hmi_client",
     SEQUENCER: "pypts.sequencer.sequencer",
     REPORT: "pypts.report.report",
+    LOGGER: "pypts.logger.log",
 }
 
 #: What a crash close during a run tells the operator. The crash close does not
@@ -156,6 +162,7 @@ FRIENDLY_SOURCE_NAME = {
     "pypts.hmi.gui.gui": "the operator interface",
     "pypts.hmi.cli.cli": "the operator interface",
     "pypts.config_handler.config_handler": "the settings file reader",
+    "pypts.logger.log": "the log writer",
 }
 
 
@@ -201,6 +208,7 @@ def core_main(
     from_hmi: QueueWrapper[HmiToCore],
     log_queue,
     log_level: int = DEFAULT_LOG_LEVEL,
+    from_logger: QueueWrapper[LoggerToCore] | None = None,
 ) -> None:
     """
     Entry point for the launcher. Runs in the Core process.
@@ -216,6 +224,8 @@ def core_main(
             rather than read from the config here, because --log-level overrides
             the config for one run and a child process has no way to know that.
             Everything else CORE needs it reads from the config itself.
+        from_logger: the Logger's heartbeat link, which CORE's watchdog
+            watches like the three modules' (Core.watched).
     """
     # Before anything else in this process. Ctrl+C reaches every process in the
     # group, and CORE dying to it takes the orderly shutdown - and the Sequencer
@@ -224,19 +234,15 @@ def core_main(
     ignore_keyboard_interrupt()
 
     init_logging(log_queue, log_level)
-    # CORE is the one process allowed to change config.ini while pypts runs
-    # (SetConfigParameter). Opened for writing before Core() is built, because
-    # Core's own first read would otherwise make this process a reader - and a
-    # reader can never be promoted to writer.
-    ConfigHandler.open_for_writing()
-    Core(to_hmi, from_hmi, log_level=log_level).start()
+    Core(to_hmi, from_hmi, log_level=log_level, from_logger=from_logger).start()
 
 
 class Core:
     """
     Mediator, and the thread that owns the Sequencer and the Report.
 
-    Naming convention for the six links: `to_x` is what CORE sends to module x,
+    Naming convention for the six links, and the Logger's heartbeat link
+    (`from_logger`): `to_x` is what CORE sends to module x,
     `from_x` is what x sends to CORE. CORE builds both halves of its own links
     and hands them to the thread that runs the module, so a module cannot
     construct a link to anyone it has no business talking to.
@@ -248,22 +254,28 @@ class Core:
         from_hmi: QueueWrapper[HmiToCore],
         *,
         log_level: int = DEFAULT_LOG_LEVEL,
+        from_logger: QueueWrapper[LoggerToCore] | None = None,
     ) -> None:
         """
         Args:
             log_level: the level of the run, which a HAL server this CORE starts is
                 given too (one found running keeps its own).
+            from_logger: the Logger's heartbeat link, built by the launcher. None
+                where no Logger process beats (a CORE built by a test): the
+                Logger is then not watched.
         """
         self.to_hmi = to_hmi
         self.from_hmi = from_hmi
+        self.from_logger = from_logger
 
         # One queue per direction. The QueueWrapper type parameter is the union that
         # queue is allowed to carry, and `link` is the name it goes by in the
         # trace - these four never leave this process, so the log is the only
         # place they can be seen at all. A plain `queue.Queue` is all they need,
         # because the Sequencer and the Report are threads of this process; the
-        # one link that does cross a process boundary, HMI<->CORE, is built by
-        # the launcher out of `multiprocessing.Queue` and handed in above.
+        # links that do cross a process boundary, HMI<->CORE and the Logger's
+        # heartbeat, are built by the launcher out of `multiprocessing.Queue`
+        # and handed in above.
         self.to_sequencer: QueueWrapper[CoreToSequencer] = QueueWrapper(
             Queue(), link=CORE_TO_SEQUENCER
         )
@@ -324,6 +336,16 @@ class Core:
             SEQUENCER: _ModuleState(),
             REPORT: _ModuleState(),
         }
+
+        #: Every module the watchdog watches: the three above, sharing their
+        #: state objects, and the Logger. The Logger is watched but never
+        #: stopped by CORE - the launcher stops it after CORE has left - so it
+        #: is kept out of `modules`, which the two closes walk to decide who is
+        #: told to stop and when CORE may leave. Its state stays `running` for
+        #: CORE's whole life, so it is watched through an orderly close too.
+        self.watched: dict[str, _ModuleState] = dict(self.modules)
+        if from_logger is not None:
+            self.watched[LOGGER] = _ModuleState()
 
         #: When CORE was built, which is the only clock a module that has never
         #: spoken can be measured against.
@@ -443,6 +465,8 @@ class Core:
         self.poll(self.from_hmi, self.handle_hmi_message)
         self.poll(self.from_sequencer, self.handle_sequencer_message)
         self.poll(self.from_report, self.handle_report_message)
+        if self.from_logger is not None:
+            self.poll(self.from_logger, self.handle_logger_message)
 
     def poll(self, inbox, handler) -> None:
         """
@@ -505,6 +529,9 @@ class Core:
                 # CORE is the single runtime writer of config.ini, which is
                 # why the message stops here rather than going anywhere else.
                 self.set_config_parameter(key, value)
+            case RestoreDefaultConfig():
+                # The same rule: CORE writes config.ini, the frontend asks.
+                self.restore_default_config()
             case Heartbeat():
                 self.note_heartbeat(message)
             case ModuleError():
@@ -623,6 +650,13 @@ class Core:
                 self.note_heartbeat(message)
             case ModuleError():
                 self.handle_module_error(message)
+            case _:
+                unhandled(message)
+
+    def handle_logger_message(self, message: LoggerToCore) -> None:
+        match message:
+            case Heartbeat():
+                self.note_heartbeat(message)
             case _:
                 unhandled(message)
 
@@ -750,8 +784,8 @@ class Core:
         """
         Write one value to config.ini, and tell the frontend whether it was.
 
-        CORE holds the configuration for writing - core_main() opens it so - and
-        the Config Handler does the real work: it parses the value against the
+        CORE is the single runtime writer of config.ini (a rule, not a check),
+        and the Config Handler does the real work: it parses the value against the
         schema before anything reaches the file, and refuses a file that was
         discarded at startup. CORE adds one rule of its own, READ_ONLY_SECTIONS,
         so a frontend that forgets to hide `meta` still cannot break the file.
@@ -759,9 +793,10 @@ class Core:
         Every refusal is answered, not only logged: the operator who asked is
         looking at a dialog waiting for the answer.
 
-        Written now, in force from the next start. Every process read its
-        configuration once at startup, CORE included, and nothing tells a
-        running one that a value changed - so nothing here pretends to.
+        Written now. The next read of the file, in any process, sees it - the
+        Sequencer reads paths.reports_dir at each run - but a value read once at
+        startup (the log level, the window, hal.show_window) is in force only
+        from the next start; nothing tells a running module that it changed.
         """
         section = key.rpartition(".")[0]
         if section in READ_ONLY_SECTIONS:
@@ -778,7 +813,7 @@ class Core:
 
         # The operator's line ("Setting ... changed to ...") is the Config
         # Handler's, written as the value reached the file.
-        log.debug("The setting '%s' applies from the next start.", key)
+        log.debug("The setting '%s' is written; the next read of the file sees it.", key)
         self.to_hmi.send(ConfigParameterResult(key=key, value=value, accepted=True))
 
     def refuse_config_parameter(self, key: str, value: str, reason: str) -> None:
@@ -788,6 +823,28 @@ class Core:
         self.to_hmi.send(
             ConfigParameterResult(key=key, value=value, accepted=False, reason=reason)
         )
+
+    def restore_default_config(self) -> None:
+        """
+        Rewrite config.ini from the template, and tell the frontend whether it was.
+
+        The Config Handler's restore_default() does the work: template defaults,
+        this machine's paths, written atomically, so there is never a moment
+        without a config.ini. It needs no read of the old file, so it works on a
+        broken or missing one too - rewriting it is what fixes it. The GUI
+        restarts pypts on the answer, so the values read at startup are the
+        defaults too.
+        """
+        try:
+            ConfigHandler.restore_default()
+        except (ConfigError, OSError) as error:
+            reason = str(error)
+            log.warning("The default settings were not restored: %s", reason)
+            self.to_hmi.send(DefaultConfigRestored(accepted=False, reason=reason))
+            return
+        # The operator's line ("All settings were restored to their defaults.")
+        # is the Config Handler's, written as the file was rewritten.
+        self.to_hmi.send(DefaultConfigRestored(accepted=True))
 
     #: What CORE logs a reported failure at. The sender rates its own failure -
     #: it is the only one who can - and CORE takes it at its word. That is the
@@ -856,7 +913,7 @@ class Core:
             self.to_hmi.send(ModuleErrorReported(error))
 
     def note_heartbeat(self, beat: Heartbeat) -> None:
-        state = self.modules.get(beat.source)
+        state = self.watched.get(beat.source)
         if state is None:
             log.debug("Heartbeat from an unknown module: '%s'.", beat.source)
             return
@@ -874,7 +931,8 @@ class Core:
 
     def do_periodic_tasks(self) -> None:
         """
-        Beat once towards the HMI, and watch the three beats coming back.
+        Beat once towards the HMI, and watch the beats coming back: the three
+        modules' and, when CORE was given its link, the Logger's (`watched`).
 
         Only modules still expected to be running are checked, so a module that
         has already reported itself stopped does not produce a timeout warning
@@ -911,7 +969,7 @@ class Core:
             return
 
         now = time.time()
-        for name, state in self.modules.items():
+        for name, state in self.watched.items():
             if not state.running:
                 continue
 

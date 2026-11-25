@@ -21,13 +21,14 @@ message, a union or a field means changing this file in the same commit.
 |------|------|
 | `__init__.py` | Re-exports only `QueueWrapper`, `UnhandledMessage`, `unhandled`. Import a message from the link module that owns it. |
 | `queue_wrapper.py` | `QueueWrapper[Msg]`, `unhandled()`, `UnhandledMessage` — see *Transport* |
-| `links.py` | The link names used in trace lines: `HMI_TO_CORE`, `CORE_TO_HMI`, `CORE_TO_SEQUENCER`, `SEQUENCER_TO_CORE`, `CORE_TO_REPORT`, `REPORT_TO_CORE`, `ANY_TO_LOGGER`. Imports nothing. |
+| `links.py` | The link names used in trace lines: `HMI_TO_CORE`, `CORE_TO_HMI`, `CORE_TO_SEQUENCER`, `SEQUENCER_TO_CORE`, `CORE_TO_REPORT`, `REPORT_TO_CORE`, `LOGGER_TO_CORE`, `ANY_TO_LOGGER`. Imports nothing. |
 | `common_messages.py` | `ModuleError`, `Heartbeat` and the payloads `ErrorSeverity`, `ResultType`, `StepOutcome` |
 | `run_events.py` | Run progress, operator commands about a run, the three operator questions, and the payloads `StepSummary`, `SequenceSummary` |
 | `core_hmi_communication.py` | `HmiToCore` / `CoreToHmi` and the messages only that link carries |
 | `core_sequencer_communication.py` | `CoreToSequencer` / `SequencerToCore`, `RunSequence`, `ForgetRecipe`, `StopSequencer`, `SequencerStopped` |
 | `core_report_communication.py` | `CoreToReport` / `ReportToCore`, `GenerateReport`, `ExportReport`, `StopReport`, `ReportStopped`, `ReportGenerated`, `ReportExported` |
 | `to_logger_communication.py` | `LoggerControl`: `SetStdoutEnabled`, `SwitchLogFile`, `StartRunLog`, `EndRunLog`, `StopLogger` |
+| `logger_core_communication.py` | `LoggerToCore` — the Logger's `Heartbeat` to CORE, and nothing else |
 | `blocking_messages.py` | `PendingRequests` — the waiting half of a request/response pair; see *Waiting for an answer* |
 
 Every message is a plain **dataclass of plain values**. Each direction has a union type — that
@@ -127,7 +128,7 @@ reaches a union, which is what stops those comments from quietly going stale.
 
 | Type | Kind | Meaning |
 |---|---|---|
-| `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all three links. It also travels **one way back**, CORE→HMI, which is why it is on four unions and not three: the HMI is the only module in a process of its own, so it is the only one that can still be running with nothing at the other end of its link. The Sequencer and the Report are threads of CORE's process and die with it, so neither is sent one — a second and third reverse direction would watch for something that cannot happen and double the trace traffic doing it. |
+| `Heartbeat(source, timestamp)` | EVT | Proof the sender's event loop is still turning. `source` travels on the message so one CORE handler serves all four links (the Sequencer's, the Report's, the HMI's and the Logger's). It also travels **one way back**, CORE→HMI, which is why it is on five unions and not four: the HMI is the only module in a process of its own that can still be running with nothing at the other end of its link. The Logger, in a process of its own too, is not sent one: it is stopped by the launcher after CORE has left, and it needs CORE for nothing. The Sequencer and the Report are threads of CORE's process and die with it, so neither is sent one — a second and third reverse direction would watch for something that cannot happen and double the trace traffic doing it. |
 | `ModuleError(source, severity, message, exception, traceback, operation, error_type)` | EVT | A failure the sender wants CORE to know about. Sent by the two decorators in `utilities/error_handling.py` for what nobody expected, and by `report_error()` / `report_problem()` from a raise site that recognised the failure itself and rated it. `operation` names the method (`"Sequencer.poll_core"`), `error_type` the exception class — strings, because this crosses the pickled link. |
 | `ErrorSeverity` · `ResultType` · `StepOutcome` | — | **Payloads.** Enums and the pickle-safe summary of one executed step. `ErrorSeverity` is a field of `ModuleError`; `ResultType` of `RunFinished`, `SequenceFinished` and `StepOutcome`; `StepOutcome` of `StepFinished`, `StepExecuted` and `RunFinished`. `StepOutcome` carries the step's `inputs`, `outputs` and `expectations` as tuples of `(name, text)` pairs (M-3, `step/step.md` §3.6): text, so it stays pickle-safe whatever a step returned, and pairs rather than a dict because a message is built from plain values, tuples and dataclasses only. `ResultType`'s integer order is load-bearing: a group aggregates to its highest member. |
 | `StepSummary(step_id, step_name, description, depth=0, is_group=False, image_path=None, graph=None)` · `SequenceSummary(sequence_name, steps, image_path=None)` | — | **Payloads**, in `run_events.py`. The rows a frontend draws before a run: `StepSummary` is a field of `SequenceSummary`, which is a field of `RecipeLoaded`. Rows are depth-first over called sequences: a row with `is_group` stands for a `Sequence` step and its own rows follow at `depth + 1`. `image_path` is the step's or sequence's picture, absolute (the recipe parser resolved it) and None when the recipe names none; the file may be missing — the parser warned, and the GUI draws "No image available" (`hmi/gui/gui.md` §18). `graph` is the step's `graph:` recipe key — the name of a live data stream, as written, or None. `image_path` is the only way a picture outside a prompt reaches a frontend: no message carries one during the run. Summaries, not the live `Step` and `Sequence` — those must never cross the HMI boundary. |
@@ -137,26 +138,28 @@ reaches a union, which is what stops those comments from quietly going stale.
 | `RunPaused(step_name, position, total)` · `RunResumed()` | EVT | The operator's hold, confirmed. `RunPaused` is sent by the Sequencer when the hold actually **begins** — after the step that was running when Pause was pressed has finished — and names the main step the run is held before (`position`/`total` count main steps, 1-based). `RunResumed` is sent when a hold ends, by `ResumeSequence` or by `StopSequence`; never without a `RunPaused` before it. Never sent for teardown, which always runs straight through. CORE relays both to the HMI only — the Report does not record holds. |
 | `RunMetadata(values)` | EVT | What the run has learned about the unit on the bench: the globals the recipe named in its `report_metadata` header, as pairs, sent by the Sequencer whenever one appears or changes. The Report cannot read globals — it is a thread fed by events, while the globals live on the sequence thread — so the Sequencer wraps the Runtime's `emit` seam and sends them. CORE relays it to the Report (which stamps it on every CSV row) and to the HMI (whose top bar shows it). |
 
-## CORE ↔ HMI — `core_hmi_communication.py` (the only process boundary)
+## CORE ↔ HMI — `core_hmi_communication.py` (a process boundary)
 
-| `HmiToCore` (14) | Kind | Meaning |
+| `HmiToCore` (15) | Kind | Meaning |
 |---|---|---|
 | `LoadRecipe(recipe_path)` | CMD | Load and validate a recipe. CORE answers `RecipeLoaded` or `ModuleError`. |
 | `UnloadRecipe()` | CMD | Forget the loaded recipe. CORE clears its copy, sends `ForgetRecipe` to the Sequencer and answers `RecipeUnloaded` — also when nothing was loaded. Not checked against a run: the frontend not offering it during one is the rule, as for `LoadRecipe`. **GUI only** (the toolbar's × and File → Unload Recipe). |
 | `StartSequence(sequence_name, excluded_step_ids=(), write_report=True)` | CMD | Run one named sequence of the loaded recipe. The two optional fields are the GUI's engineering mode: step UUIDs to record SKIP instead of running, and False for a retest with no report and no run folder. |
 | `StopSequence()` | CMD | Abort the running sequence; the application stays up. Defined in `run_events.py` because it rides two links: CORE relays the same object to the Sequencer, and the confirmation is the run's own `RunFinished(STOP)`. |
 | `PauseSequence()` · `ResumeSequence()` | CMD | Hold the run before its next main step / end the hold (or cancel a pause whose hold has not begun). Defined in `run_events.py` and relayed unchanged, like `StopSequence`. Confirmed by `RunPaused` / `RunResumed`. If no main step is left the pause lapses — teardown is never held. **GUI only**: the CLI and the API do not send them. |
-| `SetConfigParameter(key, value)` | CMD | Change one value in `config.ini`. CORE is the single runtime writer, so a frontend asks instead of writing; `value` is the text as the file spells it. Sent by the GUI's Edit → Settings dialog, one per changed key. CORE answers `ConfigParameterResult`. In force from the next start. |
+| `SetConfigParameter(key, value)` | CMD | Change one value in `config.ini`. CORE is the single runtime writer, so a frontend asks instead of writing; `value` is the text as the file spells it. Sent by the GUI's Edit → Settings dialog, one per changed key. CORE answers `ConfigParameterResult`. The next read of the file sees it; a value read once at start applies from the next start. |
+| `RestoreDefaultConfig()` | CMD | Rewrite `config.ini` with the template defaults (`ConfigHandler.restore_default()`). Asked, not done by the frontend, for the same reason: CORE is the single runtime writer. Sent by the GUI's Settings → Advanced → Restore default settings. CORE answers `DefaultConfigRestored`; the GUI restarts pypts on an accepted answer so the defaults apply. `bench.ini` is never touched. |
 | `ShutdownRequested(immediate=False)` | CMD | Shut the whole application down. `immediate=True` is the crash close: every module stopped at once, nothing waited for (the CLI's Ctrl+C; the *launcher*, on the same link, once the frontend has ended). |
 | `HmiStopped()` | EVT | The frontend's loop has ended. The orderly close waits for it before CORE exits; the crash close does not. The launcher's `stop_core()` sends it too, before its crash-close request. |
 | `UserPromptResponse`, `UserTextResponse`, `UserPathResponse` | EVT | The operator's answers; CORE relays them to the Sequencer. |
 | `Heartbeat`, `ModuleError` | EVT | Shared vocabulary, as above. |
 
-| `CoreToHmi` (20) | Kind | Meaning |
+| `CoreToHmi` (21) | Kind | Meaning |
 |---|---|---|
 | `StopHmi()` | CMD | Close the frontend. It answers `HmiStopped`. |
 | `RecipeUnloaded()` | EVT | CORE holds no recipe any more — the answer to `UnloadRecipe`. Hook `HmiClient.show_recipe_unloaded()`; the GUI returns to its startup look on it and switches the run log to a new file. |
 | `ConfigParameterResult(key, value, accepted, reason)` | EVT | CORE's answer to one `SetConfigParameter`. `accepted` means the value is in the file now; otherwise nothing was written and `reason` says why (wrong type, unknown key, a read-only section, a file discarded at startup). `key`/`value` repeat the request so a frontend waiting on several answers can tell them apart. |
+| `DefaultConfigRestored(accepted, reason)` | EVT | CORE's answer to `RestoreDefaultConfig`. `accepted` means the file holds the defaults now, in force from the next start; otherwise it was not rewritten and `reason` says why. Hook `HmiClient.show_default_config_restored()`; the GUI restarts on accepted and shows a refusal in its status line. |
 | `StatusChanged(text)` | EVT | One line of free text for the frontend's status bar. Anything with structure has its own message now. **Not logged above DEBUG**: the fact behind it was already written to the run log by whichever module owns it, so logging the status text too would say it twice - see `logger/logging_rules.md` section 5. |
 | `ModuleErrorReported(error)` | EVT | An error CORE decided the operator should see (severity above WARNING). |
 | `ReportReady(report_path, report_dir)` | EVT | The run's report is on disk. Sent by CORE when the Report answers `ReportGenerated`; the structured sibling of the `StatusChanged` sent beside it. `report_dir` is what a frontend's "open report folder" control opens. |
@@ -204,10 +207,16 @@ answer cannot arrive.
 | `LoggerControl` (5) | Meaning |
 |---|---|
 | `SetStdoutEnabled(enabled)` | The Logger owns the console handler, so console echo is an application-wide message, not a local handler change. |
-| `SwitchLogFile(log_file_path)` | Close the run log and carry on in a new file. Sent by the GUI (through `log.switch_log_file()`) when the operator unloads the recipe; the sender picks the path. Queued, so every record already on the queue lands in the old file. If the new file cannot be opened, the Logger keeps the old one and says so on stderr. While a run log is open it moves the remembered session log instead, and `EndRunLog` returns there. |
+| `SwitchLogFile(log_file_path)` | Close the run log and carry on in a new file. Sent by the GUI (through `log.switch_log_file()`) when the operator unloads the recipe; the sender picks the path. Queued, so every record already on the queue lands in the old file. If the new file cannot be opened, the Logger keeps the old one and says so on stderr and, at ERROR, in that old file. While a run log is open it moves the remembered session log instead, and `EndRunLog` returns there. |
 | `StartRunLog(log_file_path)` | Carry on in a run's own log, inside its run folder. Sent by the Sequencer (through `log.start_run_log()`) before `RunStarted`. The Logger remembers the file it was writing - the session log, wherever an unload has put it - and returns to it on `EndRunLog`. The sender's `get_log_path()` does not change. |
 | `EndRunLog()` | Close the run log and carry on in the remembered session log, appending. Sent by the Sequencer (`log.end_run_log()`) after the run summary and before `RunFinished`. Without a run log open it changes nothing. |
 | `StopLogger()` | Sent last, by the launcher. Queued rather than immediate, so everything already in flight is written first. |
+
+## Logger → CORE — `logger_core_communication.py` (a process boundary)
+
+| `LoggerToCore` (1) | Meaning |
+|---|---|
+| `Heartbeat` | The Logger's, at most once per `DEFAULT_INTERVAL_S`, source `LOGGER`. Sent from `Logger.main_loop()`, whose wait on the log queue is bounded by that interval, so a quiet run still beats and a Logger stuck in a write does not. CORE's `handle_logger_message()` feeds the watchdog, which ends the run on a silent Logger like on any module (`core/core.md` → *Heartbeats*). A `multiprocessing.Queue`, built by the launcher. There is no CORE → Logger half beyond the log queue itself. |
 
 ---
 

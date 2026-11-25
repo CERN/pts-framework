@@ -72,17 +72,18 @@ Both halves of the heartbeat protocol, kept together so they cannot drift.
 
 - `HeartbeatManager(outbox, source, interval_s=DEFAULT_INTERVAL_S)` — the sending half.
   `tick()` is cheap enough to call every loop iteration and sends a `Heartbeat` at most once
-  per `DEFAULT_INTERVAL_S` (1.0 s). Used by the Sequencer, the Report and the HMI towards
-  CORE, and by CORE towards the HMI.
+  per `DEFAULT_INTERVAL_S` (1.0 s). Used by the Sequencer, the Report, the HMI and the
+  Logger towards CORE, and by CORE towards the HMI.
 - `HeartbeatWatch(source=CORE, timeout_s=HEARTBEAT_TIMEOUT_S, fatal_s=HEARTBEAT_FATAL_S)` —
   the receiving half used by the **HMI** to watch CORE (`HmiClient.check_core_is_alive()`).
   `note()` on each beat, `silent_for()`, `is_silent()` (past the timeout — worth reporting),
   `is_lost()` (past the fatal limit — worth acting on) and a `reported` flag for one report
   per outage. It starts counting at construction, not at the epoch. CORE does not use it: it
-  tracks its three modules in its own `_ModuleState` table.
-- Module name constants: `HMI`, `SEQUENCER`, `REPORT` (the modules CORE watches, and the keys
-  of its table) and `CORE` (the source of CORE's own heartbeat to the HMI). Defined here, not
-  in `core.py`, so the names are spelled once for CORE and the three modules alike.
+  tracks what it watches in its own `_ModuleState` tables.
+- Module name constants: `HMI`, `SEQUENCER`, `REPORT`, `LOGGER` (the modules CORE watches,
+  and the keys of its tables — the Logger is watched, never stopped, by CORE) and `CORE` (the
+  source of CORE's own heartbeat to the HMI). Defined here, not in `core.py`, so the names are
+  spelled once for CORE and the modules alike.
 - Timeout constants: `HEARTBEAT_TIMEOUT_S` (5.0 s — a WARNING, costs nothing if wrong) and
   `HEARTBEAT_FATAL_S` (15.0 s — ends the run). Deliberately different numbers: the two
   thresholds do different jobs.

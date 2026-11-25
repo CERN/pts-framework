@@ -71,9 +71,17 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   - *Outgoing*: `hmi_heartbeat` (a `HeartbeatManager` with source `CORE`) beats towards the
     HMI only, first thing in `do_periodic_tasks()`, and keeps beating during shutdown so the
     HMI does not read the silence as a dead engine. The threads get none — they die with CORE.
-  - *Watchdog*: `self.modules` holds one `_ModuleState` per watched module (HMI, Sequencer,
+  - *Watchdog*: `self.modules` holds one `_ModuleState` per module CORE stops (HMI, Sequencer,
     Report): `running`, `last_heartbeat` (None until first heard from), `heartbeat_lost`,
-    `start_reported`. For modules still running: never heard from past `HEARTBEAT_TIMEOUT_S`
+    `start_reported`. `self.watched` is what the watchdog walks: the same three state objects
+    plus, when CORE was given `from_logger`, one for the **Logger** (`LOGGER`). The Logger
+    beats on its own link, `LoggerToCore` (`handle_logger_message()`), and is watched and
+    acted on exactly like the others, but it is never in `modules`: CORE does not stop it
+    (the launcher does, after CORE has left), so neither close waits for it and its state
+    stays `running` for CORE's whole life. When the Logger is what went silent, the WARNING
+    and the CRITICAL go into a queue nobody reads; the operator still gets the
+    `ModuleErrorReported` (the GUI's status bar, until the window closes; the CLI's console).
+    A CORE built without `from_logger` (tests) does not watch the Logger. For modules still running: never heard from past `HEARTBEAT_TIMEOUT_S`
     → one DEBUG "has not started yet" (does not end the run; DEBUG because a slow GUI
     start is routine); silent past
     `HEARTBEAT_TIMEOUT_S` → one WARNING per outage, cleared when it answers again (INFO
@@ -115,15 +123,18 @@ boundary. CORE builds the four in-process links itself (plain `queue.Queue`, nam
   - A module that dies during an orderly close stops beating, and the watchdog turns the wait
     into a crash close. Nothing is killed — the threads are daemons and the HMI process
     belongs to the launcher.
-- **Configuration changes** — CORE is pypts' runtime writer of `config.ini` (the Recipe
-  Editor v2, a process of its own, writes its own `[recipe_editor]` lines — `config_handler.md`).
-  `core_main()` calls `ConfigHandler.open_for_writing()` before `Core()` is built (its first
-  read would otherwise make the process a reader, which cannot be promoted).
-  `set_config_parameter()` refuses `READ_ONLY_SECTIONS`, writes through
+- **Configuration changes** — CORE is pypts' runtime writer of `config.ini`, by rule: the
+  Config Handler is stateless and has no roles (the Recipe Editor v2, a process of its own,
+  writes its own `[recipe_editor]` lines — `config_handler.md`). `set_config_parameter()` refuses `READ_ONLY_SECTIONS`, writes through
   `ConfigHandler().set_parameter()` (which parses against the schema and refuses a discarded
   file), and answers every request with `ConfigParameterResult` — refusals are logged at
-  WARNING and answered (`refuse_config_parameter()`), never only logged. In force from the
-  next start; nothing is propagated to running modules. See `config_handler/config_handler.md`
+  WARNING and answered (`refuse_config_parameter()`), never only logged.
+  `restore_default_config()` carries out `RestoreDefaultConfig` (Settings → Restore default
+  settings) through `ConfigHandler.restore_default()` and answers `DefaultConfigRestored`,
+  a refusal logged at WARNING and answered the same way; no frontend writes or deletes the
+  file itself. The next read of the file sees a change; a value read once at start (the log
+  level, the window, `hal.show_window`) applies from the next start, since nothing is
+  propagated to running modules. See `config_handler/config_handler.md`
   → *Writing*.
 
 ## The HAL link
@@ -149,8 +160,9 @@ connect (`sequencer/sequencer.md`).
   3. Otherwise `connect_pending()` (a run's `run_scope()` waits for the connect) and the
      daemon thread `HAL connect`, which calls `pyhal.client.connect(bench.path, port,
      scope=False, log_sink=_sink, log_level=log_level, show_window=show_window)`: a HAL found
-     running is connected to; none → one is started, with `show_window` through the HAL
-     monitor window.
+     running is connected to; none → one is started, with `show_window` one that opens its
+     monitor window itself (`python -m pyhal --window`; the HAL owns the window, and the
+     window never starts a HAL - `src/pyhal/pyhal.md`).
   Every path settles the pending connect: the thread calls `note_unavailable()` with the
   reason whatever its connect raises, and a thread that cannot be started does the same, so
   `run_scope()` never waits out `CONNECT_WAIT_S` for nothing. A second `start()`, or one after
@@ -171,9 +183,9 @@ connect (`sequencer/sequencer.md`).
   never raises, nothing to do without a running connect thread: it joins that thread for at
   most `FINISH_WAIT_S` (20 s, under the launcher's `CORE_SHUTDOWN_TIMEOUT_S`, 30 s), DEBUG
   lines before and if it is still running after. Without it CORE's process would exit
-  straight after `close()` and kill a connect that returns late - with the window up to
-  `HAL_WINDOW_START_TIMEOUT_S` (30 s) - before its `_closed` path closes the client, leaving a
-  HAL it started running.
+  straight after `close()` and kill a connect that returns late - a HAL start takes up to
+  `HAL_START_TIMEOUT_S` (15 s), window or not - before its `_closed` path closes the client,
+  leaving a HAL it started running.
 
 ## Routing table
 
@@ -189,8 +201,8 @@ connect (`sequencer/sequencer.md`).
 | `ReportExported` (not sent yet) | HMI, as `StatusChanged` |
 
 Handled by CORE itself: `ShutdownRequested` (orderly, or with `immediate=True` the crash close), `HmiStopped` / `SequencerStopped` /
-`ReportStopped`, `LoadRecipe`, `UnloadRecipe`, `StartSequence`, `SetConfigParameter`, `Heartbeat`,
-`ModuleError`. `RunPaused` / `RunResumed` skip the Report: a hold changes when steps run, not
+`ReportStopped`, `LoadRecipe`, `UnloadRecipe`, `StartSequence`, `SetConfigParameter`, `RestoreDefaultConfig`, `Heartbeat`
+(from the three modules and, on `LoggerToCore`, the Logger), `ModuleError`. `RunPaused` / `RunResumed` skip the Report: a hold changes when steps run, not
 what they produce.
 
 ## Key constants

@@ -525,7 +525,7 @@ A request waiting in the queue is bounded only by the requests ahead of it (D52,
 - **A standalone monitor exists** (user decision 2026-11-23): `python -m pyhal.monitor`
   (`src/pyhal/monitor/`, a PySide6 window with its own connections to the HAL, built outside
   PyPTS; `pyhal.md`, *The monitor*). It polls `status` every second and has Close all, Stop,
-  Start and a log view. In phase 4 *View -> HAL* may open that window instead of building the
+  ~~Start~~ and a log view. It only connects: it never starts a HAL (user decision 2026-11-24). In phase 4 *View -> HAL* may open that window instead of building the
   panel described here.
 - **Two buttons (D49):** *Close all devices* (`close_all`) and *Stop HAL* (`close_all`, then
   `shutdown`, which runs `close_all` itself). Both disabled while a run is open; CORE refuses
@@ -725,10 +725,15 @@ Calls taken in phase 3 (2026-11-23), one line each:
   connect to nothing (`get_device()` raises `HAL_OFF`); `tests/conftest.py` sets it for the suite.
 - **`CLOSE_WAIT_S` = 5 s** (`core/hal_link.py`): the longest `HalLink.close()` waits for a startup
   connect still running, under the frontend's 15 s limit for a silent CORE.
-- **The window start:** with `show_window`, `connect()` starts `python -m pyhal.monitor --serve
+- **The window start:** ~~with `show_window`, `connect()` starts `python -m pyhal.monitor --serve
   --exit-with-hal` with the start nonce, so the monitor's Start makes PyPTS the owner; the wait is
-  `HAL_WINDOW_START_TIMEOUT_S` (2 x `HAL_START_TIMEOUT_S`); the window closes itself after two
-  empty polls in a row (`EXIT_AFTER_MISSED_POLLS`) once it has seen its HAL.
+  `HAL_WINDOW_START_TIMEOUT_S` (2 x `HAL_START_TIMEOUT_S`)~~. Superseded 2026-11-24 (user
+  decision: the monitor never starts a HAL; the HAL owns its window): with `show_window`,
+  `connect()` starts `python -m pyhal --window`; once bound, the HAL opens the monitor as its
+  child (`python -m pyhal.monitor --port N --exit-with-hal`) and ends it at its exit; the wait is
+  `HAL_START_TIMEOUT_S`. The window closes itself after two empty polls in a row
+  (`EXIT_AFTER_MISSED_POLLS`) once it has seen its HAL - the net for a HAL killed without its
+  exit.
 - **§6.2 step 8:** CORE's connect runs on a thread; `connect_pending()` announces it, so
   `run_scope()` waits for it (at most `CONNECT_WAIT_S`), and `note_unavailable(reason)` settles it
   for a start that makes no connect.

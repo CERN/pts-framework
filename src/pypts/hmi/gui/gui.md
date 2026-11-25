@@ -816,10 +816,14 @@ held in memory and the file on disk are cleared together and nothing needs rebui
 
 **Restore default settings** is the last card of the Advanced page. It asks first
 (`confirm_restore_defaults()`, Cancel is the default), then closes Settings with
-`restore_requested`; `GUI._restore_default_settings()` deletes `config.ini` and calls
-`GUI.restart(reason)`. A fresh start is what recreates the file from the template and puts its
-values in force — the bootstrap already does both, with this machine's paths filled in.
-Unsaved changes in the dialog are lost, and the question says so.
+`restore_requested`; `GUI._restore_default_settings()` sends `RestoreDefaultConfig` through
+`HmiClient.restore_default_config()` and leaves the file alone — CORE is the single runtime
+writer of `config.ini`. CORE rewrites the file from the template (`restore_default()`: template
+defaults, this machine's paths, written atomically) and answers `DefaultConfigRestored`. At
+`show_default_config_restored()` an accepted answer calls `GUI.restart(reason)`, because the
+defaults are in force only from a fresh start; a refusal is shown in the status line
+(*Default settings not restored: …*) and nothing restarts. Unsaved changes in the dialog are
+lost, and the question says so.
 
 ```
 Edit > Settings (or View > Appearance) -> GUI._open_settings()
@@ -829,8 +833,11 @@ Edit > Settings (or View > Appearance) -> GUI._open_settings()
      Advanced page: Restore defaults -> confirm -> accept() with restore_requested
    after exec():
      recents_cleared   -> status "Recent recipes list cleared"
-     restore_requested -> delete config.ini -> GUI.restart(reason)
-                          -> shutdown, exit code 75 -> launcher starts pypts again
+     restore_requested -> RestoreDefaultConfig -> CORE rewrites config.ini
+                       <- DefaultConfigRestored(accepted)
+                          accepted -> GUI.restart(reason)
+                                      -> shutdown, exit code 75 -> launcher starts pypts again
+                          refused  -> status line, no restart
 ```
 
 **File → Restart** (`restart_action`, right after Open Config) calls `GUI.restart()` with
@@ -841,7 +848,7 @@ server too, which the restart gives only when this pypts started the HAL (its cl
 a HAL that was already running keeps its devices (`src/pyhal/pyhal.md` → *Configuration*). No question; greyed out
 from `show_run_started()` to `show_run_finished()`. The new window opens with no recipe.
 `restart(reason)` logs `reason` at INFO; Restore default settings passes
-`"pypts is restarting, so the configuration is recreated from the template."`.
+`"pypts is restarting, so the default settings apply."`.
 
 **Decisions worth not undoing:**
 
@@ -893,7 +900,7 @@ Edit > Settings -> GUI._open_settings()
                      |                                  <- ConfigParameterResult
                      | GUI.show_config_parameter_result() -> dialog.apply_result()
                      v
-                   all accepted -> the dialog closes; status line "Settings saved; they apply from the next start"
+                   all accepted -> the dialog closes; status line "Settings saved; most apply from the next start"
                    a refusal or no answer -> page 2: ✓ saved / ✗ not saved, and why
                      | done() (Close, Cancel, Esc, X): theme not saved -> preview the old one
 ```
@@ -938,10 +945,12 @@ Edit > Settings -> GUI._open_settings()
 - **The answer wait is bounded** (`ANSWER_TIMEOUT_MS`, 5 s — the heartbeat timeout). Changes
   still unanswered are reported as "may not have been saved" rather than leaving the dialog
   on *Saving…*.
-- **This session's saved values are remembered** (`GUI._saved_settings`), because this
-  process never re-reads `config.ini`; without it the dialog would reopen showing the
-  startup values. An answer that arrives with no dialog open goes to the status line.
-- **Everything but the theme applies at the next start**, and both pages say so.
+- **The dialog reads `config.ini` as it opens** (the Config Handler is stateless), so it
+  shows what CORE saved earlier in the session. An answer that arrives with no dialog open
+  goes to the status line (*Setting … saved*, or *… not saved: …*).
+- **Most settings apply at the next start; the reports folder from the next run** (the
+  Sequencer reads it at each run start), and both pages say so. The theme and the window are
+  previewed straight away.
 
 **The window reads `[gui]` once, at startup** (`window_settings()`): `GUI.show()` goes
 through `GUI._use_window()`, so `window_mode` decides full screen or a normal

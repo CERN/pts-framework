@@ -106,16 +106,13 @@ def isolated_configuration(tmp_path, monkeypatch):
     `a_config_file()`. The operating system's theme, which the default theme
     follows, is pinned to light for the same reason.
     """
-    from pypts.config_handler import ConfigHandler
     from pypts.hmi.gui import gui as gui_module
 
     monkeypatch.setattr(
         file_locations, "config_file_path", lambda: tmp_path / "config" / "config.ini"
     )
     monkeypatch.setattr(gui_module, "detect_system_dark_mode", lambda app=None: False)
-    ConfigHandler.reset_for_testing()
     yield
-    ConfigHandler.reset_for_testing()
 
 
 @pytest.fixture

@@ -49,12 +49,14 @@ from pypts.messages.common_messages import (
 from pypts.messages.core_hmi_communication import (
     ConfigParameterResult,
     CoreToHmi,
+    DefaultConfigRestored,
     HmiStopped,
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
     RecipeUnloaded,
     ReportReady,
+    RestoreDefaultConfig,
     SetConfigParameter,
     ShutdownRequested,
     StartSequence,
@@ -104,6 +106,7 @@ from pypts.messages.run_events import (
     UserTextRequest,
     UserTextResponse,
 )
+from pypts.messages.logger_core_communication import LoggerToCore
 from pypts.messages.to_logger_communication import (
     EndRunLog,
     LoggerControl,
@@ -235,6 +238,7 @@ EXAMPLES = {
         sequence_name="Main", excluded_step_ids=(STEP_ID,), write_report=False
     ),
     SetConfigParameter: SetConfigParameter(key="report.theme", value="dark"),
+    RestoreDefaultConfig: RestoreDefaultConfig(),
     ShutdownRequested: ShutdownRequested(),
     HmiStopped: HmiStopped(),
     StopHmi: StopHmi(),
@@ -248,6 +252,9 @@ EXAMPLES = {
         value="wide",
         accepted=False,
         reason="Configuration key 'gui.window_width' is 'wide'; a whole number is required.",
+    ),
+    DefaultConfigRestored: DefaultConfigRestored(
+        accepted=False, reason="config.ini could not be written."
     ),
     # core_sequencer_communication
     RunSequence: RunSequence(
@@ -285,17 +292,27 @@ LINKS = {
     "CoreToReport": CoreToReport,
     "ReportToCore": ReportToCore,
     "LoggerControl": LoggerControl,
+    "LoggerToCore": LoggerToCore,
 }
 
-#: Only these two cross a process boundary, and only in GUI mode.
-BOUNDARY_LINKS = ("HmiToCore", "CoreToHmi")
+#: The links that cross a process boundary, so everything on them must pickle.
+BOUNDARY_LINKS = ("HmiToCore", "CoreToHmi", "LoggerToCore")
+
+
+def link_members(link):
+    """The message classes one link carries. A link of a single class is that
+    class, not a union, and get_args() would find nothing in it."""
+    members = get_args(link)
+    if members:
+        return members
+    return (link,)
 
 
 def message_types(*link_names):
     """The message classes carried by the named links, de-duplicated."""
     seen = {}
     for name in link_names:
-        for message_type in get_args(LINKS[name]):
+        for message_type in link_members(LINKS[name]):
             seen[message_type] = None
     return list(seen)
 
@@ -538,17 +555,15 @@ def core(tmp_path, monkeypatch):
     drives SetConfigParameter through CORE's real write path, which must find
     nothing to write to - never the configuration of whoever runs the tests.
     """
-    from pypts.config_handler import ConfigHandler, file_locations
+    from pypts.config_handler import file_locations
 
     monkeypatch.setattr(
         file_locations, "config_file_path", lambda: tmp_path / "no_config" / "config.ini"
     )
-    ConfigHandler.reset_for_testing()
     yield Core(
         to_hmi=QueueWrapper(queue.Queue()),
         from_hmi=QueueWrapper(queue.Queue()),
     )
-    ConfigHandler.reset_for_testing()
 
 
 @pytest.fixture
@@ -593,6 +608,7 @@ def recipients(core, sequencer, report, hmi_client, logger):
         "CoreToReport": unwrapped(report, "handle_core_message"),
         "CoreToHmi": unwrapped(hmi_client, "handle_core_message"),
         "LoggerControl": unwrapped(logger, "handle_control_message"),
+        "LoggerToCore": unwrapped(core, "handle_logger_message"),
     }
 
 
@@ -608,7 +624,7 @@ def test_every_message_in_a_link_is_handled_by_its_recipient(
     """
     handler = recipients(core, sequencer, report, hmi_client, logger)[link_name]
 
-    for message_type in get_args(LINKS[link_name]):
+    for message_type in link_members(LINKS[link_name]):
         message = EXAMPLES[message_type]
         try:
             handler(message)

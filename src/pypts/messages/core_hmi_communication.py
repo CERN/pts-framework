@@ -3,7 +3,8 @@
 # SPDX-License-Identifier: LGPL-2.1-or-later
 
 """
-The HMI <-> CORE link. The only process boundary in the framework.
+The HMI <-> CORE link, across a process boundary (the other message link that
+crosses one is the Logger's heartbeat, logger_core_communication.py).
 
 Everything below is pickled, so it must stay a plain dataclass of plain values
 - no live queues, no Qt objects, no device handles. test_messages.py round-trips
@@ -83,13 +84,26 @@ class SetConfigParameter:
 
     CORE is the single runtime writer of config.ini, so a frontend asks instead
     of writing. `value` is the text as it should appear in the file ("true",
-    "1280", an absolute path). The change is written straight away but takes
-    effect on the next start: every process read its configuration once, at
-    startup, and nothing tells a running one that a value changed.
+    "1280", an absolute path). The change is written straight away and the next
+    read of the file sees it; a value read once at startup (the log level, the
+    window) takes effect on the next start, since nothing tells a running module
+    that a value changed.
     """
 
     key: str
     value: str
+
+
+@dataclass
+class RestoreDefaultConfig:
+    """
+    Rewrite config.ini with the template defaults. CORE answers DefaultConfigRestored.
+
+    A frontend asks, as for SetConfigParameter, because CORE is the single
+    runtime writer of config.ini. Every user change in the file is lost; the
+    defaults take effect on the next start, so the GUI restarts pypts once CORE
+    confirms. bench.ini is never touched.
+    """
 
 
 @dataclass
@@ -170,16 +184,30 @@ class ConfigParameterResult:
     """
     CORE's answer to one SetConfigParameter.
 
-    `accepted` True: the value is in config.ini now and applies from the next
-    start. False: the file was not touched, and `reason` says why in words meant
-    for whoever made the change - a value of the wrong type, a key that does not
-    exist, a read-only section, or a settings file that was discarded at startup.
+    `accepted` True: the value is in config.ini now, for the next read of it.
+    False: the file was not touched, and `reason` says why in words meant for
+    whoever made the change - a value of the wrong type, a key that does not
+    exist, a read-only section, or a settings file that cannot be used.
     `key` and `value` repeat the request, so a frontend waiting on several
     answers can tell them apart.
     """
 
     key: str
     value: str
+    accepted: bool
+    reason: str = ""
+
+
+@dataclass
+class DefaultConfigRestored:
+    """
+    CORE's answer to RestoreDefaultConfig.
+
+    `accepted` True: config.ini now holds the template defaults, in force from
+    the next start. False: the file was not rewritten, and `reason` says why in
+    words meant for the operator.
+    """
+
     accepted: bool
     reason: str = ""
 
@@ -197,6 +225,7 @@ HmiToCore = (
     | PauseSequence
     | ResumeSequence
     | SetConfigParameter
+    | RestoreDefaultConfig
     | ShutdownRequested
     | HmiStopped
     | UserPromptResponse
@@ -212,6 +241,7 @@ CoreToHmi = (
     | ModuleErrorReported
     | ReportReady
     | ConfigParameterResult
+    | DefaultConfigRestored
     | RecipeLoaded
     | RecipeUnloaded
     | RunStarted

@@ -97,7 +97,6 @@ def engine(tmp_path, monkeypatch):
     the threads start, because the Sequencer binds it when it is built.
     """
     monkeypatch.setattr(file_locations, "config_file_path", lambda: tmp_path / "config.ini")
-    ConfigHandler.reset_for_testing()
     ConfigHandler.bootstrap()
     reports_dir = tmp_path / "reports"
     monkeypatch.setattr(sequencer_module, "reports_dir_from_config", lambda: str(reports_dir))
@@ -112,7 +111,6 @@ def engine(tmp_path, monkeypatch):
     yield Engine(core, thread, reports_dir)
 
     shut_down(core, thread)
-    ConfigHandler.reset_for_testing()
 
 
 def shut_down(core, thread):

@@ -23,12 +23,10 @@ bench_module = importlib.import_module("pypts.config_handler.bench_config")
 
 @pytest.fixture
 def bench_path(tmp_path, monkeypatch):
-    """Point the reader at tmp_path and give every test a cold cache."""
+    """Point the reader at tmp_path."""
     path = tmp_path / "bench.ini"
     monkeypatch.setattr(file_locations, "bench_file_path", lambda: path)
-    bench_module.reset_for_testing()
     yield path
-    bench_module.reset_for_testing()
 
 
 # --- creation ---------------------------------------------------------------
@@ -97,14 +95,15 @@ def test_every_section_is_a_device_with_every_value_as_text(bench_path):
     }
 
 
-def test_the_result_is_cached_per_process(bench_path):
+def test_every_call_reads_the_file_afresh(bench_path):
+    """Stateless, like ConfigHandler: nothing is kept between calls."""
     bench_path.write_text("[a]\ndriver = x.Y\n", encoding="utf-8")
 
     first = bench_config()
     bench_path.write_text("[b]\ndriver = x.Y\n", encoding="utf-8")
 
-    # A hand edit applies from the next start, the same rule as config.ini.
-    assert bench_config() is first
+    assert list(first.devices) == ["a"]
+    assert list(bench_config().devices) == ["b"]
 
 
 def test_a_file_saved_with_a_notepad_bom_still_reads(bench_path):

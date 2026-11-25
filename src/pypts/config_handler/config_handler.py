@@ -5,26 +5,31 @@
 """
 The Config Handler: one place that answers "how is this installation set up".
 
-3 rules:
-**Multiple readers**
-The instance is per *process*, not per application - a spawned child shares no
-memory with its parent, so it builds its own instance and reads the same file.
-That is why reading is pure: it parses, it never writes.
+**Stateless.** Nothing is kept between calls: every `ConfigHandler()` reads and
+validates config.ini afresh, is used, and is thrown away. There is no singleton
+and no lock. A value saved a moment ago is seen by the next read, in any
+process; a value read once at startup (the log level, the window size) is in
+force only from the next start.
 
-**One writer.** The launcher creates the file if it does not exist, and
-validates it. An existing file that is broken or version-mismatched is never
-repaired: it is discarded for the run and the template defaults are used in
-memory (see `BootstrapOutcome`). From then on the file is read-only to everyone
-except CORE, which opens it with `open_for_writing()` - and the Recipe Editor
-v2, which runs without CORE and calls `bootstrap()` in its own process to save
-its `[recipe_editor]` settings. Any other process calling `set_parameter()` gets
-a `ConfigWriteError` instead.
+**One writer, by rule.** The file is the shared thing, not the object:
+- The launcher's `bootstrap()` creates the file if it does not exist, before
+  CORE starts. An existing file is never repaired: if it is broken or
+  version-mismatched it is discarded - the template defaults are used in
+  memory (see `BootstrapOutcome`) - and every later read discards it the same
+  way until it is corrected or deleted.
+- At runtime only CORE writes (`set_parameter()`, `restore_default()`), for the
+  frontends' SetConfigParameter and RestoreDefaultConfig.
+- The Recipe Editor v2, which runs without CORE, writes its own
+  `[recipe_editor]` lines.
+Nothing in the code enforces this; it is a convention, and the frontends have
+only the messages. A write is atomic (`template_writer.write()`), so a reader
+sees the old file or the new one, never half of one.
 
 **It has to work before logging does.** `bootstrap()` runs before the Logger
 process exists - it is what decides where the log file goes - so it cannot log.
 It buffers its messages instead, and the launcher calls
-`replay_bootstrap_log()` once logging is up. Nothing about the config's own
-startup is lost; it simply arrives in the run log a few milliseconds late.
+`replay_bootstrap_log()` once logging is up. Only `bootstrap()` narrates; an
+ordinary read logs one DEBUG line.
 
 Typical use:
 
@@ -35,7 +40,6 @@ Typical use:
 import configparser
 import logging
 import platform
-import threading
 from collections.abc import Mapping
 from enum import Enum
 from pathlib import Path
@@ -74,7 +78,8 @@ class ConfigKeyError(ConfigError):
 
 
 class ConfigWriteError(ConfigError):
-    """A write was attempted through a handler that is not the writer."""
+    """A write was refused: the file is discarded, so writing one value would
+    replace the user's file with the defaults."""
 
 
 class ConfigSchemaError(ConfigError):
@@ -82,25 +87,12 @@ class ConfigSchemaError(ConfigError):
     cannot be read as the type its key declares."""
 
 
-class Role(Enum):
-    """
-    What an instance is allowed to do.
-
-    READER is the default and what every module gets. WRITER is held by the
-    launcher during bootstrap and by CORE, which owns configuration changes at
-    runtime.
-    """
-
-    READER = "reader"
-    WRITER = "writer"
-
-
 class BootstrapOutcome(Enum):
     """
-    How this process's configuration came to be.
+    How one read of the configuration went.
 
     LOADED: the file was read, validated and is in force. CREATED: no file
-    existed, one was written from the template and is in force. DISCARDED: a
+    existed, `bootstrap()` wrote one from the template and it is in force. DISCARDED: a
     file exists but is broken or declares the wrong structure version, so the
     template defaults are in force **in memory** - the file itself is left
     exactly as the user wrote it. The launcher reads this to decide whether
@@ -114,104 +106,54 @@ class BootstrapOutcome(Enum):
 
 class ConfigHandler:
     """
-    The per-process singleton. Build it with `ConfigHandler()`, or with
-    `bootstrap()` / `open_for_writing()` if you are allowed to write.
+    One read of config.ini, used and thrown away. `ConfigHandler()` reads an
+    existing file; `bootstrap()` - the launcher's - also creates a missing one.
     """
-
-    _instance: "ConfigHandler | None" = None
-
-    #: Guards first construction. Sequencer and Report become threads of the
-    #: engine process in the target architecture, so two threads can reach a
-    #: cold singleton at the same moment.
-    _lock = threading.RLock()
-
-    def __new__(cls) -> "ConfigHandler":
-        """Read-only access to the configuration of this process."""
-        return cls._obtain(Role.READER, create_if_missing=False)
 
     def __init__(self) -> None:
         """
-        Deliberately empty.
+        Read and validate the file, now. Logs one DEBUG line.
 
-        `__new__` may return an instance that is already set up, and Python
-        calls `__init__` on it regardless; doing the work here would redo it on
-        every `ConfigHandler()` call.
+        Raises:
+            ConfigFileMissing: there is no config.ini; the launcher creates it.
         """
+        self._setup(create_if_missing=False, narrate=False)
 
     # --- construction ---------------------------------------------------------
 
     @classmethod
     def bootstrap(cls) -> "ConfigHandler":
         """
-        Prepare the configuration for this run. The launcher's job, and only the
-        launcher's.
+        Prepare the configuration for this start. The launcher's job, and the
+        Recipe Editor v2's, which runs without a launcher.
 
         Creates the file from the template if it does not exist. An existing
         file is never modified: it is validated, and if it is broken or declares
-        the wrong structure version it is **discarded for this run** - the
-        template defaults are used in memory instead, and `bootstrap_outcome` /
+        the wrong structure version it is **discarded** - the template defaults
+        are used in memory instead, and `bootstrap_outcome` /
         `bootstrap_problem` tell the launcher what to show the operator. Keeping
         the file correct is the user's job: edit it, or delete it to have it
         recreated.
 
-        Returns:
-            The writer instance for this process.
-
-        Raises:
-            ConfigWriteError: a read-only instance already exists here.
+        The one read that narrates: where it looked, what it found, every value
+        in force, buffered until `replay_bootstrap_log()`.
         """
-        return cls._obtain(Role.WRITER, create_if_missing=True)
+        handler = object.__new__(cls)
+        handler._setup(create_if_missing=True, narrate=True)
+        return handler
 
-    @classmethod
-    def open_for_writing(cls) -> "ConfigHandler":
-        """
-        Writer access for CORE, which owns configuration changes while the
-        application runs. The file must already exist - creating it is the
-        launcher's job and has happened long before CORE starts.
-        """
-        return cls._obtain(Role.WRITER, create_if_missing=False)
-
-    @classmethod
-    def reset_for_testing(cls) -> None:
-        """
-        Forget the singleton, so the next call builds a fresh one.
-
-        Only tests should call this: a process that dropped its configuration
-        half way through a run would be reading a different file from its own
-        threads. Tests need it because the singleton would otherwise outlive the
-        `tmp_path` it was pointed at.
-        """
-        with cls._lock:
-            cls._instance = None
-
-    @classmethod
-    def _obtain(cls, role: Role, create_if_missing: bool) -> "ConfigHandler":
-        with cls._lock:
-            if cls._instance is not None:
-                if role is Role.WRITER and cls._instance.role is not Role.WRITER:
-                    raise ConfigWriteError(
-                        "This process already holds a read-only configuration; it "
-                        "cannot be promoted to writer. Only the launcher's bootstrap "
-                        "and CORE open the configuration for writing."
-                    )
-                return cls._instance
-
-            instance = object.__new__(cls)
-            instance._setup(role, create_if_missing)
-            cls._instance = instance
-            return instance
-
-    def _setup(self, role: Role, create_if_missing: bool) -> None:
+    def _setup(self, create_if_missing: bool, narrate: bool) -> None:
         """
         Find or create the file, then read it.
 
-        Narrated deliberately thoroughly. This runs once per process, before
-        anything else in that process, and it is what decides where the run log
-        and the reports go - so when the answer is surprising, the log has to
-        say where the handler looked, what it found there and what it did about
-        it. At DEBUG it also prints every resulting value.
+        With `narrate` - bootstrap only - deliberately thorough: this decides
+        where the run log and the reports go, so when the answer is surprising
+        the log has to say where the handler looked, what it found there and
+        what it did about it, and at DEBUG every resulting value. Without it,
+        one DEBUG line per read: reads happen on every use, and the full story
+        on each would bury the log.
         """
-        self.role = role
+        self._narrate = narrate
         self._path = file_locations.config_file_path()
         self._template_text = _read_template()
         self._bootstrap_log: list[tuple[int, str]] = []
@@ -220,12 +162,12 @@ class ConfigHandler:
         self._note(
             logging.DEBUG,
             f"Resolving configuration: directory {file_locations.config_dir()}, "
-            f"file {file_locations.CONFIG_FILE_NAME}, opened as {self.role.value}.",
+            f"file {file_locations.CONFIG_FILE_NAME}.",
         )
 
         if not self._path.exists():
             if not create_if_missing:
-                self._note(logging.DEBUG, f"No configuration file at {self._path}.")
+                log.debug("No configuration file at %s.", self._path)
                 raise ConfigFileMissing(
                     f"No configuration at {self._path}. It is created by the launcher "
                     f"at startup; a module that reaches this has been started on its own."
@@ -234,7 +176,7 @@ class ConfigHandler:
                 logging.INFO,
                 f"No configuration file at {self._path}; creating one from the template.",
             )
-            raw = self._build_from_defaults()
+            raw = _build_from_defaults()
             self._write(raw)
             self._note(
                 logging.INFO,
@@ -256,6 +198,18 @@ class ConfigHandler:
 
         self._raw = raw
         self._values = values
+
+        if not narrate:
+            if self.bootstrap_outcome is BootstrapOutcome.DISCARDED:
+                log.debug(
+                    "Configuration read from %s: discarded, the defaults are in force. %s",
+                    self._path,
+                    self.bootstrap_problem,
+                )
+            else:
+                log.debug("Configuration read from %s.", self._path)
+            return
+
         if self.bootstrap_outcome is BootstrapOutcome.DISCARDED:
             self._note(
                 logging.INFO,
@@ -263,9 +217,6 @@ class ConfigHandler:
                 f"settings are in force for this run. The file was left untouched.",
             )
         else:
-            # DEBUG, not INFO: every process that reads the configuration
-            # replays this, so at INFO the operator would be told the same
-            # thing once per process, in words about a file they never open.
             self._note(
                 logging.DEBUG,
                 f"Configuration loaded from {self._path} (structure version "
@@ -384,21 +335,21 @@ class ConfigHandler:
                 the strings that spell them.
 
         Raises:
-            ConfigWriteError: this handler is a reader.
+            ConfigWriteError: the file is discarded (broken, or the wrong
+                structure version).
             ConfigKeyError: no such key.
             ConfigSchemaError: the value does not fit the key's type.
 
-        Note that other processes already running hold their own copy and will
-        not see this until they are restarted. Propagating a change to a live
-        run is not implemented; it is a roadmap item.
+        At runtime only CORE calls this - a rule, not a check. The next read in
+        any process sees the new value; whoever read it once at startup keeps
+        the old one until the next start.
         """
-        self._require_writer("set_parameter")
         if self.bootstrap_outcome is BootstrapOutcome.DISCARDED:
             raise ConfigWriteError(
-                f"The configuration file {self._path} was discarded at startup and this "
-                f"process runs on in-memory defaults; writing one value now would replace "
-                f"the user's file with the defaults. Correct or delete the file and "
-                f"restart, or call restore_default() to rewrite it deliberately."
+                f"The configuration file {self._path} cannot be used, so pypts runs on "
+                f"the defaults; writing one value now would replace the user's file with "
+                f"the defaults. Correct or delete the file, or restore the default "
+                f"settings to rewrite it deliberately."
             )
 
         section, _, option = key.rpartition(".")
@@ -433,33 +384,24 @@ class ConfigHandler:
             log.info("Setting '%s' changed to '%s'.", key, text)
         log.debug("Written to %s.", self._path)
 
-    def restore_default(self) -> None:
+    @classmethod
+    def restore_default(cls) -> None:
         """
         Rewrite the file as a fresh installation would: template defaults, paths
         and operating system detected again. Every user change is discarded.
 
+        A class method: it needs no read of the old file, so it works on a file
+        that is broken or missing too - rewriting it is what fixes it. At
+        runtime only CORE calls this, for RestoreDefaultConfig.
+
         Raises:
-            ConfigWriteError: this handler is a reader.
+            OSError: the file could not be written.
         """
-        self._require_writer("restore_default")
-
-        self._raw = self._build_from_defaults()
-        self._values = self._validate(self._raw)
-        self._write(self._raw)
-        # The file and the values in force agree again, so a configuration that
-        # was discarded at startup is discarded no longer.
-        self.bootstrap_outcome = BootstrapOutcome.LOADED
-        self.bootstrap_problem = None
+        path = file_locations.config_file_path()
+        text = template_writer.render(_read_template(), _build_from_defaults())
+        template_writer.write(path, text)
         log.warning("All settings were restored to their defaults.")
-        log.debug("Rewrote %s from the template.", self._path)
-
-    def _require_writer(self, action: str) -> None:
-        if self.role is not Role.WRITER:
-            raise ConfigWriteError(
-                f"{action}() needs write access, and this process holds the "
-                f"configuration read-only. Configuration changes are made by CORE; "
-                f"send it a SetConfigParameter message instead of writing the file."
-            )
+        log.debug("Rewrote %s from the template.", path)
 
     def _write(self, raw: dict[str, dict[str, str]]) -> None:
         """
@@ -475,20 +417,6 @@ class ConfigHandler:
 
     # --- creation, validation ---------------------------------------------------
 
-    def _build_from_defaults(self) -> dict[str, dict[str, str]]:
-        """
-        A complete set of values for a machine that has no config file: the
-        template's defaults, with the derived ones filled in.
-        """
-        raw = {
-            section: {key: field.default for key, field in fields.items()}
-            for section, fields in SCHEMA.items()
-        }
-        raw["meta"]["config_version"] = str(CONFIG_VERSION)
-        raw["operating_system"] = _detect_operating_system()
-        raw["paths"] = _default_paths()
-        return raw
-
     def _load_or_discard(
         self,
     ) -> tuple[dict[str, dict[str, str]], dict[str, dict[str, Any]]]:
@@ -501,8 +429,8 @@ class ConfigHandler:
         the schema - the whole file is discarded and the template defaults are
         used **in memory** instead. The reason lands in `bootstrap_problem` and
         as an ERROR in the log; the launcher turns it into a notice for the
-        operator. Every process applies the same rule to the same file, so a
-        run agrees with itself about the values in force.
+        operator. Every read applies the same rule to the same file, so a
+        discarded file stays discarded, everywhere, until it is corrected.
         """
         raw: dict[str, dict[str, str]] | None = None
         values: dict[str, dict[str, Any]] | None = None
@@ -535,7 +463,7 @@ class ConfigHandler:
             f"the file, and the file was not modified. Correct it, or delete it to "
             f"have it recreated.",
         )
-        raw = self._build_from_defaults()
+        raw = _build_from_defaults()
         values = self._validate(raw)
         return raw, values
 
@@ -628,11 +556,14 @@ class ConfigHandler:
         """
         Record something that happened before there was anywhere to log it.
 
-        Buffered rather than logged, because `bootstrap()` runs before the
-        Logger process exists - it is what decides where the log file goes.
-        Once a handler is already initialised the buffer is pointless, so the
-        message goes straight out instead.
+        Only `bootstrap()` narrates; an ordinary read drops these, having
+        logged its own one line. Buffered rather than logged, because
+        `bootstrap()` runs before the Logger process exists - it is what decides
+        where the log file goes. Once a handler is already initialised the
+        buffer is pointless, so the message goes straight out instead.
         """
+        if not self._narrate:
+            return
         if logging.getLogger().handlers:
             log.log(level, message)
             return
@@ -649,6 +580,21 @@ class ConfigHandler:
 
 
 # --- module-level helpers -------------------------------------------------------
+
+
+def _build_from_defaults() -> dict[str, dict[str, str]]:
+    """
+    A complete set of values for a machine that has no config file: the
+    template's defaults, with the derived ones filled in.
+    """
+    raw = {
+        section: {key: field.default for key, field in fields.items()}
+        for section, fields in SCHEMA.items()
+    }
+    raw["meta"]["config_version"] = str(CONFIG_VERSION)
+    raw["operating_system"] = _detect_operating_system()
+    raw["paths"] = _default_paths()
+    return raw
 
 
 def _read_template() -> str:

@@ -24,6 +24,7 @@ from pypts._version import __version__
 from pypts.logger.levels import TRACE  # noqa: F401 - registers the TRACE level name
 from pypts.messages import QueueWrapper, unhandled
 from pypts.messages.links import ANY_TO_LOGGER
+from pypts.messages.logger_core_communication import LoggerToCore
 from pypts.messages.to_logger_communication import (
     EndRunLog,
     LoggerControl,
@@ -33,6 +34,7 @@ from pypts.messages.to_logger_communication import (
     SwitchLogFile,
 )
 from pypts.utilities.common import ignore_keyboard_interrupt
+from pypts.utilities.heartbeat_manager import DEFAULT_INTERVAL_S, LOGGER, HeartbeatManager
 
 DEFAULT_LOG_LEVEL = logging.INFO
 
@@ -47,6 +49,9 @@ LOG_FORMAT = (
     ";%(filename)s:%(funcName)s;%(message)s"
 )
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+#: The logger the Logger process writes its own failures through (Logger.own_log).
+OWN_LOG_NAME = "pypts.logger.own"
 
 # The root logger, exported so modules can keep doing `from ... import log`.
 log = logging.getLogger()
@@ -240,10 +245,18 @@ def set_stdout_logging_enabled(enabled: bool):
             handler.setLevel(logging.NOTSET if enabled else logging.CRITICAL + 1)
 
 
-def logger_main(log_queue, log_file_path: str, stdout_enabled: bool = True) -> None:
+def logger_main(
+    log_queue,
+    log_file_path: str,
+    stdout_enabled: bool = True,
+    to_core: QueueWrapper[LoggerToCore] | None = None,
+) -> None:
     """
-    Entry point for the launcher. Responsible for instantiating the Logger singleton object
-    and starting its execution.
+    Entry point for the launcher. Builds the one Logger of this run and runs it.
+
+    Args:
+      to_core: the Logger's heartbeat link to CORE, built by the launcher. None
+               where nobody watches the Logger (tests).
     """
     # The Logger must outlive every module it writes for, so it is the process
     # that can least afford to die to a stray Ctrl+C: the records explaining the
@@ -251,7 +264,7 @@ def logger_main(log_queue, log_file_path: str, stdout_enabled: bool = True) -> N
     # launcher ends it with StopLogger, and only that.
     ignore_keyboard_interrupt()
 
-    logger = Logger(log_queue, log_file_path, stdout_enabled)
+    logger = Logger(log_queue, log_file_path, stdout_enabled, to_core=to_core)
     logger.start()
 
 
@@ -261,13 +274,26 @@ class Logger:
     Owns the only FileHandler on the log file
     """
 
-    def __init__(self, log_queue, log_file_path: str, stdout_enabled: bool = True):
+    def __init__(
+        self,
+        log_queue,
+        log_file_path: str,
+        stdout_enabled: bool = True,
+        *,
+        to_core: QueueWrapper[LoggerToCore] | None = None,
+    ):
         self.log_queue = log_queue
         self.log_file_path = log_file_path
         #: The session log while a run log is open (StartRunLog), else None.
         self.session_log_file_path: str | None = None
         self.stdout_enabled = stdout_enabled
         self.running = True
+
+        #: The Logger's heartbeat towards CORE, whose watchdog ends the run when
+        #: the log stops being written (HEARTBEAT_FATAL_S). None without a link.
+        self.heartbeat: HeartbeatManager | None = None
+        if to_core is not None:
+            self.heartbeat = HeartbeatManager(to_core, LOGGER)
 
         formatter = build_formatter()
 
@@ -279,6 +305,20 @@ class Logger:
 
         self.stdout_handler = logging.StreamHandler(sys.stdout)
         self.stdout_handler.setFormatter(formatter)
+
+        # The Logger's own failures, written into the log it serves, so they
+        # reach the operator's panel like anyone else's. It cannot log through
+        # the root logger - in this process that has no handler, and the queue
+        # it would need is the one this process reads - so it has a logger of
+        # its own whose one handler writes straight through write_record().
+        # Its handlers are replaced, not added to, so a second Logger built in
+        # the same process (tests do) does not write into the first one's file.
+        self.own_log = logging.getLogger(OWN_LOG_NAME)
+        self.own_log.setLevel(logging.DEBUG)
+        self.own_log.propagate = False
+        for handler in list(self.own_log.handlers):
+            self.own_log.removeHandler(handler)
+        self.own_log.addHandler(_WriteThroughLogger(self))
 
     # --- Startup ---
     def start(self):
@@ -293,11 +333,18 @@ class Logger:
     def main_loop(self):
         """
         Blocks on the shared queue and writes every record it receives.
-        blocking get() costs nothing, therefore no polling and wait mechanism
+
+        The wait is bounded by the heartbeat interval, so a quiet queue still
+        lets the Logger beat: a beat is CORE's proof that this loop is turning,
+        which a Logger stuck in a write (a lost network drive) stops sending.
         """
         while self.running:
+            if self.heartbeat is not None:
+                self.heartbeat.tick()
             try:
-                item = self.log_queue.get()
+                item = self.log_queue.get(timeout=DEFAULT_INTERVAL_S)
+            except Empty:
+                continue
             except (EOFError, OSError):
                 # The queue died - nothing left to serve.
                 break
@@ -313,6 +360,11 @@ class Logger:
                 self.handle_item(item)
             except Exception as exc:  # noqa: BLE001 - the logger must never die
                 self._report(f"Failed to handle queue item: {exc!r}")
+                self.own_log.error(
+                    "An entry could not be written to the log and was skipped: %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
 
         self.drain()
 
@@ -388,6 +440,13 @@ class Logger:
             new_handler = logging.FileHandler(log_file_path, mode="a", encoding="utf-8")
         except OSError as exc:
             self._report(f"Could not open the new log file {log_file_path}: {exc!r}")
+            # Into the file it is staying in, which is still open.
+            self.own_log.error(
+                "The log could not be continued in '%s'; it carries on in '%s': %s",
+                log_file_path,
+                self.log_file_path,
+                exc,
+            )
             return
         new_handler.setFormatter(build_formatter())
         self.file_handler.close()
@@ -431,6 +490,25 @@ class Logger:
 
     def _report(self, message: str):
         """
-        Logger-internal diagnostics.
+        Logger-internal diagnostics, on stderr.
+
+        Every one of them is printed here; the failures the operator should
+        know about are also written into the log through `own_log`. A failure
+        to write the log itself is reported here only - there is nowhere else
+        it could go.
         """
         print(f"[logger] {message}", file=sys.stderr, flush=True)
+
+
+class _WriteThroughLogger(logging.Handler):
+    """
+    The one handler of the Logger's `own_log`: writes each record straight
+    into the log, as if it had come off the queue.
+    """
+
+    def __init__(self, logger: Logger):
+        super().__init__()
+        self.logger = logger
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.logger.write_record(record)

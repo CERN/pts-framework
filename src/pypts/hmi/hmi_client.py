@@ -26,12 +26,14 @@ from pypts.messages.common_messages import Heartbeat, ModuleError, ResultType, S
 from pypts.messages.core_hmi_communication import (
     ConfigParameterResult,
     CoreToHmi,
+    DefaultConfigRestored,
     HmiStopped,
     HmiToCore,
     LoadRecipe,
     ModuleErrorReported,
     RecipeUnloaded,
     ReportReady,
+    RestoreDefaultConfig,
     SetConfigParameter,
     ShutdownRequested,
     StartSequence,
@@ -157,6 +159,8 @@ class HmiClient:
                 self.show_report_ready(message)
             case ConfigParameterResult():
                 self.show_config_parameter_result(message)
+            case DefaultConfigRestored():
+                self.show_default_config_restored(message)
             # The progress events below are live: CORE and the engine send all
             # of them on every run, and so are all three questions -
             # UserInteraction asks the first, UserWrite the second, UserLoading
@@ -266,9 +270,20 @@ class HmiClient:
 
         CORE is the single runtime writer, so a frontend asks rather than writes.
         The answer arrives as ConfigParameterResult, at
-        show_config_parameter_result(). The change applies from the next start.
+        show_config_parameter_result(). The next read of the file sees it; a value
+        read once at startup applies from the next start.
         """
         self.core.send(SetConfigParameter(key=key, value=value))
+
+    def restore_default_config(self) -> None:
+        """
+        Ask CORE to rewrite config.ini with the template defaults.
+
+        CORE is the single runtime writer, so a frontend asks rather than deletes
+        or writes the file. The answer arrives as DefaultConfigRestored, at
+        show_default_config_restored(). The defaults apply from the next start.
+        """
+        self.core.send(RestoreDefaultConfig())
 
     def request_shutdown(self, immediate: bool = False) -> None:
         """
@@ -428,6 +443,11 @@ class HmiClient:
         log.debug(
             "ConfigParameterResult received for '%s': accepted=%s.", result.key, result.accepted
         )
+
+    def show_default_config_restored(self, result: DefaultConfigRestored) -> None:
+        """CORE's answer to restore_default_config(). CORE has already logged
+        the outcome in the operator's words."""
+        log.debug("DefaultConfigRestored received: accepted=%s.", result.accepted)
 
     def show_run_metadata(self, values: tuple[tuple[str, str], ...]) -> None:
         """What the run has learned about the unit on the bench - the globals

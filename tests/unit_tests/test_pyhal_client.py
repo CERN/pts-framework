@@ -978,35 +978,24 @@ class _RecordingPopen:
         return None
 
 
-@pytest.mark.parametrize("show_window", [False, True])
-def test_launch_runs_the_hal_or_its_window(monkeypatch, tmp_path, show_window):
+@pytest.mark.parametrize("window", [False, True])
+def test_launch_runs_the_hal_with_or_without_its_window(monkeypatch, tmp_path, window):
     _RecordingPopen.commands = []
     monkeypatch.setattr(client.subprocess, "Popen", _RecordingPopen)
     monkeypatch.setattr(client, "_started_processes", [])
-    if show_window:
-        module = "pyhal.monitor"
-    else:
-        module = "pyhal"
-    launched = client._launch(
-        "C:/bench.ini", 29600, 5, str(tmp_path), module=module, nonce="given"
-    )
-    assert launched.nonce == "given"
+    launched = client._launch("C:/bench.ini", 29600, 5, str(tmp_path), window=window)
     command = _RecordingPopen.commands[0]
-    assert command[1:4] == ["-P", "-m", module]
-    expected = ["--bench", "C:/bench.ini", "--port", "29600"]
-    if show_window:
-        expected = [*expected, "--serve", "--exit-with-hal"]
-    expected = [*expected, "--nonce", "given", "--log-level", "5"]
-    expected = [*expected, "--log-dir", str(tmp_path.resolve())]
+    # Always the HAL itself: the monitor never starts a HAL (user decision 2026-11-24).
+    assert command[1:4] == ["-P", "-m", "pyhal"]
+    expected = ["--bench", "C:/bench.ini", "--port", "29600", "--nonce", launched.nonce]
+    expected = [*expected, "--log-level", "5", "--log-dir", str(tmp_path.resolve())]
+    if window:
+        expected = [*expected, "--window"]
     assert command[4:] == expected
-    # The monitor writes to a startup file of its own: the HAL it starts writes to the other.
-    if show_window:
-        assert launched.startup_path == tmp_path.resolve() / "hal_monitor_startup.log"
-    else:
-        assert launched.startup_path == tmp_path.resolve() / "hal_startup.log"
+    assert launched.startup_path == tmp_path.resolve() / "hal_startup.log"
 
 
-def test_launch_without_a_nonce_makes_a_fresh_one(monkeypatch, tmp_path):
+def test_launch_makes_a_fresh_nonce_each_time(monkeypatch, tmp_path):
     _RecordingPopen.commands = []
     monkeypatch.setattr(client.subprocess, "Popen", _RecordingPopen)
     monkeypatch.setattr(client, "_started_processes", [])
@@ -1015,6 +1004,29 @@ def test_launch_without_a_nonce_makes_a_fresh_one(monkeypatch, tmp_path):
     assert first.nonce != second.nonce
     assert len(first.nonce) == 32
     assert _RecordingPopen.commands[0][1:4] == ["-P", "-m", "pyhal"]
+    assert "--window" not in _RecordingPopen.commands[0]
+
+
+@pytest.mark.parametrize("show_window", [False, True])
+def test_start_hal_asks_for_the_window_through_the_hal(
+    start_hal, monkeypatch, tmp_path, show_window
+):
+    hal = start_hal()
+    windows: list[bool] = []
+
+    def fake_launch(bench_path, port, log_level, log_dir, *, window=False):
+        windows.append(window)
+        return client._Launched(_FakeProcess(os.getpid()), hal._nonce, tmp_path / "s.log", 0)
+
+    monkeypatch.setattr(client, "_launch", fake_launch)
+    hal_client = client._start_hal(
+        str(tmp_path / "bench.ini"), hal.port, None, None, show_window=show_window
+    )
+    try:
+        assert hal_client.started_hal is True
+    finally:
+        hal_client._close_long_connection()
+    assert windows == [show_window]
 
 
 def _wait_for_connections(hal: HalServer, count: int, seconds: float = 10.0) -> None:
@@ -1048,60 +1060,6 @@ def test_open_devices_with_only_a_status_poller_are_still_a_warning(start_hal, t
         assert any("has devices open that no client is using: m1" in text for text in warnings)
     finally:
         poller.close()
-
-
-class _ExitedProcess:
-    """A started monitor that has exited already: it could not open its window."""
-
-    def __init__(self) -> None:
-        self.pid = 4243
-
-    def poll(self):
-        return 1
-
-
-def test_a_monitor_that_cannot_start_falls_back_to_the_plain_hal(
-    start_hal, tmp_path, caplog, monkeypatch
-):
-    bench = tmp_path / "bench.ini"
-    bench.write_text(f"[loop1]\ndriver = {LOOPBACK}\n", encoding="utf-8")
-    port = _free_port()
-    launches: list[tuple[str, str]] = []
-    servers: list[HalServer] = []
-    monitor_file = tmp_path / "hal_monitor_startup.log"
-    monitor_file.write_text("qt.qpa.xcb: could not connect to display\n", encoding="utf-8")
-
-    def fake_launch(bench_path, start_port, log_level, log_dir, *, module, nonce=None):
-        launches.append((module, nonce))
-        if module == client.MONITOR_MODULE:
-            return client._Launched(_ExitedProcess(), "the-nonce", monitor_file, 0)
-        hal = HalServer(bench, start_port, nonce=nonce)
-        hal.start()
-        servers.append(hal)
-        return client._Launched(_FakeProcess(os.getpid()), nonce, tmp_path / "hal_startup.log", 0)
-
-    monkeypatch.setattr(client, "_launch", fake_launch)
-    try:
-        with caplog.at_level(logging.DEBUG, logger="pyhal.client"):
-            hal_client = client._start_hal(str(bench), port, None, None, show_window=True)
-        try:
-            assert launches == [
-                (client.MONITOR_MODULE, None),
-                (client.HAL_MODULE, "the-nonce"),
-            ]
-            assert hal_client.hello.nonce == "the-nonce"
-            assert hal_client.started_hal is True
-        finally:
-            hal_client._close_long_connection()
-    finally:
-        for hal in servers:
-            _stop(hal)
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert warnings == [
-        "The HAL monitor window could not be started; starting the HAL without it."
-    ]
-    debug = [r.getMessage() for r in caplog.records if r.levelno == logging.DEBUG]
-    assert any("could not connect to display" in text for text in debug)
 
 
 def test_connect_closes_its_client_when_it_fails_after_connecting(

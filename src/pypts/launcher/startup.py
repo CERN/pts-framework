@@ -49,7 +49,8 @@ from pypts.messages.core_hmi_communication import (
     HmiToCore,
     ShutdownRequested,
 )
-from pypts.messages.links import ANY_TO_LOGGER, CORE_TO_HMI, HMI_TO_CORE
+from pypts.messages.links import ANY_TO_LOGGER, CORE_TO_HMI, HMI_TO_CORE, LOGGER_TO_CORE
+from pypts.messages.logger_core_communication import LoggerToCore
 from pypts.messages.to_logger_communication import LoggerControl, StopLogger
 from pypts.utilities.common import RESTART_EXIT_CODE
 from pypts.utilities.local_storage import get_log_file_path
@@ -85,6 +86,8 @@ class Engine:
     log_file_path: str
     logger_process: Process
     logger_control: QueueWrapper[LoggerControl]
+    #: The Logger's heartbeat link, handed to CORE when it is started.
+    from_logger: QueueWrapper[LoggerToCore]
     to_core: QueueWrapper[HmiToCore]
     to_hmi: QueueWrapper[CoreToHmi]
     #: Held for the lifetime of the run. Nothing waits on it but stop_engine().
@@ -195,12 +198,11 @@ def restart_pypts() -> int:
     Start pypts again with the command line this one was started with, and wait.
 
     Called by main() when the GUI ended asking for it - File -> Restart, or
-    Restore default settings once it deleted config.ini. A fresh process rather
-    than a second pass through main(): every singleton (the configuration,
-    logging) starts empty, exactly as when an operator starts pypts by hand, so
-    a hand-edited config.ini is read again, or a deleted one recreated from
-    the template by the bootstrap that already does it, and a new run log comes
-    with it.
+    Restore default settings once CORE rewrote config.ini. A fresh process
+    rather than a second pass through main(): every singleton (the
+    configuration, logging) starts empty, exactly as when an operator starts
+    pypts by hand, so a hand-edited or restored config.ini is read again, and a
+    new run log comes with it.
 
     Waiting rather than exiting straight away: a console window opened just
     for this process closes when it ends, and would take the new pypts with it. The
@@ -292,11 +294,16 @@ def start_engine(mode: str, log_level_name: str | None = None) -> Engine:
     # stdout. The CLI and headless modes print their own console output.
     stdout_logging_enabled = False
 
+    # The Logger's heartbeat towards CORE, whose watchdog ends the run when the
+    # log stops being written. Built here because it crosses a process boundary
+    # and the launcher is the one that knows both ends.
+    from_logger: QueueWrapper[LoggerToCore] = QueueWrapper(Queue(), link=LOGGER_TO_CORE)
+
     # Use as a separate pocess instead of standalone import (many writers)
     logger_process = Process(
         target=logger_main,
         name="Logger",
-        args=(log_queue, log_file_path, stdout_logging_enabled),
+        args=(log_queue, log_file_path, stdout_logging_enabled, from_logger),
     )
     logger_process.start()
 
@@ -311,6 +318,7 @@ def start_engine(mode: str, log_level_name: str | None = None) -> Engine:
         log_file_path=log_file_path,
         logger_process=logger_process,
         logger_control=logger_control,
+        from_logger=from_logger,
         to_core=QueueWrapper(Queue(), link=HMI_TO_CORE),
         to_hmi=QueueWrapper(Queue(), link=CORE_TO_HMI),
     )
@@ -347,7 +355,7 @@ def start_engine(mode: str, log_level_name: str | None = None) -> Engine:
         engine.core_process = Process(
             target=core_main,
             name="Core",
-            args=(engine.to_hmi, engine.to_core, log_queue, log_level),
+            args=(engine.to_hmi, engine.to_core, log_queue, log_level, engine.from_logger),
         )
         engine.core_process.start()
         log.debug("Core process started (pid %s).", engine.core_process.pid)

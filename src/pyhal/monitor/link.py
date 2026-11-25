@@ -1,12 +1,11 @@
 """
-The HAL monitor's link to the HAL server, without Qt: the status poll, Close all, Stop, Start
-and the log tail.
+The HAL monitor's link to the HAL server, without Qt: the status poll, Close all, Stop and the
+log tail. It only connects to a HAL; it never starts one (user decision 2026-11-24).
 
 The link talks to the HAL over connections of its own and **never sends a parting request**:
 close() closes its connection and sends nothing, so closing the monitor never touches the
 bench (D36). `close_all` and `shutdown` go only from close_all() and stop(), which the window
-calls when its user has pressed a button and confirmed, or, in serve mode, once the window has
-been closed (`window.py`, *Serve mode*).
+calls when its user has pressed a button and confirmed.
 
 **The poll.** status() keeps one connection, opened on first use: connect, read `hello`, then
 `status` and its answer on each poll, every step bounded by POLL_TIMEOUT_S (the HAL answers
@@ -25,7 +24,7 @@ deadline (a close ladder can take about 50 s per device, D57); stop() sends `clo
 thread.
 
 **Locks.** One lock guards the kept connection and `hello`; status() holds it for its poll,
-close() and log_tail() take it briefly. The actions and start() do not take it.
+close() and log_tail() take it briefly. The actions do not take it.
 """
 
 import contextlib
@@ -124,28 +123,6 @@ class MonitorLink:
             return not_torn_down
         finally:
             _close_quietly(sock, stream)
-
-    def start(
-        self,
-        bench: str,
-        log_dir: str | None = None,
-        *,
-        log_level: int | None = None,
-        nonce: str | None = None,
-    ) -> int:
-        """
-        Start a HAL for the bench file on the port (client.start_hal(), with the log folder,
-        the log level and the start nonce given; None: its defaults); its pid. Raises
-        DriverError when a HAL already answers on the port, or when the start fails.
-        """
-        try:
-            sock, stream, _hello = _connect(self.port)
-        except _NothingAnswers:
-            return client.start_hal(
-                bench, self.port, log_dir=log_dir, log_level=log_level, nonce=nonce
-            )
-        _close_quietly(sock, stream)
-        raise DriverError(f"A HAL server already answers on port {self.port}.")
 
     def close(self) -> None:
         """Close the kept connection. Sends nothing. Idempotent."""

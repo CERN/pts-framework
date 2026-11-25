@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: 2026 CERN <home.cern>
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PyPTS + HAL — architecture overview</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1d232b; --muted: #5b6570; --line: #d9dee4; --head: #f3f5f8;
+  --code: #eef1f5; --accent: #1f5fae; --stripe: #fafbfc; --box: #ffffff;
+  --hl: #d9480f; --hlbg: #fff1e6;
+  --g1: #1f5fae; --g2: #2b8a3e; --g3: #ae3ec9; --g4: #868e96; --g5: #e67700; --g6: #0c8599;
+  --g1b: #e7f0fb; --g2b: #e6f4ea; --g3b: #f6e8fa; --g4b: #f1f3f5; --g5b: #fff3e0; --g6b: #e3f6f8;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #15181c; --fg: #e3e7eb; --muted: #9aa4ae; --line: #2f353c; --head: #1e2227;
+    --code: #22272d; --accent: #7fb0ee; --stripe: #191c21; --box: #1b1f24;
+    --hl: #ff8a4c; --hlbg: #3a2416;
+    --g1: #7fb0ee; --g2: #69c17d; --g3: #d58ee6; --g4: #a5adb5; --g5: #ffb547; --g6: #4fc7d6;
+    --g1b: #1b2a3d; --g2b: #1a2e20; --g3b: #2e1f33; --g4b: #22262b; --g5b: #33281a; --g6b: #17303a;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif; }
+.wrap { display: flex; gap: 32px; padding: 24px 32px; max-width: 1700px; }
+nav { position: sticky; top: 16px; align-self: flex-start; width: 230px; flex: none;
+  font-size: 13px; max-height: calc(100vh - 32px); overflow-y: auto; }
+nav ol { padding-left: 18px; margin: 6px 0; }
+nav li { margin: 3px 0; }
+nav a { color: var(--muted); text-decoration: none; }
+nav a:hover { color: var(--accent); }
+main { flex: 1; min-width: 0; max-width: 1350px; }
+h1 { font-size: 26px; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 16px; }
+h2 { font-size: 20px; margin: 34px 0 10px; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+h3 { font-size: 16px; margin: 22px 0 8px; }
+p, li { max-width: 110ch; }
+a { color: var(--accent); }
+code { background: var(--code); padding: 1px 5px; border-radius: 4px;
+  font: 13px/1.4 Consolas, "Cascadia Mono", monospace; }
+.tw { overflow-x: auto; margin: 10px 0 16px; }
+table { border-collapse: collapse; font-size: 14px; }
+th, td { border: 1px solid var(--line); padding: 6px 10px; vertical-align: top; text-align: left; }
+th { background: var(--head); }
+tbody tr:nth-child(even) { background: var(--stripe); }
+td:first-child { white-space: nowrap; }
+.hint { color: var(--muted); font-size: 13px; }
+
+/* ---- process diagram ---- */
+.fig { border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--head); }
+svg { display: block; width: 100%; height: auto; font-family: "Segoe UI", system-ui, sans-serif; }
+svg .proc rect.frame { fill: var(--box); stroke: var(--muted); stroke-width: 1.5; }
+svg .proc.hal rect.frame { stroke: var(--g5); }
+svg .proc.core rect.frame { stroke: var(--g2); }
+svg .proc.ui rect.frame { stroke: var(--g3); }
+svg .proc.log rect.frame { stroke: var(--g4); }
+svg .proc.boot rect.frame { stroke: var(--g1); }
+svg .inner { fill: var(--head); stroke: var(--line); }
+svg .file { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; }
+svg text { fill: var(--fg); font-size: 13px; }
+svg text.t { font-weight: 600; font-size: 14px; }
+svg text.s { fill: var(--muted); font-size: 11.5px; }
+svg text.lbl { fill: var(--muted); font-size: 11.5px; }
+svg .clk { cursor: pointer; }
+svg .link path.v { fill: none; stroke: var(--muted); stroke-width: 2; }
+svg .link path.hit { fill: none; stroke: transparent; stroke-width: 16; }
+svg .link.spawn path.v { stroke-dasharray: 3 4; stroke-width: 1.3; }
+svg .link.file path.v { stroke-dasharray: 6 4; }
+svg .link:hover path.v { stroke: var(--accent); }
+svg .on path.v { stroke: var(--hl) !important; stroke-width: 3.5; }
+svg .on text.lbl { fill: var(--hl); font-weight: 600; }
+svg .proc.on rect.frame, svg rect.on { stroke: var(--hl) !important; stroke-width: 3; }
+svg .proc:hover rect.frame { stroke-width: 2.5; }
+svg marker path { fill: var(--muted); }
+.panel { margin-top: 10px; border: 1px solid var(--line); border-left: 4px solid var(--hl);
+  border-radius: 6px; padding: 10px 14px; background: var(--bg); min-height: 92px; }
+.panel h4 { margin: 0 0 4px; font-size: 15px; }
+.panel p { margin: 3px 0; }
+.ctrl { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0 0; }
+button { font: inherit; font-size: 13px; padding: 4px 12px; border-radius: 5px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+button:hover { border-color: var(--accent); }
+button.sel { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.stepno { color: var(--muted); font-size: 13px; margin-left: 6px; }
+
+/* ---- module map ---- */
+.groups { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+@media (max-width: 1100px) { .groups { grid-template-columns: repeat(2, 1fr); } }
+.grp { border: 1px solid var(--line); border-top: 4px solid var(--gc); border-radius: 6px;
+  padding: 8px 10px 10px; background: var(--gb); }
+.grp h4 { margin: 0 0 2px; font-size: 14px; color: var(--gc); }
+.grp .why { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }
+.mods { display: flex; flex-wrap: wrap; gap: 6px; }
+.mod { font: 12.5px/1.3 Consolas, "Cascadia Mono", monospace; padding: 4px 8px; border-radius: 4px;
+  border: 1px solid var(--line); background: var(--bg); cursor: pointer; border-left: 4px solid var(--pc, var(--line)); }
+.mod:hover { border-color: var(--accent); }
+.mod.sel { outline: 2px solid var(--hl); }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 5px;
+  border-radius: 2px; background: var(--c); vertical-align: -1px; }
+.byproc .mod { background: var(--bg); }
+.layers { display: grid; grid-template-columns: 1fr; gap: 0; max-width: 760px; }
+@media (max-width: 900px) { .wrap { display: block; padding: 16px; } nav { display: none; } }
+
+:root { --f-recipe: #1f5fae; --f-hw: #e67700; --f-res: #2b8a3e; --f-op: #ae3ec9; --f-stream: #0c8599; --f-log: #868e96; }
+@media (prefers-color-scheme: dark) { :root { --f-recipe: #7fb0ee; --f-hw: #ffb547; --f-res: #69c17d; --f-op: #d58ee6; --f-stream: #4fc7d6; --f-log: #a5adb5; } }
+#flow .fbox rect { fill: var(--box); stroke: var(--muted); stroke-width: 1.3; }
+#flow .fbox.file rect { fill: none; stroke-dasharray: 6 4; }
+#flow .fl path { fill: none; stroke-width: 2.4; marker-end: url(#fa); }
+#flow .fl path.two { marker-start: url(#fa); }
+#flow .fl text { font-size: 11.5px; font-weight: 600; }
+#flow .fl { transition: opacity .15s; }
+#flow .fl.dim { opacity: .1; }
+#flow .f-recipe path { stroke: var(--f-recipe); } #flow .f-recipe text { fill: var(--f-recipe); }
+#flow .f-hw path { stroke: var(--f-hw); } #flow .f-hw text { fill: var(--f-hw); }
+#flow .f-res path { stroke: var(--f-res); } #flow .f-res text { fill: var(--f-res); }
+#flow .f-op path { stroke: var(--f-op); } #flow .f-op text { fill: var(--f-op); }
+#flow .f-stream path { stroke: var(--f-stream); } #flow .f-stream text { fill: var(--f-stream); }
+#flow .f-log path { stroke: var(--f-log); } #flow .f-log text { fill: var(--f-log); }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; background: var(--c); margin-right: 6px; vertical-align: 0; }
+details.fs { border: 1px solid var(--line); border-radius: 6px; margin: 6px 0; background: var(--bg); }
+details.fs > summary { cursor: pointer; padding: 6px 10px; background: var(--head); border-radius: 6px; }
+details.fs[open] > summary { border-bottom: 1px solid var(--line); border-radius: 6px 6px 0 0; }
+details.fs .tw { margin: 0; padding: 8px 10px; }
+table.ft { width: 100%; }
+table.ft td:nth-child(2) { width: 30%; }
+ul.cl { margin: 0; padding-left: 16px; }
+ul.cl li { margin: 2px 0; }
+code.cls { font-weight: 600; }
+
+#boot .ln { font-weight: 600; font-size: 13px; }
+#boot .bar { opacity: .55; }
+#boot .bar.maybe { opacity: .25; }
+#boot .b1 { fill: var(--g1); } #boot .b2 { fill: var(--g2); } #boot .b3 { fill: var(--g3); } #boot .b4 { fill: var(--g4); } #boot .b5 { fill: var(--g5); }
+#boot .sp { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+#boot .sp.dash { stroke-dasharray: 5 4; }
+#boot .ev { cursor: pointer; }
+#boot .ev circle { fill: var(--bg); stroke: var(--fg); stroke-width: 1.6; }
+#boot .ev text { text-anchor: middle; font-size: 11.5px; font-weight: 700; }
+#boot .ev.on circle { fill: var(--hl); stroke: var(--hl); }
+#boot .ev.on text { fill: #fff; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav><strong>Contents</strong><ol start="0">
+<li><a href="#s0">Start-up, and who is in charge</a></li>
+<li><a href="#s2">Processes and how they speak</a></li>
+<li><a href="#s3">How data moves</a></li>
+<li><a href="#s4">Modules by function</a></li>
+<li><a href="#s5">Rules that hold it together</a></li>
+<li><a href="#s6">Files and classes</a></li>
+</ol></nav>
+<main>
+<h1>PyPTS + HAL — architecture overview</h1>
+<p class="sub">Branch <code>architecture_refactor</code>, after HAL phase 3 (<code>9ca56dc</code>) · 2026-11-24 · written from the module context files</p>
+
+<h2 id="s0">0. Start-up, and who is in charge</h2>
+<p><code>python -m pypts</code> starts one small <b>launcher</b>. It spawns the Logger, then CORE, then the frontend, and
+after that only waits. CORE builds the rest itself: its two threads, and the link to the HAL server, which it either finds
+already running or starts as a detached process. Time runs left to right below; step through it.</p>
+<div class="fig">
+<svg id="boot" viewBox="0 0 1200 520" role="img" aria-label="start-up timeline">
+<defs>
+  <marker id="ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker>
+</defs>
+<!-- lanes -->
+<g class="lane"><text class="ln" x="10" y="64">Launcher</text><text class="s" x="10" y="80">main process</text></g>
+<g class="lane"><text class="ln" x="10" y="124">Logger</text><text class="s" x="10" y="140">process</text></g>
+<g class="lane"><text class="ln" x="10" y="184">CORE</text><text class="s" x="10" y="200">process</text></g>
+<g class="lane"><text class="ln" x="10" y="244">Sequencer,</text><text class="ln" x="10" y="260">Report</text><text class="s" x="80" y="260">threads</text></g>
+<g class="lane"><text class="ln" x="10" y="304">GUI</text><text class="s" x="10" y="320">process</text></g>
+<g class="lane"><text class="ln" x="10" y="364">HAL server</text><text class="s" x="10" y="380">detached</text></g>
+<g class="lane"><text class="ln" x="10" y="424">Monitor</text><text class="s" x="10" y="440">optional</text></g>
+<g class="lane"><text class="ln" x="10" y="484">Driver</text><text class="s" x="10" y="500">per device</text></g>
+<!-- lifetime bars -->
+<rect class="bar b1" x="120" y="54" width="1040" height="14" rx="7"/>
+<rect class="bar b4" x="240" y="114" width="925" height="14" rx="7"/>
+<rect class="bar b2" x="340" y="174" width="800" height="14" rx="7"/>
+<rect class="bar b2" x="610" y="240" width="520" height="14" rx="7"/>
+<rect class="bar b3" x="790" y="294" width="320" height="14" rx="7"/>
+<rect class="bar b5 maybe" x="120" y="354" width="420" height="14" rx="7"/>
+<rect class="bar b5" x="540" y="354" width="650" height="14" rx="7"/>
+<rect class="bar b5 maybe" x="500" y="414" width="660" height="14" rx="7"/>
+<rect class="bar b5" x="960" y="474" width="120" height="14" rx="7"/>
+<text class="s" x="130" y="349">may already be running (then CORE just connects)</text>
+<text class="s" x="1000" y="349">kept, or shut down at close</text>
+<text class="s" x="980" y="469">one run</text>
+<!-- spawn arrows -->
+<path class="sp" d="M240,68 V112" marker-end="url(#ba)"/>
+<path class="sp" d="M340,68 V172" marker-end="url(#ba)"/>
+<path class="sp" d="M610,188 V238" marker-end="url(#ba)"/>
+<path class="sp dash" d="M500,188 V412" marker-end="url(#ba)"/><path class="sp dash" d="M540,188 V352" marker-end="url(#ba)"/>
+<path class="sp dash" d="M520,414 V370" marker-end="url(#ba)"/>
+<path class="sp" d="M790,68 V292" marker-end="url(#ba)"/>
+<path class="sp" d="M960,368 V472" marker-end="url(#ba)"/>
+<!-- events -->
+<g class="ev" data-i="0"><circle cx="140" cy="61" r="11"/><text x="140" y="65">1</text></g>
+<g class="ev" data-i="1"><circle cx="240" cy="61" r="11"/><text x="240" y="65">2</text></g>
+<g class="ev" data-i="2"><circle cx="340" cy="61" r="11"/><text x="340" y="65">3</text></g>
+<g class="ev" data-i="3"><circle cx="420" cy="181" r="11"/><text x="420" y="185">4</text></g>
+<g class="ev" data-i="4"><circle cx="510" cy="181" r="11"/><text x="510" y="185">5</text></g>
+<g class="ev" data-i="5"><circle cx="610" cy="181" r="11"/><text x="610" y="185">6</text></g>
+<g class="ev" data-i="6"><circle cx="700" cy="181" r="11"/><text x="700" y="185">7</text></g>
+<g class="ev" data-i="7"><circle cx="790" cy="61" r="11"/><text x="790" y="65">8</text></g>
+<g class="ev" data-i="8"><circle cx="880" cy="361" r="11"/><text x="880" y="365">9</text></g>
+<g class="ev" data-i="9"><circle cx="960" cy="361" r="11"/><text x="960" y="365">10</text></g>
+<g class="ev" data-i="10"><circle cx="1110" cy="301" r="11"/><text x="1110" y="305">11</text></g>
+<g class="ev" data-i="11"><circle cx="1140" cy="61" r="11"/><text x="1140" y="65">12</text></g>
+</svg>
+<div class="ctrl"><button id="bprev">◀ Back</button><button id="bnext">Next ▶</button><span class="stepno" id="bstep"></span>
+  <span class="hint" style="margin-left:12px">or click a numbered circle</span></div>
+<div class="panel" id="bootpanel"></div>
+</div>
+
+<h3>Who is in charge of what</h3>
+<div class="tw"><table>
+<thead><tr><th>Part</th><th>Starts</th><th>Controls at runtime</th><th>Does not</th></tr></thead>
+<tbody>
+<tr><td>Launcher</td><td>Logger, CORE, GUI (or runs the CLI itself)</td><td>Process lifetimes: waits for the frontend to end, then closes CORE and the Logger; restarts on exit code 75</td><td>Route messages or know what runs</td></tr>
+<tr><td><b>CORE</b></td><td>Sequencer + Report threads; the HAL (if none runs)</td><td><b>The runtime:</b> its 10 ms loop routes every message, holds the recipe, starts runs, watches heartbeats, decides and runs both closes</td><td>Interpret recipe content or run steps</td></tr>
+<tr><td>Sequencer</td><td>One worker thread per run</td><td>The run: steps, teardown steps, the run folder and run log, <code>run_scope()</code> for the devices; Stop / Pause / Resume</td><td>Talk to the GUI or Report directly</td></tr>
+<tr><td>Frontend</td><td>Nothing</td><td>The operator's intent: load, start, stop, answers, settings, close, restart — all as requests to CORE</td><td>Decide alone: CORE may refuse</td></tr>
+<tr><td>HAL server</td><td>One driver process per opened device</td><td>Its own life and the devices: one request at a time, drops silent clients, tears devices down</td><td>Know PyPTS exists (any client may use it)</td></tr>
+<tr><td>Ctrl+C</td><td>—</td><td>Handled by the launcher only, as the crash close; Logger, CORE and GUI ignore it on purpose</td><td>Kill a child directly</td></tr>
+</tbody></table></div>
+
+<h2 id="s2">1. Processes and how they speak</h2>
+<div class="fig">
+<svg id="dia" viewBox="0 0 1200 615" role="img" aria-label="PyPTS and HAL process diagram">
+<defs>
+  <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z"/></marker>
+</defs>
+
+<!-- links first (under the boxes) -->
+<g class="link spawn clk" data-k="spawn" id="L-spawn">
+  <path class="v" d="M135,90 V200" marker-end="url(#ah)"/><path class="hit" d="M135,90 V200"/>
+  <path class="v" d="M250,55 H530 V130" marker-end="url(#ah)"/><path class="hit" d="M250,55 H530 V130"/>
+  <path class="v" d="M20,75 H8 V530 H20" marker-end="url(#ah)"/><path class="hit" d="M20,75 H8 V530 H20"/>
+  <text class="lbl" x="275" y="48">spawns</text>
+</g>
+<g class="link clk" data-k="hmi" id="L-hmi">
+  <path class="v" d="M250,262 H300 V200 H348" marker-start="url(#ah)" marker-end="url(#ah)"/><path class="hit" d="M250,262 H300 V200 H348"/>
+  <text class="lbl" x="256" y="285">mp.Queue ×2</text>
+</g>
+<g class="link clk" data-k="log" id="L-log">
+  <path class="v" d="M330,410 H300 V505 H252" marker-end="url(#ah)"/><path class="hit" d="M330,410 H300 V505 H252"/>
+  <path class="v" d="M135,350 V478" marker-end="url(#ah)"/><path class="hit" d="M135,350 V478"/>
+  <text class="lbl" x="142" y="420">log records</text>
+</g>
+<g class="link clk" data-k="tcp" id="L-tcp">
+  <path class="v" d="M732,300 H818" marker-start="url(#ah)" marker-end="url(#ah)"/><path class="hit" d="M732,300 H818"/>
+  <text class="lbl" x="742" y="292">TCP :29555</text>
+  <text class="lbl" x="742" y="318">JSON lines</text>
+</g>
+<g class="link clk" data-k="pipe" id="L-pipe">
+  <path class="v" d="M1022,185 H1058" marker-start="url(#ah)" marker-end="url(#ah)"/><path class="hit" d="M1022,185 H1058"/>
+  <path class="v" d="M1022,275 H1058" marker-start="url(#ah)" marker-end="url(#ah)"/><path class="hit" d="M1022,275 H1058"/>
+  <path class="v" d="M1022,365 H1058" marker-start="url(#ah)" marker-end="url(#ah)"/><path class="hit" d="M1022,365 H1058"/>
+  <text class="lbl" x="1024" y="420">mp.Pipe</text>
+</g>
+<g class="link clk" data-k="mon" id="L-mon">
+  <path class="v" d="M920,92 V128" marker-start="url(#ah)" marker-end="url(#ah)"/><path class="hit" d="M920,92 V128"/>
+  <text class="lbl" x="927" y="115">TCP: status</text>
+</g>
+<g class="link file clk" data-k="files" id="L-files">
+  <path class="v" d="M625,402 V478" marker-end="url(#ah)"/><path class="hit" d="M625,402 V478"/>
+  <path class="v" d="M435,402 V478" marker-end="url(#ah)"/><path class="hit" d="M435,402 V478"/>
+  <path class="v" d="M252,545 H328" marker-end="url(#ah)"/><path class="hit" d="M252,545 H328"/>
+  <text class="lbl" x="442" y="450">streams</text><text class="lbl" x="632" y="450">CSV, HTML</text><text class="lbl" x="258" y="538">run log</text>
+</g>
+<g class="link file clk" data-k="hallog" id="L-hallog">
+  <path class="v" d="M920,432 V478" marker-end="url(#ah)"/><path class="hit" d="M920,432 V478"/>
+  <path class="v" d="M818,525 H770 V380 H734" marker-end="url(#ah)"/><path class="hit" d="M818,525 H770 V380 H734"/>
+  <text class="lbl" x="778" y="470">LogTail</text>
+</g>
+
+<!-- processes -->
+<g class="proc boot clk" data-k="launcher" id="P-launcher">
+  <rect class="frame" x="20" y="20" width="230" height="70" rx="8"/>
+  <text class="t" x="34" y="44">Launcher</text>
+  <text class="s" x="34" y="62">main process · python -m pypts</text>
+  <text class="s" x="34" y="78">CLI runs here in --mode cli</text>
+</g>
+<g class="proc ui clk" data-k="gui" id="P-gui">
+  <rect class="frame" x="20" y="200" width="230" height="150" rx="8"/>
+  <text class="t" x="34" y="224">Frontend (HMI)</text>
+  <text class="s" x="34" y="244">GUI process (PySide6), or</text>
+  <text class="s" x="34" y="260">CLI in the launcher, or</text>
+  <text class="s" x="34" y="276">ApiClient in your program</text>
+  <text class="s" x="34" y="304">shared protocol: HmiClient</text>
+  <text class="s" x="34" y="322">reads the run log and stream</text>
+  <text class="s" x="34" y="337">files to draw the log + graphs</text>
+</g>
+<g class="proc core clk" data-k="core" id="P-core">
+  <rect class="frame" x="330" y="130" width="402" height="290" rx="8"/>
+  <text class="t" x="344" y="152">CORE process</text>
+  <rect class="inner" x="350" y="164" width="362" height="66" rx="6"/>
+  <text x="362" y="186" font-weight="600">CORE — the mediator</text>
+  <text class="s" x="362" y="204">routes every message · holds the recipe</text>
+  <text class="s" x="362" y="220">heartbeat watchdog · shutdown · hal_link</text>
+  <rect class="inner" id="P-sequencer" x="350" y="270" width="172" height="132" rx="6"/>
+  <text x="362" y="292" font-weight="600">Sequencer thread</text>
+  <text class="s" x="362" y="310">event loop + one worker</text>
+  <text class="s" x="362" y="326">thread per run that runs</text>
+  <text class="s" x="362" y="342">the steps — and your</text>
+  <text class="s" x="362" y="358">test code, which calls</text>
+  <text class="s" x="362" y="374">pyhal.get_device()</text>
+  <rect class="inner" id="P-report" x="540" y="270" width="172" height="132" rx="6"/>
+  <text x="552" y="292" font-weight="600">Report thread</text>
+  <text class="s" x="552" y="310">one CSV row per step,</text>
+  <text class="s" x="552" y="326">flushed at once;</text>
+  <text class="s" x="552" y="342">report.html at the end</text>
+</g>
+<g class="proc log clk" data-k="logger" id="P-logger">
+  <rect class="frame" x="20" y="480" width="230" height="92" rx="8"/>
+  <text class="t" x="34" y="504">Logger process</text>
+  <text class="s" x="34" y="524">the single writer of the log</text>
+  <text class="s" x="34" y="540">session log + per-run log</text>
+  <text class="s" x="34" y="556">(StartRunLog / EndRunLog)</text>
+</g>
+<g class="clk" data-k="runfolder" id="P-runfolder">
+  <rect class="file" x="330" y="480" width="402" height="110" rx="8"/>
+  <text class="t" x="344" y="504">Run folder (one per run)</text>
+  <text class="s" x="344" y="526">&lt;reports_dir&gt;/&lt;YYYYmmdd_HHMMSS&gt;_&lt;recipe&gt;/</text>
+  <text class="s" x="344" y="546">report.csv · report.html · run log · one CSV per stream</text>
+  <text class="s" x="344" y="566">made by the Sequencer at RunStarted</text>
+</g>
+<g class="proc hal clk" data-k="hal" id="P-hal">
+  <rect class="frame" x="820" y="130" width="202" height="302" rx="8"/>
+  <text class="t" x="834" y="152">HAL server</text>
+  <text class="s" x="834" y="170">python -m pyhal · standalone</text>
+  <rect class="inner" x="836" y="184" width="170" height="44" rx="5"/>
+  <text class="s" x="846" y="202">accept + one thread per</text>
+  <text class="s" x="846" y="218">client connection</text>
+  <rect class="inner" x="836" y="238" width="170" height="44" rx="5"/>
+  <text class="s" x="846" y="256">one request queue,</text>
+  <text class="s" x="846" y="272">run FIFO, one at a time</text>
+  <rect class="inner" x="836" y="292" width="170" height="44" rx="5"/>
+  <text class="s" x="846" y="310">Devices: open devices</text>
+  <text class="s" x="846" y="326">by logical name</text>
+  <text class="s" x="834" y="358">reads bench.ini once</text>
+  <text class="s" x="834" y="374">outlives a killed PyPTS</text>
+  <text class="s" x="834" y="390">watchdog drops silent</text>
+  <text class="s" x="834" y="406">clients (5 s)</text>
+</g>
+<g class="proc hal clk" data-k="drivers" id="P-drivers">
+  <rect class="frame" x="1060" y="155" width="125" height="60" rx="6"/>
+  <text x="1070" y="180" font-size="12.5">Device ssh1</text><text class="s" x="1070" y="198">SshDriver</text>
+  <rect class="frame" x="1060" y="245" width="125" height="60" rx="6"/>
+  <text x="1070" y="270" font-size="12.5">Device meteo…</text><text class="s" x="1070" y="288">OpenMeteoDriver</text>
+  <rect class="frame" x="1060" y="335" width="125" height="60" rx="6"/>
+  <text x="1070" y="360" font-size="12.5">Device …</text><text class="s" x="1070" y="378">your driver</text>
+</g>
+<g class="proc hal clk" data-k="monitor" id="P-monitor">
+  <rect class="frame" x="820" y="20" width="202" height="72" rx="8"/>
+  <text class="t" x="834" y="44">HAL monitor window</text>
+  <text class="s" x="834" y="62">optional · PySide6</text>
+  <text class="s" x="834" y="78">[hal] show_window</text>
+</g>
+<g class="clk" data-k="hallog" id="P-hallog">
+  <rect class="file" x="820" y="480" width="202" height="90" rx="8"/>
+  <text class="t" x="834" y="504">HAL log file</text>
+  <text class="s" x="834" y="524">hal_&lt;time&gt;_&lt;pid&gt;.log</text>
+  <text class="s" x="834" y="540">CORE re-logs each record</text>
+  <text class="s" x="834" y="556">as "HAL: …"</text>
+</g>
+<g class="link clk" data-k="seq" id="L-seq">
+  <path class="v" d="M435,232 V268" marker-start="url(#ah)" marker-end="url(#ah)"/><path class="hit" d="M435,232 V268"/>
+  <text class="lbl" x="442" y="255">queue.Queue</text>
+</g>
+<g class="link clk" data-k="rep" id="L-rep">
+  <path class="v" d="M625,232 V268" marker-start="url(#ah)" marker-end="url(#ah)"/><path class="hit" d="M625,232 V268"/>
+  <text class="lbl" x="632" y="255">queue.Queue</text>
+</g>
+</svg>
+<div class="panel" id="panel"><h4>Click a box or an arrow</h4>
+<p>Each one explains what it is, what crosses it and which file owns it.</p></div>
+<p class="hint" style="margin:12px 0 0"><b>Or play a scenario</b> — the diagram highlights what takes part in each step:</p>
+<div class="ctrl" style="margin-top:6px">
+  <button id="sc-run" class="sel">A run (Start press)</button>
+  <button id="sc-close">Orderly close</button>
+  <button id="sc-crash">Crash close</button>
+  <span style="flex:1"></span>
+  <button id="prev">◀ Back</button><button id="next">Next ▶</button><span class="stepno" id="stepno"></span>
+</div>
+<div class="panel" id="trace"></div>
+</div>
+
+<h3>The links at a glance</h3>
+<div class="tw"><table>
+<thead><tr><th>Link</th><th>Transport</th><th>Crosses a process?</th><th>Carries</th></tr></thead>
+<tbody>
+<tr><td>HMI ↔ CORE</td><td>two <code>multiprocessing.Queue</code>s, built by the launcher</td><td>yes — so everything on it is pickle-safe</td><td>commands (<code>LoadRecipe</code>, <code>StartSequence</code>, …), run events, operator questions</td></tr>
+<tr><td>CORE ↔ Sequencer</td><td><code>queue.Queue</code>, built by CORE</td><td>no (thread)</td><td><code>RunSequence</code> out; run and step events back</td></tr>
+<tr><td>CORE ↔ Report</td><td><code>queue.Queue</code>, built by CORE</td><td>no (thread)</td><td>forwarded run events, <code>StepExecuted</code>, <code>GenerateReport</code></td></tr>
+<tr><td>any → Logger</td><td>one shared queue, logging's <code>QueueHandler</code></td><td>yes</td><td><code>LogRecord</code>s, plus <code>LoggerControl</code> (start/end run log, stop)</td></tr>
+<tr><td>CORE ↔ HAL</td><td>TCP on localhost, one JSON object per line</td><td>yes — outside the message layer</td><td><code>open</code>, <code>call</code>, <code>recover</code>, <code>close</code>, … — one answer each; <code>beat</code> every second</td></tr>
+<tr><td>HAL ↔ driver</td><td><code>multiprocessing</code> Pipe, pickled tuples</td><td>yes</td><td>one call at a time; <code>hello</code>, <code>result</code>, <code>error</code>, <code>log</code>, <code>printed</code></td></tr>
+</tbody></table></div>
+<p>Two families, on purpose. <b>Inside PyPTS</b> every link is a <code>QueueWrapper[Msg]</code> carrying plain dataclasses,
+one union type per direction, polled — never blocking — by each module's event loop; at <code>TRACE</code> every message is
+logged once when sent and once when received. <b>Towards the HAL</b> it is a small line protocol with a client
+(<code>pyhal.client</code>): one client per process, so the Sequencer's test code and CORE's <code>hal_link</code> share it. That
+is what lets the same test functions run in a plain script: <code>with pyhal.connect("bench.ini"): ...</code>.</p>
+
+<h2 id="s3">2. How data moves</h2>
+<p>Not all data takes the same road. Commands, the recipe and results go <b>through CORE</b> as messages. Bulk data goes
+<b>around it, through files</b>: streams, logs and pictures are written to disk and read back by the GUI, so a fast
+stream never fills a queue. Hardware data never touches the message layer at all — it goes over TCP to the HAL.
+Pick a kind of data to follow it.</p>
+<div class="fig">
+<div class="ctrl" style="margin:0 0 8px" id="flowbtns">
+  <button data-f="all" class="sel">All</button>
+  <button data-f="recipe"><span class="dot" style="--c:var(--f-recipe)"></span>Recipe</button>
+  <button data-f="hw"><span class="dot" style="--c:var(--f-hw)"></span>Hardware data</button>
+  <button data-f="res"><span class="dot" style="--c:var(--f-res)"></span>Results</button>
+  <button data-f="op"><span class="dot" style="--c:var(--f-op)"></span>Operator input</button>
+  <button data-f="stream"><span class="dot" style="--c:var(--f-stream)"></span>Streams → XY graph</button>
+  <button data-f="log"><span class="dot" style="--c:var(--f-log)"></span>Logs</button>
+</div>
+<svg id="flow" viewBox="0 0 1200 570" role="img" aria-label="data flow through PyPTS">
+<defs>
+  <marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="context-stroke"/></marker>
+</defs>
+<text class="s" x="30" y="30">PROCESSES / THREADS</text>
+<text class="s" x="30" y="432">FILES ON DISK</text>
+<line x1="20" y1="405" x2="1190" y2="405" stroke="var(--line)" stroke-dasharray="2 4"/>
+
+<!-- boxes -->
+<g class="fbox"><rect x="30" y="50" width="260" height="190" rx="8"/><text class="t" x="44" y="74">GUI (HMI process)</text>
+  <text class="s" x="44" y="94">step table · interaction panel</text><text class="s" x="44" y="110">LOG OUTPUT · picture / XY graph</text></g>
+<g class="fbox"><rect x="450" y="50" width="200" height="190" rx="8"/><text class="t" x="464" y="74">CORE</text>
+  <text class="s" x="464" y="94">parses and keeps the Recipe</text><text class="s" x="464" y="110">routes; interprets nothing</text></g>
+<g class="fbox"><rect x="800" y="50" width="200" height="190" rx="8"/><text class="t" x="814" y="74">Sequencer · steps</text>
+  <text class="s" x="814" y="94">runs the test code;</text><text class="s" x="814" y="110">run variables live here</text></g>
+<g class="fbox"><rect x="1050" y="50" width="140" height="190" rx="8"/><text class="t" x="1062" y="74">HAL</text>
+  <text class="s" x="1062" y="94">server + driver</text><text class="s" x="1062" y="110">processes</text></g>
+<g class="fbox"><rect x="450" y="300" width="200" height="70" rx="8"/><text class="t" x="464" y="324">Report thread</text><text class="s" x="464" y="344">CSV rows, verdict, HTML</text></g>
+<g class="fbox"><rect x="1050" y="300" width="140" height="70" rx="8"/><text class="t" x="1062" y="324">Logger</text><text class="s" x="1062" y="344">single writer</text></g>
+<g class="fbox file"><rect x="30" y="445" width="260" height="78" rx="8"/><text class="t" x="44" y="469">recipe.yml + pictures</text><text class="s" x="44" y="489">header + sequence documents;</text><text class="s" x="44" y="505">image files beside it</text></g>
+<g class="fbox file"><rect x="450" y="445" width="200" height="78" rx="8"/><text class="t" x="464" y="469">report.csv · report.html</text><text class="s" x="464" y="489">in the run folder</text></g>
+<g class="fbox file"><rect x="800" y="445" width="200" height="78" rx="8"/><text class="t" x="814" y="469">streams/&lt;name&gt;.csv</text><text class="s" x="814" y="489">x,y rows, flushed per push</text></g>
+<g class="fbox file"><rect x="1050" y="445" width="140" height="78" rx="8"/><text class="t" x="1062" y="469">run log</text><text class="s" x="1062" y="489">in the run folder</text></g>
+
+<!-- recipe -->
+<g class="fl f-recipe">
+  <path d="M290,140 H450"/><text x="300" y="134">LoadRecipe(path) · Start…</text>
+  <path d="M290,470 H400 V200 H450"/><text x="300" y="462">Recipe.from_file()</text>
+  <path d="M450,160 H290"/><text x="300" y="155">RecipeLoaded (summary)</text>
+  <path d="M650,140 H800"/><text x="660" y="134">RunSequence(Recipe)</text>
+  <path d="M120,445 V240"/><text x="127" y="290">pictures, by</text><text x="127" y="304">absolute path</text>
+</g>
+<!-- hardware -->
+<g class="fl f-hw">
+  <path class="two" d="M1000,140 H1050"/><text x="1003" y="132">TCP</text>
+</g>
+<!-- results -->
+<g class="fl f-res">
+  <path d="M800,180 H650"/><text x="662" y="174">StepExecuted ·</text><text x="662" y="196">StepFinished</text>
+  <path d="M450,195 H290"/><text x="300" y="189">StepFinished · ReportReady</text>
+  <path d="M550,240 V300"/><text x="556" y="278">StepExecuted</text>
+  <path d="M550,370 V445"/><text x="556" y="412">rows, html</text>
+</g>
+<!-- operator -->
+<g class="fl f-op">
+  <path class="two" d="M290,228 H450"/><text x="300" y="250">User…Request / Response</text>
+  <path class="two" d="M650,228 H800"/><text x="660" y="250">User…Request / Response</text>
+</g>
+<!-- streams -->
+<g class="fl f-stream">
+  <path d="M900,240 V445"/><text x="906" y="290">register_stream()</text><text x="906" y="304">.push(x, y)</text>
+  <path d="M800,500 H730 V392 H260 V240"/><text x="300" y="386">StreamReader → pyrade XY graph (never through CORE)</text>
+</g>
+<!-- logs -->
+<g class="fl f-log">
+  <path d="M960,240 V335 H1050"/><text x="966" y="328">log records</text>
+  <path d="M1120,240 V300"/><text x="1126" y="278">HAL: …</text>
+  <path d="M1120,370 V445"/>
+  <path d="M1120,523 V552 H14 V100 H30"/><text x="320" y="547">LOG OUTPUT tails the run log file (never through CORE)</text>
+</g>
+</svg>
+<div class="panel" id="flowpanel"></div>
+</div>
+
+<h2 id="s4">3. Modules by function</h2>
+<p>Six jobs. Click a module for what it owns; switch the colouring to see <b>where it runs</b>.</p>
+<div class="ctrl" style="margin:0 0 10px">
+  <button id="c-grp" class="sel">Colour by function</button>
+  <button id="c-proc">Colour by process it runs in</button>
+</div>
+<div class="groups" id="groups"></div>
+<div class="legend" id="legend"></div>
+<div class="panel" id="modpanel"><h4>Click a module</h4><p>Its context file is the place to read before touching it.</p></div>
+
+<h3>Which way the imports point</h3>
+<svg viewBox="0 0 1200 120" role="img" aria-label="dependency direction">
+  <defs><marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" style="fill:var(--muted)"/></marker></defs>
+  <g font-size="13">
+  <rect x="10" y="20" width="170" height="44" rx="6" style="fill:var(--g1b);stroke:var(--g1)"/><text x="24" y="47">launcher / api</text>
+  <rect x="230" y="20" width="170" height="44" rx="6" style="fill:var(--g2b);stroke:var(--g2)"/><text x="244" y="47">core</text>
+  <rect x="450" y="20" width="170" height="44" rx="6" style="fill:var(--g2b);stroke:var(--g2)"/><text x="464" y="47">sequencer · report</text>
+  <rect x="670" y="20" width="170" height="44" rx="6" style="fill:var(--g2b);stroke:var(--g2)"/><text x="684" y="47">step ⇄ recipe</text>
+  <rect x="890" y="20" width="300" height="44" rx="6" style="fill:var(--g4b);stroke:var(--g4)"/><text x="904" y="47">messages · logger · config · utilities</text>
+  <path d="M180,42 H226" style="stroke:var(--muted);stroke-width:2" marker-end="url(#ah2)"/>
+  <path d="M400,42 H446" style="stroke:var(--muted);stroke-width:2" marker-end="url(#ah2)"/>
+  <path d="M620,42 H666" style="stroke:var(--muted);stroke-width:2" marker-end="url(#ah2)"/>
+  <path d="M840,42 H886" style="stroke:var(--muted);stroke-width:2" marker-end="url(#ah2)"/>
+  <rect x="450" y="80" width="480" height="34" rx="6" style="fill:var(--g5b);stroke:var(--g5)"/><text x="464" y="102">pyhal — imported by core, sequencer and test code; imports no pypts</text>
+  </g>
+</svg>
+<p class="hint">Arrow = "imports". <code>recipe</code> holds <code>Step</code> objects from <code>step</code>; <code>pyhal</code> is checked by <code>test_pyhal_independence.py</code>.</p>
+
+<h2 id="s5">4. Rules that hold it together</h2>
+<ul>
+<li><b>Only CORE routes.</b> Modules never call each other or touch another's queue; the one exception is log records,
+which go straight to the Logger. CORE forwards the same object and never interprets recipe content.</li>
+<li><b>Every handler is a closed <code>match</code></b> ending in <code>unhandled()</code>, over a link's union type — adding a message
+without its <code>case</code> fails <code>mypy</code> and <code>test_messages.py</code>.</li>
+<li><b>Heartbeats both ways.</b> Each watched module beats to CORE; silence of 5 s is a WARNING, 15 s takes the crash
+close. CORE beats to the HMI so a frontend can tell a busy engine from a dead one. The HAL drops a client silent for 5 s.</li>
+<li><b>Devices are per run.</b> <code>pyhal.run_scope()</code> wraps every run; a device opens on its first
+<code>get_device()</code> and closes, newest first, after the teardown steps and before <code>RunFinished</code> — whatever the result.</li>
+<li><b>Failures stay small.</b> A driver that crashes or hangs takes down its own process only; the HAL's teardown
+ladder tries <code>teardown()</code>, then a fresh driver process to tear down. A HAL PyPTS started gets <code>shutdown</code> at
+close; one it found running is left running.</li>
+<li><b>One writer per file.</b> The Logger owns the log, the Report owns the CSV/HTML, the HAL owns its log; readers
+(the GUI's log panel and graphs, CORE's <code>LogTail</code>) tail files and never write them.</li>
+</ul>
+
+<h2 id="s6">5. Files and classes</h2>
+<p>The repository, top level:</p>
+<div class="tw"><table>
+<thead><tr><th>Path</th><th>Holds</th></tr></thead><tbody>
+<tr><td><code>src/pypts/</code></td><td>The framework (import name <code>pypts</code>): one folder per module of section 3.</td></tr>
+<tr><td><code>src/pyhal/</code></td><td>The hardware layer and HAL server, a package of its own.</td></tr>
+<tr><td><code>src/pyrade_xy_graph/</code></td><td>The copied CERN plot package behind the GUI's XY graphs; deviations in <code>DEVIATIONS.md</code>.</td></tr>
+<tr><td><code>tests/</code></td><td><code>unit_tests/</code>, <code>functional_tests/</code>, <code>quality_tests/</code> (ruff, mypy, pyhal independence); <code>conftest.py</code> turns the HAL off.</td></tr>
+<tr><td><code>docs/Usage_manuals/</code></td><td>The user documents: status, quick start, usage manual, recipe guide, driver guide, migration.</td></tr>
+<tr><td><code>docs/superpowers/</code></td><td>Design specs and plans (e.g. the HAL server spec).</td></tr>
+<tr><td><code>resources/recipes/</code></td><td>Demo recipes, one folder per step type, <code>showcase_recipes/</code>, <code>common/</code> test code, <code>Old_recipes/</code>.</td></tr>
+<tr><td><code>resources/images/</code>, <code>resources/internal_reports/</code></td><td>Pictures; generated HTML reports like this one.</td></tr>
+<tr><td><code>run_pypts.py</code>, <code>run_hal.py</code>, <code>run_recipe_creator.py</code>, <code>run_recipe_editor.py</code>, <code>run_tests.py</code></td><td>Start scripts that put <code>src</code> on the path.</td></tr>
+<tr><td><code>pyproject.toml</code>, <code>reuse.toml</code>, <code>CLAUDE.md</code>, <code>TODO.txt</code></td><td>Build and tool config; licence-header rules; AI working rules; the task inbox.</td></tr>
+</tbody></table></div>
+<p>Every source folder below, file by file. The sentences come from the code's own docstrings (the first sentence);
+where a class has none, it was written from the class body. Click a folder to open it.</p>
+<div class="ctrl" style="margin:0 0 10px">
+  <button id="fs-open">Open all</button><button id="fs-close">Close all</button>
+  <span style="flex:1"></span>
+  <button data-p="all" class="sel fsf">All</button><button data-p="pypts" class="fsf">pypts</button><button data-p="pyhal" class="fsf">pyhal</button><button data-p="pyrade_xy_graph" class="fsf">pyrade_xy_graph</button>
+</div>
+<div id="fstree">
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/</code> <span class="hint">3 files · 0 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>pypts package initializer (minimal to avoid circular imports)</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>__main__.py</code></td><td>Entry point for <code>python -m</code>.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>_version.py</code></td><td>The package version, written by the build (setuptools-scm).</td><td><span class='hint'>no classes</span></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/api/</code> <span class="hint">4 files · 7 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>pypts.api - drive pypts from another Python program.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>embedding.py</code></td><td>The embedding API: pypts driven by code instead of by an operator.</td><td><ul class='cl'><li><code class="cls">PtsError</code> — pypts refused what was asked of it, or could not finish it.</li><li><code class="cls">LoadedRecipe</code> — What CORE loaded.</li><li><code class="cls">StepVerdict</code> — One step of a run, as it finished.</li><li><code class="cls">RunResult</code> — One finished run.</li><li><code class="cls">ApiClient</code> — The protocol half of a frontend, with no presentation at all.</li><li><code class="cls">Pts</code> — pypts with no window: the engine, driven by calls.</li></ul></td></tr><tr><td><code>headless.py</code></td><td>Headless mode: one recipe, one sequence, one exit code (migration finding M-2b).</td><td><ul class='cl'><li><code class="cls">HeadlessPts</code> — <code>Pts</code>, named HEADLESS in the run log instead of API.</li></ul></td></tr><tr><td><code>showcase.py</code></td><td>pypts.api, one case at a time.</td><td><span class='hint'>no classes</span></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/config_handler/</code> <span class="hint">6 files · 11 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Configuration for the whole framework.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>bench_config.py</code></td><td>The bench file: which devices are on this bench.</td><td><ul class='cl'><li><code class="cls">BenchOutcome</code> — What bench_config() found.</li><li><code class="cls">BenchConfig</code> — The devices of this bench, as bench.ini declares them.</li></ul></td></tr><tr><td><code>config_handler.py</code></td><td>The Config Handler: one place that answers &quot;how is this installation set up&quot;.</td><td><ul class='cl'><li><code class="cls">ConfigError</code> — Base of everything this module raises, so a caller can catch one type.</li><li><code class="cls">ConfigFileMissing</code> — The config file does not exist and this handler is not allowed to create it.</li><li><code class="cls">ConfigKeyError</code> — A key was asked for that the configuration does not have.</li><li><code class="cls">ConfigWriteError</code> — A write was attempted through a handler that is not the writer.</li><li><code class="cls">ConfigSchemaError</code> — The file&#x27;s contents do not match the schema: a key is missing, or a value cannot be read as the type its key declares.</li><li><code class="cls">Role</code> — What an instance is allowed to do.</li><li><code class="cls">BootstrapOutcome</code> — How this process&#x27;s configuration came to be.</li><li><code class="cls">ConfigHandler</code> — The per-process singleton.</li></ul></td></tr><tr><td><code>configuration_schema.py</code></td><td>What the configuration *is*: every section, every key, its type and its default.</td><td><ul class='cl'><li><code class="cls">Field</code> — One key.</li></ul></td></tr><tr><td><code>file_locations.py</code></td><td>Where pypts keeps its files on this machine.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>template_writer.py</code></td><td>Writing config.ini without throwing the comments away.</td><td><span class='hint'>no classes</span></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/core/</code> <span class="hint">3 files · 3 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>core.py</code></td><td>CORE - the mediator, and the engine process.</td><td><ul class='cl'><li><code class="cls">_ModuleState</code> — Per-module liveness state tracked by CORE&#x27;s watchdog.</li><li><code class="cls">Core</code> — Mediator, and the thread that owns the Sequencer and the Report.</li></ul></td></tr><tr><td><code>hal_link.py</code></td><td>CORE&#x27;s link to the HAL server (spec §6.1, §6.2, §6.4, §9): the connect at startup, the HAL&#x27;s log lines re-logged in PyPTS&#x27;s log, and the close.</td><td><ul class='cl'><li><code class="cls">HalLink</code> — CORE&#x27;s connection to the HAL server: started once, closed once.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/helper_applications/</code> <span class="hint">1 files · 0 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/helper_applications/recipe_creator/</code> <span class="hint">10 files · 30 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>The Recipe Creator, and the verificator it is the only user of.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>__main__.py</code></td><td>Entry point for <code>python -m</code>.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>customGUIModules.py</code></td><td>The Creator&#x27;s YAML text editor widgets.</td><td><ul class='cl'><li><code class="cls">YamlHighlighter</code> — Colours YAML keys, values and comments in the Creator&#x27;s text editor.</li><li><code class="cls">LineNumberArea</code> — The gutter widget that draws line numbers beside the editor.</li><li><code class="cls">ScintillaYamlEditor</code> — A plain-text YAML editor with line numbers and highlighting (Qt, despite the name).</li></ul></td></tr><tr><td><code>issue.py</code></td><td><code>ValidationIssue</code>, what the verificator returns for each problem.</td><td><ul class='cl'><li><code class="cls">ValidationIssue</code> — One problem found in a recipe file.</li></ul></td></tr><tr><td><code>rc_io.py</code></td><td>The recipe-file save layer the Recipe Creator and the Recipe Editor v2 share.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>rc_logging.py</code></td><td>The Recipe Creator&#x27;s own log file, and what happens to an error nobody caught.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>rc_model.py</code></td><td>The Creator&#x27;s recipe model and its undo commands.</td><td><ul class='cl'><li><code class="cls">RecipeModel</code> — The Creator&#x27;s in-memory recipe: header, sequences and steps, every edit an undoable command, signals on change.</li><li><code class="cls">_SetDictField</code> — Undo command: set one field of the header, a sequence or a step.</li><li><code class="cls">_SetPathValue</code> — Undo command: set a value at a nested path inside one document.</li><li><code class="cls">_DuplicateStep</code> — Undo command: insert a copy of a step right after it.</li><li><code class="cls">_AddStep</code> — Undo command: add a new step of a given type at a position.</li><li><code class="cls">_RemoveStep</code> — Undo command: remove one step.</li><li><code class="cls">_MoveStep</code> — Undo command: move a step to another position in its sequence.</li><li><code class="cls">_AddSequence</code> — Undo command: add a new sequence document.</li><li><code class="cls">_RemoveSequence</code> — Undo command: remove a sequence document.</li><li><code class="cls">_SetFromText</code> — Undo command: replace the whole recipe from YAML text, also when the text is invalid.</li></ul></td></tr><tr><td><code>rc_widgets.py</code></td><td>The Creator&#x27;s widgets: stylesheet, highlighter, editor with error gutter, dialogs.</td><td><ul class='cl'><li><code class="cls">PaletteYamlHighlighter</code> — YAML syntax highlighter that reads colours from the palette (no hex literals).</li><li><code class="cls">YamlEditor</code> — ScintillaYamlEditor extended with debounced commit signal and error gutter dots.</li><li><code class="cls">VerificationPanel</code> — Collapsible panel showing ValidationIssue list.</li><li><code class="cls">InvalidOverlay</code> — Watermark laid over a grayed-out widget, saying why it cannot be used.</li><li><code class="cls">GlobalsEditorDialog</code> — Modal dialog for editing the <code>globals</code> header dict.</li><li><code class="cls">HeaderStrip</code> — Collapsible strip showing recipe header fields and sequence selector.</li><li><code class="cls">MappingRowsWidget</code> — Editable rows for a step&#x27;s <code>inputs</code> or <code>outputs</code> dict.</li><li><code class="cls">MappingYamlWidget</code> — Small YAML editor for a step&#x27;s <code>inputs</code> or <code>outputs</code> block.</li><li><code class="cls">StepFormWidget</code> — Form for editing all fields of a single step.</li><li><code class="cls">_ClickLabel</code> — QLabel that emits clicked() on mouse press — avoids monkey-patching.</li><li><code class="cls">ListStepView</code> — Vertical splitter: step list on top, StepFormWidget below.</li><li><code class="cls">CardStepView</code> — Accordion of StepCard widgets, one card per step.</li><li><code class="cls">PanelsStepView</code> — Horizontal splitter: slim type+name list on left, StepFormWidget on right.</li></ul></td></tr><tr><td><code>recipe_creator_new.py</code></td><td>The Recipe Creator window and its <code>main()</code>.</td><td><ul class='cl'><li><code class="cls">RecipeCreatorNewWindow</code> — The Recipe Creator&#x27;s main window: tree, form, YAML editor and verificator results.</li></ul></td></tr><tr><td><code>verificator.py</code></td><td>Recipe verificator: validate a recipe YAML file or string and return every problem found in one pass, with line-numbered diagnostics and a fix hint each.</td><td><ul class='cl'><li><code class="cls">_Context</code> — Accumulates issues during one verification run.</li><li><code class="cls">_LineMap</code> — Maps YAML key paths (tuples) to 1-based line numbers.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/helper_applications/recipe_editor/</code> <span class="hint">8 files · 6 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Recipe Editor v2 - the recipe as the operator sees it, the YAML, and a form.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>__main__.py</code></td><td>Entry point for <code>python -m</code>.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>editor_settings.py</code></td><td>The Recipe Editor v2&#x27;s own settings: <code>[recipe_editor]</code> in config.ini, and its recent recipes.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>editor_window.py</code></td><td>Recipe Editor v2: the recipe as the operator will see it, the YAML, and a form.</td><td><ul class='cl'><li><code class="cls">RecipeEditorWindow</code> — Recipe Editor v2&#x27;s main window, laid out like the operator screen: step table, schema form, PROBLEMS panel.</li></ul></td></tr><tr><td><code>problems_panel.py</code></td><td>PROBLEMS: what the verificator found, under the step table.</td><td><ul class='cl'><li><code class="cls">ProblemsPanel</code> — The verificator&#x27;s issues, one line each, and the selected one&#x27;s hint.</li></ul></td></tr><tr><td><code>row_drag.py</code></td><td>Drag a row of the step table onto another to move its step there.</td><td><ul class='cl'><li><code class="cls">RowDragger</code> — Row drag-and-drop on a QTableWidget, reported as <code>row_dropped(source, target, below)</code>.</li></ul></td></tr><tr><td><code>row_map.py</code></td><td>From a step table row to the step to edit, and from a line of the YAML back.</td><td><ul class='cl'><li><code class="cls">StepRef</code> — One authored step: where it is in RecipeModel, and its lines in the text.</li></ul></td></tr><tr><td><code>schema_form.py</code></td><td>The Recipe Editor v2&#x27;s form: one widget per field, generated from recipe_schema.</td><td><ul class='cl'><li><code class="cls">_Field</code> — One editor in the form: where it writes, how it shows a value, its problem.</li><li><code class="cls">SchemaForm</code> — The right-hand column: the selected step&#x27;s fields, or the header&#x27;s and sequence&#x27;s.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/hmi/</code> <span class="hint">2 files · 1 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>hmi_client.py</code></td><td>The half of a frontend that is protocol rather than presentation.</td><td><ul class='cl'><li><code class="cls">HmiClient</code> — The protocol half every frontend shares: polls CORE&#x27;s messages into <code>show_*</code> hooks, sends commands, watches CORE&#x27;s heartbeat.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/hmi/cli/</code> <span class="hint">2 files · 1 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>cli.py</code></td><td>The interactive shell frontend.</td><td><ul class='cl'><li><code class="cls">CLI</code> — An interactive shell on the main thread, with the CORE inbox polled from a background thread.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/hmi/gui/</code> <span class="hint">26 files · 44 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>center_view.py</code></td><td>The right-side content: InteractionPanel (idle / prompt / text / path) + LogPanel.</td><td><ul class='cl'><li><code class="cls">CenterContent</code> — Right-side column: the interaction panel + the log panel.</li></ul></td></tr><tr><td><code>gui.py</code></td><td>The PySide6 frontend: the operator screen.</td><td><ul class='cl'><li><code class="cls">OutsideClickWatcher</code> — Ends a look back at a step (gui.md §19) when the operator clicks anywhere outside the step table.</li><li><code class="cls">PtsMainWindow</code> — The application main window.</li><li><code class="cls">GUI</code> — The assembler: main window + four content widgets + hook wiring.</li></ul></td></tr><tr><td><code>gui_theme.py</code></td><td>Light / dark / system theme: reads <code>[gui] theme</code> and follows the system scheme.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>interaction_panel.py</code></td><td>The operator interaction panel (prompts, text and path questions).</td><td><ul class='cl'><li><code class="cls">InteractionPanel</code> — The right-hand panel that shows idle, a prompt, a text question or a file question, and sends the operator&#x27;s answer.</li></ul></td></tr><tr><td><code>line_tail.py</code></td><td>Whole lines out of a file that is still being written.</td><td><ul class='cl'><li><code class="cls">LineTail</code> — One file, read forwards, repeatedly, a whole line at a time.</li></ul></td></tr><tr><td><code>log_follower.py</code></td><td>What the LOG OUTPUT panel follows: the session log and, during a run, the run&#x27;s own log.</td><td><ul class='cl'><li><code class="cls">LogFollower</code> — Hands back new log lines in the order the Logger wrote them.</li></ul></td></tr><tr><td><code>log_panel.py</code></td><td>The LOG OUTPUT panel: the run log&#x27;s lines, coloured by level and filtered by it.</td><td><ul class='cl'><li><code class="cls">LogPanel</code> — The LOG OUTPUT widget: run-log lines coloured by level, with the level filter.</li></ul></td></tr><tr><td><code>log_tail.py</code></td><td>Reading this run&#x27;s log back, for the operator&#x27;s LOG OUTPUT panel.</td><td><ul class='cl'><li><code class="cls">LogTail</code> — The run log, read forwards, repeatedly, filtered for the operator.</li></ul></td></tr><tr><td><code>palette.py</code></td><td>Every colour the GUI uses, in one file.</td><td><ul class='cl'><li><code class="cls">Chip</code> — A background plus the text colour that stays readable on it.</li><li><code class="cls">Palette</code> — One theme.</li></ul></td></tr><tr><td><code>resources.py</code></td><td>Loads the GUI&#x27;s pictures: CERN logo, result icons, the no-image placeholder.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>run_display.py</code></td><td>RunDisplay: what the right column&#x27;s picture area shows during a run.</td><td><ul class='cl'><li><code class="cls">_Running</code> — One entry of the running stack.</li><li><code class="cls">_Seen</code> — One step as this run saw it.</li><li><code class="cls">StepReview</code> — What the picture area shows for a step clicked during or after a run.</li><li><code class="cls">RunDisplay</code> — The right column&#x27;s state during a run, from the events alone.</li></ul></td></tr><tr><td><code>run_header.py</code></td><td>RunHeader: the step card on top of the right column during a run (gui.md §18).</td><td><ul class='cl'><li><code class="cls">RunHeader</code> — The step card. show_live() follows the run; show_review() stands on one step.</li></ul></td></tr><tr><td><code>run_progress.py</code></td><td>RunProgress: the small green bar at the right end of the recipe label row.</td><td><ul class='cl'><li><code class="cls">RunProgress</code> — The bar and its label.</li></ul></td></tr><tr><td><code>run_record.py</code></td><td>RunRecord: what the Summary tab says about the last run (gui.md §14).</td><td><ul class='cl'><li><code class="cls">StepTime</code> — One step and how long it took, for the slowest-steps list.</li><li><code class="cls">RunRecord</code> — One run, from its RunStarted on.</li></ul></td></tr><tr><td><code>run_state.py</code></td><td>Where the run is, as the GUI window shows it.</td><td><ul class='cl'><li><code class="cls">RunState</code> — The member value is the word the status bar shows.</li></ul></td></tr><tr><td><code>settings_dialog.py</code></td><td>The Settings dialog: Edit -&gt; Settings.</td><td><ul class='cl'><li><code class="cls">SettingsProfile</code> — What one tool&#x27;s Settings dialog shows.</li><li><code class="cls">SettingEditor</code> — One setting&#x27;s control.</li><li><code class="cls">_ExclusiveButtons</code> — Checkable buttons of which exactly one is on - the base of both choice controls.</li><li><code class="cls">ChoiceButtons</code> — A row of buttons, one per allowed value.</li><li><code class="cls">ThemeCards</code> — The theme as picture cards: a thumbnail of the window, a name and a line.</li><li><code class="cls">OnOffSwitch</code> — A yes/no setting as one button that reads On or Off.</li><li><code class="cls">NumberField</code> — A whole number, typed.</li><li><code class="cls">TextField</code> — Free text.</li><li><code class="cls">FolderField</code> — A folder: the path, Browse to pick one, Open to look inside it.</li><li><code class="cls">SettingCard</code> — One setting - or a few that belong together, like the window&#x27;s mode and size - on a card: a title, a line of explanation, the control, and a Reset that appears once the value differs from the one the dialog opened with.</li><li><code class="cls">WindowConfirmDialog</code> — &quot;Keep these window settings?&quot; with a countdown, the way an operating system asks after a display change.</li><li><code class="cls">SettingsDialog</code> — Pages of setting cards; save through CORE; say what was saved - in one window.</li></ul></td></tr><tr><td><code>step_table.py</code></td><td>The LeftSidebar content: the step table, which *is* the run&#x27;s result view.</td><td><ul class='cl'><li><code class="cls">StepTableContent</code> — Three columns: Step name (bold), Description, Result.</li></ul></td></tr><tr><td><code>step_yaml_popup.py</code></td><td>The panel that shows recipe YAML: a step&#x27;s whole sequence, or the whole recipe.</td><td><ul class='cl'><li><code class="cls">StepYamlPopup</code> — A sequence&#x27;s YAML, syntax coloured, one step picked out, beside the mouse.</li></ul></td></tr><tr><td><code>stream_graph.py</code></td><td>The XY graph of one stream, drawn live or from a finished file.</td><td><ul class='cl'><li><code class="cls">_StreamState</code> — What is kept per stream: its store, its reader (live only), the unit seen.</li><li><code class="cls">StreamGraph</code> — One stream&#x27;s XY graph, with a waiting message until its file exists.</li></ul></td></tr><tr><td><code>stream_reader.py</code></td><td>Reading a stream CSV back, for the XY graph.</td><td><ul class='cl'><li><code class="cls">StreamReader</code> — One stream CSV, followed as it grows.</li></ul></td></tr><tr><td><code>styles.py</code></td><td>The stylesheet, built from the tokens in palette.py.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>summary_panel.py</code></td><td>SummaryPanel: the last run summed up, on the left pane&#x27;s Summary tab (gui.md §14).</td><td><ul class='cl'><li><code class="cls">SummaryBadge</code> — One count - <code>3  PASS</code> - on its verdict&#x27;s colours.</li><li><code class="cls">_Card</code> — A titled box on the page.</li><li><code class="cls">_FileRow</code> — One of the run&#x27;s files: what it is, its name, and Open.</li><li><code class="cls">SummaryPanel</code> — The Summary tab. set_record() and refresh() draw it; it never changes the record.</li></ul></td></tr><tr><td><code>top_bar.py</code></td><td>The TopBar content: the run controls.</td><td><ul class='cl'><li><code class="cls">TopBarContent</code> — Open / Close / Recipe / Start / Pause / Stop / Report, each icon labelled.</li></ul></td></tr><tr><td><code>view_tabs.py</code></td><td>ViewTabBar: the Run | Summary tabs above the left pane.</td><td><ul class='cl'><li><code class="cls">ViewTabBar</code> — The two tabs.</li></ul></td></tr><tr><td><code>yaml_highlighter.py</code></td><td>YAML syntax colouring for the step table&#x27;s click panel.</td><td><ul class='cl'><li><code class="cls">YamlHighlighter</code> — Colours a YAML document from the palette, and re-colours on a theme flip.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/hmi/gui/scaffold/</code> <span class="hint">4 files · 8 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>The vendored GUI scaffold: the four-panel main-window layout the PTS GUI builds on.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>main_window.py</code></td><td>The scaffold&#x27;s main window: four panels joined by draggable splitters.</td><td><ul class='cl'><li><code class="cls">MainWindow</code> — The four-panel window.</li></ul></td></tr><tr><td><code>panels.py</code></td><td>The scaffold&#x27;s panels: one shared base, four named regions.</td><td><ul class='cl'><li><code class="cls">BasePanel</code> — Shared base for all panel components: visual styling, layout setup, and pluggable content via set_content().</li><li><code class="cls">TopBar</code> — Full-width bar along the top of the main window.</li><li><code class="cls">LeftSidebar</code> — Vertical sidebar along the left side of the main window.</li><li><code class="cls">CenterView</code> — Main content area, occupying the upper-right region of the window.</li><li><code class="cls">BottomBar</code> — Narrow bar along the bottom of the right-side content area.</li></ul></td></tr><tr><td><code>style_config.py</code></td><td>The scaffold&#x27;s two configuration dataclasses.</td><td><ul class='cl'><li><code class="cls">BoxStyle</code> — Visual styling configuration for all panels.</li><li><code class="cls">LayoutConfig</code> — Stretch factor configuration for the main window layout.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/launcher/</code> <span class="hint">2 files · 2 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>startup.py</code></td><td>The launcher - the thin supervisor.</td><td><ul class='cl'><li><code class="cls">Engine</code> — One running pypts session without its frontend: the Logger and CORE processes, and the two links a frontend talks to CORE on.</li><li><code class="cls">ArgumentParser</code> — argparse, exiting with USAGE_EXIT_CODE on a bad command line.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/logger/</code> <span class="hint">3 files · 1 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>levels.py</code></td><td>The one log level pypts adds to the standard ones: TRACE, below DEBUG.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>log.py</code></td><td>Central logging for pypts.</td><td><ul class='cl'><li><code class="cls">Logger</code> — The single writer of the run log file.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/messages/</code> <span class="hint">10 files · 57 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Everything the modules say to each other.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>blocking_messages.py</code></td><td>The waiting half of a request/response pair.</td><td><ul class='cl'><li><code class="cls">PendingRequests</code> — Requests still in flight, keyed by request_id.</li></ul></td></tr><tr><td><code>common_messages.py</code></td><td>Vocabulary shared by more than one link.</td><td><ul class='cl'><li><code class="cls">ErrorSeverity</code> — Payload of ModuleError.severity.</li><li><code class="cls">ResultType</code> — Payload of RunFinished.result, SequenceFinished.result and StepOutcome.result.</li><li><code class="cls">StepOutcome</code> — Payload of StepFinished.outcome, StepExecuted.outcome and RunFinished.outcomes.</li><li><code class="cls">ModuleError</code> — A failure a module wants CORE to know about.</li><li><code class="cls">Heartbeat</code> — Still alive.</li></ul></td></tr><tr><td><code>core_hmi_communication.py</code></td><td>The HMI &lt;-&gt; CORE link.</td><td><ul class='cl'><li><code class="cls">LoadRecipe</code> — Load and validate a recipe.</li><li><code class="cls">UnloadRecipe</code> — Forget the loaded recipe.</li><li><code class="cls">StartSequence</code> — Run one named sequence of the loaded recipe.</li><li><code class="cls">SetConfigParameter</code> — Change one configuration value in config.ini.</li><li><code class="cls">ShutdownRequested</code> — Shut the whole application down.</li><li><code class="cls">HmiStopped</code> — The HMI&#x27;s event loop has ended.</li><li><code class="cls">StopHmi</code> — Close the frontend.</li><li><code class="cls">StatusChanged</code> — One line of free text.</li><li><code class="cls">ModuleErrorReported</code> — An error CORE decided the operator should see.</li><li><code class="cls">RecipeUnloaded</code> — CORE holds no recipe any more: the answer to UnloadRecipe.</li><li><code class="cls">ReportReady</code> — The report of the run that just finished is on disk.</li><li><code class="cls">ConfigParameterResult</code> — CORE&#x27;s answer to one SetConfigParameter.</li></ul></td></tr><tr><td><code>core_report_communication.py</code></td><td>The CORE &lt;-&gt; Report link.</td><td><ul class='cl'><li><code class="cls">GenerateReport</code> — Build the report for the run that just finished.</li><li><code class="cls">ExportReport</code> — Write the generated report out in its configured format.</li><li><code class="cls">StopReport</code> — Shut the module down.</li><li><code class="cls">ReportStopped</code> — The Report&#x27;s event loop has ended.</li><li><code class="cls">ReportGenerated</code> — A report was built.</li><li><code class="cls">ReportExported</code> — A report was written out.</li></ul></td></tr><tr><td><code>core_sequencer_communication.py</code></td><td>The CORE &lt;-&gt; Sequencer link.</td><td><ul class='cl'><li><code class="cls">RunSequence</code> — Run one named sequence of the recipe carried with the command.</li><li><code class="cls">ForgetRecipe</code> — The operator unloaded the recipe: drop what the last run left behind.</li><li><code class="cls">StopSequencer</code> — Shut the module down.</li><li><code class="cls">SequencerStopped</code> — The Sequencer&#x27;s event loop has ended.</li></ul></td></tr><tr><td><code>links.py</code></td><td>The name of every direction, passed to <code>QueueWrapper(link=...)</code> and printed in every trace line.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>queue_wrapper.py</code></td><td>The one transport: a typed, one-way pipe.</td><td><ul class='cl'><li><code class="cls">UnhandledMessage</code> — A handler received a message it has no branch for.</li><li><code class="cls">QueueWrapper</code> — A typed handle on one direction of one link.</li></ul></td></tr><tr><td><code>run_events.py</code></td><td>What the engine reports while a recipe runs, and the three questions it asks back.</td><td><ul class='cl'><li><code class="cls">StepSummary</code> — Payload of SequenceSummary.steps.</li><li><code class="cls">SequenceSummary</code> — Payload of RecipeLoaded.sequences.</li><li><code class="cls">RecipeLoaded</code> — A recipe file was parsed and validated.</li><li><code class="cls">RunStarted</code> — Execution of a recipe has begun.</li><li><code class="cls">RunFinished</code> — Execution finished, for any reason.</li><li><code class="cls">RunPaused</code> — The run is now held, before the step it names.</li><li><code class="cls">RunResumed</code> — A hold has ended and the run carries on.</li><li><code class="cls">RunMetadata</code> — The current value of one or more of the run&#x27;s metadata globals.</li><li><code class="cls">SequenceStarted</code> — One named sequence within the recipe has begun.</li><li><code class="cls">SequenceFinished</code> — One named sequence finished, with its aggregated result.</li><li><code class="cls">StepStarted</code> — One step is about to run.</li><li><code class="cls">StepFinished</code> — One step finished.</li><li><code class="cls">StepExecuted</code> — One step finished, with everything the Report writes about it.</li><li><code class="cls">StopSequence</code> — Abort the running sequence but keep the module alive.</li><li><code class="cls">PauseSequence</code> — Hold the running sequence before its next main step.</li><li><code class="cls">ResumeSequence</code> — End a hold, or cancel a PauseSequence whose hold has not begun yet.</li><li><code class="cls">UserPromptRequest</code> — Show the operator a message and wait for one of <code>options</code> to be chosen.</li><li><code class="cls">UserPromptResponse</code> — The operator&#x27;s answer.</li><li><code class="cls">UserTextRequest</code> — Show the operator a message and wait for a line of text to be typed.</li><li><code class="cls">UserTextResponse</code> — What the operator typed.</li><li><code class="cls">UserPathRequest</code> — Show the operator a message and wait for a file or a folder to be chosen.</li><li><code class="cls">UserPathResponse</code> — The path the operator chose.</li></ul></td></tr><tr><td><code>to_logger_communication.py</code></td><td>The any-module -&gt; Logger link.</td><td><ul class='cl'><li><code class="cls">SetStdoutEnabled</code> — Console echo for the whole application.</li><li><code class="cls">SwitchLogFile</code> — Close the run log and carry on in a new file at <code>log_file_path</code>.</li><li><code class="cls">StartRunLog</code> — Carry on in the run log at <code>log_file_path</code> until EndRunLog.</li><li><code class="cls">EndRunLog</code> — Close the run log and carry on in the session log, appending to it.</li><li><code class="cls">StopLogger</code> — Stop the Logger.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/recipe/</code> <span class="hint">5 files · 26 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>recipe.py</code></td><td>The recipe data layer: what a recipe *is*, not what running one does.</td><td><ul class='cl'><li><code class="cls">RecipeError</code> — A recipe file that cannot be loaded: unreadable, unparseable or invalid.</li><li><code class="cls">Sequence</code> — One named, ordered list of steps.</li><li><code class="cls">Recipe</code> — One recipe file: the header fields, plus the sequences it contains.</li></ul></td></tr><tr><td><code>recipe_parser.py</code></td><td>The recipe parser: a file or a text in, a validated Recipe object out.</td><td><ul class='cl'><li><code class="cls">SchemaProblem</code> — One problem validation found in a recipe document.</li></ul></td></tr><tr><td><code>recipe_schema.py</code></td><td>Recipe schema: the format constants and Pydantic models for validating raw recipe YAML dicts.</td><td><ul class='cl'><li><code class="cls">_RecipeModel</code> — What every recipe model shares.</li><li><code class="cls">HeaderSchema</code> — Document 1 of a recipe.</li><li><code class="cls">PassOutput</code> — Output rule <code>pass</code>: records the returned value without judging it.</li><li><code class="cls">PassfailOutput</code> — Output rule <code>passfail</code>: the returned boolean is the verdict.</li><li><code class="cls">EqualsOutput</code> — Output rule <code>equals</code>: passes if the returned value equals the expected one.</li><li><code class="cls">RangeOutput</code> — Output rule <code>range</code>: passes if the returned value is between <code>min</code> and <code>max</code>.</li><li><code class="cls">GlobalOutput</code> — Output rule <code>global</code>: stores the returned value in a run variable, without judging it.</li><li><code class="cls">_StepFields</code> — STEP_COMMON_DEFAULTS: what every steptype accepts.</li><li><code class="cls">_NamedStep</code> — _StepFields plus the name and id every step that is built as itself carries.</li><li><code class="cls">_OrdinaryStep</code> — The arguments of pypts.step.step.Step&#x27;s constructor, which every built step takes.</li><li><code class="cls">PythonModuleStepSchema</code> — Validates a <code>PythonModule</code> step: the module, the method and its inputs/outputs.</li><li><code class="cls">UserInteractionStepSchema</code> — Validates a <code>UserInteraction</code> step: the message and the buttons shown to the operator.</li><li><code class="cls">UserWriteStepSchema</code> — Validates a <code>UserWrite</code> step: the text question put to the operator.</li><li><code class="cls">UserLoadingStepSchema</code> — Validates a <code>UserLoading</code> step: the file or folder the operator chooses.</li><li><code class="cls">WaitStepSchema</code> — Validates a <code>Wait</code> step: how long to wait.</li><li><code class="cls">SequenceStepSchema</code> — A call of another sequence.</li><li><code class="cls">ParameterSet</code> — One entry of an Indexed step&#x27;s <code>parameter_sets</code>: what makes one case different.</li><li><code class="cls">IndexedStepSchema</code> — One step written once and run once per parameter set (pypts.step.indexed_step).</li><li><code class="cls">SequenceSchema</code> — Documents 2 onwards of a recipe: one sequence each.</li></ul></td></tr><tr><td><code>step_source.py</code></td><td>The YAML behind one step table row - the recipe&#x27;s side of the click panel.</td><td><ul class='cl'><li><code class="cls">StepOrigin</code> — The authored step a row comes from.</li><li><code class="cls">StepSource</code> — What the click panel shows for one row.</li><li><code class="cls">_Document</code> — One sequence document: its normalized data, its node, and its text.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/report/</code> <span class="hint">3 files · 1 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>html_report.py</code></td><td>The HTML page of a run - one self-contained file built from the CSV rows.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>report.py</code></td><td>The Report module - builds and exports the artefacts of a run.</td><td><ul class='cl'><li><code class="cls">Report</code> — The Report thread: opens the run folder&#x27;s CSV on <code>RunStarted</code>, appends a row per <code>StepExecuted</code>, writes <code>report.html</code> on <code>GenerateReport</code>.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/sequencer/</code> <span class="hint">2 files · 1 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>sequencer.py</code></td><td>The Sequencer - executes the sequences of a loaded recipe.</td><td><ul class='cl'><li><code class="cls">Sequencer</code> — The Sequencer thread: an event loop that starts one worker thread per run to execute the recipe&#x27;s steps.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/step/</code> <span class="hint">12 files · 10 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>The step types: the unit of work a sequence is made of.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>indexed_step.py</code></td><td>The indexed step: one authored step, N parameter sets, N ordinary steps.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>operator_prompt.py</code></td><td>What the three step types that put a question on the operator&#x27;s screen share.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>python_module_step.py</code></td><td>PythonModuleStep - call one function of a Python module.</td><td><ul class='cl'><li><code class="cls">PythonModuleStep</code> — Call one function of a Python module; its return value is the output.</li></ul></td></tr><tr><td><code>registry.py</code></td><td>steptype name -&gt; step class, and the one function that builds a step.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>runtime.py</code></td><td>The execution context a step runs against.</td><td><ul class='cl'><li><code class="cls">PromptUnanswered</code> — Nobody answered a question put through <code>ask</code>: timed out, cancelled, or the run stopped.</li><li><code class="cls">Runtime</code> — One variable scope, the five seams to the Sequencer, and where the step lists run.</li></ul></td></tr><tr><td><code>sequence_step.py</code></td><td>The Sequence step: call another sequence of the same recipe as a group.</td><td><ul class='cl'><li><code class="cls">SequenceStep</code> — One call of another sequence: its steps and teardown, run as one group.</li></ul></td></tr><tr><td><code>step.py</code></td><td>The base Step, its StepResult, and the two loops that run steps.</td><td><ul class='cl'><li><code class="cls">StepResult</code> — What one step execution produced: verdict, data, and the error if any.</li><li><code class="cls">Step</code> — One unit of work in a sequence.</li></ul></td></tr><tr><td><code>user_interaction_step.py</code></td><td>UserInteractionStep - ask the operator a question and wait for the answer.</td><td><ul class='cl'><li><code class="cls">UserInteractionStep</code> — Show the operator a message and some buttons; their choice is the output.</li></ul></td></tr><tr><td><code>user_loading_step.py</code></td><td>UserLoadingStep - ask the operator to pick a file or a folder, and keep the path.</td><td><ul class='cl'><li><code class="cls">UserLoadingStep</code> — Show the operator a message and a file or folder chooser; the chosen path is the output.</li></ul></td></tr><tr><td><code>user_write_step.py</code></td><td>UserWriteStep - ask the operator to type something, and keep what they typed.</td><td><ul class='cl'><li><code class="cls">UserWriteStep</code> — Show the operator a message and a text field; what they type is the output.</li></ul></td></tr><tr><td><code>wait_step.py</code></td><td>WaitStep - sleep for a fixed time.</td><td><ul class='cl'><li><code class="cls">WaitStep</code> — Sleep for <code>wait_time</code> seconds.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/stream_handler/</code> <span class="hint">3 files · 3 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>stream_file.py</code></td><td>One stream&#x27;s CSV file: the path rule, the header format and the Stream handle.</td><td><ul class='cl'><li><code class="cls">Stream</code> — A named series of (x, y) samples, written to a CSV file as they are pushed.</li></ul></td></tr><tr><td><code>stream_session.py</code></td><td>The streams of one run, and the one session that is active in this process.</td><td><ul class='cl'><li><code class="cls">StreamError</code> — No stream can be registered: no session is active.</li><li><code class="cls">StreamSession</code> — The streams of one run.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pypts"><summary><code>src/pypts/utilities/</code> <span class="hint">6 files · 4 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>common.py</code></td><td>Small helpers with no home of their own.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>error_handling.py</code></td><td>Reporting a module&#x27;s failures to CORE.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>heartbeat_manager.py</code></td><td>Periodic proof that a module&#x27;s event loop is still turning.</td><td><ul class='cl'><li><code class="cls">HeartbeatManager</code> — Sends a Heartbeat on <code>outbox</code> at most once per interval.</li><li><code class="cls">HeartbeatWatch</code> — The receiving half: how long is it since the other end last spoke?</li></ul></td></tr><tr><td><code>local_storage.py</code></td><td>Naming the files pypts writes.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>recent_recipes.py</code></td><td>The recipes this operator opened last, kept between runs.</td><td><ul class='cl'><li><code class="cls">RecentEntry</code> — One remembered recipe.</li><li><code class="cls">RecentRecipes</code> — The recent-recipes list, read on construction and rewritten on every change.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pyhal"><summary><code>src/pyhal/</code> <span class="hint">12 files · 26 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>The hardware layer: devices on the bench, reached by logical name.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>__main__.py</code></td><td><code>python -m pyhal</code>: run a HAL server, or tell a running one to close its devices or to stop (spec §11).</td><td><ul class='cl'><li><code class="cls">ExitHandlers</code> — The handlers that turn a signal or a console event into the server&#x27;s exit.</li></ul></td></tr><tr><td><code>base_driver.py</code></td><td>The base every driver derives from, and the error the hardware layer raises.</td><td><ul class='cl'><li><code class="cls">DriverError</code> — A device could not be reached, or an operation on it failed.</li><li><code class="cls">BaseDriver</code> — One instrument, or one remote connection, as a plain class.</li></ul></td></tr><tr><td><code>bench.py</code></td><td>The bench file: bench.ini&#x27;s device sections, read and prepared for the devices.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>client.py</code></td><td>The HAL client: what test code and scripts use to reach the HAL server (spec §6.1, §6.3, §7.5).</td><td><ul class='cl'><li><code class="cls">HalClient</code> — The process&#x27;s connection to the HAL server: the long connection and its beat thread.</li><li><code class="cls">LogTail</code> — Follows the HAL&#x27;s log file and passes each new record to <code>sink(levelno, message)</code> (spec §9): the level from the record&#x27;s level name (<code>TRACE</code> = 5 included; a name logging does not know is INFO), the message as written after …</li><li><code class="cls">Device</code> — One device as test code sees it, from get_device(): every public name on it is the driver&#x27;s operation (its own members are all <code>_private</code>, so no name is reserved), and a call is a request on the long connection.</li><li><code class="cls">_Fence</code> — What a request checks under the request lock: its handle&#x27;s scope.</li><li><code class="cls">_NothingListens</code> — Nothing accepted a connection on the port.</li><li><code class="cls">_Refused</code> — The HAL answered with an <code>error</code> instead of <code>hello</code>: it is shutting down.</li><li><code class="cls">_AnotherHal</code> — start_hal(): a HAL that another starter started answered on the port first.</li><li><code class="cls">_Launched</code> — A process _launch() started (a HAL, or the monitor that starts one), and what waiting for it needs.</li></ul></td></tr><tr><td><code>connection_driver.py</code></td><td>ConnectionDriver - one device as test code sees it: a local object whose methods run in the driver&#x27;s own process.</td><td><ul class='cl'><li><code class="cls">ConnectionDriver</code> — One device, its driver running in a process of its own.</li><li><code class="cls">_Channel</code> — The driver process&#x27;s end of the Pipe. send() is locked: a driver thread may log.</li><li><code class="cls">_ForwardingHandler</code> — Sends every log record of the driver process to PyPTS, for the run log.</li><li><code class="cls">_PrintForwarder</code> — Stands in for sys.stdout and sys.stderr: every printed line goes to PyPTS&#x27;s run log.</li></ul></td></tr><tr><td><code>device_control.py</code></td><td>The value <code>device_info()</code> returns: a device as it stands.</td><td><ul class='cl'><li><code class="cls">DeviceInfo</code> — A device as it stands: what device_info() returns.</li></ul></td></tr><tr><td><code>device_types.py</code></td><td>The device types.</td><td><ul class='cl'><li><code class="cls">PSU</code> — A programmable power supply.</li><li><code class="cls">DMM</code> — A digital multimeter.</li><li><code class="cls">Scope</code> — An oscilloscope.</li><li><code class="cls">SSH</code> — A remote shell.</li><li><code class="cls">Load</code> — An electronic load.</li><li><code class="cls">Other</code> — Anything that is none of the above.</li></ul></td></tr><tr><td><code>devices.py</code></td><td>Devices - the open devices of the HAL server, by logical name.</td><td><ul class='cl'><li><code class="cls">Devices</code> — The bench&#x27;s devices: the open ones, and what the bench file says about the rest.</li></ul></td></tr><tr><td><code>dispatch.py</code></td><td>The top-level <code>pyhal.get_device()</code>, <code>pyhal.recover_device()</code> and <code>pyhal.device_info()</code>.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>hal_log.py</code></td><td>The HAL server&#x27;s own log file (spec §9, D16): plain Python logging, standard library only.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>server.py</code></td><td>The HAL server: a localhost TCP service that owns the bench&#x27;s devices (spec §6.5, §7.2-§7.5).</td><td><ul class='cl'><li><code class="cls">_Connection</code> — One client&#x27;s connection.</li><li><code class="cls">_Item</code> — One queued request together with the connection that sent it.</li><li><code class="cls">HalServer</code> — The HAL server on one port, its devices those of one bench file.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pyhal"><summary><code>src/pyhal/drivers/</code> <span class="hint">4 files · 3 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>The drivers PyPTS ships.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>loopback.py</code></td><td>Loopback - a device with nothing behind it.</td><td><ul class='cl'><li><code class="cls">LoopbackDriver</code> — Answers with what it was given; can also fail, stall and crash on request.</li></ul></td></tr><tr><td><code>ssh.py</code></td><td>SSH - a remote shell, over paramiko.</td><td><ul class='cl'><li><code class="cls">SshDriver</code> — One SSH session to one host.</li></ul></td></tr><tr><td><code>weather.py</code></td><td>Open-Meteo - a weather station on the internet, read like an instrument.</td><td><ul class='cl'><li><code class="cls">OpenMeteoDriver</code> — The weather at one place, from the Open-Meteo forecast API.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pyhal"><summary><code>src/pyhal/monitor/</code> <span class="hint">4 files · 4 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>The HAL monitor: a small standalone window that shows a running HAL server&#x27;s status and can close its devices, stop it, start one and show its latest log lines.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>__main__.py</code></td><td>Starts the HAL monitor window.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>link.py</code></td><td>The HAL monitor&#x27;s link to the HAL server, without Qt: the status poll, Close all, Stop, Start and the log tail.</td><td><ul class='cl'><li><code class="cls">_NothingAnswers</code> — Nothing accepted a connection on the port.</li><li><code class="cls">MonitorLink</code> — The monitor&#x27;s connection to the HAL server on 127.0.0.1:&lt;port&gt;.</li></ul></td></tr><tr><td><code>window.py</code></td><td>The HAL monitor&#x27;s window: a running HAL server&#x27;s state, its devices, Close all / Stop / Start, and the HAL log&#x27;s latest records.</td><td><ul class='cl'><li><code class="cls">_Signals</code> — The workers&#x27; way back to the GUI thread.</li><li><code class="cls">MonitorWindow</code> — The monitor of the HAL on 127.0.0.1:&lt;port&gt;.</li></ul></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pyhal"><summary><code>src/pyhal/protocol/</code> <span class="hint">4 files · 21 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>The HAL wire protocol: plain values, message dataclasses, and the line codec.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>codec.py</code></td><td>The line codec: one JSON object per line, UTF-8, newline-terminated, <code>kind</code> plus the fields.</td><td><ul class='cl'><li><code class="cls">MalformedLine</code> — A received line is not a valid message.</li><li><code class="cls">MessageTooLarge</code> — An encoded message is over MAX_MESSAGE_BYTES.</li></ul></td></tr><tr><td><code>messages.py</code></td><td>The HAL wire messages: one frozen dataclass per message, two unions, two kind tables.</td><td><ul class='cl'><li><code class="cls">Open</code> — Request <code>open</code>: open a device by name.</li><li><code class="cls">Call</code> — Request <code>call</code>: run one operation of a device with args/kwargs.</li><li><code class="cls">Recover</code> — Request <code>recover</code>: ask a device&#x27;s driver to recover.</li><li><code class="cls">Info</code> — Request <code>info</code>: a device&#x27;s type, operations and whether it is open.</li><li><code class="cls">Close</code> — Request <code>close</code>: close one device.</li><li><code class="cls">CloseAll</code> — Request <code>close_all</code>: close every open device.</li><li><code class="cls">Shutdown</code> — Request <code>shutdown</code>: close all and stop the HAL.</li><li><code class="cls">Status</code> — Request <code>status</code>: the HAL&#x27;s state, answered at once.</li><li><code class="cls">Beat</code> — The client&#x27;s heartbeat; has no answer.</li><li><code class="cls">Hello</code> — First message of a connection: pid, version, bench, log file, open devices, other clients.</li><li><code class="cls">Opened</code> — Answer to <code>open</code>: device type and operations.</li><li><code class="cls">Result</code> — Answer to <code>call</code>: the returned value.</li><li><code class="cls">Recovered</code> — Answer to <code>recover</code>.</li><li><code class="cls">DeviceInfo</code> — Answer to <code>info</code>.</li><li><code class="cls">Closed</code> — Answer to <code>close</code>.</li><li><code class="cls">ClosedAll</code> — Answer to <code>close_all</code>: the devices that were not torn down.</li><li><code class="cls">Bye</code> — Answer to <code>shutdown</code>.</li><li><code class="cls">StatusReport</code> — Answer to <code>status</code>: clients, what is busy, queue length, one row per device.</li><li><code class="cls">Error</code> — Answer to any request that failed: where it failed and why.</li></ul></td></tr><tr><td><code>values.py</code></td><td>Plain values: what may cross the wire, and how the awkward ones are tagged.</td><td><span class='hint'>no classes</span></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pyrade_xy_graph"><summary><code>src/pyrade_xy_graph/</code> <span class="hint">2 files · 0 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>main.py</code></td><td>Runs the plot package as a standalone window.</td><td><span class='hint'>no classes</span></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pyrade_xy_graph"><summary><code>src/pyrade_xy_graph/core/</code> <span class="hint">7 files · 9 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>binary_results.py</code></td><td>Static file loading (CSV/HDF5/TDMS) and writing/recording of the same three formats, for both exports and live recording.</td><td><ul class='cl'><li><code class="cls">FileLoadWorker</code> — Reads a CSV/HDF5/TDMS file chunk-by-chunk on a background thread, decimating each chunk against a per-channel point budget so opening a multi-GB file never materializes it whole in RAM or floods the GUI thread with more points …</li><li><code class="cls">RangeLoadWorker</code> — Reads one channel&#x27;s data within an x-range directly from disk, at a finer resolution than FileLoadWorker&#x27;s load-time decimation left in DataStore - drives the &quot;Load Detail for Visible Region&quot; action (see ui/graph_widget.py&#x27;s …</li><li><code class="cls">_CSVRecorderBackend</code> — One row per sample.</li><li><code class="cls">_HDF5RecorderBackend</code> — Recorder backend that appends samples to an HDF5 file.</li><li><code class="cls">_TDMSRecorderBackend</code> — Recorder backend that writes samples to a TDMS file.</li><li><code class="cls">RecorderThread</code> — Writes queued records to disk (CSV/HDF5/TDMS, via _make_recorder_backend) on its own thread, separate from whatever is draining the live DAQ queue (core/live_worker.py&#x27;s AcquisitionWorker) - a slow disk throttles this thread&#x27;s …</li></ul></td></tr><tr><td><code>data_store.py</code></td><td>The in-memory signal buffer every plot reads.</td><td><ul class='cl'><li><code class="cls">_RingColumn</code> — Amortized-growth column buffer backing one DataStore column.</li><li><code class="cls">DataStore</code> — Central in-memory buffer for signal data.</li></ul></td></tr><tr><td><code>export_utils.py</code></td><td>Screenshot and signal export to CSV / HDF5 / TDMS.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>live_worker.py</code></td><td>Live acquisition: drains a queue.Queue of DAQ records on its own background thread, delivering them to the GUI thread via a Qt signal and, if recording, to a RecorderThread (core/binary_results.py) via its own internal queue - …</td><td><ul class='cl'><li><code class="cls">AcquisitionWorker</code> — Drains data_queue on its own background thread.</li></ul></td></tr><tr><td><code>math_engine.py</code></td><td>Headless numerical analysis: no Qt/pyqtgraph imports anywhere in this module, so it&#x27;s usable (and testable) independent of the GUI.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>trace_level.py</code></td><td>Registers a TRACE logging level (below DEBUG) and Logger.trace(), as a side effect of import.</td><td><span class='hint'>no classes</span></td></tr></tbody></table></div></details>
+<details class="fs" data-pkg="pyrade_xy_graph"><summary><code>src/pyrade_xy_graph/ui/</code> <span class="hint">9 files · 11 classes</span></summary><div class="tw"><table class="ft"><thead><tr><th>File</th><th>What the file is</th><th>Classes — one sentence each</th></tr></thead><tbody><tr><td><code>__init__.py</code></td><td>Package marker.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>graph_widget.py</code></td><td>PyradeXYGraphWidget: all of pyrade_xy_graph&#x27;s functionality - live acquisition, static file loading, plot, signal list, math stats, log - as a plain QWidget.</td><td><ul class='cl'><li><code class="cls">LiveSession</code> — One running live-acquisition pipeline, keyed by session_id in PyradeXYGraphWidget.sessions.</li><li><code class="cls">PyradeXYGraphWidget</code> — All of pyrade_xy_graph&#x27;s functionality as a plain QWidget, embeddable into any host application&#x27;s own layout, tab, or window.</li></ul></td></tr><tr><td><code>log_panel.py</code></td><td>The plot package&#x27;s own log view.</td><td><ul class='cl'><li><code class="cls">_LogSignal</code> — The Qt signal object that carries a log record to the GUI thread.</li><li><code class="cls">QtLogHandler</code> — logging.Handler that marshals records onto the GUI thread via a Qt signal - log calls can come from any thread (AcquisitionWorker, FileLoadWorker, or any other QThread in this app), and QPlainTextEdit isn&#x27;t safe to touch off …</li><li><code class="cls">LogPanel</code> — Read-only, always-visible log view with a level selector (Trace/Debug/Info/Warning/Error).</li></ul></td></tr><tr><td><code>main_window.py</code></td><td>The standalone window around the graph widget.</td><td><ul class='cl'><li><code class="cls">MainWindow</code> — Standalone runnable window (what main.py shows) - a thin QMainWindow wrapper around PyradeXYGraphWidget, which owns all the actual functionality and is itself the thing to embed into another application.</li></ul></td></tr><tr><td><code>math_dock.py</code></td><td>The statistics dock (min, max, average …).</td><td><ul class='cl'><li><code class="cls">MathDockWidget</code> — Shows min/max/average/median/peak-to-peak for one signal, over either its whole buffered range (default) or a region dragged on the main graph (&quot;Limit to selected region&quot;, which shows/hides ScopePlotWidget&#x27;s ROI selector).</li></ul></td></tr><tr><td><code>plot_widget.py</code></td><td>The pyqtgraph plot with many Y axes, scope window and ROI.</td><td><ul class='cl'><li><code class="cls">SignalStyle</code> — How one signal is drawn: colour, line width, point symbol, visible.</li><li><code class="cls">ScopePlotWidget</code> — PyQtGraph widget for DataStore array streaming.</li></ul></td></tr><tr><td><code>signal_tree.py</code></td><td>Per-signal show/hide, style and colour controls.</td><td><ul class='cl'><li><code class="cls">SignalTreeWidget</code> — Per-signal show/hide + point-style + colour controls.</li></ul></td></tr><tr><td><code>style.py</code></td><td>One shared QSS stylesheet for the whole app.</td><td><span class='hint'>no classes</span></td></tr><tr><td><code>tdms_exporter.py</code></td><td>Registers a TDMS format in pyqtgraph&#x27;s native right-click &gt; Export... dialog, alongside its built-in CSV/HDF5/Image/Matplotlib/SVG exporters.</td><td><ul class='cl'><li><code class="cls">TDMSExporter</code> — pyqtgraph exporter that saves the plotted curves as a TDMS file.</li></ul></td></tr></tbody></table></div></details>
+</div>
+</main>
+</div>
+
+<script>
+// ---------- diagram details ----------
+const INFO = {
+  launcher: ["Launcher — the thin supervisor", "launcher/startup.py · launcher.md",
+    "Pins <code>spawn</code>, bootstraps <code>config.ini</code>, builds the HMI↔CORE queue pair and the Logger queue, then spawns the Logger, CORE and (GUI mode) the GUI. In CLI mode the CLI runs right here. The HAL is <b>not</b> its child — CORE connects to or starts it. When the frontend ends it sends CORE the crash-close request and joins it for up to 30 s."],
+  gui: ["Frontend (HMI)", "hmi/hmi_client.py · hmi/cli · hmi/gui · api/embedding.py",
+    "Three faces of one protocol class, <code>HmiClient</code>: it polls <code>from_core</code> and dispatches to <code>show_*</code> hooks, sends commands, answers operator questions, and watches CORE's heartbeat. The GUI's log panel tails the run log file and its graphs read the stream CSVs — data that never crosses the queue."],
+  core: ["CORE process", "core/core.py · core/hal_link.py · core.md",
+    "The mediator: three handlers (HMI, Sequencer, Report), a 10 ms loop, the only copy of the loaded <code>Recipe</code>, the heartbeat watchdog, both shutdown choreographies, and the runtime writer of <code>config.ini</code>. <code>hal_link</code> connects to the HAL on a daemon thread at startup (never blocking) and closes it on either close. Sequencer and Report are daemon threads of this process."],
+  logger: ["Logger process", "logger/log.py · logging_rules.md",
+    "Owns the only handle of the log file. Every process and thread pushes <code>LogRecord</code>s through a <code>QueueHandler</code>; the Logger drains and writes. Control messages switch to a per-run log inside the run folder. INFO and above are written for the technician (the GUI shows them), DEBUG for developers."],
+  runfolder: ["Run folder", "utilities/local_storage.py · report.md · stream_handler.md",
+    "Made by the Sequencer when the run starts and named in <code>RunStarted</code>. The Logger writes the run log here, the Report <code>report.csv</code> (row by row) and <code>report.html</code>, and test code's <code>register_stream()</code> one CSV per stream."],
+  hal: ["HAL server", "src/pyhal/server.py · devices.py · pyhal.md",
+    "A TCP server on <code>127.0.0.1</code> that owns the bench's devices. Connection threads answer <code>beat</code> and <code>status</code> themselves; every other request goes on <b>one</b> queue that a single thread runs in order on <code>Devices</code> — so no locks, and two clients can share a device. Reads <code>bench.ini</code> once. Standalone: <code>python -m pyhal</code>, <code>--stop</code>, <code>--close-all</code>."],
+  drivers: ["Driver processes — one per opened device", "src/pyhal/connection_driver.py · base_driver.py · drivers/",
+    "Spawned as <code>Device &lt;name&gt;</code> on first open. The driver (<code>BaseDriver</code>: <code>connect</code>, <code>teardown</code>, <code>recover</code> + its own operations) runs here, so a crash or hang only takes this process. Each call has a 30 s timeout."],
+  monitor: ["HAL monitor window", "src/pyhal/monitor/ · pyhal.md → The monitor",
+    "A small PySide6 window, a client like any other: polls <code>status</code>, shows devices, state and the HAL log; buttons Close all / Stop / Start. With <code>[hal] show_window</code> on, CORE starts the monitor in serve mode and it starts the HAL — closing the window stops the HAL. The only place <code>pyhal</code> imports Qt."],
+  hallog: ["HAL log file", "src/pyhal/hal_log.py · client.py LogTail",
+    "The HAL writes its own log because it outlives PyPTS. The client's <code>LogTail</code> tails it, and CORE's <code>hal_link</code> re-logs each record at its own level as <code>HAL: …</code> — so it lands in PyPTS's log and the GUI."],
+  spawn: ["Spawns", "launcher/startup.py",
+    "The launcher starts the Logger, CORE and the GUI with <code>multiprocessing</code>, start method <code>spawn</code> on every OS. The queues are handed over as constructor arguments."],
+  hmi: ["HMI ↔ CORE", "messages/core_hmi_communication.py · run_events.py",
+    "The only message link that crosses a process boundary, so it carries only pickle-safe dataclasses — no queues, Qt objects or device handles. Unions <code>HmiToCore</code> / <code>CoreToHmi</code>. <code>StepExecuted</code> (the full result) never crosses it."],
+  seq: ["CORE ↔ Sequencer", "messages/core_sequencer_communication.py",
+    "<code>RunSequence(recipe, …)</code> is the only way the recipe reaches the Sequencer. Back come run and step events, operator questions, <code>ModuleError</code>s and heartbeats."],
+  rep: ["CORE ↔ Report", "messages/core_report_communication.py",
+    "CORE forwards <code>RunStarted</code>, <code>SequenceStarted</code>, <code>RunMetadata</code>, <code>StepExecuted</code>, <code>RunFinished</code> and then <code>GenerateReport</code>; the Report answers <code>ReportGenerated</code>, which CORE turns into <code>ReportReady</code> for the HMI."],
+  log: ["Log records → Logger", "messages/to_logger_communication.py · logger/log.py",
+    "Straight from every process, not via CORE. Everything else goes through CORE."],
+  tcp: ["CORE process ↔ HAL server", "src/pyhal/client.py · protocol/",
+    "One <code>HalClient</code> per process, shared by <code>hal_link</code> and the test code. Line protocol in three layers: values (JSON-safe types, tagged NaN/bytes), messages (frozen dataclasses), codec (one JSON object per line, max 16 MiB). Every request has one answer; <code>beat</code> has none."],
+  pipe: ["HAL ↔ driver process", "src/pyhal/connection_driver.py",
+    "Pickled tuples, read and written whole: <code>(method, args, kwargs)</code> one way; <code>hello</code>/<code>fatal</code>, <code>result</code>/<code>error</code>, <code>log</code>, <code>printed</code> the other. When the HAL dies, the driver process tears down and exits."],
+  mon: ["Monitor ↔ HAL", "src/pyhal/monitor/link.py",
+    "Separate TCP connections that only ask <code>status</code>, so the HAL does not count the window as a client."],
+  files: ["Writes into the run folder", "",
+    "Report → CSV + HTML; Logger → run log; test code → stream CSVs (flushed on every push, so the GUI sees data live)."],
+};
+let panel = document.getElementById("panel");
+function showInfo(k) {
+  const d = INFO[k]; if (!d) return;
+  panel.innerHTML = "<h4>" + d[0] + "</h4>" + (d[1] ? "<p class='hint'>" + d[1] + "</p>" : "") + "<p>" + d[2] + "</p>";
+  clearOn(); markOn([k]);
+}
+const IDMAP = { launcher: "P-launcher", gui: "P-gui", core: "P-core", logger: "P-logger", runfolder: "P-runfolder",
+  hal: "P-hal", drivers: "P-drivers", monitor: "P-monitor", hallog: "L-hallog", spawn: "L-spawn", hmi: "L-hmi",
+  seq: "L-seq", rep: "L-rep", log: "L-log", tcp: "L-tcp", pipe: "L-pipe", mon: "L-mon", files: "L-files",
+  sequencer: "P-sequencer", report: "P-report" };
+function clearOn() { document.querySelectorAll("#dia .on").forEach(e => e.classList.remove("on")); }
+function markOn(keys) { keys.forEach(k => { const e = document.getElementById(IDMAP[k]); if (e) e.classList.add("on"); }); }
+document.querySelectorAll("#dia .clk").forEach(g => g.addEventListener("click", ev => { ev.stopPropagation(); showInfo(g.dataset.k); }));
+
+// ---------- scenarios ----------
+const SCEN = {
+  run: [
+    ["Start", ["gui", "hmi"], "The operator presses Start. The frontend sends <code>StartSequence(sequence_name, …)</code> to CORE."],
+    ["Recipe goes to the Sequencer", ["seq", "sequencer"], "CORE answers with <code>RunSequence(self.recipe, …)</code> — the only way the recipe ever reaches the Sequencer. With no recipe loaded CORE refuses it itself."],
+    ["Run opens", ["sequencer", "files", "runfolder", "log"], "The Sequencer starts a worker thread, makes the run folder and tells the Logger to start the run log there, opens a <code>StreamSession</code>, and enters <code>pyhal.run_scope()</code> (it waits for CORE's startup connect to the HAL if that is still going)."],
+    ["Everybody learns of it", ["seq", "rep", "hmi", "report", "gui"], "<code>RunStarted</code> (naming the run folder) and <code>SequenceStarted</code> go to CORE, which relays them to the Report <b>and</b> the HMI. The Report opens <code>report.csv</code>."],
+    ["A step calls hardware", ["sequencer", "tcp", "hal"], "<code>StepStarted</code> goes to the HMI. The step's test code calls <code>get_device(\"ssh1\")</code>: the client sends <code>open</code> over TCP; the HAL queues it and runs it on <code>Devices</code>."],
+    ["Driver process", ["hal", "pipe", "drivers"], "First open: the HAL spawns <code>Device ssh1</code>, which sends <code>hello</code> (type + operations) and is connected. Then <code>.execute(\"uname -r\")</code> becomes a <code>call</code> → Pipe → driver → <code>result</code> → back over TCP to the test code."],
+    ["Step result", ["seq", "rep", "hmi", "report"], "<code>StepExecuted</code> (the full result) goes to the Report only — one CSV row, flushed. <code>StepFinished</code> (the summary) goes to the HMI. An operator question would be a <code>UserPromptRequest</code> to the HMI and a <code>UserPromptResponse</code> back to the Sequencer, both through CORE."],
+    ["Devices close", ["sequencer", "tcp", "hal", "pipe", "drivers"], "After the steps and the teardown steps, <code>run_scope()</code> closes every device the run opened, newest first, whatever the result: <code>teardown()</code> in the driver, then its process ends."],
+    ["Run finishes", ["seq", "rep", "hmi", "log"], "The run log is ended, then <code>RunFinished</code> goes out — once <code>RunStarted</code> is sent, <code>RunFinished</code> always follows. CORE sends it to the Report followed by <code>GenerateReport</code>, and to the HMI."],
+    ["Report ready", ["report", "files", "rep", "hmi", "gui"], "The Report writes <code>report.html</code> and answers <code>ReportGenerated</code>; CORE tells the HMI <code>StatusChanged</code> and <code>ReportReady(report_path, report_dir)</code>."],
+  ],
+  close: [
+    ["Ask to close", ["gui", "hmi"], "The frontend sends <code>ShutdownRequested()</code>. CORE logs <code>Shutting down.</code> — there is no deadline."],
+    ["Sequencer first", ["seq", "sequencer"], "CORE sends <code>StopSequencer</code>. A running test finishes its current step and its teardown steps, however long that takes; then <code>SequencerStopped</code>."],
+    ["HAL link closes", ["tcp", "hal"], "CORE calls <code>hal_link.close()</code>: a HAL this PyPTS started is sent <code>shutdown</code>; one it found running gets <code>close_all</code> and keeps running."],
+    ["Report next", ["rep", "report", "files"], "<code>StopReport</code>, so the CSV tail and <code>report.html</code> of a stopped run are written; then <code>ReportStopped</code>."],
+    ["Frontend last", ["hmi", "gui"], "<code>StopHmi</code> — the frontend has shown everything the other two said — and it answers <code>HmiStopped</code>. CORE's loop ends, joins its threads, and <code>hal_link.finish()</code> waits ≤ 20 s for a late connect."],
+    ["Launcher tidies up", ["launcher", "spawn", "logger"], "The launcher joins CORE (≤ 30 s, then terminates it) and stops the Logger."],
+  ],
+  crash: [
+    ["Trigger", ["gui", "hmi", "core"], "Ctrl+C in the CLI, the launcher after the frontend died, or the watchdog (a module silent for 15 s) — <code>ShutdownRequested(immediate=True)</code> → <code>close_at_once()</code>."],
+    ["HAL link first", ["tcp", "hal"], "On CORE's own thread, before anything else: the HAL is sent <code>close_all</code> or <code>shutdown</code>, not waited for. With a run open the log says CRITICAL — the bench may be energised, the run's teardown never runs."],
+    ["Stop everyone, wait for nobody", ["seq", "rep", "hmi"], "A stop goes to every module still running; CORE does not join the daemon threads (a Sequencer may be stuck in a step) and leaves."],
+    ["The HAL is the safety net", ["hal", "pipe", "drivers"], "The HAL tears its devices down (teardown ladder). If PyPTS was killed outright, the HAL keeps running with its devices as they are, until <code>python -m pyhal --stop</code> or the monitor's Stop."],
+  ],
+};
+let cur = "run", idx = 0;
+const trace = document.getElementById("trace"), stepno = document.getElementById("stepno");
+function drawStep() {
+  const s = SCEN[cur][idx];
+  trace.innerHTML = "<h4>" + (idx + 1) + ". " + s[0] + "</h4><p>" + s[2] + "</p>";
+  stepno.textContent = (idx + 1) + " / " + SCEN[cur].length;
+  clearOn(); markOn(s[1]);
+}
+function pick(name) {
+  cur = name; idx = 0;
+  ["run", "close", "crash"].forEach(n => document.getElementById("sc-" + n).classList.toggle("sel", n === name));
+  drawStep();
+}
+document.getElementById("sc-run").onclick = () => pick("run");
+document.getElementById("sc-close").onclick = () => pick("close");
+document.getElementById("sc-crash").onclick = () => pick("crash");
+document.getElementById("next").onclick = () => { if (idx < SCEN[cur].length - 1) { idx++; drawStep(); } };
+document.getElementById("prev").onclick = () => { if (idx > 0) { idx--; drawStep(); } };
+pick("run"); clearOn();
+
+// ---------- module map ----------
+const PROC = {
+  launcher: ["Launcher", "var(--g1)"], core: ["CORE process", "var(--g2)"], gui: ["Frontend", "var(--g3)"],
+  logger: ["Logger", "var(--g4)"], hal: ["HAL / driver processes", "var(--g5)"], app: ["Own process (tool)", "var(--g6)"],
+  all: ["Every process (library)", "var(--muted)"],
+};
+const GROUPS = [
+  ["Start & embed", "How PyPTS is started — by a person or by code.", "g1", [
+    ["launcher", "launcher", "launcher/launcher.md", "Entry point (<code>python -m pypts</code>, <code>pypts</code>): parses arguments, bootstraps config, spawns Logger + CORE + GUI, restarts on exit code 75, supervises the end."],
+    ["api", "launcher", "api/api.md", "<code>Pts</code> (headless engine driven from your Python), <code>open_gui()</code>, <code>--mode headless</code> with exit codes. Starts exactly what the launcher starts, through the same functions."],
+  ]],
+  ["Engine", "Loads the recipe, runs the steps, records the results.", "g2", [
+    ["core", "core", "core/core.md", "The mediator: routing table, recipe kept, heartbeat watchdog, the two closes, config writes, <code>hal_link</code> to the HAL."],
+    ["sequencer", "core", "sequencer/sequencer.md", "Event-loop thread; one worker thread per run executes the sequence inside <code>pyhal.run_scope()</code> and a <code>StreamSession</code>; stop, pause, resume."],
+    ["step", "core", "step/step.md", "The step types — <code>PythonModule</code>, <code>UserInteraction</code>, <code>UserWrite</code>, <code>UserLoading</code>, <code>Wait</code>, <code>Sequence</code>, <code>Indexed</code> (expanded at load) — and the <code>Runtime</code> seams they run against."],
+    ["recipe", "core", "recipe/recipe.md", "Data only: YAML → Pydantic-validated <code>Recipe</code> / <code>Sequence</code>. <code>Recipe.from_file()</code>, defaults, version check. No execution."],
+    ["report", "core", "report/report.md", "Thread: incremental <code>report.csv</code>, the verdict, <code>report.html</code> built from the CSV rows."],
+    ["stream_handler", "core", "stream_handler/stream_handler.md", "<code>register_stream(name).push(x, y)</code> from test code → one CSV per stream in the run folder; the GUI draws <code>graph:</code> from it."],
+  ]],
+  ["Operator frontends", "What the technician sees and clicks.", "g3", [
+    ["hmi (HmiClient)", "gui", "hmi/hmi.md", "The protocol half every frontend shares: polling, commands, the shutdown handshake, CORE watch."],
+    ["hmi/cli", "launcher", "hmi/hmi.md", "Text frontend, runs in the launcher's process."],
+    ["hmi/gui", "gui", "hmi/gui/gui.md", "PySide6 operator window: step table, interaction panel, log panel (tails the run log), run display with images and stream graphs, settings."],
+  ]],
+  ["Plumbing", "Shared by everyone; no business logic.", "g4", [
+    ["messages", "all", "messages/messages.md", "Every message dataclass, one module per link with its union types, <code>QueueWrapper</code> (send/receive + TRACE), <code>unhandled()</code>."],
+    ["logger", "logger", "logger/logging_rules.md", "The Logger process (single writer, run logs) and the rules for what a log line says at which level."],
+    ["config_handler", "all", "config_handler/config_handler.md", "Per-user <code>config.ini</code> (schema, template, versioning; CORE writes) and <code>bench.ini</code>, the bench's devices."],
+    ["utilities", "all", "utilities/utilities.md", "Error-reporting decorators, <code>HeartbeatManager</code>, run folders, recent recipes."],
+  ]],
+  ["Hardware — pyhal", "A package of its own; never imports pypts.", "g5", [
+    ["pyhal.server · devices", "hal", "src/pyhal/pyhal.md", "<code>HalServer</code>: TCP, connection threads, one request queue, watchdog, exit; <code>Devices</code>: open devices by name."],
+    ["pyhal.client", "all", "src/pyhal/pyhal.md", "<code>connect()</code> (or start), <code>run_scope()</code>, <code>get_device()</code> → <code>Device</code> handle, <code>LogTail</code>. Runs in whoever uses it — CORE, a script."],
+    ["pyhal.protocol", "all", "src/pyhal/pyhal.md", "Values, messages, codec: the JSON-lines wire format."],
+    ["connection_driver · drivers", "hal", "src/pyhal/pyhal.md", "<code>ConnectionDriver</code> (one device; every public name is the driver's operation) and the driver process; <code>BaseDriver</code>, device types; drivers <code>ssh</code>, <code>weather</code>, <code>loopback</code>."],
+    ["pyhal.monitor", "app", "src/pyhal/pyhal.md", "The HAL monitor window (PySide6), a client that polls <code>status</code>; serve mode owns the HAL."],
+  ]],
+  ["Authoring tools", "For writing recipes and plotting — not on the run path.", "g6", [
+    ["recipe_creator", "app", "helper_applications/recipe_creator/recipe_creator.md", "The Recipe Creator and its verificator: every problem in one pass, with the framework's own verdict."],
+    ["recipe_editor", "app", "helper_applications/recipe_editor/recipe_editor.md", "Recipe Editor v2, laid out like the operator window; form generated from the schema."],
+    ["pyrade_xy_graph", "gui", "src/pyrade_xy_graph/DEVIATIONS.md", "Copied CERN plot package, used by the GUI's stream graphs; later a dependency."],
+  ]],
+];
+const gbox = document.getElementById("groups"), legend = document.getElementById("legend"), modpanel = document.getElementById("modpanel");
+let byProc = false;
+function renderMods() {
+  gbox.innerHTML = "";
+  GROUPS.forEach(([title, why, g, mods]) => {
+    const d = document.createElement("div"); d.className = "grp";
+    d.style.setProperty("--gc", "var(--" + g + ")"); d.style.setProperty("--gb", "var(--" + g + "b)");
+    d.innerHTML = "<h4>" + title + "</h4><p class='why'>" + why + "</p>";
+    const m = document.createElement("div"); m.className = "mods";
+    mods.forEach(([name, proc, ctx, desc]) => {
+      const b = document.createElement("span"); b.className = "mod"; b.textContent = name;
+      b.style.setProperty("--pc", byProc ? PROC[proc][1] : "var(--" + g + ")");
+      b.onclick = () => {
+        document.querySelectorAll(".mod.sel").forEach(x => x.classList.remove("sel")); b.classList.add("sel");
+        modpanel.innerHTML = "<h4><code>" + name + "</code> <span class='hint'>— runs in: " + PROC[proc][0] + "</span></h4><p class='hint'>Context file: <code>" + ctx + "</code></p><p>" + desc + "</p>";
+      };
+      m.appendChild(b);
+    });
+    d.appendChild(m); gbox.appendChild(d);
+  });
+  legend.innerHTML = byProc ? Object.values(PROC).map(p => "<span style='--c:" + p[1] + "'>" + p[0] + "</span>").join("") : "";
+}
+document.getElementById("c-grp").onclick = () => { byProc = false; document.getElementById("c-grp").classList.add("sel"); document.getElementById("c-proc").classList.remove("sel"); renderMods(); };
+document.getElementById("c-proc").onclick = () => { byProc = true; document.getElementById("c-proc").classList.add("sel"); document.getElementById("c-grp").classList.remove("sel"); renderMods(); };
+renderMods();
+
+// ---------- data flow ----------
+const FLOW = {
+  all: ["All the roads", "Messages through CORE (recipe, results, operator input) are solid lines between processes; files below the dotted line are the roads around CORE (streams, logs, pictures). Pick a kind of data above."],
+  recipe: ["Recipe", "<ol><li>The GUI sends only the <b>path</b>: <code>LoadRecipe(path)</code>.</li><li>CORE reads and validates the file itself (<code>Recipe.from_file()</code>: YAML → Pydantic schema → <code>Recipe</code> with its <code>Sequence</code>s and <code>Step</code> objects) and keeps the only copy.</li><li>The GUI gets back <code>RecipeLoaded</code>: a pickle-safe <b>summary</b> (sequence and step rows) — all it will ever know about the recipe; it fills the step table from it.</li><li>On Start (<code>StartSequence</code>), CORE hands the whole <code>Recipe</code> object to the Sequencer in <code>RunSequence</code> — in-process, no copy across a process boundary.</li><li>Pictures are not sent: the summary carries absolute paths and the GUI loads the image files itself.</li></ol>"],
+  hw: ["Hardware data", "Test code calls <code>get_device(name).operation(...)</code>. The client in the CORE process sends a JSON <code>call</code> over TCP; the HAL passes it on a Pipe to the driver process and the value comes back the same way, as a plain JSON-safe value (no numpy scalars). The returned value becomes the step's <b>output</b> — from there it travels as a result."],
+  res: ["Results", "<ol><li>When a step ends, <code>Step.run()</code> emits two messages: <code>StepExecuted</code> (rich: inputs, outputs, timing) and <code>StepFinished</code> (the flat <code>StepOutcome</code>).</li><li>CORE sends <code>StepExecuted</code> to the Report only — it must never cross into the GUI — and <code>StepFinished</code> to the GUI only.</li><li>The Report appends one row to <code>report.csv</code> at once; at the end <code>GenerateReport</code> → <code>report.html</code> → <code>ReportGenerated</code> → the GUI gets <code>ReportReady</code>.</li><li><code>RunMetadata</code> (the recipe's <code>report_metadata</code> run variables, e.g. a serial number) takes the same road to the Report and the GUI.</li></ol>"],
+  op: ["Operator input", "A step that needs a person (<code>UserInteraction</code>, <code>UserWrite</code>, <code>UserLoading</code>) sends <code>UserPromptRequest</code> / <code>UserTextRequest</code> / <code>UserPathRequest</code>; CORE routes it to the GUI's interaction panel, and the answer (<code>User…Response</code>) is routed back to the Sequencer, where the waiting step picks it up and turns it into its output."],
+  stream: ["Streams → XY graph", "The one road for bulk measurement data. Test code calls <code>register_stream(\"name\", unit)</code> and <code>.push(x, y)</code>; each push is flushed to <code>streams/&lt;name&gt;.csv</code> in the run folder. The GUI follows that file with <code>StreamReader</code> (new rows since the last poll) and draws the step's <code>graph:</code> with the <code>pyrade_xy_graph</code> widget. <b>No message, no CORE</b> — only the run folder's path, which the GUI learned from <code>RunStarted.run_dir</code>."],
+  log: ["Logs", "Every process and thread sends <code>LogRecord</code>s straight to the Logger (not through CORE), which writes the session log and, during a run, the run log in the run folder. The GUI's LOG OUTPUT panel <b>tails that file</b> (path from <code>RunStarted.run_log_path</code>). The HAL writes its own log file; CORE's <code>hal_link</code> tails it and re-logs each record as <code>HAL: …</code>, so it reaches the Logger through the CORE process (drawn here as one arrow)."],
+};
+const fpanel = document.getElementById("flowpanel");
+function showFlow(f) {
+  document.querySelectorAll("#flowbtns button").forEach(b => b.classList.toggle("sel", b.dataset.f === f));
+  document.querySelectorAll("#flow .fl").forEach(g => g.classList.toggle("dim", f !== "all" && !g.classList.contains("f-" + f)));
+  fpanel.innerHTML = "<h4>" + FLOW[f][0] + "</h4>" + (FLOW[f][1].startsWith("<ol>") ? FLOW[f][1] : "<p>" + FLOW[f][1] + "</p>");
+}
+document.querySelectorAll("#flowbtns button").forEach(b => b.onclick = () => showFlow(b.dataset.f));
+showFlow("all");
+
+// ---------- file tree ----------
+document.getElementById("fs-open").onclick = () => document.querySelectorAll("details.fs").forEach(d => { if (d.style.display !== "none") d.open = true; });
+document.getElementById("fs-close").onclick = () => document.querySelectorAll("details.fs").forEach(d => d.open = false);
+document.querySelectorAll(".fsf").forEach(b => b.onclick = () => {
+  document.querySelectorAll(".fsf").forEach(x => x.classList.toggle("sel", x === b));
+  document.querySelectorAll("details.fs").forEach(d => d.style.display = (b.dataset.p === "all" || d.dataset.pkg === b.dataset.p) ? "" : "none");
+});
+
+// ---------- start-up ----------
+const BOOT = [
+  ["Launcher: arguments and config", "<code>startup.main()</code> parses <code>--mode</code> and <code>--log-level</code> (headless hands over to <code>pypts.api</code>, whose <code>Pts</code> starts the same engine). <code>start_engine()</code> pins the <code>spawn</code> start method, then <code>ConfigHandler.bootstrap()</code> reads — or creates from the template — <code>config.ini</code>; a created or discarded file shows a popup or console banner."],
+  ["Logger first", "The Logger process (<code>logger_main</code>) is spawned before anything else, so every later line has a writer. Then the launcher's own <code>init_logging()</code>, the replay of the bootstrap's log lines, and a notice if <code>bench.ini</code> was discarded."],
+  ["CORE is spawned", "<code>core_main</code> in a new process, handed the HMI↔CORE queue pair (the only cross-process message link) and the log queue."],
+  ["CORE sets itself up", "Ignores Ctrl+C (only the launcher decides when PyPTS stops), <code>init_logging()</code> — the only call in this process; its threads inherit it — and <code>ConfigHandler.open_for_writing()</code>: CORE is the one runtime writer of <code>config.ini</code>. <code>Core()</code> builds the four in-process queues and the <code>HalLink</code>."],
+  ["HAL link — never blocks", "<code>hal_link.start()</code>: with <code>PYPTS_HAL=off</code> (the tests) or a discarded <code>bench.ini</code> there is no HAL this time. Otherwise a daemon thread <code>HAL connect</code> tries <code>127.0.0.1:29555</code>. A HAL that answers is used. If none answers it starts one, detached: <code>python -P -m pyhal --bench …</code>, or — with <code>[hal] show_window</code> on — the monitor window in serve mode, which then starts the HAL. Either way the HAL is not a child of PyPTS."],
+  ["Threads", "<code>start_submodules()</code> starts the Sequencer and the Report as named daemon threads, each given its inbox and outbox. They start beating to CORE at once."],
+  ["CORE takes the wheel", "<code>main_loop()</code>: every 10 ms poll the three inboxes, route, beat to the HMI, watch the others' heartbeats (5 s → WARNING, 15 s → crash close), check whether to stop. From here on <b>CORE controls the runtime</b>."],
+  ["The frontend", "GUI mode: <code>run_gui()</code> spawns the GUI process (<code>gui_main</code>: ignores Ctrl+C, <code>init_logging()</code>, <code>QApplication</code>, the window, a <code>QTimer</code> that polls CORE) and <b>joins</b> it — the launcher now just waits. CLI mode: the CLI runs in the launcher's process instead. A GUI slower than 5 s to start is routine: DEBUG only."],
+  ["The HAL answers", "<code>hello</code> arrives: CORE logs <code>Started the HAL server.</code> or <code>Connected to the HAL server.</code> (a version or bench difference is a WARNING, and the HAL is used anyway). The HAL read <code>bench.ini</code> once when it started. From now on the HAL's own log is tailed into PyPTS's log as <code>HAL: …</code>."],
+  ["First run, first device", "On Start the Sequencer's <code>run_scope()</code> waits for the connect if it is still going. The first <code>get_device(\"x\")</code> makes the HAL spawn the driver process <code>Device x</code>; every device the run opened is closed at the end of the run."],
+  ["Close", "The operator closes the window: <code>ShutdownRequested</code> → Sequencer stops (finishes its step and teardown) → HAL link closed → Report stops → <code>StopHmi</code> → the GUI process exits."],
+  ["Launcher tidies up", "<code>stop_engine()</code>: <code>stop_core()</code> (a crash-close request that does nothing after an orderly close; join ≤ 30 s, then terminate a wedged CORE), then <code>StopLogger</code> and join ≤ 5 s. A GUI exit code of 75 (File → Restart) makes the launcher run the same command line again. A HAL this PyPTS started was sent <code>shutdown</code>; one it found running keeps running."],
+];
+let bi = 0;
+const bpanel = document.getElementById("bootpanel"), bstep = document.getElementById("bstep");
+function drawBoot() {
+  document.querySelectorAll("#boot .ev").forEach(e => e.classList.toggle("on", +e.dataset.i === bi));
+  bpanel.innerHTML = "<h4>" + (bi + 1) + ". " + BOOT[bi][0] + "</h4><p>" + BOOT[bi][1] + "</p>";
+  bstep.textContent = (bi + 1) + " / " + BOOT.length;
+}
+document.querySelectorAll("#boot .ev").forEach(e => e.onclick = () => { bi = +e.dataset.i; drawBoot(); });
+document.getElementById("bnext").onclick = () => { if (bi < BOOT.length - 1) { bi++; drawBoot(); } };
+document.getElementById("bprev").onclick = () => { if (bi > 0) { bi--; drawBoot(); } };
+drawBoot();
+</script>
+</body>
+</html>

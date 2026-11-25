@@ -24,7 +24,6 @@ process rewrote it once per run.
 import configparser
 import logging
 import re
-import threading
 
 import pytest
 
@@ -36,7 +35,6 @@ from pypts.config_handler.config_handler import (
     ConfigKeyError,
     ConfigSchemaError,
     ConfigWriteError,
-    Role,
     _parse,
     _read_template,
 )
@@ -63,12 +61,10 @@ def with_log_level(text: str, level: str) -> str:
 
 @pytest.fixture
 def config_path(tmp_path, monkeypatch):
-    """Point the handler at tmp_path and give every test a cold singleton."""
+    """Point the handler at tmp_path."""
     path = tmp_path / "config.ini"
     monkeypatch.setattr(file_locations, "config_file_path", lambda: path)
-    ConfigHandler.reset_for_testing()
     yield path
-    ConfigHandler.reset_for_testing()
 
 
 @pytest.fixture
@@ -92,7 +88,6 @@ def test_config_is_created_from_the_template_when_missing(config_path):
 
 
 def test_an_existing_valid_file_is_loaded(config, config_path):
-    ConfigHandler.reset_for_testing()
 
     reopened = ConfigHandler.bootstrap()
 
@@ -187,68 +182,33 @@ def test_dump_names_the_file_it_read(config):
     assert "window_width = 1280" in dumped
 
 
-# --- the singleton ---------------------------------------------------------------
+# --- stateless -------------------------------------------------------------------
 
 
-def test_one_instance_per_process(config):
-    assert ConfigHandler() is config
+def test_every_call_reads_the_file_afresh(config, config_path):
+    """Nothing is kept: a value written to the file is seen by the next read, no restart."""
+    first = ConfigHandler()
+    text = config_path.read_text(encoding="utf-8")
+    config_path.write_text(text.replace("window_width = 1280", "window_width = 999"), "utf-8")
+
+    second = ConfigHandler()
+
+    assert second is not first
+    assert first.get_parameter("gui.window_width") == 1280
+    assert second.get_parameter("gui.window_width") == 999
 
 
-def test_first_construction_is_thread_safe(config_path):
-    """
-    Sequencer and Report become threads of the engine process, so two threads
-    can reach a cold singleton at the same moment. They must not get two
-    handlers, each having parsed the file.
-    """
-    ConfigHandler.bootstrap()
-    ConfigHandler.reset_for_testing()
+def test_a_value_set_through_one_handler_is_read_by_the_next(config):
+    """What CORE does for SetConfigParameter, and what the next reader sees."""
+    ConfigHandler().set_parameter("gui.theme", "dark")
 
-    instances = []
-    barrier = threading.Barrier(8)
-
-    def build():
-        barrier.wait()
-        instances.append(ConfigHandler())
-
-    threads = [threading.Thread(target=build) for _ in range(8)]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    assert len(instances) == 8
-    assert len({id(instance) for instance in instances}) == 1
-
-
-# --- who may write ----------------------------------------------------------------
-
-
-def test_a_reader_cannot_write(config_path):
-    ConfigHandler.bootstrap()
-    ConfigHandler.reset_for_testing()
-    reader = ConfigHandler()
-
-    assert reader.role is Role.READER
-    with pytest.raises(ConfigWriteError):
-        reader.set_parameter("gui.theme", "dark")
-    with pytest.raises(ConfigWriteError):
-        reader.restore_default()
-
-
-def test_a_reader_cannot_be_promoted_to_writer(config_path):
-    ConfigHandler.bootstrap()
-    ConfigHandler.reset_for_testing()
-    ConfigHandler()
-
-    with pytest.raises(ConfigWriteError):
-        ConfigHandler.open_for_writing()
+    assert ConfigHandler().get_parameter("gui.theme") == "dark"
 
 
 def test_the_writer_writes_and_the_value_survives_a_restart(config, config_path):
     config.set_parameter("gui.theme", "dark")
     config.set_parameter("paths.reports_dir", str(config_path.parent / "elsewhere"))
 
-    ConfigHandler.reset_for_testing()
     reopened = ConfigHandler()
 
     assert reopened.get_parameter("gui.theme") == "dark"
@@ -262,7 +222,6 @@ def test_user_edits_survive_a_restart(config, config_path):
         encoding="utf-8",
     )
 
-    ConfigHandler.reset_for_testing()
 
     assert ConfigHandler.bootstrap().get_parameter("logging.level") == "ERROR"
 
@@ -278,9 +237,9 @@ def test_a_rejected_value_never_reaches_the_file(config, config_path):
 def test_restore_default_discards_user_values(config):
     config.set_parameter("gui.theme", "dark")
 
-    config.restore_default()
+    ConfigHandler.restore_default()
 
-    assert config.get_parameter("gui.theme") == "light"
+    assert ConfigHandler().get_parameter("gui.theme") == "light"
 
 
 def test_a_second_bootstrap_does_not_touch_the_file(config, config_path):
@@ -290,7 +249,6 @@ def test_a_second_bootstrap_does_not_touch_the_file(config, config_path):
     """
     before = config_path.read_bytes(), config_path.stat().st_mtime_ns
 
-    ConfigHandler.reset_for_testing()
     ConfigHandler.bootstrap()
 
     assert (config_path.read_bytes(), config_path.stat().st_mtime_ns) == before
@@ -309,7 +267,6 @@ def test_a_value_of_the_wrong_type_discards_the_file_and_names_the_key(config, c
         "window_width = 1280", "window_width = wide"
     )
     config_path.write_text(broken, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
 
     handler = ConfigHandler()
 
@@ -326,7 +283,6 @@ def test_a_value_outside_the_allowed_set_discards_the_file(config, config_path):
         with_log_level(config_path.read_text(encoding="utf-8"), "CHATTY"),
         encoding="utf-8",
     )
-    ConfigHandler.reset_for_testing()
 
     handler = ConfigHandler()
 
@@ -343,7 +299,6 @@ def test_a_file_saved_with_a_byte_order_mark_still_reads(config, config_path):
     front of the first section header and configparser refuses the whole file.
     """
     config_path.write_text(config_path.read_text(encoding="utf-8"), encoding="utf-8-sig")
-    ConfigHandler.reset_for_testing()
 
     assert ConfigHandler().get_parameter("gui.window_width") == 1280
 
@@ -354,7 +309,6 @@ def test_a_file_that_is_not_ini_is_discarded_with_an_explanation(config, config_
     what to do about it, not just what configparser thinks.
     """
     config_path.write_text("this is not an ini file\n", encoding="utf-8")
-    ConfigHandler.reset_for_testing()
 
     handler = ConfigHandler.bootstrap()
 
@@ -404,7 +358,6 @@ def test_a_key_deleted_by_hand_discards_the_file(config, config_path):
     """
     broken = config_path.read_text(encoding="utf-8").replace("window_height = 720", "")
     config_path.write_text(broken, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
 
     handler = ConfigHandler.bootstrap()
 
@@ -418,19 +371,16 @@ def test_a_key_deleted_by_hand_discards_the_file(config, config_path):
 
 def test_a_reader_applies_the_same_discard_rule(config, config_path):
     """
-    Every process reads the file for itself, so every process has to reach the
-    same verdict about it - a run must agree with itself about the values in
-    force.
+    Every read is a read of the file, so every read has to reach the same
+    verdict about it - a run must agree with itself about the values in force.
     """
     config_path.write_text(
         config_path.read_text(encoding="utf-8").replace("window_height = 720", ""),
         encoding="utf-8",
     )
-    ConfigHandler.reset_for_testing()
 
     reader = ConfigHandler()
 
-    assert reader.role is Role.READER
     assert reader.bootstrap_outcome is BootstrapOutcome.DISCARDED
     assert reader.get_parameter("gui.window_height") == 720
 
@@ -448,7 +398,6 @@ def test_a_user_added_section_is_kept_as_text_and_reported(config, config_path, 
         config_path.read_text(encoding="utf-8") + "\n[gui_extra]\ntimeout_s = 2.5\n",
         encoding="utf-8",
     )
-    ConfigHandler.reset_for_testing()
 
     with caplog.at_level(logging.WARNING):
         reopened = ConfigHandler.bootstrap()
@@ -463,7 +412,6 @@ def test_a_retired_logs_dir_line_is_kept_and_warned_about_once(config, config_pa
     config_path.write_text(
         text.replace("[paths]\n", "[paths]\nlogs_dir = C:/old/logs\n", 1), encoding="utf-8"
     )
-    ConfigHandler.reset_for_testing()
 
     with caplog.at_level(logging.WARNING):
         reopened = ConfigHandler.bootstrap()
@@ -479,7 +427,6 @@ def test_a_hardware_section_is_kept_as_text_and_warned_about_once(config, config
         + "\n[hardware.dmm1]\ndriver = nidmm\nresource = PXI1Slot2\ntimeout_s = 2.5\n",
         encoding="utf-8",
     )
-    ConfigHandler.reset_for_testing()
 
     with caplog.at_level(logging.WARNING):
         reopened = ConfigHandler.bootstrap()
@@ -508,7 +455,6 @@ def test_a_user_added_device_survives_a_rewrite(config, config_path):
         + "\n[hardware.dmm1]\ndriver = nidmm\nresource = PXI1Slot2\ntimeout_s = 2.5\n",
         encoding="utf-8",
     )
-    ConfigHandler.reset_for_testing()
     reopened = ConfigHandler.bootstrap()
 
     reopened.set_parameter("gui.theme", "dark")
@@ -531,7 +477,6 @@ def test_a_version_mismatch_discards_the_file_for_this_run(config, config_path, 
     )
     mismatched = mismatched.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(mismatched, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
 
     handler = _bootstrap_before_logging()
 
@@ -565,7 +510,6 @@ def test_a_version_4_file_is_discarded_with_a_problem_naming_5_0_0(config, confi
         ),
         encoding="utf-8",
     )
-    ConfigHandler.reset_for_testing()
 
     handler = _bootstrap_before_logging()
 
@@ -584,7 +528,6 @@ def test_a_different_minor_or_patch_version_is_still_loaded(config, config_path)
     )
     newer = newer.replace("window_width = 1280", "window_width = 999")
     config_path.write_text(newer, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
 
     handler = _bootstrap_before_logging()
 
@@ -602,7 +545,6 @@ def test_a_version_that_is_not_major_minor_patch_discards_the_file(config, confi
         f"config_version = {CONFIG_VERSION}", "config_version = 5"
     )
     config_path.write_text(old_style, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
 
     handler = _bootstrap_before_logging()
 
@@ -622,7 +564,6 @@ def test_a_discarded_configuration_refuses_runtime_writes(config, config_path):
         config_path.read_text(encoding="utf-8").replace("window_height = 720", ""),
         encoding="utf-8",
     )
-    ConfigHandler.reset_for_testing()
     writer = ConfigHandler.bootstrap()
 
     assert writer.bootstrap_outcome is BootstrapOutcome.DISCARDED
@@ -634,19 +575,18 @@ def test_a_discarded_configuration_refuses_runtime_writes(config, config_path):
 
 def test_restore_default_ends_the_discarded_state(config, config_path):
     """
-    restore_default() rewrites the file with the defaults deliberately, so
-    afterwards the file and the values in force agree again and writing works.
+    restore_default() rewrites the file with the defaults deliberately, needing
+    no read of it, so afterwards the next read loads it and writing works.
     """
     config_path.write_text("this is not an ini file\n", encoding="utf-8")
-    ConfigHandler.reset_for_testing()
-    writer = ConfigHandler.bootstrap()
-    assert writer.bootstrap_outcome is BootstrapOutcome.DISCARDED
+    assert ConfigHandler().bootstrap_outcome is BootstrapOutcome.DISCARDED
 
-    writer.restore_default()
+    ConfigHandler.restore_default()
 
-    assert writer.bootstrap_outcome is BootstrapOutcome.LOADED
-    assert writer.bootstrap_problem is None
-    writer.set_parameter("gui.theme", "dark")
+    reread = ConfigHandler()
+    assert reread.bootstrap_outcome is BootstrapOutcome.LOADED
+    assert reread.bootstrap_problem is None
+    reread.set_parameter("gui.theme", "dark")
     assert "theme = dark" in config_path.read_text(encoding="utf-8")
 
 
@@ -681,7 +621,6 @@ def test_creating_the_file_is_narrated(config_path, caplog):
 
 
 def test_finding_an_existing_file_is_narrated(config, config_path, caplog):
-    ConfigHandler.reset_for_testing()
     handler = _bootstrap_before_logging()
 
     with caplog.at_level(logging.DEBUG):
@@ -692,25 +631,34 @@ def test_finding_an_existing_file_is_narrated(config, config_path, caplog):
     assert "creating one from the template" not in caplog.text
 
 
-def test_a_reader_narrates_its_role(config, config_path, caplog):
-    ConfigHandler.reset_for_testing()
-    root = logging.getLogger()
-    saved = root.handlers[:]
-    root.handlers.clear()
-    try:
-        reader = ConfigHandler()
-    finally:
-        root.handlers.extend(saved)
+def test_an_ordinary_read_logs_one_debug_line_and_no_story(config, config_path, caplog):
+    """Reads happen on every use; only bootstrap() narrates."""
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8") + "\n[gui_extra]\ntimeout_s = 2.5\n",
+        encoding="utf-8",
+    )
 
     with caplog.at_level(logging.DEBUG):
-        reader.replay_bootstrap_log()
+        ConfigHandler()
 
-    assert "opened as reader" in caplog.text
+    messages = [record.getMessage() for record in caplog.records]
+    assert messages == [f"Configuration read from {config_path}."]
+    assert all(record.levelno == logging.DEBUG for record in caplog.records)
+
+
+def test_an_ordinary_read_of_a_discarded_file_says_so_at_debug(config, config_path, caplog):
+    config_path.write_text("this is not an ini file\n", encoding="utf-8")
+
+    with caplog.at_level(logging.DEBUG):
+        ConfigHandler()
+
+    assert len(caplog.records) == 1
+    assert caplog.records[0].levelno == logging.DEBUG
+    assert "discarded, the defaults are in force" in caplog.records[0].getMessage()
 
 
 def test_every_value_in_force_is_logged_at_debug(config, caplog):
     """`config.dump()` for a console; this is the same thing for the run log."""
-    ConfigHandler.reset_for_testing()
     handler = _bootstrap_before_logging()
 
     with caplog.at_level(logging.DEBUG):
@@ -725,12 +673,10 @@ def test_the_value_dump_is_debug_only(config, caplog):
     """
     One line per key is right for a trace and wrong for a normal run.
 
-    So is the "loaded from ... structure version N, M sections" line: every
-    process that reads the configuration replays it, so at INFO the operator
-    would be told it once per process, about a file they never open. An
+    So is the "loaded from ... structure version N, M sections" line: at INFO
+    the operator would be told it on every start, about a file they never open. An
     ordinary load says nothing at INFO at all - logging_rules.md section 1.
     """
-    ConfigHandler.reset_for_testing()
     handler = _bootstrap_before_logging()
 
     with caplog.at_level(logging.INFO):
@@ -740,7 +686,6 @@ def test_the_value_dump_is_debug_only(config, caplog):
     assert "Configuration loaded from" not in caplog.text
 
     caplog.clear()
-    ConfigHandler.reset_for_testing()
     handler = _bootstrap_before_logging()
     with caplog.at_level(logging.DEBUG):
         handler.replay_bootstrap_log()
@@ -804,7 +749,6 @@ def test_a_key_added_by_hand_stays_in_its_section_when_a_setting_is_saved(config
     text = config_path.read_text(encoding="utf-8")
     hand_edited = text.replace("[gui]\n", "[gui]\nmy_note = bench 4\n", 1)
     config_path.write_text(hand_edited, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
     reopened = ConfigHandler.bootstrap()
 
     reopened.set_parameter("gui.theme", "dark")
@@ -812,7 +756,6 @@ def test_a_key_added_by_hand_stays_in_its_section_when_a_setting_is_saved(config
     written = config_path.read_text(encoding="utf-8")
     assert written.count("[gui]") == 1
     assert "[gui]\nmy_note = bench 4\n" in written
-    ConfigHandler.reset_for_testing()
     again = ConfigHandler.bootstrap()
     assert again.bootstrap_outcome is BootstrapOutcome.LOADED
     assert again.get_parameter("gui.theme") == "dark"

@@ -34,7 +34,6 @@ def isolated_configuration(tmp_path, monkeypatch):
     follow the real OS theme. The config points at a file that does not exist
     until a test writes one with `a_config_file()`.
     """
-    from pypts.config_handler import ConfigHandler
     from pypts.hmi.gui import gui as gui_module
 
     monkeypatch.setattr(
@@ -44,16 +43,13 @@ def isolated_configuration(tmp_path, monkeypatch):
         file_locations, "recent_recipes_path", lambda: tmp_path / "state" / "recent.json"
     )
     monkeypatch.setattr(gui_module, "detect_system_dark_mode", lambda app=None: False)
-    ConfigHandler.reset_for_testing()
     yield
-    ConfigHandler.reset_for_testing()
 
 
 def a_config_file(settings=None):
     """
     Write a real config.ini where `isolated_configuration` points, with some
-    values replaced, then drop the singleton - so what is built next reads the
-    file the way a fresh process would.
+    values replaced, so what is built next reads it.
 
     Args:
         settings: dotted key -> value as it should appear in the file, e.g.
@@ -71,7 +67,6 @@ def a_config_file(settings=None):
         rest = re.sub(rf"^{key} = .*$", f"{key} = {value}", rest, count=1, flags=re.MULTILINE)
         text = head + header + rest
     path.write_text(text, encoding="utf-8")
-    ConfigHandler.reset_for_testing()
     return path
 
 
@@ -653,13 +648,14 @@ def test_the_dialog_saves_through_core_and_shows_its_answer(gui_factory, monkeyp
 
 
 def test_a_saved_setting_is_shown_when_the_dialog_reopens(gui_factory, monkeypatch):
-    """This process never re-reads config.ini, so it remembers what CORE confirmed."""
+    """The dialog reads config.ini as it opens, so a value CORE saved since is shown."""
+    from pypts.config_handler import ConfigHandler
     from pypts.hmi.gui.settings_dialog import SettingsDialog
 
     a_config_file()
-    instance, _outbox, inbox = gui_factory()
-    inbox.send(ConfigParameterResult(key="gui.window_width", value="1500", accepted=True))
-    instance.poll_core()
+    instance, _outbox, _inbox = gui_factory()
+    # What CORE does for SetConfigParameter, after this window opened.
+    ConfigHandler().set_parameter("gui.window_width", "1500")
     shown = {}
 
     def look_at_the_width(dialog):
@@ -1094,15 +1090,11 @@ def test_restore_is_refused_during_a_run_and_clearing_the_recents_is_not(
     assert seen["can_restore"] is False
 
 
-def test_restoring_the_defaults_deletes_the_config_and_restarts_pypts(gui_factory, monkeypatch):
-    """Every process read config.ini at startup; a fresh start recreates it from the template."""
+def press_restore_defaults(instance, monkeypatch):
+    """Open Settings, press Restore defaults and confirm it."""
     from pypts.hmi.gui import settings_dialog
     from pypts.hmi.gui.settings_dialog import SettingsDialog
-    from pypts.messages.core_hmi_communication import ShutdownRequested
-    from pypts.utilities.common import RESTART_EXIT_CODE
 
-    config_file = a_config_file()
-    instance, outbox, _inbox = gui_factory()
     monkeypatch.setattr(settings_dialog, "confirm_restore_defaults", lambda parent: True)
 
     def press_restore(dialog):
@@ -1112,9 +1104,51 @@ def test_restoring_the_defaults_deletes_the_config_and_restarts_pypts(gui_factor
     monkeypatch.setattr(SettingsDialog, "exec", press_restore)
     instance.window.settings_action.trigger()
 
-    assert not config_file.exists()
+
+def test_restoring_the_defaults_asks_core_and_restarts_once_confirmed(gui_factory, monkeypatch):
+    """CORE is the single runtime writer: the GUI asks, leaves the file alone, and
+    restarts on the answer."""
+    from pypts.messages.core_hmi_communication import (
+        DefaultConfigRestored,
+        RestoreDefaultConfig,
+        ShutdownRequested,
+    )
+    from pypts.utilities.common import RESTART_EXIT_CODE
+
+    config_file = a_config_file()
+    before = config_file.read_text(encoding="utf-8")
+    instance, outbox, inbox = gui_factory()
+
+    press_restore_defaults(instance, monkeypatch)
+
+    asked = drain(outbox)
+    assert any(isinstance(message, RestoreDefaultConfig) for message in asked)
+    assert not any(isinstance(message, ShutdownRequested) for message in asked)
+    assert config_file.read_text(encoding="utf-8") == before
+    assert instance.exit_code != RESTART_EXIT_CODE
+
+    inbox.send(DefaultConfigRestored(accepted=True))
+    instance.poll_core()
+
     assert instance.exit_code == RESTART_EXIT_CODE
     assert any(isinstance(message, ShutdownRequested) for message in drain(outbox))
+
+
+def test_a_refused_restore_is_shown_and_nothing_restarts(gui_factory, monkeypatch):
+    from pypts.messages.core_hmi_communication import DefaultConfigRestored, ShutdownRequested
+    from pypts.utilities.common import RESTART_EXIT_CODE
+
+    a_config_file()
+    instance, outbox, inbox = gui_factory()
+    press_restore_defaults(instance, monkeypatch)
+    drain(outbox)
+
+    inbox.send(DefaultConfigRestored(accepted=False, reason="The disk is read-only."))
+    instance.poll_core()
+
+    assert "Default settings not restored: The disk is read-only." in instance.status_label.text()
+    assert instance.exit_code != RESTART_EXIT_CODE
+    assert not any(isinstance(message, ShutdownRequested) for message in drain(outbox))
 
 
 def test_clearing_the_recents_in_settings_empties_the_list_without_a_restart(
@@ -1271,7 +1305,6 @@ def test_a_saved_filter_click_puts_nothing_in_the_status_line(gui_factory):
     instance.poll_core()
 
     assert instance.status_label.text() == before
-    assert instance._saved_settings["gui.log_show_info"] == "false"
 
 
 def test_a_refused_filter_save_is_shown_and_the_click_stays(gui_factory):

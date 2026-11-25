@@ -98,10 +98,21 @@ DEBUG  CORE module stopping.           DEBUG  CORE left its main event loop.
 The names are `LAUNCHER`, `LOGGER`, `CORE`, `SEQUENCER`, `REPORT`, `GUI`, `CLI` — uppercase,
 exactly these spellings.
 
-`LOGGER` is in the list but does not appear in the run log, and cannot: the Logger process is
-the file's only writer and does not log through itself. Its own diagnostics go to stderr,
-prefixed `[logger]`, which is the one place in the framework where a message bypasses all of
-this. The launcher records the Logger's lifecycle from the outside, at DEBUG.
+`LOGGER` is in the list but its lifecycle lines do not appear in the run log: the Logger
+process is the file's only writer and does not log through the queue it reads. The launcher
+records the Logger's lifecycle from the outside, at DEBUG. Every diagnostic of its own goes to
+stderr, prefixed `[logger]` — the one place in the framework where a message bypasses all of
+this. The two failures the operator should know about are **also** written into the log, at
+ERROR, through `Logger.own_log` (the logger `pypts.logger.own`, whose one handler writes
+straight through `write_record()`), so the source column reads `log.py:<function>`:
+
+| Line | When |
+|---|---|
+| `The log could not be continued in '<new>'; it carries on in '<old>': <error>` | a `SwitchLogFile`, `StartRunLog` or `EndRunLog` whose file could not be opened; written into the file it stayed in |
+| `An entry could not be written to the log and was skipped: <Type>: <error>` | handling one queue item raised; the Logger carries on with the next |
+
+A record that could not be written to the file at all is reported on stderr only — there is
+nowhere else it could go.
 
 **Ordinary event lines carry no prefix** (one exception: the HAL server's own lines, re-logged
 as `HAL: <message>`, §6). `Recipe 'x.yml' loaded.` already says what happened;
